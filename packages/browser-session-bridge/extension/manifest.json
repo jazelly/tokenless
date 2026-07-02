@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Tokenless Browser Session Bridge",
+  "version": "0.1.0",
+  "description": "Visible bridge for user-authorized ChatGPT, Gemini, and Claude web sessions.",
+  "permissions": [
+    "activeTab",
+    "nativeMessaging",
+    "sidePanel",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://claude.ai/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://claude.ai/*"
+      ],
+      "js": [
+        "content/provider-content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
+  "action": {
+    "default_title": "Tokenless Browser Session Bridge"
+  },
+  "externally_connectable": {
+    "matches": [
+      "https://*.tokenless.dev/*",
+      "https://*.tokenless.ai/*",
+      "https://*.noop.build/*",
+      "https://*.noop.vertile.ai/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*"
+    ]
+  }
+}

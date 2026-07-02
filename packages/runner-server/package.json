@@ -1,0 +1,20 @@
+{
+  "name": "@tokenless/runner-server",
+  "version": "0.1.0",
+  "description": "HTTP runner shell for Tokenless webapp integrations.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "tokenless-runner-server": "./src/server.mjs"
+  },
+  "scripts": {
+    "build": "node --check src/index.js && node --check src/server.mjs",
+    "lint": "node --check src/index.js && node --check src/server.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

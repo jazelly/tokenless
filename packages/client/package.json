@@ -1,0 +1,17 @@
+{
+  "name": "@tokenless/client",
+  "version": "0.1.0",
+  "description": "Webapp client helpers for Tokenless runner and extension integrations.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "build": "node --check src/index.js",
+    "lint": "node --check src/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tokenless Bridge</title>
+    <link rel="stylesheet" href="index.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">Tokenless</p>
+          <h1>Browser Session Bridge</h1>
+        </div>
+        <span id="status" class="status">Idle</span>
+      </header>
+
+      <section class="panel">
+        <h2>Providers</h2>
+        <div id="providers" class="providers"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Bridge Contract</h2>
+        <ul>
+          <li>Visible tabs only</li>
+          <li>No cookie export</li>
+          <li>No hidden provider APIs</li>
+          <li>Stops on login, CAPTCHA, or selector drift</li>
+        </ul>
+      </section>
+    </main>
+    <script type="module" src="index.js"></script>
+  </body>
+</html>
