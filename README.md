@@ -41,6 +41,7 @@ Run a task from a local agent or terminal:
 ```bash
 tokenless run \
   --provider chatgpt \
+  --idempotency-key agent-chat-123 \
   --project-root /path/to/project \
   --prompt-file /tmp/request.md \
   --context-file /tmp/shareable-context.md \
@@ -50,10 +51,19 @@ tokenless run \
 What the user sees:
 
 1. A Tokenless task page opens in the browser.
-2. The extension opens or reuses the selected provider tab.
+2. The extension opens the mapped provider conversation, or starts a new visible chat for a new idempotency key.
 3. The prompt is inserted into the visible composer and submitted.
 4. Tokenless waits for the visible response text.
 5. The answer is returned to the local agent.
+
+## Conversation Mapping
+
+Pass a stable `--idempotency-key` for each agent chat thread. Tokenless stores the local mapping in `~/.tokenless/meta/conversations.json`.
+
+- First run for a new key opens the provider home URL, such as `https://chatgpt.com/`, so it starts a new visible chat.
+- When the provider redirects that run to a conversation URL, such as `https://chatgpt.com/c/...`, Tokenless saves that URL for the key.
+- Later runs with the same key route back to the same provider conversation.
+- Different keys do not reuse an existing ChatGPT conversation by accident.
 
 ## What It Includes
 
@@ -141,6 +151,7 @@ EOF
 
 tokenless run \
   --provider chatgpt \
+  --idempotency-key local-dev-chat \
   --project-root "$REPO_ROOT" \
   --prompt-file /tmp/tokenless-request.md \
   --context-file /tmp/tokenless-context.md \

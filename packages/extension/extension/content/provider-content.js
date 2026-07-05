@@ -147,6 +147,7 @@ async function submitPrompt(provider, request) {
     provider: provider.id,
     visible: true,
     answerBaseline,
+    url: location.href,
   }
 }
 
@@ -174,6 +175,7 @@ async function readLatestAnswer(provider, request = {}) {
     provider: provider.id,
     text,
     chars: text.length,
+    url: location.href,
   }
 }
 

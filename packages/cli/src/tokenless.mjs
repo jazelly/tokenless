@@ -61,6 +61,7 @@ async function runCommand(args) {
     )
   }
   const homeDir = tokenlessHome(args.home)
+  const idempotencyKey = args.idempotencyKey || process.env.TOKENLESS_IDEMPOTENCY_KEY
   const job = await createLocalJob({
     homeDir,
     provider: args.provider || 'chatgpt',
@@ -68,12 +69,14 @@ async function runCommand(args) {
     prompt,
     projectRoot: args.projectRoot,
     targetUrl: args.targetUrl,
+    idempotencyKey,
     readDelayMs: args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs),
     readTimeoutMs: args.readTimeoutMs === undefined ? 120000 : Number(args.readTimeoutMs),
     metadata: {
       source: 'tokenless-cli',
       browser: args.browser,
       profile: args.profile,
+      idempotencyKey,
     },
   })
 
@@ -96,6 +99,8 @@ async function runCommand(args) {
     jobId: job.jobId,
     taskUrl,
     requestPath: `${job.jobId}.request.json`,
+    idempotencyKey: job.idempotencyKey,
+    conversation: job.conversation,
     result,
     compactOutput: result?.compactOutput,
   }
@@ -212,6 +217,9 @@ function parseArgs(argv) {
     } else if (arg === '--target-url') {
       parsed.targetUrl = next
       index += 1
+    } else if (arg === '--idempotency-key' || arg === '--conversation-key') {
+      parsed.idempotencyKey = next
+      index += 1
     } else if (arg === '--extension-id') {
       parsed.extensionId = next
       index += 1
@@ -293,7 +301,7 @@ function printPayload(payload, args) {
 function usage() {
   console.error([
     'Usage:',
-    '  tokenless run --provider chatgpt --project-root <path> --prompt-file <file> --context-file <file> --json',
+    '  tokenless run --provider chatgpt --idempotency-key <agent-chat-id> --project-root <path> --prompt-file <file> --context-file <file> --json',
     '  tokenless install --extension-id <chrome-extension-id> --json',
     '  tokenless doctor --json',
   ].join('\n'))

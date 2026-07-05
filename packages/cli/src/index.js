@@ -4,6 +4,7 @@ import path from 'node:path'
 export {
   buildTaskUrl,
   completeLocalJob,
+  conversationMapPath,
   createLocalJob,
   ensureJobStore,
   installNativeHost,
@@ -12,8 +13,10 @@ export {
   NATIVE_HOST_NAME,
   nativeMessagingHostDir,
   nativeMessagingHostDirs,
+  readConversationMap,
   readLocalJobRequest,
   tokenlessHome,
+  upsertConversationMapping,
   waitLocalJobResult,
   writeJobState,
 } from './job-store.js'

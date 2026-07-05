@@ -39,6 +39,7 @@ tokenless doctor --extension-id <chrome-extension-id>
 ```bash
 tokenless run \
   --provider chatgpt \
+  --idempotency-key agent-chat-123 \
   --project-root /path/to/project \
   --prompt-file /tmp/request.md \
   --context-file /tmp/shareable-context.md \
@@ -48,10 +49,19 @@ tokenless run \
 用户会看到：
 
 1. 浏览器打开 Tokenless 任务页面。
-2. 扩展打开或复用指定服务商页面。
+2. 扩展打开已映射的服务商对话；如果是新的 idempotency key，则从新的可见聊天开始。
 3. 提示词被填入可见输入框并发送。
 4. Tokenless 等待可见回答文本稳定。
 5. 回答返回给本地智能体。
+
+## 对话映射
+
+每个智能体聊天线程传入稳定的 `--idempotency-key`。Tokenless 会把本地映射保存到 `~/.tokenless/meta/conversations.json`。
+
+- 新 key 第一次运行时打开服务商主页，例如 `https://chatgpt.com/`，从新的可见聊天开始。
+- 当服务商把这次运行跳转到对话 URL，例如 `https://chatgpt.com/c/...`，Tokenless 会把这个 URL 保存到该 key。
+- 同一个 key 后续运行会回到同一个服务商对话。
+- 不同 key 不会意外复用已有 ChatGPT 对话。
 
 ## 包含哪些部分
 
@@ -139,6 +149,7 @@ EOF
 
 tokenless run \
   --provider chatgpt \
+  --idempotency-key local-dev-chat \
   --project-root "$REPO_ROOT" \
   --prompt-file /tmp/tokenless-request.md \
   --context-file /tmp/tokenless-context.md \

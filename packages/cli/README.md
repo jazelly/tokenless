@@ -22,6 +22,7 @@ tokenless doctor --extension-id <chrome-extension-id>
 ```bash
 tokenless run \
   --provider chatgpt \
+  --idempotency-key agent-chat-123 \
   --project-root /path/to/project \
   --prompt-file /tmp/request.md \
   --context-file /tmp/shareable-context.md \
@@ -29,6 +30,10 @@ tokenless run \
 ```
 
 Tokenless opens a browser task page, routes the request through the extension, submits the prompt in the visible provider UI, waits for visible answer text, and returns that answer to the local agent.
+
+## Conversation Mapping
+
+Use one stable `--idempotency-key` per agent chat thread. Tokenless stores the local provider-conversation mapping in `~/.tokenless/meta/conversations.json`. A new key opens the provider home URL, and once ChatGPT redirects to a conversation URL such as `https://chatgpt.com/c/...`, later runs with the same key return to that same conversation.
 
 ## Boundary
 

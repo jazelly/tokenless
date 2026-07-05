@@ -94,6 +94,16 @@ async function getOrCreateProviderTab(provider, targetUrl) {
   for (const host of provider.hosts) {
     candidates.push(...await chrome.tabs.query({ url: `https://${host}/*` }))
   }
+  if (targetUrl) {
+    const requestedKey = canonicalTabUrl(requestedUrl)
+    const exactCandidate = candidates.find((tab) => (
+      tab.id !== undefined && canonicalTabUrl(tab.url ?? '') === requestedKey
+    ))
+    if (exactCandidate) {
+      return exactCandidate
+    }
+    return chrome.tabs.create({ url: requestedUrl, active: true })
+  }
   const visibleCandidate = candidates.find((tab) => tab.id !== undefined && getProviderForUrl(tab.url ?? '')?.id === provider.id)
   if (visibleCandidate) {
     return visibleCandidate
@@ -137,6 +147,15 @@ function safeProviderUrl(provider, targetUrl) {
   }
   const providerForTarget = getProviderForUrl(targetUrl)
   return providerForTarget?.id === provider.id ? targetUrl : provider.homeUrl
+}
+
+function canonicalTabUrl(url) {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return ''
+  }
 }
 
 function delay(ms) {

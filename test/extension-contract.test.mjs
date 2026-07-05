@@ -18,6 +18,21 @@ test('browser extension manifest is domain limited', () => {
   assert.ok(manifest.host_permissions.every((pattern) => pattern.startsWith('https://')))
 })
 
+test('extension routes mapped conversations by exact target URL before generic provider reuse', () => {
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.js'), 'utf8')
+  const targetBranch = serviceWorker.indexOf('if (targetUrl)')
+  const genericReuse = serviceWorker.indexOf('const visibleCandidate')
+
+  assert.ok(targetBranch > 0, 'service worker should branch on explicit targetUrl')
+  assert.ok(genericReuse > 0, 'service worker should retain generic reuse fallback')
+  assert.ok(targetBranch < genericReuse, 'explicit targetUrl routing must happen before generic provider reuse')
+  assert.match(serviceWorker, /const exactCandidate = candidates\.find/)
+  assert.match(serviceWorker, /return chrome\.tabs\.create\(\{ url: requestedUrl, active: true \}\)/)
+
+  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.js'), 'utf8')
+  assert.match(contentScript, /url: location\.href/)
+})
+
 test('Relay protocol validates required run fields', async () => {
   const { RELAY_PROTOCOL_VERSION, createRelayRun, validateRelayRun } = await import('../packages/relay/src/index.js')
   const run = createRelayRun({ prompt: 'Review this diff.' })
@@ -88,6 +103,143 @@ test('local job store requires nonce and writes compact result', async () => {
   })
   const result = await waitLocalJobResult({ homeDir, jobId: job.jobId, nonce: job.nonce, timeoutMs: 1000 })
   assert.equal(result.compactOutput, 'hello from visible DOM')
+})
+
+test('local conversation mapping routes the same idempotency key to the same provider conversation', async () => {
+  const {
+    completeLocalJob,
+    conversationMapPath,
+    createLocalJob,
+    readConversationMap,
+  } = await import('../packages/cli/src/index.js')
+  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-map-'))
+  const idempotencyKey = 'agent-thread-42'
+
+  const first = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    idempotencyKey,
+    prompt: 'Start a mapped conversation.',
+  })
+
+  assert.equal(first.targetUrl, 'https://chatgpt.com/')
+  assert.equal(first.conversation.route, 'new')
+  assert.equal(first.idempotencyKey, idempotencyKey)
+
+  await completeLocalJob({
+    homeDir,
+    jobId: first.jobId,
+    nonce: first.nonce,
+    ok: true,
+    result: {
+      text: 'mapped answer',
+      read: {
+        text: 'mapped answer',
+        url: 'https://chatgpt.com/c/abc-123?temporary-chat=false',
+      },
+    },
+  })
+
+  assert.ok(fs.existsSync(conversationMapPath(homeDir)))
+  const map = await readConversationMap(homeDir)
+  assert.equal(map.conversations[`chatgpt:${idempotencyKey}`].targetUrl, 'https://chatgpt.com/c/abc-123')
+  assert.equal(map.conversations[`chatgpt:${idempotencyKey}`].providerConversationId, 'abc-123')
+
+  const second = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    idempotencyKey,
+    prompt: 'Continue the mapped conversation.',
+  })
+  assert.equal(second.targetUrl, 'https://chatgpt.com/c/abc-123')
+  assert.equal(second.conversation.route, 'mapped')
+
+  const unrelated = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    idempotencyKey: 'agent-thread-99',
+    prompt: 'Start a different conversation.',
+  })
+  assert.equal(unrelated.targetUrl, 'https://chatgpt.com/')
+  assert.equal(unrelated.conversation.route, 'new')
+})
+
+test('local conversation mapping preserves concurrent completions', async () => {
+  const {
+    completeLocalJob,
+    createLocalJob,
+    readConversationMap,
+  } = await import('../packages/cli/src/index.js')
+  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-concurrent-'))
+  const jobs = await Promise.all(Array.from({ length: 16 }, (_, index) => createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    idempotencyKey: `agent-thread-${index}`,
+    prompt: `Start mapped conversation ${index}.`,
+  })))
+
+  await Promise.all(jobs.map((job, index) => completeLocalJob({
+    homeDir,
+    jobId: job.jobId,
+    nonce: job.nonce,
+    ok: true,
+    result: {
+      text: `mapped answer ${index}`,
+      read: {
+        text: `mapped answer ${index}`,
+        url: `https://chatgpt.com/c/conversation-${index}?temporary-chat=false`,
+      },
+    },
+  })))
+
+  const map = await readConversationMap(homeDir)
+  for (let index = 0; index < jobs.length; index += 1) {
+    assert.equal(
+      map.conversations[`chatgpt:agent-thread-${index}`].targetUrl,
+      `https://chatgpt.com/c/conversation-${index}`
+    )
+  }
+})
+
+test('local conversation mapping rejects corrupt local state instead of overwriting it', async () => {
+  const {
+    completeLocalJob,
+    conversationMapPath,
+    createLocalJob,
+    readConversationMap,
+  } = await import('../packages/cli/src/index.js')
+  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-corrupt-'))
+  const mapPath = conversationMapPath(homeDir)
+  const job = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    idempotencyKey: 'agent-thread-corrupt',
+    prompt: 'Start a mapped conversation.',
+  })
+
+  await fsp.writeFile(mapPath, '{not valid json', 'utf8')
+  await assert.rejects(
+    readConversationMap(homeDir),
+    /Cannot read Tokenless conversation map/
+  )
+
+  const result = await completeLocalJob({
+    homeDir,
+    jobId: job.jobId,
+    nonce: job.nonce,
+    ok: true,
+    result: {
+      text: 'answer that should not hide local state failure',
+      read: {
+        text: 'answer that should not hide local state failure',
+        url: 'https://chatgpt.com/c/corrupt-map',
+      },
+    },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.status, 'failed')
+  assert.equal(result.error.code, 'conversation_map_error')
 })
 
 test('native host installer scopes manifest to extension origin', async () => {

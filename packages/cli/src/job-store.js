@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const LOCAL_JOB_PROTOCOL_VERSION = 'tokenless.local-job.v1'
+export const CONVERSATION_MAP_PROTOCOL_VERSION = 'tokenless.conversation-map.v1'
 export const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 
 export const JOB_STATES = Object.freeze({
@@ -24,12 +25,22 @@ const FINAL_STATES = new Set([
   JOB_STATES.TIMED_OUT,
 ])
 
+const conversationMapLocks = new Map()
+
 export function tokenlessHome(explicitHome = process.env.TOKENLESS_HOME) {
   return path.resolve(explicitHome || path.join(os.homedir(), '.tokenless'))
 }
 
 export function jobsDir(homeDir = tokenlessHome()) {
   return path.join(homeDir, 'jobs')
+}
+
+export function metaDir(homeDir = tokenlessHome()) {
+  return path.join(homeDir, 'meta')
+}
+
+export function conversationMapPath(homeDir = tokenlessHome()) {
+  return path.join(metaDir(homeDir), 'conversations.json')
 }
 
 export function createJobId() {
@@ -47,8 +58,10 @@ export function createNonce() {
 
 export async function ensureJobStore(homeDir = tokenlessHome()) {
   await fs.mkdir(jobsDir(homeDir), { recursive: true, mode: 0o700 })
+  await fs.mkdir(metaDir(homeDir), { recursive: true, mode: 0o700 })
   await fs.chmod(homeDir, 0o700).catch(() => undefined)
   await fs.chmod(jobsDir(homeDir), 0o700).catch(() => undefined)
+  await fs.chmod(metaDir(homeDir), 0o700).catch(() => undefined)
 }
 
 export async function createLocalJob({
@@ -58,6 +71,7 @@ export async function createLocalJob({
   prompt,
   projectRoot,
   targetUrl,
+  idempotencyKey,
   readDelayMs = 1000,
   readTimeoutMs = 120000,
   metadata,
@@ -67,6 +81,12 @@ export async function createLocalJob({
     throw new TypeError('prompt must be a nonempty string.')
   }
   await ensureJobStore(homeDir)
+  const conversation = await resolveConversationTarget({
+    homeDir,
+    provider,
+    targetUrl,
+    idempotencyKey: idempotencyKey ?? metadata?.idempotencyKey ?? metadata?.conversationKey,
+  })
   const now = new Date()
   const jobId = createJobId()
   const nonce = createNonce()
@@ -81,10 +101,16 @@ export async function createLocalJob({
     action,
     prompt,
     projectRoot: projectRoot ? path.resolve(projectRoot) : undefined,
-    targetUrl,
+    targetUrl: conversation.targetUrl,
+    idempotencyKey: conversation.idempotencyKey,
+    conversation,
     readDelayMs,
     readTimeoutMs,
-    metadata: metadata ?? {},
+    metadata: {
+      ...(metadata ?? {}),
+      idempotencyKey: conversation.idempotencyKey,
+      conversationRoute: conversation.route,
+    },
   }
   await writeJsonAtomic(jobPath(homeDir, jobId, 'request'), request, 0o600)
   await writeJobState({ homeDir, jobId, nonce, status: JOB_STATES.QUEUED, actor: 'tokenless-cli' })
@@ -140,24 +166,91 @@ export async function completeLocalJob({
   actor = 'native-host',
 } = {}) {
   const request = await readLocalJobRequest({ homeDir, jobId, nonce })
-  const status = ok ? JOB_STATES.SUCCEEDED : JOB_STATES.FAILED
+  let mappingError = null
+  if (ok) {
+    try {
+      await rememberConversationFromResult({ homeDir, request, result })
+    } catch (error) {
+      mappingError = localStateError(
+        'conversation_map_error',
+        `Failed to persist Tokenless conversation mapping: ${error.message}`
+      )
+    }
+  }
+  const succeeded = Boolean(ok) && !mappingError
+  const status = succeeded ? JOB_STATES.SUCCEEDED : JOB_STATES.FAILED
   const payload = {
     protocol: LOCAL_JOB_PROTOCOL_VERSION,
     jobId,
     nonce,
     requestId: request.jobId,
-    ok: Boolean(ok),
+    ok: succeeded,
     provider: request.provider,
     action: request.action,
     status,
     completedAt: new Date().toISOString(),
-    compactOutput: ok ? compactResult(result) : undefined,
-    result: ok ? result ?? null : null,
-    error: ok ? null : normalizeError(error),
+    compactOutput: succeeded ? compactResult(result) : undefined,
+    result: succeeded ? result ?? null : null,
+    error: succeeded ? null : normalizeError(mappingError ?? error),
   }
   await writeJsonAtomic(jobPath(homeDir, jobId, 'result'), payload, 0o600)
   await writeJobState({ homeDir, jobId, nonce, status, actor })
   return payload
+}
+
+export async function readConversationMap(homeDir = tokenlessHome()) {
+  const mapPath = conversationMapPath(homeDir)
+  let payload
+  try {
+    payload = await readJson(mapPath)
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return emptyConversationMap()
+    }
+    throw localStateError(
+      'conversation_map_unreadable',
+      `Cannot read Tokenless conversation map at ${mapPath}: ${error.message}`
+    )
+  }
+  validateConversationMap(payload, mapPath)
+  return payload
+}
+
+export async function upsertConversationMapping({
+  homeDir = tokenlessHome(),
+  provider,
+  idempotencyKey,
+  targetUrl,
+  jobId,
+} = {}) {
+  const normalizedKey = normalizeIdempotencyKey(idempotencyKey)
+  if (!normalizedKey || typeof provider !== 'string' || typeof targetUrl !== 'string') {
+    return null
+  }
+  const parsedUrl = safeUrl(targetUrl)
+  if (!parsedUrl || providerForUrl(parsedUrl.href) !== provider || !isConversationUrl(provider, parsedUrl)) {
+    return null
+  }
+
+  return withConversationMapLock(homeDir, async () => {
+    const map = await readConversationMap(homeDir)
+    const now = new Date().toISOString()
+    const key = conversationMapKey(provider, normalizedKey)
+    const existing = map.conversations[key]
+    const entry = {
+      provider,
+      idempotencyKey: normalizedKey,
+      targetUrl: canonicalProviderUrl(parsedUrl),
+      providerConversationId: providerConversationId(provider, parsedUrl),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      lastJobId: jobId,
+    }
+    map.updatedAt = now
+    map.conversations[key] = entry
+    await writeJsonAtomic(conversationMapPath(homeDir), map, 0o600)
+    return entry
+  })
 }
 
 export async function waitLocalJobResult({
@@ -282,15 +375,21 @@ async function readJson(file) {
 
 async function writeJsonAtomic(file, payload, mode) {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
-  const handle = await fs.open(tmp, 'w', mode)
+  const tmp = `${file}.${process.pid}.${Date.now()}.${createJobId()}.tmp`
+  let handle
   try {
+    handle = await fs.open(tmp, 'wx', mode)
     await handle.writeFile(`${JSON.stringify(payload, null, 2)}\n`, 'utf8')
     await handle.sync()
   } finally {
-    await handle.close()
+    await handle?.close()
   }
-  await fs.rename(tmp, file)
+  try {
+    await fs.rename(tmp, file)
+  } catch (error) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 function validateJobAccess(payload, jobId, nonce) {
@@ -310,6 +409,180 @@ function compactResult(result) {
   return text.length > 4000 ? `${text.slice(0, 4000)}\n...[truncated]` : text
 }
 
+function emptyConversationMap() {
+  return {
+    protocol: CONVERSATION_MAP_PROTOCOL_VERSION,
+    updatedAt: null,
+    conversations: {},
+  }
+}
+
+function validateConversationMap(payload, mapPath) {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    payload.protocol !== CONVERSATION_MAP_PROTOCOL_VERSION ||
+    !payload.conversations ||
+    typeof payload.conversations !== 'object' ||
+    Array.isArray(payload.conversations)
+  ) {
+    throw localStateError('conversation_map_invalid', `Invalid Tokenless conversation map at ${mapPath}.`)
+  }
+}
+
+function withConversationMapLock(homeDir, fn) {
+  const lockKey = conversationMapPath(homeDir)
+  const prior = conversationMapLocks.get(lockKey) ?? Promise.resolve()
+  const run = prior
+    .catch(() => undefined)
+    .then(() => withConversationMapFileLock(homeDir, fn))
+  const chain = run.catch(() => undefined)
+  conversationMapLocks.set(lockKey, chain)
+  return run.finally(() => {
+    if (conversationMapLocks.get(lockKey) === chain) {
+      conversationMapLocks.delete(lockKey)
+    }
+  })
+}
+
+async function withConversationMapFileLock(homeDir, fn) {
+  const lockDir = `${conversationMapPath(homeDir)}.lock`
+  await acquireLockDir(lockDir)
+  try {
+    return await fn()
+  } finally {
+    await fs.rm(lockDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+async function acquireLockDir(lockDir) {
+  await fs.mkdir(path.dirname(lockDir), { recursive: true, mode: 0o700 })
+  const deadline = Date.now() + 10000
+  while (true) {
+    try {
+      await fs.mkdir(lockDir, { mode: 0o700 })
+      await fs.writeFile(
+        path.join(lockDir, 'owner'),
+        `${process.pid}\n${new Date().toISOString()}\n`,
+        { mode: 0o600 }
+      ).catch(() => undefined)
+      return
+    } catch (error) {
+      if (error?.code !== 'EEXIST') {
+        throw error
+      }
+      const stat = await fs.stat(lockDir).catch(() => null)
+      if (stat && Date.now() - stat.mtimeMs > 30000) {
+        await fs.rm(lockDir, { recursive: true, force: true }).catch(() => undefined)
+        continue
+      }
+      if (Date.now() > deadline) {
+        throw localStateError('conversation_map_locked', `Timed out waiting for Tokenless conversation map lock at ${lockDir}.`)
+      }
+      await delay(25)
+    }
+  }
+}
+
+async function resolveConversationTarget({ homeDir, provider, targetUrl, idempotencyKey } = {}) {
+  const normalizedKey = normalizeIdempotencyKey(idempotencyKey)
+  if (!normalizedKey) {
+    return {
+      idempotencyKey: undefined,
+      route: targetUrl ? 'explicit' : 'default',
+      targetUrl,
+    }
+  }
+
+  const map = await readConversationMap(homeDir)
+  const existing = map.conversations[conversationMapKey(provider, normalizedKey)]
+  if (!targetUrl && existing?.targetUrl) {
+    return {
+      idempotencyKey: normalizedKey,
+      route: 'mapped',
+      targetUrl: existing.targetUrl,
+      mappedAt: existing.updatedAt,
+      providerConversationId: existing.providerConversationId,
+    }
+  }
+
+  return {
+    idempotencyKey: normalizedKey,
+    route: targetUrl ? 'explicit' : 'new',
+    targetUrl: targetUrl ?? providerHomeUrl(provider),
+  }
+}
+
+async function rememberConversationFromResult({ homeDir, request, result } = {}) {
+  const idempotencyKey = request?.idempotencyKey ?? request?.metadata?.idempotencyKey
+  const targetUrl = result?.read?.url ?? result?.url ?? result?.textUrl ?? result?.submit?.url
+  if (!idempotencyKey || !targetUrl) {
+    return null
+  }
+  return upsertConversationMapping({
+    homeDir,
+    provider: request.provider,
+    idempotencyKey,
+    targetUrl,
+    jobId: request.jobId,
+  })
+}
+
+function normalizeIdempotencyKey(idempotencyKey) {
+  if (typeof idempotencyKey !== 'string') return undefined
+  const normalized = idempotencyKey.trim()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function conversationMapKey(provider, idempotencyKey) {
+  return `${provider}:${idempotencyKey}`
+}
+
+function providerHomeUrl(provider) {
+  const homeUrls = {
+    chatgpt: 'https://chatgpt.com/',
+    gemini: 'https://gemini.google.com/app',
+    claude: 'https://claude.ai/new',
+  }
+  return homeUrls[provider] ?? undefined
+}
+
+function providerForUrl(url) {
+  const parsed = typeof url === 'string' ? safeUrl(url) : url
+  const host = parsed?.hostname?.toLowerCase()
+  if (host === 'chatgpt.com' || host === 'chat.openai.com') return 'chatgpt'
+  if (host === 'gemini.google.com') return 'gemini'
+  if (host === 'claude.ai') return 'claude'
+  return null
+}
+
+function isConversationUrl(provider, url) {
+  if (provider === 'chatgpt') return /^\/c\/[^/]+/.test(url.pathname)
+  if (provider === 'gemini') return /^\/app\/[^/]+/.test(url.pathname)
+  if (provider === 'claude') return /^\/chat\/[^/]+/.test(url.pathname)
+  return false
+}
+
+function providerConversationId(provider, url) {
+  if (provider === 'chatgpt') return url.pathname.split('/')[2] || null
+  if (provider === 'gemini') return url.pathname.split('/')[2] || null
+  if (provider === 'claude') return url.pathname.split('/')[2] || null
+  return null
+}
+
+function canonicalProviderUrl(url) {
+  return `${url.origin}${url.pathname}`
+}
+
+function safeUrl(value) {
+  try {
+    return new URL(value)
+  } catch {
+    return null
+  }
+}
+
 function normalizeError(error) {
   return {
     code: typeof error?.code === 'string' ? error.code : 'local_job_error',
@@ -321,6 +594,13 @@ function normalizeError(error) {
 function accessError(code, message) {
   const error = new Error(message)
   error.code = code
+  return error
+}
+
+function localStateError(code, message) {
+  const error = new Error(message)
+  error.code = code
+  error.retryable = false
   return error
 }
 

@@ -34,6 +34,8 @@ async function main() {
     action: request.action,
     prompt: request.prompt,
     targetUrl: request.targetUrl,
+    idempotencyKey: request.idempotencyKey,
+    conversation: request.conversation,
     readDelayMs: request.readDelayMs,
     readTimeoutMs: request.readTimeoutMs,
     metadata: request.metadata,
