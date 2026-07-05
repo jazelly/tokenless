@@ -21,7 +21,7 @@ export {
 const DEFAULT_MAX_FILE_BYTES = 24_000
 const DEFAULT_MAX_TOTAL_BYTES = 80_000
 
-export async function buildLocalScalePrompt({
+export async function buildTokenlessPrompt({
   userPrompt,
   projectRoot = process.cwd(),
   files = [],
@@ -37,7 +37,7 @@ export async function buildLocalScalePrompt({
   const selectedFiles = await collectFiles(root, files, maxFileBytes, maxTotalBytes)
 
   return [
-    '# Tokenless Local Scale Request',
+    '# Tokenless Request',
     '',
     '## User Prompt',
     userPrompt.trim(),

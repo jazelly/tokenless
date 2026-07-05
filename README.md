@@ -1,65 +1,93 @@
 # Tokenless
 
-Tokenless is a standalone visible-session bridge for AI web products and local agents. It packages a browser extension, shared protocol, server-runner shell, and local scale runtime so a web app or a local agent can ask a user-authorized web session to perform visible UI work without exporting cookies or calling hidden provider APIs.
+Tokenless lets a local agent use the AI subscriptions already open in your browser. It sends a task to a visible ChatGPT, Gemini, or Claude tab, waits for the answer, and returns the visible response to the agent without exporting cookies, browser storage, or hidden provider API tokens.
 
-## Architecture
+## Why It Exists
 
-```text
-Local agent skill
-  -> scale CLI
-  -> ~/.tokenless/jobs/<jobId>.request.json
-  -> chrome-extension://<extension-id>/task/task.html?jobId=...&nonce=...
-  -> extension task page / background worker
-  -> native messaging host
-  -> visible ChatGPT, Gemini, or Claude tab
-  -> provider content script
-  -> ~/.tokenless/jobs/<jobId>.result.json
-  -> compact result for the agent
-```
+AI coding agents often need a second model or a user-owned subscription, but the normal options are awkward:
 
-Hosted/webapp flow stays separate:
+- API keys are another secret to provision, rotate, and pay for.
+- Browser automation often assumes a disposable test profile instead of the browser where the user is already logged in.
+- Copying prompts and answers by hand breaks flow and loses project context.
+- Provider sessions should stay visible and user-controlled, especially when login, CAPTCHA, rate limits, or confirmations appear.
 
-```text
-Web app
-  -> Tokenless client protocol
-  -> runner server
-  -> browser extension
-  -> provider content script
-  -> visible ChatGPT, Gemini, or Claude tab
-```
+Tokenless keeps that work in the browser session the user already trusts. The extension can only act on approved provider pages, and it operates through visible UI selectors rather than private provider endpoints.
 
-## Packages
+## User Experience
 
-- `@tokenless/browser-session-bridge`: Manifest V3 extension, content scripts, provider selectors, and web-client helper.
-- `@tokenless/client`: webapp client helpers for runner-server requests.
-- `@tokenless/runner-server`: HTTP runner shell for web apps and hosted control planes.
-- `@tokenless/local-scale`: self-contained local runtime and agent-facing scale script.
-
-## Commands
+Install the CLI:
 
 ```bash
-npm run lint
+npm install -g tokenless
+```
+
+Load the Tokenless browser extension from:
+
+```text
+packages/extension/dist/extension
+```
+
+Then bind the extension to the local native host:
+
+```bash
+tokenless install --extension-id <chrome-extension-id>
+tokenless doctor --extension-id <chrome-extension-id>
+```
+
+Run a task from a local agent or terminal:
+
+```bash
+tokenless run \
+  --provider chatgpt \
+  --project-root /path/to/project \
+  --prompt-file /tmp/request.md \
+  --context-file /tmp/shareable-context.md \
+  --extension-id <chrome-extension-id>
+```
+
+What the user sees:
+
+1. A Tokenless task page opens in the browser.
+2. The extension opens or reuses the selected provider tab.
+3. The prompt is inserted into the visible composer and submitted.
+4. Tokenless waits for the visible response text.
+5. The answer is returned to the local agent.
+
+## What It Includes
+
+- `tokenless`: the CLI users install and agents call.
+- `Tokenless Browser Session Bridge`: the browser extension that works with visible provider tabs.
+- `tokenless-relay`: an optional HTTP relay for web or hosted integrations that need a stable Tokenless entrypoint.
+- `tokenless-client`: optional helper code for web apps talking to the relay.
+
+## Publishing
+
+Publish now:
+
+- `tokenless`
+
+Do not publish yet:
+
+- `tokenless-relay`
+- `tokenless-client`
+- `tokenless-browser-session-bridge`
+
+The extension is distributed through Chrome Web Store, an unpacked build, or a zip package. Users install it in the browser, not through npm.
+
+## Safety Boundary
+
+Tokenless does not bypass login, CAPTCHA, provider permissions, rate limits, or user-visible confirmations. It does not read provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider backend APIs. If a blocker appears in the visible browser session, Tokenless reports it instead of trying to bypass it.
+
+## Development
+
+```bash
 npm run build
 npm test
 npm run test:e2e
 ```
 
-Load `packages/browser-session-bridge/dist/extension` as an unpacked extension in Chrome, Edge, or Arc for local extension testing.
-
-Install local native messaging support after the extension id is known:
+The live ChatGPT test is opt-in because it requires a real logged-in browser profile:
 
 ```bash
-scale install --extension-id <chrome-extension-id> --json
-scale doctor --extension-id <chrome-extension-id> --json
-scale run \
-  --provider chatgpt \
-  --project-root /path/to/project \
-  --prompt-file /tmp/request.md \
-  --context-file /tmp/shareable-context.md \
-  --extension-id <chrome-extension-id> \
-  --json
+TOKENLESS_LIVE_CHATGPT=1 npm run test:e2e:live-chatgpt
 ```
-
-## Safety Boundary
-
-Tokenless does not bypass login, CAPTCHA, provider permissions, rate limits, or user-visible confirmations. The browser extension can fill, click, and read approved provider pages only after the browser grants the required host permission.

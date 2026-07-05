@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+test('workspace package names are unscoped and match product roles', () => {
+  const packages = Object.fromEntries(
+    ['cli', 'client', 'extension', 'relay'].map((folder) => {
+      const pkg = readJson(`packages/${folder}/package.json`)
+      return [folder, pkg]
+    })
+  )
+
+  assert.equal(packages.cli.name, 'tokenless')
+  assert.equal(packages.client.name, 'tokenless-client')
+  assert.equal(packages.extension.name, 'tokenless-browser-session-bridge')
+  assert.equal(packages.relay.name, 'tokenless-relay')
+  assert.equal(packages.client.private, true)
+  assert.equal(packages.extension.private, true)
+  assert.equal(packages.relay.private, true)
+
+  for (const pkg of Object.values(packages)) {
+    assert.ok(!pkg.name.startsWith('@tokenless/'), `${pkg.name} must not use the unavailable npm scope`)
+  }
+})
+
+test('public bins expose current product names only', () => {
+  const cli = readJson('packages/cli/package.json')
+  const relay = readJson('packages/relay/package.json')
+
+  assert.deepEqual(cli.bin, { tokenless: 'src/tokenless.mjs' })
+  assert.deepEqual(relay.bin, { 'tokenless-relay': 'src/server.mjs' })
+  assertNoLegacyNames(JSON.stringify({ cli, relay }))
+})
+
+test('README explains user pain, browser install path, and publish strategy', () => {
+  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
+
+  assert.match(readme, /AI coding agents often need a second model/)
+  assert.match(readme, /npm install -g tokenless/)
+  assert.match(readme, /packages\/extension\/dist\/extension/)
+  assert.match(readme, /The extension is distributed through Chrome Web Store/)
+  assert.match(readme, /Do not publish yet:\n\n- `tokenless-relay`\n- `tokenless-client`\n- `tokenless-browser-session-bridge`/)
+  assertNoLegacyNames(readme)
+})
+
+test('published CLI package includes user-facing README and only the tokenless bin', () => {
+  const output = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+    cwd: path.join(root, 'packages/cli'),
+    encoding: 'utf8',
+  })
+  const [pack] = JSON.parse(output)
+  const paths = pack.files.map((file) => file.path).sort()
+
+  assert.ok(paths.includes('README.md'))
+  assert.ok(paths.includes('package.json'))
+  assert.ok(paths.includes('src/tokenless.mjs'))
+  assert.deepEqual(readJson('packages/cli/package.json').bin, { tokenless: 'src/tokenless.mjs' })
+
+  const cliReadme = fs.readFileSync(path.join(root, 'packages/cli/README.md'), 'utf8')
+  assert.match(cliReadme, /npm install -g tokenless/)
+  assert.match(cliReadme, /visible ChatGPT, Gemini, or Claude tab/)
+  assertNoLegacyNames(cliReadme)
+})
+
+function readJson(relativePath) {
+  return JSON.parse(fs.readFileSync(path.join(root, relativePath), 'utf8'))
+}
+
+function assertNoLegacyNames(text) {
+  assert.doesNotMatch(text, /@tokenless\//)
+  assert.doesNotMatch(text, /runner-server/)
+  assert.doesNotMatch(text, /local-scale/)
+  assert.doesNotMatch(text, /\bscale (install|run|doctor)\b/)
+  assert.doesNotMatch(text, /tokenless-scale/)
+  assert.doesNotMatch(text, /tokenless-runner-server/)
+}

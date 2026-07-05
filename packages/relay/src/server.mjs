@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 import http from 'node:http'
-import { createRunnerResult, validateRun } from './index.js'
+import { createRelayResult, validateRelayRun } from './index.js'
 
-const port = Number(process.env.TOKENLESS_RUNNER_PORT ?? 8787)
+const port = Number(process.env.TOKENLESS_RELAY_PORT ?? 8787)
 
 const server = http.createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && request.url === '/health') {
-      return sendJson(response, 200, { ok: true, service: 'tokenless-runner-server' })
+      return sendJson(response, 200, { ok: true, service: 'tokenless-relay' })
     }
 
     if (request.method === 'GET' && request.url === '/v1/capabilities') {
       return sendJson(response, 200, {
         ok: true,
-        protocol: 'tokenless.runner.v1',
-        transports: ['server-runner', 'browser-extension-relay', 'local-scale'],
+        protocol: 'tokenless.relay.v1',
+        transports: ['tokenless-relay', 'browser-extension', 'tokenless-cli'],
         providers: ['chatgpt', 'gemini', 'claude'],
         actions: ['capabilities', 'open', 'submit', 'read', 'submit_and_read'],
       })
@@ -22,16 +22,16 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'POST' && request.url === '/v1/runs') {
       const body = await readJson(request)
-      const validation = validateRun(body)
+      const validation = validateRelayRun(body)
       if (!validation.ok) {
-        return sendJson(response, 400, createRunnerResult(body, { ok: false, error: validation.error }))
+        return sendJson(response, 400, createRelayResult(body, { ok: false, error: validation.error }))
       }
-      return sendJson(response, 202, createRunnerResult(validation.run, {
+      return sendJson(response, 202, createRelayResult(validation.run, {
         ok: true,
         result: {
           status: 'accepted',
-          runner: 'server',
-          note: 'Browser execution requires an installed Tokenless extension or a local-scale relay.',
+          relay: 'server',
+          note: 'Browser execution requires an installed Tokenless extension or a Tokenless CLI relay.',
         },
       }))
     }
@@ -40,13 +40,13 @@ const server = http.createServer(async (request, response) => {
   } catch (error) {
     return sendJson(response, 500, {
       ok: false,
-      error: { code: 'runner_server_error', message: error.message || 'Runner server failed.' },
+      error: { code: 'relay_server_error', message: error.message || 'Tokenless Relay failed.' },
     })
   }
 })
 
 server.listen(port, '127.0.0.1', () => {
-  console.log(`tokenless-runner-server listening on http://127.0.0.1:${port}`)
+  console.log(`tokenless-relay listening on http://127.0.0.1:${port}`)
 })
 
 function readJson(request) {

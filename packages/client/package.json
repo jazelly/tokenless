@@ -1,7 +1,8 @@
 {
-  "name": "@tokenless/client",
+  "name": "tokenless-client",
   "version": "0.1.0",
-  "description": "Webapp client helpers for Tokenless runner and extension integrations.",
+  "description": "Webapp client helpers for Tokenless Relay and extension integrations.",
+  "private": true,
   "type": "module",
   "license": "UNLICENSED",
   "exports": {

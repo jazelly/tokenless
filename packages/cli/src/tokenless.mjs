@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import {
-  buildLocalScalePrompt,
+  buildTokenlessPrompt,
   buildTaskUrl,
   createLocalJob,
   installNativeHost,
@@ -31,8 +31,8 @@ try {
   const payload = {
     ok: false,
     error: {
-      code: error.code || 'scale_error',
-      message: error.message || 'Tokenless scale failed.',
+      code: error.code || 'tokenless_cli_error',
+      message: error.message || 'Tokenless CLI failed.',
       retryable: Boolean(error.retryable),
     },
   }
@@ -57,7 +57,7 @@ async function runCommand(args) {
     readDelayMs: args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs),
     readTimeoutMs: args.readTimeoutMs === undefined ? 120000 : Number(args.readTimeoutMs),
     metadata: {
-      source: 'scale',
+      source: 'tokenless-cli',
       browser: args.browser,
       profile: args.profile,
     },
@@ -101,7 +101,7 @@ async function installCommand(args) {
     extensionInstalled: Boolean(args.extensionId || process.env.TOKENLESS_EXTENSION_ID),
     nextStep: result.manifests.length === 0
       ? 'Install the extension, then rerun with --extension-id <id>.'
-      : 'Open the extension task page through scale run.',
+      : 'Open the extension task page through tokenless run.',
   }, args)
 }
 
@@ -133,12 +133,12 @@ async function promptFromArgs(args) {
     ? await fs.readFile(args.promptFile, 'utf8')
     : args.prompt
   if (!userPrompt) {
-    throw usageError('missing_prompt', 'Usage: scale run --prompt-file <path> or --prompt <text>.')
+    throw usageError('missing_prompt', 'Usage: tokenless run --prompt-file <path> or --prompt <text>.')
   }
   const turnContext = args.contextFile || args.turnContextFile
     ? await fs.readFile(args.contextFile || args.turnContextFile, 'utf8')
     : args.context
-  return buildLocalScalePrompt({
+  return buildTokenlessPrompt({
     userPrompt,
     projectRoot: args.projectRoot,
     files: args.files,
@@ -251,9 +251,9 @@ function printPayload(payload, args) {
 function usage() {
   console.error([
     'Usage:',
-    '  scale run --provider chatgpt --project-root <path> --prompt-file <file> --context-file <file> --json',
-    '  scale install --extension-id <chrome-extension-id> --json',
-    '  scale doctor --json',
+    '  tokenless run --provider chatgpt --project-root <path> --prompt-file <file> --context-file <file> --json',
+    '  tokenless install --extension-id <chrome-extension-id> --json',
+    '  tokenless doctor --json',
   ].join('\n'))
 }
 

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const LOCAL_JOB_PROTOCOL_VERSION = 'tokenless.local-job.v1'
-export const NATIVE_HOST_NAME = 'dev.tokenless.scale'
+export const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 
 export const JOB_STATES = Object.freeze({
   QUEUED: 'queued',
@@ -87,7 +87,7 @@ export async function createLocalJob({
     metadata: metadata ?? {},
   }
   await writeJsonAtomic(jobPath(homeDir, jobId, 'request'), request, 0o600)
-  await writeJobState({ homeDir, jobId, nonce, status: JOB_STATES.QUEUED, actor: 'scale' })
+  await writeJobState({ homeDir, jobId, nonce, status: JOB_STATES.QUEUED, actor: 'tokenless-cli' })
   return request
 }
 
@@ -181,7 +181,7 @@ export async function waitLocalJobResult({
     }
     await delay(pollMs)
   }
-  await writeJobState({ homeDir, jobId, nonce, status: JOB_STATES.TIMED_OUT, actor: 'scale' })
+  await writeJobState({ homeDir, jobId, nonce, status: JOB_STATES.TIMED_OUT, actor: 'tokenless-cli' })
   throw accessError('job_timeout', 'Timed out waiting for local Tokenless job result.')
 }
 
@@ -209,7 +209,7 @@ export async function installNativeHost({
   if (extensionId) {
     const manifest = {
       name: NATIVE_HOST_NAME,
-      description: 'Tokenless local scale native messaging host',
+      description: 'Tokenless native messaging host',
       path: executable,
       type: 'stdio',
       allowed_origins: [`chrome-extension://${extensionId}/`],

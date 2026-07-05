@@ -1,4 +1,4 @@
-const NATIVE_HOST_NAME = 'dev.tokenless.scale'
+const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 const statusNode = document.querySelector('#status')
 
 main().catch(async (error) => {

@@ -1,7 +1,8 @@
 {
-  "name": "@tokenless/browser-session-bridge",
+  "name": "tokenless-browser-session-bridge",
   "version": "0.1.0",
   "description": "Visible browser-session bridge extension and protocol for user-authorized web AI sessions.",
+  "private": true,
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
@@ -20,9 +21,6 @@
     "build": "node src/build-extension.mjs",
     "lint": "node --check src/index.js && node --check src/protocol.js && node --check src/providers.js && node --check src/web-client.js && node --check src/build-extension.mjs && node --check extension/background/service-worker.js && node --check extension/content/provider-content.js && node --check extension/shared/bridge-protocol.js && node --check extension/shared/provider-config.js && node --check extension/sidepanel/index.js && node --check extension/task/task.js",
     "pack:extension": "node src/build-extension.mjs --zip"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "engines": {
     "node": ">=22"

@@ -1,14 +1,15 @@
 {
-  "name": "@tokenless/runner-server",
+  "name": "tokenless-relay",
   "version": "0.1.0",
-  "description": "HTTP runner shell for Tokenless webapp integrations.",
+  "description": "Tokenless Relay HTTP entrypoint for web and hosted integrations.",
+  "private": true,
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
     ".": "./src/index.js"
   },
   "bin": {
-    "tokenless-runner-server": "./src/server.mjs"
+    "tokenless-relay": "src/server.mjs"
   },
   "scripts": {
     "build": "node --check src/index.js && node --check src/server.mjs",

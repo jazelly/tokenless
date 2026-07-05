@@ -19,7 +19,7 @@ verifyManifest(manifest)
 
 const files = await listFiles(distExtensionRoot)
 const manifestRecord = {
-  package: '@tokenless/browser-session-bridge',
+  package: 'tokenless-browser-session-bridge',
   builtAt: new Date().toISOString(),
   manifestVersion: manifest.manifest_version,
   version: manifest.version,

@@ -1,4 +1,4 @@
-export function createRunnerClient({ baseUrl, fetchImpl = globalThis.fetch } = {}) {
+export function createRelayClient({ baseUrl, fetchImpl = globalThis.fetch } = {}) {
   if (typeof baseUrl !== 'string' || baseUrl.trim() === '') {
     throw new TypeError('baseUrl must be a nonempty string.')
   }

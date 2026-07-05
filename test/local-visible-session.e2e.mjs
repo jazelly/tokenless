@@ -6,10 +6,10 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionPath = path.join(root, 'packages/browser-session-bridge/extension')
+const extensionPath = path.join(root, 'packages/extension/extension')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-e2e', 'runs')
 
-test('local scale job completes through extension task page and ChatGPT DOM selectors', {
+test('Tokenless CLI job completes through extension task page and ChatGPT DOM selectors', {
   skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run browser E2E' : false,
   timeout: 120000,
 }, async () => {
@@ -20,7 +20,7 @@ test('local scale job completes through extension task page and ChatGPT DOM sele
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     waitLocalJobResult,
-  } = await import('../packages/local-scale/src/index.js')
+  } = await import('../packages/cli/src/index.js')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-e2e-'))
   const artifactDir = await createArtifactDir()

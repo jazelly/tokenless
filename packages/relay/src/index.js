@@ -1,9 +1,9 @@
-export const RUNNER_PROTOCOL_VERSION = 'tokenless.runner.v1'
+export const RELAY_PROTOCOL_VERSION = 'tokenless.relay.v1'
 
-export function createRun(input = {}) {
+export function createRelayRun(input = {}) {
   const requestId = input.requestId ?? randomId()
   return {
-    protocol: RUNNER_PROTOCOL_VERSION,
+    protocol: RELAY_PROTOCOL_VERSION,
     requestId,
     provider: input.provider ?? 'chatgpt',
     action: input.action ?? 'submit_and_read',
@@ -14,12 +14,12 @@ export function createRun(input = {}) {
   }
 }
 
-export function validateRun(payload) {
+export function validateRelayRun(payload) {
   if (!payload || typeof payload !== 'object') {
-    return invalid('invalid_run', 'Run must be an object.')
+    return invalid('invalid_run', 'Relay run must be an object.')
   }
-  if (payload.protocol !== RUNNER_PROTOCOL_VERSION) {
-    return invalid('unsupported_protocol', 'Runner protocol version is not supported.')
+  if (payload.protocol !== RELAY_PROTOCOL_VERSION) {
+    return invalid('unsupported_protocol', 'Relay protocol version is not supported.')
   }
   if (typeof payload.requestId !== 'string' || payload.requestId.trim() === '') {
     return invalid('invalid_request_id', 'Run requestId must be a nonempty string.')
@@ -36,9 +36,9 @@ export function validateRun(payload) {
   return { ok: true, run: { ...payload } }
 }
 
-export function createRunnerResult(run, result) {
+export function createRelayResult(run, result) {
   return {
-    protocol: RUNNER_PROTOCOL_VERSION,
+    protocol: RELAY_PROTOCOL_VERSION,
     requestId: run?.requestId ?? null,
     ok: Boolean(result?.ok),
     provider: run?.provider ?? null,
@@ -54,8 +54,8 @@ function invalid(code, message) {
 
 function normalizeError(error) {
   return {
-    code: typeof error?.code === 'string' ? error.code : 'runner_error',
-    message: typeof error?.message === 'string' ? error.message : 'Runner failed.',
+    code: typeof error?.code === 'string' ? error.code : 'relay_error',
+    message: typeof error?.message === 'string' ? error.message : 'Relay failed.',
     retryable: Boolean(error?.retryable),
   }
 }
