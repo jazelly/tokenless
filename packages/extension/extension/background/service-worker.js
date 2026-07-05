@@ -65,7 +65,10 @@ async function handleRuntimeMessage(message) {
       const submit = await sendToProviderTab(tab.id, { type: 'tokenless.bridge.submit', request })
       const readDelayMs = Math.min(Number(request.readDelayMs ?? 2500), 30000)
       await delay(readDelayMs)
-      const read = await sendToProviderTab(tab.id, { type: 'tokenless.bridge.read', request })
+      const read = await sendToProviderTab(tab.id, {
+        type: 'tokenless.bridge.read',
+        request: { ...request, answerBaseline: submit?.answerBaseline },
+      })
       return createBridgeResponse(request, { ok: true, result: { submit, read } })
     }
 

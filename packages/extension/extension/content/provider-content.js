@@ -26,6 +26,14 @@ const PROVIDERS = [
       'article[data-testid*="conversation-turn"]',
       'main article',
     ],
+    busySelectors: [
+      'button[data-testid="stop-button"]',
+      'button[aria-label*="Stop" i]',
+    ],
+    busyTextLabels: [
+      'stop answering',
+      'stop generating',
+    ],
     blockerSelectors: [
       'iframe[src*="captcha"]',
       '[aria-label*="captcha" i]',
@@ -84,6 +92,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true
 })
 
+const submissionBaselines = new Map()
+
 async function handleMessage(message) {
   const provider = getProviderForUrl(location.href)
   if (!provider) {
@@ -129,11 +139,14 @@ async function submitPrompt(provider, request) {
     return selectorDrift('submit')
   }
 
+  const answerBaseline = answerSnapshot(provider)
+  submissionBaselines.set(requestKey(request), answerBaseline)
   submitButton.click()
   return {
     status: 'submitted',
     provider: provider.id,
     visible: true,
+    answerBaseline,
   }
 }
 
@@ -145,7 +158,8 @@ async function readLatestAnswer(provider, request = {}) {
   }
 
   const timeoutMs = Math.min(Number(request.readTimeoutMs ?? 60000), 300000)
-  const text = await waitForStableAnswer(provider, timeoutMs)
+  const baseline = request.answerBaseline ?? submissionBaselines.get(requestKey(request))
+  const text = await waitForStableAnswer(provider, timeoutMs, baseline)
   if (!text) {
     return {
       status: 'blocked',
@@ -161,6 +175,10 @@ async function readLatestAnswer(provider, request = {}) {
     text,
     chars: text.length,
   }
+}
+
+function requestKey(request = {}) {
+  return request.requestId || request.jobId || '__latest__'
 }
 
 function detectBlocker(provider) {
@@ -302,30 +320,85 @@ async function waitForActionableSubmit(provider, request = {}) {
   return findFirst(provider.submitSelectors)
 }
 
-async function waitForStableAnswer(provider, timeoutMs) {
+async function waitForStableAnswer(provider, timeoutMs, baseline) {
   const deadline = Date.now() + timeoutMs
   let lastText = ''
   let stableSince = 0
   while (Date.now() < deadline) {
-    const text = latestAnswerText(provider)
+    const text = latestAnswerText(provider, baseline)
+    const busy = isProviderBusy(provider)
     if (text && text === lastText) {
       if (stableSince === 0) stableSince = Date.now()
-      if (Date.now() - stableSince >= 600) return text
+      if (!busy && Date.now() - stableSince >= 600) return text
     } else {
       lastText = text
       stableSince = text ? Date.now() : 0
     }
     await delay(150)
   }
-  return latestAnswerText(provider)
+  return latestAnswerText(provider, baseline)
 }
 
-function latestAnswerText(provider) {
-  const answers = provider.answerSelectors.flatMap((selector) => [...document.querySelectorAll(selector)])
-  return answers
-    .map((node) => normalizeText(node.innerText || node.textContent || ''))
-    .filter((text) => text.length > 0)
-    .at(-1) ?? ''
+function isProviderBusy(provider) {
+  const selectorMatch = Boolean(provider.busySelectors?.some((selector) => {
+    try {
+      return [...document.querySelectorAll(selector)].some((node) => isVisible(node))
+    } catch {
+      return false
+    }
+  }))
+  if (selectorMatch) {
+    return true
+  }
+  const labels = provider.busyTextLabels ?? []
+  if (labels.length === 0) {
+    return false
+  }
+  return [...document.querySelectorAll('button,[role="button"]')].some((node) => {
+    if (!isVisible(node)) return false
+    const label = normalizeText([
+      node.getAttribute('aria-label'),
+      node.textContent,
+      node.innerText,
+    ].filter(Boolean).join(' ')).toLowerCase()
+    return labels.some((busyLabel) => label.includes(busyLabel))
+  })
+}
+
+function latestAnswerText(provider, baseline) {
+  const answers = answerTexts(provider)
+  if (baseline?.count !== undefined) {
+    if (answers.length < baseline.count) {
+      return ''
+    }
+    if (answers.length === baseline.count) {
+      const lastText = answers.at(-1) ?? ''
+      return lastText && lastText !== baseline.lastText ? lastText : ''
+    }
+    return answers.at(-1) ?? ''
+  }
+  return answers.at(-1) ?? ''
+}
+
+function answerSnapshot(provider) {
+  const texts = answerTexts(provider)
+  return {
+    count: texts.length,
+    lastText: texts.at(-1) ?? '',
+  }
+}
+
+function answerTexts(provider) {
+  for (const selector of provider.answerSelectors) {
+    const texts = [...document.querySelectorAll(selector)]
+      .filter((node) => isVisible(node))
+      .map((node) => normalizeText(node.innerText || node.textContent || ''))
+      .filter((text) => text.length > 0)
+    if (texts.length > 0) {
+      return texts
+    }
+  }
+  return []
 }
 
 function selectorDrift(target) {

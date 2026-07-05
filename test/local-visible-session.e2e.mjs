@@ -97,11 +97,13 @@ test('Tokenless CLI job completes through extension task page and ChatGPT DOM se
     assert.equal(result.ok, true)
     assert.match(result.compactOutput, /visible ChatGPT DOM answer/)
     assert.match(result.compactOutput, /Tokenless E2E DOM prompt 48291/)
+    assert.doesNotMatch(result.compactOutput, /stale ChatGPT DOM answer/)
+    assert.doesNotMatch(result.compactOutput, /_streaming/)
 
     const providerPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/')) ?? providerFixturePage
     assert.ok(providerPage, 'provider tab should be opened')
     assert.equal(await providerPage.locator('#prompt-textarea').innerText(), prompt)
-    assert.match(await providerPage.locator('[data-message-author-role="assistant"]').innerText(), /visible ChatGPT DOM answer/)
+    assert.match(await providerPage.locator('[data-message-author-role="assistant"]').last().innerText(), /visible ChatGPT DOM answer/)
     await task.screenshot({ path: path.join(artifactDir, '03-extension-task-completed.png'), fullPage: true })
     await providerPage.screenshot({ path: path.join(artifactDir, '04-chatgpt-after-prompt-and-response.png'), fullPage: true })
     await fs.writeFile(path.join(artifactDir, 'provider-text.txt'), await providerPage.locator('body').innerText(), 'utf8')
@@ -380,7 +382,20 @@ function chatGptFixtureHtml() {
       <main>
         <header>ChatGPT visible-session fixture</header>
         <section id="conversation">
-          <div class="empty" id="empty-state">No messages yet. Tokenless will submit through the visible composer.</div>
+          <article data-message-author-role="user">
+            <div class="avatar">U</div>
+            <div>
+              <div class="message-label">You</div>
+              <div class="message-text">Earlier fixture prompt</div>
+            </div>
+          </article>
+          <article data-message-author-role="assistant">
+            <div class="avatar">AI</div>
+            <div>
+              <div class="message-label">ChatGPT</div>
+              <div class="message-text">stale ChatGPT DOM answer that must not be read</div>
+            </div>
+          </article>
         </section>
         <div class="composer-wrap">
           <div class="composer">
@@ -401,7 +416,16 @@ function chatGptFixtureHtml() {
         empty?.remove()
         conversation.append(message('user', 'You', 'U', prompt))
         setTimeout(() => {
-          conversation.append(message('assistant', 'ChatGPT', 'AI', 'visible ChatGPT DOM answer for: ' + prompt))
+          const assistant = message('assistant', 'ChatGPT', 'AI', 'visible ChatGPT DOM answer_streaming for: ' + prompt)
+          const stop = document.createElement('button')
+          stop.dataset.testid = 'stop-button'
+          stop.textContent = 'Stop answering'
+          document.body.append(stop)
+          conversation.append(assistant)
+          setTimeout(() => {
+            assistant.querySelector('.message-text').textContent = 'visible ChatGPT DOM answer for: ' + prompt
+            stop.remove()
+          }, 900)
         }, 150)
       })
       function message(role, label, avatarText, text) {

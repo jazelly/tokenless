@@ -2,6 +2,8 @@
 
 Tokenless lets a local agent use the AI subscriptions already open in your browser. It sends a task to a visible ChatGPT, Gemini, or Claude tab, waits for the answer, and returns the visible response to the agent without exporting cookies, browser storage, or hidden provider API tokens.
 
+Chinese version: [README.zh-CN.md](README.zh-CN.md)
+
 ## Why It Exists
 
 AI coding agents often need a second model or a user-owned subscription, but the normal options are awkward:
@@ -91,3 +93,60 @@ The live ChatGPT test is opt-in because it requires a real logged-in browser pro
 ```bash
 TOKENLESS_LIVE_CHATGPT=1 npm run test:e2e:live-chatgpt
 ```
+
+## Local Dev Test
+
+Run these commands from the repo root:
+
+```bash
+REPO_ROOT="$(pwd)"
+
+npm install
+npm run build
+npm test
+npm run test:e2e
+
+npm install -g ./packages/cli
+```
+
+Load the unpacked extension from `packages/extension/dist/extension`:
+
+```bash
+open "chrome://extensions"
+```
+
+Copy the real 32-character extension id, then run:
+
+```bash
+export TOKENLESS_EXTENSION_ID="<chrome-extension-id>"
+
+tokenless install --extension-id "$TOKENLESS_EXTENSION_ID" --json
+tokenless doctor --extension-id "$TOKENLESS_EXTENSION_ID" --json
+```
+
+Open ChatGPT in the same browser profile, then run the smoke test:
+
+```bash
+open "https://chatgpt.com"
+
+cat > /tmp/tokenless-request.md <<'EOF'
+Reply with exactly this text and nothing else:
+
+TOKENLESS_LOCAL_OK_48291
+EOF
+
+cat > /tmp/tokenless-context.md <<'EOF'
+This is a local Tokenless smoke test. No private secrets are included.
+EOF
+
+tokenless run \
+  --provider chatgpt \
+  --project-root "$REPO_ROOT" \
+  --prompt-file /tmp/tokenless-request.md \
+  --context-file /tmp/tokenless-context.md \
+  --extension-id "$TOKENLESS_EXTENSION_ID" \
+  --read-timeout-ms 180000 \
+  --json
+```
+
+Success is `ok: true` with `compactOutput` containing `TOKENLESS_LOCAL_OK_48291`.

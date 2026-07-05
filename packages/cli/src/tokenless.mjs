@@ -46,6 +46,20 @@ try {
 
 async function runCommand(args) {
   const prompt = await promptFromArgs(args)
+  const rawExtensionId = args.extensionId || process.env.TOKENLESS_EXTENSION_ID
+  const extensionId = normalizeExtensionId(rawExtensionId)
+  if (!extensionId) {
+    if (rawExtensionId) {
+      throw usageError(
+        'invalid_extension_id',
+        'Extension id must be the real 32-character Chrome extension id from chrome://extensions.'
+      )
+    }
+    throw usageError(
+      'missing_extension_id',
+      'Usage: tokenless run requires --extension-id <id> or TOKENLESS_EXTENSION_ID.'
+    )
+  }
   const homeDir = tokenlessHome(args.home)
   const job = await createLocalJob({
     homeDir,
@@ -63,10 +77,9 @@ async function runCommand(args) {
     },
   })
 
-  const extensionId = args.extensionId || process.env.TOKENLESS_EXTENSION_ID
-  const taskUrl = extensionId ? buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce }) : null
+  const taskUrl = buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce })
   if (taskUrl && !args.noOpen) {
-    await openUrl(taskUrl)
+    await openUrl(taskUrl, { browser: args.browser })
   }
 
   const result = args.noWait
@@ -90,15 +103,22 @@ async function runCommand(args) {
 }
 
 async function installCommand(args) {
+  const extensionId = normalizeExtensionId(args.extensionId || process.env.TOKENLESS_EXTENSION_ID)
+  if ((args.extensionId || process.env.TOKENLESS_EXTENSION_ID) && !extensionId) {
+    throw usageError(
+      'invalid_extension_id',
+      'Extension id must be the real 32-character Chrome extension id from chrome://extensions.'
+    )
+  }
   const result = await installNativeHost({
     homeDir: tokenlessHome(args.home),
-    extensionId: args.extensionId || process.env.TOKENLESS_EXTENSION_ID,
+    extensionId,
     browsers: args.browser ? [args.browser] : undefined,
   })
   printPayload({
     ok: true,
     nativeHost: result,
-    extensionInstalled: Boolean(args.extensionId || process.env.TOKENLESS_EXTENSION_ID),
+    extensionInstalled: Boolean(extensionId),
     nextStep: result.manifests.length === 0
       ? 'Install the extension, then rerun with --extension-id <id>.'
       : 'Open the extension task page through tokenless run.',
@@ -108,13 +128,18 @@ async function installCommand(args) {
 async function doctorCommand(args) {
   const homeDir = tokenlessHome(args.home)
   const nodeOk = Number(process.versions.node.split('.')[0]) >= 22
-  const extensionId = args.extensionId || process.env.TOKENLESS_EXTENSION_ID || null
+  const rawExtensionId = args.extensionId || process.env.TOKENLESS_EXTENSION_ID || null
+  const extensionId = normalizeExtensionId(rawExtensionId)
   printPayload({
-    ok: nodeOk,
+    ok: nodeOk && (!rawExtensionId || Boolean(extensionId)),
     checks: {
       node: { ok: nodeOk, version: process.version, required: '>=22' },
       tokenlessHome: { ok: true, path: homeDir },
-      extensionId: { ok: Boolean(extensionId), extensionId },
+      extensionId: {
+        ok: Boolean(extensionId),
+        extensionId,
+        error: rawExtensionId && !extensionId ? 'invalid_extension_id' : undefined,
+      },
     },
   }, args)
 }
@@ -219,13 +244,8 @@ function parseArgs(argv) {
   return parsed
 }
 
-async function openUrl(url) {
-  const command = process.platform === 'darwin'
-    ? 'open'
-    : process.platform === 'win32'
-      ? 'cmd'
-      : 'xdg-open'
-  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url]
+async function openUrl(url, { browser } = {}) {
+  const { command, args } = openCommand(url, { browser })
   await new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: 'ignore', detached: true })
     child.on('error', reject)
@@ -234,6 +254,28 @@ async function openUrl(url) {
       resolve()
     })
   })
+}
+
+function openCommand(url, { browser } = {}) {
+  if (process.platform === 'darwin') {
+    const app = macBrowserApp(browser, url)
+    return app
+      ? { command: 'open', args: ['-a', app, url] }
+      : { command: 'open', args: [url] }
+  }
+  if (process.platform === 'win32') {
+    return { command: 'cmd', args: ['/c', 'start', '', url] }
+  }
+  return { command: 'xdg-open', args: [url] }
+}
+
+function macBrowserApp(browser, url) {
+  const normalized = typeof browser === 'string' ? browser.toLowerCase() : null
+  if (normalized === 'arc') return 'Arc'
+  if (normalized === 'edge') return 'Microsoft Edge'
+  if (normalized === 'chrome' || normalized === 'google-chrome') return 'Google Chrome'
+  if (url.startsWith('chrome-extension://')) return 'Google Chrome'
+  return null
 }
 
 function printPayload(payload, args) {
@@ -261,4 +303,10 @@ function usageError(code, message) {
   const error = new Error(message)
   error.code = code
   return error
+}
+
+function normalizeExtensionId(extensionId) {
+  if (typeof extensionId !== 'string') return null
+  const normalized = extensionId.trim().toLowerCase()
+  return /^[a-p]{32}$/.test(normalized) ? normalized : null
 }

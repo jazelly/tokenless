@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -40,12 +41,105 @@ test('public bins expose current product names only', () => {
 test('README explains user pain, browser install path, and publish strategy', () => {
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
 
+  assert.match(readme, /\[README\.zh-CN\.md\]\(README\.zh-CN\.md\)/)
   assert.match(readme, /AI coding agents often need a second model/)
   assert.match(readme, /npm install -g tokenless/)
   assert.match(readme, /packages\/extension\/dist\/extension/)
   assert.match(readme, /The extension is distributed through Chrome Web Store/)
   assert.match(readme, /Do not publish yet:\n\n- `tokenless-relay`\n- `tokenless-client`\n- `tokenless-browser-session-bridge`/)
+  assert.match(readme, /## Local Dev Test/)
+  assert.doesNotMatch(readme, /\/Users\/jazelly/)
+  assert.match(readme, /npm install -g \.\/packages\/cli/)
+  assert.match(readme, /REPO_ROOT="\$\(pwd\)"/)
+  assert.doesNotMatch(readme, /\/path\/to\/tokenless/)
+  assert.match(readme, /tokenless install --extension-id "\$TOKENLESS_EXTENSION_ID" --json/)
+  assert.match(readme, /--project-root "\$REPO_ROOT"/)
+  assert.match(readme, /TOKENLESS_LOCAL_OK_48291/)
+  assert.doesNotMatch(readme, /ls -lt ~\/\.tokenless\/jobs/)
+  assert.doesNotMatch(readme, /Common blockers/)
   assertNoLegacyNames(readme)
+})
+
+test('Chinese README mirrors the user-facing local test flow', () => {
+  const readme = fs.readFileSync(path.join(root, 'README.zh-CN.md'), 'utf8')
+
+  assert.match(readme, /## 它解决什么问题/)
+  assert.match(readme, /## 用户体验/)
+  assert.match(readme, /## 本地开发测试/)
+  assert.doesNotMatch(readme, /\/Users\/jazelly/)
+  assert.match(readme, /npm install -g tokenless/)
+  assert.match(readme, /packages\/extension\/dist\/extension/)
+  assert.match(readme, /npm install -g \.\/packages\/cli/)
+  assert.match(readme, /REPO_ROOT="\$\(pwd\)"/)
+  assert.doesNotMatch(readme, /\/path\/to\/tokenless/)
+  assert.match(readme, /tokenless install --extension-id "\$TOKENLESS_EXTENSION_ID" --json/)
+  assert.match(readme, /--project-root "\$REPO_ROOT"/)
+  assert.match(readme, /TOKENLESS_LOCAL_OK_48291/)
+  assert.doesNotMatch(readme, /ls -lt ~\/\.tokenless\/jobs/)
+  assert.doesNotMatch(readme, /常见阻塞/)
+  assert.match(readme, /浏览器扩展通过 Chrome 网上应用店、未打包目录或压缩包分发/)
+  assertNoLegacyNames(readme)
+})
+
+test('CLI run fails fast when extension id is missing', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-missing-extension-'))
+  const result = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'run',
+    '--prompt',
+    'hello',
+    '--home',
+    homeDir,
+    '--json',
+  ], {
+    cwd: root,
+    env: { ...process.env, TOKENLESS_EXTENSION_ID: '' },
+    encoding: 'utf8',
+  })
+
+  assert.equal(result.status, 1)
+  const payload = JSON.parse(result.stdout)
+  assert.equal(payload.ok, false)
+  assert.equal(payload.error.code, 'missing_extension_id')
+  assert.equal(fs.existsSync(path.join(homeDir, 'jobs')), false)
+})
+
+test('CLI rejects placeholder extension ids before writing local jobs or manifests', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-invalid-extension-'))
+  const run = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'run',
+    '--prompt',
+    'hello',
+    '--extension-id',
+    '<chrome-extension-id>',
+    '--home',
+    homeDir,
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+
+  assert.equal(run.status, 1)
+  assert.equal(JSON.parse(run.stdout).error.code, 'invalid_extension_id')
+  assert.equal(fs.existsSync(path.join(homeDir, 'jobs')), false)
+
+  const install = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'install',
+    '--extension-id',
+    '<chrome-extension-id>',
+    '--home',
+    homeDir,
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+
+  assert.equal(install.status, 1)
+  assert.equal(JSON.parse(install.stdout).error.code, 'invalid_extension_id')
 })
 
 test('published CLI package includes user-facing README and only the tokenless bin', () => {
