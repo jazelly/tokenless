@@ -6,8 +6,10 @@ import {
   buildTaskUrl,
   createLocalJob,
   installNativeHost,
+  readTokenlessConfig,
   tokenlessHome,
   waitLocalJobResult,
+  writeTokenlessConfig,
 } from './index.js'
 
 const argv = process.argv.slice(2)
@@ -21,6 +23,8 @@ try {
     await installCommand(args)
   } else if (command === 'doctor') {
     await doctorCommand(args)
+  } else if (command === 'config') {
+    await configCommand(args)
   } else if (command === 'prompt') {
     await promptCommand(args)
   } else {
@@ -61,13 +65,22 @@ async function runCommand(args) {
     )
   }
   const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
+  const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME
   const idempotencyKey = args.idempotencyKey || process.env.TOKENLESS_IDEMPOTENCY_KEY
+  const provider = args.provider ||
+    process.env.TOKENLESS_PROVIDER ||
+    config.preferredProviders[0] ||
+    'chatgpt'
   const job = await createLocalJob({
     homeDir,
-    provider: args.provider || 'chatgpt',
+    provider,
     action: args.action || 'submit_and_read',
     prompt,
     projectRoot: args.projectRoot,
+    projectName,
+    chatName,
     targetUrl: args.targetUrl,
     idempotencyKey,
     readDelayMs: args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs),
@@ -76,6 +89,8 @@ async function runCommand(args) {
       source: 'tokenless-cli',
       browser: args.browser,
       profile: args.profile,
+      projectName,
+      chatName,
       idempotencyKey,
     },
   })
@@ -97,8 +112,11 @@ async function runCommand(args) {
   const payload = {
     ok: true,
     jobId: job.jobId,
+    provider: job.provider,
     taskUrl,
     requestPath: `${job.jobId}.request.json`,
+    projectName: job.projectName,
+    chatName: job.chatName,
     idempotencyKey: job.idempotencyKey,
     conversation: job.conversation,
     result,
@@ -149,6 +167,28 @@ async function doctorCommand(args) {
   }, args)
 }
 
+async function configCommand(args) {
+  const homeDir = tokenlessHome(args.home)
+  if (args.preferredProviders) {
+    const config = await writeTokenlessConfig({
+      homeDir,
+      preferredProviders: parseProviderList(args.preferredProviders),
+    })
+    printPayload({
+      ok: true,
+      configPath: `${homeDir}/config.json`,
+      config,
+    }, args)
+    return
+  }
+  const config = await readTokenlessConfig(homeDir)
+  printPayload({
+    ok: true,
+    configPath: `${homeDir}/config.json`,
+    config,
+  }, args)
+}
+
 async function promptCommand(args) {
   const prompt = await promptFromArgs(args)
   if (args.output) {
@@ -190,6 +230,12 @@ function parseArgs(argv) {
     } else if (arg === '--project-root') {
       parsed.projectRoot = next
       index += 1
+    } else if (arg === '--project-name') {
+      parsed.projectName = next
+      index += 1
+    } else if (arg === '--chat-name') {
+      parsed.chatName = next
+      index += 1
     } else if (arg === '--file') {
       parsed.files.push(next)
       index += 1
@@ -210,6 +256,9 @@ function parseArgs(argv) {
       index += 1
     } else if (arg === '--provider') {
       parsed.provider = next
+      index += 1
+    } else if (arg === '--preferred-providers') {
+      parsed.preferredProviders = next
       index += 1
     } else if (arg === '--action') {
       parsed.action = next
@@ -301,7 +350,8 @@ function printPayload(payload, args) {
 function usage() {
   console.error([
     'Usage:',
-    '  tokenless run --provider chatgpt --idempotency-key <agent-chat-id> --project-root <path> --prompt-file <file> --context-file <file> --json',
+    '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --context-file <file> --json',
+    '  tokenless config --preferred-providers claude,chatgpt,gemini --json',
     '  tokenless install --extension-id <chrome-extension-id> --json',
     '  tokenless doctor --json',
   ].join('\n'))
@@ -317,4 +367,11 @@ function normalizeExtensionId(extensionId) {
   if (typeof extensionId !== 'string') return null
   const normalized = extensionId.trim().toLowerCase()
   return /^[a-p]{32}$/.test(normalized) ? normalized : null
+}
+
+function parseProviderList(value) {
+  return String(value)
+    .split(',')
+    .map((provider) => provider.trim())
+    .filter(Boolean)
 }

@@ -17,12 +17,21 @@ tokenless install --extension-id <chrome-extension-id>
 tokenless doctor --extension-id <chrome-extension-id>
 ```
 
+## Configure Provider Preference
+
+```bash
+tokenless config --preferred-providers claude,chatgpt,gemini
+```
+
+This writes `~/.tokenless/config.json`. When `tokenless run` has no explicit `--provider`, it uses the first configured provider before falling back to ChatGPT. The extension side panel displays this local configuration.
+
 ## Run A Task
 
 ```bash
 tokenless run \
   --provider chatgpt \
-  --idempotency-key agent-chat-123 \
+  --project-name "Website redesign" \
+  --chat-name "Navbar review" \
   --project-root /path/to/project \
   --prompt-file /tmp/request.md \
   --context-file /tmp/shareable-context.md \
@@ -33,7 +42,7 @@ Tokenless opens a browser task page, routes the request through the extension, s
 
 ## Conversation Mapping
 
-Use one stable `--idempotency-key` per agent chat thread. Tokenless stores the local provider-conversation mapping in `~/.tokenless/meta/conversations.json`. A new key opens the provider home URL, and once ChatGPT redirects to a conversation URL such as `https://chatgpt.com/c/...`, later runs with the same key return to that same conversation.
+Use stable `--project-name` and `--chat-name` values from the calling agent. Tokenless derives a conversation key from both names, or from either single name when only one is available, unless an explicit `--idempotency-key` is provided. If neither name nor explicit key is present, Tokenless starts from a new visible chat instead of reusing a mapped conversation. It stores the local provider-conversation mapping in `~/.tokenless/meta/conversations.json`. A new key opens the provider home URL, and once ChatGPT redirects to a conversation URL such as `https://chatgpt.com/c/...`, later runs with the same key return to that same conversation. The extension side panel shows local task history grouped by project and chat, including the mapped provider URL.
 
 ## Boundary
 

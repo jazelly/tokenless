@@ -2,8 +2,11 @@
 import {
   completeLocalJob,
   JOB_STATES,
+  readLocalHistory,
   readLocalJobRequest,
+  readTokenlessConfig,
   tokenlessHome,
+  writeTokenlessConfig,
   writeJobState,
 } from './job-store.js'
 
@@ -45,6 +48,24 @@ async function handleMessage(message) {
         actor: 'extension',
       })
       return { ok: true, result: { request } }
+    }
+    if (message?.type === 'tokenless.native.list_history') {
+      const history = await readLocalHistory({
+        homeDir,
+        limit: message.limit,
+      })
+      return { ok: true, result: history }
+    }
+    if (message?.type === 'tokenless.native.read_config') {
+      const config = await readTokenlessConfig(homeDir)
+      return { ok: true, result: config }
+    }
+    if (message?.type === 'tokenless.native.write_config') {
+      const config = await writeTokenlessConfig({
+        homeDir,
+        preferredProviders: message.preferredProviders,
+      })
+      return { ok: true, result: config }
     }
     if (message?.type === 'tokenless.native.write_state') {
       const state = await writeJobState({

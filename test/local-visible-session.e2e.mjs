@@ -9,8 +9,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const extensionPath = path.join(root, 'packages/extension/extension')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-e2e', 'runs')
 
-test('Tokenless CLI job completes through extension task page and ChatGPT DOM selectors', {
-  skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run browser E2E' : false,
+test('Tokenless CLI job completes through extension task page and ChatGPT fixture DOM', {
+  skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run fixture browser E2E' : false,
   timeout: 120000,
 }, async () => {
   const { chromium } = await import('playwright')
@@ -65,11 +65,18 @@ test('Tokenless CLI job completes through extension task page and ChatGPT DOM se
         body: chatGptFixtureHtml(),
       })
     })
+    events.push({
+      at: new Date().toISOString(),
+      event: 'provider_fixture_route_registered',
+      route: 'https://chatgpt.com/**',
+      fixture: true,
+      realProviderDom: false,
+    })
     const providerFixturePage = await context.newPage()
     await providerFixturePage.goto('https://chatgpt.com/')
     await providerFixturePage.locator('#prompt-textarea').waitFor({ timeout: 5000 })
-    await providerFixturePage.screenshot({ path: path.join(artifactDir, '01-chatgpt-before-empty-composer.png'), fullPage: true })
-    events.push({ at: new Date().toISOString(), event: 'provider_fixture_ready', url: providerFixturePage.url() })
+    await providerFixturePage.screenshot({ path: path.join(artifactDir, '01-chatgpt-fixture-before-empty-composer.png'), fullPage: true })
+    events.push({ at: new Date().toISOString(), event: 'provider_fixture_ready', url: providerFixturePage.url(), fixture: true, realProviderDom: false })
 
     const job = await createLocalJob({
       homeDir: tokenlessHome,
@@ -95,23 +102,27 @@ test('Tokenless CLI job completes through extension task page and ChatGPT DOM se
     events.push({ at: new Date().toISOString(), event: 'job_result_received', ok: result.ok })
 
     assert.equal(result.ok, true)
-    assert.match(result.compactOutput, /visible ChatGPT DOM answer/)
+    assert.match(result.compactOutput, /visible ChatGPT fixture DOM answer/)
     assert.match(result.compactOutput, /Tokenless E2E DOM prompt 48291/)
-    assert.doesNotMatch(result.compactOutput, /stale ChatGPT DOM answer/)
+    assert.doesNotMatch(result.compactOutput, /stale ChatGPT fixture DOM answer/)
     assert.doesNotMatch(result.compactOutput, /_streaming/)
 
     const providerPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/')) ?? providerFixturePage
     assert.ok(providerPage, 'provider tab should be opened')
     assert.equal(await providerPage.locator('#prompt-textarea').innerText(), prompt)
-    assert.match(await providerPage.locator('[data-message-author-role="assistant"]').last().innerText(), /visible ChatGPT DOM answer/)
+    assert.match(await providerPage.locator('[data-message-author-role="assistant"]').last().innerText(), /visible ChatGPT fixture DOM answer/)
     await task.screenshot({ path: path.join(artifactDir, '03-extension-task-completed.png'), fullPage: true })
-    await providerPage.screenshot({ path: path.join(artifactDir, '04-chatgpt-after-prompt-and-response.png'), fullPage: true })
-    await fs.writeFile(path.join(artifactDir, 'provider-text.txt'), await providerPage.locator('body').innerText(), 'utf8')
+    await providerPage.screenshot({ path: path.join(artifactDir, '04-chatgpt-fixture-after-prompt-and-response.png'), fullPage: true })
+    await fs.writeFile(path.join(artifactDir, 'provider-fixture-text.txt'), await providerPage.locator('body').innerText(), 'utf8')
     await fs.writeFile(path.join(artifactDir, 'task-text.txt'), await task.locator('body').innerText(), 'utf8')
     await copyJobFiles(tokenlessHome, job.jobId, artifactDir, 'after')
     await fs.writeFile(path.join(artifactDir, 'summary.json'), `${JSON.stringify({
       ok: true,
       artifactDir,
+      mode: 'fixture-chatgpt',
+      fixture: true,
+      fixtureRoute: 'https://chatgpt.com/**',
+      realProviderDom: false,
       extensionId,
       jobId: job.jobId,
       provider: 'chatgpt',
@@ -120,7 +131,7 @@ test('Tokenless CLI job completes through extension task page and ChatGPT DOM se
       compactOutput: result.compactOutput,
       events,
     }, null, 2)}\n`, 'utf8')
-    console.log(`Tokenless E2E artifacts: ${artifactDir}`)
+    console.log(`Tokenless fixture E2E artifacts: ${artifactDir}`)
   } finally {
     if (context) {
       await fs.writeFile(path.join(artifactDir, 'pages.json'), `${JSON.stringify(
@@ -380,7 +391,7 @@ function chatGptFixtureHtml() {
         <div class="new-chat">+ New chat</div>
       </aside>
       <main>
-        <header>ChatGPT visible-session fixture</header>
+        <header>ChatGPT fixture DOM, not real ChatGPT</header>
         <section id="conversation">
           <article data-message-author-role="user">
             <div class="avatar">U</div>
@@ -393,7 +404,7 @@ function chatGptFixtureHtml() {
             <div class="avatar">AI</div>
             <div>
               <div class="message-label">ChatGPT</div>
-              <div class="message-text">stale ChatGPT DOM answer that must not be read</div>
+              <div class="message-text">stale ChatGPT fixture DOM answer that must not be read</div>
             </div>
           </article>
         </section>
@@ -402,7 +413,7 @@ function chatGptFixtureHtml() {
             <div id="prompt-textarea" contenteditable="true" role="textbox" aria-label="Message ChatGPT"></div>
             <button data-testid="send-button" aria-label="Send prompt">↑</button>
           </div>
-          <div class="proof-strip">E2E proof: content script writes prompt here, clicks send, then reads assistant message from DOM.</div>
+          <div class="proof-strip">Fixture E2E proof only: content script writes prompt here, clicks send, then reads assistant message from this local DOM.</div>
         </div>
       </main>
     </div>
@@ -416,14 +427,14 @@ function chatGptFixtureHtml() {
         empty?.remove()
         conversation.append(message('user', 'You', 'U', prompt))
         setTimeout(() => {
-          const assistant = message('assistant', 'ChatGPT', 'AI', 'visible ChatGPT DOM answer_streaming for: ' + prompt)
+          const assistant = message('assistant', 'ChatGPT Fixture', 'AI', 'visible ChatGPT fixture DOM answer_streaming for: ' + prompt)
           const stop = document.createElement('button')
           stop.dataset.testid = 'stop-button'
           stop.textContent = 'Stop answering'
           document.body.append(stop)
           conversation.append(assistant)
           setTimeout(() => {
-            assistant.querySelector('.message-text').textContent = 'visible ChatGPT DOM answer for: ' + prompt
+            assistant.querySelector('.message-text').textContent = 'visible ChatGPT fixture DOM answer for: ' + prompt
             stop.remove()
           }, 900)
         }, 150)

@@ -34,12 +34,21 @@ tokenless install --extension-id <chrome-extension-id>
 tokenless doctor --extension-id <chrome-extension-id>
 ```
 
+配置智能体在没有显式指定 provider 时使用的 provider 优先级：
+
+```bash
+tokenless config --preferred-providers claude,chatgpt,gemini
+```
+
+这个命令会写入 `~/.tokenless/config.json`。CLI 把这个文件当作配置源；扩展侧边栏会显示这份配置，让浏览器界面和本地智能体保持一致。
+
 从本地智能体或终端运行任务：
 
 ```bash
 tokenless run \
   --provider chatgpt \
-  --idempotency-key agent-chat-123 \
+  --project-name "Website redesign" \
+  --chat-name "Navbar review" \
   --project-root /path/to/project \
   --prompt-file /tmp/request.md \
   --context-file /tmp/shareable-context.md \
@@ -56,12 +65,28 @@ tokenless run \
 
 ## 对话映射
 
-每个智能体聊天线程传入稳定的 `--idempotency-key`。Tokenless 会把本地映射保存到 `~/.tokenless/meta/conversations.json`。
+每个智能体聊天线程传入稳定的项目名和聊天名。Tokenless 会把本地映射保存到 `~/.tokenless/meta/conversations.json`。
+
+- `--project-name` 是调用方智能体里的项目名。
+- `--chat-name` 是调用方智能体里的聊天标题、线程标题或稳定聊天标签。
+- 如果没有显式传 `--idempotency-key`，Tokenless 会从 `--project-name` 和 `--chat-name` 派生稳定对话 key。
+- 如果只传了 `--project-name` 或只传了 `--chat-name`，Tokenless 也会基于这个单独名称派生稳定 key。
+- 如果两个名称都没有传，也没有显式 `--idempotency-key`，Tokenless 不复用已有映射，会从新的可见聊天开始。
+- 如果调用方智能体已经有稳定线程编号，也可以继续通过 `--idempotency-key` 显式传入。
 
 - 新 key 第一次运行时打开服务商主页，例如 `https://chatgpt.com/`，从新的可见聊天开始。
 - 当服务商把这次运行跳转到对话 URL，例如 `https://chatgpt.com/c/...`，Tokenless 会把这个 URL 保存到该 key。
 - 同一个 key 后续运行会回到同一个服务商对话。
-- 不同 key 不会意外复用已有 ChatGPT 对话。
+- 不同 key 不会意外复用已有服务商对话。
+- 扩展侧边栏会按项目和聊天显示本地任务历史，并展示映射到的服务商 URL。
+
+## Provider 选择
+
+Tokenless 支持可见的 ChatGPT、Claude 和 Gemini 页面。如果用户已经配置了 `~/.tokenless/config.json`，智能体应该优先把 `preferredProviders` 当作候选列表。如果没有用户偏好：
+
+- Claude 适合长文写作、谨慎批评、架构取舍和综合性 review。
+- ChatGPT 适合通用编码、调试、结构化转换、多模态或浏览器产品推理，以及快速交互迭代。
+- Gemini 适合大上下文阅读、研究式摘要、Google 生态上下文和大量文档对比。
 
 ## 包含哪些部分
 
@@ -96,7 +121,9 @@ npm test
 npm run test:e2e
 ```
 
-真实 ChatGPT 测试需要真实登录的浏览器资料，因此默认不运行：
+`npm run test:e2e` 会用 Playwright 在 `https://chatgpt.com/**` 下提供一个形似 ChatGPT 的本地 fixture DOM，验证本地 extension/native-host 链路。它不证明当前线上 ChatGPT DOM 仍然可用。
+
+真实 ChatGPT 测试会打开真正的 `https://chatgpt.com/` DOM，并且需要真实登录的浏览器资料，因此默认不运行：
 
 ```bash
 TOKENLESS_LIVE_CHATGPT=1 npm run test:e2e:live-chatgpt
@@ -112,7 +139,7 @@ REPO_ROOT="$(pwd)"
 npm install
 npm run build
 npm test
-npm run test:e2e
+npm run test:e2e # fixture DOM E2E，不是真实 ChatGPT
 
 npm install -g ./packages/cli
 ```
@@ -149,7 +176,8 @@ EOF
 
 tokenless run \
   --provider chatgpt \
-  --idempotency-key local-dev-chat \
+  --project-name "Tokenless local dev" \
+  --chat-name "Smoke test" \
   --project-root "$REPO_ROOT" \
   --prompt-file /tmp/tokenless-request.md \
   --context-file /tmp/tokenless-context.md \

@@ -24,7 +24,9 @@ header {
 
 h1,
 h2,
-p {
+p,
+select,
+button {
   margin: 0;
 }
 
@@ -66,6 +68,35 @@ h2 {
   gap: 8px;
 }
 
+.section-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+button {
+  background: Canvas;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 6px;
+  color: CanvasText;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+
+select {
+  background: Canvas;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 6px;
+  color: CanvasText;
+  font: inherit;
+  font-size: 12px;
+  min-width: 0;
+  padding: 5px 8px;
+}
+
 .provider {
   align-items: center;
   display: flex;
@@ -76,6 +107,114 @@ h2 {
 .provider span {
   color: color-mix(in srgb, CanvasText 60%, transparent);
   font-size: 12px;
+}
+
+.configuration,
+.history {
+  display: grid;
+  gap: 12px;
+}
+
+.provider-order {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.provider-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.provider-editor-row,
+.provider-editor-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.provider-editor-row {
+  justify-content: space-between;
+}
+
+.provider-editor-row strong {
+  font-size: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.provider-editor-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.provider-editor-add {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.project {
+  display: grid;
+  gap: 7px;
+}
+
+.project-title {
+  color: color-mix(in srgb, CanvasText 78%, transparent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.conversation {
+  border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+}
+
+.conversation-header {
+  align-items: start;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.conversation-title {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pill {
+  border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, CanvasText 66%, transparent);
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+
+.conversation-meta {
+  color: color-mix(in srgb, CanvasText 62%, transparent);
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.conversation-meta a {
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: color-mix(in srgb, CanvasText 58%, transparent);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 ul {

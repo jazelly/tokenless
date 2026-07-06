@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 export const LOCAL_JOB_PROTOCOL_VERSION = 'tokenless.local-job.v1'
 export const CONVERSATION_MAP_PROTOCOL_VERSION = 'tokenless.conversation-map.v1'
+export const TOKENLESS_CONFIG_PROTOCOL_VERSION = 'tokenless.config.v1'
 export const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 
 export const JOB_STATES = Object.freeze({
@@ -26,6 +27,7 @@ const FINAL_STATES = new Set([
 ])
 
 const conversationMapLocks = new Map()
+const SUPPORTED_PROVIDER_IDS = Object.freeze(['chatgpt', 'claude', 'gemini'])
 
 export function tokenlessHome(explicitHome = process.env.TOKENLESS_HOME) {
   return path.resolve(explicitHome || path.join(os.homedir(), '.tokenless'))
@@ -41,6 +43,10 @@ export function metaDir(homeDir = tokenlessHome()) {
 
 export function conversationMapPath(homeDir = tokenlessHome()) {
   return path.join(metaDir(homeDir), 'conversations.json')
+}
+
+export function configPath(homeDir = tokenlessHome()) {
+  return path.join(homeDir, 'config.json')
 }
 
 export function createJobId() {
@@ -70,6 +76,8 @@ export async function createLocalJob({
   action = 'submit_and_read',
   prompt,
   projectRoot,
+  projectName,
+  chatName,
   targetUrl,
   idempotencyKey,
   readDelayMs = 1000,
@@ -81,11 +89,17 @@ export async function createLocalJob({
     throw new TypeError('prompt must be a nonempty string.')
   }
   await ensureJobStore(homeDir)
+  const normalizedProjectName = normalizeDisplayName(projectName ?? metadata?.projectName)
+  const normalizedChatName = normalizeDisplayName(chatName ?? metadata?.chatName)
+  const conversationKey = idempotencyKey ??
+    metadata?.idempotencyKey ??
+    metadata?.conversationKey ??
+    derivedConversationKey({ projectName: normalizedProjectName, chatName: normalizedChatName })
   const conversation = await resolveConversationTarget({
     homeDir,
     provider,
     targetUrl,
-    idempotencyKey: idempotencyKey ?? metadata?.idempotencyKey ?? metadata?.conversationKey,
+    idempotencyKey: conversationKey,
   })
   const now = new Date()
   const jobId = createJobId()
@@ -101,6 +115,8 @@ export async function createLocalJob({
     action,
     prompt,
     projectRoot: projectRoot ? path.resolve(projectRoot) : undefined,
+    projectName: normalizedProjectName,
+    chatName: normalizedChatName,
     targetUrl: conversation.targetUrl,
     idempotencyKey: conversation.idempotencyKey,
     conversation,
@@ -108,6 +124,8 @@ export async function createLocalJob({
     readTimeoutMs,
     metadata: {
       ...(metadata ?? {}),
+      projectName: normalizedProjectName,
+      chatName: normalizedChatName,
       idempotencyKey: conversation.idempotencyKey,
       conversationRoute: conversation.route,
     },
@@ -216,12 +234,51 @@ export async function readConversationMap(homeDir = tokenlessHome()) {
   return payload
 }
 
+export async function readTokenlessConfig(homeDir = tokenlessHome()) {
+  const file = configPath(homeDir)
+  let payload
+  try {
+    payload = await readJson(file)
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return emptyTokenlessConfig()
+    }
+    throw localStateError(
+      'tokenless_config_unreadable',
+      `Cannot read Tokenless config at ${file}: ${error.message}`
+    )
+  }
+  validateTokenlessConfig(payload, file)
+  return {
+    ...payload,
+    preferredProviders: normalizeProviderList(payload.preferredProviders),
+  }
+}
+
+export async function writeTokenlessConfig({
+  homeDir = tokenlessHome(),
+  preferredProviders,
+} = {}) {
+  await ensureJobStore(homeDir)
+  const now = new Date().toISOString()
+  const config = {
+    protocol: TOKENLESS_CONFIG_PROTOCOL_VERSION,
+    updatedAt: now,
+    preferredProviders: normalizeProviderList(preferredProviders),
+  }
+  await writeJsonAtomic(configPath(homeDir), config, 0o600)
+  return config
+}
+
 export async function upsertConversationMapping({
   homeDir = tokenlessHome(),
   provider,
   idempotencyKey,
   targetUrl,
   jobId,
+  projectName,
+  chatName,
+  projectRoot,
 } = {}) {
   const normalizedKey = normalizeIdempotencyKey(idempotencyKey)
   if (!normalizedKey || typeof provider !== 'string' || typeof targetUrl !== 'string') {
@@ -240,6 +297,9 @@ export async function upsertConversationMapping({
     const entry = {
       provider,
       idempotencyKey: normalizedKey,
+      projectName: normalizeDisplayName(projectName) ?? existing?.projectName,
+      chatName: normalizeDisplayName(chatName) ?? existing?.chatName,
+      projectRoot: typeof projectRoot === 'string' ? projectRoot : existing?.projectRoot,
       targetUrl: canonicalProviderUrl(parsedUrl),
       providerConversationId: providerConversationId(provider, parsedUrl),
       createdAt: existing?.createdAt ?? now,
@@ -251,6 +311,62 @@ export async function upsertConversationMapping({
     await writeJsonAtomic(conversationMapPath(homeDir), map, 0o600)
     return entry
   })
+}
+
+export async function readLocalHistory({ homeDir = tokenlessHome(), limit = 50 } = {}) {
+  await ensureJobStore(homeDir)
+  const conversations = await readConversationMap(homeDir)
+  const rows = new Map()
+
+  for (const entry of Object.values(conversations.conversations)) {
+    const key = historyKey(entry.provider, entry.idempotencyKey)
+    rows.set(key, normalizeHistoryEntry({
+      provider: entry.provider,
+      idempotencyKey: entry.idempotencyKey,
+      projectName: entry.projectName,
+      chatName: entry.chatName,
+      projectRoot: entry.projectRoot,
+      targetUrl: entry.targetUrl,
+      providerConversationId: entry.providerConversationId,
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+      lastJobId: entry.lastJobId,
+      jobCount: 0,
+    }))
+  }
+
+  for (const job of await readJobSummaries(homeDir)) {
+    if (!job.provider || !job.idempotencyKey) continue
+    const key = historyKey(job.provider, job.idempotencyKey)
+    const existing = rows.get(key)
+    const updatedAt = laterIso(existing?.updatedAt, job.updatedAt)
+    const jobIsLatest = updatedAt === job.updatedAt
+    rows.set(key, normalizeHistoryEntry({
+      ...existing,
+      provider: job.provider,
+      idempotencyKey: job.idempotencyKey,
+      projectName: job.projectName ?? existing?.projectName,
+      chatName: job.chatName ?? existing?.chatName,
+      projectRoot: job.projectRoot ?? existing?.projectRoot,
+      targetUrl: existing?.targetUrl ?? job.targetUrl,
+      providerConversationId: existing?.providerConversationId,
+      createdAt: earlierIso(existing?.createdAt, job.createdAt),
+      updatedAt,
+      lastJobId: jobIsLatest ? job.jobId : existing?.lastJobId,
+      lastStatus: jobIsLatest ? job.status : existing?.lastStatus,
+      jobCount: (existing?.jobCount ?? 0) + 1,
+    }))
+  }
+
+  const history = [...rows.values()]
+    .sort((a, b) => Date.parse(b.updatedAt ?? b.createdAt ?? 0) - Date.parse(a.updatedAt ?? a.createdAt ?? 0))
+    .slice(0, Math.max(1, Number(limit) || 50))
+
+  return {
+    protocol: CONVERSATION_MAP_PROTOCOL_VERSION,
+    updatedAt: new Date().toISOString(),
+    history,
+  }
 }
 
 export async function waitLocalJobResult({
@@ -417,6 +533,14 @@ function emptyConversationMap() {
   }
 }
 
+function emptyTokenlessConfig() {
+  return {
+    protocol: TOKENLESS_CONFIG_PROTOCOL_VERSION,
+    updatedAt: null,
+    preferredProviders: [],
+  }
+}
+
 function validateConversationMap(payload, mapPath) {
   if (
     !payload ||
@@ -428,6 +552,18 @@ function validateConversationMap(payload, mapPath) {
     Array.isArray(payload.conversations)
   ) {
     throw localStateError('conversation_map_invalid', `Invalid Tokenless conversation map at ${mapPath}.`)
+  }
+}
+
+function validateTokenlessConfig(payload, file) {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    payload.protocol !== TOKENLESS_CONFIG_PROTOCOL_VERSION ||
+    (payload.preferredProviders !== undefined && !Array.isArray(payload.preferredProviders))
+  ) {
+    throw localStateError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
 }
 
@@ -526,7 +662,96 @@ async function rememberConversationFromResult({ homeDir, request, result } = {})
     idempotencyKey,
     targetUrl,
     jobId: request.jobId,
+    projectName: request.projectName ?? request.metadata?.projectName,
+    chatName: request.chatName ?? request.metadata?.chatName,
+    projectRoot: request.projectRoot,
   })
+}
+
+async function readJobSummaries(homeDir) {
+  const dir = jobsDir(homeDir)
+  const files = await fs.readdir(dir).catch((error) => {
+    if (error?.code === 'ENOENT') return []
+    throw error
+  })
+  const requestFiles = files.filter((file) => file.endsWith('.request.json'))
+  const jobs = []
+  for (const file of requestFiles) {
+    const jobId = file.slice(0, -'.request.json'.length)
+    const request = await readJson(path.join(dir, file)).catch(() => null)
+    if (!request || request.protocol !== LOCAL_JOB_PROTOCOL_VERSION) continue
+    const state = await readJson(jobPath(homeDir, jobId, 'state')).catch(() => null)
+    const result = await readJson(jobPath(homeDir, jobId, 'result')).catch(() => null)
+    jobs.push({
+      jobId,
+      provider: request.provider,
+      idempotencyKey: request.idempotencyKey ?? request.metadata?.idempotencyKey,
+      projectName: normalizeDisplayName(request.projectName ?? request.metadata?.projectName),
+      chatName: normalizeDisplayName(request.chatName ?? request.metadata?.chatName),
+      projectRoot: request.projectRoot,
+      targetUrl: request.targetUrl,
+      createdAt: request.createdAt,
+      updatedAt: result?.completedAt ?? state?.updatedAt ?? request.createdAt,
+      status: result?.status ?? state?.status ?? request.status,
+    })
+  }
+  return jobs
+}
+
+function normalizeHistoryEntry(entry) {
+  const projectName = normalizeDisplayName(entry.projectName) ?? projectNameFromRoot(entry.projectRoot) ?? 'Unspecified project'
+  const chatName = normalizeDisplayName(entry.chatName) ??
+    (normalizeDisplayName(entry.projectName) ? 'Unspecified chat' : entry.idempotencyKey) ??
+    'Unspecified chat'
+  return {
+    provider: entry.provider,
+    idempotencyKey: entry.idempotencyKey,
+    projectName,
+    chatName,
+    projectRoot: entry.projectRoot,
+    targetUrl: entry.targetUrl,
+    providerConversationId: entry.providerConversationId,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt ?? entry.createdAt,
+    lastJobId: entry.lastJobId,
+    lastStatus: entry.lastStatus,
+    jobCount: entry.jobCount ?? 0,
+  }
+}
+
+function normalizeDisplayName(value) {
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function derivedConversationKey({ projectName, chatName } = {}) {
+  if (!projectName && !chatName) return undefined
+  return [
+    projectName ? `project:${projectName}` : null,
+    chatName ? `chat:${chatName}` : null,
+  ].filter(Boolean).join(':')
+}
+
+function projectNameFromRoot(projectRoot) {
+  if (typeof projectRoot !== 'string' || projectRoot.trim() === '') return undefined
+  return path.basename(projectRoot)
+}
+
+function historyKey(provider, idempotencyKey) {
+  return `${provider}:${idempotencyKey}`
+}
+
+function earlierIso(left, right) {
+  if (!left) return right
+  if (!right) return left
+  return Date.parse(left) <= Date.parse(right) ? left : right
+}
+
+function laterIso(left, right) {
+  if (!left) return right
+  if (!right) return left
+  return Date.parse(left) >= Date.parse(right) ? left : right
 }
 
 function normalizeIdempotencyKey(idempotencyKey) {
@@ -546,6 +771,20 @@ function providerHomeUrl(provider) {
     claude: 'https://claude.ai/new',
   }
   return homeUrls[provider] ?? undefined
+}
+
+function normalizeProviderList(providers) {
+  if (!Array.isArray(providers)) return []
+  const seen = new Set()
+  const normalized = []
+  for (const provider of providers) {
+    if (typeof provider !== 'string') continue
+    const value = provider.trim().toLowerCase()
+    if (!SUPPORTED_PROVIDER_IDS.includes(value) || seen.has(value)) continue
+    seen.add(value)
+    normalized.push(value)
+  }
+  return normalized
 }
 
 function providerForUrl(url) {

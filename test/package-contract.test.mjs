@@ -44,19 +44,28 @@ test('README explains user pain, browser install path, and publish strategy', ()
   assert.match(readme, /\[README\.zh-CN\.md\]\(README\.zh-CN\.md\)/)
   assert.match(readme, /AI coding agents often need a second model/)
   assert.match(readme, /npm install -g tokenless/)
+  assert.match(readme, /tokenless config --preferred-providers claude,chatgpt,gemini/)
+  assert.match(readme, /~\/\.tokenless\/config\.json/)
   assert.match(readme, /packages\/extension\/dist\/extension/)
   assert.match(readme, /The extension is distributed through Chrome Web Store/)
   assert.match(readme, /Do not publish yet:\n\n- `tokenless-relay`\n- `tokenless-client`\n- `tokenless-browser-session-bridge`/)
   assert.match(readme, /## Local Dev Test/)
   assert.match(readme, /## Conversation Mapping/)
-  assert.match(readme, /--idempotency-key agent-chat-123/)
+  assert.match(readme, /## Provider Selection/)
+  assert.match(readme, /preferredProviders/)
+  assert.match(readme, /--project-name "Website redesign"/)
+  assert.match(readme, /--chat-name "Navbar review"/)
   assert.match(readme, /~\/\.tokenless\/meta\/conversations\.json/)
+  assert.match(readme, /extension side panel shows local task history grouped by project and chat/)
   assert.doesNotMatch(readme, /\/Users\/jazelly/)
   assert.match(readme, /npm install -g \.\/packages\/cli/)
   assert.match(readme, /REPO_ROOT="\$\(pwd\)"/)
+  assert.match(readme, /ChatGPT-shaped fixture served by Playwright/)
+  assert.match(readme, /It does not prove the current production ChatGPT DOM/)
   assert.doesNotMatch(readme, /\/path\/to\/tokenless/)
   assert.match(readme, /tokenless install --extension-id "\$TOKENLESS_EXTENSION_ID" --json/)
-  assert.match(readme, /--idempotency-key local-dev-chat/)
+  assert.match(readme, /--project-name "Tokenless local dev"/)
+  assert.match(readme, /--chat-name "Smoke test"/)
   assert.match(readme, /--project-root "\$REPO_ROOT"/)
   assert.match(readme, /TOKENLESS_LOCAL_OK_48291/)
   assert.doesNotMatch(readme, /ls -lt ~\/\.tokenless\/jobs/)
@@ -71,22 +80,70 @@ test('Chinese README mirrors the user-facing local test flow', () => {
   assert.match(readme, /## 用户体验/)
   assert.match(readme, /## 本地开发测试/)
   assert.match(readme, /## 对话映射/)
-  assert.match(readme, /--idempotency-key agent-chat-123/)
+  assert.match(readme, /--project-name "Website redesign"/)
+  assert.match(readme, /--chat-name "Navbar review"/)
   assert.match(readme, /~\/\.tokenless\/meta\/conversations\.json/)
+  assert.match(readme, /扩展侧边栏会按项目和聊天显示本地任务历史/)
   assert.doesNotMatch(readme, /\/Users\/jazelly/)
   assert.match(readme, /npm install -g tokenless/)
+  assert.match(readme, /tokenless config --preferred-providers claude,chatgpt,gemini/)
+  assert.match(readme, /~\/\.tokenless\/config\.json/)
   assert.match(readme, /packages\/extension\/dist\/extension/)
   assert.match(readme, /npm install -g \.\/packages\/cli/)
   assert.match(readme, /REPO_ROOT="\$\(pwd\)"/)
+  assert.match(readme, /形似 ChatGPT 的本地 fixture DOM/)
+  assert.match(readme, /不证明当前线上 ChatGPT DOM/)
   assert.doesNotMatch(readme, /\/path\/to\/tokenless/)
   assert.match(readme, /tokenless install --extension-id "\$TOKENLESS_EXTENSION_ID" --json/)
-  assert.match(readme, /--idempotency-key local-dev-chat/)
+  assert.match(readme, /--project-name "Tokenless local dev"/)
+  assert.match(readme, /--chat-name "Smoke test"/)
   assert.match(readme, /--project-root "\$REPO_ROOT"/)
   assert.match(readme, /TOKENLESS_LOCAL_OK_48291/)
   assert.doesNotMatch(readme, /ls -lt ~\/\.tokenless\/jobs/)
   assert.doesNotMatch(readme, /常见阻塞/)
   assert.match(readme, /浏览器扩展通过 Chrome 网上应用店、未打包目录或压缩包分发/)
   assertNoLegacyNames(readme)
+})
+
+test('CLI config command sets the default provider for run', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-config-'))
+  const config = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'config',
+    '--preferred-providers',
+    'claude,chatgpt,gemini',
+    '--home',
+    homeDir,
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+
+  assert.equal(config.status, 0)
+  assert.deepEqual(JSON.parse(config.stdout).config.preferredProviders, ['claude', 'chatgpt', 'gemini'])
+
+  const run = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'run',
+    '--prompt',
+    'hello',
+    '--extension-id',
+    'abcdefghijklmnopabcdefghijklmnop',
+    '--home',
+    homeDir,
+    '--no-open',
+    '--no-wait',
+    '--json',
+  ], {
+    cwd: root,
+    env: { ...process.env, TOKENLESS_PROVIDER: '' },
+    encoding: 'utf8',
+  })
+
+  assert.equal(run.status, 0)
+  const payload = JSON.parse(run.stdout)
+  assert.equal(payload.provider, 'claude')
 })
 
 test('CLI run fails fast when extension id is missing', () => {
@@ -148,6 +205,46 @@ test('CLI rejects placeholder extension ids before writing local jobs or manifes
 
   assert.equal(install.status, 1)
   assert.equal(JSON.parse(install.stdout).error.code, 'invalid_extension_id')
+})
+
+test('tokenless skill documents npm entrypoints instead of repo-relative CLI paths', () => {
+  const skill = fs.readFileSync(path.join(root, 'skills/tokenless/SKILL.md'), 'utf8')
+
+  assert.match(skill, /npx tokenless config --json/)
+  assert.match(skill, /~\/\.tokenless\/config\.json/)
+  assert.match(skill, /npx tokenless run/)
+  assert.doesNotMatch(skill, /packages\/cli/)
+  assert.doesNotMatch(skill, /tokenless\.mjs/)
+})
+
+test('packed CLI tarball exposes a working tokenless bin for npx', () => {
+  const cliDir = path.join(root, 'packages/cli')
+  const packOutput = execFileSync('npm', ['pack', '--json'], {
+    cwd: cliDir,
+    encoding: 'utf8',
+  })
+  const [pack] = JSON.parse(packOutput)
+  const tarball = path.join(cliDir, pack.filename)
+  const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-pack-install-'))
+
+  try {
+    execFileSync('npm', ['install', tarball, '--prefix', installDir, '--silent'])
+    const config = spawnSync(process.execPath, [
+      path.join(installDir, 'node_modules', 'tokenless', 'src', 'tokenless.mjs'),
+      'config',
+      '--json',
+    ], {
+      encoding: 'utf8',
+    })
+
+    assert.equal(config.status, 0)
+    const payload = JSON.parse(config.stdout)
+    assert.equal(payload.ok, true)
+    assert.ok(Array.isArray(payload.config.preferredProviders))
+  } finally {
+    fs.rmSync(installDir, { recursive: true, force: true })
+    fs.rmSync(tarball, { force: true })
+  }
 })
 
 test('published CLI package includes user-facing README and only the tokenless bin', () => {

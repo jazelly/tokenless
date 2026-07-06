@@ -36,12 +36,21 @@ tokenless install --extension-id <chrome-extension-id>
 tokenless doctor --extension-id <chrome-extension-id>
 ```
 
+Configure the provider preference order used by agents when no provider is explicitly requested:
+
+```bash
+tokenless config --preferred-providers claude,chatgpt,gemini
+```
+
+This writes `~/.tokenless/config.json`. The CLI treats that file as the source of truth; the extension side panel displays it so the browser surface and local agent agree.
+
 Run a task from a local agent or terminal:
 
 ```bash
 tokenless run \
   --provider chatgpt \
-  --idempotency-key agent-chat-123 \
+  --project-name "Website redesign" \
+  --chat-name "Navbar review" \
   --project-root /path/to/project \
   --prompt-file /tmp/request.md \
   --context-file /tmp/shareable-context.md \
@@ -58,12 +67,28 @@ What the user sees:
 
 ## Conversation Mapping
 
-Pass a stable `--idempotency-key` for each agent chat thread. Tokenless stores the local mapping in `~/.tokenless/meta/conversations.json`.
+Pass stable project and chat names for each agent chat thread. Tokenless stores the local mapping in `~/.tokenless/meta/conversations.json`.
+
+- `--project-name` is the project name from the calling agent.
+- `--chat-name` is the chat/thread title or stable chat label from the calling agent.
+- If `--idempotency-key` is omitted, Tokenless derives a stable conversation key from `--project-name` and `--chat-name`.
+- If only one of `--project-name` or `--chat-name` is present, Tokenless derives a stable key from that single name.
+- If neither name is present and no explicit `--idempotency-key` is provided, Tokenless does not reuse a mapped conversation and starts from a new visible chat.
+- If a calling agent already has a stable thread id, it may pass that id through `--idempotency-key`.
 
 - First run for a new key opens the provider home URL, such as `https://chatgpt.com/`, so it starts a new visible chat.
 - When the provider redirects that run to a conversation URL, such as `https://chatgpt.com/c/...`, Tokenless saves that URL for the key.
 - Later runs with the same key route back to the same provider conversation.
-- Different keys do not reuse an existing ChatGPT conversation by accident.
+- Different keys do not reuse an existing provider conversation by accident.
+- The extension side panel shows local task history grouped by project and chat, including the mapped provider URL.
+
+## Provider Selection
+
+Tokenless supports visible ChatGPT, Claude, and Gemini sessions. When the user has configured `~/.tokenless/config.json`, agents should treat `preferredProviders` as the first candidate list. If no user preference applies:
+
+- Use Claude for long-form writing, careful critique, architecture tradeoffs, and synthesis-heavy reviews.
+- Use ChatGPT for general coding, debugging, structured transformations, multimodal/browser-product reasoning, and fast iteration.
+- Use Gemini for large-context reading, research-style summarization, Google ecosystem context, and broad document comparisons.
 
 ## What It Includes
 
@@ -98,7 +123,9 @@ npm test
 npm run test:e2e
 ```
 
-The live ChatGPT test is opt-in because it requires a real logged-in browser profile:
+`npm run test:e2e` runs the local extension/native-host flow against a ChatGPT-shaped fixture served by Playwright at `https://chatgpt.com/**`. It does not prove the current production ChatGPT DOM.
+
+The live ChatGPT test is opt-in because it uses the real `https://chatgpt.com/` DOM and requires a real logged-in browser profile:
 
 ```bash
 TOKENLESS_LIVE_CHATGPT=1 npm run test:e2e:live-chatgpt
@@ -114,7 +141,7 @@ REPO_ROOT="$(pwd)"
 npm install
 npm run build
 npm test
-npm run test:e2e
+npm run test:e2e # fixture DOM E2E, not real ChatGPT
 
 npm install -g ./packages/cli
 ```
@@ -151,7 +178,8 @@ EOF
 
 tokenless run \
   --provider chatgpt \
-  --idempotency-key local-dev-chat \
+  --project-name "Tokenless local dev" \
+  --chat-name "Smoke test" \
   --project-root "$REPO_ROOT" \
   --prompt-file /tmp/tokenless-request.md \
   --context-file /tmp/tokenless-context.md \
