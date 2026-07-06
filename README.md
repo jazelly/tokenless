@@ -57,6 +57,17 @@ tokenless run \
   --extension-id <chrome-extension-id>
 ```
 
+Capture a sanitized DOM snapshot from the visible provider page:
+
+```bash
+tokenless snapshot-dom \
+  --provider chatgpt \
+  --extension-id <chrome-extension-id> \
+  --json
+```
+
+Snapshot artifacts are written under `~/.tokenless/snapshots/<provider>/`. By default, Tokenless redacts visible page text in the HTML snapshot and writes selector probe results separately. Pass `--include-text` only when the visible page text is intentionally shareable.
+
 What the user sees:
 
 1. A Tokenless task page opens in the browser.

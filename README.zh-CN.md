@@ -55,6 +55,17 @@ tokenless run \
   --extension-id <chrome-extension-id>
 ```
 
+从可见服务商页面抓取 sanitized DOM snapshot：
+
+```bash
+tokenless snapshot-dom \
+  --provider chatgpt \
+  --extension-id <chrome-extension-id> \
+  --json
+```
+
+Snapshot 产物会写入 `~/.tokenless/snapshots/<provider>/`。默认情况下，Tokenless 会在 HTML snapshot 中遮蔽可见页面文字，并把 selector probe 结果单独保存。只有在页面可见文字可以明确分享时才传 `--include-text`。
+
 用户会看到：
 
 1. 浏览器打开 Tokenless 任务页面。

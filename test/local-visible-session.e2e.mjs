@@ -117,8 +117,41 @@ test('Tokenless CLI job completes through extension task page and ChatGPT real-D
     assert.equal(await providerPage.locator('[data-testid="composer"] [contenteditable="true"]').innerText(), '')
     assert.match(await providerPage.locator('[data-message-author-role="user"]').last().innerText(), /Tokenless E2E DOM prompt 48291/)
     assert.match(await providerPage.locator('[data-message-author-role="assistant"]').last().innerText(), /visible ChatGPT real-DOM fixture answer/)
+
+    const snapshotJob = await createLocalJob({
+      homeDir: tokenlessHome,
+      provider: 'chatgpt',
+      action: 'snapshot_dom',
+      targetUrl: providerPage.url(),
+      includeText: false,
+    })
+    events.push({ at: new Date().toISOString(), event: 'snapshot_job_created', jobId: snapshotJob.jobId })
+    const snapshotTask = await context.newPage()
+    await snapshotTask.goto(`chrome-extension://${extensionId}/task/task.html?jobId=${snapshotJob.jobId}&nonce=${snapshotJob.nonce}`)
+    const snapshotResult = await waitLocalJobResult({
+      homeDir: tokenlessHome,
+      jobId: snapshotJob.jobId,
+      nonce: snapshotJob.nonce,
+      timeoutMs: 30000,
+    })
+    events.push({ at: new Date().toISOString(), event: 'snapshot_result_received', ok: snapshotResult.ok })
+    assert.equal(snapshotResult.ok, true)
+    assert.equal(snapshotResult.result.snapshot.provider, 'chatgpt')
+    assert.match(snapshotResult.result.snapshot.htmlPath, /snapshots\/chatgpt\/.*\/dom\.sanitized\.html$/)
+    assert.match(snapshotResult.compactOutput, /snapshots\/chatgpt\/.*\/dom\.sanitized\.html$/)
+    const snapshotHtml = await fs.readFile(snapshotResult.result.snapshot.htmlPath, 'utf8')
+    const selectorProbeText = await fs.readFile(snapshotResult.result.snapshot.selectorProbesPath, 'utf8')
+    const selectorProbes = JSON.parse(selectorProbeText)
+    assert.match(snapshotHtml, /data-testid="composer"/)
+    assert.doesNotMatch(snapshotHtml, /Tokenless E2E DOM prompt 48291/)
+    assert.doesNotMatch(selectorProbeText, /Tokenless E2E DOM prompt 48291/)
+    assert.ok(selectorProbes.composers.some((probe) => probe.count > 0))
+    assert.ok(selectorProbes.submits.some((probe) => probe.count > 0))
+    assert.ok(selectorProbes.answers.some((probe) => probe.count > 0))
+
     await task.screenshot({ path: path.join(artifactDir, '03-extension-task-completed.png'), fullPage: true })
     await providerPage.screenshot({ path: path.join(artifactDir, '04-chatgpt-fixture-after-prompt-and-response.png'), fullPage: true })
+    await snapshotTask.screenshot({ path: path.join(artifactDir, '05-extension-snapshot-completed.png'), fullPage: true })
     await fs.writeFile(path.join(artifactDir, 'provider-fixture-text.txt'), await providerPage.locator('body').innerText(), 'utf8')
     await fs.writeFile(path.join(artifactDir, 'task-text.txt'), await task.locator('body').innerText(), 'utf8')
     await copyJobFiles(tokenlessHome, job.jobId, artifactDir, 'after')

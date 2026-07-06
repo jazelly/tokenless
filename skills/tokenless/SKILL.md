@@ -7,6 +7,8 @@ description: Route a Q&A type LLM conversation to online web version to save tok
 
 - Node.js runtime (>=22)
 - Tokenless CLI from npm (`npm install -g tokenless` or `npx tokenless`) If not installed locally, just rely on npx
+- Tokenless extension installed on chromium-based browser
+- If installed developer version of the extension, i.e. extension ID is uncertain, you should look at the env variable for the `TOKENLESS_EXTENSION_ID`. If still cannot find, you should ask users for calrification.
 
 Do not invoke Tokenless through repo-relative CLI paths. Use the npm CLI only.
 

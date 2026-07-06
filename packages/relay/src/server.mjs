@@ -16,7 +16,7 @@ const server = http.createServer(async (request, response) => {
         protocol: 'tokenless.relay.v1',
         transports: ['tokenless-relay', 'browser-extension', 'tokenless-cli'],
         providers: ['chatgpt', 'gemini', 'claude'],
-        actions: ['capabilities', 'open', 'submit', 'read', 'submit_and_read'],
+        actions: ['capabilities', 'open', 'submit', 'read', 'snapshot_dom', 'submit_and_read'],
       })
     }
 

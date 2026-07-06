@@ -34,6 +34,32 @@ test('extension routes mapped conversations by exact target URL before generic p
   assert.match(contentScript, /url: location\.href/)
 })
 
+test('provider content script is safe to inject more than once', () => {
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.js'), 'utf8')
+  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.js'), 'utf8')
+
+  assert.match(serviceWorker, /chrome\.scripting\.executeScript/)
+  assert.match(contentScript, /\(\(\) => \{/)
+  assert.match(contentScript, /__TOKENLESS_PROVIDER_CONTENT_LOADED__/)
+  assert.ok(
+    contentScript.indexOf('__TOKENLESS_PROVIDER_CONTENT_LOADED__') < contentScript.indexOf('const PROVIDERS ='),
+    'the duplicate-injection guard must run before top-level declarations inside the content script closure'
+  )
+})
+
+test('browser bridge advertises sanitized DOM snapshot action', async () => {
+  const { BRIDGE_ACTIONS, capabilitiesPayload, validateBridgeRequest, BRIDGE_PROTOCOL_VERSION } = await import('../packages/extension/extension/shared/bridge-protocol.js')
+
+  assert.equal(BRIDGE_ACTIONS.SNAPSHOT_DOM, 'snapshot_dom')
+  assert.ok(capabilitiesPayload().actions.includes('snapshot_dom'))
+  assert.equal(validateBridgeRequest({
+    protocol: BRIDGE_PROTOCOL_VERSION,
+    requestId: 'snapshot-1',
+    provider: 'chatgpt',
+    action: 'snapshot_dom',
+  }).ok, true)
+})
+
 test('extension side panel renders provider-agnostic task history from native host', () => {
   const sidePanelHtml = fs.readFileSync(path.join(root, 'packages/extension/extension/sidepanel/index.html'), 'utf8')
   const sidePanelJs = fs.readFileSync(path.join(root, 'packages/extension/extension/sidepanel/index.js'), 'utf8')
@@ -104,6 +130,7 @@ test('local job store requires nonce and writes compact result', async () => {
     createLocalJob,
     readLocalJobRequest,
     waitLocalJobResult,
+    writeDomSnapshot,
   } = await import('../packages/cli/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-job-store-'))
   const job = await createLocalJob({
@@ -127,6 +154,39 @@ test('local job store requires nonce and writes compact result', async () => {
   })
   const result = await waitLocalJobResult({ homeDir, jobId: job.jobId, nonce: job.nonce, timeoutMs: 1000 })
   assert.equal(result.compactOutput, 'hello from visible DOM')
+
+  const snapshotJob = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    action: 'snapshot_dom',
+    targetUrl: 'https://chatgpt.com/',
+  })
+  const snapshot = await writeDomSnapshot({
+    homeDir,
+    jobId: snapshotJob.jobId,
+    nonce: snapshotJob.nonce,
+    snapshot: {
+      status: 'snapshotted',
+      provider: 'chatgpt',
+      url: 'https://chatgpt.com/',
+      title: 'ChatGPT',
+      sanitized: true,
+      includeText: false,
+      html: '<!doctype html><html><body>[text]</body></html>',
+      selectorProbes: { composers: [] },
+    },
+  })
+  assert.match(snapshot.htmlPath, /snapshots\/chatgpt\/.*\/dom\.sanitized\.html$/)
+
+  await completeLocalJob({
+    homeDir,
+    jobId: snapshotJob.jobId,
+    nonce: snapshotJob.nonce,
+    ok: true,
+    result: { snapshot },
+  })
+  const snapshotResult = await waitLocalJobResult({ homeDir, jobId: snapshotJob.jobId, nonce: snapshotJob.nonce, timeoutMs: 1000 })
+  assert.equal(snapshotResult.compactOutput, snapshot.htmlPath)
 })
 
 test('local Tokenless config stores provider preference for default runs', async () => {

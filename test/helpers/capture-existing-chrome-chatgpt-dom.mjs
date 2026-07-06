@@ -173,7 +173,8 @@ function browserCaptureScript({ selectorProbes, includeText, maxTextChars }) {
         try {
           const matches = [...document.querySelectorAll(selector)];
           count = matches.length;
-          firstText = normalizeText(matches[0]?.innerText || matches[0]?.textContent || '').slice(0, 240);
+          const rawText = normalizeText(matches[0]?.innerText || matches[0]?.textContent || '');
+          firstText = includeText ? rawText.slice(0, 240) : (rawText ? '[text]' : '');
         } catch (probeError) {
           error = probeError.message;
         }

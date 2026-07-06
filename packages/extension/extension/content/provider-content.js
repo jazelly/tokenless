@@ -1,3 +1,9 @@
+(() => {
+if (globalThis.__TOKENLESS_PROVIDER_CONTENT_LOADED__) {
+  return
+}
+globalThis.__TOKENLESS_PROVIDER_CONTENT_LOADED__ = true
+
 const PROVIDERS = [
   {
     id: 'chatgpt',
@@ -176,7 +182,7 @@ async function snapshotDom(provider, request = {}) {
     sanitized: true,
     includeText,
     html: `<!doctype html>\n${clone.outerHTML}`,
-    selectorProbes: selectorProbeSnapshot(provider),
+    selectorProbes: selectorProbeSnapshot(provider, { includeText }),
     visibleText: includeText
       ? normalizeText(document.body?.innerText || '').slice(0, maxTextChars)
       : undefined,
@@ -468,17 +474,17 @@ function answerTexts(provider) {
   return []
 }
 
-function selectorProbeSnapshot(provider) {
+function selectorProbeSnapshot(provider, { includeText = false } = {}) {
   return {
-    composers: probeSelectors(provider.composerSelectors),
-    submits: probeSelectors(provider.submitSelectors),
-    answers: probeSelectors(provider.answerSelectors),
-    blockers: probeSelectors(provider.blockerSelectors),
-    busy: probeSelectors(provider.busySelectors ?? []),
+    composers: probeSelectors(provider.composerSelectors, { includeText }),
+    submits: probeSelectors(provider.submitSelectors, { includeText }),
+    answers: probeSelectors(provider.answerSelectors, { includeText }),
+    blockers: probeSelectors(provider.blockerSelectors, { includeText }),
+    busy: probeSelectors(provider.busySelectors ?? [], { includeText }),
   }
 }
 
-function probeSelectors(selectors = []) {
+function probeSelectors(selectors = [], { includeText = false } = {}) {
   return selectors.map((selector) => {
     let count = 0
     let firstText = ''
@@ -486,7 +492,8 @@ function probeSelectors(selectors = []) {
     try {
       const matches = [...document.querySelectorAll(selector)]
       count = matches.length
-      firstText = normalizeText(matches[0]?.innerText || matches[0]?.textContent || '').slice(0, 240)
+      const rawText = normalizeText(matches[0]?.innerText || matches[0]?.textContent || '')
+      firstText = includeText ? rawText.slice(0, 240) : (rawText ? '[text]' : '')
     } catch (probeError) {
       error = probeError.message
     }
@@ -533,3 +540,4 @@ function getProviderForUrl(url) {
   const host = parsed.hostname.toLowerCase()
   return PROVIDERS.find((provider) => provider.hosts.includes(host)) ?? null
 }
+})()
