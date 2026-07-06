@@ -41,6 +41,10 @@ export function metaDir(homeDir = tokenlessHome()) {
   return path.join(homeDir, 'meta')
 }
 
+export function snapshotsDir(homeDir = tokenlessHome()) {
+  return path.join(homeDir, 'snapshots')
+}
+
 export function conversationMapPath(homeDir = tokenlessHome()) {
   return path.join(metaDir(homeDir), 'conversations.json')
 }
@@ -65,9 +69,11 @@ export function createNonce() {
 export async function ensureJobStore(homeDir = tokenlessHome()) {
   await fs.mkdir(jobsDir(homeDir), { recursive: true, mode: 0o700 })
   await fs.mkdir(metaDir(homeDir), { recursive: true, mode: 0o700 })
+  await fs.mkdir(snapshotsDir(homeDir), { recursive: true, mode: 0o700 })
   await fs.chmod(homeDir, 0o700).catch(() => undefined)
   await fs.chmod(jobsDir(homeDir), 0o700).catch(() => undefined)
   await fs.chmod(metaDir(homeDir), 0o700).catch(() => undefined)
+  await fs.chmod(snapshotsDir(homeDir), 0o700).catch(() => undefined)
 }
 
 export async function createLocalJob({
@@ -83,9 +89,12 @@ export async function createLocalJob({
   readDelayMs = 1000,
   readTimeoutMs = 120000,
   metadata,
+  includeText,
+  maxTextChars,
   ttlMs = 15 * 60 * 1000,
 } = {}) {
-  if (typeof prompt !== 'string' || prompt.trim() === '') {
+  const promptIsRequired = action === 'submit' || action === 'submit_and_read'
+  if (promptIsRequired && (typeof prompt !== 'string' || prompt.trim() === '')) {
     throw new TypeError('prompt must be a nonempty string.')
   }
   await ensureJobStore(homeDir)
@@ -122,6 +131,8 @@ export async function createLocalJob({
     conversation,
     readDelayMs,
     readTimeoutMs,
+    includeText,
+    maxTextChars,
     metadata: {
       ...(metadata ?? {}),
       projectName: normalizedProjectName,
@@ -143,6 +154,60 @@ export async function readLocalJobRequest({ homeDir = tokenlessHome(), jobId, no
     throw accessError('job_expired', 'Local job has expired.')
   }
   return request
+}
+
+export async function writeDomSnapshot({
+  homeDir = tokenlessHome(),
+  jobId,
+  nonce,
+  provider,
+  snapshot,
+} = {}) {
+  const request = await readLocalJobRequest({ homeDir, jobId, nonce })
+  if (request.action !== 'snapshot_dom') {
+    throw accessError('invalid_snapshot_job', 'Local job is not a DOM snapshot job.')
+  }
+  if (!snapshot || snapshot.status !== 'snapshotted') {
+    throw accessError('invalid_snapshot_payload', 'DOM snapshot payload is invalid.')
+  }
+
+  const snapshotProvider = normalizeSafeSegment(provider || snapshot.provider || request.provider || 'provider')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const dir = path.join(snapshotsDir(homeDir), snapshotProvider, `${stamp}-${jobId}`)
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 })
+
+  const htmlPath = path.join(dir, 'dom.sanitized.html')
+  const probesPath = path.join(dir, 'selector-probes.json')
+  const metadataPath = path.join(dir, 'metadata.json')
+  const textPath = snapshot.visibleText === undefined ? null : path.join(dir, 'visible-text.txt')
+
+  await fs.writeFile(htmlPath, `${snapshot.html ?? ''}\n`, { mode: 0o600 })
+  await fs.writeFile(probesPath, `${JSON.stringify(snapshot.selectorProbes ?? {}, null, 2)}\n`, { mode: 0o600 })
+  if (textPath) {
+    await fs.writeFile(textPath, `${snapshot.visibleText}\n`, { mode: 0o600 })
+  }
+
+  const metadata = {
+    protocol: LOCAL_JOB_PROTOCOL_VERSION,
+    jobId,
+    provider: snapshot.provider ?? request.provider,
+    action: request.action,
+    capturedAt: snapshot.capturedAt ?? new Date().toISOString(),
+    url: snapshot.url,
+    title: snapshot.title,
+    sanitized: snapshot.sanitized !== false,
+    includeText: Boolean(snapshot.includeText),
+    htmlPath,
+    selectorProbesPath: probesPath,
+    visibleTextPath: textPath,
+  }
+  await fs.writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o600 })
+
+  return {
+    ...metadata,
+    snapshotDir: dir,
+    metadataPath,
+  }
 }
 
 export async function writeJobState({
@@ -520,6 +585,9 @@ function validateJobAccess(payload, jobId, nonce) {
 function compactResult(result) {
   const text = result?.text ?? result?.read?.text ?? result?.result?.read?.text
   if (typeof text !== 'string') {
+    if (result?.snapshot?.htmlPath) {
+      return result.snapshot.htmlPath
+    }
     return ''
   }
   return text.length > 4000 ? `${text.slice(0, 4000)}\n...[truncated]` : text
@@ -785,6 +853,14 @@ function normalizeProviderList(providers) {
     normalized.push(value)
   }
   return normalized
+}
+
+function normalizeSafeSegment(value) {
+  const normalized = String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return normalized || 'provider'
 }
 
 function providerForUrl(url) {

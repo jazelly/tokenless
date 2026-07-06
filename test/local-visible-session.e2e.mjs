@@ -7,9 +7,10 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const extensionPath = path.join(root, 'packages/extension/extension')
+const chatGptRealDomFixturePath = path.join(root, 'test/fixtures/chatgpt-real-dom-fixture.html')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-e2e', 'runs')
 
-test('Tokenless CLI job completes through extension task page and ChatGPT fixture DOM', {
+test('Tokenless CLI job completes through extension task page and ChatGPT real-DOM fixture', {
   skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run fixture browser E2E' : false,
   timeout: 120000,
 }, async () => {
@@ -58,11 +59,12 @@ test('Tokenless CLI job completes through extension task page and ChatGPT fixtur
     })
 
     context = await launchTokenlessContext(chromium, userDataDir, tokenlessHome)
+    const chatGptFixture = await chatGptRealDomFixtureHtml()
     await context.route('https://chatgpt.com/**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'text/html',
-        body: chatGptFixtureHtml(),
+        body: chatGptFixture,
       })
     })
     events.push({
@@ -70,13 +72,16 @@ test('Tokenless CLI job completes through extension task page and ChatGPT fixtur
       event: 'provider_fixture_route_registered',
       route: 'https://chatgpt.com/**',
       fixture: true,
-      realProviderDom: false,
+      realProviderDom: true,
+      fixturePath: chatGptRealDomFixturePath,
     })
     const providerFixturePage = await context.newPage()
     await providerFixturePage.goto('https://chatgpt.com/')
-    await providerFixturePage.locator('#prompt-textarea').waitFor({ timeout: 5000 })
+    await providerFixturePage.locator('[data-testid="composer"] [contenteditable="true"]').waitFor({ timeout: 5000 })
+    assert.equal(await providerFixturePage.locator('[data-testid="composer"]').count(), 1)
+    assert.equal(await providerFixturePage.locator('[data-testid="composer-send-button"]').count(), 1)
     await providerFixturePage.screenshot({ path: path.join(artifactDir, '01-chatgpt-fixture-before-empty-composer.png'), fullPage: true })
-    events.push({ at: new Date().toISOString(), event: 'provider_fixture_ready', url: providerFixturePage.url(), fixture: true, realProviderDom: false })
+    events.push({ at: new Date().toISOString(), event: 'provider_fixture_ready', url: providerFixturePage.url(), fixture: true, realProviderDom: true })
 
     const job = await createLocalJob({
       homeDir: tokenlessHome,
@@ -102,15 +107,16 @@ test('Tokenless CLI job completes through extension task page and ChatGPT fixtur
     events.push({ at: new Date().toISOString(), event: 'job_result_received', ok: result.ok })
 
     assert.equal(result.ok, true)
-    assert.match(result.compactOutput, /visible ChatGPT fixture DOM answer/)
+    assert.match(result.compactOutput, /visible ChatGPT real-DOM fixture answer/)
     assert.match(result.compactOutput, /Tokenless E2E DOM prompt 48291/)
-    assert.doesNotMatch(result.compactOutput, /stale ChatGPT fixture DOM answer/)
+    assert.doesNotMatch(result.compactOutput, /stale ChatGPT real-DOM fixture answer/)
     assert.doesNotMatch(result.compactOutput, /_streaming/)
 
     const providerPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/')) ?? providerFixturePage
     assert.ok(providerPage, 'provider tab should be opened')
-    assert.equal(await providerPage.locator('#prompt-textarea').innerText(), prompt)
-    assert.match(await providerPage.locator('[data-message-author-role="assistant"]').last().innerText(), /visible ChatGPT fixture DOM answer/)
+    assert.equal(await providerPage.locator('[data-testid="composer"] [contenteditable="true"]').innerText(), '')
+    assert.match(await providerPage.locator('[data-message-author-role="user"]').last().innerText(), /Tokenless E2E DOM prompt 48291/)
+    assert.match(await providerPage.locator('[data-message-author-role="assistant"]').last().innerText(), /visible ChatGPT real-DOM fixture answer/)
     await task.screenshot({ path: path.join(artifactDir, '03-extension-task-completed.png'), fullPage: true })
     await providerPage.screenshot({ path: path.join(artifactDir, '04-chatgpt-fixture-after-prompt-and-response.png'), fullPage: true })
     await fs.writeFile(path.join(artifactDir, 'provider-fixture-text.txt'), await providerPage.locator('body').innerText(), 'utf8')
@@ -122,7 +128,8 @@ test('Tokenless CLI job completes through extension task page and ChatGPT fixtur
       mode: 'fixture-chatgpt',
       fixture: true,
       fixtureRoute: 'https://chatgpt.com/**',
-      realProviderDom: false,
+      realProviderDom: true,
+      fixturePath: chatGptRealDomFixturePath,
       extensionId,
       jobId: job.jobId,
       provider: 'chatgpt',
@@ -214,249 +221,6 @@ async function discoverExtensionId(context) {
   return url.hostname
 }
 
-function chatGptFixtureHtml() {
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>ChatGPT Fixture</title>
-    <style>
-      :root {
-        color-scheme: light;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #f7f7f8;
-        color: #202123;
-      }
-
-      body {
-        margin: 0;
-        min-height: 100vh;
-        background: #f7f7f8;
-      }
-
-      .shell {
-        display: grid;
-        grid-template-columns: 260px 1fr;
-        min-height: 100vh;
-      }
-
-      aside {
-        background: #202123;
-        color: #ececf1;
-        padding: 18px 14px;
-      }
-
-      .brand {
-        font-size: 18px;
-        font-weight: 700;
-        margin-bottom: 18px;
-      }
-
-      .new-chat {
-        border: 1px solid rgba(255,255,255,.28);
-        border-radius: 8px;
-        padding: 11px 12px;
-        font-size: 14px;
-      }
-
-      main {
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-      }
-
-      header {
-        height: 56px;
-        border-bottom: 1px solid #e5e5e8;
-        display: flex;
-        align-items: center;
-        padding: 0 24px;
-        background: white;
-        font-weight: 650;
-      }
-
-      #conversation {
-        flex: 1;
-        max-width: 860px;
-        width: 100%;
-        margin: 0 auto;
-        padding: 48px 24px 180px;
-        box-sizing: border-box;
-      }
-
-      .empty {
-        text-align: center;
-        margin-top: 92px;
-        color: #565869;
-      }
-
-      article {
-        display: grid;
-        grid-template-columns: 40px 1fr;
-        gap: 14px;
-        padding: 22px 0;
-        border-bottom: 1px solid #ececf1;
-      }
-
-      .avatar {
-        width: 32px;
-        height: 32px;
-        border-radius: 4px;
-        display: grid;
-        place-items: center;
-        font-size: 13px;
-        font-weight: 700;
-        color: white;
-      }
-
-      article[data-message-author-role="user"] .avatar {
-        background: #2563eb;
-      }
-
-      article[data-message-author-role="assistant"] .avatar {
-        background: #10a37f;
-      }
-
-      .message-label {
-        font-size: 13px;
-        font-weight: 700;
-        margin-bottom: 6px;
-      }
-
-      .message-text {
-        line-height: 1.55;
-        white-space: pre-wrap;
-      }
-
-      .composer-wrap {
-        position: fixed;
-        left: 260px;
-        right: 0;
-        bottom: 0;
-        padding: 22px 24px 30px;
-        background: linear-gradient(to top, #f7f7f8 75%, rgba(247,247,248,0));
-      }
-
-      .composer {
-        max-width: 860px;
-        margin: 0 auto;
-        background: white;
-        border: 1px solid #d9d9e3;
-        border-radius: 12px;
-        box-shadow: 0 8px 24px rgba(0,0,0,.08);
-        display: grid;
-        grid-template-columns: 1fr 44px;
-        align-items: end;
-        padding: 12px;
-        gap: 10px;
-      }
-
-      #prompt-textarea {
-        min-height: 44px;
-        max-height: 180px;
-        overflow: auto;
-        outline: none;
-        line-height: 1.5;
-        padding: 10px 12px;
-      }
-
-      #prompt-textarea:empty::before {
-        content: "Message ChatGPT";
-        color: #8e8ea0;
-      }
-
-      button[data-testid="send-button"] {
-        width: 42px;
-        height: 42px;
-        border: 0;
-        border-radius: 8px;
-        background: #111827;
-        color: white;
-        font-weight: 800;
-        cursor: pointer;
-      }
-
-      .proof-strip {
-        max-width: 860px;
-        margin: 10px auto 0;
-        color: #6b7280;
-        font-size: 12px;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="shell">
-      <aside>
-        <div class="brand">ChatGPT</div>
-        <div class="new-chat">+ New chat</div>
-      </aside>
-      <main>
-        <header>ChatGPT fixture DOM, not real ChatGPT</header>
-        <section id="conversation">
-          <article data-message-author-role="user">
-            <div class="avatar">U</div>
-            <div>
-              <div class="message-label">You</div>
-              <div class="message-text">Earlier fixture prompt</div>
-            </div>
-          </article>
-          <article data-message-author-role="assistant">
-            <div class="avatar">AI</div>
-            <div>
-              <div class="message-label">ChatGPT</div>
-              <div class="message-text">stale ChatGPT fixture DOM answer that must not be read</div>
-            </div>
-          </article>
-        </section>
-        <div class="composer-wrap">
-          <div class="composer">
-            <div id="prompt-textarea" contenteditable="true" role="textbox" aria-label="Message ChatGPT"></div>
-            <button data-testid="send-button" aria-label="Send prompt">↑</button>
-          </div>
-          <div class="proof-strip">Fixture E2E proof only: content script writes prompt here, clicks send, then reads assistant message from this local DOM.</div>
-        </div>
-      </main>
-    </div>
-    <script>
-      const composer = document.querySelector('#prompt-textarea')
-      const send = document.querySelector('[data-testid="send-button"]')
-      const conversation = document.querySelector('#conversation')
-      const empty = document.querySelector('#empty-state')
-      send.addEventListener('click', () => {
-        const prompt = composer.innerText || composer.textContent || ''
-        empty?.remove()
-        conversation.append(message('user', 'You', 'U', prompt))
-        setTimeout(() => {
-          const assistant = message('assistant', 'ChatGPT Fixture', 'AI', 'visible ChatGPT fixture DOM answer_streaming for: ' + prompt)
-          const stop = document.createElement('button')
-          stop.dataset.testid = 'stop-button'
-          stop.textContent = 'Stop answering'
-          document.body.append(stop)
-          conversation.append(assistant)
-          setTimeout(() => {
-            assistant.querySelector('.message-text').textContent = 'visible ChatGPT fixture DOM answer for: ' + prompt
-            stop.remove()
-          }, 900)
-        }, 150)
-      })
-      function message(role, label, avatarText, text) {
-        const article = document.createElement('article')
-        article.dataset.messageAuthorRole = role
-        const avatar = document.createElement('div')
-        avatar.className = 'avatar'
-        avatar.textContent = avatarText
-        const body = document.createElement('div')
-        const title = document.createElement('div')
-        title.className = 'message-label'
-        title.textContent = label
-        const content = document.createElement('div')
-        content.className = 'message-text'
-        content.textContent = text
-        body.append(title, content)
-        article.append(avatar, body)
-        return article
-      }
-    </script>
-  </body>
-</html>`
+async function chatGptRealDomFixtureHtml() {
+  return fs.readFile(chatGptRealDomFixturePath, 'utf8')
 }

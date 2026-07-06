@@ -123,7 +123,7 @@ npm test
 npm run test:e2e
 ```
 
-`npm run test:e2e` runs the local extension/native-host flow against a ChatGPT-shaped fixture served by Playwright at `https://chatgpt.com/**`. It does not prove the current production ChatGPT DOM.
+`npm run test:e2e` runs the local extension/native-host flow against a normalized real-DOM ChatGPT fixture served by Playwright at `https://chatgpt.com/**`. It exercises the same visible composer, submit button, and assistant-message selector shapes that Tokenless uses against ChatGPT, but it does not prove the current production ChatGPT DOM is still compatible.
 
 The live ChatGPT test is opt-in because it uses the real `https://chatgpt.com/` DOM and requires a real logged-in browser profile:
 
@@ -141,7 +141,7 @@ REPO_ROOT="$(pwd)"
 npm install
 npm run build
 npm test
-npm run test:e2e # fixture DOM E2E, not real ChatGPT
+npm run test:e2e # real-DOM fixture E2E, not live ChatGPT
 
 npm install -g ./packages/cli
 ```

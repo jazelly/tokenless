@@ -110,11 +110,76 @@ async function handleMessage(message) {
   if (message?.type === 'tokenless.bridge.read') {
     return readLatestAnswer(provider, message.request)
   }
+  if (message?.type === 'tokenless.bridge.snapshot_dom') {
+    return snapshotDom(provider, message.request)
+  }
 
   return {
     status: 'blocked',
     stopReason: 'unsupported_message',
     message: 'Content bridge message is not supported.',
+  }
+}
+
+async function snapshotDom(provider, request = {}) {
+  await dismissProviderInterruptions(provider)
+  const includeText = Boolean(request.includeText ?? request.metadata?.includeText)
+  const maxTextChars = Math.min(Number(request.maxTextChars ?? request.metadata?.maxTextChars ?? 4000), 100000)
+  const clone = document.documentElement.cloneNode(true)
+
+  clone.querySelectorAll([
+    'script',
+    'noscript',
+    'iframe[src*="accounts.google.com"]',
+    'iframe[src*="challenge-platform"]',
+  ].join(',')).forEach((node) => node.remove())
+
+  clone.querySelectorAll('input, textarea').forEach((node) => {
+    if (node.hasAttribute('value')) {
+      node.setAttribute('value', '[redacted]')
+    }
+    if (!includeText) {
+      node.textContent = ''
+    }
+  })
+
+  clone.querySelectorAll('[contenteditable="true"]').forEach((node) => {
+    if (!includeText) {
+      node.textContent = ''
+    }
+  })
+
+  if (!includeText) {
+    redactTextNodes(clone)
+  }
+
+  clone.querySelectorAll('*').forEach((node) => {
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase()
+      if (
+        name.includes('token') ||
+        name.includes('secret') ||
+        name.includes('email') ||
+        name === 'srcdoc'
+      ) {
+        node.setAttribute(attr.name, '[redacted]')
+      }
+    }
+  })
+
+  return {
+    status: 'snapshotted',
+    provider: provider.id,
+    url: location.href,
+    title: document.title,
+    capturedAt: new Date().toISOString(),
+    sanitized: true,
+    includeText,
+    html: `<!doctype html>\n${clone.outerHTML}`,
+    selectorProbes: selectorProbeSnapshot(provider),
+    visibleText: includeText
+      ? normalizeText(document.body?.innerText || '').slice(0, maxTextChars)
+      : undefined,
   }
 }
 
@@ -401,6 +466,45 @@ function answerTexts(provider) {
     }
   }
   return []
+}
+
+function selectorProbeSnapshot(provider) {
+  return {
+    composers: probeSelectors(provider.composerSelectors),
+    submits: probeSelectors(provider.submitSelectors),
+    answers: probeSelectors(provider.answerSelectors),
+    blockers: probeSelectors(provider.blockerSelectors),
+    busy: probeSelectors(provider.busySelectors ?? []),
+  }
+}
+
+function probeSelectors(selectors = []) {
+  return selectors.map((selector) => {
+    let count = 0
+    let firstText = ''
+    let error = null
+    try {
+      const matches = [...document.querySelectorAll(selector)]
+      count = matches.length
+      firstText = normalizeText(matches[0]?.innerText || matches[0]?.textContent || '').slice(0, 240)
+    } catch (probeError) {
+      error = probeError.message
+    }
+    return { selector, count, firstText, error }
+  })
+}
+
+function redactTextNodes(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const nodes = []
+  while (walker.nextNode()) {
+    nodes.push(walker.currentNode)
+  }
+  for (const node of nodes) {
+    if (node.nodeValue.trim()) {
+      node.nodeValue = '[text]'
+    }
+  }
 }
 
 function selectorDrift(target) {

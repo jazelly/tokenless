@@ -61,6 +61,11 @@ async function handleRuntimeMessage(message) {
       return createBridgeResponse(request, { ok: true, result })
     }
 
+    if (request.action === BRIDGE_ACTIONS.SNAPSHOT_DOM) {
+      const result = await sendToProviderTab(tab.id, { type: 'tokenless.bridge.snapshot_dom', request })
+      return createBridgeResponse(request, { ok: true, result })
+    }
+
     if (request.action === BRIDGE_ACTIONS.SUBMIT_AND_READ) {
       const submit = await sendToProviderTab(tab.id, { type: 'tokenless.bridge.submit', request })
       const readDelayMs = Math.min(Number(request.readDelayMs ?? 2500), 30000)

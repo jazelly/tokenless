@@ -22,6 +22,7 @@ export {
   tokenlessHome,
   upsertConversationMapping,
   waitLocalJobResult,
+  writeDomSnapshot,
   writeTokenlessConfig,
   writeJobState,
 } from './job-store.js'

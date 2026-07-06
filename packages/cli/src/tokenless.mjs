@@ -19,6 +19,8 @@ const args = parseArgs(argv)
 try {
   if (command === 'run') {
     await runCommand(args)
+  } else if (command === 'snapshot-dom') {
+    await snapshotDomCommand(args)
   } else if (command === 'install') {
     await installCommand(args)
   } else if (command === 'doctor') {
@@ -46,6 +48,72 @@ try {
     console.error(`${payload.error.code}: ${payload.error.message}`)
   }
   process.exit(1)
+}
+
+async function snapshotDomCommand(args) {
+  const rawExtensionId = args.extensionId || process.env.TOKENLESS_EXTENSION_ID
+  const extensionId = normalizeExtensionId(rawExtensionId)
+  if (!extensionId) {
+    if (rawExtensionId) {
+      throw usageError(
+        'invalid_extension_id',
+        'Extension id must be the real 32-character Chrome extension id from chrome://extensions.'
+      )
+    }
+    throw usageError(
+      'missing_extension_id',
+      'Usage: tokenless snapshot-dom requires --extension-id <id> or TOKENLESS_EXTENSION_ID.'
+    )
+  }
+
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const provider = args.provider ||
+    process.env.TOKENLESS_PROVIDER ||
+    config.preferredProviders[0] ||
+    'chatgpt'
+  const job = await createLocalJob({
+    homeDir,
+    provider,
+    action: 'snapshot_dom',
+    projectRoot: args.projectRoot,
+    projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
+    chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME || 'DOM snapshot',
+    targetUrl: args.targetUrl,
+    idempotencyKey: args.idempotencyKey || process.env.TOKENLESS_IDEMPOTENCY_KEY,
+    includeText: Boolean(args.includeText),
+    maxTextChars: args.maxTextChars === undefined ? undefined : Number(args.maxTextChars),
+    metadata: {
+      source: 'tokenless-cli',
+      browser: args.browser,
+      includeText: Boolean(args.includeText),
+      maxTextChars: args.maxTextChars === undefined ? undefined : Number(args.maxTextChars),
+    },
+  })
+
+  const taskUrl = buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce })
+  if (!args.noOpen) {
+    await openUrl(taskUrl, { browser: args.browser })
+  }
+
+  const result = args.noWait
+    ? null
+    : await waitLocalJobResult({
+      homeDir,
+      jobId: job.jobId,
+      nonce: job.nonce,
+      timeoutMs: args.timeoutMs === undefined ? 60000 : Number(args.timeoutMs),
+    })
+
+  printPayload({
+    ok: true,
+    jobId: job.jobId,
+    provider: job.provider,
+    taskUrl,
+    result,
+    snapshot: result?.result?.snapshot,
+    compactOutput: result?.compactOutput,
+  }, args)
 }
 
 async function runCommand(args) {
@@ -290,6 +358,11 @@ function parseArgs(argv) {
     } else if (arg === '--read-timeout-ms') {
       parsed.readTimeoutMs = next
       index += 1
+    } else if (arg === '--max-text-chars') {
+      parsed.maxTextChars = next
+      index += 1
+    } else if (arg === '--include-text') {
+      parsed.includeText = true
     } else if (arg === '--json') {
       parsed.json = true
     } else if (arg === '--no-open') {
@@ -351,6 +424,7 @@ function usage() {
   console.error([
     'Usage:',
     '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --context-file <file> --json',
+    '  tokenless snapshot-dom --provider chatgpt --extension-id <chrome-extension-id> --json',
     '  tokenless config --preferred-providers claude,chatgpt,gemini --json',
     '  tokenless install --extension-id <chrome-extension-id> --json',
     '  tokenless doctor --json',

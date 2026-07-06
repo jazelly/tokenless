@@ -7,6 +7,7 @@ export const BRIDGE_ACTIONS = Object.freeze({
   OPEN: 'open',
   SUBMIT: 'submit',
   READ: 'read',
+  SNAPSHOT_DOM: 'snapshot_dom',
   SUBMIT_AND_READ: 'submit_and_read',
 })
 
@@ -25,6 +26,8 @@ export function createBridgeRequest(input = {}) {
     readDelayMs: input.readDelayMs,
     readTimeoutMs: input.readTimeoutMs,
     submitTimeoutMs: input.submitTimeoutMs,
+    includeText: input.includeText,
+    maxTextChars: input.maxTextChars,
     metadata: input.metadata,
   }
 }
@@ -76,6 +79,9 @@ export function validateBridgeRequest(payload) {
   if (payload.submitTimeoutMs !== undefined && (!Number.isFinite(Number(payload.submitTimeoutMs)) || Number(payload.submitTimeoutMs) < 0)) {
     return invalid('invalid_submit_timeout', 'Bridge submitTimeoutMs must be a nonnegative number.')
   }
+  if (payload.maxTextChars !== undefined && (!Number.isFinite(Number(payload.maxTextChars)) || Number(payload.maxTextChars) < 0)) {
+    return invalid('invalid_max_text_chars', 'Bridge maxTextChars must be a nonnegative number.')
+  }
   return valid(normalizeRequest(payload))
 }
 
@@ -111,6 +117,8 @@ function normalizeRequest(payload) {
     readDelayMs: payload.readDelayMs === undefined ? undefined : Number(payload.readDelayMs),
     readTimeoutMs: payload.readTimeoutMs === undefined ? undefined : Number(payload.readTimeoutMs),
     submitTimeoutMs: payload.submitTimeoutMs === undefined ? undefined : Number(payload.submitTimeoutMs),
+    includeText: payload.includeText === undefined ? undefined : Boolean(payload.includeText),
+    maxTextChars: payload.maxTextChars === undefined ? undefined : Number(payload.maxTextChars),
     metadata: payload.metadata,
   }
 }

@@ -38,10 +38,34 @@ async function main() {
     conversation: request.conversation,
     readDelayMs: request.readDelayMs,
     readTimeoutMs: request.readTimeoutMs,
+    includeText: request.includeText,
+    maxTextChars: request.maxTextChars,
     metadata: request.metadata,
   })
 
   const normalized = normalizeBridgeResponse(bridgeResponse)
+  if (normalized.ok && request.action === 'snapshot_dom') {
+    const snapshotWrite = await nativeRequest({
+      type: 'tokenless.native.write_snapshot',
+      jobId,
+      nonce,
+      provider: request.provider,
+      snapshot: normalized.result,
+    })
+    if (!snapshotWrite.ok) {
+      throw taskError(snapshotWrite.error?.code, snapshotWrite.error?.message)
+    }
+    normalized.result = {
+      status: normalized.result?.status,
+      provider: normalized.result?.provider,
+      url: normalized.result?.url,
+      title: normalized.result?.title,
+      capturedAt: normalized.result?.capturedAt,
+      sanitized: normalized.result?.sanitized,
+      includeText: normalized.result?.includeText,
+      snapshot: snapshotWrite.result.snapshot,
+    }
+  }
   await nativeRequest({
     type: 'tokenless.native.write_result',
     jobId,

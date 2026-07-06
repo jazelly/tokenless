@@ -6,6 +6,7 @@ import {
   readLocalJobRequest,
   readTokenlessConfig,
   tokenlessHome,
+  writeDomSnapshot,
   writeTokenlessConfig,
   writeJobState,
 } from './job-store.js'
@@ -89,6 +90,16 @@ async function handleMessage(message) {
         actor: 'extension',
       })
       return { ok: true, result }
+    }
+    if (message?.type === 'tokenless.native.write_snapshot') {
+      const snapshot = await writeDomSnapshot({
+        homeDir,
+        jobId: message.jobId,
+        nonce: message.nonce,
+        provider: message.provider,
+        snapshot: message.snapshot,
+      })
+      return { ok: true, result: { snapshot } }
     }
     return {
       ok: false,

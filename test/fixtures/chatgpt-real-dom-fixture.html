@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en-US" data-build="prod-real-dom-fixture" data-contrast="default" dir="ltr" class="light" style="color-scheme: light;">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="text-scale" content="scale">
+    <title>ChatGPT</title>
+    <meta property="og:title" content="ChatGPT">
+    <meta property="og:url" content="https://chatgpt.com/">
+    <meta property="og:site_name" content="ChatGPT">
+    <meta name="description" content="ChatGPT is your AI chatbot for everyday use.">
+    <style>
+      :root {
+        color-scheme: light;
+        --main-surface-primary: #ffffff;
+        --main-surface-secondary: #f9f9f9;
+        --text-primary: #0d0d0d;
+        --text-secondary: #5d5d5d;
+        --border-light: #e3e3e3;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--main-surface-primary);
+        color: var(--text-primary);
+      }
+
+      #root {
+        min-height: 100vh;
+      }
+
+      .relative.flex.h-full.w-full.overflow-hidden {
+        min-height: 100vh;
+        display: flex;
+      }
+
+      .draggable.no-draggable-children {
+        width: 260px;
+        background: #f7f7f7;
+        border-right: 1px solid var(--border-light);
+        padding: 12px;
+        box-sizing: border-box;
+      }
+
+      main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        height: 56px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--border-light);
+      }
+
+      [data-testid="conversation-panel"] {
+        flex: 1;
+        overflow: auto;
+        padding: 24px 0 172px;
+      }
+
+      article[data-testid*="conversation-turn"] {
+        width: min(768px, calc(100vw - 320px));
+        margin: 0 auto;
+        padding: 18px 0;
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 14px;
+      }
+
+      [data-message-author-role="assistant"] .avatar {
+        background: #10a37f;
+      }
+
+      [data-message-author-role="user"] .avatar {
+        background: #ececec;
+        color: #0d0d0d;
+      }
+
+      .avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        color: white;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .markdown {
+        line-height: 1.6;
+        white-space: pre-wrap;
+      }
+
+      .composer-parent {
+        position: fixed;
+        left: 260px;
+        right: 0;
+        bottom: 0;
+        padding: 20px 24px 28px;
+        background: linear-gradient(to top, var(--main-surface-primary) 74%, rgba(255,255,255,0));
+      }
+
+      form[data-testid="composer"] {
+        width: min(768px, calc(100vw - 320px));
+        margin: 0 auto;
+        border: 1px solid #d7d7d7;
+        border-radius: 28px;
+        background: var(--main-surface-primary);
+        box-shadow: 0 8px 22px rgba(0,0,0,.06);
+        display: grid;
+        grid-template-columns: 1fr 42px;
+        align-items: end;
+        gap: 10px;
+        padding: 10px;
+      }
+
+      #prompt-textarea.ProseMirror {
+        min-height: 24px;
+        max-height: 180px;
+        overflow-y: auto;
+        outline: none;
+        padding: 9px 12px;
+        line-height: 1.5;
+      }
+
+      #prompt-textarea:empty::before {
+        content: attr(data-placeholder);
+        color: #8f8f8f;
+      }
+
+      button[data-testid="composer-send-button"] {
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        border: 0;
+        background: #0d0d0d;
+        color: white;
+        cursor: pointer;
+      }
+
+      button[data-testid="composer-send-button"][disabled],
+      button[data-testid="composer-send-button"][aria-disabled="true"] {
+        opacity: .35;
+        cursor: default;
+      }
+
+      button[data-testid="stop-button"] {
+        position: fixed;
+        right: 32px;
+        bottom: 100px;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="relative flex h-full w-full overflow-hidden">
+        <aside class="draggable no-draggable-children">
+          <nav aria-label="Chat history">
+            <button aria-label="New chat">New chat</button>
+            <ol>
+              <li><a href="/c/stale-fixture-conversation">Earlier Tokenless selector check</a></li>
+            </ol>
+          </nav>
+        </aside>
+        <main>
+          <header>
+            <button aria-label="Open sidebar">☰</button>
+            <div>ChatGPT</div>
+          </header>
+          <div data-testid="conversation-panel">
+            <article data-testid="conversation-turn-1" data-message-author-role="user">
+              <div class="avatar">U</div>
+              <div>
+                <div class="sr-only">You said:</div>
+                <div class="whitespace-pre-wrap">Earlier real-DOM fixture prompt</div>
+              </div>
+            </article>
+            <article data-testid="conversation-turn-2" data-message-author-role="assistant">
+              <div class="avatar">AI</div>
+              <div>
+                <div class="sr-only">ChatGPT said:</div>
+                <div class="markdown prose">stale ChatGPT real-DOM fixture answer that must not be read</div>
+              </div>
+            </article>
+          </div>
+          <div class="composer-parent">
+            <form data-testid="composer" aria-label="Message composer">
+              <div
+                id="prompt-textarea"
+                class="ProseMirror"
+                data-id="root"
+                contenteditable="true"
+                role="textbox"
+                aria-label="Message ChatGPT"
+                data-placeholder="Ask anything"
+              ></div>
+              <button
+                type="submit"
+                data-testid="composer-send-button"
+                aria-label="Send message"
+                aria-disabled="true"
+                disabled
+              >↑</button>
+            </form>
+          </div>
+        </main>
+      </div>
+    </div>
+    <script>
+      const composer = document.querySelector('[data-testid="composer"] [contenteditable="true"]')
+      const form = document.querySelector('[data-testid="composer"]')
+      const send = document.querySelector('[data-testid="composer-send-button"]')
+      const conversation = document.querySelector('[data-testid="conversation-panel"]')
+
+      composer.addEventListener('input', () => {
+        const hasPrompt = textOf(composer).trim().length > 0
+        send.disabled = !hasPrompt
+        send.setAttribute('aria-disabled', String(!hasPrompt))
+      })
+
+      form.addEventListener('submit', (event) => {
+        event.preventDefault()
+        if (send.disabled || send.getAttribute('aria-disabled') === 'true') return
+
+        const prompt = textOf(composer)
+        conversation.append(message('user', prompt))
+        composer.textContent = ''
+        send.disabled = true
+        send.setAttribute('aria-disabled', 'true')
+
+        const stop = document.createElement('button')
+        stop.dataset.testid = 'stop-button'
+        stop.setAttribute('aria-label', 'Stop generating')
+        stop.textContent = 'Stop generating'
+        document.body.append(stop)
+
+        setTimeout(() => {
+          const assistant = message('assistant', 'visible ChatGPT real-DOM fixture answer_streaming for: ' + prompt)
+          conversation.append(assistant)
+          setTimeout(() => {
+            assistant.querySelector('.markdown').textContent = 'visible ChatGPT real-DOM fixture answer for: ' + prompt
+            stop.remove()
+            history.replaceState(null, '', '/c/real-dom-fixture-conversation')
+          }, 900)
+        }, 120)
+      })
+
+      function message(role, text) {
+        const article = document.createElement('article')
+        article.dataset.testid = 'conversation-turn-' + crypto.randomUUID()
+        article.dataset.messageAuthorRole = role
+
+        const avatar = document.createElement('div')
+        avatar.className = 'avatar'
+        avatar.textContent = role === 'assistant' ? 'AI' : 'U'
+
+        const body = document.createElement('div')
+        const label = document.createElement('div')
+        label.className = 'sr-only'
+        label.textContent = role === 'assistant' ? 'ChatGPT said:' : 'You said:'
+
+        const content = document.createElement('div')
+        content.className = role === 'assistant' ? 'markdown prose' : 'whitespace-pre-wrap'
+        content.textContent = text
+
+        body.append(label, content)
+        article.append(avatar, body)
+        return article
+      }
+
+      function textOf(node) {
+        return node.innerText || node.textContent || ''
+      }
+    </script>
+  </body>
+</html>

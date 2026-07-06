@@ -121,7 +121,7 @@ npm test
 npm run test:e2e
 ```
 
-`npm run test:e2e` 会用 Playwright 在 `https://chatgpt.com/**` 下提供一个形似 ChatGPT 的本地 fixture DOM，验证本地 extension/native-host 链路。它不证明当前线上 ChatGPT DOM 仍然可用。
+`npm run test:e2e` 会用 Playwright 在 `https://chatgpt.com/**` 下提供一个规范化的 ChatGPT real-DOM fixture，验证本地 extension/native-host 链路。它会覆盖 Tokenless 针对 ChatGPT 使用的可见输入框、发送按钮和助手消息 selector 形态，但不证明当前线上 ChatGPT DOM 仍然兼容。
 
 真实 ChatGPT 测试会打开真正的 `https://chatgpt.com/` DOM，并且需要真实登录的浏览器资料，因此默认不运行：
 
@@ -139,7 +139,7 @@ REPO_ROOT="$(pwd)"
 npm install
 npm run build
 npm test
-npm run test:e2e # fixture DOM E2E，不是真实 ChatGPT
+npm run test:e2e # real-DOM fixture E2E，不是 live ChatGPT
 
 npm install -g ./packages/cli
 ```
