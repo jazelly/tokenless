@@ -151,6 +151,23 @@ function browserCaptureScript({ selectorProbes, includeText, maxTextChars }) {
         if (node.nodeValue.trim()) node.nodeValue = '[text]';
       }
     }
+    const textLikeAttributes = new Set([
+      'aria-description',
+      'aria-label',
+      'alt',
+      'content',
+      'label',
+      'placeholder',
+      'title'
+    ]);
+    const urlAttributes = new Set([
+      'action',
+      'formaction',
+      'href',
+      'poster',
+      'src',
+      'srcset'
+    ]);
     clone.querySelectorAll('*').forEach((node) => {
       for (const attr of [...node.attributes]) {
         const name = attr.name.toLowerCase();
@@ -158,9 +175,16 @@ function browserCaptureScript({ selectorProbes, includeText, maxTextChars }) {
           name.includes('token') ||
           name.includes('secret') ||
           name.includes('email') ||
+          name.includes('password') ||
+          name.includes('session') ||
+          name.includes('auth') ||
           name === 'srcdoc'
         ) {
           node.setAttribute(attr.name, '[redacted]');
+        } else if (urlAttributes.has(name) && attr.value.trim()) {
+          node.setAttribute(attr.name, '[url]');
+        } else if (!includeText && textLikeAttributes.has(name) && attr.value.trim()) {
+          node.setAttribute(attr.name, '[text]');
         }
       }
     });
@@ -186,7 +210,7 @@ function browserCaptureScript({ selectorProbes, includeText, maxTextChars }) {
       metadata: {
         capturedAt: new Date().toISOString(),
         url: location.href,
-        title: document.title,
+        title: includeText ? document.title : '[text]',
         userAgent: navigator.userAgent,
         sanitized: true,
         includeText,

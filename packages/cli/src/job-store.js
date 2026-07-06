@@ -13,6 +13,8 @@ export const JOB_STATES = Object.freeze({
   CLAIMED: 'claimed',
   RUNNING: 'running',
   NEEDS_USER: 'needs_user',
+  BLOCKED: 'blocked',
+  UI_MISMATCH: 'ui_mismatch',
   SUCCEEDED: 'succeeded',
   FAILED: 'failed',
   CANCELED: 'canceled',
@@ -20,10 +22,27 @@ export const JOB_STATES = Object.freeze({
 })
 
 const FINAL_STATES = new Set([
+  JOB_STATES.BLOCKED,
+  JOB_STATES.UI_MISMATCH,
   JOB_STATES.SUCCEEDED,
   JOB_STATES.FAILED,
   JOB_STATES.CANCELED,
   JOB_STATES.TIMED_OUT,
+])
+
+const BLOCKED_ERROR_CODES = new Set([
+  'provider_blocker_visible',
+  'provider_landing_blocked',
+])
+
+const UI_MISMATCH_ERROR_CODES = new Set([
+  'provider_landing_unavailable',
+  'selector_drift',
+])
+
+const TIMED_OUT_ERROR_CODES = new Set([
+  'provider_landing_timeout',
+  'response_unavailable',
 ])
 
 const conversationMapLocks = new Map()
@@ -260,8 +279,9 @@ export async function completeLocalJob({
       )
     }
   }
+  const normalizedError = normalizeError(mappingError ?? error)
   const succeeded = Boolean(ok) && !mappingError
-  const status = succeeded ? JOB_STATES.SUCCEEDED : JOB_STATES.FAILED
+  const status = succeeded ? JOB_STATES.SUCCEEDED : failedJobStatus(normalizedError)
   const payload = {
     protocol: LOCAL_JOB_PROTOCOL_VERSION,
     jobId,
@@ -274,7 +294,7 @@ export async function completeLocalJob({
     completedAt: new Date().toISOString(),
     compactOutput: succeeded ? compactResult(result) : undefined,
     result: succeeded ? result ?? null : null,
-    error: succeeded ? null : normalizeError(mappingError ?? error),
+    error: succeeded ? null : normalizedError,
   }
   await writeJsonAtomic(jobPath(homeDir, jobId, 'result'), payload, 0o600)
   await writeJobState({ homeDir, jobId, nonce, status, actor })
@@ -440,23 +460,76 @@ export async function waitLocalJobResult({
   nonce,
   timeoutMs = 120000,
   pollMs = 250,
+  statusIntervalMs = 10000,
+  onStatus,
 } = {}) {
   const deadline = Date.now() + timeoutMs
+  const startedAt = Date.now()
   let lastState = null
+  let lastStateKey = null
+  let nextPollStatusAt = startedAt + statusIntervalMs
   while (Date.now() < deadline) {
     const result = await readJson(jobPath(homeDir, jobId, 'result')).catch(() => null)
     if (result) {
       validateJobAccess(result, jobId, nonce)
+      await notifyJobStatus(onStatus, {
+        type: 'result',
+        jobId,
+        status: result.status,
+        actor: result.actor,
+        elapsedMs: Date.now() - startedAt,
+      })
       return result
     }
-    lastState = await readJson(jobPath(homeDir, jobId, 'state')).catch(() => lastState)
+    const state = await readJson(jobPath(homeDir, jobId, 'state')).catch(() => lastState)
+    if (state) {
+      lastState = state
+      const stateKey = `${state.status}:${state.updatedAt ?? ''}`
+      if (stateKey !== lastStateKey) {
+        lastStateKey = stateKey
+        nextPollStatusAt = Date.now() + statusIntervalMs
+        await notifyJobStatus(onStatus, {
+          type: 'state',
+          jobId,
+          status: state.status,
+          actor: state.actor,
+          detail: state.detail,
+          updatedAt: state.updatedAt,
+          elapsedMs: Date.now() - startedAt,
+        })
+      } else if (Date.now() >= nextPollStatusAt) {
+        nextPollStatusAt = Date.now() + statusIntervalMs
+        await notifyJobStatus(onStatus, {
+          type: 'poll',
+          jobId,
+          status: state.status,
+          actor: state.actor,
+          detail: state.detail,
+          updatedAt: state.updatedAt,
+          elapsedMs: Date.now() - startedAt,
+        })
+      }
+    }
     if (lastState && FINAL_STATES.has(lastState.status)) {
       throw accessError(lastState.status, `Local job ended without result: ${lastState.status}`)
     }
     await delay(pollMs)
   }
   await writeJobState({ homeDir, jobId, nonce, status: JOB_STATES.TIMED_OUT, actor: 'tokenless-cli' })
+  await notifyJobStatus(onStatus, {
+    type: 'timeout',
+    jobId,
+    status: JOB_STATES.TIMED_OUT,
+    actor: 'tokenless-cli',
+    elapsedMs: Date.now() - startedAt,
+  })
   throw accessError('job_timeout', 'Timed out waiting for local Tokenless job result.')
+}
+
+async function notifyJobStatus(onStatus, event) {
+  if (typeof onStatus === 'function') {
+    await onStatus(event)
+  }
 }
 
 export async function installNativeHost({
@@ -904,6 +977,19 @@ function normalizeError(error) {
     message: typeof error?.message === 'string' ? error.message : 'Local Tokenless job failed.',
     retryable: Boolean(error?.retryable),
   }
+}
+
+function failedJobStatus(error) {
+  if (BLOCKED_ERROR_CODES.has(error?.code)) {
+    return JOB_STATES.BLOCKED
+  }
+  if (UI_MISMATCH_ERROR_CODES.has(error?.code)) {
+    return JOB_STATES.UI_MISMATCH
+  }
+  if (TIMED_OUT_ERROR_CODES.has(error?.code)) {
+    return JOB_STATES.TIMED_OUT
+  }
+  return JOB_STATES.FAILED
 }
 
 function accessError(code, message) {

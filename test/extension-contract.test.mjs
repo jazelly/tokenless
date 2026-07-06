@@ -34,6 +34,28 @@ test('extension routes mapped conversations by exact target URL before generic p
   assert.match(contentScript, /url: location\.href/)
 })
 
+test('extension validates provider landing before waiting on provider actions', () => {
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.js'), 'utf8')
+  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.js'), 'utf8')
+
+  assert.match(serviceWorker, /const PROVIDER_LANDING_TIMEOUT_MS = 8000/)
+  assert.match(serviceWorker, /waitForProviderTabLoaded\(tab\.id, provider\)/)
+  assert.match(serviceWorker, /validateProviderLanding\(landedTab\.id, provider, request\)/)
+  assert.match(serviceWorker, /invalid_target_url/)
+  assert.doesNotMatch(serviceWorker, /target_url_provider_mismatch/)
+  assert.doesNotMatch(serviceWorker, /provider_landing_failed/)
+  assert.doesNotMatch(serviceWorker, /providerForTab\?\.id === provider\.id/)
+  assert.doesNotMatch(serviceWorker, /return providerForTarget\?\.id === provider\.id \? targetUrl : provider\.homeUrl/)
+
+  assert.match(contentScript, /tokenless\.bridge\.validate_landing/)
+  assert.match(contentScript, /request\.landingTimeoutMs \?\? 5000/)
+  assert.match(contentScript, /provider_landing_unavailable/)
+  assert.match(contentScript, /providerForMessage/)
+  assert.match(contentScript, /chatSurfaceStatus/)
+  assert.match(contentScript, /provider\.id === 'chatgpt'/)
+  assert.match(contentScript, /Boolean\(visibleComposer && visibleSubmit\)/)
+})
+
 test('provider content script is safe to inject more than once', () => {
   const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.js'), 'utf8')
   const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.js'), 'utf8')
@@ -128,9 +150,11 @@ test('local job store requires nonce and writes compact result', async () => {
   const {
     completeLocalJob,
     createLocalJob,
+    JOB_STATES,
     readLocalJobRequest,
     waitLocalJobResult,
     writeDomSnapshot,
+    writeJobState,
   } = await import('../packages/cli/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-job-store-'))
   const job = await createLocalJob({
@@ -187,6 +211,99 @@ test('local job store requires nonce and writes compact result', async () => {
   })
   const snapshotResult = await waitLocalJobResult({ homeDir, jobId: snapshotJob.jobId, nonce: snapshotJob.nonce, timeoutMs: 1000 })
   assert.equal(snapshotResult.compactOutput, snapshot.htmlPath)
+
+  const blockedJob = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    prompt: 'Blocked visible session.',
+  })
+  const blockedResult = await completeLocalJob({
+    homeDir,
+    jobId: blockedJob.jobId,
+    nonce: blockedJob.nonce,
+    ok: false,
+    error: { code: 'provider_blocker_visible', message: 'CAPTCHA is visible.', retryable: true },
+  })
+  assert.equal(blockedResult.status, JOB_STATES.BLOCKED)
+
+  const uiMismatchJob = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    prompt: 'Mismatched visible session.',
+  })
+  const uiMismatchResult = await completeLocalJob({
+    homeDir,
+    jobId: uiMismatchJob.jobId,
+    nonce: uiMismatchJob.nonce,
+    ok: false,
+    error: { code: 'selector_drift', message: 'Composer selector was not found.', retryable: true },
+  })
+  assert.equal(uiMismatchResult.status, JOB_STATES.UI_MISMATCH)
+
+  const timedOutJob = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    prompt: 'Timed out visible session.',
+  })
+  const timedOutResult = await completeLocalJob({
+    homeDir,
+    jobId: timedOutJob.jobId,
+    nonce: timedOutJob.nonce,
+    ok: false,
+    error: { code: 'provider_landing_timeout', message: 'Provider did not load.', retryable: true },
+  })
+  assert.equal(timedOutResult.status, JOB_STATES.TIMED_OUT)
+
+  const failedJob = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    prompt: 'Generic failure.',
+  })
+  const failedResult = await completeLocalJob({
+    homeDir,
+    jobId: failedJob.jobId,
+    nonce: failedJob.nonce,
+    ok: false,
+    error: { code: 'bridge_runtime_error', message: 'Unexpected bridge failure.', retryable: true },
+  })
+  assert.equal(failedResult.status, JOB_STATES.FAILED)
+
+  const pollingJob = await createLocalJob({
+    homeDir,
+    provider: 'chatgpt',
+    prompt: 'Wait for visible DOM.',
+  })
+  const events = []
+  await writeJobState({
+    homeDir,
+    jobId: pollingJob.jobId,
+    nonce: pollingJob.nonce,
+    status: 'running',
+    actor: 'extension',
+    detail: { provider: 'chatgpt' },
+  })
+  const waiting = waitLocalJobResult({
+    homeDir,
+    jobId: pollingJob.jobId,
+    nonce: pollingJob.nonce,
+    timeoutMs: 1000,
+    pollMs: 20,
+    statusIntervalMs: 25,
+    onStatus: (event) => events.push(event),
+  })
+  await delay(70)
+  await completeLocalJob({
+    homeDir,
+    jobId: pollingJob.jobId,
+    nonce: pollingJob.nonce,
+    ok: true,
+    result: { text: 'done after polling' },
+  })
+  assert.equal((await waiting).compactOutput, 'done after polling')
+  assert.deepEqual(events.map((event) => event.type), ['state', 'poll', 'result'])
+  assert.equal(events[0].status, 'running')
+  assert.equal(events[1].status, 'running')
+  assert.equal(events[2].status, 'succeeded')
 })
 
 test('local Tokenless config stores provider preference for default runs', async () => {
@@ -558,4 +675,8 @@ function nativeHostMessage(message, env = {}) {
     header.writeUInt32LE(body.length, 0)
     child.stdin.write(Buffer.concat([header, body]))
   })
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

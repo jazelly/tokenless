@@ -11,6 +11,7 @@ import {
   waitLocalJobResult,
   writeTokenlessConfig,
 } from './index.js'
+import { DEFAULT_EXTENSION_ID } from './default-extension-id.js'
 
 const argv = process.argv.slice(2)
 const command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
@@ -42,6 +43,12 @@ try {
       retryable: Boolean(error.retryable),
     },
   }
+  if (error.status) {
+    payload.status = error.status
+  }
+  if (Array.isArray(error.statusLog)) {
+    payload.statusLog = error.statusLog
+  }
   if (args.json) {
     console.log(JSON.stringify(payload, null, 2))
   } else {
@@ -51,20 +58,7 @@ try {
 }
 
 async function snapshotDomCommand(args) {
-  const rawExtensionId = args.extensionId || process.env.TOKENLESS_EXTENSION_ID
-  const extensionId = normalizeExtensionId(rawExtensionId)
-  if (!extensionId) {
-    if (rawExtensionId) {
-      throw usageError(
-        'invalid_extension_id',
-        'Extension id must be the real 32-character Chrome extension id from chrome://extensions.'
-      )
-    }
-    throw usageError(
-      'missing_extension_id',
-      'Usage: tokenless snapshot-dom requires --extension-id <id> or TOKENLESS_EXTENSION_ID.'
-    )
-  }
+  const { extensionId } = resolveExtensionId(args)
 
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
@@ -91,19 +85,52 @@ async function snapshotDomCommand(args) {
     },
   })
 
+  const statusReporter = createCliStatusReporter(args)
+  statusReporter.report({
+    event: 'created',
+    status: job.status,
+    jobId: job.jobId,
+    provider: job.provider,
+    action: job.action,
+    route: job.conversation?.route,
+  })
+
   const taskUrl = buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce })
   if (!args.noOpen) {
     await openUrl(taskUrl, { browser: args.browser })
+    statusReporter.report({
+      event: 'opened',
+      status: 'opened_task_page',
+      jobId: job.jobId,
+      provider: job.provider,
+      browser: args.browser,
+      taskUrl,
+    })
+  } else {
+    statusReporter.report({
+      event: 'not_opened',
+      status: 'waiting_for_external_open',
+      jobId: job.jobId,
+      provider: job.provider,
+      taskUrl,
+    })
   }
 
   const result = args.noWait
-    ? null
-    : await waitLocalJobResult({
-      homeDir,
-      jobId: job.jobId,
-      nonce: job.nonce,
-      timeoutMs: args.timeoutMs === undefined ? 60000 : Number(args.timeoutMs),
-    })
+    ? (statusReporter.report({
+        event: 'detached',
+        status: 'no_wait',
+        jobId: job.jobId,
+        provider: job.provider,
+      }), null)
+    : await waitLocalJobResultWithStatus({
+        homeDir,
+        jobId: job.jobId,
+        nonce: job.nonce,
+        timeoutMs: args.timeoutMs === undefined ? 60000 : Number(args.timeoutMs),
+        statusReporter,
+      })
+  assertLocalJobSucceeded(result, statusReporter)
 
   printPayload({
     ok: true,
@@ -113,25 +140,14 @@ async function snapshotDomCommand(args) {
     result,
     snapshot: result?.result?.snapshot,
     compactOutput: result?.compactOutput,
+    status: result?.status ?? statusReporter.lastStatus(),
+    statusLog: statusReporter.events,
   }, args)
 }
 
 async function runCommand(args) {
   const prompt = await promptFromArgs(args)
-  const rawExtensionId = args.extensionId || process.env.TOKENLESS_EXTENSION_ID
-  const extensionId = normalizeExtensionId(rawExtensionId)
-  if (!extensionId) {
-    if (rawExtensionId) {
-      throw usageError(
-        'invalid_extension_id',
-        'Extension id must be the real 32-character Chrome extension id from chrome://extensions.'
-      )
-    }
-    throw usageError(
-      'missing_extension_id',
-      'Usage: tokenless run requires --extension-id <id> or TOKENLESS_EXTENSION_ID.'
-    )
-  }
+  const { extensionId } = resolveExtensionId(args)
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
@@ -163,19 +179,52 @@ async function runCommand(args) {
     },
   })
 
+  const statusReporter = createCliStatusReporter(args)
+  statusReporter.report({
+    event: 'created',
+    status: job.status,
+    jobId: job.jobId,
+    provider: job.provider,
+    action: job.action,
+    route: job.conversation?.route,
+  })
+
   const taskUrl = buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce })
   if (taskUrl && !args.noOpen) {
     await openUrl(taskUrl, { browser: args.browser })
+    statusReporter.report({
+      event: 'opened',
+      status: 'opened_task_page',
+      jobId: job.jobId,
+      provider: job.provider,
+      browser: args.browser,
+      taskUrl,
+    })
+  } else {
+    statusReporter.report({
+      event: 'not_opened',
+      status: 'waiting_for_external_open',
+      jobId: job.jobId,
+      provider: job.provider,
+      taskUrl,
+    })
   }
 
   const result = args.noWait
-    ? null
-    : await waitLocalJobResult({
-      homeDir,
-      jobId: job.jobId,
-      nonce: job.nonce,
-      timeoutMs: args.timeoutMs === undefined ? 180000 : Number(args.timeoutMs),
-    })
+    ? (statusReporter.report({
+        event: 'detached',
+        status: 'no_wait',
+        jobId: job.jobId,
+        provider: job.provider,
+      }), null)
+    : await waitLocalJobResultWithStatus({
+        homeDir,
+        jobId: job.jobId,
+        nonce: job.nonce,
+        timeoutMs: args.timeoutMs === undefined ? 180000 : Number(args.timeoutMs),
+        statusReporter,
+      })
+  assertLocalJobSucceeded(result, statusReporter)
 
   const payload = {
     ok: true,
@@ -189,18 +238,14 @@ async function runCommand(args) {
     conversation: job.conversation,
     result,
     compactOutput: result?.compactOutput,
+    status: result?.status ?? statusReporter.lastStatus(),
+    statusLog: statusReporter.events,
   }
   printPayload(payload, args)
 }
 
 async function installCommand(args) {
-  const extensionId = normalizeExtensionId(args.extensionId || process.env.TOKENLESS_EXTENSION_ID)
-  if ((args.extensionId || process.env.TOKENLESS_EXTENSION_ID) && !extensionId) {
-    throw usageError(
-      'invalid_extension_id',
-      'Extension id must be the real 32-character Chrome extension id from chrome://extensions.'
-    )
-  }
+  const { extensionId } = resolveExtensionId(args)
   const result = await installNativeHost({
     homeDir: tokenlessHome(args.home),
     extensionId,
@@ -219,17 +264,16 @@ async function installCommand(args) {
 async function doctorCommand(args) {
   const homeDir = tokenlessHome(args.home)
   const nodeOk = Number(process.versions.node.split('.')[0]) >= 22
-  const rawExtensionId = args.extensionId || process.env.TOKENLESS_EXTENSION_ID || null
-  const extensionId = normalizeExtensionId(rawExtensionId)
+  const { extensionId, source: extensionIdSource } = resolveExtensionId(args)
   printPayload({
-    ok: nodeOk && (!rawExtensionId || Boolean(extensionId)),
+    ok: nodeOk && Boolean(extensionId),
     checks: {
       node: { ok: nodeOk, version: process.version, required: '>=22' },
       tokenlessHome: { ok: true, path: homeDir },
       extensionId: {
         ok: Boolean(extensionId),
         extensionId,
-        error: rawExtensionId && !extensionId ? 'invalid_extension_id' : undefined,
+        source: extensionIdSource,
       },
     },
   }, args)
@@ -365,6 +409,8 @@ function parseArgs(argv) {
       parsed.includeText = true
     } else if (arg === '--json') {
       parsed.json = true
+    } else if (arg === '--quiet') {
+      parsed.quiet = true
     } else if (arg === '--no-open') {
       parsed.noOpen = true
     } else if (arg === '--no-wait') {
@@ -420,6 +466,110 @@ function printPayload(payload, args) {
   console.log(JSON.stringify(payload, null, 2))
 }
 
+async function waitLocalJobResultWithStatus({
+  homeDir,
+  jobId,
+  nonce,
+  timeoutMs,
+  statusReporter,
+}) {
+  try {
+    return await waitLocalJobResult({
+      homeDir,
+      jobId,
+      nonce,
+      timeoutMs,
+      onStatus: statusReporter.report,
+    })
+  } catch (error) {
+    error.status = statusReporter.lastStatus()
+    error.statusLog = statusReporter.events
+    throw error
+  }
+}
+
+function assertLocalJobSucceeded(result, statusReporter) {
+  if (!result || result.ok !== false) {
+    return
+  }
+  const error = new Error(result.error?.message || `Local Tokenless job failed: ${result.status || 'failed'}`)
+  error.code = result.error?.code || result.status || 'local_job_failed'
+  error.retryable = Boolean(result.error?.retryable)
+  error.status = result.status ?? statusReporter.lastStatus()
+  error.statusLog = statusReporter.events
+  throw error
+}
+
+function createCliStatusReporter(args) {
+  const startedAt = Date.now()
+  const events = []
+  const report = (event) => {
+    const normalized = normalizeStatusEvent(event, startedAt)
+    events.push(normalized)
+    if (!args.json && !args.quiet) {
+      console.log(formatStatusEvent(normalized))
+    }
+  }
+  return {
+    events,
+    report,
+    lastStatus() {
+      return events.at(-1)?.status
+    },
+  }
+}
+
+function normalizeStatusEvent(event, startedAt) {
+  const now = new Date()
+  const elapsedMs = Number.isFinite(event.elapsedMs) ? event.elapsedMs : now.getTime() - startedAt
+  return {
+    at: now.toISOString(),
+    event: event.event || event.type || 'status',
+    status: event.status,
+    jobId: event.jobId,
+    provider: event.provider ?? event.detail?.provider,
+    action: event.action,
+    route: event.route,
+    actor: event.actor,
+    browser: event.browser,
+    taskUrl: event.taskUrl,
+    elapsedMs,
+  }
+}
+
+function formatStatusEvent(event) {
+  const parts = ['[tokenless]', event.event]
+  for (const [key, value] of [
+    ['status', event.status],
+    ['provider', event.provider],
+    ['action', event.action],
+    ['route', event.route],
+    ['actor', event.actor],
+    ['browser', event.browser],
+    ['elapsed', formatElapsed(event.elapsedMs)],
+  ]) {
+    if (value !== undefined && value !== null && value !== '') {
+      parts.push(`${key}=${value}`)
+    }
+  }
+  if (event.jobId) {
+    parts.push(`job=${shortJobId(event.jobId)}`)
+  }
+  if (event.taskUrl && (event.event === 'opened' || event.event === 'not_opened')) {
+    parts.push(`taskUrl=${event.taskUrl}`)
+  }
+  return parts.join(' ')
+}
+
+function formatElapsed(elapsedMs) {
+  if (!Number.isFinite(elapsedMs)) return undefined
+  return `${Math.max(0, Math.round(elapsedMs / 1000))}s`
+}
+
+function shortJobId(jobId) {
+  return String(jobId).slice(0, 8)
+}
+
 function usage() {
   console.error([
     'Usage:',
@@ -435,6 +585,29 @@ function usageError(code, message) {
   const error = new Error(message)
   error.code = code
   return error
+}
+
+function resolveExtensionId(args) {
+  const candidates = [
+    ['argument', args.extensionId],
+    ['environment', process.env.TOKENLESS_EXTENSION_ID],
+    ['bundled_default', DEFAULT_EXTENSION_ID],
+  ]
+  for (const [source, value] of candidates) {
+    if (!value) continue
+    const extensionId = normalizeExtensionId(value)
+    if (!extensionId) {
+      throw usageError(
+        'invalid_extension_id',
+        'Extension id must be the real 32-character Chrome extension id from chrome://extensions.'
+      )
+    }
+    return { extensionId, source }
+  }
+  throw usageError(
+    'missing_extension_id',
+    'Usage: tokenless requires --extension-id <id>, TOKENLESS_EXTENSION_ID, or a bundled default extension id.'
+  )
 }
 
 function normalizeExtensionId(extensionId) {

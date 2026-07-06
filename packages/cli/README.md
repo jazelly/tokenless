@@ -17,6 +17,8 @@ tokenless install --extension-id <chrome-extension-id>
 tokenless doctor --extension-id <chrome-extension-id>
 ```
 
+The CLI resolves the extension id in this order: `--extension-id`, `TOKENLESS_EXTENSION_ID`, then the bundled fallback in `src/default-extension-id.js`. Update that tracked file when the distributed extension id changes.
+
 ## Configure Provider Preference
 
 ```bash
@@ -39,6 +41,8 @@ tokenless run \
 ```
 
 Tokenless opens a browser task page, routes the request through the extension, submits the prompt in the visible provider UI, waits for visible answer text, and returns that answer to the local agent.
+
+By default, `tokenless run` and `tokenless snapshot-dom` print compact `[tokenless]` status lines to stdout when the local job is created, opened, polled, and completed. Use `--json` when the caller needs a single parseable JSON payload; the same status summary is included as `status` and `statusLog`. Use `--quiet` to suppress status lines in non-JSON mode.
 
 ## Capture A DOM Snapshot
 

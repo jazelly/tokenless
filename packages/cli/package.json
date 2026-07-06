@@ -16,8 +16,8 @@
     "tokenless": "src/tokenless.mjs"
   },
   "scripts": {
-    "build": "node --check src/index.js && node --check src/job-store.js && node --check src/native-host.mjs && node --check src/tokenless.mjs",
-    "lint": "node --check src/index.js && node --check src/job-store.js && node --check src/native-host.mjs && node --check src/tokenless.mjs"
+    "build": "node --check src/default-extension-id.js && node --check src/index.js && node --check src/job-store.js && node --check src/native-host.mjs && node --check src/tokenless.mjs",
+    "lint": "node --check src/default-extension-id.js && node --check src/index.js && node --check src/job-store.js && node --check src/native-host.mjs && node --check src/tokenless.mjs"
   },
   "engines": {
     "node": ">=22"

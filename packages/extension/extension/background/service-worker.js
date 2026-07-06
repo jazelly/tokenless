@@ -6,6 +6,9 @@ import {
 } from '../shared/bridge-protocol.js'
 import { getProviderById, getProviderForUrl } from '../shared/provider-config.js'
 
+const PROVIDER_LANDING_TIMEOUT_MS = 8000
+const PROVIDER_LANDING_POLL_MS = 250
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => undefined)
 })
@@ -42,35 +45,40 @@ async function handleRuntimeMessage(message) {
 
     if (request.action === BRIDGE_ACTIONS.OPEN) {
       const tab = await getOrCreateProviderTab(provider, request.targetUrl)
+      const landedTab = await waitForProviderTabLoaded(tab.id, provider)
       return createBridgeResponse(request, {
         ok: true,
-        result: { tabId: tab.id, url: tab.url ?? provider.homeUrl },
+        result: { tabId: landedTab.id, url: landedTab.url ?? provider.homeUrl },
       })
     }
 
     const tab = await getOrCreateProviderTab(provider, request.targetUrl)
     await focusTab(tab)
+    const landedTab = await waitForProviderTabLoaded(tab.id, provider)
 
     if (request.action === BRIDGE_ACTIONS.SUBMIT) {
-      const result = await sendToProviderTab(tab.id, { type: 'tokenless.bridge.submit', request })
+      await validateProviderLanding(landedTab.id, provider, request)
+      const result = await sendToProviderTab(landedTab.id, { type: 'tokenless.bridge.submit', request })
       return createBridgeResponse(request, { ok: true, result })
     }
 
     if (request.action === BRIDGE_ACTIONS.READ) {
-      const result = await sendToProviderTab(tab.id, { type: 'tokenless.bridge.read', request })
+      await validateProviderLanding(landedTab.id, provider, request)
+      const result = await sendToProviderTab(landedTab.id, { type: 'tokenless.bridge.read', request })
       return createBridgeResponse(request, { ok: true, result })
     }
 
     if (request.action === BRIDGE_ACTIONS.SNAPSHOT_DOM) {
-      const result = await sendToProviderTab(tab.id, { type: 'tokenless.bridge.snapshot_dom', request })
+      const result = await sendToProviderTab(landedTab.id, { type: 'tokenless.bridge.snapshot_dom', request })
       return createBridgeResponse(request, { ok: true, result })
     }
 
     if (request.action === BRIDGE_ACTIONS.SUBMIT_AND_READ) {
-      const submit = await sendToProviderTab(tab.id, { type: 'tokenless.bridge.submit', request })
+      await validateProviderLanding(landedTab.id, provider, request)
+      const submit = await sendToProviderTab(landedTab.id, { type: 'tokenless.bridge.submit', request })
       const readDelayMs = Math.min(Number(request.readDelayMs ?? 2500), 30000)
       await delay(readDelayMs)
-      const read = await sendToProviderTab(tab.id, {
+      const read = await sendToProviderTab(landedTab.id, {
         type: 'tokenless.bridge.read',
         request: { ...request, answerBaseline: submit?.answerBaseline },
       })
@@ -146,12 +154,51 @@ async function sendToProviderTab(tabId, message) {
   throw bridgeError('content_script_unavailable', 'Provider content script is unavailable.', true)
 }
 
+async function waitForProviderTabLoaded(tabId, provider, timeoutMs = PROVIDER_LANDING_TIMEOUT_MS) {
+  if (tabId === undefined) {
+    throw bridgeError('tab_unavailable', 'Provider tab is not available.', true)
+  }
+  const deadline = Date.now() + timeoutMs
+  let lastUrl = ''
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId)
+    lastUrl = tab.pendingUrl || tab.url || lastUrl
+    if (tab.status === 'complete') {
+      return tab
+    }
+    await delay(PROVIDER_LANDING_POLL_MS)
+  }
+  throw bridgeError(
+    'provider_landing_timeout',
+    `Timed out waiting for ${provider.label} to load. Last URL: ${redactUrlForError(lastUrl) || 'unknown'}`,
+    true
+  )
+}
+
+async function validateProviderLanding(tabId, provider, request) {
+  const validation = await sendToProviderTab(tabId, { type: 'tokenless.bridge.validate_landing', request })
+  if (validation?.status === 'ready') {
+    return validation
+  }
+  if (validation?.status === 'blocked') {
+    throw bridgeError(
+      validation.stopReason || 'provider_landing_blocked',
+      validation.message || `${provider.label} page is not ready for Tokenless.`,
+      true
+    )
+  }
+  throw bridgeError('provider_landing_unavailable', `${provider.label} page did not report a usable chat surface.`, true)
+}
+
 function safeProviderUrl(provider, targetUrl) {
   if (!targetUrl) {
     return provider.homeUrl
   }
-  const providerForTarget = getProviderForUrl(targetUrl)
-  return providerForTarget?.id === provider.id ? targetUrl : provider.homeUrl
+  try {
+    return new URL(targetUrl).href
+  } catch {
+    throw bridgeError('invalid_target_url', 'Target URL must be a valid absolute URL.', false)
+  }
 }
 
 function canonicalTabUrl(url) {
@@ -165,6 +212,15 @@ function canonicalTabUrl(url) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function redactUrlForError(url) {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return ''
+  }
 }
 
 function bridgeError(code, message, retryable) {

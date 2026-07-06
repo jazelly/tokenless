@@ -142,12 +142,15 @@ test('CLI config command sets the default provider for run', () => {
   })
 
   assert.equal(run.status, 0)
+  assert.doesNotMatch(run.stdout, /\[tokenless\]/)
   const payload = JSON.parse(run.stdout)
   assert.equal(payload.provider, 'claude')
+  assert.equal(payload.status, 'no_wait')
+  assert.deepEqual(payload.statusLog.map((event) => event.event), ['created', 'not_opened', 'detached'])
 })
 
-test('CLI run fails fast when extension id is missing', () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-missing-extension-'))
+test('CLI run falls back to bundled extension id when no extension id is configured', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-default-extension-'))
   const result = spawnSync(process.execPath, [
     path.join(root, 'packages/cli/src/tokenless.mjs'),
     'run',
@@ -155,6 +158,8 @@ test('CLI run fails fast when extension id is missing', () => {
     'hello',
     '--home',
     homeDir,
+    '--no-open',
+    '--no-wait',
     '--json',
   ], {
     cwd: root,
@@ -162,11 +167,37 @@ test('CLI run fails fast when extension id is missing', () => {
     encoding: 'utf8',
   })
 
-  assert.equal(result.status, 1)
+  assert.equal(result.status, 0)
   const payload = JSON.parse(result.stdout)
-  assert.equal(payload.ok, false)
-  assert.equal(payload.error.code, 'missing_extension_id')
-  assert.equal(fs.existsSync(path.join(homeDir, 'jobs')), false)
+  assert.equal(payload.ok, true)
+  assert.match(payload.taskUrl, /^chrome-extension:\/\/afpfljlnhlpkbkmgonoanbmcdmmfmoam\//)
+  assert.equal(fs.existsSync(path.join(homeDir, 'jobs')), true)
+})
+
+test('CLI default output reports local job status for agents', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-status-'))
+  const run = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'run',
+    '--prompt',
+    'hello',
+    '--extension-id',
+    'abcdefghijklmnopabcdefghijklmnop',
+    '--home',
+    homeDir,
+    '--no-open',
+    '--no-wait',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+
+  assert.equal(run.status, 0)
+  assert.match(run.stdout, /^\[tokenless\] created status=queued provider=chatgpt action=submit_and_read/m)
+  assert.match(run.stdout, /^\[tokenless\] not_opened status=waiting_for_external_open provider=chatgpt/m)
+  assert.match(run.stdout, /^\[tokenless\] detached status=no_wait provider=chatgpt/m)
+  assert.match(run.stdout, /"status": "no_wait"/)
+  assert.match(run.stdout, /"statusLog": \[/)
 })
 
 test('CLI rejects placeholder extension ids before writing local jobs or manifests', () => {
@@ -257,6 +288,7 @@ test('published CLI package includes user-facing README and only the tokenless b
 
   assert.ok(paths.includes('README.md'))
   assert.ok(paths.includes('package.json'))
+  assert.ok(paths.includes('src/default-extension-id.js'))
   assert.ok(paths.includes('src/tokenless.mjs'))
   assert.deepEqual(readJson('packages/cli/package.json').bin, { tokenless: 'src/tokenless.mjs' })
 

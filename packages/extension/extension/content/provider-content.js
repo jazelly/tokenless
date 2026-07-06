@@ -101,7 +101,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 const submissionBaselines = new Map()
 
 async function handleMessage(message) {
-  const provider = getProviderForUrl(location.href)
+  const provider = providerForMessage(message)
   if (!provider) {
     return {
       status: 'blocked',
@@ -119,11 +119,47 @@ async function handleMessage(message) {
   if (message?.type === 'tokenless.bridge.snapshot_dom') {
     return snapshotDom(provider, message.request)
   }
+  if (message?.type === 'tokenless.bridge.validate_landing') {
+    return validateLanding(provider, message.request)
+  }
 
   return {
     status: 'blocked',
     stopReason: 'unsupported_message',
     message: 'Content bridge message is not supported.',
+  }
+}
+
+async function validateLanding(provider, request = {}) {
+  const timeoutMs = Math.min(Number(request.landingTimeoutMs ?? 5000), 30000)
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await dismissProviderInterruptions(provider)
+    const blocker = detectBlocker(provider)
+    if (blocker) {
+      return blocker
+    }
+    const chatSurface = chatSurfaceStatus(provider)
+    if (chatSurface.ready) {
+      return {
+        status: 'ready',
+        provider: provider.id,
+        visible: true,
+        checks: chatSurface.checks,
+        url: location.href,
+        title: document.title,
+      }
+    }
+    await delay(250)
+  }
+  return {
+    status: 'blocked',
+    stopReason: 'provider_landing_unavailable',
+    message: provider.id === 'chatgpt'
+      ? 'ChatGPT page loaded, but no visible composer and send button were found.'
+      : 'Provider page loaded, but no visible chat surface was found.',
+    provider: provider.id,
+    url: location.href,
   }
 }
 
@@ -159,25 +195,13 @@ async function snapshotDom(provider, request = {}) {
     redactTextNodes(clone)
   }
 
-  clone.querySelectorAll('*').forEach((node) => {
-    for (const attr of [...node.attributes]) {
-      const name = attr.name.toLowerCase()
-      if (
-        name.includes('token') ||
-        name.includes('secret') ||
-        name.includes('email') ||
-        name === 'srcdoc'
-      ) {
-        node.setAttribute(attr.name, '[redacted]')
-      }
-    }
-  })
+  redactAttributes(clone, { includeText })
 
   return {
     status: 'snapshotted',
     provider: provider.id,
     url: location.href,
-    title: document.title,
+    title: includeText ? document.title : '[text]',
     capturedAt: new Date().toISOString(),
     sanitized: true,
     includeText,
@@ -272,6 +296,53 @@ function findFirst(selectors) {
     const node = document.querySelector(selector)
     if (node) {
       return node
+    }
+  }
+  return null
+}
+
+function providerForMessage(message) {
+  if (message?.type === 'tokenless.bridge.validate_landing' && message.request?.provider === 'chatgpt') {
+    return PROVIDERS.find((provider) => provider.id === 'chatgpt') ?? null
+  }
+  return getProviderForUrl(location.href)
+}
+
+function chatSurfaceStatus(provider) {
+  const visibleComposer = findFirstVisible(provider.composerSelectors)
+  const visibleSubmit = findFirstVisible(provider.submitSelectors)
+  if (provider.id === 'chatgpt') {
+    return {
+      ready: Boolean(visibleComposer && visibleSubmit),
+      checks: {
+        composer: Boolean(visibleComposer),
+        sendButton: Boolean(visibleSubmit),
+      },
+    }
+  }
+  const visibleAnswer = findFirstVisible(provider.answerSelectors)
+  return {
+    ready: Boolean(visibleComposer || visibleAnswer),
+    checks: {
+      composer: Boolean(visibleComposer),
+      sendButton: Boolean(visibleSubmit),
+      answer: Boolean(visibleAnswer),
+    },
+  }
+}
+
+function findFirstVisible(selectors) {
+  for (const selector of selectors) {
+    let nodes
+    try {
+      nodes = document.querySelectorAll(selector)
+    } catch {
+      continue
+    }
+    for (const node of nodes) {
+      if (isVisible(node)) {
+        return node
+      }
     }
   }
   return null
@@ -512,6 +583,47 @@ function redactTextNodes(root) {
       node.nodeValue = '[text]'
     }
   }
+}
+
+function redactAttributes(root, { includeText = false } = {}) {
+  const textLikeAttributes = new Set([
+    'aria-description',
+    'aria-label',
+    'alt',
+    'content',
+    'label',
+    'placeholder',
+    'title',
+  ])
+  const urlAttributes = new Set([
+    'action',
+    'formaction',
+    'href',
+    'poster',
+    'src',
+    'srcset',
+  ])
+
+  root.querySelectorAll('*').forEach((node) => {
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase()
+      if (
+        name.includes('token') ||
+        name.includes('secret') ||
+        name.includes('email') ||
+        name.includes('password') ||
+        name.includes('session') ||
+        name.includes('auth') ||
+        name === 'srcdoc'
+      ) {
+        node.setAttribute(attr.name, '[redacted]')
+      } else if (urlAttributes.has(name) && attr.value.trim()) {
+        node.setAttribute(attr.name, '[url]')
+      } else if (!includeText && textLikeAttributes.has(name) && attr.value.trim()) {
+        node.setAttribute(attr.name, '[text]')
+      }
+    }
+  })
 }
 
 function selectorDrift(target) {

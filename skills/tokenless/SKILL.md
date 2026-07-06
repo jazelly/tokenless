@@ -3,14 +3,17 @@ name: tokenless
 description: Route a Q&A type LLM conversation to online web version to save token usage for users. Use when a question or task can be done without directly writing to the project. For example, web-search based analysis, project-related analysis without writing, or even image generation.
 ---
 
+## Important Rules
+
+1. When this skill is invoked, you must strive to use the `npx tokenless` command to handle the request, instead of self handle it. This skill contains vitally important steps to handle request and response. The detailed way of using `npx tokenless` is listed later in this doc.
+
+2. When the `npx tokenless` process is working, its highly likely it takes some time, as long as it successfully goes to the remote website. You can see the process stage from the standard output. If it 
+
 ## Prerequisites
 
 - Node.js runtime (>=22)
 - Tokenless CLI from npm (`npm install -g tokenless` or `npx tokenless`) If not installed locally, just rely on npx
 - Tokenless extension installed on chromium-based browser
-- If installed developer version of the extension, i.e. extension ID is uncertain, you should look at the env variable for the `TOKENLESS_EXTENSION_ID`. If still cannot find, you should ask users for calrification.
-
-Do not invoke Tokenless through repo-relative CLI paths. Use the npm CLI only.
 
 ## Check available providers
 
