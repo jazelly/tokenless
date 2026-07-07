@@ -41,12 +41,6 @@ h2 {
   font-weight: 650;
 }
 
-.eyebrow {
-  color: color-mix(in srgb, CanvasText 62%, transparent);
-  font-size: 11px;
-  margin-bottom: 2px;
-}
-
 .status {
   border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
   border-radius: 999px;
@@ -61,11 +55,6 @@ h2 {
   display: grid;
   gap: 10px;
   padding: 12px;
-}
-
-.providers {
-  display: grid;
-  gap: 8px;
 }
 
 .section-heading {
@@ -86,6 +75,23 @@ button {
   padding: 5px 8px;
 }
 
+button:hover:not(:disabled),
+select:hover {
+  border-color: color-mix(in srgb, CanvasText 30%, transparent);
+  background: color-mix(in srgb, CanvasText 5%, Canvas);
+}
+
+button:focus-visible,
+select:focus-visible {
+  outline: 2px solid color-mix(in srgb, CanvasText 42%, transparent);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  color: color-mix(in srgb, CanvasText 34%, transparent);
+  cursor: default;
+}
+
 select {
   background: Canvas;
   border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
@@ -95,18 +101,6 @@ select {
   font-size: 12px;
   min-width: 0;
   padding: 5px 8px;
-}
-
-.provider {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.provider span {
-  color: color-mix(in srgb, CanvasText 60%, transparent);
-  font-size: 12px;
 }
 
 .configuration,
@@ -130,21 +124,78 @@ select {
 .provider-editor-actions {
   align-items: center;
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 
 .provider-editor-row {
+  background: color-mix(in srgb, CanvasText 4%, Canvas);
+  border: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+  border-radius: 8px;
   justify-content: space-between;
+  min-height: 44px;
+  padding: 7px;
 }
 
-.provider-editor-row strong {
+.provider-editor-row-selected {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, Highlight 18%, Canvas),
+      color-mix(in srgb, Highlight 8%, Canvas) 44%,
+      color-mix(in srgb, CanvasText 3%, Canvas)
+    );
+  border-color: color-mix(in srgb, Highlight 34%, CanvasText 12%);
+}
+
+.provider-editor-identity {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.provider-editor-rank {
+  align-items: center;
+  background: color-mix(in srgb, CanvasText 9%, Canvas);
+  border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, CanvasText 72%, transparent);
+  display: inline-flex;
+  flex: 0 0 24px;
+  font-size: 11px;
+  font-weight: 650;
+  height: 24px;
+  justify-content: center;
+}
+
+.provider-editor-row-selected .provider-editor-rank {
+  background: color-mix(in srgb, Highlight 24%, Canvas);
+  border-color: color-mix(in srgb, Highlight 36%, transparent);
+  color: CanvasText;
+}
+
+.provider-editor-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.provider-editor-text strong {
   font-size: 12px;
+  line-height: 1.2;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
+.provider-editor-text span {
+  color: color-mix(in srgb, CanvasText 52%, transparent);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .provider-editor-controls {
   display: flex;
+  flex: 0 0 auto;
   gap: 4px;
 }
 
@@ -152,6 +203,40 @@ select {
   display: grid;
   gap: 6px;
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.button-with-icon,
+.icon-button {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.button-with-icon {
+  gap: 6px;
+}
+
+.icon-button {
+  border-radius: 8px;
+  height: 32px;
+  padding: 0;
+  width: 32px;
+}
+
+.icon-button-danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, #c2410c 40%, CanvasText 12%);
+  color: color-mix(in srgb, #c2410c 82%, CanvasText);
+}
+
+.icon {
+  fill: none;
+  flex: 0 0 auto;
+  height: 15px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  width: 15px;
 }
 
 .project {

@@ -5,7 +5,9 @@ import {
   buildTokenlessPrompt,
   buildTaskUrl,
   createLocalJob,
+  deriveTaskId,
   installNativeHost,
+  readLocalTaskState,
   readTokenlessConfig,
   tokenlessHome,
   waitLocalJobResult,
@@ -20,6 +22,8 @@ const args = parseArgs(argv)
 try {
   if (command === 'run') {
     await runCommand(args)
+  } else if (command === 'state' || command === 'status') {
+    await stateCommand(args)
   } else if (command === 'snapshot-dom') {
     await snapshotDomCommand(args)
   } else if (command === 'install') {
@@ -74,7 +78,7 @@ async function snapshotDomCommand(args) {
     projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
     chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME || 'DOM snapshot',
     targetUrl: args.targetUrl,
-    idempotencyKey: args.idempotencyKey || process.env.TOKENLESS_IDEMPOTENCY_KEY,
+    idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
     includeText: Boolean(args.includeText),
     maxTextChars: args.maxTextChars === undefined ? undefined : Number(args.maxTextChars),
     metadata: {
@@ -90,6 +94,7 @@ async function snapshotDomCommand(args) {
     event: 'created',
     status: job.status,
     jobId: job.jobId,
+    taskId: job.taskId,
     provider: job.provider,
     action: job.action,
     route: job.conversation?.route,
@@ -102,6 +107,7 @@ async function snapshotDomCommand(args) {
       event: 'opened',
       status: 'opened_task_page',
       jobId: job.jobId,
+      taskId: job.taskId,
       provider: job.provider,
       browser: args.browser,
       taskUrl,
@@ -111,6 +117,7 @@ async function snapshotDomCommand(args) {
       event: 'not_opened',
       status: 'waiting_for_external_open',
       jobId: job.jobId,
+      taskId: job.taskId,
       provider: job.provider,
       taskUrl,
     })
@@ -121,6 +128,7 @@ async function snapshotDomCommand(args) {
         event: 'detached',
         status: 'no_wait',
         jobId: job.jobId,
+        taskId: job.taskId,
         provider: job.provider,
       }), null)
     : await waitLocalJobResultWithStatus({
@@ -129,12 +137,14 @@ async function snapshotDomCommand(args) {
         nonce: job.nonce,
         timeoutMs: args.timeoutMs === undefined ? 60000 : Number(args.timeoutMs),
         statusReporter,
+        taskId: job.taskId,
       })
   assertLocalJobSucceeded(result, statusReporter)
 
   printPayload({
     ok: true,
     jobId: job.jobId,
+    taskId: job.taskId,
     provider: job.provider,
     taskUrl,
     result,
@@ -152,7 +162,7 @@ async function runCommand(args) {
   const config = await readTokenlessConfig(homeDir)
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
   const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME
-  const idempotencyKey = args.idempotencyKey || process.env.TOKENLESS_IDEMPOTENCY_KEY
+  const idempotencyKey = args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY
   const provider = args.provider ||
     process.env.TOKENLESS_PROVIDER ||
     config.preferredProviders[0] ||
@@ -184,6 +194,7 @@ async function runCommand(args) {
     event: 'created',
     status: job.status,
     jobId: job.jobId,
+    taskId: job.taskId,
     provider: job.provider,
     action: job.action,
     route: job.conversation?.route,
@@ -196,6 +207,7 @@ async function runCommand(args) {
       event: 'opened',
       status: 'opened_task_page',
       jobId: job.jobId,
+      taskId: job.taskId,
       provider: job.provider,
       browser: args.browser,
       taskUrl,
@@ -205,6 +217,7 @@ async function runCommand(args) {
       event: 'not_opened',
       status: 'waiting_for_external_open',
       jobId: job.jobId,
+      taskId: job.taskId,
       provider: job.provider,
       taskUrl,
     })
@@ -215,6 +228,7 @@ async function runCommand(args) {
         event: 'detached',
         status: 'no_wait',
         jobId: job.jobId,
+        taskId: job.taskId,
         provider: job.provider,
       }), null)
     : await waitLocalJobResultWithStatus({
@@ -223,12 +237,14 @@ async function runCommand(args) {
         nonce: job.nonce,
         timeoutMs: args.timeoutMs === undefined ? 180000 : Number(args.timeoutMs),
         statusReporter,
+        taskId: job.taskId,
       })
   assertLocalJobSucceeded(result, statusReporter)
 
   const payload = {
     ok: true,
     jobId: job.jobId,
+    taskId: job.taskId,
     provider: job.provider,
     taskUrl,
     requestPath: `${job.jobId}.request.json`,
@@ -242,6 +258,26 @@ async function runCommand(args) {
     statusLog: statusReporter.events,
   }
   printPayload(payload, args)
+}
+
+async function stateCommand(args) {
+  const taskId = args.taskId || args.idempotencyKey || deriveTaskId({
+    projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
+    chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
+  })
+  const state = await readLocalTaskState({
+    homeDir: tokenlessHome(args.home),
+    taskId,
+    jobId: args.jobId,
+    provider: args.provider || process.env.TOKENLESS_PROVIDER,
+    projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
+    chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
+    limit: args.limit === undefined ? 10 : Number(args.limit),
+  })
+  printPayload({
+    ok: true,
+    ...state,
+  }, args)
 }
 
 async function installCommand(args) {
@@ -381,6 +417,15 @@ function parseArgs(argv) {
     } else if (arg === '--idempotency-key' || arg === '--conversation-key') {
       parsed.idempotencyKey = next
       index += 1
+    } else if (arg === '--task-id') {
+      parsed.taskId = next
+      index += 1
+    } else if (arg === '--job-id') {
+      parsed.jobId = next
+      index += 1
+    } else if (arg === '--limit') {
+      parsed.limit = next
+      index += 1
     } else if (arg === '--extension-id') {
       parsed.extensionId = next
       index += 1
@@ -472,6 +517,7 @@ async function waitLocalJobResultWithStatus({
   nonce,
   timeoutMs,
   statusReporter,
+  taskId,
 }) {
   try {
     return await waitLocalJobResult({
@@ -479,7 +525,7 @@ async function waitLocalJobResultWithStatus({
       jobId,
       nonce,
       timeoutMs,
-      onStatus: statusReporter.report,
+      onStatus: (event) => statusReporter.report({ ...event, taskId }),
     })
   } catch (error) {
     error.status = statusReporter.lastStatus()
@@ -527,6 +573,7 @@ function normalizeStatusEvent(event, startedAt) {
     event: event.event || event.type || 'status',
     status: event.status,
     jobId: event.jobId,
+    taskId: event.taskId,
     provider: event.provider ?? event.detail?.provider,
     action: event.action,
     route: event.route,
@@ -544,12 +591,13 @@ function formatStatusEvent(event) {
     ['provider', event.provider],
     ['action', event.action],
     ['route', event.route],
+    ['taskId', event.taskId],
     ['actor', event.actor],
     ['browser', event.browser],
     ['elapsed', formatElapsed(event.elapsedMs)],
   ]) {
     if (value !== undefined && value !== null && value !== '') {
-      parts.push(`${key}=${value}`)
+      parts.push(`${key}=${formatStatusValue(value)}`)
     }
   }
   if (event.jobId) {
@@ -559,6 +607,11 @@ function formatStatusEvent(event) {
     parts.push(`taskUrl=${event.taskUrl}`)
   }
   return parts.join(' ')
+}
+
+function formatStatusValue(value) {
+  const text = String(value)
+  return /\s/.test(text) ? JSON.stringify(text) : text
 }
 
 function formatElapsed(elapsedMs) {
@@ -574,6 +627,7 @@ function usage() {
   console.error([
     'Usage:',
     '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --context-file <file> --json',
+    '  tokenless state --task-id <task-id> --json',
     '  tokenless snapshot-dom --provider chatgpt --extension-id <chrome-extension-id> --json',
     '  tokenless config --preferred-providers claude,chatgpt,gemini --json',
     '  tokenless install --extension-id <chrome-extension-id> --json',

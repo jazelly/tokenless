@@ -1,7 +1,7 @@
 import { createBridgeRequest, validateBridgeRequest } from './protocol.js'
 
 export class BrowserSessionBridgeUnavailableError extends Error {
-  constructor(message = 'Tokenless Browser Session Bridge extension runtime is unavailable.') {
+  constructor(message = 'Tokenless extension runtime is unavailable.') {
     super(message)
     this.name = 'BrowserSessionBridgeUnavailableError'
     this.code = 'browser_session_bridge_unavailable'

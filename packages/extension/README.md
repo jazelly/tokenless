@@ -1,6 +1,6 @@
-# Tokenless Browser Session Bridge
+# Tokenless
 
-Tokenless Browser Session Bridge is a visible browser-extension bridge for user-authorized web AI sessions. It lets Tokenless clients request actions in the user's own browser profile without exporting cookies, tokens, or hidden provider API calls.
+Tokenless is a visible browser extension for user-authorized web AI sessions. It lets Tokenless clients request actions in the user's own browser profile without exporting cookies, tokens, or hidden provider API calls.
 
 ## Surfaces
 

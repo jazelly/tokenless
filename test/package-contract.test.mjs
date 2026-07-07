@@ -200,6 +200,84 @@ test('CLI default output reports local job status for agents', () => {
   assert.match(run.stdout, /"statusLog": \[/)
 })
 
+test('CLI exposes stable task ids and state lookup for agents', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-task-state-'))
+  const run = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'run',
+    '--prompt',
+    'hello',
+    '--extension-id',
+    'abcdefghijklmnopabcdefghijklmnop',
+    '--home',
+    homeDir,
+    '--project-name',
+    'Tokenless',
+    '--chat-name',
+    'State query',
+    '--no-open',
+    '--no-wait',
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+
+  assert.equal(run.status, 0)
+  const payload = JSON.parse(run.stdout)
+  assert.equal(payload.taskId, 'project:Tokenless:chat:State query')
+  assert.equal(payload.idempotencyKey, payload.taskId)
+  assert.equal(payload.statusLog[0].taskId, payload.taskId)
+
+  const state = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'state',
+    '--task-id',
+    payload.taskId,
+    '--home',
+    homeDir,
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+
+  assert.equal(state.status, 0)
+  const statePayload = JSON.parse(state.stdout)
+  assert.equal(statePayload.ok, true)
+  assert.equal(statePayload.taskId, payload.taskId)
+  assert.equal(statePayload.latest.jobId, payload.jobId)
+  assert.equal(statePayload.latest.status, 'queued')
+  assert.equal(statePayload.latest.state.status, 'queued')
+  assert.equal(statePayload.latest.result, null)
+  assert.equal(statePayload.latest.nonce, undefined)
+  assert.equal(statePayload.latest.prompt, undefined)
+
+  const continuation = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    'run',
+    '--prompt',
+    'continue',
+    '--extension-id',
+    'abcdefghijklmnopabcdefghijklmnop',
+    '--home',
+    homeDir,
+    '--task-id',
+    payload.taskId,
+    '--no-open',
+    '--no-wait',
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+
+  assert.equal(continuation.status, 0)
+  const continuationPayload = JSON.parse(continuation.stdout)
+  assert.equal(continuationPayload.taskId, payload.taskId)
+  assert.equal(continuationPayload.idempotencyKey, payload.taskId)
+})
+
 test('CLI rejects placeholder extension ids before writing local jobs or manifests', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-invalid-extension-'))
   const run = spawnSync(process.execPath, [

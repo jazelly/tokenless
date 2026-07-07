@@ -85,6 +85,14 @@ export function createNonce() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
 }
 
+export function deriveTaskId({ projectName, chatName, idempotencyKey } = {}) {
+  return normalizeIdempotencyKey(idempotencyKey) ??
+    derivedConversationKey({
+      projectName: normalizeDisplayName(projectName),
+      chatName: normalizeDisplayName(chatName),
+    })
+}
+
 export async function ensureJobStore(homeDir = tokenlessHome()) {
   await fs.mkdir(jobsDir(homeDir), { recursive: true, mode: 0o700 })
   await fs.mkdir(metaDir(homeDir), { recursive: true, mode: 0o700 })
@@ -119,15 +127,16 @@ export async function createLocalJob({
   await ensureJobStore(homeDir)
   const normalizedProjectName = normalizeDisplayName(projectName ?? metadata?.projectName)
   const normalizedChatName = normalizeDisplayName(chatName ?? metadata?.chatName)
-  const conversationKey = idempotencyKey ??
-    metadata?.idempotencyKey ??
-    metadata?.conversationKey ??
-    derivedConversationKey({ projectName: normalizedProjectName, chatName: normalizedChatName })
+  const taskId = deriveTaskId({
+    projectName: normalizedProjectName,
+    chatName: normalizedChatName,
+    idempotencyKey: idempotencyKey ?? metadata?.idempotencyKey ?? metadata?.conversationKey,
+  })
   const conversation = await resolveConversationTarget({
     homeDir,
     provider,
     targetUrl,
-    idempotencyKey: conversationKey,
+    idempotencyKey: taskId,
   })
   const now = new Date()
   const jobId = createJobId()
@@ -145,6 +154,7 @@ export async function createLocalJob({
     projectRoot: projectRoot ? path.resolve(projectRoot) : undefined,
     projectName: normalizedProjectName,
     chatName: normalizedChatName,
+    taskId: conversation.idempotencyKey,
     targetUrl: conversation.targetUrl,
     idempotencyKey: conversation.idempotencyKey,
     conversation,
@@ -156,6 +166,7 @@ export async function createLocalJob({
       ...(metadata ?? {}),
       projectName: normalizedProjectName,
       chatName: normalizedChatName,
+      taskId: conversation.idempotencyKey,
       idempotencyKey: conversation.idempotencyKey,
       conversationRoute: conversation.route,
     },
@@ -163,6 +174,50 @@ export async function createLocalJob({
   await writeJsonAtomic(jobPath(homeDir, jobId, 'request'), request, 0o600)
   await writeJobState({ homeDir, jobId, nonce, status: JOB_STATES.QUEUED, actor: 'tokenless-cli' })
   return request
+}
+
+export async function readLocalTaskState({
+  homeDir = tokenlessHome(),
+  taskId,
+  jobId,
+  provider,
+  projectName,
+  chatName,
+  limit = 10,
+} = {}) {
+  const normalizedTaskId = deriveTaskId({ projectName, chatName, idempotencyKey: taskId })
+  if (!normalizedTaskId && !jobId) {
+    throw accessError('missing_task_id', 'Usage: tokenless state requires --task-id or --job-id.')
+  }
+  await ensureJobStore(homeDir)
+  const jobs = (await readJobDetails(homeDir))
+    .filter((job) => {
+      if (jobId && job.jobId !== jobId) return false
+      if (normalizedTaskId && job.taskId !== normalizedTaskId) return false
+      if (provider && job.provider !== provider) return false
+      return true
+    })
+    .sort((a, b) => Date.parse(b.updatedAt ?? b.createdAt ?? 0) - Date.parse(a.updatedAt ?? a.createdAt ?? 0))
+
+  if (jobs.length === 0) {
+    throw accessError('task_state_not_found', `No Tokenless task state found for ${normalizedTaskId ?? jobId}.`)
+  }
+
+  const latest = jobs[0]
+  const resolvedTaskId = normalizedTaskId ?? latest.taskId
+  const conversations = await readConversationMap(homeDir)
+  const conversation = resolvedTaskId
+    ? conversations.conversations[conversationMapKey(provider ?? latest.provider, resolvedTaskId)] ?? null
+    : null
+
+  return {
+    protocol: LOCAL_JOB_PROTOCOL_VERSION,
+    taskId: resolvedTaskId,
+    provider: provider ?? latest.provider,
+    latest,
+    jobs: jobs.slice(0, Math.max(1, Number(limit) || 10)),
+    conversation,
+  }
 }
 
 export async function readLocalJobRequest({ homeDir = tokenlessHome(), jobId, nonce } = {}) {
@@ -810,6 +865,21 @@ async function rememberConversationFromResult({ homeDir, request, result } = {})
 }
 
 async function readJobSummaries(homeDir) {
+  return (await readJobDetails(homeDir)).map((job) => ({
+    jobId: job.jobId,
+    provider: job.provider,
+    idempotencyKey: job.idempotencyKey,
+    projectName: job.projectName,
+    chatName: job.chatName,
+    projectRoot: job.projectRoot,
+    targetUrl: job.targetUrl,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    status: job.status,
+  }))
+}
+
+async function readJobDetails(homeDir) {
   const dir = jobsDir(homeDir)
   const files = await fs.readdir(dir).catch((error) => {
     if (error?.code === 'ENOENT') return []
@@ -823,17 +893,34 @@ async function readJobSummaries(homeDir) {
     if (!request || request.protocol !== LOCAL_JOB_PROTOCOL_VERSION) continue
     const state = await readJson(jobPath(homeDir, jobId, 'state')).catch(() => null)
     const result = await readJson(jobPath(homeDir, jobId, 'result')).catch(() => null)
+    const taskId = request.taskId ?? request.idempotencyKey ?? request.metadata?.taskId ?? request.metadata?.idempotencyKey
     jobs.push({
       jobId,
+      taskId,
       provider: request.provider,
+      action: request.action,
       idempotencyKey: request.idempotencyKey ?? request.metadata?.idempotencyKey,
       projectName: normalizeDisplayName(request.projectName ?? request.metadata?.projectName),
       chatName: normalizeDisplayName(request.chatName ?? request.metadata?.chatName),
       projectRoot: request.projectRoot,
       targetUrl: request.targetUrl,
+      route: request.conversation?.route ?? request.metadata?.conversationRoute,
       createdAt: request.createdAt,
       updatedAt: result?.completedAt ?? state?.updatedAt ?? request.createdAt,
       status: result?.status ?? state?.status ?? request.status,
+      state: state ? {
+        status: state.status,
+        actor: state.actor,
+        detail: state.detail,
+        updatedAt: state.updatedAt,
+      } : null,
+      result: result ? {
+        ok: result.ok,
+        status: result.status,
+        completedAt: result.completedAt,
+        compactOutput: result.compactOutput,
+        error: result.error,
+      } : null,
     })
   }
   return jobs

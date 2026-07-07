@@ -12,7 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 test('browser extension manifest is domain limited', () => {
   const manifest = readJson('packages/extension/extension/manifest.json')
   assert.equal(manifest.manifest_version, 3)
-  assert.equal(manifest.name, 'Tokenless Browser Session Bridge')
+  assert.equal(manifest.name, 'Tokenless')
   assert.deepEqual(manifest.content_scripts[0].matches, manifest.host_permissions)
   assert.ok(!manifest.permissions.includes('cookies'))
   assert.ok(!manifest.permissions.includes('history'))
@@ -152,6 +152,7 @@ test('local job store requires nonce and writes compact result', async () => {
     createLocalJob,
     JOB_STATES,
     readLocalJobRequest,
+    readLocalTaskState,
     waitLocalJobResult,
     writeDomSnapshot,
     writeJobState,
@@ -178,6 +179,11 @@ test('local job store requires nonce and writes compact result', async () => {
   })
   const result = await waitLocalJobResult({ homeDir, jobId: job.jobId, nonce: job.nonce, timeoutMs: 1000 })
   assert.equal(result.compactOutput, 'hello from visible DOM')
+  const taskState = await readLocalTaskState({ homeDir, jobId: job.jobId })
+  assert.equal(taskState.latest.jobId, job.jobId)
+  assert.equal(taskState.latest.result.compactOutput, 'hello from visible DOM')
+  assert.equal(taskState.latest.prompt, undefined)
+  assert.equal(taskState.latest.nonce, undefined)
 
   const snapshotJob = await createLocalJob({
     homeDir,

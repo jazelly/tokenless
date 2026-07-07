@@ -42,7 +42,17 @@ tokenless run \
 
 Tokenless opens a browser task page, routes the request through the extension, submits the prompt in the visible provider UI, waits for visible answer text, and returns that answer to the local agent.
 
-By default, `tokenless run` and `tokenless snapshot-dom` print compact `[tokenless]` status lines to stdout when the local job is created, opened, polled, and completed. Use `--json` when the caller needs a single parseable JSON payload; the same status summary is included as `status` and `statusLog`. Use `--quiet` to suppress status lines in non-JSON mode.
+By default, `tokenless run` and `tokenless snapshot-dom` print compact `[tokenless]` status lines to stdout when the local job is created, opened, polled, and completed. The first `created` event includes a stable `taskId` derived from `--project-name` and `--chat-name`, or from explicit `--task-id`. Use `--json` when the caller needs a single parseable JSON payload; the same status summary is included as `status` and `statusLog`. Use `--quiet` to suppress status lines in non-JSON mode.
+
+## Query Task State
+
+Agents can query execution state later by passing the returned task id:
+
+```bash
+tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
+```
+
+Use `--task-id <id>` on later `tokenless run` calls to continue the same task/conversation mapping explicitly.
 
 ## Capture A DOM Snapshot
 

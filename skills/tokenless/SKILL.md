@@ -7,7 +7,7 @@ description: Route a Q&A type LLM conversation to online web version to save tok
 
 1. When this skill is invoked, you must strive to use the `npx tokenless` command to handle the request, instead of self handle it. This skill contains vitally important steps to handle request and response. The detailed way of using `npx tokenless` is listed later in this doc.
 
-2. When the `npx tokenless` process is working, its highly likely it takes some time, as long as it successfully goes to the remote website. You can see the process stage from the standard output. If it 
+2. When the `npx tokenless` process is working, its highly likely it takes some time, as long as it successfully goes to the remote website. You can see the process stage from the standard output. If it is `blocked`, `ui_mismatch`, `failed`, we should fail fast. However, if it is reporting state at other stage, you must wait for its finishing, as that means its actively addresing the request in the web. In a nutshell, you should respect the state exposed in the cli.
 
 ## Prerequisites
 
@@ -59,8 +59,22 @@ When invoking `tokenless run`:
 
 - `--project-name`: the project name from the calling agent workspace.
 - `--chat-name`: the chat/thread title or stable chat label from the calling agent.
+- Read and retain the returned `taskId`. Tokenless derives it from `--project-name` and `--chat-name` unless `--task-id` is supplied explicitly.
+- On later turns for the same agent task, pass `--task-id "<returned taskId>"` to continue the same Tokenless task/conversation mapping.
 - Use `--provider chatgpt`, `--provider claude`, or `--provider gemini` when the user explicitly requests a visible web provider.
 - Otherwise omit `--provider` and let Tokenless use the first entry in `preferredProviders` from `~/.tokenless/config.json`.
+
+## Query task execution state
+
+Use the returned `taskId` to check a previous or currently running task:
+
+```bash
+npx tokenless state \
+  --task-id "<returned taskId>" \
+  --json
+```
+
+The state payload includes `latest.status`, `latest.state`, `latest.result`, and recent `jobs`. Treat `blocked`, `ui_mismatch`, `failed`, `canceled`, and `timed_out` as terminal failures. If the state is `queued`, `claimed`, `running`, or `needs_user`, keep waiting or surface the needed visible-browser action to the user.
 
 If no user preference applies and no provider is configured, use this default guidance:
 

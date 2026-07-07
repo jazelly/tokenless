@@ -17,19 +17,21 @@ Tokenless keeps that work in the browser session the user already trusts. The ex
 
 ## User Experience
 
-Install the CLI:
+1. Install the CLI:
 
 ```bash
 npm install -g tokenless
 ```
 
-Load the Tokenless browser extension from:
+2. Install the Tokenless skill on your machine (enabling agents to interact with Tokenless upfront):
 
-```text
-packages/extension/dist/extension
+```bash
+npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless
 ```
 
-Then bind the extension to the local native host:
+3. Install the Tokenless browser extension through Chrome Web Store, an unpacked build, or a zip package. If you are starting from a source checkout, build the extension first; see Local Dev Test below.
+
+4. Then bind the extension to the local native host:
 
 ```bash
 tokenless install --extension-id <chrome-extension-id>
@@ -57,6 +59,8 @@ tokenless run \
   --extension-id <chrome-extension-id>
 ```
 
+The CLI returns a stable `taskId` derived from the project and chat names. Agents can retain it, query execution state with `tokenless state --task-id "<taskId>" --json`, and pass it back as `--task-id "<taskId>"` on later runs.
+
 Capture a sanitized DOM snapshot from the visible provider page:
 
 ```bash
@@ -83,6 +87,7 @@ Pass stable project and chat names for each agent chat thread. Tokenless stores 
 - `--project-name` is the project name from the calling agent.
 - `--chat-name` is the chat/thread title or stable chat label from the calling agent.
 - If `--idempotency-key` is omitted, Tokenless derives a stable conversation key from `--project-name` and `--chat-name`.
+- The derived key is returned to agents as `taskId`; `--task-id` is accepted as the preferred agent-facing alias for later state queries and follow-up runs.
 - If only one of `--project-name` or `--chat-name` is present, Tokenless derives a stable key from that single name.
 - If neither name is present and no explicit `--idempotency-key` is provided, Tokenless does not reuse a mapped conversation and starts from a new visible chat.
 - If a calling agent already has a stable thread id, it may pass that id through `--idempotency-key`.
@@ -95,16 +100,17 @@ Pass stable project and chat names for each agent chat thread. Tokenless stores 
 
 ## Provider Selection
 
-Tokenless supports visible ChatGPT, Claude, and Gemini sessions. When the user has configured `~/.tokenless/config.json`, agents should treat `preferredProviders` as the first candidate list. If no user preference applies:
+Tokenless supports visible ChatGPT, Claude, and Gemini sessions. You can configure your preferred providers in two ways:
 
-- Use Claude for long-form writing, careful critique, architecture tradeoffs, and synthesis-heavy reviews.
-- Use ChatGPT for general coding, debugging, structured transformations, multimodal/browser-product reasoning, and fast iteration.
-- Use Gemini for large-context reading, research-style summarization, Google ecosystem context, and broad document comparisons.
+1. **Manually**: Directly edit the `~/.tokenless/config.json` configuration file, or run the `tokenless config --preferred-providers` command.
+2. **Through the UI**: Directly configure your preferences within the extension sidepanel/UI.
+
+The stored `preferredProviders` array controls the default provider order for future `tokenless run` calls.
 
 ## What It Includes
 
 - `tokenless`: the CLI users install and agents call.
-- `Tokenless Browser Session Bridge`: the browser extension that works with visible provider tabs.
+- `Tokenless`: the browser extension that works with visible provider tabs.
 - `tokenless-relay`: an optional HTTP relay for web or hosted integrations that need a stable Tokenless entrypoint.
 - `tokenless-client`: optional helper code for web apps talking to the relay.
 
@@ -133,6 +139,8 @@ npm run build
 npm test
 npm run test:e2e
 ```
+
+`npm run build` writes an unpacked extension to `packages/extension/dist/extension`. After building, open `chrome://extensions` in Chrome or Edge, enable developer mode, choose **Load unpacked**, and select that directory. See **Local Dev Test** below for CLI binding and the smoke test.
 
 `npm run test:e2e` runs the local extension/native-host flow against a normalized real-DOM ChatGPT fixture served by Playwright at `https://chatgpt.com/**`. It exercises the same visible composer, submit button, and assistant-message selector shapes that Tokenless uses against ChatGPT, but it does not prove the current production ChatGPT DOM is still compatible.
 

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Tokenless Browser Session Bridge",
+  "name": "Tokenless",
   "version": "0.1.0",
   "description": "Visible bridge for user-authorized ChatGPT, Gemini, and Claude web sessions.",
   "permissions": [
@@ -38,7 +38,7 @@
     "default_path": "sidepanel/index.html"
   },
   "action": {
-    "default_title": "Tokenless Browser Session Bridge"
+    "default_title": "Tokenless"
   },
   "externally_connectable": {
     "matches": [

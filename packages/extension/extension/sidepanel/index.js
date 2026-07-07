@@ -2,7 +2,6 @@ import { capabilitiesPayload } from '../shared/bridge-protocol.js'
 
 const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 const status = document.querySelector('#status')
-const providers = document.querySelector('#providers')
 const configuration = document.querySelector('#configuration')
 const history = document.querySelector('#history')
 const refreshHistory = document.querySelector('#refresh-history')
@@ -11,20 +10,6 @@ const supportedProviderIds = capabilities.providers.map((provider) => provider.i
 let configProviderOrder = []
 
 status.textContent = 'Ready'
-
-providers.replaceChildren(...capabilities.providers.map((provider) => {
-  const row = document.createElement('div')
-  row.className = 'provider'
-
-  const label = document.createElement('strong')
-  label.textContent = provider.label
-
-  const meta = document.createElement('span')
-  meta.textContent = new URL(provider.homeUrl).hostname
-
-  row.append(label, meta)
-  return row
-}))
 
 refreshHistory?.addEventListener('click', () => {
   refreshLocalState()
@@ -74,14 +59,16 @@ function renderConfigEditor(message) {
 
   const save = document.createElement('button')
   save.type = 'button'
-  save.textContent = 'Save'
+  save.className = 'button-with-icon'
+  save.append(iconNode('save'), document.createTextNode('Save'))
   save.addEventListener('click', () => {
     saveConfig().catch((error) => renderConfigEditor(error?.message || 'Local configuration could not be saved.'))
   })
 
   const clear = document.createElement('button')
   clear.type = 'button'
-  clear.textContent = 'Clear'
+  clear.className = 'button-with-icon'
+  clear.append(iconNode('clear'), document.createTextNode('Clear'))
   clear.addEventListener('click', () => {
     configProviderOrder = []
     renderConfigEditor('Cleared locally. Save to update ~/.tokenless/config.json.')
@@ -100,19 +87,38 @@ function renderConfigEditor(message) {
 function renderProviderEditorRow(providerId, index) {
   const row = document.createElement('div')
   row.className = 'provider-editor-row'
+  if (index === 0) {
+    row.classList.add('provider-editor-row-selected')
+  }
+
+  const identity = document.createElement('div')
+  identity.className = 'provider-editor-identity'
+
+  const rank = document.createElement('span')
+  rank.className = 'provider-editor-rank'
+  rank.textContent = String(index + 1)
+
+  const text = document.createElement('div')
+  text.className = 'provider-editor-text'
 
   const label = document.createElement('strong')
   label.textContent = providerLabel(providerId)
 
+  const description = document.createElement('span')
+  description.textContent = index === 0 ? 'Preferred provider' : 'Fallback provider'
+
+  text.append(label, description)
+  identity.append(rank, text)
+
   const controls = document.createElement('div')
   controls.className = 'provider-editor-controls'
   controls.append(
-    providerButton('^', () => moveProvider(index, -1), index === 0),
-    providerButton('v', () => moveProvider(index, 1), index === configProviderOrder.length - 1),
-    providerButton('Remove', () => removeProvider(index), false)
+    providerIconButton('Move up', 'chevron-up', () => moveProvider(index, -1), index === 0),
+    providerIconButton('Move down', 'chevron-down', () => moveProvider(index, 1), index === configProviderOrder.length - 1),
+    providerIconButton('Remove provider', 'trash', () => removeProvider(index), false, 'danger')
   )
 
-  row.append(label, controls)
+  row.append(identity, controls)
   return row
 }
 
@@ -134,7 +140,8 @@ function renderProviderAddRow() {
 
   const add = document.createElement('button')
   add.type = 'button'
-  add.textContent = 'Add'
+  add.className = 'button-with-icon'
+  add.append(iconNode('plus'), document.createTextNode('Add'))
   add.addEventListener('click', () => {
     if (!select.value || configProviderOrder.includes(select.value)) return
     configProviderOrder = [...configProviderOrder, select.value]
@@ -145,13 +152,72 @@ function renderProviderAddRow() {
   return row
 }
 
-function providerButton(text, onClick, disabled) {
+function providerIconButton(label, icon, onClick, disabled, tone) {
   const button = document.createElement('button')
   button.type = 'button'
-  button.textContent = text
+  button.className = tone ? `icon-button icon-button-${tone}` : 'icon-button'
+  button.setAttribute('aria-label', label)
+  button.title = label
+  button.append(iconNode(icon))
   button.disabled = disabled
   button.addEventListener('click', onClick)
   return button
+}
+
+function iconNode(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('focusable', 'false')
+  svg.classList.add('icon')
+
+  for (const attrs of iconPaths(name)) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    for (const [key, value] of Object.entries(attrs)) {
+      path.setAttribute(key, value)
+    }
+    svg.append(path)
+  }
+
+  return svg
+}
+
+function iconPaths(name) {
+  switch (name) {
+    case 'chevron-up':
+      return [{ d: 'm18 15-6-6-6 6' }]
+    case 'chevron-down':
+      return [{ d: 'm6 9 6 6 6-6' }]
+    case 'trash':
+      return [
+        { d: 'M3 6h18' },
+        { d: 'M8 6V4h8v2' },
+        { d: 'm19 6-1 14H6L5 6' },
+        { d: 'M10 11v5' },
+        { d: 'M14 11v5' },
+      ]
+    case 'save':
+      return [
+        { d: 'M5 3h12l2 2v16H5z' },
+        { d: 'M8 3v6h8V3' },
+        { d: 'M8 21v-7h8v7' },
+      ]
+    case 'clear':
+      return [
+        { d: 'M4 7h16' },
+        { d: 'M10 11v6' },
+        { d: 'M14 11v6' },
+        { d: 'M6 7l1 14h10l1-14' },
+        { d: 'M9 7V4h6v3' },
+      ]
+    case 'plus':
+      return [
+        { d: 'M12 5v14' },
+        { d: 'M5 12h14' },
+      ]
+    default:
+      return [{ d: 'M12 5v14' }]
+  }
 }
 
 function moveProvider(index, delta) {
