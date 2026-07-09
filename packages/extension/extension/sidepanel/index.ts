@@ -8,6 +8,7 @@ const refreshHistory = document.querySelector('#refresh-history')
 const capabilities = capabilitiesPayload()
 const supportedProviderIds = capabilities.providers.map((provider) => provider.id)
 let configProviderOrder: string[] = []
+type PanelRecord = Record<string, any>
 
 if (status) {
   status.textContent = 'Ready'
@@ -34,7 +35,7 @@ async function loadConfig() {
   renderConfig(response.result)
 }
 
-function renderConfig(config) {
+function renderConfig(config: PanelRecord | null | undefined) {
   if (!configuration) return
   configProviderOrder = normalizeProviderOrder(config?.preferredProviders)
   renderConfigEditor()
@@ -86,7 +87,7 @@ function renderConfigEditor(message?: string) {
   configuration.replaceChildren(editor)
 }
 
-function renderProviderEditorRow(providerId, index) {
+function renderProviderEditorRow(providerId: string, index: number) {
   const row = document.createElement('div')
   row.className = 'provider-editor-row'
   if (index === 0) {
@@ -154,7 +155,7 @@ function renderProviderAddRow() {
   return row
 }
 
-function providerIconButton(label, icon, onClick, disabled, tone?: string) {
+function providerIconButton(label: string, icon: string, onClick: () => void, disabled: boolean, tone?: string) {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = tone ? `icon-button icon-button-${tone}` : 'icon-button'
@@ -166,7 +167,7 @@ function providerIconButton(label, icon, onClick, disabled, tone?: string) {
   return button
 }
 
-function iconNode(name) {
+function iconNode(name: string) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', '0 0 24 24')
   svg.setAttribute('aria-hidden', 'true')
@@ -184,7 +185,7 @@ function iconNode(name) {
   return svg
 }
 
-function iconPaths(name) {
+function iconPaths(name: string) {
   switch (name) {
     case 'chevron-up':
       return [{ d: 'm18 15-6-6-6 6' }]
@@ -222,17 +223,18 @@ function iconPaths(name) {
   }
 }
 
-function moveProvider(index, delta) {
+function moveProvider(index: number, delta: number) {
   const nextIndex = index + delta
   if (nextIndex < 0 || nextIndex >= configProviderOrder.length) return
   const next = [...configProviderOrder]
   const [provider] = next.splice(index, 1)
+  if (provider === undefined) return
   next.splice(nextIndex, 0, provider)
   configProviderOrder = next
   renderConfigEditor()
 }
 
-function removeProvider(index) {
+function removeProvider(index: number) {
   configProviderOrder = configProviderOrder.filter((_, providerIndex) => providerIndex !== index)
   renderConfigEditor()
 }
@@ -260,7 +262,7 @@ async function loadHistory() {
   renderHistory(response.result?.history ?? [])
 }
 
-function renderHistory(entries) {
+function renderHistory(entries: PanelRecord[]) {
   if (!history) return
   if (entries.length === 0) {
     history.replaceChildren(messageNode('No mapped local tasks yet.'))
@@ -288,7 +290,7 @@ function renderHistory(entries) {
   }))
 }
 
-function renderConversation(entry) {
+function renderConversation(entry: PanelRecord) {
   const row = document.createElement('article')
   row.className = 'conversation'
 
@@ -320,13 +322,13 @@ function renderConversation(entry) {
   return row
 }
 
-function metaLine(label, value) {
+function metaLine(label: string, value: string) {
   const line = document.createElement('div')
   line.textContent = `${label}: ${value}`
   return line
 }
 
-function urlLine(url) {
+function urlLine(url: string) {
   const line = document.createElement('div')
   const label = document.createTextNode('Provider URL: ')
   const link = document.createElement('a')
@@ -338,28 +340,28 @@ function urlLine(url) {
   return line
 }
 
-function messageNode(text) {
+function messageNode(text: string) {
   const node = document.createElement('p')
   node.className = 'muted'
   node.textContent = text
   return node
 }
 
-function renderHistoryError(error) {
+function renderHistoryError(error: Partial<Error>) {
   if (!history) return
   history.replaceChildren(messageNode(error?.message || 'Local history is unavailable.'))
 }
 
-function renderConfigError(error) {
+function renderConfigError(error: Partial<Error>) {
   if (!configuration) return
   configuration.replaceChildren(messageNode(error?.message || 'Local configuration is unavailable.'))
 }
 
-function providerLabel(providerId) {
-  return capabilities.providers.find((provider) => provider.id === providerId)?.label ?? providerId ?? 'Provider'
+function providerLabel(providerId: unknown) {
+  return capabilities.providers.find((provider) => provider.id === providerId)?.label ?? String(providerId ?? 'Provider')
 }
 
-function normalizeProviderOrder(providers) {
+function normalizeProviderOrder(providers: unknown) {
   if (!Array.isArray(providers)) return []
   const seen = new Set<string>()
   const normalized: string[] = []
@@ -371,14 +373,15 @@ function normalizeProviderOrder(providers) {
   return normalized
 }
 
-function formatDate(value) {
+function formatDate(value: unknown) {
   if (!value) return 'Unknown'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
+  const text = String(value)
+  const date = new Date(text)
+  if (Number.isNaN(date.getTime())) return text
   return date.toLocaleString()
 }
 
-function nativeRequest(message): Promise<any> {
+function nativeRequest(message: PanelRecord): Promise<any> {
   return new Promise((resolve, reject) => {
     const port = chrome.runtime.connectNative(NATIVE_HOST_NAME)
     let settled = false

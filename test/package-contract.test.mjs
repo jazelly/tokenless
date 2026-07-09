@@ -42,31 +42,28 @@ test('README explains user pain, browser install path, and publish strategy', ()
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
 
   assert.match(readme, /\[README\.zh-CN\.md\]\(README\.zh-CN\.md\)/)
-  assert.match(readme, /AI coding agents often need a second model/)
+  assert.match(readme, /Tokenless helps agents save tokens/)
+  assert.match(readme, /visible web version of ChatGPT, Claude, or Gemini/)
+  assert.match(readme, /## Core Value/)
+  assert.match(readme, /## How It Works/)
+  assert.match(readme, /## Safety Boundary/)
   assert.match(readme, /npm install -g tokenless/)
   assert.match(readme, /tokenless config --preferred-providers claude,chatgpt,gemini/)
   assert.match(readme, /~\/\.tokenless\/config\.json/)
   assert.match(readme, /packages\/extension\/dist\/extension/)
-  assert.match(readme, /The extension is distributed through Chrome Web Store/)
+  assert.match(readme, /Chrome Web Store, an unpacked build, or a zip package/)
   assert.match(readme, /Do not publish yet:\n\n- `tokenless-relay`\n- `tokenless-client`\n- `tokenless-browser-session-bridge`/)
-  assert.match(readme, /## Local Dev Test/)
-  assert.match(readme, /## Conversation Mapping/)
-  assert.match(readme, /## Provider Selection/)
-  assert.match(readme, /preferredProviders/)
+  assert.match(readme, /## Development/)
+  assert.match(readme, /No hidden provider backend calls/)
+  assert.match(readme, /does not read provider cookies/)
   assert.match(readme, /--project-name "Website redesign"/)
   assert.match(readme, /--chat-name "Navbar review"/)
-  assert.match(readme, /~\/\.tokenless\/meta\/conversations\.json/)
-  assert.match(readme, /extension side panel shows local task history grouped by project and chat/)
   assert.doesNotMatch(readme, /\/Users\/jazelly/)
-  assert.match(readme, /npm install -g \.\/packages\/cli/)
-  assert.match(readme, /REPO_ROOT="\$\(pwd\)"/)
-  assert.match(readme, /normalized real-DOM ChatGPT fixture served by Playwright/)
-  assert.match(readme, /does not prove the current production ChatGPT DOM is still compatible/)
   assert.doesNotMatch(readme, /\/path\/to\/tokenless/)
   assert.match(readme, /tokenless install --extension-id "\$TOKENLESS_EXTENSION_ID" --json/)
   assert.match(readme, /--project-name "Tokenless local dev"/)
   assert.match(readme, /--chat-name "Smoke test"/)
-  assert.match(readme, /--project-root "\$REPO_ROOT"/)
+  assert.match(readme, /--project-root "\$\(pwd\)"/)
   assert.match(readme, /TOKENLESS_LOCAL_OK_48291/)
   assert.doesNotMatch(readme, /ls -lt ~\/\.tokenless\/jobs/)
   assert.doesNotMatch(readme, /Common blockers/)
@@ -76,42 +73,42 @@ test('README explains user pain, browser install path, and publish strategy', ()
 test('Chinese README mirrors the user-facing local test flow', () => {
   const readme = fs.readFileSync(path.join(root, 'README.zh-CN.md'), 'utf8')
 
-  assert.match(readme, /## 它解决什么问题/)
-  assert.match(readme, /## 用户体验/)
-  assert.match(readme, /## 本地开发测试/)
-  assert.match(readme, /## 对话映射/)
+  assert.match(readme, /Tokenless 帮 agent 省 token/)
+  assert.match(readme, /可见的 ChatGPT、Claude 或 Gemini 网页/)
+  assert.match(readme, /## 核心价值/)
+  assert.match(readme, /## 它怎么工作/)
+  assert.match(readme, /## 安全边界/)
+  assert.match(readme, /## 开发/)
   assert.match(readme, /--project-name "Website redesign"/)
   assert.match(readme, /--chat-name "Navbar review"/)
-  assert.match(readme, /~\/\.tokenless\/meta\/conversations\.json/)
-  assert.match(readme, /扩展侧边栏会按项目和聊天显示本地任务历史/)
   assert.doesNotMatch(readme, /\/Users\/jazelly/)
   assert.match(readme, /npm install -g tokenless/)
   assert.match(readme, /tokenless config --preferred-providers claude,chatgpt,gemini/)
   assert.match(readme, /~\/\.tokenless\/config\.json/)
   assert.match(readme, /packages\/extension\/dist\/extension/)
-  assert.match(readme, /npm install -g \.\/packages\/cli/)
-  assert.match(readme, /REPO_ROOT="\$\(pwd\)"/)
-  assert.match(readme, /规范化的 ChatGPT real-DOM fixture/)
-  assert.match(readme, /不证明当前线上 ChatGPT DOM 仍然兼容/)
+  assert.match(readme, /不会调用隐藏的 provider 后端接口/)
+  assert.match(readme, /它不读取 provider cookies/)
   assert.doesNotMatch(readme, /\/path\/to\/tokenless/)
   assert.match(readme, /tokenless install --extension-id "\$TOKENLESS_EXTENSION_ID" --json/)
   assert.match(readme, /--project-name "Tokenless local dev"/)
   assert.match(readme, /--chat-name "Smoke test"/)
-  assert.match(readme, /--project-root "\$REPO_ROOT"/)
+  assert.match(readme, /--project-root "\$\(pwd\)"/)
   assert.match(readme, /TOKENLESS_LOCAL_OK_48291/)
   assert.doesNotMatch(readme, /ls -lt ~\/\.tokenless\/jobs/)
   assert.doesNotMatch(readme, /常见阻塞/)
-  assert.match(readme, /浏览器扩展通过 Chrome 网上应用店、未打包目录或压缩包分发/)
+  assert.match(readme, /Chrome Web Store、未打包目录或 zip 包/)
   assertNoLegacyNames(readme)
 })
 
-test('CLI config command sets the default provider for run', () => {
+test('CLI config command sets defaults for run', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-config-'))
   const config = spawnSync(process.execPath, [
     path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'config',
     '--preferred-providers',
     'claude,chatgpt,gemini',
+    '--browser',
+    'brave-browser',
     '--home',
     homeDir,
     '--json',
@@ -122,6 +119,7 @@ test('CLI config command sets the default provider for run', () => {
 
   assert.equal(config.status, 0)
   assert.deepEqual(JSON.parse(config.stdout).config.preferredProviders, ['claude', 'chatgpt', 'gemini'])
+  assert.equal(JSON.parse(config.stdout).config.browser, 'brave')
 
   const run = spawnSync(process.execPath, [
     path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
@@ -147,6 +145,33 @@ test('CLI config command sets the default provider for run', () => {
   assert.equal(payload.provider, 'claude')
   assert.equal(payload.status, 'no_wait')
   assert.deepEqual(payload.statusLog.map((event) => event.event), ['created', 'not_opened', 'detached'])
+  const request = JSON.parse(fs.readFileSync(path.join(homeDir, 'jobs', payload.requestPath), 'utf8'))
+  assert.equal(request.metadata.browser, 'brave')
+
+  const override = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+    'run',
+    '--prompt',
+    'hello',
+    '--extension-id',
+    'abcdefghijklmnopabcdefghijklmnop',
+    '--browser',
+    'edge',
+    '--home',
+    homeDir,
+    '--no-open',
+    '--no-wait',
+    '--json',
+  ], {
+    cwd: root,
+    env: { ...process.env, TOKENLESS_PROVIDER: '' },
+    encoding: 'utf8',
+  })
+
+  assert.equal(override.status, 0)
+  const overridePayload = JSON.parse(override.stdout)
+  const overrideRequest = JSON.parse(fs.readFileSync(path.join(homeDir, 'jobs', overridePayload.requestPath), 'utf8'))
+  assert.equal(overrideRequest.metadata.browser, 'edge')
 })
 
 test('CLI run falls back to bundled extension id when no extension id is configured', () => {
@@ -350,6 +375,7 @@ test('packed CLI tarball exposes a working tokenless bin for npx', () => {
     const payload = JSON.parse(config.stdout)
     assert.equal(payload.ok, true)
     assert.ok(Array.isArray(payload.config.preferredProviders))
+    assert.equal(payload.config.browser, null)
   } finally {
     fs.rmSync(installDir, { recursive: true, force: true })
     fs.rmSync(tarball, { force: true })

@@ -11,6 +11,7 @@ const distExtensionRoot = path.join(distRoot, 'extension')
 
 await fs.promises.mkdir(distExtensionRoot, { recursive: true })
 await copyStaticExtensionFiles(extensionRoot, distExtensionRoot)
+await prepareContentScripts(distExtensionRoot)
 
 const manifestPath = path.join(distExtensionRoot, 'manifest.json')
 const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8')) as Record<string, any>
@@ -100,4 +101,13 @@ async function copyStaticExtensionFiles(sourceRoot: string, targetRoot: string) 
       await fs.promises.copyFile(sourcePath, targetPath)
     }
   }
+}
+
+async function prepareContentScripts(distExtensionRoot: string) {
+  const contentScriptPath = path.join(distExtensionRoot, 'content', 'provider-content.js')
+  const source = await fs.promises.readFile(contentScriptPath, 'utf8')
+  await fs.promises.writeFile(
+    contentScriptPath,
+    source.replace(/\nexport \{\};(?=\n\/\/# sourceMappingURL=)/, '')
+  )
 }

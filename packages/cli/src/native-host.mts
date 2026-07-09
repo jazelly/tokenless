@@ -10,6 +10,10 @@ import {
   writeTokenlessConfig,
   writeJobState,
 } from './job-store.js'
+import {
+  claimNextDaemonJob,
+  completeDaemonJob,
+} from './daemon-client.js'
 
 type NativeMessage = Record<string, any>
 type NativeError = Error & {
@@ -62,6 +66,25 @@ async function handleMessage(message: NativeMessage) {
         limit: message.limit,
       })
       return { ok: true, result: history }
+    }
+    if (message?.type === 'tokenless.native.daemon_claim_next') {
+      const result = await claimNextDaemonJob({
+        homeDir,
+        daemonUrl: message.daemonUrl,
+        provider: message.provider,
+        action: message.action,
+      })
+      return { ok: true, result: { job: result.job } }
+    }
+    if (message?.type === 'tokenless.native.daemon_complete_job') {
+      const job = await completeDaemonJob({
+        daemonUrl: message.daemonUrl,
+        jobId: message.jobId,
+        claimToken: message.claimToken,
+        result: Object.hasOwn(message, 'result') ? message.result : undefined,
+        error: Object.hasOwn(message, 'error') ? message.error : undefined,
+      })
+      return { ok: true, result: job }
     }
     if (message?.type === 'tokenless.native.read_config') {
       const config = await readTokenlessConfig(homeDir)

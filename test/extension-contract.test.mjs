@@ -56,15 +56,93 @@ test('extension validates provider landing before waiting on provider actions', 
   assert.match(contentScript, /Boolean\(visibleComposer && visibleSubmit\)/)
 })
 
+test('background can run daemon claim-next jobs through the visible provider bridge', () => {
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
+
+  assert.match(serviceWorker, /DAEMON_RUN_NEXT_MESSAGE = 'tokenless\.daemon\.run_next'/)
+  assert.match(serviceWorker, /isDaemonRunNextMessage\(message\)/)
+  assert.match(serviceWorker, /runNextDaemonJob\(message\)/)
+  assert.match(serviceWorker, /tokenless\.native\.daemon_claim_next/)
+  assert.match(serviceWorker, /tokenless\.native\.daemon_complete_job/)
+  assert.match(serviceWorker, /chrome\.runtime\.connectNative\(NATIVE_HOST_NAME\)/)
+  assert.match(serviceWorker, /provider: stringOrUndefined\(message\.provider\)/)
+  assert.match(serviceWorker, /action: stringOrUndefined\(message\.action\)/)
+  assert.match(serviceWorker, /job === null \|\| job === undefined/)
+  assert.match(serviceWorker, /status: 'no_job'/)
+  assert.match(serviceWorker, /daemonJobToBridgeRequest\(job\)/)
+  assert.match(serviceWorker, /requestJson\.prompt/)
+  assert.match(serviceWorker, /requestJson\.targetUrl/)
+  assert.doesNotMatch(
+    serviceWorker.slice(
+      serviceWorker.indexOf('function daemonJobToBridgeRequest'),
+      serviceWorker.indexOf('async function completeDaemonJob')
+    ),
+    /claim_token|claimToken/,
+    'daemon claim token must not be copied into provider bridge requests'
+  )
+  assert.match(serviceWorker, /validateBridgeRequest\(bridgeRequest\)/)
+  assert.match(serviceWorker, /runBridgeRequest\(validation\.request\)/)
+  assert.match(serviceWorker, /claimToken/)
+  assert.match(serviceWorker, /normalizeBridgeResponse\(bridgeResponse\)/)
+  assert.match(serviceWorker, /job: publicDaemonJob\(job\)/)
+  assert.match(serviceWorker, /claim_token: _claimTokenSnake/)
+  assert.match(serviceWorker, /claimToken: _claimTokenCamel/)
+
+  assert.ok(
+    serviceWorker.indexOf('tokenless.native.daemon_claim_next') < serviceWorker.indexOf('tokenless.native.daemon_complete_job'),
+    'daemon jobs must be claimed before they are completed'
+  )
+  assert.ok(
+    serviceWorker.indexOf('async function runBridgeRequest') < serviceWorker.indexOf('async function runNextDaemonJob'),
+    'daemon jobs should reuse the same bridge executor as runtime bridge requests'
+  )
+  assert.match(serviceWorker, /tokenless\.bridge\.submit/)
+  assert.match(serviceWorker, /tokenless\.bridge\.read/)
+  assert.match(serviceWorker, /tokenless\.bridge\.validate_landing/)
+})
+
+test('daemon background path keeps provider sessions visible and does not inspect provider credentials', () => {
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
+  const manifest = fs.readFileSync(path.join(root, 'packages/extension/extension/manifest.json'), 'utf8')
+
+  assert.match(serviceWorker, /getOrCreateProviderTab/)
+  assert.match(serviceWorker, /focusTab\(tab\)/)
+  assert.match(serviceWorker, /sendToProviderTab/)
+  assert.match(serviceWorker, /chrome\.tabs\.sendMessage/)
+  assert.doesNotMatch(serviceWorker, /chrome\.cookies/)
+  assert.doesNotMatch(serviceWorker, /document\.cookie/)
+  assert.doesNotMatch(serviceWorker, /localStorage/)
+  assert.doesNotMatch(serviceWorker, /sessionStorage/)
+  assert.doesNotMatch(serviceWorker, /provider.*fetch|fetch.*provider/)
+  assert.doesNotMatch(manifest, /"cookies"/)
+})
+
+test('daemon background path preserves existing task page native job flow', () => {
+  const taskPage = fs.readFileSync(path.join(root, 'packages/extension/extension/task/task.ts'), 'utf8')
+  const taskHtml = fs.readFileSync(path.join(root, 'packages/extension/extension/task/task.html'), 'utf8')
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
+
+  assert.match(taskHtml, /<script type="module" src="\.\/task\.js"><\/script>/)
+  assert.match(taskPage, /tokenless\.native\.claim_job/)
+  assert.match(taskPage, /chrome\.runtime\.sendMessage/)
+  assert.match(taskPage, /protocol: 'tokenless\.browser-session-bridge\.v1'/)
+  assert.match(taskPage, /tokenless\.native\.write_result/)
+  assert.match(taskPage, /tokenless\.native\.write_snapshot/)
+  assert.match(taskPage, /normalizeBridgeResponse\(bridgeResponse\)/)
+  assert.match(serviceWorker, /validateBridgeRequest\(message\)/)
+})
+
 test('provider content script is safe to inject more than once', () => {
   const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
   const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.ts'), 'utf8')
+  const builtContentScript = fs.readFileSync(path.join(root, 'packages/extension/dist/extension/content/provider-content.js'), 'utf8')
 
   assert.match(serviceWorker, /chrome\.scripting\.executeScript/)
   assert.match(contentScript, /\(\(\) => \{/)
   assert.match(contentScript, /__TOKENLESS_PROVIDER_CONTENT_LOADED__/)
+  assert.doesNotMatch(builtContentScript, /\nexport \{\};/)
   assert.ok(
-    contentScript.indexOf('__TOKENLESS_PROVIDER_CONTENT_LOADED__') < contentScript.indexOf('const PROVIDERS ='),
+    contentScript.indexOf('__TOKENLESS_PROVIDER_CONTENT_LOADED__') < contentScript.search(/const PROVIDERS\b/),
     'the duplicate-injection guard must run before top-level declarations inside the content script closure'
   )
 })
@@ -630,6 +708,37 @@ test('native host installer scopes manifest to extension origin', async () => {
   const manifest = JSON.parse(fs.readFileSync(installed.manifests[0], 'utf8'))
   assert.equal(manifest.name, NATIVE_HOST_NAME)
   assert.deepEqual(manifest.allowed_origins, ['chrome-extension://abcdefghijklmnopabcdefghijklmnop/'])
+})
+
+test('native host installer supports Brave browser manifests', async () => {
+  const { installNativeHost } = await import('../packages/cli/dist/src/index.js')
+  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-native-home-'))
+  const manifestHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-manifest-home-'))
+  const installed = await installNativeHost({
+    homeDir,
+    manifestHome,
+    extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+    browsers: ['brave-browser'],
+  })
+
+  assert.equal(installed.manifests.length, 1)
+  const expectedSegment = path.join('BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts')
+  assert.ok(installed.manifests[0].includes(expectedSegment))
+})
+
+test('native host installer supports isolated browser profile manifests', async () => {
+  const { installNativeHost } = await import('../packages/cli/dist/src/index.js')
+  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-native-home-'))
+  const manifestHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-manifest-home-'))
+  const installed = await installNativeHost({
+    homeDir,
+    manifestHome,
+    extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+    browsers: ['profile'],
+  })
+
+  assert.equal(installed.manifests.length, 1)
+  assert.equal(installed.manifests[0], path.join(manifestHome, 'NativeMessagingHosts', 'dev.tokenless.native_host.json'))
 })
 
 function readJson(relativePath) {

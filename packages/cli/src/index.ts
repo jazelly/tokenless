@@ -2,6 +2,24 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 export {
+  DEFAULT_DAEMON_URL,
+  claimNextDaemonJob,
+  completeDaemonJob,
+  createDaemonJob,
+  daemonUrl,
+  readDaemonToken,
+} from './daemon-client.js'
+
+export type {
+  ClaimNextDaemonJobOptions,
+  CompleteDaemonJobOptions,
+  CreateDaemonJobOptions,
+  DaemonClaimedJob,
+  DaemonClientOptions,
+  DaemonJob,
+} from './daemon-client.js'
+
+export {
   buildTaskUrl,
   completeLocalJob,
   configPath,
@@ -13,6 +31,7 @@ export {
   JOB_STATES,
   LOCAL_JOB_PROTOCOL_VERSION,
   NATIVE_HOST_NAME,
+  normalizeBrowserId,
   nativeMessagingHostDir,
   nativeMessagingHostDirs,
   readConversationMap,

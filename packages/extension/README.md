@@ -30,7 +30,7 @@ npm run build -w tokenless-browser-session-bridge
 npm test
 ```
 
-Load `packages/extension/dist/extension` as an unpacked extension in Chrome or Edge developer mode.
+Load `packages/extension/dist/extension` as an unpacked extension in Chrome, Brave, Edge, Chromium, or Arc developer mode.
 
 ```js
 import { createExternalExtensionClient } from "tokenless-browser-session-bridge/web-client";
@@ -43,4 +43,4 @@ const response = await bridge.request({
 });
 ```
 
-The current extension build targets Chromium-family browsers: Chrome, Edge, and Arc. Firefox and Safari need target-specific manifests and Safari's containing app wrapper before release.
+The current extension build targets Chromium-family browsers: Chrome, Brave, Edge, Chromium, and Arc. Firefox and Safari need target-specific manifests and Safari's containing app wrapper before release.

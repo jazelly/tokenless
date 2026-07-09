@@ -6,7 +6,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionPath = path.join(root, 'packages/extension/extension')
+const extensionPath = path.join(root, 'packages/extension/dist/extension')
 const chatGptRealDomFixturePath = path.join(root, 'test/fixtures/chatgpt-real-dom-fixture.html')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-e2e', 'runs')
 

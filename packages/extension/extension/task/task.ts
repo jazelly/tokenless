@@ -92,7 +92,7 @@ function params() {
   }
 }
 
-async function writeState(jobId, nonce, status, detail) {
+async function writeState(jobId: string, nonce: string, status: string, detail: TaskRecord) {
   const response = await nativeRequest({
     type: 'tokenless.native.write_state',
     jobId,
@@ -105,14 +105,14 @@ async function writeState(jobId, nonce, status, detail) {
   }
 }
 
-async function writeResult(message) {
+async function writeResult(message: TaskRecord) {
   return nativeRequest({
     type: 'tokenless.native.write_result',
     ...message,
   })
 }
 
-function nativeRequest(message): Promise<any> {
+function nativeRequest(message: TaskRecord): Promise<any> {
   return new Promise((resolve, reject) => {
     const port = chrome.runtime.connectNative(NATIVE_HOST_NAME)
     let settled = false
@@ -180,13 +180,13 @@ function normalizeBridgeResponse(response: TaskRecord) {
   }
 }
 
-function setStatus(text) {
+function setStatus(text: string) {
   if (statusNode) {
     statusNode.textContent = text
   }
 }
 
-function taskError(code, message): TokenlessTaskError {
+function taskError(code: string | undefined, message: string | undefined): TokenlessTaskError {
   const error: TokenlessTaskError = new Error(message || 'Tokenless task failed.')
   error.code = code || 'tokenless_task_error'
   return error

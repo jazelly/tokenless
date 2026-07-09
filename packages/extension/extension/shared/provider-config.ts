@@ -4,7 +4,23 @@ export const PROVIDER_IDS = Object.freeze({
   CLAUDE: 'claude',
 })
 
-const PROVIDERS = Object.freeze([
+export type ProviderId = typeof PROVIDER_IDS[keyof typeof PROVIDER_IDS]
+
+export type ProviderConfig = {
+  readonly id: ProviderId
+  readonly label: string
+  readonly homeUrl: string
+  readonly hosts: readonly string[]
+  readonly matchPatterns: readonly string[]
+  readonly composerSelectors: readonly string[]
+  readonly submitSelectors: readonly string[]
+  readonly answerSelectors: readonly string[]
+  readonly blockerSelectors: readonly string[]
+  readonly busySelectors?: readonly string[]
+  readonly busyTextLabels?: readonly string[]
+}
+
+const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
   Object.freeze({
     id: PROVIDER_IDS.CHATGPT,
     label: 'ChatGPT',
@@ -94,15 +110,15 @@ const PROVIDERS = Object.freeze([
   }),
 ])
 
-export function listProviders() {
+export function listProviders(): ProviderConfig[] {
   return [...PROVIDERS]
 }
 
-export function getProviderById(providerId) {
+export function getProviderById(providerId: unknown): ProviderConfig | null {
   return PROVIDERS.find((provider) => provider.id === providerId) ?? null
 }
 
-export function getProviderForUrl(url) {
+export function getProviderForUrl(url: string): ProviderConfig | null {
   let parsed
   try {
     parsed = new URL(url)

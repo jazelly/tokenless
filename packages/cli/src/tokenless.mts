@@ -7,6 +7,7 @@ import {
   createLocalJob,
   deriveTaskId,
   installNativeHost,
+  normalizeBrowserId,
   readLocalTaskState,
   readTokenlessConfig,
   tokenlessHome,
@@ -86,6 +87,7 @@ async function snapshotDomCommand(args: CliArgs) {
 
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
+  const { browser } = resolveBrowser(args, config)
   const provider = args.provider ||
     process.env.TOKENLESS_PROVIDER ||
     config.preferredProviders[0] ||
@@ -103,7 +105,7 @@ async function snapshotDomCommand(args: CliArgs) {
     maxTextChars: args.maxTextChars === undefined ? undefined : Number(args.maxTextChars),
     metadata: {
       source: 'tokenless-cli',
-      browser: args.browser,
+      browser,
       includeText: Boolean(args.includeText),
       maxTextChars: args.maxTextChars === undefined ? undefined : Number(args.maxTextChars),
     },
@@ -122,14 +124,14 @@ async function snapshotDomCommand(args: CliArgs) {
 
   const taskUrl = buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce })
   if (!args.noOpen) {
-    await openUrl(taskUrl, { browser: args.browser })
+    await openUrl(taskUrl, { browser: browser ?? undefined })
     statusReporter.report({
       event: 'opened',
       status: 'opened_task_page',
       jobId: job.jobId,
       taskId: job.taskId,
       provider: job.provider,
-      browser: args.browser,
+      browser,
       taskUrl,
     })
   } else {
@@ -180,6 +182,7 @@ async function runCommand(args: CliArgs) {
   const { extensionId } = resolveExtensionId(args)
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
+  const { browser } = resolveBrowser(args, config)
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
   const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME
   const idempotencyKey = args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY
@@ -201,7 +204,7 @@ async function runCommand(args: CliArgs) {
     readTimeoutMs: args.readTimeoutMs === undefined ? 120000 : Number(args.readTimeoutMs),
     metadata: {
       source: 'tokenless-cli',
-      browser: args.browser,
+      browser,
       profile: args.profile,
       projectName,
       chatName,
@@ -222,14 +225,14 @@ async function runCommand(args: CliArgs) {
 
   const taskUrl = buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce })
   if (taskUrl && !args.noOpen) {
-    await openUrl(taskUrl, { browser: args.browser })
+    await openUrl(taskUrl, { browser: browser ?? undefined })
     statusReporter.report({
       event: 'opened',
       status: 'opened_task_page',
       jobId: job.jobId,
       taskId: job.taskId,
       provider: job.provider,
-      browser: args.browser,
+      browser,
       taskUrl,
     })
   } else {
@@ -302,10 +305,13 @@ async function stateCommand(args: CliArgs) {
 
 async function installCommand(args: CliArgs) {
   const { extensionId } = resolveExtensionId(args)
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const { browser } = resolveBrowser(args, config)
   const result = await installNativeHost({
-    homeDir: tokenlessHome(args.home),
+    homeDir,
     extensionId,
-    browsers: args.browser ? [args.browser] : undefined,
+    browsers: browser ? [browser] : undefined,
   })
   printPayload({
     ok: true,
@@ -319,8 +325,10 @@ async function installCommand(args: CliArgs) {
 
 async function doctorCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
   const nodeOk = Number(process.versions.node.split('.')[0]) >= 22
   const { extensionId, source: extensionIdSource } = resolveExtensionId(args)
+  const { browser, source: browserSource } = resolveBrowser(args, config)
   printPayload({
     ok: nodeOk && Boolean(extensionId),
     checks: {
@@ -331,16 +339,23 @@ async function doctorCommand(args: CliArgs) {
         extensionId,
         source: extensionIdSource,
       },
+      browser: {
+        ok: true,
+        browser,
+        source: browserSource,
+      },
     },
   }, args)
 }
 
 async function configCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  if (args.preferredProviders) {
+  if (args.preferredProviders !== undefined || args.browser !== undefined) {
+    const browser = args.browser === undefined ? undefined : normalizeCliBrowser(args.browser)
     const config = await writeTokenlessConfig({
       homeDir,
-      preferredProviders: parseProviderList(args.preferredProviders),
+      preferredProviders: args.preferredProviders === undefined ? undefined : parseProviderList(args.preferredProviders),
+      browser,
     })
     printPayload({
       ok: true,
@@ -509,15 +524,32 @@ function openCommand(url: string, { browser }: { browser?: string | undefined } 
   if (process.platform === 'win32') {
     return { command: 'cmd', args: ['/c', 'start', '', url] }
   }
+  const linuxCommand = linuxBrowserCommand(browser)
+  if (linuxCommand) {
+    return { command: linuxCommand, args: [url] }
+  }
   return { command: 'xdg-open', args: [url] }
 }
 
 function macBrowserApp(browser: unknown, url: string) {
-  const normalized = typeof browser === 'string' ? browser.toLowerCase() : null
+  const normalized = normalizeBrowserId(browser)
   if (normalized === 'arc') return 'Arc'
   if (normalized === 'edge') return 'Microsoft Edge'
-  if (normalized === 'chrome' || normalized === 'google-chrome') return 'Google Chrome'
+  if (normalized === 'brave') return 'Brave Browser'
+  if (normalized === 'chrome') return 'Google Chrome'
+  if (normalized === 'chrome-for-testing' || normalized === 'chrome-for-testing-legacy') return 'Google Chrome for Testing'
+  if (normalized === 'chromium') return 'Chromium'
   if (url.startsWith('chrome-extension://')) return 'Google Chrome'
+  return null
+}
+
+function linuxBrowserCommand(browser: unknown) {
+  const normalized = normalizeBrowserId(browser)
+  if (normalized === 'chrome') return 'google-chrome'
+  if (normalized === 'chrome-for-testing' || normalized === 'chrome-for-testing-legacy') return 'google-chrome-for-testing'
+  if (normalized === 'chromium') return 'chromium'
+  if (normalized === 'edge') return 'microsoft-edge'
+  if (normalized === 'brave') return 'brave-browser'
   return null
 }
 
@@ -653,7 +685,7 @@ function usage() {
     '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --context-file <file> --json',
     '  tokenless state --task-id <task-id> --json',
     '  tokenless snapshot-dom --provider chatgpt --extension-id <chrome-extension-id> --json',
-    '  tokenless config --preferred-providers claude,chatgpt,gemini --json',
+    '  tokenless config --preferred-providers claude,chatgpt,gemini --browser brave --json',
     '  tokenless install --extension-id <chrome-extension-id> --json',
     '  tokenless doctor --json',
   ].join('\n'))
@@ -686,6 +718,27 @@ function resolveExtensionId(args: CliArgs) {
     'missing_extension_id',
     'Usage: tokenless requires --extension-id <id>, TOKENLESS_EXTENSION_ID, or a bundled default extension id.'
   )
+}
+
+function resolveBrowser(args: CliArgs, config: Record<string, any> = {}) {
+  if (args.browser !== undefined) {
+    return { browser: normalizeCliBrowser(args.browser), source: 'argument' }
+  }
+  if (config.browser) {
+    return { browser: normalizeCliBrowser(config.browser), source: 'config' }
+  }
+  return { browser: null, source: 'default' }
+}
+
+function normalizeCliBrowser(browser: unknown) {
+  const browserId = normalizeBrowserId(browser)
+  if (!browserId) {
+    throw usageError(
+      'invalid_browser',
+      'Browser must be one of: chrome, chrome-for-testing, chromium, edge, arc, brave.'
+    )
+  }
+  return browserId
 }
 
 function normalizeExtensionId(extensionId: unknown) {

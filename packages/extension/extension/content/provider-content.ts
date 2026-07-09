@@ -1,12 +1,26 @@
 (() => {
 type ContentRecord = Record<string, any>
+type ContentProvider = {
+  id: string
+  hosts: string[]
+  composerSelectors: string[]
+  submitSelectors: string[]
+  answerSelectors: string[]
+  blockerSelectors: string[]
+  busySelectors?: string[]
+  busyTextLabels?: string[]
+}
 
-if (globalThis.__TOKENLESS_PROVIDER_CONTENT_LOADED__) {
+const globalState = globalThis as typeof globalThis & {
+  __TOKENLESS_PROVIDER_CONTENT_LOADED__?: boolean
+}
+
+if (globalState.__TOKENLESS_PROVIDER_CONTENT_LOADED__) {
   return
 }
-globalThis.__TOKENLESS_PROVIDER_CONTENT_LOADED__ = true
+globalState.__TOKENLESS_PROVIDER_CONTENT_LOADED__ = true
 
-const PROVIDERS = [
+const PROVIDERS: ContentProvider[] = [
   {
     id: 'chatgpt',
     hosts: ['chatgpt.com', 'chat.openai.com'],
@@ -102,7 +116,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 const submissionBaselines = new Map()
 
-async function handleMessage(message) {
+async function handleMessage(message: ContentRecord) {
   const provider = providerForMessage(message)
   if (!provider) {
     return {
@@ -132,7 +146,7 @@ async function handleMessage(message) {
   }
 }
 
-async function validateLanding(provider, request: ContentRecord = {}) {
+async function validateLanding(provider: ContentProvider, request: ContentRecord = {}) {
   const timeoutMs = Math.min(Number(request.landingTimeoutMs ?? 5000), 30000)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -165,7 +179,7 @@ async function validateLanding(provider, request: ContentRecord = {}) {
   }
 }
 
-async function snapshotDom(provider, request: ContentRecord = {}) {
+async function snapshotDom(provider: ContentProvider, request: ContentRecord = {}) {
   await dismissProviderInterruptions(provider)
   const includeText = Boolean(request.includeText ?? request.metadata?.includeText)
   const maxTextChars = Math.min(Number(request.maxTextChars ?? request.metadata?.maxTextChars ?? 4000), 100000)
@@ -215,7 +229,7 @@ async function snapshotDom(provider, request: ContentRecord = {}) {
   }
 }
 
-async function submitPrompt(provider, request) {
+async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
   await dismissProviderInterruptions(provider)
   const blocker = detectBlocker(provider)
   if (blocker) {
@@ -232,7 +246,7 @@ async function submitPrompt(provider, request) {
   await delay(150)
 
   const submitButton = await waitForActionableSubmit(provider, request)
-  if (!submitButton || submitButton.disabled || submitButton.getAttribute('aria-disabled') === 'true') {
+  if (!submitButton || (submitButton as HTMLButtonElement).disabled || submitButton.getAttribute('aria-disabled') === 'true') {
     return selectorDrift('submit')
   }
 
@@ -248,7 +262,7 @@ async function submitPrompt(provider, request) {
   }
 }
 
-async function readLatestAnswer(provider, request: ContentRecord = {}) {
+async function readLatestAnswer(provider: ContentProvider, request: ContentRecord = {}) {
   await dismissProviderInterruptions(provider)
   const blocker = detectBlocker(provider)
   if (blocker) {
@@ -280,7 +294,7 @@ function requestKey(request: ContentRecord = {}) {
   return request.requestId || request.jobId || '__latest__'
 }
 
-function detectBlocker(provider) {
+function detectBlocker(provider: ContentProvider) {
   const blocker = findFirst(provider.blockerSelectors)
   if (!blocker) {
     return null
@@ -293,9 +307,9 @@ function detectBlocker(provider) {
   }
 }
 
-function findFirst(selectors) {
+function findFirst(selectors: string[]): HTMLElement | null {
   for (const selector of selectors) {
-    const node = document.querySelector(selector)
+    const node = document.querySelector(selector) as HTMLElement | null
     if (node) {
       return node
     }
@@ -303,14 +317,14 @@ function findFirst(selectors) {
   return null
 }
 
-function providerForMessage(message) {
+function providerForMessage(message: ContentRecord) {
   if (message?.type === 'tokenless.bridge.validate_landing' && message.request?.provider === 'chatgpt') {
     return PROVIDERS.find((provider) => provider.id === 'chatgpt') ?? null
   }
   return getProviderForUrl(location.href)
 }
 
-function chatSurfaceStatus(provider) {
+function chatSurfaceStatus(provider: ContentProvider) {
   const visibleComposer = findFirstVisible(provider.composerSelectors)
   const visibleSubmit = findFirstVisible(provider.submitSelectors)
   if (provider.id === 'chatgpt') {
@@ -333,7 +347,7 @@ function chatSurfaceStatus(provider) {
   }
 }
 
-function findFirstVisible(selectors) {
+function findFirstVisible(selectors: string[]): HTMLElement | null {
   for (const selector of selectors) {
     let nodes
     try {
@@ -343,14 +357,14 @@ function findFirstVisible(selectors) {
     }
     for (const node of nodes) {
       if (isVisible(node)) {
-        return node
+        return node as HTMLElement
       }
     }
   }
   return null
 }
 
-async function waitForComposer(provider, request: ContentRecord = {}) {
+async function waitForComposer(provider: ContentProvider, request: ContentRecord = {}) {
   const timeoutMs = Math.min(Number(request.composerTimeoutMs ?? 15000), 60000)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -364,7 +378,7 @@ async function waitForComposer(provider, request: ContentRecord = {}) {
   return findFirst(provider.composerSelectors)
 }
 
-async function dismissProviderInterruptions(provider) {
+async function dismissProviderInterruptions(provider: ContentProvider) {
   if (provider.id !== 'chatgpt') {
     return
   }
@@ -402,7 +416,7 @@ async function dismissProviderInterruptions(provider) {
   }
 }
 
-function isVisible(node) {
+function isVisible(node: Element) {
   const rect = node.getBoundingClientRect?.()
   const style = window.getComputedStyle?.(node)
   return Boolean(
@@ -414,19 +428,19 @@ function isVisible(node) {
   )
 }
 
-function focusComposer(composer) {
+function focusComposer(composer: HTMLElement) {
   composer.focus()
   if (composer.isContentEditable) {
     const selection = window.getSelection()
     const range = document.createRange()
     range.selectNodeContents(composer)
     range.collapse(false)
-    selection.removeAllRanges()
-    selection.addRange(range)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
   }
 }
 
-function setComposerText(composer, text) {
+function setComposerText(composer: HTMLElement & { value?: string }, text: string) {
   if ('value' in composer) {
     composer.value = text
     composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
@@ -453,12 +467,12 @@ function setComposerText(composer, text) {
   }))
 }
 
-async function waitForActionableSubmit(provider, request: ContentRecord = {}) {
+async function waitForActionableSubmit(provider: ContentProvider, request: ContentRecord = {}) {
   const timeoutMs = Math.min(Number(request.submitTimeoutMs ?? 5000), 30000)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const button = findFirst(provider.submitSelectors)
-    if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
+    if (button && !(button as HTMLButtonElement).disabled && button.getAttribute('aria-disabled') !== 'true') {
       return button
     }
     await delay(100)
@@ -466,7 +480,7 @@ async function waitForActionableSubmit(provider, request: ContentRecord = {}) {
   return findFirst(provider.submitSelectors)
 }
 
-async function waitForStableAnswer(provider, timeoutMs, baseline) {
+async function waitForStableAnswer(provider: ContentProvider, timeoutMs: number, baseline: ContentRecord | undefined) {
   const deadline = Date.now() + timeoutMs
   let lastText = ''
   let stableSince = 0
@@ -485,7 +499,7 @@ async function waitForStableAnswer(provider, timeoutMs, baseline) {
   return latestAnswerText(provider, baseline)
 }
 
-function isProviderBusy(provider) {
+function isProviderBusy(provider: ContentProvider) {
   const selectorMatch = Boolean(provider.busySelectors?.some((selector) => {
     try {
       return [...document.querySelectorAll(selector)].some((node) => isVisible(node))
@@ -507,11 +521,11 @@ function isProviderBusy(provider) {
       node.textContent,
       node.innerText,
     ].filter(Boolean).join(' ')).toLowerCase()
-    return labels.some((busyLabel) => label.includes(busyLabel))
+    return labels.some((busyLabel: string) => label.includes(busyLabel))
   })
 }
 
-function latestAnswerText(provider, baseline) {
+function latestAnswerText(provider: ContentProvider, baseline: ContentRecord | undefined) {
   const answers = answerTexts(provider)
   if (baseline?.count !== undefined) {
     if (answers.length < baseline.count) {
@@ -526,7 +540,7 @@ function latestAnswerText(provider, baseline) {
   return answers.at(-1) ?? ''
 }
 
-function answerSnapshot(provider) {
+function answerSnapshot(provider: ContentProvider) {
   const texts = answerTexts(provider)
   return {
     count: texts.length,
@@ -534,11 +548,14 @@ function answerSnapshot(provider) {
   }
 }
 
-function answerTexts(provider) {
+function answerTexts(provider: ContentProvider) {
   for (const selector of provider.answerSelectors) {
     const texts = [...document.querySelectorAll(selector)]
       .filter((node) => isVisible(node))
-      .map((node) => normalizeText(node.innerText || node.textContent || ''))
+      .map((node) => {
+        const element = node as HTMLElement
+        return normalizeText(element.innerText || element.textContent || '')
+      })
       .filter((text) => text.length > 0)
     if (texts.length > 0) {
       return texts
@@ -547,7 +564,7 @@ function answerTexts(provider) {
   return []
 }
 
-function selectorProbeSnapshot(provider, { includeText = false } = {}) {
+function selectorProbeSnapshot(provider: ContentProvider, { includeText = false }: { includeText?: boolean } = {}) {
   return {
     composers: probeSelectors(provider.composerSelectors, { includeText }),
     submits: probeSelectors(provider.submitSelectors, { includeText }),
@@ -557,7 +574,7 @@ function selectorProbeSnapshot(provider, { includeText = false } = {}) {
   }
 }
 
-function probeSelectors(selectors = [], { includeText = false } = {}) {
+function probeSelectors(selectors: string[] = [], { includeText = false }: { includeText?: boolean } = {}) {
   return selectors.map((selector) => {
     let count = 0
     let firstText = ''
@@ -569,26 +586,26 @@ function probeSelectors(selectors = [], { includeText = false } = {}) {
       const rawText = normalizeText(firstMatch?.innerText || firstMatch?.textContent || '')
       firstText = includeText ? rawText.slice(0, 240) : (rawText ? '[text]' : '')
     } catch (probeError) {
-      error = probeError.message
+      error = probeError instanceof Error ? probeError.message : String(probeError)
     }
     return { selector, count, firstText, error }
   })
 }
 
-function redactTextNodes(root) {
+function redactTextNodes(root: Node) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   const nodes: Node[] = []
   while (walker.nextNode()) {
     nodes.push(walker.currentNode)
   }
   for (const node of nodes) {
-    if (node.nodeValue.trim()) {
+    if (node.nodeValue?.trim()) {
       node.nodeValue = '[text]'
     }
   }
 }
 
-function redactAttributes(root, { includeText = false } = {}) {
+function redactAttributes(root: ParentNode, { includeText = false }: { includeText?: boolean } = {}) {
   const textLikeAttributes = new Set([
     'aria-description',
     'aria-label',
@@ -607,7 +624,7 @@ function redactAttributes(root, { includeText = false } = {}) {
     'srcset',
   ])
 
-  root.querySelectorAll('*').forEach((node) => {
+  root.querySelectorAll('*').forEach((node: Element) => {
     for (const attr of [...node.attributes]) {
       const name = attr.name.toLowerCase()
       if (
@@ -629,7 +646,7 @@ function redactAttributes(root, { includeText = false } = {}) {
   })
 }
 
-function selectorDrift(target) {
+function selectorDrift(target: string) {
   return {
     status: 'blocked',
     stopReason: 'selector_drift',
@@ -637,15 +654,15 @@ function selectorDrift(target) {
   }
 }
 
-function normalizeText(text) {
+function normalizeText(text: string) {
   return text.replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
-function delay(ms) {
+function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function getProviderForUrl(url) {
+function getProviderForUrl(url: string) {
   let parsed
   try {
     parsed = new URL(url)

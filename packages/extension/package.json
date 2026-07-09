@@ -20,7 +20,8 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node dist/src/build-extension.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "pack:extension": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node dist/src/build-extension.mjs --zip"
+    "pack:extension": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node dist/src/build-extension.mjs --zip",
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=22"

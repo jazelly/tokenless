@@ -19,13 +19,13 @@ tokenless doctor --extension-id <chrome-extension-id>
 
 The CLI resolves the extension id in this order: `--extension-id`, `TOKENLESS_EXTENSION_ID`, then the bundled fallback in `src/default-extension-id.js`. Update that tracked file when the distributed extension id changes.
 
-## Configure Provider Preference
+## Configure Defaults
 
 ```bash
-tokenless config --preferred-providers claude,chatgpt,gemini
+tokenless config --preferred-providers claude,chatgpt,gemini --browser brave
 ```
 
-This writes `~/.tokenless/config.json`. When `tokenless run` has no explicit `--provider`, it uses the first configured provider before falling back to ChatGPT. The extension side panel displays this local configuration.
+This writes `~/.tokenless/config.json`. When `tokenless run` has no explicit `--provider`, it uses the first configured provider before falling back to ChatGPT. Browser selection uses `--browser` first, then this configured browser, then the platform default. Supported browser ids are `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, and `brave`. The extension side panel displays this local configuration.
 
 ## Run A Task
 

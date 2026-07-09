@@ -47,6 +47,16 @@ const TIMED_OUT_ERROR_CODES = new Set([
 
 const conversationMapLocks = new Map()
 const SUPPORTED_PROVIDER_IDS = Object.freeze(['chatgpt', 'claude', 'gemini'])
+export const SUPPORTED_BROWSER_IDS = Object.freeze([
+  'chrome',
+  'chrome-for-testing',
+  'chrome-for-testing-legacy',
+  'chromium',
+  'edge',
+  'arc',
+  'brave',
+  'profile',
+])
 
 type JsonRecord = Record<string, any>
 type LocalError = Error & {
@@ -57,6 +67,25 @@ type LockFunction<T> = () => Promise<T>
 
 export function tokenlessHome(explicitHome = process.env.TOKENLESS_HOME) {
   return path.resolve(explicitHome || path.join(os.homedir(), '.tokenless'))
+}
+
+export function normalizeBrowserId(browser: unknown) {
+  if (typeof browser !== 'string') return null
+  const normalized = browser.trim().toLowerCase().replace(/[_\s]+/g, '-')
+  if (!normalized) return null
+  const aliases: Record<string, string> = {
+    'google-chrome': 'chrome',
+    googlechrome: 'chrome',
+    'chrome-testing': 'chrome-for-testing',
+    'chrome-for-testing': 'chrome-for-testing',
+    'chrome-for-testing-legacy': 'chrome-for-testing-legacy',
+    'chromium-browser': 'chromium',
+    'microsoft-edge': 'edge',
+    msedge: 'edge',
+    'brave-browser': 'brave',
+  }
+  const browserId = aliases[normalized] ?? normalized
+  return SUPPORTED_BROWSER_IDS.includes(browserId) ? browserId : null
 }
 
 export function jobsDir(homeDir = tokenlessHome()) {
@@ -399,19 +428,25 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<Js
   return {
     ...payload,
     preferredProviders: normalizeProviderList(payload.preferredProviders),
+    browser: normalizeBrowserId(payload.browser),
   }
 }
 
 export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
   preferredProviders,
+  browser,
 }: JsonRecord = {}) {
   await ensureJobStore(homeDir)
+  const current = await readTokenlessConfig(homeDir)
   const now = new Date().toISOString()
   const config = {
     protocol: TOKENLESS_CONFIG_PROTOCOL_VERSION,
     updatedAt: now,
-    preferredProviders: normalizeProviderList(preferredProviders),
+    preferredProviders: preferredProviders === undefined
+      ? normalizeProviderList(current.preferredProviders)
+      : normalizeProviderList(preferredProviders),
+    browser: browser === undefined ? normalizeBrowserId(current.browser) : normalizeBrowserId(browser),
   }
   await writeJsonAtomic(configPath(homeDir), config, 0o600)
   return config
@@ -598,7 +633,7 @@ export async function installNativeHost({
   homeDir = tokenlessHome(),
   manifestHome = os.homedir(),
   extensionId,
-  browsers = ['chrome', 'chrome-for-testing', 'chrome-for-testing-legacy', 'chromium', 'edge', 'arc'],
+  browsers = ['chrome', 'chrome-for-testing', 'chrome-for-testing-legacy', 'chromium', 'edge', 'arc', 'brave'],
   nodePath = process.execPath,
   packageRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url))),
 }: JsonRecord = {}) {
@@ -624,7 +659,9 @@ export async function installNativeHost({
       allowed_origins: [`chrome-extension://${extensionId}/`],
     }
     for (const browser of browsers) {
-      for (const dir of nativeMessagingHostDirs(browser, manifestHome)) {
+      const browserId = normalizeBrowserId(browser)
+      if (!browserId) continue
+      for (const dir of nativeMessagingHostDirs(browserId, manifestHome)) {
         await fs.mkdir(dir, { recursive: true, mode: 0o755 })
         const manifestPath = path.join(dir, `${NATIVE_HOST_NAME}.json`)
         await writeJsonAtomic(manifestPath, manifest, 0o644)
@@ -653,6 +690,7 @@ export function nativeMessagingHostDirs(browser: string, home = os.homedir()) {
       chromium: ['Library', 'Application Support', 'Chromium', 'NativeMessagingHosts'],
       edge: ['Library', 'Application Support', 'Microsoft Edge', 'NativeMessagingHosts'],
       arc: ['Library', 'Application Support', 'Arc', 'User Data', 'NativeMessagingHosts'],
+      brave: ['Library', 'Application Support', 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts'],
     }
     const root = roots[browser as keyof typeof roots]
     return root ? [path.join(home, ...root)] : []
@@ -667,6 +705,7 @@ export function nativeMessagingHostDirs(browser: string, home = os.homedir()) {
     chromium: ['.config', 'chromium', 'NativeMessagingHosts'],
     edge: ['.config', 'microsoft-edge', 'NativeMessagingHosts'],
     arc: null,
+    brave: ['.config', 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts'],
   }
   const root = roots[browser as keyof typeof roots]
   return root ? [path.join(home, ...root)] : []
@@ -743,6 +782,7 @@ function emptyTokenlessConfig() {
     protocol: TOKENLESS_CONFIG_PROTOCOL_VERSION,
     updatedAt: null,
     preferredProviders: [],
+    browser: null,
   }
 }
 
@@ -766,7 +806,8 @@ function validateTokenlessConfig(payload: JsonRecord, file: string) {
     typeof payload !== 'object' ||
     Array.isArray(payload) ||
     payload.protocol !== TOKENLESS_CONFIG_PROTOCOL_VERSION ||
-    (payload.preferredProviders !== undefined && !Array.isArray(payload.preferredProviders))
+    (payload.preferredProviders !== undefined && !Array.isArray(payload.preferredProviders)) ||
+    (payload.browser !== undefined && payload.browser !== null && !normalizeBrowserId(payload.browser))
   ) {
     throw localStateError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }

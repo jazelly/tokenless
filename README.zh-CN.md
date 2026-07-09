@@ -68,10 +68,10 @@ tokenless doctor --extension-id <chrome-extension-id>
 设置 Tokenless 优先使用哪些网页版 provider：
 
 ```bash
-tokenless config --preferred-providers claude,chatgpt,gemini
+tokenless config --preferred-providers claude,chatgpt,gemini --browser brave
 ```
 
-这会写入 `~/.tokenless/config.json`。
+这会写入 `~/.tokenless/config.json`。`tokenless run` 和 `tokenless snapshot-dom` 会优先使用 `--browser`，其次使用这里配置的浏览器，最后才使用平台默认打开方式。支持的 browser id 是 `chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc` 和 `brave`。
 
 ## 运行一个请求
 
@@ -125,7 +125,7 @@ npm run test:e2e
 
 `npm run build` 会生成未打包扩展到 `packages/extension/dist/extension`。
 
-在 Chrome 或 Edge 里加载它：
+在 Chrome、Brave、Edge、Chromium 或 Arc 里加载它：
 
 1. 打开 `chrome://extensions`。
 2. 开启 developer mode。

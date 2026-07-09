@@ -68,10 +68,10 @@ tokenless doctor --extension-id <chrome-extension-id>
 Choose the web providers you want Tokenless to try first:
 
 ```bash
-tokenless config --preferred-providers claude,chatgpt,gemini
+tokenless config --preferred-providers claude,chatgpt,gemini --browser brave
 ```
 
-This writes `~/.tokenless/config.json`.
+This writes `~/.tokenless/config.json`. `tokenless run` and `tokenless snapshot-dom` use `--browser` first, then this configured browser, then the platform default. Supported browser ids are `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, and `brave`.
 
 ## Run A Request
 
@@ -125,7 +125,7 @@ npm run test:e2e
 
 `npm run build` writes an unpacked extension to `packages/extension/dist/extension`.
 
-Load it in Chrome or Edge:
+Load it in Chrome, Brave, Edge, Chromium, or Arc:
 
 1. Open `chrome://extensions`.
 2. Enable developer mode.
