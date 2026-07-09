@@ -28,17 +28,41 @@ export type ClaimNextDaemonJobOptions = DaemonClientOptions & {
     provider?: string | undefined;
     action?: string | undefined;
 };
+export type GetDaemonJobOptions = DaemonClientOptions & {
+    jobId: string;
+};
 export type CompleteDaemonJobOptions = DaemonClientOptions & {
     jobId: string;
     claimToken: string;
     result?: unknown;
     error?: unknown;
 };
+export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
+    timeoutMs?: number | undefined;
+    pollMs?: number | undefined;
+    onStatus?: ((event: Record<string, unknown>) => unknown) | undefined;
+};
 export declare function daemonUrl(explicitUrl?: string): string;
 export declare function readDaemonToken({ homeDir }?: DaemonClientOptions): Promise<string>;
 export declare function createDaemonJob({ daemonUrl: explicitDaemonUrl, provider, action, requestJson, jobId, claimToken, }: CreateDaemonJobOptions): Promise<DaemonClaimedJob>;
+export declare function getDaemonJob({ daemonUrl: explicitDaemonUrl, jobId, }: GetDaemonJobOptions): Promise<DaemonJob>;
 export declare function claimNextDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, provider, action, }?: ClaimNextDaemonJobOptions): Promise<{
     job: DaemonClaimedJob | null;
 }>;
 export declare function completeDaemonJob({ daemonUrl: explicitDaemonUrl, jobId, claimToken, result, error, }: CompleteDaemonJobOptions): Promise<DaemonJob>;
+export declare function waitDaemonJobResult({ daemonUrl: explicitDaemonUrl, jobId, timeoutMs, pollMs, onStatus, }: WaitDaemonJobResultOptions): Promise<{
+    ok: boolean;
+    status: string;
+    job: DaemonJob;
+    result: unknown;
+    compactOutput: string | undefined;
+    error?: never;
+} | {
+    result?: never;
+    compactOutput?: never;
+    ok: boolean;
+    status: string;
+    job: DaemonJob;
+    error: unknown;
+}>;
 //# sourceMappingURL=daemon-client.d.ts.map

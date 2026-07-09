@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import {
   buildTokenlessPrompt,
   buildTaskUrl,
+  createDaemonJob,
   createLocalJob,
   deriveTaskId,
   installNativeHost,
@@ -11,6 +12,7 @@ import {
   readLocalTaskState,
   readTokenlessConfig,
   tokenlessHome,
+  waitDaemonJobResult,
   waitLocalJobResult,
   writeTokenlessConfig,
 } from './index.js'
@@ -185,34 +187,65 @@ async function runCommand(args: CliArgs) {
   const { browser } = resolveBrowser(args, config)
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
   const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME
-  const idempotencyKey = args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY
+  const idempotencyKey = deriveTaskId({
+    projectName,
+    chatName,
+    idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
+  })
   const provider = args.provider ||
     process.env.TOKENLESS_PROVIDER ||
     config.preferredProviders[0] ||
     'chatgpt'
+  const action = args.action || 'submit_and_read'
+  const readDelayMs = args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs)
+  const readTimeoutMs = args.readTimeoutMs === undefined ? 120000 : Number(args.readTimeoutMs)
+  const metadata = {
+    source: 'tokenless-cli',
+    browser,
+    profile: args.profile,
+    projectName,
+    chatName,
+    idempotencyKey,
+  }
+  const statusReporter = createCliStatusReporter(args)
+  if (!args.noDaemon) {
+    const daemonResult = await tryRunWithDaemon({
+      args,
+      extensionId,
+      provider,
+      action,
+      prompt,
+      targetUrl: args.targetUrl,
+      idempotencyKey,
+      readDelayMs,
+      readTimeoutMs,
+      metadata,
+      browser,
+      projectName,
+      chatName,
+      statusReporter,
+    })
+    if (daemonResult) {
+      printPayload(daemonResult, args)
+      return
+    }
+  }
+
   const job = await createLocalJob({
     homeDir,
     provider,
-    action: args.action || 'submit_and_read',
+    action,
     prompt,
     projectRoot: args.projectRoot,
     projectName,
     chatName,
     targetUrl: args.targetUrl,
     idempotencyKey,
-    readDelayMs: args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs),
-    readTimeoutMs: args.readTimeoutMs === undefined ? 120000 : Number(args.readTimeoutMs),
-    metadata: {
-      source: 'tokenless-cli',
-      browser,
-      profile: args.profile,
-      projectName,
-      chatName,
-      idempotencyKey,
-    },
+    readDelayMs,
+    readTimeoutMs,
+    metadata,
   })
 
-  const statusReporter = createCliStatusReporter(args)
   statusReporter.report({
     event: 'created',
     status: job.status,
@@ -281,6 +314,118 @@ async function runCommand(args: CliArgs) {
     statusLog: statusReporter.events,
   }
   printPayload(payload, args)
+}
+
+async function tryRunWithDaemon({
+  args,
+  extensionId,
+  provider,
+  action,
+  prompt,
+  targetUrl,
+  idempotencyKey,
+  readDelayMs,
+  readTimeoutMs,
+  metadata,
+  browser,
+  projectName,
+  chatName,
+  statusReporter,
+}: Record<string, any>) {
+  try {
+    const job = await createDaemonJob({
+      daemonUrl: args.daemonUrl,
+      provider,
+      action,
+      requestJson: {
+        requestId: idempotencyKey,
+        prompt,
+        targetUrl,
+        idempotencyKey,
+        readDelayMs,
+        readTimeoutMs,
+        metadata,
+      },
+    })
+    statusReporter.report({
+      event: 'daemon_created',
+      status: job.status,
+      jobId: job.job_id,
+      provider: job.provider,
+      action: job.action,
+    })
+    const runnerUrl = buildDaemonRunnerUrl({
+      extensionId,
+      daemonUrl: args.daemonUrl,
+      provider,
+      action,
+    })
+    if (!args.noOpen) {
+      await openUrl(runnerUrl, { browser: browser ?? undefined })
+      statusReporter.report({
+        event: 'opened',
+        status: 'opened_daemon_runner',
+        jobId: job.job_id,
+        provider,
+        action,
+        browser,
+        runnerUrl,
+      })
+    } else {
+      statusReporter.report({
+        event: 'not_opened',
+        status: 'waiting_for_external_daemon_runner',
+        jobId: job.job_id,
+        provider,
+        action,
+        runnerUrl,
+      })
+    }
+
+    const result = args.noWait
+      ? (statusReporter.report({
+          event: 'detached',
+          status: 'no_wait',
+          jobId: job.job_id,
+          provider,
+          action,
+        }), null)
+      : await waitDaemonJobResult({
+          daemonUrl: args.daemonUrl,
+          jobId: job.job_id,
+          timeoutMs: args.timeoutMs === undefined ? 180000 : Number(args.timeoutMs),
+          onStatus: (event: StatusEvent) => statusReporter.report(event),
+        })
+    assertDaemonJobSucceeded(result, statusReporter)
+
+    return {
+      ok: true,
+      transport: 'daemon',
+      jobId: job.job_id,
+      provider,
+      runnerUrl,
+      projectName,
+      chatName,
+      idempotencyKey,
+      result,
+      compactOutput: result?.compactOutput,
+      status: result?.status ?? statusReporter.lastStatus(),
+      statusLog: statusReporter.events,
+    }
+  } catch (error) {
+    const cliError = error as CliError
+    if (cliError.code !== 'daemon_unavailable') {
+      throw error
+    }
+    statusReporter.report({
+      event: 'daemon_unavailable',
+      status: 'fallback_task_page',
+      taskId: idempotencyKey,
+      provider,
+      action,
+    })
+    return null
+  }
 }
 
 async function stateCommand(args: CliArgs) {
@@ -475,6 +620,9 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (arg === '--home') {
       parsed.home = next
       index += 1
+    } else if (arg === '--daemon-url') {
+      parsed.daemonUrl = next
+      index += 1
     } else if (arg === '--timeout-ms') {
       parsed.timeoutMs = next
       index += 1
@@ -497,9 +645,30 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.noOpen = true
     } else if (arg === '--no-wait') {
       parsed.noWait = true
+    } else if (arg === '--no-daemon') {
+      parsed.noDaemon = true
     }
   }
   return parsed
+}
+
+function buildDaemonRunnerUrl({
+  extensionId,
+  daemonUrl,
+  provider,
+  action,
+}: {
+  extensionId: string
+  daemonUrl?: string | undefined
+  provider?: string | undefined
+  action?: string | undefined
+}) {
+  const params = new URLSearchParams()
+  if (daemonUrl) params.set('daemonUrl', daemonUrl)
+  if (provider) params.set('provider', provider)
+  if (action) params.set('action', action)
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  return `chrome-extension://${extensionId}/daemon/runner.html${suffix}`
 }
 
 async function openUrl(url: string, { browser }: { browser?: string | undefined } = {}) {
@@ -601,6 +770,21 @@ function assertLocalJobSucceeded(result: Record<string, any> | null, statusRepor
   throw error
 }
 
+function assertDaemonJobSucceeded(result: Record<string, any> | null, statusReporter: StatusReporter) {
+  if (!result || result.ok !== false) {
+    return
+  }
+  const errorPayload = result.error && typeof result.error === 'object'
+    ? result.error as Record<string, any>
+    : {}
+  const error: CliError = new Error(String(errorPayload.message || `Daemon Tokenless job failed: ${result.status || 'failed'}`))
+  error.code = String(errorPayload.code || result.status || 'daemon_job_failed')
+  error.retryable = Boolean(errorPayload.retryable)
+  error.status = result.status ?? statusReporter.lastStatus()
+  error.statusLog = statusReporter.events
+  throw error
+}
+
 function createCliStatusReporter(args: CliArgs): StatusReporter {
   const startedAt = Date.now()
   const events: StatusEvent[] = []
@@ -635,6 +819,7 @@ function normalizeStatusEvent(event: StatusEvent, startedAt: number): StatusEven
     actor: event.actor,
     browser: event.browser,
     taskUrl: event.taskUrl,
+    runnerUrl: event.runnerUrl,
     elapsedMs,
   }
 }
@@ -660,6 +845,9 @@ function formatStatusEvent(event: StatusEvent) {
   }
   if (event.taskUrl && (event.event === 'opened' || event.event === 'not_opened')) {
     parts.push(`taskUrl=${event.taskUrl}`)
+  }
+  if (event.runnerUrl && (event.event === 'opened' || event.event === 'not_opened')) {
+    parts.push(`runnerUrl=${event.runnerUrl}`)
   }
   return parts.join(' ')
 }

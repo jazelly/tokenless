@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -86,6 +86,52 @@ test('daemon client rejects non-loopback daemon URLs', async () => {
       assert.equal(daemonUrl('http://localhost:7331'), 'http://localhost:7331')
       assert.equal(daemonUrl('http://[::1]:7331'), 'http://[::1]:7331')
     })
+})
+
+test('CLI run uses daemon transport when daemon is reachable', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-cli-'))
+  const port = await freePort()
+  const daemonUrl = `http://127.0.0.1:${port}`
+  const daemon = startDaemon({ homeDir, port })
+
+  try {
+    await waitForDaemonReady(daemonUrl, daemon)
+    const run = spawnSync(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'run',
+      '--prompt',
+      'hello through daemon',
+      '--extension-id',
+      'abcdefghijklmnopabcdefghijklmnop',
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--no-open',
+      '--no-wait',
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+
+    assert.equal(run.status, 0, run.stderr)
+    const payload = JSON.parse(run.stdout)
+    assert.equal(payload.transport, 'daemon')
+    assert.equal(payload.provider, 'chatgpt')
+    assert.match(payload.runnerUrl, /^chrome-extension:\/\/abcdefghijklmnopabcdefghijklmnop\/daemon\/runner\.html\?/)
+    assert.deepEqual(payload.statusLog.map((event) => event.event), ['daemon_created', 'not_opened', 'detached'])
+    assert.equal(fs.existsSync(path.join(homeDir, 'jobs')), false)
+
+    const job = await fetch(`${daemonUrl}/jobs/${encodeURIComponent(payload.jobId)}`).then((response) => response.json())
+    assert.equal(job.status, 'queued')
+    assert.match(job.request_json.prompt, /hello through daemon/)
+    assert.equal(job.request_json.metadata.source, 'tokenless-cli')
+    assert.equal(job.claim_token, undefined)
+  } finally {
+    await stopDaemon(daemon)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
 })
 
 function startDaemon({ homeDir, port }) {

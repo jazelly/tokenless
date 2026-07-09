@@ -144,7 +144,7 @@ test('CLI config command sets defaults for run', () => {
   const payload = JSON.parse(run.stdout)
   assert.equal(payload.provider, 'claude')
   assert.equal(payload.status, 'no_wait')
-  assert.deepEqual(payload.statusLog.map((event) => event.event), ['created', 'not_opened', 'detached'])
+  assert.deepEqual(payload.statusLog.map((event) => event.event), ['daemon_unavailable', 'created', 'not_opened', 'detached'])
   const request = JSON.parse(fs.readFileSync(path.join(homeDir, 'jobs', payload.requestPath), 'utf8'))
   assert.equal(request.metadata.browser, 'brave')
 
@@ -197,6 +197,36 @@ test('CLI run falls back to bundled extension id when no extension id is configu
   assert.equal(payload.ok, true)
   assert.match(payload.taskUrl, /^chrome-extension:\/\/afpfljlnhlpkbkmgonoanbmcdmmfmoam\//)
   assert.equal(fs.existsSync(path.join(homeDir, 'jobs')), true)
+})
+
+test('CLI run falls back to task page transport when daemon is unavailable', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-fallback-'))
+  const result = spawnSync(process.execPath, [
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+    'run',
+    '--prompt',
+    'hello',
+    '--extension-id',
+    'abcdefghijklmnopabcdefghijklmnop',
+    '--home',
+    homeDir,
+    '--daemon-url',
+    'http://127.0.0.1:9',
+    '--no-open',
+    '--no-wait',
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+
+  assert.equal(result.status, 0)
+  const payload = JSON.parse(result.stdout)
+  assert.equal(payload.transport, undefined)
+  assert.match(payload.taskUrl, /^chrome-extension:\/\/abcdefghijklmnopabcdefghijklmnop\/task\/task\.html\?/)
+  assert.deepEqual(payload.statusLog.map((event) => event.event), ['daemon_unavailable', 'created', 'not_opened', 'detached'])
+  assert.equal(payload.statusLog[0].status, 'fallback_task_page')
+  assert.equal(fs.existsSync(path.join(homeDir, 'jobs', payload.requestPath)), true)
 })
 
 test('CLI default output reports local job status for agents', () => {

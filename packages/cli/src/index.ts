@@ -7,7 +7,9 @@ export {
   completeDaemonJob,
   createDaemonJob,
   daemonUrl,
+  getDaemonJob,
   readDaemonToken,
+  waitDaemonJobResult,
 } from './daemon-client.js'
 
 export type {
@@ -17,6 +19,8 @@ export type {
   DaemonClaimedJob,
   DaemonClientOptions,
   DaemonJob,
+  GetDaemonJobOptions,
+  WaitDaemonJobResultOptions,
 } from './daemon-client.js'
 
 export {

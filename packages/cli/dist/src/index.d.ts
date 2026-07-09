@@ -1,5 +1,5 @@
-export { DEFAULT_DAEMON_URL, claimNextDaemonJob, completeDaemonJob, createDaemonJob, daemonUrl, readDaemonToken, } from './daemon-client.js';
-export type { ClaimNextDaemonJobOptions, CompleteDaemonJobOptions, CreateDaemonJobOptions, DaemonClaimedJob, DaemonClientOptions, DaemonJob, } from './daemon-client.js';
+export { DEFAULT_DAEMON_URL, claimNextDaemonJob, completeDaemonJob, createDaemonJob, daemonUrl, getDaemonJob, readDaemonToken, waitDaemonJobResult, } from './daemon-client.js';
+export type { ClaimNextDaemonJobOptions, CompleteDaemonJobOptions, CreateDaemonJobOptions, DaemonClaimedJob, DaemonClientOptions, DaemonJob, GetDaemonJobOptions, WaitDaemonJobResultOptions, } from './daemon-client.js';
 export { buildTaskUrl, completeLocalJob, configPath, conversationMapPath, createLocalJob, deriveTaskId, ensureJobStore, installNativeHost, JOB_STATES, LOCAL_JOB_PROTOCOL_VERSION, NATIVE_HOST_NAME, normalizeBrowserId, nativeMessagingHostDir, nativeMessagingHostDirs, readConversationMap, readLocalHistory, readLocalJobRequest, readLocalTaskState, readTokenlessConfig, TOKENLESS_CONFIG_PROTOCOL_VERSION, tokenlessHome, upsertConversationMapping, waitLocalJobResult, writeDomSnapshot, writeTokenlessConfig, writeJobState, } from './job-store.js';
 type TokenlessPromptOptions = {
     userPrompt?: string;

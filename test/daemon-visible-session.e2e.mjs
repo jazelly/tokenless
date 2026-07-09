@@ -107,15 +107,14 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     events.push({ at: new Date().toISOString(), event: 'daemon_job_created', jobId: created.job_id })
 
     const extensionPage = await context.newPage()
-    await extensionPage.goto(`chrome-extension://${extensionId}/sidepanel/index.html`)
-    const run = await extensionPage.evaluate((url) => new Promise((resolve) => {
-      chrome.runtime.sendMessage({
-        type: 'tokenless.daemon.run_next',
-        daemonUrl: url,
-        provider: 'chatgpt',
-        action: 'submit_and_read',
-      }, resolve)
-    }), daemonUrl)
+    await extensionPage.goto(daemonRunnerUrl({
+      extensionId,
+      daemonUrl,
+      provider: 'chatgpt',
+      action: 'submit_and_read',
+    }))
+    await extensionPage.locator('#status', { hasText: 'Completed' }).waitFor({ timeout: 30000 })
+    const run = await extensionPage.evaluate(() => globalThis.__TOKENLESS_DAEMON_RUN_RESPONSE__)
     events.push({ at: new Date().toISOString(), event: 'daemon_run_next_returned', ok: run?.ok, status: run?.status })
     await fs.writeFile(path.join(artifactDir, 'daemon-run-response.json'), `${JSON.stringify(run, null, 2)}\n`, 'utf8')
 
@@ -152,14 +151,15 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
         prompt: 'This invalid action must fail before provider submission.',
       },
     })
-    const failedRun = await extensionPage.evaluate((url) => new Promise((resolve) => {
-      chrome.runtime.sendMessage({
-        type: 'tokenless.daemon.run_next',
-        daemonUrl: url,
-        provider: 'chatgpt',
-        action: 'unsupported_for_e2e',
-      }, resolve)
-    }), daemonUrl)
+    const failedPage = await context.newPage()
+    await failedPage.goto(daemonRunnerUrl({
+      extensionId,
+      daemonUrl,
+      provider: 'chatgpt',
+      action: 'unsupported_for_e2e',
+    }))
+    await failedPage.locator('#status', { hasText: 'Failed' }).waitFor({ timeout: 30000 })
+    const failedRun = await failedPage.evaluate(() => globalThis.__TOKENLESS_DAEMON_RUN_RESPONSE__)
     assert.equal(failedRun.ok, false, JSON.stringify(failedRun, null, 2))
     assert.equal(failedRun.status, 'failed')
     assert.equal(failedRun.job.job_id, invalid.job_id)
@@ -177,6 +177,7 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
 
     await providerPage.screenshot({ path: path.join(artifactDir, '02-chatgpt-fixture-after-daemon.png'), fullPage: true })
     await extensionPage.screenshot({ path: path.join(artifactDir, '03-extension-page-after-daemon.png'), fullPage: true })
+    await failedPage.screenshot({ path: path.join(artifactDir, '04-extension-page-after-daemon-failure.png'), fullPage: true })
     await fs.writeFile(path.join(artifactDir, 'daemon-completed-job.json'), `${JSON.stringify(completed, null, 2)}\n`, 'utf8')
     await fs.writeFile(path.join(artifactDir, 'daemon-failed-run-response.json'), `${JSON.stringify(failedRun, null, 2)}\n`, 'utf8')
     await fs.writeFile(path.join(artifactDir, 'daemon-failed-job.json'), `${JSON.stringify(failedCompleted, null, 2)}\n`, 'utf8')
@@ -242,6 +243,11 @@ function assertNoTaskPageObserved(observedUrls) {
     observedUrls.every((entry) => !entry.url.includes('/task/task.html')),
     JSON.stringify(observedUrls, null, 2)
   )
+}
+
+function daemonRunnerUrl({ extensionId, daemonUrl, provider, action }) {
+  const params = new URLSearchParams({ daemonUrl, provider, action })
+  return `chrome-extension://${extensionId}/daemon/runner.html?${params.toString()}`
 }
 
 async function createArtifactDir() {

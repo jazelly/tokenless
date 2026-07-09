@@ -132,6 +132,20 @@ test('daemon background path preserves existing task page native job flow', () =
   assert.match(serviceWorker, /validateBridgeRequest\(message\)/)
 })
 
+test('daemon runner page triggers background daemon run-next without task page job parameters', () => {
+  const runnerHtml = fs.readFileSync(path.join(root, 'packages/extension/extension/daemon/runner.html'), 'utf8')
+  const runnerTs = fs.readFileSync(path.join(root, 'packages/extension/extension/daemon/runner.ts'), 'utf8')
+  const builtRunner = fs.readFileSync(path.join(root, 'packages/extension/dist/extension/daemon/runner.js'), 'utf8')
+
+  assert.match(runnerHtml, /src="\.\/runner\.js"/)
+  assert.match(runnerTs, /tokenless\.daemon\.run_next/)
+  assert.match(runnerTs, /params\.get\('daemonUrl'\)/)
+  assert.match(runnerTs, /params\.get\('provider'\)/)
+  assert.match(runnerTs, /params\.get\('action'\)/)
+  assert.doesNotMatch(runnerTs, /jobId|nonce/)
+  assert.match(builtRunner, /__TOKENLESS_DAEMON_RUN_RESPONSE__/)
+})
+
 test('provider content script is safe to inject more than once', () => {
   const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
   const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.ts'), 'utf8')

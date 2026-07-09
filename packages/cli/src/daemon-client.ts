@@ -39,11 +39,21 @@ export type ClaimNextDaemonJobOptions = DaemonClientOptions & {
   action?: string | undefined
 }
 
+export type GetDaemonJobOptions = DaemonClientOptions & {
+  jobId: string
+}
+
 export type CompleteDaemonJobOptions = DaemonClientOptions & {
   jobId: string
   claimToken: string
   result?: unknown
   error?: unknown
+}
+
+export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
+  timeoutMs?: number | undefined
+  pollMs?: number | undefined
+  onStatus?: ((event: Record<string, unknown>) => unknown) | undefined
 }
 
 type DaemonError = Error & {
@@ -81,6 +91,17 @@ export async function createDaemonJob({
       job_id: jobId,
       claim_token: claimToken,
     },
+  })
+}
+
+export async function getDaemonJob({
+  daemonUrl: explicitDaemonUrl,
+  jobId,
+}: GetDaemonJobOptions) {
+  return daemonRequest<DaemonJob>({
+    daemonUrl: explicitDaemonUrl,
+    method: 'GET',
+    path: `/jobs/${encodeURIComponent(jobId)}`,
   })
 }
 
@@ -131,13 +152,60 @@ export async function completeDaemonJob({
   })
 }
 
+export async function waitDaemonJobResult({
+  daemonUrl: explicitDaemonUrl,
+  jobId,
+  timeoutMs = 180000,
+  pollMs = 250,
+  onStatus,
+}: WaitDaemonJobResultOptions) {
+  const startedAt = Date.now()
+  let lastStatus: string | undefined
+  while (Date.now() - startedAt < timeoutMs) {
+    const job = await getDaemonJob({ daemonUrl: explicitDaemonUrl, jobId })
+    if (job.status !== lastStatus) {
+      lastStatus = job.status
+      await onStatus?.({
+        event: 'daemon_status',
+        status: job.status,
+        jobId,
+        provider: job.provider,
+        action: job.action,
+        elapsedMs: Date.now() - startedAt,
+      })
+    }
+    if (job.status === 'succeeded') {
+      return {
+        ok: true,
+        status: job.status,
+        job,
+        result: job.result_json,
+        compactOutput: compactDaemonOutput(job.result_json),
+      }
+    }
+    if (job.status === 'failed') {
+      return {
+        ok: false,
+        status: job.status,
+        job,
+        error: job.error_json,
+      }
+    }
+    await delay(pollMs)
+  }
+  const error = daemonClientError('daemon_job_timeout', 'Timed out waiting for daemon job result.', true)
+  throw error
+}
+
 async function daemonRequest<T>({
   daemonUrl: explicitDaemonUrl,
+  method = 'POST',
   path: requestPath,
   body,
   token,
 }: {
   daemonUrl?: string | undefined
+  method?: 'GET' | 'POST'
   path: string
   body?: Record<string, unknown>
   token?: string | undefined
@@ -155,14 +223,19 @@ async function daemonRequest<T>({
   }
 
   const requestInit: RequestInit = {
-    method: 'POST',
+    method,
     headers,
   }
   if (payload !== undefined) {
     requestInit.body = payload
   }
 
-  const response = await fetch(`${daemonUrl(explicitDaemonUrl)}${requestPath}`, requestInit)
+  let response: Response
+  try {
+    response = await fetch(`${daemonUrl(explicitDaemonUrl)}${requestPath}`, requestInit)
+  } catch {
+    throw daemonClientError('daemon_unavailable', 'Tokenless daemon is not reachable on the configured loopback URL.', true)
+  }
   const responseBody = await readJsonResponse(response)
   if (!response.ok) {
     const message = errorMessageFromBody(responseBody) || `Tokenless daemon request failed with HTTP ${response.status}.`
@@ -219,4 +292,14 @@ function isLoopbackHostname(hostname: string) {
 
 function stripUndefined(value: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined))
+}
+
+function compactDaemonOutput(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined
+  const text = (value as { text?: unknown }).text
+  return typeof text === 'string' && text.trim() ? text : undefined
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
