@@ -11,13 +11,19 @@ import {
   writeJobState,
 } from './job-store.js'
 
+type NativeMessage = Record<string, any>
+type NativeError = Error & {
+  code?: string
+  retryable?: boolean
+}
+
 const homeDir = tokenlessHome()
 let input = Buffer.alloc(0)
 
 process.stdin.on('data', (chunk) => {
-  input = Buffer.concat([input, chunk])
+  input = Buffer.concat([input, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)])
   drainMessages().catch((error) => {
-    writeMessage({ ok: false, error: serializeError(error) })
+    writeMessage({ ok: false, error: serializeError(error as Partial<NativeError>) })
   })
 })
 
@@ -34,7 +40,7 @@ async function drainMessages() {
   }
 }
 
-async function handleMessage(message) {
+async function handleMessage(message: NativeMessage) {
   try {
     if (message?.type === 'tokenless.native.ping') {
       return { ok: true, result: { status: 'ready' } }
@@ -110,18 +116,18 @@ async function handleMessage(message) {
       },
     }
   } catch (error) {
-    return { ok: false, error: serializeError(error) }
+    return { ok: false, error: serializeError(error as Partial<NativeError>) }
   }
 }
 
-function writeMessage(payload) {
+function writeMessage(payload: unknown) {
   const body = Buffer.from(JSON.stringify(payload), 'utf8')
   const header = Buffer.alloc(4)
   header.writeUInt32LE(body.length, 0)
   process.stdout.write(Buffer.concat([header, body]))
 }
 
-function serializeError(error) {
+function serializeError(error: Partial<NativeError> | null | undefined) {
   return {
     code: error?.code || 'native_host_error',
     message: error?.message || 'Tokenless native host failed.',

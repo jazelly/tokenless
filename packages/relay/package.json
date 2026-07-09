@@ -6,14 +6,18 @@
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./dist/src/index.js"
   },
   "bin": {
-    "tokenless-relay": "src/server.mjs"
+    "tokenless-relay": "dist/src/server.mjs"
   },
+  "files": [
+    "dist/src",
+    "package.json"
+  ],
   "scripts": {
-    "build": "node --check src/index.js && node --check src/server.mjs",
-    "lint": "node --check src/index.js && node --check src/server.mjs"
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22"

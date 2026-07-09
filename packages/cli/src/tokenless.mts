@@ -15,6 +15,25 @@ import {
 } from './index.js'
 import { DEFAULT_EXTENSION_ID } from './default-extension-id.js'
 
+type CliArgs = Record<string, any> & {
+  files: string[]
+}
+
+type CliError = Error & {
+  code?: string
+  retryable?: boolean
+  status?: string
+  statusLog?: StatusEvent[]
+}
+
+type StatusEvent = Record<string, any>
+
+type StatusReporter = {
+  events: StatusEvent[]
+  report(event: StatusEvent): void
+  lastStatus(): string | undefined
+}
+
 const argv = process.argv.slice(2)
 const command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
 const args = parseArgs(argv)
@@ -39,19 +58,20 @@ try {
     process.exit(command === 'help' ? 0 : 2)
   }
 } catch (error) {
+  const cliError = error as Partial<CliError>
   const payload = {
     ok: false,
     error: {
-      code: error.code || 'tokenless_cli_error',
-      message: error.message || 'Tokenless CLI failed.',
-      retryable: Boolean(error.retryable),
+      code: cliError.code || 'tokenless_cli_error',
+      message: cliError.message || 'Tokenless CLI failed.',
+      retryable: Boolean(cliError.retryable),
     },
+  } as Record<string, any>
+  if (cliError.status) {
+    payload.status = cliError.status
   }
-  if (error.status) {
-    payload.status = error.status
-  }
-  if (Array.isArray(error.statusLog)) {
-    payload.statusLog = error.statusLog
+  if (Array.isArray(cliError.statusLog)) {
+    payload.statusLog = cliError.statusLog
   }
   if (args.json) {
     console.log(JSON.stringify(payload, null, 2))
@@ -61,7 +81,7 @@ try {
   process.exit(1)
 }
 
-async function snapshotDomCommand(args) {
+async function snapshotDomCommand(args: CliArgs) {
   const { extensionId } = resolveExtensionId(args)
 
   const homeDir = tokenlessHome(args.home)
@@ -155,7 +175,7 @@ async function snapshotDomCommand(args) {
   }, args)
 }
 
-async function runCommand(args) {
+async function runCommand(args: CliArgs) {
   const prompt = await promptFromArgs(args)
   const { extensionId } = resolveExtensionId(args)
   const homeDir = tokenlessHome(args.home)
@@ -260,7 +280,7 @@ async function runCommand(args) {
   printPayload(payload, args)
 }
 
-async function stateCommand(args) {
+async function stateCommand(args: CliArgs) {
   const taskId = args.taskId || args.idempotencyKey || deriveTaskId({
     projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
     chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
@@ -280,7 +300,7 @@ async function stateCommand(args) {
   }, args)
 }
 
-async function installCommand(args) {
+async function installCommand(args: CliArgs) {
   const { extensionId } = resolveExtensionId(args)
   const result = await installNativeHost({
     homeDir: tokenlessHome(args.home),
@@ -297,7 +317,7 @@ async function installCommand(args) {
   }, args)
 }
 
-async function doctorCommand(args) {
+async function doctorCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const nodeOk = Number(process.versions.node.split('.')[0]) >= 22
   const { extensionId, source: extensionIdSource } = resolveExtensionId(args)
@@ -315,7 +335,7 @@ async function doctorCommand(args) {
   }, args)
 }
 
-async function configCommand(args) {
+async function configCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   if (args.preferredProviders) {
     const config = await writeTokenlessConfig({
@@ -337,7 +357,7 @@ async function configCommand(args) {
   }, args)
 }
 
-async function promptCommand(args) {
+async function promptCommand(args: CliArgs) {
   const prompt = await promptFromArgs(args)
   if (args.output) {
     await fs.writeFile(args.output, `${prompt}\n`, 'utf8')
@@ -346,7 +366,7 @@ async function promptCommand(args) {
   }
 }
 
-async function promptFromArgs(args) {
+async function promptFromArgs(args: CliArgs) {
   const userPrompt = args.promptFile
     ? await fs.readFile(args.promptFile, 'utf8')
     : args.prompt
@@ -364,8 +384,8 @@ async function promptFromArgs(args) {
   })
 }
 
-function parseArgs(argv) {
-  const parsed = { files: [] }
+function parseArgs(argv: string[]): CliArgs {
+  const parsed: CliArgs = { files: [] }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     const next = argv[index + 1]
@@ -385,7 +405,9 @@ function parseArgs(argv) {
       parsed.chatName = next
       index += 1
     } else if (arg === '--file') {
-      parsed.files.push(next)
+      if (next !== undefined) {
+        parsed.files.push(next)
+      }
       index += 1
     } else if (arg === '--context') {
       parsed.context = next
@@ -465,9 +487,9 @@ function parseArgs(argv) {
   return parsed
 }
 
-async function openUrl(url, { browser } = {}) {
+async function openUrl(url: string, { browser }: { browser?: string | undefined } = {}) {
   const { command, args } = openCommand(url, { browser })
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, { stdio: 'ignore', detached: true })
     child.on('error', reject)
     child.on('spawn', () => {
@@ -477,7 +499,7 @@ async function openUrl(url, { browser } = {}) {
   })
 }
 
-function openCommand(url, { browser } = {}) {
+function openCommand(url: string, { browser }: { browser?: string | undefined } = {}) {
   if (process.platform === 'darwin') {
     const app = macBrowserApp(browser, url)
     return app
@@ -490,7 +512,7 @@ function openCommand(url, { browser } = {}) {
   return { command: 'xdg-open', args: [url] }
 }
 
-function macBrowserApp(browser, url) {
+function macBrowserApp(browser: unknown, url: string) {
   const normalized = typeof browser === 'string' ? browser.toLowerCase() : null
   if (normalized === 'arc') return 'Arc'
   if (normalized === 'edge') return 'Microsoft Edge'
@@ -499,7 +521,7 @@ function macBrowserApp(browser, url) {
   return null
 }
 
-function printPayload(payload, args) {
+function printPayload(payload: Record<string, any>, args: CliArgs) {
   if (args.json) {
     console.log(JSON.stringify(payload, null, 2))
     return
@@ -518,27 +540,28 @@ async function waitLocalJobResultWithStatus({
   timeoutMs,
   statusReporter,
   taskId,
-}) {
+}: Record<string, any>) {
   try {
     return await waitLocalJobResult({
       homeDir,
       jobId,
       nonce,
       timeoutMs,
-      onStatus: (event) => statusReporter.report({ ...event, taskId }),
+      onStatus: (event: StatusEvent) => statusReporter.report({ ...event, taskId }),
     })
   } catch (error) {
-    error.status = statusReporter.lastStatus()
-    error.statusLog = statusReporter.events
-    throw error
+    const cliError = error as CliError
+    cliError.status = statusReporter.lastStatus()
+    cliError.statusLog = statusReporter.events
+    throw cliError
   }
 }
 
-function assertLocalJobSucceeded(result, statusReporter) {
+function assertLocalJobSucceeded(result: Record<string, any> | null, statusReporter: StatusReporter) {
   if (!result || result.ok !== false) {
     return
   }
-  const error = new Error(result.error?.message || `Local Tokenless job failed: ${result.status || 'failed'}`)
+  const error: CliError = new Error(result.error?.message || `Local Tokenless job failed: ${result.status || 'failed'}`)
   error.code = result.error?.code || result.status || 'local_job_failed'
   error.retryable = Boolean(result.error?.retryable)
   error.status = result.status ?? statusReporter.lastStatus()
@@ -546,10 +569,10 @@ function assertLocalJobSucceeded(result, statusReporter) {
   throw error
 }
 
-function createCliStatusReporter(args) {
+function createCliStatusReporter(args: CliArgs): StatusReporter {
   const startedAt = Date.now()
-  const events = []
-  const report = (event) => {
+  const events: StatusEvent[] = []
+  const report = (event: StatusEvent) => {
     const normalized = normalizeStatusEvent(event, startedAt)
     events.push(normalized)
     if (!args.json && !args.quiet) {
@@ -565,7 +588,7 @@ function createCliStatusReporter(args) {
   }
 }
 
-function normalizeStatusEvent(event, startedAt) {
+function normalizeStatusEvent(event: StatusEvent, startedAt: number): StatusEvent {
   const now = new Date()
   const elapsedMs = Number.isFinite(event.elapsedMs) ? event.elapsedMs : now.getTime() - startedAt
   return {
@@ -584,7 +607,7 @@ function normalizeStatusEvent(event, startedAt) {
   }
 }
 
-function formatStatusEvent(event) {
+function formatStatusEvent(event: StatusEvent) {
   const parts = ['[tokenless]', event.event]
   for (const [key, value] of [
     ['status', event.status],
@@ -609,17 +632,18 @@ function formatStatusEvent(event) {
   return parts.join(' ')
 }
 
-function formatStatusValue(value) {
+function formatStatusValue(value: unknown) {
   const text = String(value)
   return /\s/.test(text) ? JSON.stringify(text) : text
 }
 
-function formatElapsed(elapsedMs) {
-  if (!Number.isFinite(elapsedMs)) return undefined
-  return `${Math.max(0, Math.round(elapsedMs / 1000))}s`
+function formatElapsed(elapsedMs: unknown) {
+  const value = Number(elapsedMs)
+  if (!Number.isFinite(value)) return undefined
+  return `${Math.max(0, Math.round(value / 1000))}s`
 }
 
-function shortJobId(jobId) {
+function shortJobId(jobId: unknown) {
   return String(jobId).slice(0, 8)
 }
 
@@ -635,13 +659,13 @@ function usage() {
   ].join('\n'))
 }
 
-function usageError(code, message) {
-  const error = new Error(message)
+function usageError(code: string, message: string): CliError {
+  const error: CliError = new Error(message)
   error.code = code
   return error
 }
 
-function resolveExtensionId(args) {
+function resolveExtensionId(args: CliArgs) {
   const candidates = [
     ['argument', args.extensionId],
     ['environment', process.env.TOKENLESS_EXTENSION_ID],
@@ -664,13 +688,13 @@ function resolveExtensionId(args) {
   )
 }
 
-function normalizeExtensionId(extensionId) {
+function normalizeExtensionId(extensionId: unknown) {
   if (typeof extensionId !== 'string') return null
   const normalized = extensionId.trim().toLowerCase()
   return /^[a-p]{32}$/.test(normalized) ? normalized : null
 }
 
-function parseProviderList(value) {
+function parseProviderList(value: unknown) {
   return String(value)
     .split(',')
     .map((provider) => provider.trim())

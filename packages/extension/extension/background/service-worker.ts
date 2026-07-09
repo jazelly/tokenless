@@ -6,6 +6,11 @@ import {
 } from '../shared/bridge-protocol.js'
 import { getProviderById, getProviderForUrl } from '../shared/provider-config.js'
 
+type BridgeRuntimeError = Error & {
+  code?: string
+  retryable?: boolean
+}
+
 const PROVIDER_LANDING_TIMEOUT_MS = 8000
 const PROVIDER_LANDING_POLL_MS = 250
 
@@ -14,19 +19,19 @@ chrome.runtime.onInstalled.addListener(() => {
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handleRuntimeMessage(message, sender).then(sendResponse)
+  handleRuntimeMessage(message).then(sendResponse)
   return true
 })
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  handleRuntimeMessage(message, sender).then(sendResponse)
+  handleRuntimeMessage(message).then(sendResponse)
   return true
 })
 
 async function handleRuntimeMessage(message) {
   const validation = validateBridgeRequest(message)
   const request = validation.ok ? validation.request : message
-  if (!validation.ok) {
+  if (validation.ok === false) {
     return createBridgeResponse(request, { ok: false, error: validation.error })
   }
 
@@ -90,12 +95,13 @@ async function handleRuntimeMessage(message) {
       error: { code: 'unsupported_action', message: 'Action is not supported.', retryable: false },
     })
   } catch (error) {
+    const bridgeRuntimeError = error as Partial<BridgeRuntimeError>
     return createBridgeResponse(request, {
       ok: false,
       error: {
-        code: error.code || 'bridge_runtime_error',
-        message: error.message || 'Bridge runtime failed.',
-        retryable: Boolean(error.retryable),
+        code: bridgeRuntimeError.code || 'bridge_runtime_error',
+        message: bridgeRuntimeError.message || 'Bridge runtime failed.',
+        retryable: Boolean(bridgeRuntimeError.retryable),
       },
     })
   }
@@ -103,7 +109,7 @@ async function handleRuntimeMessage(message) {
 
 async function getOrCreateProviderTab(provider, targetUrl) {
   const requestedUrl = safeProviderUrl(provider, targetUrl)
-  const candidates = []
+  const candidates: chrome.tabs.Tab[] = []
   for (const host of provider.hosts) {
     candidates.push(...await chrome.tabs.query({ url: `https://${host}/*` }))
   }
@@ -142,7 +148,7 @@ async function sendToProviderTab(tabId, message) {
       return await chrome.tabs.sendMessage(tabId, message)
     } catch (error) {
       if (attempt === 2) {
-        throw bridgeError('content_script_unavailable', error.message, true)
+        throw bridgeError('content_script_unavailable', error.message || 'Provider content script is unavailable.', true)
       }
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -224,7 +230,7 @@ function redactUrlForError(url) {
 }
 
 function bridgeError(code, message, retryable) {
-  const error = new Error(message)
+  const error: BridgeRuntimeError = new Error(message)
   error.code = code
   error.retryable = retryable
   return error

@@ -7,9 +7,11 @@ const history = document.querySelector('#history')
 const refreshHistory = document.querySelector('#refresh-history')
 const capabilities = capabilitiesPayload()
 const supportedProviderIds = capabilities.providers.map((provider) => provider.id)
-let configProviderOrder = []
+let configProviderOrder: string[] = []
 
-status.textContent = 'Ready'
+if (status) {
+  status.textContent = 'Ready'
+}
 
 refreshHistory?.addEventListener('click', () => {
   refreshLocalState()
@@ -38,7 +40,7 @@ function renderConfig(config) {
   renderConfigEditor()
 }
 
-function renderConfigEditor(message) {
+function renderConfigEditor(message?: string) {
   if (!configuration) return
   const editor = document.createElement('div')
   editor.className = 'provider-editor'
@@ -152,7 +154,7 @@ function renderProviderAddRow() {
   return row
 }
 
-function providerIconButton(label, icon, onClick, disabled, tone) {
+function providerIconButton(label, icon, onClick, disabled, tone?: string) {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = tone ? `icon-button icon-button-${tone}` : 'icon-button'
@@ -265,7 +267,7 @@ function renderHistory(entries) {
     return
   }
 
-  const projects = new Map()
+  const projects = new Map<string, Record<string, any>[]>()
   for (const entry of entries) {
     const key = entry.projectName || 'Unspecified project'
     const group = projects.get(key) ?? []
@@ -359,8 +361,8 @@ function providerLabel(providerId) {
 
 function normalizeProviderOrder(providers) {
   if (!Array.isArray(providers)) return []
-  const seen = new Set()
-  const normalized = []
+  const seen = new Set<string>()
+  const normalized: string[] = []
   for (const provider of providers) {
     if (!supportedProviderIds.includes(provider) || seen.has(provider)) continue
     seen.add(provider)
@@ -376,7 +378,7 @@ function formatDate(value) {
   return date.toLocaleString()
 }
 
-function nativeRequest(message) {
+function nativeRequest(message): Promise<any> {
   return new Promise((resolve, reject) => {
     const port = chrome.runtime.connectNative(NATIVE_HOST_NAME)
     let settled = false

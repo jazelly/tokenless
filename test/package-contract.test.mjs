@@ -33,8 +33,8 @@ test('public bins expose current product names only', () => {
   const cli = readJson('packages/cli/package.json')
   const relay = readJson('packages/relay/package.json')
 
-  assert.deepEqual(cli.bin, { tokenless: 'src/tokenless.mjs' })
-  assert.deepEqual(relay.bin, { 'tokenless-relay': 'src/server.mjs' })
+  assert.deepEqual(cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
+  assert.deepEqual(relay.bin, { 'tokenless-relay': 'dist/src/server.mjs' })
   assertNoLegacyNames(JSON.stringify({ cli, relay }))
 })
 
@@ -108,7 +108,7 @@ test('Chinese README mirrors the user-facing local test flow', () => {
 test('CLI config command sets the default provider for run', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-config-'))
   const config = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'config',
     '--preferred-providers',
     'claude,chatgpt,gemini',
@@ -124,7 +124,7 @@ test('CLI config command sets the default provider for run', () => {
   assert.deepEqual(JSON.parse(config.stdout).config.preferredProviders, ['claude', 'chatgpt', 'gemini'])
 
   const run = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'run',
     '--prompt',
     'hello',
@@ -152,7 +152,7 @@ test('CLI config command sets the default provider for run', () => {
 test('CLI run falls back to bundled extension id when no extension id is configured', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-default-extension-'))
   const result = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'run',
     '--prompt',
     'hello',
@@ -177,7 +177,7 @@ test('CLI run falls back to bundled extension id when no extension id is configu
 test('CLI default output reports local job status for agents', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-status-'))
   const run = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'run',
     '--prompt',
     'hello',
@@ -203,7 +203,7 @@ test('CLI default output reports local job status for agents', () => {
 test('CLI exposes stable task ids and state lookup for agents', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-task-state-'))
   const run = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'run',
     '--prompt',
     'hello',
@@ -230,7 +230,7 @@ test('CLI exposes stable task ids and state lookup for agents', () => {
   assert.equal(payload.statusLog[0].taskId, payload.taskId)
 
   const state = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'state',
     '--task-id',
     payload.taskId,
@@ -254,7 +254,7 @@ test('CLI exposes stable task ids and state lookup for agents', () => {
   assert.equal(statePayload.latest.prompt, undefined)
 
   const continuation = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'run',
     '--prompt',
     'continue',
@@ -281,7 +281,7 @@ test('CLI exposes stable task ids and state lookup for agents', () => {
 test('CLI rejects placeholder extension ids before writing local jobs or manifests', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-invalid-extension-'))
   const run = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'run',
     '--prompt',
     'hello',
@@ -300,7 +300,7 @@ test('CLI rejects placeholder extension ids before writing local jobs or manifes
   assert.equal(fs.existsSync(path.join(homeDir, 'jobs')), false)
 
   const install = spawnSync(process.execPath, [
-    path.join(root, 'packages/cli/src/tokenless.mjs'),
+    path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
     'install',
     '--extension-id',
     '<chrome-extension-id>',
@@ -339,7 +339,7 @@ test('packed CLI tarball exposes a working tokenless bin for npx', () => {
   try {
     execFileSync('npm', ['install', tarball, '--prefix', installDir, '--silent'])
     const config = spawnSync(process.execPath, [
-      path.join(installDir, 'node_modules', 'tokenless', 'src', 'tokenless.mjs'),
+      path.join(installDir, 'node_modules', 'tokenless', 'dist', 'src', 'tokenless.mjs'),
       'config',
       '--json',
     ], {
@@ -366,9 +366,9 @@ test('published CLI package includes user-facing README and only the tokenless b
 
   assert.ok(paths.includes('README.md'))
   assert.ok(paths.includes('package.json'))
-  assert.ok(paths.includes('src/default-extension-id.js'))
-  assert.ok(paths.includes('src/tokenless.mjs'))
-  assert.deepEqual(readJson('packages/cli/package.json').bin, { tokenless: 'src/tokenless.mjs' })
+  assert.ok(paths.includes('dist/src/default-extension-id.js'))
+  assert.ok(paths.includes('dist/src/tokenless.mjs'))
+  assert.deepEqual(readJson('packages/cli/package.json').bin, { tokenless: 'dist/src/tokenless.mjs' })
 
   const cliReadme = fs.readFileSync(path.join(root, 'packages/cli/README.md'), 'utf8')
   assert.match(cliReadme, /npm install -g tokenless/)

@@ -1,6 +1,8 @@
 import { createBridgeRequest, validateBridgeRequest } from './protocol.js'
 
 export class BrowserSessionBridgeUnavailableError extends Error {
+  code: string
+
   constructor(message = 'Tokenless extension runtime is unavailable.') {
     super(message)
     this.name = 'BrowserSessionBridgeUnavailableError'
@@ -8,16 +10,22 @@ export class BrowserSessionBridgeUnavailableError extends Error {
   }
 }
 
-export function createExternalExtensionClient({ extensionId, runtime = globalThis.chrome?.runtime } = {}) {
+type ExtensionRuntime = typeof chrome.runtime
+type ExternalExtensionClientOptions = {
+  extensionId?: string
+  runtime?: ExtensionRuntime
+}
+
+export function createExternalExtensionClient({ extensionId, runtime = globalThis.chrome?.runtime }: ExternalExtensionClientOptions = {}) {
   if (typeof extensionId !== 'string' || extensionId.trim() === '') {
     throw new TypeError('extensionId must be a nonempty string.')
   }
 
   return {
-    async request(input) {
+    async request(input: Record<string, any>) {
       const request = createBridgeRequest(input)
       const validation = validateBridgeRequest(request)
-      if (!validation.ok) {
+      if (validation.ok === false) {
         return {
           protocol: request.protocol,
           requestId: request.requestId,
@@ -38,7 +46,7 @@ export function createExternalExtensionClient({ extensionId, runtime = globalThi
   }
 }
 
-function sendRuntimeMessage(runtime, extensionId, request) {
+function sendRuntimeMessage(runtime: ExtensionRuntime, extensionId: string, request: Record<string, any>) {
   return new Promise((resolve, reject) => {
     runtime.sendMessage(extensionId, request, (response) => {
       const lastError = runtime.lastError

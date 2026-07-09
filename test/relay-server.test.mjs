@@ -5,7 +5,7 @@ import test from 'node:test'
 
 test('Tokenless Relay exposes health, capabilities, validation, and accepted run responses', async () => {
   const port = 19000 + Math.floor(Math.random() * 1000)
-  const child = spawn(process.execPath, ['packages/relay/src/server.mjs'], {
+  const child = spawn(process.execPath, ['packages/relay/dist/src/server.mjs'], {
     cwd: new URL('..', import.meta.url),
     env: { ...process.env, TOKENLESS_RELAY_PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],

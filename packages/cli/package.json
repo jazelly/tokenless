@@ -5,19 +5,19 @@
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./dist/src/index.js"
   },
   "files": [
-    "src",
+    "dist/src",
     "README.md",
     "package.json"
   ],
   "bin": {
-    "tokenless": "src/tokenless.mjs"
+    "tokenless": "dist/src/tokenless.mjs"
   },
   "scripts": {
-    "build": "node --check src/default-extension-id.js && node --check src/index.js && node --check src/job-store.js && node --check src/native-host.mjs && node --check src/tokenless.mjs",
-    "lint": "node --check src/default-extension-id.js && node --check src/index.js && node --check src/job-store.js && node --check src/native-host.mjs && node --check src/tokenless.mjs"
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22"

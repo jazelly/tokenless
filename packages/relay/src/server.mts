@@ -24,7 +24,7 @@ const server = http.createServer(async (request, response) => {
       const body = await readJson(request)
       const validation = validateRelayRun(body)
       if (!validation.ok) {
-        return sendJson(response, 400, createRelayResult(body, { ok: false, error: validation.error }))
+        return sendJson(response, 400, createRelayResult(body as never, { ok: false, error: validation.error }))
       }
       return sendJson(response, 202, createRelayResult(validation.run, {
         ok: true,
@@ -38,9 +38,10 @@ const server = http.createServer(async (request, response) => {
 
     return sendJson(response, 404, { ok: false, error: { code: 'not_found', message: 'Route not found.' } })
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Tokenless Relay failed.'
     return sendJson(response, 500, {
       ok: false,
-      error: { code: 'relay_server_error', message: error.message || 'Tokenless Relay failed.' },
+      error: { code: 'relay_server_error', message },
     })
   }
 })
@@ -49,9 +50,9 @@ server.listen(port, '127.0.0.1', () => {
   console.log(`tokenless-relay listening on http://127.0.0.1:${port}`)
 })
 
-function readJson(request) {
+function readJson(request: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const chunks = []
+    const chunks: Buffer[] = []
     request.on('data', (chunk) => chunks.push(chunk))
     request.on('end', () => {
       try {
@@ -65,7 +66,7 @@ function readJson(request) {
   })
 }
 
-function sendJson(response, status, payload) {
+function sendJson(response: http.ServerResponse, status: number, payload: unknown) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   response.end(`${JSON.stringify(payload, null, 2)}\n`)
 }

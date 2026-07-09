@@ -21,7 +21,7 @@ test('Tokenless CLI job completes through extension task page and ChatGPT real-D
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     waitLocalJobResult,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-e2e-'))
   const artifactDir = await createArtifactDir()

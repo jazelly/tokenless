@@ -4,17 +4,16 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
-const packageRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const packageRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const extensionRoot = path.join(packageRoot, 'extension')
 const distRoot = path.join(packageRoot, 'dist')
 const distExtensionRoot = path.join(distRoot, 'extension')
 
-await fs.promises.rm(distExtensionRoot, { recursive: true, force: true })
 await fs.promises.mkdir(distExtensionRoot, { recursive: true })
-await fs.promises.cp(extensionRoot, distExtensionRoot, { recursive: true })
+await copyStaticExtensionFiles(extensionRoot, distExtensionRoot)
 
 const manifestPath = path.join(distExtensionRoot, 'manifest.json')
-const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'))
+const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8')) as Record<string, any>
 verifyManifest(manifest)
 
 const files = await listFiles(distExtensionRoot)
@@ -52,7 +51,7 @@ console.log(JSON.stringify({
   files: files.length,
 }, null, 2))
 
-function verifyManifest(manifest) {
+function verifyManifest(manifest: Record<string, any>) {
   if (manifest.manifest_version !== 3) {
     throw new Error('extension manifest must use Manifest V3')
   }
@@ -71,9 +70,9 @@ function verifyManifest(manifest) {
   }
 }
 
-async function listFiles(root) {
+async function listFiles(root: string): Promise<string[]> {
   const entries = await fs.promises.readdir(root, { withFileTypes: true })
-  const files = []
+  const files: string[] = []
   for (const entry of entries) {
     const fullPath = path.join(root, entry.name)
     if (entry.isDirectory()) {
@@ -85,6 +84,20 @@ async function listFiles(root) {
   return files.sort()
 }
 
-function hashFile(file) {
+function hashFile(file: string) {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+}
+
+async function copyStaticExtensionFiles(sourceRoot: string, targetRoot: string) {
+  const entries = await fs.promises.readdir(sourceRoot, { withFileTypes: true })
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceRoot, entry.name)
+    const targetPath = path.join(targetRoot, entry.name)
+    if (entry.isDirectory()) {
+      await fs.promises.mkdir(targetPath, { recursive: true })
+      await copyStaticExtensionFiles(sourcePath, targetPath)
+    } else if (entry.isFile() && !entry.name.endsWith('.ts')) {
+      await fs.promises.copyFile(sourcePath, targetPath)
+    }
+  }
 }

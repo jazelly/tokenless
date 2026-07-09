@@ -1,4 +1,6 @@
 (() => {
+type ContentRecord = Record<string, any>
+
 if (globalThis.__TOKENLESS_PROVIDER_CONTENT_LOADED__) {
   return
 }
@@ -130,7 +132,7 @@ async function handleMessage(message) {
   }
 }
 
-async function validateLanding(provider, request = {}) {
+async function validateLanding(provider, request: ContentRecord = {}) {
   const timeoutMs = Math.min(Number(request.landingTimeoutMs ?? 5000), 30000)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -163,11 +165,11 @@ async function validateLanding(provider, request = {}) {
   }
 }
 
-async function snapshotDom(provider, request = {}) {
+async function snapshotDom(provider, request: ContentRecord = {}) {
   await dismissProviderInterruptions(provider)
   const includeText = Boolean(request.includeText ?? request.metadata?.includeText)
   const maxTextChars = Math.min(Number(request.maxTextChars ?? request.metadata?.maxTextChars ?? 4000), 100000)
-  const clone = document.documentElement.cloneNode(true)
+  const clone = document.documentElement.cloneNode(true) as Element
 
   clone.querySelectorAll([
     'script',
@@ -246,7 +248,7 @@ async function submitPrompt(provider, request) {
   }
 }
 
-async function readLatestAnswer(provider, request = {}) {
+async function readLatestAnswer(provider, request: ContentRecord = {}) {
   await dismissProviderInterruptions(provider)
   const blocker = detectBlocker(provider)
   if (blocker) {
@@ -274,7 +276,7 @@ async function readLatestAnswer(provider, request = {}) {
   }
 }
 
-function requestKey(request = {}) {
+function requestKey(request: ContentRecord = {}) {
   return request.requestId || request.jobId || '__latest__'
 }
 
@@ -348,7 +350,7 @@ function findFirstVisible(selectors) {
   return null
 }
 
-async function waitForComposer(provider, request = {}) {
+async function waitForComposer(provider, request: ContentRecord = {}) {
   const timeoutMs = Math.min(Number(request.composerTimeoutMs ?? 15000), 60000)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -384,7 +386,7 @@ async function dismissProviderInterruptions(provider) {
     'stay logged out',
     'skip',
   ]
-  for (const button of [...document.querySelectorAll('button,[role="button"]')]) {
+  for (const button of [...document.querySelectorAll('button,[role="button"]')] as HTMLElement[]) {
     if (!isVisible(button)) continue
     const label = normalizeText([
       button.getAttribute('aria-label'),
@@ -451,7 +453,7 @@ function setComposerText(composer, text) {
   }))
 }
 
-async function waitForActionableSubmit(provider, request = {}) {
+async function waitForActionableSubmit(provider, request: ContentRecord = {}) {
   const timeoutMs = Math.min(Number(request.submitTimeoutMs ?? 5000), 30000)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -498,7 +500,7 @@ function isProviderBusy(provider) {
   if (labels.length === 0) {
     return false
   }
-  return [...document.querySelectorAll('button,[role="button"]')].some((node) => {
+  return ([...document.querySelectorAll('button,[role="button"]')] as HTMLElement[]).some((node) => {
     if (!isVisible(node)) return false
     const label = normalizeText([
       node.getAttribute('aria-label'),
@@ -563,7 +565,8 @@ function probeSelectors(selectors = [], { includeText = false } = {}) {
     try {
       const matches = [...document.querySelectorAll(selector)]
       count = matches.length
-      const rawText = normalizeText(matches[0]?.innerText || matches[0]?.textContent || '')
+      const firstMatch = matches[0] as HTMLElement | undefined
+      const rawText = normalizeText(firstMatch?.innerText || firstMatch?.textContent || '')
       firstText = includeText ? rawText.slice(0, 240) : (rawText ? '[text]' : '')
     } catch (probeError) {
       error = probeError.message
@@ -574,7 +577,7 @@ function probeSelectors(selectors = [], { includeText = false } = {}) {
 
 function redactTextNodes(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  const nodes = []
+  const nodes: Node[] = []
   while (walker.nextNode()) {
     nodes.push(walker.currentNode)
   }

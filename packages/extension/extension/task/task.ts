@@ -1,6 +1,12 @@
 const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 const statusNode = document.querySelector('#status')
 
+type TaskRecord = Record<string, any>
+type TokenlessTaskError = Error & {
+  code?: string
+  retryable?: boolean
+}
+
 main().catch(async (error) => {
   setStatus(`Failed: ${error.message || error}`)
   await writeResult({
@@ -106,7 +112,7 @@ async function writeResult(message) {
   })
 }
 
-function nativeRequest(message) {
+function nativeRequest(message): Promise<any> {
   return new Promise((resolve, reject) => {
     const port = chrome.runtime.connectNative(NATIVE_HOST_NAME)
     let settled = false
@@ -134,7 +140,7 @@ function nativeRequest(message) {
   })
 }
 
-function normalizeBridgeResponse(response) {
+function normalizeBridgeResponse(response: TaskRecord) {
   if (!response?.ok) {
     return {
       ok: false,
@@ -180,13 +186,13 @@ function setStatus(text) {
   }
 }
 
-function taskError(code, message) {
-  const error = new Error(message || 'Tokenless task failed.')
+function taskError(code, message): TokenlessTaskError {
+  const error: TokenlessTaskError = new Error(message || 'Tokenless task failed.')
   error.code = code || 'tokenless_task_error'
   return error
 }
 
-function serializeError(error) {
+function serializeError(error: Partial<TokenlessTaskError> | null | undefined) {
   return {
     code: error?.code || 'tokenless_task_error',
     message: error?.message || 'Tokenless task failed.',

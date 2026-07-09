@@ -13,7 +13,27 @@ export const BRIDGE_ACTIONS = Object.freeze({
 
 const ACTIONS = new Set(Object.values(BRIDGE_ACTIONS))
 
-export function createBridgeRequest(input = {}) {
+export type BridgeRequest = Record<string, any> & {
+  protocol: typeof BRIDGE_PROTOCOL_VERSION
+  requestId: string
+  action: string
+}
+
+type BridgeError = {
+  code: string
+  message: string
+  retryable: boolean
+}
+
+type BridgeValidation =
+  | { ok: true; request: BridgeRequest }
+  | { ok: false; error: BridgeError }
+
+type BridgeResult =
+  | { ok: true; result?: unknown }
+  | { ok: false; error?: Partial<BridgeError> }
+
+export function createBridgeRequest(input: Record<string, any> = {}): BridgeRequest {
   return {
     protocol: BRIDGE_PROTOCOL_VERSION,
     requestId: input.requestId ?? cryptoRandomId(),
@@ -32,57 +52,60 @@ export function createBridgeRequest(input = {}) {
   }
 }
 
-export function createBridgeResponse(request, result) {
+export function createBridgeResponse(request: Partial<BridgeRequest> | null | undefined, result: BridgeResult) {
+  const ok = Boolean(result?.ok)
+  const payload = result as Record<string, any>
   return {
     protocol: BRIDGE_PROTOCOL_VERSION,
     requestId: request?.requestId ?? null,
-    ok: Boolean(result?.ok),
+    ok,
     provider: request?.provider ?? null,
     action: request?.action ?? null,
-    result: result?.ok ? result.result ?? null : null,
-    error: result?.ok ? null : normalizeError(result?.error),
+    result: ok ? payload.result ?? null : null,
+    error: ok ? null : normalizeError(payload.error),
   }
 }
 
-export function validateBridgeRequest(payload) {
+export function validateBridgeRequest(payload: unknown): BridgeValidation {
   if (!payload || typeof payload !== 'object') {
     return invalid('invalid_request', 'Bridge request must be an object.')
   }
-  if (payload.protocol !== BRIDGE_PROTOCOL_VERSION) {
+  const request = payload as Record<string, any>
+  if (request.protocol !== BRIDGE_PROTOCOL_VERSION) {
     return invalid('unsupported_protocol', 'Bridge protocol version is not supported.')
   }
-  if (typeof payload.requestId !== 'string' || payload.requestId.trim() === '') {
+  if (typeof request.requestId !== 'string' || request.requestId.trim() === '') {
     return invalid('invalid_request_id', 'Bridge requestId must be a nonempty string.')
   }
-  if (!ACTIONS.has(payload.action)) {
+  if (!ACTIONS.has(request.action)) {
     return invalid('unsupported_action', 'Bridge action is not supported.')
   }
-  if (payload.action === BRIDGE_ACTIONS.CAPABILITIES) {
-    return valid(normalizeRequest(payload))
+  if (request.action === BRIDGE_ACTIONS.CAPABILITIES) {
+    return valid(normalizeRequest(request))
   }
-  const provider = getProviderById(payload.provider)
+  const provider = getProviderById(request.provider)
   if (!provider) {
     return invalid('unsupported_provider', 'Bridge provider is not supported.')
   }
   if (
-    (payload.action === BRIDGE_ACTIONS.SUBMIT || payload.action === BRIDGE_ACTIONS.SUBMIT_AND_READ) &&
-    (typeof payload.prompt !== 'string' || payload.prompt.trim() === '')
+    (request.action === BRIDGE_ACTIONS.SUBMIT || request.action === BRIDGE_ACTIONS.SUBMIT_AND_READ) &&
+    (typeof request.prompt !== 'string' || request.prompt.trim() === '')
   ) {
     return invalid('invalid_prompt', 'Bridge prompt must be a nonempty string for submit actions.')
   }
-  if (payload.readDelayMs !== undefined && (!Number.isFinite(Number(payload.readDelayMs)) || Number(payload.readDelayMs) < 0)) {
+  if (request.readDelayMs !== undefined && (!Number.isFinite(Number(request.readDelayMs)) || Number(request.readDelayMs) < 0)) {
     return invalid('invalid_read_delay', 'Bridge readDelayMs must be a nonnegative number.')
   }
-  if (payload.readTimeoutMs !== undefined && (!Number.isFinite(Number(payload.readTimeoutMs)) || Number(payload.readTimeoutMs) < 0)) {
+  if (request.readTimeoutMs !== undefined && (!Number.isFinite(Number(request.readTimeoutMs)) || Number(request.readTimeoutMs) < 0)) {
     return invalid('invalid_read_timeout', 'Bridge readTimeoutMs must be a nonnegative number.')
   }
-  if (payload.submitTimeoutMs !== undefined && (!Number.isFinite(Number(payload.submitTimeoutMs)) || Number(payload.submitTimeoutMs) < 0)) {
+  if (request.submitTimeoutMs !== undefined && (!Number.isFinite(Number(request.submitTimeoutMs)) || Number(request.submitTimeoutMs) < 0)) {
     return invalid('invalid_submit_timeout', 'Bridge submitTimeoutMs must be a nonnegative number.')
   }
-  if (payload.maxTextChars !== undefined && (!Number.isFinite(Number(payload.maxTextChars)) || Number(payload.maxTextChars) < 0)) {
+  if (request.maxTextChars !== undefined && (!Number.isFinite(Number(request.maxTextChars)) || Number(request.maxTextChars) < 0)) {
     return invalid('invalid_max_text_chars', 'Bridge maxTextChars must be a nonnegative number.')
   }
-  return valid(normalizeRequest(payload))
+  return valid(normalizeRequest(request))
 }
 
 export function capabilitiesPayload() {
@@ -104,7 +127,7 @@ export function capabilitiesPayload() {
   }
 }
 
-function normalizeRequest(payload) {
+function normalizeRequest(payload: Record<string, any>): BridgeRequest {
   return {
     protocol: payload.protocol,
     requestId: payload.requestId,
@@ -123,15 +146,15 @@ function normalizeRequest(payload) {
   }
 }
 
-function valid(request) {
+function valid(request: BridgeRequest): BridgeValidation {
   return { ok: true, request }
 }
 
-function invalid(code, message) {
+function invalid(code: string, message: string): BridgeValidation {
   return { ok: false, error: { code, message, retryable: false } }
 }
 
-function normalizeError(error) {
+function normalizeError(error: Partial<BridgeError> | null | undefined): BridgeError {
   if (!error || typeof error !== 'object') {
     return { code: 'bridge_error', message: 'Bridge request failed.', retryable: true }
   }

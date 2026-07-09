@@ -6,11 +6,15 @@
   "type": "module",
   "license": "UNLICENSED",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./dist/src/index.js"
   },
+  "files": [
+    "dist/src",
+    "package.json"
+  ],
   "scripts": {
-    "build": "node --check src/index.js",
-    "lint": "node --check src/index.js"
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22"

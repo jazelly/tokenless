@@ -1,52 +1,79 @@
 # Tokenless
 
-Tokenless lets a local agent use the AI subscriptions already open in your browser. It sends a task to a visible ChatGPT, Gemini, or Claude tab, waits for the answer, and returns the visible response to the agent without exporting cookies, browser storage, or hidden provider API tokens.
+Tokenless helps agents save tokens.
+
+Many agent requests do not need to spend paid API tokens. They can be answered by the AI web apps you already use in your browser. Tokenless routes those requests to the visible web version of ChatGPT, Claude, or Gemini, then brings the answer back to your local agent.
 
 Chinese version: [README.zh-CN.md](README.zh-CN.md)
 
-## Why It Exists
+## Core Value
 
-AI coding agents often need a second model or a user-owned subscription, but the normal options are awkward:
+Tokenless solves one simple problem:
 
-- API keys are another secret to provision, rotate, and pay for.
-- Browser automation often assumes a disposable test profile instead of the browser where the user is already logged in.
-- Copying prompts and answers by hand breaks flow and loses project context.
-- Provider sessions should stay visible and user-controlled, especially when login, CAPTCHA, rate limits, or confirmations appear.
+> Your agent should not spend tokens on work that a free or already-open web chat can handle.
 
-Tokenless keeps that work in the browser session the user already trusts. The extension can only act on approved provider pages, and it operates through visible UI selectors rather than private provider endpoints.
+When a request is a good fit, Tokenless sends it to the provider's normal web page. The answer comes back into the agent flow, so you keep working without copying prompts and responses by hand.
 
-## User Experience
+This can reduce token usage for everyday agent work, especially for:
 
-1. Install the CLI:
+- second opinions
+- research-style answers
+- draft writing
+- code review notes
+- explanations
+- simple transformations
+- tasks where the web chat answer is good enough
+
+## How It Works
+
+From the user's point of view:
+
+1. You keep ChatGPT, Claude, or Gemini logged in in your browser.
+2. Your local agent asks Tokenless to run a request.
+3. Tokenless opens the visible web chat.
+4. The prompt is sent through the page you can see.
+5. The visible answer is returned to the agent.
+
+No manual copy and paste. No separate API key for that request. No hidden provider backend calls.
+
+## Why It Matters
+
+Agents are powerful, but token usage adds up quickly. A lot of agent work is not high-stakes model reasoning. It is checking, rewriting, explaining, summarizing, or getting another model's view.
+
+Tokenless gives your agent a lower-cost path for that kind of work. Use tokens where they matter. Use the web version when that is enough.
+
+## Install
+
+Install the CLI:
 
 ```bash
 npm install -g tokenless
 ```
 
-2. Install the Tokenless skill on your machine (enabling agents to interact with Tokenless upfront):
+Install the Tokenless skill so agents can call it:
 
 ```bash
 npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless
 ```
 
-3. Install the Tokenless browser extension through Chrome Web Store, an unpacked build, or a zip package. If you are starting from a source checkout, build the extension first; see Local Dev Test below.
+Install the Tokenless browser extension from the Chrome Web Store, an unpacked build, or a zip package.
 
-4. Then bind the extension to the local native host:
+Then connect the extension to your machine:
 
 ```bash
 tokenless install --extension-id <chrome-extension-id>
 tokenless doctor --extension-id <chrome-extension-id>
 ```
 
-Configure the provider preference order used by agents when no provider is explicitly requested:
+Choose the web providers you want Tokenless to try first:
 
 ```bash
 tokenless config --preferred-providers claude,chatgpt,gemini
 ```
 
-This writes `~/.tokenless/config.json`. The CLI treats that file as the source of truth; the extension side panel displays it so the browser surface and local agent agree.
+This writes `~/.tokenless/config.json`.
 
-Run a task from a local agent or terminal:
+## Run A Request
 
 ```bash
 tokenless run \
@@ -59,62 +86,16 @@ tokenless run \
   --extension-id <chrome-extension-id>
 ```
 
-The CLI returns a stable `taskId` derived from the project and chat names. Agents can retain it, query execution state with `tokenless state --task-id "<taskId>" --json`, and pass it back as `--task-id "<taskId>"` on later runs.
+Tokenless returns the provider's visible answer to the local agent.
 
-Capture a sanitized DOM snapshot from the visible provider page:
+If you pass the same project and chat names again, Tokenless can return to the same web conversation instead of starting over.
 
-```bash
-tokenless snapshot-dom \
-  --provider chatgpt \
-  --extension-id <chrome-extension-id> \
-  --json
-```
+## What Is Included
 
-Snapshot artifacts are written under `~/.tokenless/snapshots/<provider>/`. By default, Tokenless redacts visible page text in the HTML snapshot and writes selector probe results separately. Pass `--include-text` only when the visible page text is intentionally shareable.
-
-What the user sees:
-
-1. A Tokenless task page opens in the browser.
-2. The extension opens the mapped provider conversation, or starts a new visible chat for a new idempotency key.
-3. The prompt is inserted into the visible composer and submitted.
-4. Tokenless waits for the visible response text.
-5. The answer is returned to the local agent.
-
-## Conversation Mapping
-
-Pass stable project and chat names for each agent chat thread. Tokenless stores the local mapping in `~/.tokenless/meta/conversations.json`.
-
-- `--project-name` is the project name from the calling agent.
-- `--chat-name` is the chat/thread title or stable chat label from the calling agent.
-- If `--idempotency-key` is omitted, Tokenless derives a stable conversation key from `--project-name` and `--chat-name`.
-- The derived key is returned to agents as `taskId`; `--task-id` is accepted as the preferred agent-facing alias for later state queries and follow-up runs.
-- If only one of `--project-name` or `--chat-name` is present, Tokenless derives a stable key from that single name.
-- If neither name is present and no explicit `--idempotency-key` is provided, Tokenless does not reuse a mapped conversation and starts from a new visible chat.
-- If a calling agent already has a stable thread id, it may pass that id through `--idempotency-key`.
-
-- First run for a new key opens the provider home URL, such as `https://chatgpt.com/`, so it starts a new visible chat.
-- When the provider redirects that run to a conversation URL, such as `https://chatgpt.com/c/...`, Tokenless saves that URL for the key.
-- Later runs with the same key route back to the same provider conversation.
-- Different keys do not reuse an existing provider conversation by accident.
-- The extension side panel shows local task history grouped by project and chat, including the mapped provider URL.
-
-## Provider Selection
-
-Tokenless supports visible ChatGPT, Claude, and Gemini sessions. You can configure your preferred providers in two ways:
-
-1. **Manually**: Directly edit the `~/.tokenless/config.json` configuration file, or run the `tokenless config --preferred-providers` command.
-2. **Through the UI**: Directly configure your preferences within the extension sidepanel/UI.
-
-The stored `preferredProviders` array controls the default provider order for future `tokenless run` calls.
-
-## What It Includes
-
-- `tokenless`: the CLI users install and agents call.
-- `Tokenless`: the browser extension that works with visible provider tabs.
-- `tokenless-relay`: an optional HTTP relay for web or hosted integrations that need a stable Tokenless entrypoint.
-- `tokenless-client`: optional helper code for web apps talking to the relay.
-
-## Publishing
+- `tokenless`: the CLI that users install and agents call.
+- `Tokenless`: the browser extension that works with visible provider pages.
+- `tokenless-relay`: an optional relay package for hosted integrations.
+- `tokenless-client`: optional helper code for apps that use the relay.
 
 Publish now:
 
@@ -126,11 +107,13 @@ Do not publish yet:
 - `tokenless-client`
 - `tokenless-browser-session-bridge`
 
-The extension is distributed through Chrome Web Store, an unpacked build, or a zip package. Users install it in the browser, not through npm.
-
 ## Safety Boundary
 
-Tokenless does not bypass login, CAPTCHA, provider permissions, rate limits, or user-visible confirmations. It does not read provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider backend APIs. If a blocker appears in the visible browser session, Tokenless reports it instead of trying to bypass it.
+Tokenless works only through the visible browser session after the user grants permission.
+
+It does not bypass login, CAPTCHA, rate limits, provider permissions, or user confirmations. It does not read provider cookies, browser storage tokens, hidden auth headers, or private provider backend APIs.
+
+If the provider page asks for something the user must handle, Tokenless reports that blocker instead of trying to bypass it.
 
 ## Development
 
@@ -140,38 +123,16 @@ npm test
 npm run test:e2e
 ```
 
-`npm run build` writes an unpacked extension to `packages/extension/dist/extension`. After building, open `chrome://extensions` in Chrome or Edge, enable developer mode, choose **Load unpacked**, and select that directory. See **Local Dev Test** below for CLI binding and the smoke test.
+`npm run build` writes an unpacked extension to `packages/extension/dist/extension`.
 
-`npm run test:e2e` runs the local extension/native-host flow against a normalized real-DOM ChatGPT fixture served by Playwright at `https://chatgpt.com/**`. It exercises the same visible composer, submit button, and assistant-message selector shapes that Tokenless uses against ChatGPT, but it does not prove the current production ChatGPT DOM is still compatible.
+Load it in Chrome or Edge:
 
-The live ChatGPT test is opt-in because it uses the real `https://chatgpt.com/` DOM and requires a real logged-in browser profile:
+1. Open `chrome://extensions`.
+2. Enable developer mode.
+3. Choose **Load unpacked**.
+4. Select `packages/extension/dist/extension`.
 
-```bash
-TOKENLESS_LIVE_CHATGPT=1 npm run test:e2e:live-chatgpt
-```
-
-## Local Dev Test
-
-Run these commands from the repo root:
-
-```bash
-REPO_ROOT="$(pwd)"
-
-npm install
-npm run build
-npm test
-npm run test:e2e # real-DOM fixture E2E, not live ChatGPT
-
-npm install -g ./packages/cli
-```
-
-Load the unpacked extension from `packages/extension/dist/extension`:
-
-```bash
-open "chrome://extensions"
-```
-
-Copy the real 32-character extension id, then run:
+Then bind the real extension id:
 
 ```bash
 export TOKENLESS_EXTENSION_ID="<chrome-extension-id>"
@@ -180,7 +141,7 @@ tokenless install --extension-id "$TOKENLESS_EXTENSION_ID" --json
 tokenless doctor --extension-id "$TOKENLESS_EXTENSION_ID" --json
 ```
 
-Open ChatGPT in the same browser profile, then run the smoke test:
+Run the local smoke test against a logged-in ChatGPT browser profile:
 
 ```bash
 open "https://chatgpt.com"
@@ -199,7 +160,7 @@ tokenless run \
   --provider chatgpt \
   --project-name "Tokenless local dev" \
   --chat-name "Smoke test" \
-  --project-root "$REPO_ROOT" \
+  --project-root "$(pwd)" \
   --prompt-file /tmp/tokenless-request.md \
   --context-file /tmp/tokenless-context.md \
   --extension-id "$TOKENLESS_EXTENSION_ID" \

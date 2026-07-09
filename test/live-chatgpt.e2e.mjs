@@ -20,7 +20,7 @@ test('live ChatGPT DOM is driven by Tokenless extension without fixture routing'
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     waitLocalJobResult,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
 
   const artifactDir = await createArtifactDir()
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-live-chatgpt-'))

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const source = path.join(repoRoot, 'skills', 'tokenless')
 const home = os.homedir()
 const skillRoots = [
@@ -37,7 +37,7 @@ if (synced.length === 0) {
 
 console.log(JSON.stringify({ synced, skipped }, null, 2))
 
-async function assertSkillSource(skillPath) {
+async function assertSkillSource(skillPath: string) {
   const stat = await fs.stat(skillPath).catch(() => null)
   if (!stat?.isDirectory()) {
     throw new Error(`Skill source directory does not exist: ${skillPath}`)
@@ -50,6 +50,6 @@ async function assertSkillSource(skillPath) {
   }
 }
 
-async function exists(targetPath) {
+async function exists(targetPath: string) {
   return fs.access(targetPath).then(() => true, () => false)
 }

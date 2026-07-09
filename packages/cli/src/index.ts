@@ -32,6 +32,21 @@ export {
 const DEFAULT_MAX_FILE_BYTES = 24_000
 const DEFAULT_MAX_TOTAL_BYTES = 80_000
 
+type TokenlessPromptOptions = {
+  userPrompt?: string
+  projectRoot?: string
+  files?: string[]
+  turnContext?: unknown
+  maxFileBytes?: number
+  maxTotalBytes?: number
+}
+
+type CollectedFile = {
+  path: string
+  truncated: boolean
+  text: string
+}
+
 export async function buildTokenlessPrompt({
   userPrompt,
   projectRoot = process.cwd(),
@@ -39,7 +54,7 @@ export async function buildTokenlessPrompt({
   turnContext,
   maxFileBytes = DEFAULT_MAX_FILE_BYTES,
   maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
-} = {}) {
+}: TokenlessPromptOptions = {}) {
   if (typeof userPrompt !== 'string' || userPrompt.trim() === '') {
     throw new TypeError('userPrompt must be a nonempty string.')
   }
@@ -66,8 +81,8 @@ export async function buildTokenlessPrompt({
   ].join('\n')
 }
 
-export async function collectFiles(projectRoot, files, maxFileBytes, maxTotalBytes) {
-  const result = []
+export async function collectFiles(projectRoot: string, files: string[], maxFileBytes: number, maxTotalBytes: number) {
+  const result: CollectedFile[] = []
   let total = 0
   for (const file of files) {
     const absolute = path.resolve(projectRoot, file)
@@ -95,7 +110,7 @@ export async function collectFiles(projectRoot, files, maxFileBytes, maxTotalByt
   return result
 }
 
-function formatFile(file) {
+function formatFile(file: CollectedFile) {
   return [
     `### ${file.path}${file.truncated ? ' (truncated)' : ''}`,
     '```',
@@ -104,7 +119,7 @@ function formatFile(file) {
   ].join('\n')
 }
 
-function sanitizeText(text) {
+function sanitizeText(text: unknown) {
   return String(text)
     .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*["']?[^"'\n]+/gi, '$1=<redacted>')
     .trim()

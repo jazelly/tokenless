@@ -1,4 +1,11 @@
-export function createRelayClient({ baseUrl, fetchImpl = globalThis.fetch } = {}) {
+type RelayClientOptions = {
+  baseUrl?: string
+  fetchImpl?: typeof fetch
+}
+
+type RelayRun = Record<string, unknown>
+
+export function createRelayClient({ baseUrl, fetchImpl = globalThis.fetch }: RelayClientOptions = {}) {
   if (typeof baseUrl !== 'string' || baseUrl.trim() === '') {
     throw new TypeError('baseUrl must be a nonempty string.')
   }
@@ -12,7 +19,7 @@ export function createRelayClient({ baseUrl, fetchImpl = globalThis.fetch } = {}
     async capabilities() {
       return requestJson(fetchImpl, `${root}/v1/capabilities`, { method: 'GET' })
     },
-    async createRun(run) {
+    async createRun(run: RelayRun) {
       return requestJson(fetchImpl, `${root}/v1/runs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -22,7 +29,7 @@ export function createRelayClient({ baseUrl, fetchImpl = globalThis.fetch } = {}
   }
 }
 
-async function requestJson(fetchImpl, url, init) {
+async function requestJson(fetchImpl: typeof fetch, url: string, init: RequestInit) {
   const response = await fetchImpl(url, init)
   const payload = await response.json()
   if (!response.ok && payload?.error == null) {

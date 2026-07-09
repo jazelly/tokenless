@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+    "noUncheckedIndexedAccess": false,
+    "exactOptionalPropertyTypes": false,
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["node", "chrome"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.mts", "extension/**/*.ts"]
+}

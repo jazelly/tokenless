@@ -20,7 +20,7 @@ test('browser extension manifest is domain limited', () => {
 })
 
 test('extension routes mapped conversations by exact target URL before generic provider reuse', () => {
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.js'), 'utf8')
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
   const targetBranch = serviceWorker.indexOf('if (targetUrl)')
   const genericReuse = serviceWorker.indexOf('const visibleCandidate')
 
@@ -30,13 +30,13 @@ test('extension routes mapped conversations by exact target URL before generic p
   assert.match(serviceWorker, /const exactCandidate = candidates\.find/)
   assert.match(serviceWorker, /return chrome\.tabs\.create\(\{ url: requestedUrl, active: true \}\)/)
 
-  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.js'), 'utf8')
+  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.ts'), 'utf8')
   assert.match(contentScript, /url: location\.href/)
 })
 
 test('extension validates provider landing before waiting on provider actions', () => {
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.js'), 'utf8')
-  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.js'), 'utf8')
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
+  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.ts'), 'utf8')
 
   assert.match(serviceWorker, /const PROVIDER_LANDING_TIMEOUT_MS = 8000/)
   assert.match(serviceWorker, /waitForProviderTabLoaded\(tab\.id, provider\)/)
@@ -57,8 +57,8 @@ test('extension validates provider landing before waiting on provider actions', 
 })
 
 test('provider content script is safe to inject more than once', () => {
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.js'), 'utf8')
-  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.js'), 'utf8')
+  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
+  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.ts'), 'utf8')
 
   assert.match(serviceWorker, /chrome\.scripting\.executeScript/)
   assert.match(contentScript, /\(\(\) => \{/)
@@ -70,7 +70,7 @@ test('provider content script is safe to inject more than once', () => {
 })
 
 test('browser bridge advertises sanitized DOM snapshot action', async () => {
-  const { BRIDGE_ACTIONS, capabilitiesPayload, validateBridgeRequest, BRIDGE_PROTOCOL_VERSION } = await import('../packages/extension/extension/shared/bridge-protocol.js')
+  const { BRIDGE_ACTIONS, capabilitiesPayload, validateBridgeRequest, BRIDGE_PROTOCOL_VERSION } = await import('../packages/extension/dist/extension/shared/bridge-protocol.js')
 
   assert.equal(BRIDGE_ACTIONS.SNAPSHOT_DOM, 'snapshot_dom')
   assert.ok(capabilitiesPayload().actions.includes('snapshot_dom'))
@@ -84,8 +84,8 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
 
 test('extension side panel renders provider-agnostic task history from native host', () => {
   const sidePanelHtml = fs.readFileSync(path.join(root, 'packages/extension/extension/sidepanel/index.html'), 'utf8')
-  const sidePanelJs = fs.readFileSync(path.join(root, 'packages/extension/extension/sidepanel/index.js'), 'utf8')
-  const nativeHost = fs.readFileSync(path.join(root, 'packages/cli/src/native-host.mjs'), 'utf8')
+  const sidePanelJs = fs.readFileSync(path.join(root, 'packages/extension/extension/sidepanel/index.ts'), 'utf8')
+  const nativeHost = fs.readFileSync(path.join(root, 'packages/cli/dist/src/native-host.mjs'), 'utf8')
 
   assert.match(sidePanelHtml, /Task History/)
   assert.match(sidePanelHtml, /id="history"/)
@@ -106,7 +106,7 @@ test('extension side panel renders provider-agnostic task history from native ho
 })
 
 test('Relay protocol validates required run fields', async () => {
-  const { RELAY_PROTOCOL_VERSION, createRelayRun, validateRelayRun } = await import('../packages/relay/src/index.js')
+  const { RELAY_PROTOCOL_VERSION, createRelayRun, validateRelayRun } = await import('../packages/relay/dist/src/index.js')
   const run = createRelayRun({ prompt: 'Review this diff.' })
   assert.equal(run.protocol, RELAY_PROTOCOL_VERSION)
   assert.equal(validateRelayRun(run).ok, true)
@@ -114,7 +114,7 @@ test('Relay protocol validates required run fields', async () => {
 })
 
 test('Tokenless CLI prompt redacts obvious secret values', async () => {
-  const { buildTokenlessPrompt } = await import('../packages/cli/src/index.js')
+  const { buildTokenlessPrompt } = await import('../packages/cli/dist/src/index.js')
   const prompt = await buildTokenlessPrompt({
     userPrompt: 'Review',
     turnContext: 'token=abc123',
@@ -125,7 +125,7 @@ test('Tokenless CLI prompt redacts obvious secret values', async () => {
 })
 
 test('web client posts relay requests to a configured server', async () => {
-  const { createRelayClient } = await import('../packages/client/src/index.js')
+  const { createRelayClient } = await import('../packages/client/dist/src/index.js')
   const calls = []
   const client = createRelayClient({
     baseUrl: 'https://relay.example.test/',
@@ -156,7 +156,7 @@ test('local job store requires nonce and writes compact result', async () => {
     waitLocalJobResult,
     writeDomSnapshot,
     writeJobState,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-job-store-'))
   const job = await createLocalJob({
     homeDir,
@@ -318,7 +318,7 @@ test('local Tokenless config stores provider preference for default runs', async
     createLocalJob,
     readTokenlessConfig,
     writeTokenlessConfig,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-config-'))
 
   assert.deepEqual((await readTokenlessConfig(homeDir)).preferredProviders, [])
@@ -344,7 +344,7 @@ test('local Tokenless config stores provider preference for default runs', async
 test('native host writes Tokenless config through native messaging protocol', async () => {
   const {
     readTokenlessConfig,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-native-config-'))
   const response = await nativeHostMessage({
     type: 'tokenless.native.write_config',
@@ -363,7 +363,7 @@ test('local conversation mapping routes the same idempotency key to the same pro
     createLocalJob,
     readConversationMap,
     readLocalHistory,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-map-'))
 
   const first = await createLocalJob({
@@ -433,7 +433,7 @@ test('local conversation mapping derives stable keys from partial agent names on
     createLocalJob,
     readConversationMap,
     readLocalHistory,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-partial-agent-names-'))
 
   const unnamed = await createLocalJob({
@@ -541,7 +541,7 @@ test('local conversation mapping preserves concurrent completions', async () => 
     completeLocalJob,
     createLocalJob,
     readConversationMap,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-concurrent-'))
   const jobs = await Promise.all(Array.from({ length: 16 }, (_, index) => createLocalJob({
     homeDir,
@@ -579,7 +579,7 @@ test('local conversation mapping rejects corrupt local state instead of overwrit
     conversationMapPath,
     createLocalJob,
     readConversationMap,
-  } = await import('../packages/cli/src/index.js')
+  } = await import('../packages/cli/dist/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-corrupt-'))
   const mapPath = conversationMapPath(homeDir)
   const job = await createLocalJob({
@@ -615,7 +615,7 @@ test('local conversation mapping rejects corrupt local state instead of overwrit
 })
 
 test('native host installer scopes manifest to extension origin', async () => {
-  const { installNativeHost, NATIVE_HOST_NAME } = await import('../packages/cli/src/index.js')
+  const { installNativeHost, NATIVE_HOST_NAME } = await import('../packages/cli/dist/src/index.js')
   const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-native-home-'))
   const manifestHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-manifest-home-'))
   const installed = await installNativeHost({
@@ -639,7 +639,7 @@ function readJson(relativePath) {
 function nativeHostMessage(message, env = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
-      path.join(root, 'packages/cli/src/native-host.mjs'),
+      path.join(root, 'packages/cli/dist/src/native-host.mjs'),
     ], {
       cwd: root,
       env: { ...process.env, ...env },

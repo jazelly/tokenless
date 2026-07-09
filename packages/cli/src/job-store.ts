@@ -48,6 +48,13 @@ const TIMED_OUT_ERROR_CODES = new Set([
 const conversationMapLocks = new Map()
 const SUPPORTED_PROVIDER_IDS = Object.freeze(['chatgpt', 'claude', 'gemini'])
 
+type JsonRecord = Record<string, any>
+type LocalError = Error & {
+  code?: string
+  retryable?: boolean
+}
+type LockFunction<T> = () => Promise<T>
+
 export function tokenlessHome(explicitHome = process.env.TOKENLESS_HOME) {
   return path.resolve(explicitHome || path.join(os.homedir(), '.tokenless'))
 }
@@ -85,7 +92,7 @@ export function createNonce() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
 }
 
-export function deriveTaskId({ projectName, chatName, idempotencyKey } = {}) {
+export function deriveTaskId({ projectName, chatName, idempotencyKey }: JsonRecord = {}) {
   return normalizeIdempotencyKey(idempotencyKey) ??
     derivedConversationKey({
       projectName: normalizeDisplayName(projectName),
@@ -119,7 +126,7 @@ export async function createLocalJob({
   includeText,
   maxTextChars,
   ttlMs = 15 * 60 * 1000,
-} = {}) {
+}: JsonRecord = {}) {
   const promptIsRequired = action === 'submit' || action === 'submit_and_read'
   if (promptIsRequired && (typeof prompt !== 'string' || prompt.trim() === '')) {
     throw new TypeError('prompt must be a nonempty string.')
@@ -184,7 +191,7 @@ export async function readLocalTaskState({
   projectName,
   chatName,
   limit = 10,
-} = {}) {
+}: JsonRecord = {}) {
   const normalizedTaskId = deriveTaskId({ projectName, chatName, idempotencyKey: taskId })
   if (!normalizedTaskId && !jobId) {
     throw accessError('missing_task_id', 'Usage: tokenless state requires --task-id or --job-id.')
@@ -203,7 +210,7 @@ export async function readLocalTaskState({
     throw accessError('task_state_not_found', `No Tokenless task state found for ${normalizedTaskId ?? jobId}.`)
   }
 
-  const latest = jobs[0]
+  const latest = jobs[0]!
   const resolvedTaskId = normalizedTaskId ?? latest.taskId
   const conversations = await readConversationMap(homeDir)
   const conversation = resolvedTaskId
@@ -220,7 +227,7 @@ export async function readLocalTaskState({
   }
 }
 
-export async function readLocalJobRequest({ homeDir = tokenlessHome(), jobId, nonce } = {}) {
+export async function readLocalJobRequest({ homeDir = tokenlessHome(), jobId, nonce }: JsonRecord = {}) {
   const request = await readJson(jobPath(homeDir, jobId, 'request'))
   validateJobAccess(request, jobId, nonce)
   if (Date.now() > Date.parse(request.expiresAt)) {
@@ -236,7 +243,7 @@ export async function writeDomSnapshot({
   nonce,
   provider,
   snapshot,
-} = {}) {
+}: JsonRecord = {}) {
   const request = await readLocalJobRequest({ homeDir, jobId, nonce })
   if (request.action !== 'snapshot_dom') {
     throw accessError('invalid_snapshot_job', 'Local job is not a DOM snapshot job.')
@@ -291,7 +298,7 @@ export async function writeJobState({
   status,
   actor,
   detail,
-} = {}) {
+}: JsonRecord = {}) {
   if (!Object.values(JOB_STATES).includes(status)) {
     throw new Error(`Unsupported job status: ${status}`)
   }
@@ -321,16 +328,16 @@ export async function completeLocalJob({
   result,
   error,
   actor = 'native-host',
-} = {}) {
+}: JsonRecord = {}) {
   const request = await readLocalJobRequest({ homeDir, jobId, nonce })
-  let mappingError = null
+  let mappingError: LocalError | null = null
   if (ok) {
     try {
       await rememberConversationFromResult({ homeDir, request, result })
     } catch (error) {
       mappingError = localStateError(
         'conversation_map_error',
-        `Failed to persist Tokenless conversation mapping: ${error.message}`
+        `Failed to persist Tokenless conversation mapping: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   }
@@ -356,36 +363,36 @@ export async function completeLocalJob({
   return payload
 }
 
-export async function readConversationMap(homeDir = tokenlessHome()) {
+export async function readConversationMap(homeDir = tokenlessHome()): Promise<JsonRecord> {
   const mapPath = conversationMapPath(homeDir)
   let payload
   try {
     payload = await readJson(mapPath)
   } catch (error) {
-    if (error?.code === 'ENOENT') {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
       return emptyConversationMap()
     }
     throw localStateError(
       'conversation_map_unreadable',
-      `Cannot read Tokenless conversation map at ${mapPath}: ${error.message}`
+      `Cannot read Tokenless conversation map at ${mapPath}: ${error instanceof Error ? error.message : String(error)}`
     )
   }
   validateConversationMap(payload, mapPath)
   return payload
 }
 
-export async function readTokenlessConfig(homeDir = tokenlessHome()) {
+export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<JsonRecord> {
   const file = configPath(homeDir)
   let payload
   try {
     payload = await readJson(file)
   } catch (error) {
-    if (error?.code === 'ENOENT') {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
       return emptyTokenlessConfig()
     }
     throw localStateError(
       'tokenless_config_unreadable',
-      `Cannot read Tokenless config at ${file}: ${error.message}`
+      `Cannot read Tokenless config at ${file}: ${error instanceof Error ? error.message : String(error)}`
     )
   }
   validateTokenlessConfig(payload, file)
@@ -398,7 +405,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()) {
 export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
   preferredProviders,
-} = {}) {
+}: JsonRecord = {}) {
   await ensureJobStore(homeDir)
   const now = new Date().toISOString()
   const config = {
@@ -419,7 +426,7 @@ export async function upsertConversationMapping({
   projectName,
   chatName,
   projectRoot,
-} = {}) {
+}: JsonRecord = {}) {
   const normalizedKey = normalizeIdempotencyKey(idempotencyKey)
   if (!normalizedKey || typeof provider !== 'string' || typeof targetUrl !== 'string') {
     return null
@@ -453,12 +460,12 @@ export async function upsertConversationMapping({
   })
 }
 
-export async function readLocalHistory({ homeDir = tokenlessHome(), limit = 50 } = {}) {
+export async function readLocalHistory({ homeDir = tokenlessHome(), limit = 50 }: JsonRecord = {}) {
   await ensureJobStore(homeDir)
   const conversations = await readConversationMap(homeDir)
-  const rows = new Map()
+  const rows = new Map<string, JsonRecord>()
 
-  for (const entry of Object.values(conversations.conversations)) {
+  for (const entry of Object.values(conversations.conversations as JsonRecord) as JsonRecord[]) {
     const key = historyKey(entry.provider, entry.idempotencyKey)
     rows.set(key, normalizeHistoryEntry({
       provider: entry.provider,
@@ -517,11 +524,11 @@ export async function waitLocalJobResult({
   pollMs = 250,
   statusIntervalMs = 10000,
   onStatus,
-} = {}) {
+}: JsonRecord = {}) {
   const deadline = Date.now() + timeoutMs
   const startedAt = Date.now()
-  let lastState = null
-  let lastStateKey = null
+  let lastState: JsonRecord | null = null
+  let lastStateKey: string | null = null
   let nextPollStatusAt = startedAt + statusIntervalMs
   while (Date.now() < deadline) {
     const result = await readJson(jobPath(homeDir, jobId, 'result')).catch(() => null)
@@ -581,7 +588,7 @@ export async function waitLocalJobResult({
   throw accessError('job_timeout', 'Timed out waiting for local Tokenless job result.')
 }
 
-async function notifyJobStatus(onStatus, event) {
+async function notifyJobStatus(onStatus: unknown, event: JsonRecord) {
   if (typeof onStatus === 'function') {
     await onStatus(event)
   }
@@ -594,7 +601,7 @@ export async function installNativeHost({
   browsers = ['chrome', 'chrome-for-testing', 'chrome-for-testing-legacy', 'chromium', 'edge', 'arc'],
   nodePath = process.execPath,
   packageRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url))),
-} = {}) {
+}: JsonRecord = {}) {
   await fs.mkdir(path.join(homeDir, 'bin'), { recursive: true, mode: 0o700 })
   await fs.chmod(path.join(homeDir, 'bin'), 0o700).catch(() => undefined)
   const hostScript = path.join(packageRoot, 'src', 'native-host.mjs')
@@ -607,7 +614,7 @@ export async function installNativeHost({
   await fs.writeFile(executable, wrapper, { mode: 0o755 })
   await fs.chmod(executable, 0o755)
 
-  const manifests = []
+  const manifests: string[] = []
   if (extensionId) {
     const manifest = {
       name: NATIVE_HOST_NAME,
@@ -629,11 +636,11 @@ export async function installNativeHost({
   return { executable, manifests }
 }
 
-export function nativeMessagingHostDir(browser, home = os.homedir()) {
+export function nativeMessagingHostDir(browser: string, home = os.homedir()) {
   return nativeMessagingHostDirs(browser, home)[0] ?? null
 }
 
-export function nativeMessagingHostDirs(browser, home = os.homedir()) {
+export function nativeMessagingHostDirs(browser: string, home = os.homedir()) {
   if (browser === 'profile') {
     return [path.join(home, 'NativeMessagingHosts')]
   }
@@ -647,7 +654,8 @@ export function nativeMessagingHostDirs(browser, home = os.homedir()) {
       edge: ['Library', 'Application Support', 'Microsoft Edge', 'NativeMessagingHosts'],
       arc: ['Library', 'Application Support', 'Arc', 'User Data', 'NativeMessagingHosts'],
     }
-    return roots[browser] ? [path.join(home, ...roots[browser])] : []
+    const root = roots[browser as keyof typeof roots]
+    return root ? [path.join(home, ...root)] : []
   }
   if (platform === 'win32') {
     return []
@@ -660,10 +668,11 @@ export function nativeMessagingHostDirs(browser, home = os.homedir()) {
     edge: ['.config', 'microsoft-edge', 'NativeMessagingHosts'],
     arc: null,
   }
-  return roots[browser] ? [path.join(home, ...roots[browser])] : []
+  const root = roots[browser as keyof typeof roots]
+  return root ? [path.join(home, ...root)] : []
 }
 
-export function buildTaskUrl({ extensionId, jobId, nonce } = {}) {
+export function buildTaskUrl({ extensionId, jobId, nonce }: JsonRecord = {}) {
   if (!extensionId) {
     throw new TypeError('extensionId is required to build a task URL.')
   }
@@ -671,21 +680,21 @@ export function buildTaskUrl({ extensionId, jobId, nonce } = {}) {
   return `chrome-extension://${extensionId}/task/task.html?${params.toString()}`
 }
 
-export function jobPath(homeDir, jobId, kind) {
+export function jobPath(homeDir: string, jobId: string, kind: string) {
   if (typeof jobId !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(jobId)) {
     throw new Error('Invalid jobId.')
   }
   return path.join(jobsDir(homeDir), `${jobId}.${kind}.json`)
 }
 
-async function readJson(file) {
+async function readJson<T = JsonRecord>(file: string): Promise<T> {
   return JSON.parse(await fs.readFile(file, 'utf8'))
 }
 
-async function writeJsonAtomic(file, payload, mode) {
+async function writeJsonAtomic(file: string, payload: unknown, mode: number) {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
   const tmp = `${file}.${process.pid}.${Date.now()}.${createJobId()}.tmp`
-  let handle
+  let handle: fs.FileHandle | undefined
   try {
     handle = await fs.open(tmp, 'wx', mode)
     await handle.writeFile(`${JSON.stringify(payload, null, 2)}\n`, 'utf8')
@@ -701,7 +710,7 @@ async function writeJsonAtomic(file, payload, mode) {
   }
 }
 
-function validateJobAccess(payload, jobId, nonce) {
+function validateJobAccess(payload: JsonRecord | null | undefined, jobId: string, nonce: string) {
   if (payload?.protocol !== LOCAL_JOB_PROTOCOL_VERSION) {
     throw accessError('unsupported_protocol', 'Local job protocol is not supported.')
   }
@@ -710,7 +719,7 @@ function validateJobAccess(payload, jobId, nonce) {
   }
 }
 
-function compactResult(result) {
+function compactResult(result: JsonRecord | null | undefined) {
   const text = result?.text ?? result?.read?.text ?? result?.result?.read?.text
   if (typeof text !== 'string') {
     if (result?.snapshot?.htmlPath) {
@@ -737,7 +746,7 @@ function emptyTokenlessConfig() {
   }
 }
 
-function validateConversationMap(payload, mapPath) {
+function validateConversationMap(payload: JsonRecord, mapPath: string) {
   if (
     !payload ||
     typeof payload !== 'object' ||
@@ -751,7 +760,7 @@ function validateConversationMap(payload, mapPath) {
   }
 }
 
-function validateTokenlessConfig(payload, file) {
+function validateTokenlessConfig(payload: JsonRecord, file: string) {
   if (
     !payload ||
     typeof payload !== 'object' ||
@@ -763,7 +772,7 @@ function validateTokenlessConfig(payload, file) {
   }
 }
 
-function withConversationMapLock(homeDir, fn) {
+function withConversationMapLock<T>(homeDir: string, fn: LockFunction<T>) {
   const lockKey = conversationMapPath(homeDir)
   const prior = conversationMapLocks.get(lockKey) ?? Promise.resolve()
   const run = prior
@@ -778,7 +787,7 @@ function withConversationMapLock(homeDir, fn) {
   })
 }
 
-async function withConversationMapFileLock(homeDir, fn) {
+async function withConversationMapFileLock<T>(homeDir: string, fn: LockFunction<T>) {
   const lockDir = `${conversationMapPath(homeDir)}.lock`
   await acquireLockDir(lockDir)
   try {
@@ -788,7 +797,7 @@ async function withConversationMapFileLock(homeDir, fn) {
   }
 }
 
-async function acquireLockDir(lockDir) {
+async function acquireLockDir(lockDir: string) {
   await fs.mkdir(path.dirname(lockDir), { recursive: true, mode: 0o700 })
   const deadline = Date.now() + 10000
   while (true) {
@@ -801,7 +810,7 @@ async function acquireLockDir(lockDir) {
       ).catch(() => undefined)
       return
     } catch (error) {
-      if (error?.code !== 'EEXIST') {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
         throw error
       }
       const stat = await fs.stat(lockDir).catch(() => null)
@@ -817,7 +826,7 @@ async function acquireLockDir(lockDir) {
   }
 }
 
-async function resolveConversationTarget({ homeDir, provider, targetUrl, idempotencyKey } = {}) {
+async function resolveConversationTarget({ homeDir, provider, targetUrl, idempotencyKey }: JsonRecord = {}) {
   const normalizedKey = normalizeIdempotencyKey(idempotencyKey)
   if (!normalizedKey) {
     return {
@@ -846,7 +855,7 @@ async function resolveConversationTarget({ homeDir, provider, targetUrl, idempot
   }
 }
 
-async function rememberConversationFromResult({ homeDir, request, result } = {}) {
+async function rememberConversationFromResult({ homeDir, request, result }: JsonRecord = {}) {
   const idempotencyKey = request?.idempotencyKey ?? request?.metadata?.idempotencyKey
   const targetUrl = result?.read?.url ?? result?.url ?? result?.textUrl ?? result?.submit?.url
   if (!idempotencyKey || !targetUrl) {
@@ -864,7 +873,7 @@ async function rememberConversationFromResult({ homeDir, request, result } = {})
   })
 }
 
-async function readJobSummaries(homeDir) {
+async function readJobSummaries(homeDir: string) {
   return (await readJobDetails(homeDir)).map((job) => ({
     jobId: job.jobId,
     provider: job.provider,
@@ -879,14 +888,14 @@ async function readJobSummaries(homeDir) {
   }))
 }
 
-async function readJobDetails(homeDir) {
+async function readJobDetails(homeDir: string) {
   const dir = jobsDir(homeDir)
   const files = await fs.readdir(dir).catch((error) => {
     if (error?.code === 'ENOENT') return []
     throw error
   })
   const requestFiles = files.filter((file) => file.endsWith('.request.json'))
-  const jobs = []
+  const jobs: JsonRecord[] = []
   for (const file of requestFiles) {
     const jobId = file.slice(0, -'.request.json'.length)
     const request = await readJson(path.join(dir, file)).catch(() => null)
@@ -926,7 +935,7 @@ async function readJobDetails(homeDir) {
   return jobs
 }
 
-function normalizeHistoryEntry(entry) {
+function normalizeHistoryEntry(entry: JsonRecord) {
   const projectName = normalizeDisplayName(entry.projectName) ?? projectNameFromRoot(entry.projectRoot) ?? 'Unspecified project'
   const chatName = normalizeDisplayName(entry.chatName) ??
     (normalizeDisplayName(entry.projectName) ? 'Unspecified chat' : entry.idempotencyKey) ??
@@ -947,13 +956,13 @@ function normalizeHistoryEntry(entry) {
   }
 }
 
-function normalizeDisplayName(value) {
+function normalizeDisplayName(value: unknown) {
   if (typeof value !== 'string') return undefined
   const normalized = value.trim()
   return normalized.length > 0 ? normalized : undefined
 }
 
-function derivedConversationKey({ projectName, chatName } = {}) {
+function derivedConversationKey({ projectName, chatName }: JsonRecord = {}) {
   if (!projectName && !chatName) return undefined
   return [
     projectName ? `project:${projectName}` : null,
@@ -961,50 +970,50 @@ function derivedConversationKey({ projectName, chatName } = {}) {
   ].filter(Boolean).join(':')
 }
 
-function projectNameFromRoot(projectRoot) {
+function projectNameFromRoot(projectRoot: unknown) {
   if (typeof projectRoot !== 'string' || projectRoot.trim() === '') return undefined
   return path.basename(projectRoot)
 }
 
-function historyKey(provider, idempotencyKey) {
+function historyKey(provider: string, idempotencyKey: string) {
   return `${provider}:${idempotencyKey}`
 }
 
-function earlierIso(left, right) {
+function earlierIso(left: string | undefined, right: string | undefined) {
   if (!left) return right
   if (!right) return left
   return Date.parse(left) <= Date.parse(right) ? left : right
 }
 
-function laterIso(left, right) {
+function laterIso(left: string | undefined, right: string | undefined) {
   if (!left) return right
   if (!right) return left
   return Date.parse(left) >= Date.parse(right) ? left : right
 }
 
-function normalizeIdempotencyKey(idempotencyKey) {
+function normalizeIdempotencyKey(idempotencyKey: unknown) {
   if (typeof idempotencyKey !== 'string') return undefined
   const normalized = idempotencyKey.trim()
   return normalized.length > 0 ? normalized : undefined
 }
 
-function conversationMapKey(provider, idempotencyKey) {
+function conversationMapKey(provider: string, idempotencyKey: string) {
   return `${provider}:${idempotencyKey}`
 }
 
-function providerHomeUrl(provider) {
+function providerHomeUrl(provider: string) {
   const homeUrls = {
     chatgpt: 'https://chatgpt.com/',
     gemini: 'https://gemini.google.com/app',
     claude: 'https://claude.ai/new',
   }
-  return homeUrls[provider] ?? undefined
+  return homeUrls[provider as keyof typeof homeUrls] ?? undefined
 }
 
-function normalizeProviderList(providers) {
+function normalizeProviderList(providers: unknown) {
   if (!Array.isArray(providers)) return []
-  const seen = new Set()
-  const normalized = []
+  const seen = new Set<string>()
+  const normalized: string[] = []
   for (const provider of providers) {
     if (typeof provider !== 'string') continue
     const value = provider.trim().toLowerCase()
@@ -1015,7 +1024,7 @@ function normalizeProviderList(providers) {
   return normalized
 }
 
-function normalizeSafeSegment(value) {
+function normalizeSafeSegment(value: unknown) {
   const normalized = String(value)
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-')
@@ -1023,7 +1032,7 @@ function normalizeSafeSegment(value) {
   return normalized || 'provider'
 }
 
-function providerForUrl(url) {
+function providerForUrl(url: string | URL) {
   const parsed = typeof url === 'string' ? safeUrl(url) : url
   const host = parsed?.hostname?.toLowerCase()
   if (host === 'chatgpt.com' || host === 'chat.openai.com') return 'chatgpt'
@@ -1032,25 +1041,25 @@ function providerForUrl(url) {
   return null
 }
 
-function isConversationUrl(provider, url) {
+function isConversationUrl(provider: string, url: URL) {
   if (provider === 'chatgpt') return /^\/c\/[^/]+/.test(url.pathname)
   if (provider === 'gemini') return /^\/app\/[^/]+/.test(url.pathname)
   if (provider === 'claude') return /^\/chat\/[^/]+/.test(url.pathname)
   return false
 }
 
-function providerConversationId(provider, url) {
+function providerConversationId(provider: string, url: URL) {
   if (provider === 'chatgpt') return url.pathname.split('/')[2] || null
   if (provider === 'gemini') return url.pathname.split('/')[2] || null
   if (provider === 'claude') return url.pathname.split('/')[2] || null
   return null
 }
 
-function canonicalProviderUrl(url) {
+function canonicalProviderUrl(url: URL) {
   return `${url.origin}${url.pathname}`
 }
 
-function safeUrl(value) {
+function safeUrl(value: string) {
   try {
     return new URL(value)
   } catch {
@@ -1058,7 +1067,7 @@ function safeUrl(value) {
   }
 }
 
-function normalizeError(error) {
+function normalizeError(error: Partial<LocalError> | null | undefined) {
   return {
     code: typeof error?.code === 'string' ? error.code : 'local_job_error',
     message: typeof error?.message === 'string' ? error.message : 'Local Tokenless job failed.',
@@ -1066,36 +1075,36 @@ function normalizeError(error) {
   }
 }
 
-function failedJobStatus(error) {
-  if (BLOCKED_ERROR_CODES.has(error?.code)) {
+function failedJobStatus(error: Partial<LocalError> | null | undefined) {
+  if (typeof error?.code === 'string' && BLOCKED_ERROR_CODES.has(error.code)) {
     return JOB_STATES.BLOCKED
   }
-  if (UI_MISMATCH_ERROR_CODES.has(error?.code)) {
+  if (typeof error?.code === 'string' && UI_MISMATCH_ERROR_CODES.has(error.code)) {
     return JOB_STATES.UI_MISMATCH
   }
-  if (TIMED_OUT_ERROR_CODES.has(error?.code)) {
+  if (typeof error?.code === 'string' && TIMED_OUT_ERROR_CODES.has(error.code)) {
     return JOB_STATES.TIMED_OUT
   }
   return JOB_STATES.FAILED
 }
 
-function accessError(code, message) {
-  const error = new Error(message)
+function accessError(code: string, message: string): LocalError {
+  const error: LocalError = new Error(message)
   error.code = code
   return error
 }
 
-function localStateError(code, message) {
-  const error = new Error(message)
+function localStateError(code: string, message: string): LocalError {
+  const error: LocalError = new Error(message)
   error.code = code
   error.retryable = false
   return error
 }
 
-function shellQuote(value) {
+function shellQuote(value: unknown) {
   return `'${String(value).replace(/'/g, "'\\''")}'`
 }
 
-function delay(ms) {
+function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
