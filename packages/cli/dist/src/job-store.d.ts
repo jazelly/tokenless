@@ -122,11 +122,12 @@ export declare function completeLocalJob({ homeDir, jobId, nonce, ok, result, er
 }>;
 export declare function readConversationMap(homeDir?: string): Promise<JsonRecord>;
 export declare function readTokenlessConfig(homeDir?: string): Promise<JsonRecord>;
-export declare function writeTokenlessConfig({ homeDir, preferredProviders, browser, }?: JsonRecord): Promise<{
+export declare function writeTokenlessConfig({ homeDir, preferredProviders, browser, daemonUrl, }?: JsonRecord): Promise<{
     protocol: string;
     updatedAt: string;
     preferredProviders: string[];
     browser: string | null;
+    daemonUrl: string | null;
 }>;
 export declare function upsertConversationMapping({ homeDir, provider, idempotencyKey, targetUrl, jobId, projectName, chatName, projectRoot, }?: JsonRecord): Promise<any>;
 export declare function readLocalHistory({ homeDir, limit }?: JsonRecord): Promise<{

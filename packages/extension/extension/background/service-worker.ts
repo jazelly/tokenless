@@ -14,35 +14,55 @@ type BridgeRuntimeError = Error & {
   retryable?: boolean
 }
 type ExtensionRecord = Record<string, any>
+type RuntimeMessageContext = {
+  external: boolean
+}
 
 const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
-const DAEMON_RUN_NEXT_MESSAGE = 'tokenless.daemon.run_next'
+const DAEMON_JOB_RESPONSE_TYPE = 'tokenless.daemon.job_result'
 const NATIVE_REQUEST_TIMEOUT_MS = 10000
+const DAEMON_BRIDGE_RECONNECT_MS = 1000
 const PROVIDER_LANDING_TIMEOUT_MS = 8000
 const PROVIDER_LANDING_POLL_MS = 250
+let daemonBridgePort: chrome.runtime.Port | null = null
+let daemonBridgeReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let daemonJobQueue: Promise<void> = Promise.resolve()
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => undefined)
+  startDaemonBridge()
 })
 
+chrome.runtime.onStartup.addListener(() => {
+  startDaemonBridge()
+})
+
+startDaemonBridge()
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handleRuntimeMessage(message).then(sendResponse)
+  handleRuntimeMessage(message, { external: false }).then(sendResponse)
   return true
 })
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  handleRuntimeMessage(message).then(sendResponse)
+  handleRuntimeMessage(message, { external: true }).then(sendResponse)
   return true
 })
 
-async function handleRuntimeMessage(message: unknown) {
-  if (isDaemonRunNextMessage(message)) {
-    return runNextDaemonJob(message)
-  }
-
+async function handleRuntimeMessage(message: unknown, context: RuntimeMessageContext) {
   const validation = validateBridgeRequest(message)
   if (validation.ok === false) {
     return createBridgeResponse(message as Partial<BridgeRequest>, { ok: false, error: validation.error })
+  }
+  if (context.external && validation.request.action !== BRIDGE_ACTIONS.CAPABILITIES) {
+    return createBridgeResponse(validation.request, {
+      ok: false,
+      error: {
+        code: 'external_bridge_forbidden',
+        message: 'External origins are not authorized to drive Tokenless provider sessions.',
+        retryable: false,
+      },
+    })
   }
 
   return runBridgeRequest(validation.request)
@@ -121,49 +141,69 @@ async function runBridgeRequest(request: BridgeRequest) {
   }
 }
 
-async function runNextDaemonJob(message: ExtensionRecord) {
-  let claim: any
+function startDaemonBridge() {
+  if (daemonBridgePort) return
+  if (daemonBridgeReconnectTimer) {
+    clearTimeout(daemonBridgeReconnectTimer)
+    daemonBridgeReconnectTimer = null
+  }
+
+  let port: chrome.runtime.Port
   try {
-    claim = await nativeRequest({
-      type: 'tokenless.native.daemon_claim_next',
-      daemonUrl: stringOrUndefined(message.daemonUrl),
-      provider: stringOrUndefined(message.provider),
-      action: stringOrUndefined(message.action),
-    })
-  } catch (error) {
-    return daemonRunResponse({
-      ok: false,
-      job: null,
-      error: normalizeRuntimeError(error, 'daemon_claim_failed', 'Daemon job claim failed.'),
-    })
+    port = chrome.runtime.connectNative(NATIVE_HOST_NAME)
+  } catch {
+    scheduleDaemonBridgeReconnect()
+    return
   }
 
-  if (!claim?.ok) {
-    return daemonRunResponse({
-      ok: false,
-      job: null,
-      error: normalizeRuntimeError(claim?.error, 'daemon_claim_failed', 'Daemon job claim failed.'),
-    })
-  }
-
-  const job = claim.result?.job
-  if (job === null || job === undefined) {
-    return {
-      type: DAEMON_RUN_NEXT_MESSAGE,
-      ok: true,
-      status: 'no_job',
-      job: null,
-      result: null,
-      error: null,
+  daemonBridgePort = port
+  port.onMessage.addListener((message) => handleDaemonBridgeMessage(port, message))
+  port.onDisconnect.addListener(() => {
+    if (daemonBridgePort === port) {
+      daemonBridgePort = null
     }
-  }
+    scheduleDaemonBridgeReconnect()
+  })
+  port.postMessage({ type: 'tokenless.native.daemon_connect' })
+}
 
-  const jobId = stringOrUndefined(job.job_id)
-  const claimToken = stringOrUndefined(job.claim_token)
+function scheduleDaemonBridgeReconnect() {
+  if (daemonBridgeReconnectTimer) return
+  daemonBridgeReconnectTimer = setTimeout(() => {
+    daemonBridgeReconnectTimer = null
+    startDaemonBridge()
+  }, DAEMON_BRIDGE_RECONNECT_MS)
+}
+
+function handleDaemonBridgeMessage(port: chrome.runtime.Port, message: ExtensionRecord) {
+  if (message?.type !== 'tokenless.native.daemon_job' || !message.ok) return
+  const job = message.result?.job
+  daemonJobQueue = daemonJobQueue
+    .catch(() => undefined)
+    .then(() => runClaimedDaemonJob(job))
+    .then(
+      () => postDaemonBridgeReady(port),
+      () => postDaemonBridgeReady(port)
+    )
+}
+
+function postDaemonBridgeReady(port: chrome.runtime.Port) {
+  if (daemonBridgePort !== port) return
+  try {
+    port.postMessage({ type: 'tokenless.native.daemon_ready' })
+  } catch {
+    // The native process may have already disconnected after the job settled.
+  }
+}
+
+async function runClaimedDaemonJob(job: unknown) {
+  const claimedJob = objectRecord(job)
+  const jobId = stringOrUndefined(claimedJob.job_id)
+  const claimToken = stringOrUndefined(claimedJob.claim_token)
   if (!jobId || !claimToken) {
     return daemonRunResponse({
       ok: false,
-      job,
+      job: claimedJob,
       error: {
         code: 'invalid_daemon_job',
         message: 'Claimed daemon job is missing job_id or claim_token.',
@@ -173,7 +213,7 @@ async function runNextDaemonJob(message: ExtensionRecord) {
   }
 
   try {
-    const bridgeRequest = daemonJobToBridgeRequest(job)
+    const bridgeRequest = daemonJobToBridgeRequest(claimedJob)
     const validation = validateBridgeRequest(bridgeRequest)
     if (validation.ok === false) {
       throw bridgeError(validation.error.code, validation.error.message, validation.error.retryable)
@@ -181,7 +221,6 @@ async function runNextDaemonJob(message: ExtensionRecord) {
     const bridgeResponse = await runBridgeRequest(validation.request)
     const normalized = normalizeBridgeResponse(bridgeResponse)
     const completion = await completeDaemonJob({
-      daemonUrl: stringOrUndefined(message.daemonUrl),
       jobId,
       claimToken,
       result: normalized.ok ? normalized.result : undefined,
@@ -191,7 +230,7 @@ async function runNextDaemonJob(message: ExtensionRecord) {
     if (!completion?.ok) {
       return daemonRunResponse({
         ok: false,
-        job,
+        job: claimedJob,
         bridge: normalized,
         error: normalizeRuntimeError(completion?.error, 'daemon_completion_failed', 'Daemon job completion failed.'),
       })
@@ -207,14 +246,13 @@ async function runNextDaemonJob(message: ExtensionRecord) {
   } catch (error) {
     const serialized = normalizeRuntimeError(error, 'daemon_run_failed', 'Daemon job run failed.')
     const completion = await completeDaemonJob({
-      daemonUrl: stringOrUndefined(message.daemonUrl),
       jobId,
       claimToken,
       error: serialized,
     }).catch(() => undefined)
     return daemonRunResponse({
       ok: false,
-      job: completion?.ok ? completion.result : job,
+      job: completion?.ok ? completion.result : claimedJob,
       error: serialized,
     })
   }
@@ -330,14 +368,6 @@ function normalizeBridgeResponse(response: ExtensionRecord) {
   }
 }
 
-function isDaemonRunNextMessage(message: unknown): message is ExtensionRecord {
-  return Boolean(
-    message &&
-    typeof message === 'object' &&
-    (message as ExtensionRecord).type === DAEMON_RUN_NEXT_MESSAGE
-  )
-}
-
 function daemonRunResponse({
   ok,
   job,
@@ -352,7 +382,7 @@ function daemonRunResponse({
   error?: unknown
 }) {
   return {
-    type: DAEMON_RUN_NEXT_MESSAGE,
+    type: DAEMON_JOB_RESPONSE_TYPE,
     ok,
     status: ok ? 'completed' : 'failed',
     job: publicDaemonJob(job),
@@ -488,11 +518,16 @@ function safeProviderUrl(provider: ProviderConfig, targetUrl: unknown) {
   if (!targetUrl) {
     return provider.homeUrl
   }
+  let parsed: URL
   try {
-    return new URL(String(targetUrl)).href
+    parsed = new URL(String(targetUrl))
   } catch {
     throw bridgeError('invalid_target_url', 'Target URL must be a valid absolute URL.', false)
   }
+  if (parsed.protocol !== 'https:' || !provider.hosts.includes(parsed.hostname.toLowerCase())) {
+    throw bridgeError('target_url_provider_mismatch', 'Target URL must belong to the selected provider.', false)
+  }
+  return parsed.href
 }
 
 function canonicalTabUrl(url: string) {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -83,19 +84,51 @@ test('Tokenless CLI job completes through extension task page and ChatGPT real-D
     await providerFixturePage.screenshot({ path: path.join(artifactDir, '01-chatgpt-fixture-before-empty-composer.png'), fullPage: true })
     events.push({ at: new Date().toISOString(), event: 'provider_fixture_ready', url: providerFixturePage.url(), fixture: true, realProviderDom: true })
 
-    const job = await createLocalJob({
-      homeDir: tokenlessHome,
-      provider: 'chatgpt',
-      targetUrl: 'https://chatgpt.com/',
+    const cliRun = spawnSync(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'run',
+      '--prompt',
       prompt,
-      readDelayMs: 0,
-      readTimeoutMs: 10000,
+      '--provider',
+      'chatgpt',
+      '--extension-id',
+      extensionId,
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      'http://127.0.0.1:9',
+      '--target-url',
+      'https://chatgpt.com/',
+      '--read-delay-ms',
+      '0',
+      '--read-timeout-ms',
+      '10000',
+      '--no-open',
+      '--no-wait',
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
     })
-    events.push({ at: new Date().toISOString(), event: 'job_created', jobId: job.jobId })
+
+    assert.equal(cliRun.status, 0, cliRun.stderr || cliRun.stdout)
+    const cliPayload = JSON.parse(cliRun.stdout)
+    assert.equal(cliPayload.transport, undefined)
+    assert.match(cliPayload.taskUrl, /\/task\/task\.html\?/)
+    assert.deepEqual(cliPayload.statusLog.map((event) => event.event), ['daemon_unavailable', 'created', 'not_opened', 'detached'])
+    const taskUrl = new URL(cliPayload.taskUrl)
+    const job = {
+      jobId: taskUrl.searchParams.get('jobId'),
+      nonce: taskUrl.searchParams.get('nonce'),
+    }
+    assert.equal(job.jobId, cliPayload.jobId)
+    assert.ok(job.nonce)
+    await fs.writeFile(path.join(artifactDir, 'cli-fallback-run-payload.json'), `${JSON.stringify(cliPayload, null, 2)}\n`, 'utf8')
+    events.push({ at: new Date().toISOString(), event: 'cli_fallback_job_created', jobId: job.jobId })
     await copyJobFiles(tokenlessHome, job.jobId, artifactDir, 'before')
 
     const task = await context.newPage()
-    await task.goto(`chrome-extension://${extensionId}/task/task.html?jobId=${job.jobId}&nonce=${job.nonce}`)
+    await task.goto(cliPayload.taskUrl)
     await task.screenshot({ path: path.join(artifactDir, '02-extension-task-started.png'), fullPage: true })
 
     const result = await waitLocalJobResult({
@@ -169,6 +202,7 @@ test('Tokenless CLI job completes through extension task page and ChatGPT real-D
       realProviderDom: true,
       fixturePath: chatGptRealDomFixturePath,
       extensionId,
+      taskUrl: cliPayload.taskUrl,
       jobId: job.jobId,
       provider: 'chatgpt',
       targetUrl: 'https://chatgpt.com/',

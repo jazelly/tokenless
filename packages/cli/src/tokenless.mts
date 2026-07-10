@@ -6,6 +6,7 @@ import {
   buildTaskUrl,
   createDaemonJob,
   createLocalJob,
+  daemonUrl,
   deriveTaskId,
   installNativeHost,
   normalizeBrowserId,
@@ -211,7 +212,6 @@ async function runCommand(args: CliArgs) {
   if (!args.noDaemon) {
     const daemonResult = await tryRunWithDaemon({
       args,
-      extensionId,
       provider,
       action,
       prompt,
@@ -220,7 +220,7 @@ async function runCommand(args: CliArgs) {
       readDelayMs,
       readTimeoutMs,
       metadata,
-      browser,
+      homeDir,
       projectName,
       chatName,
       statusReporter,
@@ -318,7 +318,6 @@ async function runCommand(args: CliArgs) {
 
 async function tryRunWithDaemon({
   args,
-  extensionId,
   provider,
   action,
   prompt,
@@ -327,14 +326,16 @@ async function tryRunWithDaemon({
   readDelayMs,
   readTimeoutMs,
   metadata,
-  browser,
+  homeDir,
   projectName,
   chatName,
   statusReporter,
 }: Record<string, any>) {
+  let job: Record<string, any> | null = null
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl)
   try {
-    const job = await createDaemonJob({
-      daemonUrl: args.daemonUrl,
+    job = await createDaemonJob({
+      daemonUrl: configuredDaemonUrl,
       provider,
       action,
       requestJson: {
@@ -347,41 +348,35 @@ async function tryRunWithDaemon({
         metadata,
       },
     })
-    statusReporter.report({
-      event: 'daemon_created',
-      status: job.status,
-      jobId: job.job_id,
-      provider: job.provider,
-      action: job.action,
+    await writeTokenlessConfig({
+      homeDir,
+      daemonUrl: configuredDaemonUrl,
     })
-    const runnerUrl = buildDaemonRunnerUrl({
-      extensionId,
-      daemonUrl: args.daemonUrl,
+  } catch (error) {
+    const cliError = error as CliError
+    if (cliError.code !== 'daemon_unavailable') {
+      attachStatusLog(cliError, statusReporter)
+      throw error
+    }
+    statusReporter.report({
+      event: 'daemon_unavailable',
+      status: 'fallback_task_page',
+      taskId: idempotencyKey,
       provider,
       action,
     })
-    if (!args.noOpen) {
-      await openUrl(runnerUrl, { browser: browser ?? undefined })
-      statusReporter.report({
-        event: 'opened',
-        status: 'opened_daemon_runner',
-        jobId: job.job_id,
-        provider,
-        action,
-        browser,
-        runnerUrl,
-      })
-    } else {
-      statusReporter.report({
-        event: 'not_opened',
-        status: 'waiting_for_external_daemon_runner',
-        jobId: job.job_id,
-        provider,
-        action,
-        runnerUrl,
-      })
-    }
+    return null
+  }
 
+  statusReporter.report({
+    event: 'daemon_created',
+    status: job.status,
+    jobId: job.job_id,
+    provider: job.provider,
+    action: job.action,
+  })
+
+  try {
     const result = args.noWait
       ? (statusReporter.report({
           event: 'detached',
@@ -391,7 +386,7 @@ async function tryRunWithDaemon({
           action,
         }), null)
       : await waitDaemonJobResult({
-          daemonUrl: args.daemonUrl,
+          daemonUrl: configuredDaemonUrl,
           jobId: job.job_id,
           timeoutMs: args.timeoutMs === undefined ? 180000 : Number(args.timeoutMs),
           onStatus: (event: StatusEvent) => statusReporter.report(event),
@@ -403,7 +398,6 @@ async function tryRunWithDaemon({
       transport: 'daemon',
       jobId: job.job_id,
       provider,
-      runnerUrl,
       projectName,
       chatName,
       idempotencyKey,
@@ -414,17 +408,18 @@ async function tryRunWithDaemon({
     }
   } catch (error) {
     const cliError = error as CliError
-    if (cliError.code !== 'daemon_unavailable') {
-      throw error
-    }
     statusReporter.report({
-      event: 'daemon_unavailable',
-      status: 'fallback_task_page',
-      taskId: idempotencyKey,
+      event: 'daemon_failed',
+      status: 'failed',
+      jobId: job.job_id,
       provider,
       action,
+      errorCode: cliError.code || 'daemon_error',
+      errorMessage: cliError.message || 'Daemon run failed.',
+      retryable: Boolean(cliError.retryable),
     })
-    return null
+    attachStatusLog(cliError, statusReporter)
+    throw cliError
   }
 }
 
@@ -464,7 +459,7 @@ async function installCommand(args: CliArgs) {
     extensionInstalled: Boolean(extensionId),
     nextStep: result.manifests.length === 0
       ? 'Install the extension, then rerun with --extension-id <id>.'
-      : 'Open the extension task page through tokenless run.',
+      : 'Keep the Tokenless extension enabled; daemon jobs run from the background service worker.',
   }, args)
 }
 
@@ -652,25 +647,6 @@ function parseArgs(argv: string[]): CliArgs {
   return parsed
 }
 
-function buildDaemonRunnerUrl({
-  extensionId,
-  daemonUrl,
-  provider,
-  action,
-}: {
-  extensionId: string
-  daemonUrl?: string | undefined
-  provider?: string | undefined
-  action?: string | undefined
-}) {
-  const params = new URLSearchParams()
-  if (daemonUrl) params.set('daemonUrl', daemonUrl)
-  if (provider) params.set('provider', provider)
-  if (action) params.set('action', action)
-  const suffix = params.size > 0 ? `?${params.toString()}` : ''
-  return `chrome-extension://${extensionId}/daemon/runner.html${suffix}`
-}
-
 async function openUrl(url: string, { browser }: { browser?: string | undefined } = {}) {
   const { command, args } = openCommand(url, { browser })
   await new Promise<void>((resolve, reject) => {
@@ -785,6 +761,14 @@ function assertDaemonJobSucceeded(result: Record<string, any> | null, statusRepo
   throw error
 }
 
+function attachStatusLog(error: CliError, statusReporter: StatusReporter) {
+  const status = statusReporter.lastStatus()
+  if (status !== undefined) {
+    error.status = status
+  }
+  error.statusLog = statusReporter.events
+}
+
 function createCliStatusReporter(args: CliArgs): StatusReporter {
   const startedAt = Date.now()
   const events: StatusEvent[] = []
@@ -819,7 +803,9 @@ function normalizeStatusEvent(event: StatusEvent, startedAt: number): StatusEven
     actor: event.actor,
     browser: event.browser,
     taskUrl: event.taskUrl,
-    runnerUrl: event.runnerUrl,
+    errorCode: event.errorCode,
+    errorMessage: event.errorMessage,
+    retryable: event.retryable,
     elapsedMs,
   }
 }
@@ -834,6 +820,9 @@ function formatStatusEvent(event: StatusEvent) {
     ['taskId', event.taskId],
     ['actor', event.actor],
     ['browser', event.browser],
+    ['errorCode', event.errorCode],
+    ['errorMessage', event.errorMessage],
+    ['retryable', event.retryable],
     ['elapsed', formatElapsed(event.elapsedMs)],
   ]) {
     if (value !== undefined && value !== null && value !== '') {
@@ -845,9 +834,6 @@ function formatStatusEvent(event: StatusEvent) {
   }
   if (event.taskUrl && (event.event === 'opened' || event.event === 'not_opened')) {
     parts.push(`taskUrl=${event.taskUrl}`)
-  }
-  if (event.runnerUrl && (event.event === 'opened' || event.event === 'not_opened')) {
-    parts.push(`runnerUrl=${event.runnerUrl}`)
   }
   return parts.join(' ')
 }

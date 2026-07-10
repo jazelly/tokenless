@@ -130,6 +130,7 @@ test('CLI config command sets defaults for run', () => {
     'abcdefghijklmnopabcdefghijklmnop',
     '--home',
     homeDir,
+    '--no-daemon',
     '--no-open',
     '--no-wait',
     '--json',
@@ -144,7 +145,7 @@ test('CLI config command sets defaults for run', () => {
   const payload = JSON.parse(run.stdout)
   assert.equal(payload.provider, 'claude')
   assert.equal(payload.status, 'no_wait')
-  assert.deepEqual(payload.statusLog.map((event) => event.event), ['daemon_unavailable', 'created', 'not_opened', 'detached'])
+  assert.deepEqual(payload.statusLog.map((event) => event.event), ['created', 'not_opened', 'detached'])
   const request = JSON.parse(fs.readFileSync(path.join(homeDir, 'jobs', payload.requestPath), 'utf8'))
   assert.equal(request.metadata.browser, 'brave')
 
@@ -159,6 +160,7 @@ test('CLI config command sets defaults for run', () => {
     'edge',
     '--home',
     homeDir,
+    '--no-daemon',
     '--no-open',
     '--no-wait',
     '--json',
@@ -183,6 +185,7 @@ test('CLI run falls back to bundled extension id when no extension id is configu
     'hello',
     '--home',
     homeDir,
+    '--no-daemon',
     '--no-open',
     '--no-wait',
     '--json',
@@ -240,6 +243,7 @@ test('CLI default output reports local job status for agents', () => {
     'abcdefghijklmnopabcdefghijklmnop',
     '--home',
     homeDir,
+    '--no-daemon',
     '--no-open',
     '--no-wait',
   ], {
@@ -270,6 +274,7 @@ test('CLI exposes stable task ids and state lookup for agents', () => {
     'Tokenless',
     '--chat-name',
     'State query',
+    '--no-daemon',
     '--no-open',
     '--no-wait',
     '--json',
@@ -319,6 +324,7 @@ test('CLI exposes stable task ids and state lookup for agents', () => {
     homeDir,
     '--task-id',
     payload.taskId,
+    '--no-daemon',
     '--no-open',
     '--no-wait',
     '--json',

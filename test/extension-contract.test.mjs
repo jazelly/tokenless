@@ -14,6 +14,8 @@ test('browser extension manifest is domain limited', () => {
   assert.equal(manifest.manifest_version, 3)
   assert.equal(manifest.name, 'Tokenless')
   assert.deepEqual(manifest.content_scripts[0].matches, manifest.host_permissions)
+  assert.ok(!manifest.permissions.includes('alarms'))
+  assert.ok(manifest.permissions.includes('nativeMessaging'))
   assert.ok(!manifest.permissions.includes('cookies'))
   assert.ok(!manifest.permissions.includes('history'))
   assert.ok(manifest.host_permissions.every((pattern) => pattern.startsWith('https://')))
@@ -42,10 +44,9 @@ test('extension validates provider landing before waiting on provider actions', 
   assert.match(serviceWorker, /waitForProviderTabLoaded\(tab\.id, provider\)/)
   assert.match(serviceWorker, /validateProviderLanding\(landedTab\.id, provider, request\)/)
   assert.match(serviceWorker, /invalid_target_url/)
-  assert.doesNotMatch(serviceWorker, /target_url_provider_mismatch/)
+  assert.match(serviceWorker, /target_url_provider_mismatch/)
+  assert.match(serviceWorker, /parsed\.protocol !== 'https:' \|\| !provider\.hosts\.includes\(parsed\.hostname\.toLowerCase\(\)\)/)
   assert.doesNotMatch(serviceWorker, /provider_landing_failed/)
-  assert.doesNotMatch(serviceWorker, /providerForTab\?\.id === provider\.id/)
-  assert.doesNotMatch(serviceWorker, /return providerForTarget\?\.id === provider\.id \? targetUrl : provider\.homeUrl/)
 
   assert.match(contentScript, /tokenless\.bridge\.validate_landing/)
   assert.match(contentScript, /request\.landingTimeoutMs \?\? 5000/)
@@ -56,20 +57,25 @@ test('extension validates provider landing before waiting on provider actions', 
   assert.match(contentScript, /Boolean\(visibleComposer && visibleSubmit\)/)
 })
 
-test('background can run daemon claim-next jobs through the visible provider bridge', () => {
+test('background maintains a native daemon bridge and runs pushed jobs through the visible provider bridge', () => {
   const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
 
-  assert.match(serviceWorker, /DAEMON_RUN_NEXT_MESSAGE = 'tokenless\.daemon\.run_next'/)
-  assert.match(serviceWorker, /isDaemonRunNextMessage\(message\)/)
-  assert.match(serviceWorker, /runNextDaemonJob\(message\)/)
-  assert.match(serviceWorker, /tokenless\.native\.daemon_claim_next/)
-  assert.match(serviceWorker, /tokenless\.native\.daemon_complete_job/)
+  assert.match(serviceWorker, /DAEMON_JOB_RESPONSE_TYPE = 'tokenless\.daemon\.job_result'/)
   assert.match(serviceWorker, /chrome\.runtime\.connectNative\(NATIVE_HOST_NAME\)/)
-  assert.match(serviceWorker, /provider: stringOrUndefined\(message\.provider\)/)
-  assert.match(serviceWorker, /action: stringOrUndefined\(message\.action\)/)
-  assert.match(serviceWorker, /job === null \|\| job === undefined/)
-  assert.match(serviceWorker, /status: 'no_job'/)
-  assert.match(serviceWorker, /daemonJobToBridgeRequest\(job\)/)
+  assert.match(serviceWorker, /tokenless\.native\.daemon_connect/)
+  assert.match(serviceWorker, /tokenless\.native\.daemon_job/)
+  assert.match(serviceWorker, /tokenless\.native\.daemon_ready/)
+  assert.match(serviceWorker, /tokenless\.native\.daemon_complete_job/)
+  assert.match(serviceWorker, /daemonBridgePort/)
+  assert.match(serviceWorker, /daemonBridgeReconnectTimer/)
+  assert.match(serviceWorker, /scheduleDaemonBridgeReconnect/)
+  assert.match(serviceWorker, /port\.onDisconnect\.addListener/)
+  assert.match(serviceWorker, /daemonJobQueue = daemonJobQueue/)
+  assert.match(serviceWorker, /handleDaemonBridgeMessage\(port, message\)/)
+  assert.match(serviceWorker, /runClaimedDaemonJob\(job\)/)
+  assert.match(serviceWorker, /postDaemonBridgeReady\(port\)/)
+  assert.match(serviceWorker, /daemonBridgePort !== port/)
+  assert.match(serviceWorker, /daemonJobToBridgeRequest\(claimedJob\)/)
   assert.match(serviceWorker, /requestJson\.prompt/)
   assert.match(serviceWorker, /requestJson\.targetUrl/)
   assert.doesNotMatch(
@@ -87,15 +93,33 @@ test('background can run daemon claim-next jobs through the visible provider bri
   assert.match(serviceWorker, /job: publicDaemonJob\(job\)/)
   assert.match(serviceWorker, /claim_token: _claimTokenSnake/)
   assert.match(serviceWorker, /claimToken: _claimTokenCamel/)
+  assert.doesNotMatch(serviceWorker, /chrome\.alarms/)
+  assert.doesNotMatch(serviceWorker, /tokenless\.native\.daemon_claim_next/)
+  assert.match(serviceWorker, /handleRuntimeMessage\(message, \{ external: false \}\)/)
+  assert.match(serviceWorker, /handleRuntimeMessage\(message, \{ external: true \}\)/)
+  assert.match(serviceWorker, /external_bridge_forbidden/)
+  assert.match(serviceWorker, /context\.external && validation\.request\.action !== BRIDGE_ACTIONS\.CAPABILITIES/)
+  assert.doesNotMatch(serviceWorker, /DAEMON_RUN_NEXT_MESSAGE|tokenless\.daemon\.run_next|isDaemonRunNextMessage/)
 
   assert.ok(
-    serviceWorker.indexOf('tokenless.native.daemon_claim_next') < serviceWorker.indexOf('tokenless.native.daemon_complete_job'),
-    'daemon jobs must be claimed before they are completed'
+    serviceWorker.indexOf('tokenless.native.daemon_job') < serviceWorker.indexOf('tokenless.native.daemon_complete_job'),
+    'daemon jobs must be pushed to the background before they are completed'
   )
   assert.ok(
-    serviceWorker.indexOf('async function runBridgeRequest') < serviceWorker.indexOf('async function runNextDaemonJob'),
-    'daemon jobs should reuse the same bridge executor as runtime bridge requests'
+    serviceWorker.indexOf("if (context.external && validation.request.action !== BRIDGE_ACTIONS.CAPABILITIES)") <
+      serviceWorker.indexOf('return runBridgeRequest(validation.request)'),
+    'external bridge actions must be rejected before provider sessions can be driven'
   )
+  assert.ok(
+    serviceWorker.indexOf('port.postMessage({ type: \'tokenless.native.daemon_connect\' })') <
+      serviceWorker.indexOf('tokenless.native.daemon_job'),
+    'daemon jobs must arrive through the long-lived native bridge'
+  )
+  assert.ok(
+    serviceWorker.indexOf('external_bridge_forbidden') < serviceWorker.indexOf('return runBridgeRequest(validation.request)'),
+    'external bridge actions must be rejected before provider sessions can be driven'
+  )
+  assert.ok(serviceWorker.indexOf('async function runBridgeRequest') < serviceWorker.indexOf('async function runClaimedDaemonJob'))
   assert.match(serviceWorker, /tokenless\.bridge\.submit/)
   assert.match(serviceWorker, /tokenless\.bridge\.read/)
   assert.match(serviceWorker, /tokenless\.bridge\.validate_landing/)
@@ -132,18 +156,11 @@ test('daemon background path preserves existing task page native job flow', () =
   assert.match(serviceWorker, /validateBridgeRequest\(message\)/)
 })
 
-test('daemon runner page triggers background daemon run-next without task page job parameters', () => {
-  const runnerHtml = fs.readFileSync(path.join(root, 'packages/extension/extension/daemon/runner.html'), 'utf8')
-  const runnerTs = fs.readFileSync(path.join(root, 'packages/extension/extension/daemon/runner.ts'), 'utf8')
-  const builtRunner = fs.readFileSync(path.join(root, 'packages/extension/dist/extension/daemon/runner.js'), 'utf8')
-
-  assert.match(runnerHtml, /src="\.\/runner\.js"/)
-  assert.match(runnerTs, /tokenless\.daemon\.run_next/)
-  assert.match(runnerTs, /params\.get\('daemonUrl'\)/)
-  assert.match(runnerTs, /params\.get\('provider'\)/)
-  assert.match(runnerTs, /params\.get\('action'\)/)
-  assert.doesNotMatch(runnerTs, /jobId|nonce/)
-  assert.match(builtRunner, /__TOKENLESS_DAEMON_RUN_RESPONSE__/)
+test('daemon runner page is not part of the active extension architecture', () => {
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/extension/daemon/runner.html')), false)
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/extension/daemon/runner.ts')), false)
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/extension/daemon/runner.html')), false)
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/extension/daemon/runner.js')), false)
 })
 
 test('provider content script is safe to inject more than once', () => {

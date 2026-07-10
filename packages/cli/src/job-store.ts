@@ -429,6 +429,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<Js
     ...payload,
     preferredProviders: normalizeProviderList(payload.preferredProviders),
     browser: normalizeBrowserId(payload.browser),
+    daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
   }
 }
 
@@ -436,6 +437,7 @@ export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
   preferredProviders,
   browser,
+  daemonUrl,
 }: JsonRecord = {}) {
   await ensureJobStore(homeDir)
   const current = await readTokenlessConfig(homeDir)
@@ -447,6 +449,7 @@ export async function writeTokenlessConfig({
       ? normalizeProviderList(current.preferredProviders)
       : normalizeProviderList(preferredProviders),
     browser: browser === undefined ? normalizeBrowserId(current.browser) : normalizeBrowserId(browser),
+    daemonUrl: daemonUrl === undefined ? normalizeDaemonUrl(current.daemonUrl) : normalizeDaemonUrl(daemonUrl),
   }
   await writeJsonAtomic(configPath(homeDir), config, 0o600)
   return config
@@ -783,6 +786,7 @@ function emptyTokenlessConfig() {
     updatedAt: null,
     preferredProviders: [],
     browser: null,
+    daemonUrl: null,
   }
 }
 
@@ -807,10 +811,36 @@ function validateTokenlessConfig(payload: JsonRecord, file: string) {
     Array.isArray(payload) ||
     payload.protocol !== TOKENLESS_CONFIG_PROTOCOL_VERSION ||
     (payload.preferredProviders !== undefined && !Array.isArray(payload.preferredProviders)) ||
-    (payload.browser !== undefined && payload.browser !== null && !normalizeBrowserId(payload.browser))
+    (payload.browser !== undefined && payload.browser !== null && !normalizeBrowserId(payload.browser)) ||
+    (payload.daemonUrl !== undefined && payload.daemonUrl !== null && !normalizeDaemonUrl(payload.daemonUrl))
   ) {
     throw localStateError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+}
+
+function normalizeDaemonUrl(value: unknown) {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().replace(/\/+$/, '')
+  if (!normalized) return null
+  let parsed: URL
+  try {
+    parsed = new URL(normalized)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' || !isLoopbackHostname(parsed.hostname)) {
+    return null
+  }
+  return parsed.href.replace(/\/+$/, '')
+}
+
+function isLoopbackHostname(hostname: string) {
+  const normalized = hostname.toLowerCase()
+  return normalized === 'localhost' ||
+    normalized === '[::1]' ||
+    normalized === '::1' ||
+    /^127(?:\.\d{1,3}){3}$/.test(normalized)
 }
 
 function withConversationMapLock<T>(homeDir: string, fn: LockFunction<T>) {

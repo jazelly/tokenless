@@ -2,14 +2,23 @@
 import { completeLocalJob, JOB_STATES, readLocalHistory, readLocalJobRequest, readTokenlessConfig, tokenlessHome, writeDomSnapshot, writeTokenlessConfig, writeJobState, } from './job-store.js';
 import { claimNextDaemonJob, completeDaemonJob, } from './daemon-client.js';
 const homeDir = tokenlessHome();
+const DAEMON_BRIDGE_POLL_MS = 250;
+const DAEMON_BRIDGE_ERROR_POLL_MS = 1000;
 let input = Buffer.alloc(0);
+let daemonBridgeTask = null;
+let daemonBridgeStopped = false;
+let daemonBridgeHasCapacity = true;
+let daemonBridgeCapacityResolvers = [];
 process.stdin.on('data', (chunk) => {
     input = Buffer.concat([input, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
     drainMessages().catch((error) => {
         writeMessage({ ok: false, error: serializeError(error) });
     });
 });
-process.stdin.on('end', () => process.exit(0));
+process.stdin.on('end', () => {
+    daemonBridgeStopped = true;
+    process.exit(0);
+});
 async function drainMessages() {
     while (input.length >= 4) {
         const length = input.readUInt32LE(0);
@@ -45,17 +54,35 @@ async function handleMessage(message) {
             return { ok: true, result: history };
         }
         if (message?.type === 'tokenless.native.daemon_claim_next') {
+            const config = await readTokenlessConfig(homeDir);
             const result = await claimNextDaemonJob({
                 homeDir,
-                daemonUrl: message.daemonUrl,
+                daemonUrl: message.daemonUrl ?? config.daemonUrl,
                 provider: message.provider,
                 action: message.action,
             });
             return { ok: true, result: { job: result.job } };
         }
+        if (message?.type === 'tokenless.native.daemon_connect') {
+            startDaemonBridge(message);
+            return {
+                type: 'tokenless.native.daemon_connected',
+                ok: true,
+                result: { status: 'connected' },
+            };
+        }
+        if (message?.type === 'tokenless.native.daemon_ready') {
+            markDaemonBridgeReady();
+            return {
+                type: 'tokenless.native.daemon_ready',
+                ok: true,
+                result: { status: 'ready' },
+            };
+        }
         if (message?.type === 'tokenless.native.daemon_complete_job') {
+            const config = await readTokenlessConfig(homeDir);
             const job = await completeDaemonJob({
-                daemonUrl: message.daemonUrl,
+                daemonUrl: message.daemonUrl ?? config.daemonUrl,
                 jobId: message.jobId,
                 claimToken: message.claimToken,
                 result: Object.hasOwn(message, 'result') ? message.result : undefined,
@@ -71,6 +98,7 @@ async function handleMessage(message) {
             const config = await writeTokenlessConfig({
                 homeDir,
                 preferredProviders: message.preferredProviders,
+                daemonUrl: message.daemonUrl,
             });
             return { ok: true, result: config };
         }
@@ -120,6 +148,71 @@ async function handleMessage(message) {
         return { ok: false, error: serializeError(error) };
     }
 }
+function startDaemonBridge(message) {
+    if (daemonBridgeTask)
+        return;
+    daemonBridgeStopped = false;
+    daemonBridgeHasCapacity = true;
+    daemonBridgeTask = runDaemonBridge({
+        daemonUrl: typeof message.daemonUrl === 'string' && message.daemonUrl.trim() ? message.daemonUrl : undefined,
+        provider: typeof message.provider === 'string' && message.provider.trim() ? message.provider : undefined,
+        action: typeof message.action === 'string' && message.action.trim() ? message.action : undefined,
+    }).catch((error) => {
+        writeMessage({
+            type: 'tokenless.native.daemon_error',
+            ok: false,
+            error: serializeError(error),
+        });
+    });
+}
+async function runDaemonBridge({ daemonUrl, provider, action, }) {
+    while (!daemonBridgeStopped) {
+        await waitForDaemonBridgeCapacity();
+        try {
+            const config = await readTokenlessConfig(homeDir);
+            const result = await claimNextDaemonJob({
+                homeDir,
+                daemonUrl: daemonUrl ?? config.daemonUrl,
+                provider,
+                action,
+            });
+            if (result.job) {
+                daemonBridgeHasCapacity = false;
+                writeMessage({
+                    type: 'tokenless.native.daemon_job',
+                    ok: true,
+                    result: { job: result.job },
+                });
+                continue;
+            }
+            await delay(DAEMON_BRIDGE_POLL_MS);
+        }
+        catch (error) {
+            writeMessage({
+                type: 'tokenless.native.daemon_error',
+                ok: false,
+                error: serializeError(error),
+            });
+            await delay(DAEMON_BRIDGE_ERROR_POLL_MS);
+        }
+    }
+}
+function markDaemonBridgeReady() {
+    daemonBridgeHasCapacity = true;
+    const resolvers = daemonBridgeCapacityResolvers;
+    daemonBridgeCapacityResolvers = [];
+    for (const resolve of resolvers) {
+        resolve();
+    }
+}
+function waitForDaemonBridgeCapacity() {
+    if (daemonBridgeHasCapacity || daemonBridgeStopped) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+        daemonBridgeCapacityResolvers.push(resolve);
+    });
+}
 function writeMessage(payload) {
     const body = Buffer.from(JSON.stringify(payload), 'utf8');
     const header = Buffer.alloc(4);
@@ -132,5 +225,8 @@ function serializeError(error) {
         message: error?.message || 'Tokenless native host failed.',
         retryable: Boolean(error?.retryable),
     };
+}
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 //# sourceMappingURL=native-host.mjs.map
