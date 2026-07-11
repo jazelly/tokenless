@@ -9,9 +9,12 @@ export const BRIDGE_ACTIONS = Object.freeze({
   READ: 'read',
   SNAPSHOT_DOM: 'snapshot_dom',
   SUBMIT_AND_READ: 'submit_and_read',
+  INSPECT_CHATGPT_CONTROLS: 'inspect_chatgpt_controls',
+  CONFIGURE_CHATGPT: 'configure_chatgpt',
 })
 
 const ACTIONS = new Set(Object.values(BRIDGE_ACTIONS))
+const CHATGPT_EFFORTS = new Set(['instant', 'medium', 'high', 'extra_high', 'pro'])
 
 export type BridgeRequest = Record<string, any> & {
   protocol: typeof BRIDGE_PROTOCOL_VERSION
@@ -48,6 +51,10 @@ export function createBridgeRequest(input: Record<string, any> = {}): BridgeRequ
     submitTimeoutMs: input.submitTimeoutMs,
     includeText: input.includeText,
     maxTextChars: input.maxTextChars,
+    chatSurface: input.chatSurface,
+    model: input.model,
+    modelFallbacks: input.modelFallbacks,
+    effort: input.effort,
     metadata: input.metadata,
   }
 }
@@ -87,6 +94,8 @@ export function validateBridgeRequest(payload: unknown): BridgeValidation {
   if (!provider) {
     return invalid('unsupported_provider', 'Bridge provider is not supported.')
   }
+  const chatGptControls = validateChatGptControls(request, provider.id)
+  if (chatGptControls) return chatGptControls
   if (request.targetUrl !== undefined) {
     if (typeof request.targetUrl !== 'string' || request.targetUrl.trim() === '') {
       return invalid('invalid_target_url', 'Bridge targetUrl must be a nonempty absolute URL when provided.')
@@ -167,8 +176,50 @@ function normalizeRequest(payload: Record<string, any>): BridgeRequest {
     submitTimeoutMs: payload.submitTimeoutMs === undefined ? undefined : Number(payload.submitTimeoutMs),
     includeText: includeText.ok ? includeText.value : undefined,
     maxTextChars: payload.maxTextChars === undefined ? undefined : Number(payload.maxTextChars),
+    chatSurface: payload.chatSurface,
+    model: payload.model,
+    modelFallbacks: payload.modelFallbacks,
+    effort: payload.effort,
     metadata: payload.metadata,
   }
+}
+
+function validateChatGptControls(
+  payload: Record<string, any>,
+  providerId: string
+): BridgeValidation | null {
+  const hasControls = (
+    payload.chatSurface !== undefined ||
+    payload.model !== undefined ||
+    payload.modelFallbacks !== undefined ||
+    payload.effort !== undefined
+  )
+  const requiresChatGpt = (
+    payload.action === BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS ||
+    payload.action === BRIDGE_ACTIONS.CONFIGURE_CHATGPT
+  )
+  if ((hasControls || requiresChatGpt) && providerId !== 'chatgpt') {
+    return invalid('chatgpt_controls_unsupported', 'Model and Intelligence controls are available only for ChatGPT.')
+  }
+  if (payload.chatSurface !== undefined && payload.chatSurface !== 'chat') {
+    return invalid('invalid_chat_surface', 'ChatGPT chatSurface must be "chat" when provided.')
+  }
+  if (payload.model !== undefined && !isControlLabel(payload.model)) {
+    return invalid('invalid_model', 'ChatGPT model must be a nonempty UI model label up to 120 characters.')
+  }
+  if (payload.modelFallbacks !== undefined) {
+    if (!Array.isArray(payload.modelFallbacks) || payload.modelFallbacks.length > 8 || !payload.modelFallbacks.every(isControlLabel)) {
+      return invalid('invalid_model_fallbacks', 'ChatGPT modelFallbacks must contain at most eight nonempty UI model labels.')
+    }
+  }
+  if (payload.effort !== undefined && (!isControlLabel(payload.effort) || !CHATGPT_EFFORTS.has(payload.effort))) {
+    return invalid('invalid_effort', 'ChatGPT effort must be one of: instant, medium, high, extra_high, pro.')
+  }
+  return null
+}
+
+function isControlLabel(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 120
 }
 
 function resolveIncludeText(payload: Record<string, any>):

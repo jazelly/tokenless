@@ -1218,6 +1218,144 @@ test('provider content uses only visible controls and snapshots a fail-closed re
   }
 })
 
+test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade without blocking submission', { timeout: 30000 }, async () => {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch({ headless: true })
+  const chatgpt = await openProviderFixture(browser, 'https://chatgpt.com/', `
+    <!doctype html>
+    <html><body>
+      <div role="banner">
+        <div id="surface-toggle">
+          <button role="radio" aria-checked="false" data-state="off">聊天</button>
+          <button role="radio" aria-checked="true" data-state="on">工作</button>
+        </div>
+      </div>
+      <main>
+        <div id="prompt-textarea" role="textbox" contenteditable="true"></div>
+        <button id="intelligence" aria-expanded="false">中等</button>
+        <button data-testid="send-button" disabled>发送</button>
+      </main>
+      <script>
+        const radios = [...document.querySelectorAll('[role="radio"]')]
+        radios.forEach((radio, selectedIndex) => radio.addEventListener('click', () => {
+          radios.forEach((candidate, index) => {
+            const selected = index === selectedIndex
+            candidate.setAttribute('aria-checked', String(selected))
+            candidate.setAttribute('data-state', selected ? 'on' : 'off')
+          })
+        }))
+        const composer = document.querySelector('#prompt-textarea')
+        const send = document.querySelector('[data-testid="send-button"]')
+        composer.addEventListener('input', () => { send.disabled = composer.textContent.trim().length === 0 })
+        const trigger = document.querySelector('#intelligence')
+        let model = 'GPT-5.6 Sol'
+        let effort = 1
+        const effortLabels = ['即时', '中等', '高', '特高', '专业']
+        const closeMenus = () => document.querySelectorAll('[role="menu"]').forEach((menu) => menu.remove())
+        document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMenus() })
+        function updateTrigger() {
+          trigger.textContent = model === 'GPT-5.6 Sol' ? effortLabels[effort] : model.replace('GPT-', '') + ' ' + effortLabels[effort]
+          trigger.setAttribute('aria-expanded', 'false')
+        }
+        function modelMenu(parent) {
+          const menu = document.createElement('div')
+          menu.setAttribute('role', 'menu')
+          for (const candidate of ['GPT-5.6 Sol', 'GPT-5.5', 'o3']) {
+            const item = document.createElement('button')
+            item.setAttribute('role', 'menuitemradio')
+            item.setAttribute('aria-checked', String(candidate === model))
+            item.textContent = candidate
+            item.addEventListener('click', () => { model = candidate; closeMenus(); updateTrigger() })
+            menu.append(item)
+          }
+          document.body.append(menu)
+          return menu
+        }
+        function intelligenceMenu() {
+          closeMenus()
+          const menu = document.createElement('div')
+          menu.setAttribute('role', 'menu')
+          menu.setAttribute('aria-labelledby', trigger.id)
+          for (const [index, label] of effortLabels.entries()) {
+            const item = document.createElement('button')
+            item.setAttribute('role', 'menuitemradio')
+            item.setAttribute('aria-checked', String(index === effort))
+            if (index >= 3) {
+              item.disabled = true
+              item.setAttribute('aria-disabled', 'true')
+            }
+            item.textContent = label
+            item.addEventListener('click', () => { effort = index; closeMenus(); updateTrigger() })
+            menu.append(item)
+          }
+          const submenu = document.createElement('button')
+          submenu.setAttribute('role', 'menuitem')
+          submenu.setAttribute('aria-haspopup', 'menu')
+          submenu.textContent = model
+          submenu.addEventListener('click', () => modelMenu(menu))
+          menu.append(submenu)
+          document.body.append(menu)
+        }
+        trigger.addEventListener('click', intelligenceMenu)
+        updateTrigger()
+      </script>
+    </body></html>
+  `)
+  try {
+    const inspect = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.inspect_chatgpt_controls',
+      request: { provider: 'chatgpt', requestId: 'controls-inspect' },
+    }))
+    assert.equal(inspect.status, 'inspected')
+    assert.deepEqual(inspect.controls.efforts.map((item) => item.id), ['instant', 'medium', 'high', 'extra_high', 'pro'])
+    assert.deepEqual(inspect.controls.efforts.map((item) => item.available), [true, true, true, false, false])
+    assert.deepEqual(inspect.controls.models.map((item) => item.label), ['GPT-5.6 Sol', 'GPT-5.5', 'o3'])
+
+    const configure = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.configure_chatgpt',
+      request: {
+        provider: 'chatgpt',
+        requestId: 'controls-configure',
+        chatSurface: 'chat',
+        model: 'GPT-5.4',
+        modelFallbacks: ['GPT-5.5'],
+        effort: 'pro',
+      },
+    }))
+    assert.equal(configure.status, 'configured')
+    assert.equal(configure.surface.status, 'chat_selected')
+    assert.equal(configure.model.status, 'fallback_selected')
+    assert.equal(configure.model.applied, 'GPT-5.5')
+    assert.equal(configure.effort.status, 'fallback_selected')
+    assert.equal(configure.effort.applied, 'high')
+    assert.equal(await chatgpt.page.locator('[role="radio"]').nth(0).getAttribute('aria-checked'), 'true')
+    assert.match(await chatgpt.page.locator('#intelligence').innerText(), /5\.5/)
+
+    const submit = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.submit',
+      request: {
+        provider: 'chatgpt',
+        requestId: 'controls-submit',
+        prompt: 'Submit even when requested controls are unavailable.',
+        chatSurface: 'chat',
+        model: 'missing-model',
+        modelFallbacks: ['also-missing'],
+        effort: 'pro',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+      },
+    }))
+    assert.equal(submit.status, 'submitted')
+    assert.equal(submit.configuration.model.status, 'preserved_current')
+    assert.equal(submit.configuration.effort.applied, 'high')
+    assert.match(await chatgpt.page.locator('#prompt-textarea').textContent(), /Submit even when requested controls are unavailable/)
+    assert.deepEqual(chatgpt.pageErrors, [])
+  } finally {
+    await chatgpt.context.close()
+    await browser.close()
+  }
+})
+
 test('background opens Settings only on action click and jobs create only approved provider tabs', async () => {
   const previousChrome = globalThis.chrome
   const installed = createChromeEvent()
@@ -1759,6 +1897,10 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
 
   assert.equal(BRIDGE_ACTIONS.SNAPSHOT_DOM, 'snapshot_dom')
   assert.ok(capabilitiesPayload().actions.includes('snapshot_dom'))
+  assert.equal(BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS, 'inspect_chatgpt_controls')
+  assert.equal(BRIDGE_ACTIONS.CONFIGURE_CHATGPT, 'configure_chatgpt')
+  assert.ok(capabilitiesPayload().actions.includes('inspect_chatgpt_controls'))
+  assert.ok(capabilitiesPayload().actions.includes('configure_chatgpt'))
   const baseRequest = {
     protocol: BRIDGE_PROTOCOL_VERSION,
     requestId: 'snapshot-1',
@@ -1766,6 +1908,28 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     action: 'snapshot_dom',
   }
   assert.equal(validateBridgeRequest(baseRequest).ok, true)
+  const chatGptControls = validateBridgeRequest({
+    ...baseRequest,
+    action: 'configure_chatgpt',
+    chatSurface: 'chat',
+    model: 'GPT-5.6 Sol',
+    modelFallbacks: ['GPT-5.5', 'o3'],
+    effort: 'extra_high',
+  })
+  assert.equal(chatGptControls.ok, true)
+  assert.equal(chatGptControls.request.effort, 'extra_high')
+  for (const malformedControls of [
+    { ...baseRequest, chatSurface: 'work' },
+    { ...baseRequest, effort: 'maximum' },
+    { ...baseRequest, model: '' },
+    { ...baseRequest, modelFallbacks: 'GPT-5.5' },
+    { ...baseRequest, modelFallbacks: Array.from({ length: 9 }, () => 'GPT-5.5') },
+    { ...baseRequest, provider: 'gemini', effort: 'high' },
+    { ...baseRequest, provider: 'gemini', action: 'inspect_chatgpt_controls' },
+  ]) {
+    const validation = validateBridgeRequest(malformedControls)
+    assert.equal(validation.ok, false)
+  }
   const daemonSuppliedTransition = validateBridgeRequest({
     ...baseRequest,
     allowPostSubmitTargetTransition: true,

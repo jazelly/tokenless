@@ -112,6 +112,12 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
       daemonUrl,
       '--target-url',
       'https://chatgpt.com/',
+      '--model',
+      'GPT-5.5',
+      '--model-fallback',
+      'o3',
+      '--effort',
+      'high',
       '--read-delay-ms',
       '0',
       '--read-timeout-ms',
@@ -196,6 +202,11 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     assert.match(completed.result_json.text, /Tokenless daemon E2E DOM prompt 93742/)
     assert.doesNotMatch(completed.result_json.text, /stale ChatGPT real-DOM fixture answer/)
     assert.doesNotMatch(completed.result_json.text, /_streaming/)
+    assert.equal(completed.result_json.submit.configuration.surface.status, 'chat_selected')
+    assert.equal(completed.result_json.submit.configuration.model.status, 'selected')
+    assert.equal(completed.result_json.submit.configuration.model.applied, 'GPT-5.5')
+    assert.equal(completed.result_json.submit.configuration.effort.status, 'selected')
+    assert.equal(completed.result_json.submit.configuration.effort.applied, 'high')
 
     const providerPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/'))
     assert.ok(providerPage, `extension did not open the visible ChatGPT page: ${JSON.stringify(context.pages().map((page) => page.url()))}`)
@@ -215,6 +226,35 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
       'task execution must open exactly one visible provider page')
     assertNoTaskPageObserved(observedUrls)
     assertNoRunnerPageObserved(observedUrls)
+
+    const pagesBeforeControlInspection = new Set(context.pages())
+    const controlInspection = spawnSync(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'chatgpt-controls',
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      providerPage.url(),
+      '--no-open',
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 30000,
+    })
+    assert.equal(controlInspection.status, 0, controlInspection.stderr || controlInspection.stdout)
+    const controlInspectionPayload = JSON.parse(controlInspection.stdout)
+    const controls = controlInspectionPayload.result?.result?.controls ?? controlInspectionPayload.result?.controls
+    assert.equal(controls.available, true)
+    assert.deepEqual(controls.efforts.map((item) => item.id), ['instant', 'medium', 'high', 'extra_high', 'pro'])
+    assert.deepEqual(controls.models.map((item) => item.label), ['GPT-5.6 Sol', 'GPT-5.5', 'GPT-5.4', 'GPT-5.3', 'o3'])
+    assert.deepEqual(
+      context.pages().filter((page) => !pagesBeforeControlInspection.has(page)).map((page) => page.url()),
+      [],
+      'chatgpt-controls must reuse the visible provider tab without opening another page'
+    )
 
     const pagesBeforeSnapshot = new Set(context.pages())
     const snapshotRun = spawnSync(process.execPath, [

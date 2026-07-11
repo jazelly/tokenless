@@ -53,6 +53,10 @@ try {
   args = parseArgs(argv)
   if (command === 'run') {
     await runCommand(args)
+  } else if (command === 'chatgpt-controls' || command === 'inspect-chatgpt-controls') {
+    await chatGptControlsCommand(args)
+  } else if (command === 'chatgpt-configure') {
+    await chatGptConfigureCommand(args)
   } else if (command === 'snapshot-dom') {
     await snapshotDomCommand(args)
   } else if (command === 'state' || command === 'status') {
@@ -93,6 +97,26 @@ async function runCommand(args: CliArgs) {
   await executeDaemonJob({ args, action: args.action || 'submit_and_read', prompt })
 }
 
+async function chatGptControlsCommand(args: CliArgs) {
+  await executeDaemonJob({
+    args: { ...args, provider: requiredChatGptProvider(args) },
+    action: 'inspect_chatgpt_controls',
+  })
+}
+
+async function chatGptConfigureCommand(args: CliArgs) {
+  if (args.model === undefined && args.effort === undefined && args.thinkingEffort === undefined && args.chatSurface === undefined) {
+    throw usageError(
+      'missing_chatgpt_control',
+      'chatgpt-configure requires --model, --effort, or --chat-surface chat.'
+    )
+  }
+  await executeDaemonJob({
+    args: { ...args, provider: requiredChatGptProvider(args) },
+    action: 'configure_chatgpt',
+  })
+}
+
 async function snapshotDomCommand(args: CliArgs) {
   await executeDaemonJob({ args, action: 'snapshot_dom' })
 }
@@ -112,6 +136,7 @@ async function executeDaemonJob({
   const provider = normalizeProvider(
     args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || 'chatgpt'
   )
+  const chatGptControls = resolveChatGptControls({ args, provider, action })
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
   const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
   const taskId = deriveTaskId({
@@ -162,6 +187,7 @@ async function executeDaemonJob({
       maxTextChars: action === 'snapshot_dom' && args.maxTextChars !== undefined
         ? Number(args.maxTextChars)
         : undefined,
+      ...chatGptControls,
       metadata: {
         source: 'tokenless-cli',
         browser: bridge.browser ?? normalizeBrowserId(selectedBrowser),
@@ -789,6 +815,11 @@ function parseArgs(argv: string[]): CliArgs {
     '--read-delay-ms': 'readDelayMs',
     '--read-timeout-ms': 'readTimeoutMs',
     '--max-text-chars': 'maxTextChars',
+    '--model': 'model',
+    '--model-fallback': 'modelFallbacks',
+    '--effort': 'effort',
+    '--thinking-effort': 'thinkingEffort',
+    '--chat-surface': 'chatSurface',
   }
   const booleanFlags: Record<string, string> = {
     '--include-text': 'includeText',
@@ -879,6 +910,58 @@ function normalizeProvider(provider: unknown) {
   return normalized
 }
 
+function requiredChatGptProvider(args: CliArgs) {
+  if (args.provider !== undefined && normalizeProvider(args.provider) !== 'chatgpt') {
+    throw usageError('chatgpt_controls_unsupported', 'ChatGPT controls require --provider chatgpt or no provider argument.')
+  }
+  return 'chatgpt'
+}
+
+function resolveChatGptControls({
+  args,
+  provider,
+  action,
+}: {
+  args: CliArgs
+  provider: string
+  action: string
+}) {
+  const hasRequestedControl = (
+    args.model !== undefined ||
+    args.modelFallbacks !== undefined ||
+    args.effort !== undefined ||
+    args.thinkingEffort !== undefined ||
+    args.chatSurface !== undefined
+  )
+  if (provider !== 'chatgpt') {
+    if (hasRequestedControl) {
+      throw usageError('chatgpt_controls_unsupported', '--model, --model-fallback, --effort, and --chat-surface are available only for ChatGPT.')
+    }
+    return {}
+  }
+  if (action === 'inspect_chatgpt_controls') return {}
+  const chatSurface = args.chatSurface === undefined ? 'chat' : String(args.chatSurface).trim().toLowerCase()
+  if (chatSurface !== 'chat') {
+    throw usageError('invalid_chat_surface', 'ChatGPT runs support only --chat-surface chat; Work is intentionally not used by Tokenless.')
+  }
+  const effortValue = args.effort ?? args.thinkingEffort
+  const effort = effortValue === undefined ? undefined : normalizeChatGptEffort(effortValue)
+  return {
+    chatSurface,
+    model: args.model === undefined ? undefined : String(args.model).trim(),
+    modelFallbacks: args.modelFallbacks === undefined ? undefined : parseList(args.modelFallbacks),
+    effort,
+  }
+}
+
+function normalizeChatGptEffort(value: unknown) {
+  const normalized = String(value).trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (!['instant', 'medium', 'high', 'extra_high', 'pro'].includes(normalized)) {
+    throw usageError('invalid_effort', '--effort must be one of: instant, medium, high, extra_high, pro.')
+  }
+  return normalized
+}
+
 function parseProviderList(value: unknown) {
   return parseList(value).map(normalizeProvider)
 }
@@ -955,6 +1038,9 @@ function usage() {
   console.error([
     'Usage:',
     '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
+    '  tokenless run --provider chatgpt --model <visible-model> --model-fallback <model,...> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
+    '  tokenless chatgpt-controls --json',
+    '  tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
     '  tokenless state --task-id <task-id> --json',
     '  tokenless cancel --job-id <job-id> --json',
     '  tokenless snapshot-dom --provider chatgpt --json',

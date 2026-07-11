@@ -248,6 +248,12 @@ async function handleMessage(message: ContentRecord) {
   if (message?.type === 'tokenless.bridge.snapshot_dom') {
     return snapshotDom(provider, message.request)
   }
+  if (message?.type === 'tokenless.bridge.inspect_chatgpt_controls') {
+    return inspectChatGptControls(provider, message.request)
+  }
+  if (message?.type === 'tokenless.bridge.configure_chatgpt') {
+    return configureChatGptControls(provider, message.request)
+  }
   if (message?.type === 'tokenless.bridge.validate_landing') {
     return validateLanding(provider, message.request, message.type)
   }
@@ -359,6 +365,13 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
     return blocker
   }
 
+  const configuration = provider.id === 'chatgpt'
+    ? await configureChatGptControls(provider, request)
+    : undefined
+  if (configuration?.status === 'blocked') {
+    return configuration
+  }
+
   const composer = await waitForComposer(provider, request)
   if (!composer || !isVisibleConnected(composer)) {
     return selectorDrift('composer')
@@ -393,9 +406,291 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
     status: 'submitted',
     provider: provider.id,
     visible: true,
+    configuration,
     answerBaseline,
     url: publicPageUrl(location.href),
   }
+}
+
+const CHATGPT_EFFORT_ORDER = ['instant', 'medium', 'high', 'extra_high', 'pro'] as const
+
+type ChatGptEffort = typeof CHATGPT_EFFORT_ORDER[number]
+
+async function inspectChatGptControls(provider: ContentProvider, request: ContentRecord = {}) {
+  if (provider.id !== 'chatgpt') {
+    return {
+      status: 'blocked',
+      stopReason: 'chatgpt_controls_unsupported',
+      message: 'ChatGPT controls are only available on ChatGPT.',
+      provider: provider.id,
+    }
+  }
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+  const surface = chatGptSurfaceSnapshot()
+  const opened = await openChatGptIntelligenceMenu()
+  if (!opened) {
+    return {
+      status: 'inspected',
+      provider: provider.id,
+      visible: true,
+      surface,
+      controls: { available: false, efforts: [], models: [] },
+      url: publicPageUrl(location.href),
+    }
+  }
+  try {
+    const effortItems = chatGptEffortChoices(opened.menu)
+    const modelTrigger = findVisibleMenuSubmenuTrigger(opened.menu)
+    const modelMenu = modelTrigger ? await openChatGptModelMenu(modelTrigger, opened.menu) : null
+    return {
+      status: 'inspected',
+      provider: provider.id,
+      visible: true,
+      surface,
+      controls: {
+        available: true,
+        efforts: effortItems.map((item) => ({
+          id: item.effort,
+          label: visibleControlLabel(item.choice),
+          selected: item.choice.getAttribute('aria-checked') === 'true',
+          available: isEnabledVisible(item.choice),
+        })),
+        models: modelMenu
+          ? menuRadioItems(modelMenu).map((item) => ({
+              label: visibleControlLabel(item),
+              selected: item.getAttribute('aria-checked') === 'true',
+              available: isEnabledVisible(item),
+            }))
+          : [],
+      },
+      url: publicPageUrl(location.href),
+    }
+  } finally {
+    dismissChatGptMenus()
+  }
+}
+
+async function configureChatGptControls(provider: ContentProvider, request: ContentRecord = {}) {
+  if (provider.id !== 'chatgpt') {
+    return {
+      status: 'blocked',
+      stopReason: 'chatgpt_controls_unsupported',
+      message: 'ChatGPT controls are only available on ChatGPT.',
+      provider: provider.id,
+    }
+  }
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+
+  const surface = await ensureChatGptChatSurface()
+  if (surface.status === 'blocked') return surface
+  const model = request.model === undefined
+    ? { status: 'preserved' }
+    : await selectChatGptModel(request.model, request.modelFallbacks)
+  const effort = request.effort === undefined
+    ? { status: 'preserved' }
+    : await selectChatGptEffort(request.effort)
+  return {
+    status: 'configured',
+    provider: provider.id,
+    visible: true,
+    surface,
+    model,
+    effort,
+    url: publicPageUrl(location.href),
+  }
+}
+
+function chatGptSurfaceSnapshot() {
+  const radios = visibleChatGptSurfaceRadios()
+  if (radios.length !== 2) {
+    return { status: 'not_present', available: false, selected: null }
+  }
+  const chatRadio = radios[0]
+  if (!chatRadio) return { status: 'not_present', available: false, selected: null }
+  return {
+    status: chatRadio.getAttribute('aria-checked') === 'true' ? 'chat_selected' : 'work_selected',
+    available: true,
+    selected: radios.findIndex((radio) => radio.getAttribute('aria-checked') === 'true'),
+  }
+}
+
+async function ensureChatGptChatSurface() {
+  const radios = visibleChatGptSurfaceRadios()
+  if (radios.length !== 2) {
+    return { status: 'not_present', available: false, selected: null }
+  }
+  const chatRadio = radios[0]
+  if (!chatRadio) return { status: 'not_present', available: false, selected: null }
+  if (chatRadio.getAttribute('aria-checked') === 'true') {
+    return { status: 'chat_selected', available: true, selected: 0 }
+  }
+  chatRadio.click()
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (chatRadio.getAttribute('aria-checked') === 'true') {
+      return { status: 'chat_selected', available: true, selected: 0, changed: true }
+    }
+    await delay(100)
+  }
+  return {
+    status: 'blocked',
+    stopReason: 'chat_surface_unavailable',
+    message: 'ChatGPT Work surface was selected and Tokenless could not switch to the Chat surface.',
+    provider: 'chatgpt',
+  }
+}
+
+function visibleChatGptSurfaceRadios() {
+  return [...document.querySelectorAll('[role="radio"]')]
+    .filter((node) => isVisible(node))
+    .filter((node) => node.closest('[role="menu"]') === null) as HTMLElement[]
+}
+
+async function selectChatGptModel(requested: unknown, fallbacks: unknown) {
+  const requestedLabels = [requested, ...(Array.isArray(fallbacks) ? fallbacks : [])]
+    .filter((label): label is string => typeof label === 'string' && label.trim().length > 0)
+  const opened = await openChatGptIntelligenceMenu()
+  if (!opened) return { status: 'unavailable', requested: requestedLabels[0] ?? null, applied: null }
+  try {
+    const trigger = findVisibleMenuSubmenuTrigger(opened.menu)
+    const modelMenu = trigger ? await openChatGptModelMenu(trigger, opened.menu) : null
+    if (!modelMenu) return { status: 'unavailable', requested: requestedLabels[0] ?? null, applied: null }
+    const choices = menuRadioItems(modelMenu)
+    for (let fallbackIndex = 0; fallbackIndex < requestedLabels.length; fallbackIndex += 1) {
+      const label = requestedLabels[fallbackIndex]
+      if (!label) continue
+      const choice = choices.find((item) => isEnabledVisible(item) && modelLabelMatches(visibleControlLabel(item), label))
+      if (!choice) continue
+      const applied = visibleControlLabel(choice)
+      if (choice.getAttribute('aria-checked') !== 'true') choice.click()
+      return {
+        status: fallbackIndex === 0 ? 'selected' : 'fallback_selected',
+        requested: requestedLabels[0],
+        applied,
+        fallback: fallbackIndex === 0 ? null : label,
+      }
+    }
+    const current = choices.find((item) => item.getAttribute('aria-checked') === 'true')
+    return {
+      status: 'preserved_current',
+      requested: requestedLabels[0] ?? null,
+      applied: current ? visibleControlLabel(current) : null,
+    }
+  } finally {
+    dismissChatGptMenus()
+  }
+}
+
+async function selectChatGptEffort(requested: unknown) {
+  const wanted = typeof requested === 'string' ? requested as ChatGptEffort : undefined
+  const wantedIndex = wanted ? CHATGPT_EFFORT_ORDER.indexOf(wanted) : -1
+  const opened = await openChatGptIntelligenceMenu()
+  if (wantedIndex < 0 || !opened) return { status: 'unavailable', requested: wanted ?? null, applied: null }
+  try {
+    const choices = chatGptEffortChoices(opened.menu)
+    const enabled = choices
+      .filter(({ choice, effort }) => isEnabledVisible(choice) && effort !== null)
+    const selection = enabled
+      .filter(({ effort }) => CHATGPT_EFFORT_ORDER.indexOf(effort as ChatGptEffort) <= wantedIndex)
+      .sort((left, right) => (
+        CHATGPT_EFFORT_ORDER.indexOf(right.effort as ChatGptEffort) -
+        CHATGPT_EFFORT_ORDER.indexOf(left.effort as ChatGptEffort)
+      ))[0]
+      ?? enabled.find(({ choice }) => choice.getAttribute('aria-checked') === 'true')
+      ?? enabled[0]
+    if (!selection || !selection.effort) {
+      const current = choices.find(({ choice }) => choice.getAttribute('aria-checked') === 'true')
+      return {
+        status: 'preserved_current',
+        requested: wanted,
+        applied: current?.effort ?? null,
+        reason: 'unmapped_partial_effort_menu',
+      }
+    }
+    if (selection.choice.getAttribute('aria-checked') !== 'true') selection.choice.click()
+    return {
+      status: selection.effort === wanted ? 'selected' : 'fallback_selected',
+      requested: wanted,
+      applied: selection.effort,
+    }
+  } finally {
+    dismissChatGptMenus()
+  }
+}
+
+async function openChatGptIntelligenceMenu() {
+  const main = document.querySelector('main')
+  const trigger = main
+    ? [...main.querySelectorAll('button[aria-expanded]')].find((node) => isVisible(node)) as HTMLElement | undefined
+    : undefined
+  if (!trigger) return null
+  if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const menu = [...document.querySelectorAll('[role="menu"]')]
+      .find((candidate) => isVisible(candidate) && candidate.getAttribute('aria-labelledby') === trigger.id) as HTMLElement | undefined
+    if (menu) return { trigger, menu }
+    await delay(75)
+  }
+  return null
+}
+
+async function openChatGptModelMenu(trigger: HTMLElement, parentMenu: HTMLElement) {
+  trigger.click()
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const menu = [...document.querySelectorAll('[role="menu"]')]
+      .find((candidate) => candidate !== parentMenu && isVisible(candidate)) as HTMLElement | undefined
+    if (menu) return menu
+    await delay(75)
+  }
+  return null
+}
+
+function findVisibleMenuSubmenuTrigger(menu: HTMLElement) {
+  return [...menu.querySelectorAll('[role="menuitem"]')]
+    .find((node) => isVisible(node) && node.getAttribute('aria-haspopup') === 'menu') as HTMLElement | undefined
+}
+
+function menuRadioItems(menu: HTMLElement) {
+  return [...menu.querySelectorAll('[role="menuitemradio"]')]
+    .filter((node) => isVisible(node)) as HTMLElement[]
+}
+
+function chatGptEffortChoices(menu: HTMLElement) {
+  const choices = menuRadioItems(menu)
+  const isCompleteFiveLevelMenu = choices.length === CHATGPT_EFFORT_ORDER.length
+  return choices.map((choice, index) => ({
+    choice,
+    // Current ChatGPT exposes the five Intelligence radios in semantic order but
+    // does not expose a locale-independent value. Only rely on that order when
+    // the complete sequence is present; partial entitlement menus must preserve
+    // the current setting rather than guess a translated label or wrong rank.
+    effort: isCompleteFiveLevelMenu ? CHATGPT_EFFORT_ORDER[index] ?? null : null,
+  }))
+}
+
+function isEnabledVisible(node: HTMLElement) {
+  return isVisible(node) && node.getAttribute('aria-disabled') !== 'true' && !(node as HTMLButtonElement).disabled
+}
+
+function visibleControlLabel(node: HTMLElement) {
+  return normalizeText(node.innerText || node.textContent || '')
+}
+
+function modelLabelMatches(available: string, requested: string) {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  const candidate = normalize(available)
+  const wanted = normalize(requested)
+  return candidate === wanted || candidate.startsWith(wanted)
+}
+
+function dismissChatGptMenus() {
+  document.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Escape',
+    code: 'Escape',
+    bubbles: true,
+    cancelable: true,
+  }))
 }
 
 async function readLatestAnswer(provider: ContentProvider, request: ContentRecord = {}) {

@@ -128,6 +128,34 @@ async function runBridgeRequest(request: BridgeRequest) {
     const landedTab = await waitForProviderTabLoaded(tab.id, provider, request.targetUrl)
     const preSubmitUrl = landedTab.pendingUrl || landedTab.url || provider.homeUrl
 
+    if (request.action === BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS) {
+      await validateProviderLanding(landedTab.id, provider, request)
+      const result = await sendToProviderTab(landedTab.id, provider, request, {
+        type: 'tokenless.bridge.inspect_chatgpt_controls',
+        request,
+      })
+      return createBridgeResponse(request, { ok: true, result })
+    }
+
+    if (request.action === BRIDGE_ACTIONS.CONFIGURE_CHATGPT) {
+      await validateProviderLanding(landedTab.id, provider, request)
+      const result = await sendToProviderTab(landedTab.id, provider, request, {
+        type: 'tokenless.bridge.configure_chatgpt',
+        request,
+      })
+      if (result?.status === 'blocked') {
+        return createBridgeResponse(request, {
+          ok: false,
+          error: {
+            code: result.stopReason || 'chatgpt_controls_unavailable',
+            message: result.message || 'ChatGPT controls could not be configured.',
+            retryable: Boolean(result.retryable),
+          },
+        })
+      }
+      return createBridgeResponse(request, { ok: true, result })
+    }
+
     if (request.action === BRIDGE_ACTIONS.SUBMIT) {
       await validateProviderLanding(landedTab.id, provider, request)
       const result = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.submit', request })
@@ -344,6 +372,10 @@ function daemonJobToBridgeRequest(job: ExtensionRecord): BridgeRequest {
     submitTimeoutMs: requestJson.submitTimeoutMs,
     includeText: requestJson.includeText,
     maxTextChars: requestJson.maxTextChars,
+    chatSurface: requestJson.chatSurface,
+    model: requestJson.model,
+    modelFallbacks: requestJson.modelFallbacks,
+    effort: requestJson.effort,
     metadata: requestJson.metadata,
   })
 }

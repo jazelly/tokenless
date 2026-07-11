@@ -31,6 +31,34 @@ npx tokenless run \
 
 `run` requires no extension id after setup. It starts the Rust daemon when needed. If the extension bridge is live, the CLI does not pre-open a wake tab; otherwise it opens only the selected provider's validated HTTPS UI in the configured Chromium browser. The extension reuses an approved provider tab when possible or opens one provider tab when necessary. ChatGPT is the provider default. Tokenless never opens a task page, extension page, local file, runner, settings, or history page.
 
+## ChatGPT visible controls
+
+ChatGPT runs enforce the visible `Chat` surface before submission. Use the visible control inventory to discover what the signed-in account currently exposes:
+
+```bash
+npx tokenless chatgpt-controls --json
+```
+
+Configure a new ChatGPT turn or attach the same controls to `run`:
+
+```bash
+npx tokenless chatgpt-configure \
+  --model "GPT-5.6 Sol" \
+  --model-fallback "GPT-5.5,o3" \
+  --effort pro \
+  --json
+
+npx tokenless run \
+  --provider chatgpt \
+  --model "GPT-5.6 Sol" \
+  --model-fallback "GPT-5.5,o3" \
+  --effort extra_high \
+  --prompt "Review this design." \
+  --json
+```
+
+`--effort` accepts `instant`, `medium`, `high`, `extra_high`, or `pro`. Tokenless uses visible DOM roles and selected state, not provider APIs or browser storage. When a requested model is absent it tries `--model-fallback` in order, then preserves the visible current model. When a complete five-level Intelligence menu is visible it selects the strongest available level at or below the requested level; incomplete or unlabelled menus preserve the current setting rather than guessing. In all non-safety control fallbacks, the prompt is still submitted.
+
 Use returned task ids to inspect daemon-backed state:
 
 ```bash

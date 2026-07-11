@@ -184,6 +184,10 @@
             <button aria-label="Open sidebar">☰</button>
             <div>ChatGPT</div>
           </header>
+          <div role="banner" data-testid="chat-surface">
+            <button type="button" role="radio" aria-checked="true" data-state="on">Chat</button>
+            <button type="button" role="radio" aria-checked="false" data-state="off">Work</button>
+          </div>
           <div data-testid="conversation-panel">
             <article data-testid="conversation-turn-1" data-message-author-role="user">
               <div class="avatar">U</div>
@@ -202,6 +206,7 @@
           </div>
           <div class="composer-parent">
             <form data-testid="composer" aria-label="Message composer">
+              <button id="intelligence-control" type="button" aria-expanded="false">Medium</button>
               <div
                 id="prompt-textarea"
                 class="ProseMirror"
@@ -228,6 +233,86 @@
       const form = document.querySelector('[data-testid="composer"]')
       const send = document.querySelector('[data-testid="composer-send-button"]')
       const conversation = document.querySelector('[data-testid="conversation-panel"]')
+      const intelligence = document.querySelector('#intelligence-control')
+      const surfaceRadios = [...document.querySelectorAll('[role="banner"] [role="radio"]')]
+      const effortLabels = ['Instant', 'Medium', 'High', 'Extra High', 'Pro']
+      let selectedModel = 'GPT-5.6 Sol'
+      let selectedEffort = 1
+
+      surfaceRadios.forEach((radio, selectedIndex) => radio.addEventListener('click', () => {
+        surfaceRadios.forEach((candidate, index) => {
+          const selected = index === selectedIndex
+          candidate.setAttribute('aria-checked', String(selected))
+          candidate.setAttribute('data-state', selected ? 'on' : 'off')
+        })
+      }))
+
+      function dismissIntelligenceMenus() {
+        document.querySelectorAll('[role="menu"]').forEach((menu) => menu.remove())
+        intelligence.setAttribute('aria-expanded', 'false')
+      }
+
+      function updateIntelligenceTrigger() {
+        intelligence.textContent = selectedModel === 'GPT-5.6 Sol'
+          ? effortLabels[selectedEffort]
+          : selectedModel.replace('GPT-', '') + ' ' + effortLabels[selectedEffort]
+      }
+
+      function createModelMenu(parentMenu) {
+        const menu = document.createElement('div')
+        menu.setAttribute('role', 'menu')
+        menu.style.cssText = 'position:fixed;left:620px;bottom:96px;z-index:20;background:#fff;border:1px solid #ddd;padding:8px;display:grid;gap:4px'
+        for (const model of ['GPT-5.6 Sol', 'GPT-5.5', 'GPT-5.4', 'GPT-5.3', 'o3']) {
+          const item = document.createElement('button')
+          item.type = 'button'
+          item.setAttribute('role', 'menuitemradio')
+          item.setAttribute('aria-checked', String(model === selectedModel))
+          item.textContent = model
+          item.addEventListener('click', () => {
+            selectedModel = model
+            dismissIntelligenceMenus()
+            updateIntelligenceTrigger()
+          })
+          menu.append(item)
+        }
+        document.body.append(menu)
+      }
+
+      function createIntelligenceMenu() {
+        dismissIntelligenceMenus()
+        intelligence.setAttribute('aria-expanded', 'true')
+        const menu = document.createElement('div')
+        menu.setAttribute('role', 'menu')
+        menu.setAttribute('aria-labelledby', intelligence.id)
+        menu.style.cssText = 'position:fixed;left:380px;bottom:96px;z-index:20;background:#fff;border:1px solid #ddd;padding:8px;display:grid;gap:4px'
+        effortLabels.forEach((label, index) => {
+          const item = document.createElement('button')
+          item.type = 'button'
+          item.setAttribute('role', 'menuitemradio')
+          item.setAttribute('aria-checked', String(index === selectedEffort))
+          item.textContent = label
+          item.addEventListener('click', () => {
+            selectedEffort = index
+            dismissIntelligenceMenus()
+            updateIntelligenceTrigger()
+          })
+          menu.append(item)
+        })
+        const submenu = document.createElement('button')
+        submenu.type = 'button'
+        submenu.setAttribute('role', 'menuitem')
+        submenu.setAttribute('aria-haspopup', 'menu')
+        submenu.textContent = selectedModel
+        submenu.addEventListener('click', () => createModelMenu(menu))
+        menu.append(submenu)
+        document.body.append(menu)
+      }
+
+      intelligence.addEventListener('click', createIntelligenceMenu)
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') dismissIntelligenceMenus()
+      })
+      updateIntelligenceTrigger()
 
       composer.addEventListener('input', () => {
         const hasPrompt = textOf(composer).trim().length > 0

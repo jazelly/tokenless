@@ -65,6 +65,8 @@ npx tokenless run \
 
 Add `--provider chatgpt`, `--provider claude`, or `--provider gemini` only when provider selection is intentional. Retain the returned `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task.
 
+For ChatGPT, Tokenless selects the visible Chat surface before sending. Never request Work. Use `npx tokenless chatgpt-controls --json` to inspect the signed-in account's currently visible models and Intelligence levels. Add `--model "<visible model>"`, optional `--model-fallback "<model,...>"`, and `--effort instant|medium|high|extra_high|pro` to `run` when the user asks for them. A missing model tries the supplied fallback list then preserves the visible current model; unavailable or structurally ambiguous Intelligence levels preserve the current level. These control fallbacks must not prevent the prompt from being submitted.
+
 The only page Tokenless may open automatically is the selected provider's HTTPS UI (ChatGPT by default). It does not automatically open extension settings, task, runner, history, or local-file pages. If a live extension bridge exists, the CLI does not pre-open a wake tab; the extension reuses an approved provider tab when available or opens one provider tab otherwise. Do not add `--no-open` unless you know a live bridge exists: otherwise Tokenless fails clearly before creating a job.
 
 Respect CLI state. Continue waiting while a normal run reports `queued`, `claimed`, or `running`. Fail fast on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch`, and surface any visible login, CAPTCHA, permission, or confirmation action the user must handle.
