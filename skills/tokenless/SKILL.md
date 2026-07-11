@@ -1,72 +1,75 @@
 ---
 name: tokenless
-description: Route a Q&A type LLM conversation to online web version to save token usage for users. Use when a question or task can be done without directly writing to the project. For example, web-search based analysis, project-related analysis without writing, or even image generation.
+description: Route shareable Q&A, analysis, review, research, writing, and other non-project-writing work through a user's visible ChatGPT, Claude, or Gemini browser session to save API tokens.
 ---
 
-## Important Rules
+# Tokenless agent workflow
 
-1. When this skill is invoked, you must strive to use the `npx tokenless` command to handle the request, instead of self handle it. This skill contains vitally important steps to handle request and response. The detailed way of using `npx tokenless` is listed later in this doc.
+Use `npx tokenless` as the entrypoint when this skill applies. Do not reproduce the visible-session workflow yourself.
 
-2. When the `npx tokenless` process is working, its highly likely it takes some time, as long as it successfully goes to the remote website. You can see the process stage from the standard output. If it is `blocked`, `ui_mismatch`, `failed`, we should fail fast. However, if it is reporting state at other stage, you must wait for its finishing, as that means its actively addresing the request in the web. In a nutshell, you should respect the state exposed in the cli.
+Tokenless is daemon-only. Its packaged Rust daemon and Rust Native Messaging host connect the CLI to the browser extension. It never uses a local JSON task queue, a local file URL, a `chrome-extension://` task page, provider cookies, browser storage tokens, hidden auth headers, or private provider APIs.
 
-## Prerequisites
+## One-time user setup
 
-- Node.js runtime (>=22)
-- Tokenless CLI from npm (`npm install -g tokenless` or `npx tokenless`) If not installed locally, just rely on npx
-- Tokenless extension installed on chromium-based browser
+Prerequisites:
 
-## Check available providers
+- Node.js 22 or newer.
+- A supported Chromium browser with the Tokenless extension installed.
+- The user has run `npx tokenless install` once. The published extension id is bundled; unpacked development builds can use `--extension-id <id>`.
 
-Before choosing a provider, read the user's configured order from `~/.tokenless/config.json`, or run:
+If a run reports a missing Rust binary, native host, manifest, or extension bridge, stop and ask the user to run:
+
+```bash
+npx tokenless install
+npx tokenless doctor --json
+```
+
+Do not ask for or pass an extension id on normal `run`, `snapshot-dom`, or `state` calls.
+
+The npm CLI resolves only its locally installed OS/CPU native package. Do not download, curl, or execute a replacement binary; a missing native package requires reinstalling `tokenless` with optional dependencies enabled.
+
+## Read provider preferences
 
 ```bash
 npx tokenless config --json
 ```
 
-Use the `preferredProviders` array as the allowed provider list and default routing order. Supported values are `chatgpt`, `claude`, and `gemini`.
+Use the first configured `preferredProviders` entry unless the user explicitly chooses `chatgpt`, `claude`, or `gemini`. When none is configured, Tokenless defaults to ChatGPT.
 
-Configure the default provider order locally:
+## Build only shareable context
 
-```bash
-npx tokenless config --preferred-providers claude,chatgpt,gemini --json
-```
-
-## Build a shareable prompt (optional)
+You may build a prompt file before the run:
 
 ```bash
 npx tokenless \
   --project-root "/absolute/path/to/project" \
   --project-name "<agent project name>" \
-  --chat-name "<agent chat name>" \
+  --chat-name "<agent task name>" \
   --prompt "<user request>" \
-  --file <relative file> \
+  --file <relative-file> \
   --output /tmp/tokenless-prompt.md
 ```
 
-## Run a visible-session task
+Include only the user's request, explicit shareable turn context, and intentionally selected files. Never include hidden reasoning, credentials, cookies, browser storage, private headers, or secrets.
+
+## Run through the visible provider UI
 
 ```bash
 npx tokenless run \
   --project-name "<agent project name>" \
-  --chat-name "<agent chat name>" \
+  --chat-name "<agent task name>" \
   --project-root "/absolute/path/to/project" \
   --prompt-file /tmp/tokenless-prompt.md \
-  --extension-id "<chrome-extension-id>" \
   --json
 ```
 
-When invoking `tokenless run`:
+Add `--provider chatgpt`, `--provider claude`, or `--provider gemini` only when provider selection is intentional. Retain the returned `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task.
 
-- `--project-name`: the project name from the calling agent workspace.
-- `--chat-name`: the chat/thread title or stable chat label from the calling agent.
-- Read and retain the returned `taskId`. Tokenless derives it from `--project-name` and `--chat-name` unless `--task-id` is supplied explicitly.
-- On later turns for the same agent task, pass `--task-id "<returned taskId>"` to continue the same Tokenless task/conversation mapping.
-- Use `--provider chatgpt`, `--provider claude`, or `--provider gemini` when the user explicitly requests a visible web provider.
-- Otherwise omit `--provider` and let Tokenless use the first entry in `preferredProviders` from `~/.tokenless/config.json`.
+The only page Tokenless may open automatically is the selected provider's HTTPS UI (ChatGPT by default). It does not automatically open extension settings, task, runner, history, or local-file pages. If a live extension bridge exists, the CLI does not pre-open a wake tab; the extension reuses an approved provider tab when available or opens one provider tab otherwise. Do not add `--no-open` unless you know a live bridge exists: otherwise Tokenless fails clearly before creating a job.
 
-## Query task execution state
+Respect CLI state. Continue waiting while a normal run reports `queued`, `claimed`, or `running`. Fail fast on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch`, and surface any visible login, CAPTCHA, permission, or confirmation action the user must handle.
 
-Use the returned `taskId` to check a previous or currently running task:
+## Query daemon-backed state
 
 ```bash
 npx tokenless state \
@@ -74,12 +77,18 @@ npx tokenless state \
   --json
 ```
 
-The state payload includes `latest.status`, `latest.state`, `latest.result`, and recent `jobs`. Treat `blocked`, `ui_mismatch`, `failed`, `canceled`, and `timed_out` as terminal failures. If the state is `queued`, `claimed`, `running`, or `needs_user`, keep waiting or surface the needed visible-browser action to the user.
+`state` uses exact provider/task filtering against the authenticated Rust daemon, not legacy local JSON files. Use `latest.status`, `latest.state`, `latest.result`, `latest.error`, and `jobs` as the source of truth. CLI state preserves actionable daemon error detail; do not confuse it with the extension Settings history, which is intentionally scalar-only.
 
-If no user preference applies and no provider is configured, use this default guidance:
+To cancel a detached job, use its returned job id:
 
-- `claude`: long-form writing, careful critique, broad code review, architecture tradeoffs, and synthesis-heavy tasks.
-- `chatgpt`: general coding, debugging, structured transformations, multimodal/browser-product reasoning, and fast interactive iteration.
-- `gemini`: large-context reading, research-style summarization, Google ecosystem context, and broad document comparisons.
+```bash
+npx tokenless cancel --job-id "<jobId>" --json
+```
 
-Do not include hidden agent reasoning, provider cookies, browser storage tokens, or secrets. Include only shareable user prompt, explicit turn context, and selected project files.
+Treat cancellation as successful only when the CLI returns `ok: true` and `status: canceled`. On `job_cancel_failed`, tell the user the job may still be running or may already have completed; query `state` instead of claiming cancellation succeeded.
+
+## Provider guidance
+
+- `chatgpt`: general coding, debugging, transformations, multimodal or browser-product reasoning, and fast iteration.
+- `claude`: long-form writing, critique, architecture tradeoffs, broad code review, and synthesis-heavy work.
+- `gemini`: large-context reading, research-style summarization, Google ecosystem context, and document comparison.

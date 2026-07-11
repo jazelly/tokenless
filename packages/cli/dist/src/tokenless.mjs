@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
-import { spawn } from 'node:child_process';
-import { buildTokenlessPrompt, buildTaskUrl, createDaemonJob, createLocalJob, daemonUrl, deriveTaskId, installNativeHost, normalizeBrowserId, readLocalTaskState, readTokenlessConfig, tokenlessHome, waitDaemonJobResult, waitLocalJobResult, writeTokenlessConfig, } from './index.js';
+import { DEFAULT_DAEMON_URL, MAX_NATIVE_MESSAGE_BYTES, NATIVE_PROTOCOL, buildTokenlessPrompt, cancelDaemonJob, createDaemonJob, daemonUrl, deriveTaskId, ensureDaemonReady, getDaemonJob, inspectNativeHostManifests, inspectRustBinaries, installRustRuntime, listDaemonJobs, normalizeBrowserId, openProviderUrl, persistDaemonSnapshot, providerWakeUrl, readLiveBridgeMarker, readTokenlessConfig, refreshInstalledRustBinaries, resolveChromiumBrowser, tokenlessHome, waitDaemonJobResult, waitForExtensionBridge, writeTokenlessConfig, } from './index.js';
 import { DEFAULT_EXTENSION_ID } from './default-extension-id.js';
-const argv = process.argv.slice(2);
-const command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help');
-const args = parseArgs(argv);
+let args = { files: [], json: process.argv.includes('--json') };
 try {
+    const argv = process.argv.slice(2);
+    const command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help');
+    args = parseArgs(argv);
     if (command === 'run') {
         await runCommand(args);
+    }
+    else if (command === 'snapshot-dom') {
+        await snapshotDomCommand(args);
     }
     else if (command === 'state' || command === 'status') {
         await stateCommand(args);
     }
-    else if (command === 'snapshot-dom') {
-        await snapshotDomCommand(args);
+    else if (command === 'cancel') {
+        await cancelCommand(args);
     }
     else if (command === 'install') {
         await installCommand(args);
@@ -43,430 +46,461 @@ catch (error) {
             retryable: Boolean(cliError.retryable),
         },
     };
-    if (cliError.status) {
+    if (cliError.status)
         payload.status = cliError.status;
-    }
-    if (Array.isArray(cliError.statusLog)) {
+    if (Array.isArray(cliError.statusLog))
         payload.statusLog = cliError.statusLog;
-    }
-    if (args.json) {
+    if (args.json)
         console.log(JSON.stringify(payload, null, 2));
-    }
-    else {
+    else
         console.error(`${payload.error.code}: ${payload.error.message}`);
-    }
     process.exit(1);
-}
-async function snapshotDomCommand(args) {
-    const { extensionId } = resolveExtensionId(args);
-    const homeDir = tokenlessHome(args.home);
-    const config = await readTokenlessConfig(homeDir);
-    const { browser } = resolveBrowser(args, config);
-    const provider = args.provider ||
-        process.env.TOKENLESS_PROVIDER ||
-        config.preferredProviders[0] ||
-        'chatgpt';
-    const job = await createLocalJob({
-        homeDir,
-        provider,
-        action: 'snapshot_dom',
-        projectRoot: args.projectRoot,
-        projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
-        chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME || 'DOM snapshot',
-        targetUrl: args.targetUrl,
-        idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
-        includeText: Boolean(args.includeText),
-        maxTextChars: args.maxTextChars === undefined ? undefined : Number(args.maxTextChars),
-        metadata: {
-            source: 'tokenless-cli',
-            browser,
-            includeText: Boolean(args.includeText),
-            maxTextChars: args.maxTextChars === undefined ? undefined : Number(args.maxTextChars),
-        },
-    });
-    const statusReporter = createCliStatusReporter(args);
-    statusReporter.report({
-        event: 'created',
-        status: job.status,
-        jobId: job.jobId,
-        taskId: job.taskId,
-        provider: job.provider,
-        action: job.action,
-        route: job.conversation?.route,
-    });
-    const taskUrl = buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce });
-    if (!args.noOpen) {
-        await openUrl(taskUrl, { browser: browser ?? undefined });
-        statusReporter.report({
-            event: 'opened',
-            status: 'opened_task_page',
-            jobId: job.jobId,
-            taskId: job.taskId,
-            provider: job.provider,
-            browser,
-            taskUrl,
-        });
-    }
-    else {
-        statusReporter.report({
-            event: 'not_opened',
-            status: 'waiting_for_external_open',
-            jobId: job.jobId,
-            taskId: job.taskId,
-            provider: job.provider,
-            taskUrl,
-        });
-    }
-    const result = args.noWait
-        ? (statusReporter.report({
-            event: 'detached',
-            status: 'no_wait',
-            jobId: job.jobId,
-            taskId: job.taskId,
-            provider: job.provider,
-        }), null)
-        : await waitLocalJobResultWithStatus({
-            homeDir,
-            jobId: job.jobId,
-            nonce: job.nonce,
-            timeoutMs: args.timeoutMs === undefined ? 60000 : Number(args.timeoutMs),
-            statusReporter,
-            taskId: job.taskId,
-        });
-    assertLocalJobSucceeded(result, statusReporter);
-    printPayload({
-        ok: true,
-        jobId: job.jobId,
-        taskId: job.taskId,
-        provider: job.provider,
-        taskUrl,
-        result,
-        snapshot: result?.result?.snapshot,
-        compactOutput: result?.compactOutput,
-        status: result?.status ?? statusReporter.lastStatus(),
-        statusLog: statusReporter.events,
-    }, args);
 }
 async function runCommand(args) {
     const prompt = await promptFromArgs(args);
-    const { extensionId } = resolveExtensionId(args);
+    await executeDaemonJob({ args, action: args.action || 'submit_and_read', prompt });
+}
+async function snapshotDomCommand(args) {
+    await executeDaemonJob({ args, action: 'snapshot_dom' });
+}
+async function executeDaemonJob({ args, action, prompt, }) {
     const homeDir = tokenlessHome(args.home);
     const config = await readTokenlessConfig(homeDir);
-    const { browser } = resolveBrowser(args, config);
+    const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined);
+    const provider = normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || 'chatgpt');
     const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME;
-    const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME;
-    const idempotencyKey = deriveTaskId({
+    const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined);
+    const taskId = deriveTaskId({
         projectName,
         chatName,
         idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
     });
-    const provider = args.provider ||
-        process.env.TOKENLESS_PROVIDER ||
-        config.preferredProviders[0] ||
-        'chatgpt';
-    const action = args.action || 'submit_and_read';
-    const readDelayMs = args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs);
-    const readTimeoutMs = args.readTimeoutMs === undefined ? 120000 : Number(args.readTimeoutMs);
-    const metadata = {
-        source: 'tokenless-cli',
-        browser,
-        profile: args.profile,
-        projectName,
-        chatName,
-        idempotencyKey,
-    };
     const statusReporter = createCliStatusReporter(args);
-    if (!args.noDaemon) {
-        const daemonResult = await tryRunWithDaemon({
+    try {
+        const daemon = await ensureDaemonReady({
+            homeDir,
+            daemonUrl: configuredDaemonUrl,
+            timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+        });
+        statusReporter.report({
+            event: daemon.started ? 'daemon_started' : 'daemon_ready',
+            status: 'ready',
+            daemonUrl: configuredDaemonUrl,
+            daemonPid: daemon.pid,
+        });
+        await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl });
+        const targetUrl = args.targetUrl
+            ? providerWakeUrl(provider, args.targetUrl)
+            : await mappedDaemonTarget({ homeDir, daemonUrl: configuredDaemonUrl, provider, taskId }) ?? providerWakeUrl(provider);
+        const selectedBrowser = args.browser ?? config.browser ?? undefined;
+        const bridge = await prepareExtensionBridge({
             args,
+            homeDir,
             provider,
-            action,
+            targetUrl,
+            selectedBrowser,
+            statusReporter,
+        });
+        const readDelayMs = args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs);
+        const readTimeoutMs = args.readTimeoutMs === undefined ? 120000 : Number(args.readTimeoutMs);
+        const requestJson = {
+            requestId: taskId,
+            taskId,
             prompt,
-            targetUrl: args.targetUrl,
-            idempotencyKey,
+            targetUrl,
+            idempotencyKey: taskId,
             readDelayMs,
             readTimeoutMs,
-            metadata,
-            homeDir,
-            projectName,
-            chatName,
-            statusReporter,
-        });
-        if (daemonResult) {
-            printPayload(daemonResult, args);
-            return;
-        }
-    }
-    const job = await createLocalJob({
-        homeDir,
-        provider,
-        action,
-        prompt,
-        projectRoot: args.projectRoot,
-        projectName,
-        chatName,
-        targetUrl: args.targetUrl,
-        idempotencyKey,
-        readDelayMs,
-        readTimeoutMs,
-        metadata,
-    });
-    statusReporter.report({
-        event: 'created',
-        status: job.status,
-        jobId: job.jobId,
-        taskId: job.taskId,
-        provider: job.provider,
-        action: job.action,
-        route: job.conversation?.route,
-    });
-    const taskUrl = buildTaskUrl({ extensionId, jobId: job.jobId, nonce: job.nonce });
-    if (taskUrl && !args.noOpen) {
-        await openUrl(taskUrl, { browser: browser ?? undefined });
-        statusReporter.report({
-            event: 'opened',
-            status: 'opened_task_page',
-            jobId: job.jobId,
-            taskId: job.taskId,
-            provider: job.provider,
-            browser,
-            taskUrl,
-        });
-    }
-    else {
-        statusReporter.report({
-            event: 'not_opened',
-            status: 'waiting_for_external_open',
-            jobId: job.jobId,
-            taskId: job.taskId,
-            provider: job.provider,
-            taskUrl,
-        });
-    }
-    const result = args.noWait
-        ? (statusReporter.report({
-            event: 'detached',
-            status: 'no_wait',
-            jobId: job.jobId,
-            taskId: job.taskId,
-            provider: job.provider,
-        }), null)
-        : await waitLocalJobResultWithStatus({
-            homeDir,
-            jobId: job.jobId,
-            nonce: job.nonce,
-            timeoutMs: args.timeoutMs === undefined ? 180000 : Number(args.timeoutMs),
-            statusReporter,
-            taskId: job.taskId,
-        });
-    assertLocalJobSucceeded(result, statusReporter);
-    const payload = {
-        ok: true,
-        jobId: job.jobId,
-        taskId: job.taskId,
-        provider: job.provider,
-        taskUrl,
-        requestPath: `${job.jobId}.request.json`,
-        projectName: job.projectName,
-        chatName: job.chatName,
-        idempotencyKey: job.idempotencyKey,
-        conversation: job.conversation,
-        result,
-        compactOutput: result?.compactOutput,
-        status: result?.status ?? statusReporter.lastStatus(),
-        statusLog: statusReporter.events,
-    };
-    printPayload(payload, args);
-}
-async function tryRunWithDaemon({ args, provider, action, prompt, targetUrl, idempotencyKey, readDelayMs, readTimeoutMs, metadata, homeDir, projectName, chatName, statusReporter, }) {
-    let job = null;
-    const configuredDaemonUrl = daemonUrl(args.daemonUrl);
-    try {
-        job = await createDaemonJob({
-            daemonUrl: configuredDaemonUrl,
-            provider,
-            action,
-            requestJson: {
-                requestId: idempotencyKey,
-                prompt,
-                targetUrl,
-                idempotencyKey,
-                readDelayMs,
-                readTimeoutMs,
-                metadata,
+            includeText: action === 'snapshot_dom' ? Boolean(args.includeText) : undefined,
+            maxTextChars: action === 'snapshot_dom' && args.maxTextChars !== undefined
+                ? Number(args.maxTextChars)
+                : undefined,
+            metadata: {
+                source: 'tokenless-cli',
+                browser: bridge.browser ?? normalizeBrowserId(selectedBrowser),
+                projectName,
+                chatName,
+                taskId,
+                idempotencyKey: taskId,
+                visibleSessionOnly: true,
             },
-        });
-        await writeTokenlessConfig({
-            homeDir,
+        };
+        assertNativeRequestSize({ provider, action, request_json: requestJson });
+        const job = await createDaemonJob({
             daemonUrl: configuredDaemonUrl,
+            homeDir,
+            provider,
+            action,
+            requestJson,
         });
-    }
-    catch (error) {
-        const cliError = error;
-        if (cliError.code !== 'daemon_unavailable') {
-            attachStatusLog(cliError, statusReporter);
-            throw error;
-        }
         statusReporter.report({
-            event: 'daemon_unavailable',
-            status: 'fallback_task_page',
-            taskId: idempotencyKey,
+            event: 'daemon_created',
+            status: job.status,
+            jobId: job.job_id,
+            taskId,
             provider,
             action,
         });
-        return null;
-    }
-    statusReporter.report({
-        event: 'daemon_created',
-        status: job.status,
-        jobId: job.job_id,
-        provider: job.provider,
-        action: job.action,
-    });
-    try {
         const result = args.noWait
             ? (statusReporter.report({
                 event: 'detached',
                 status: 'no_wait',
                 jobId: job.job_id,
+                taskId,
                 provider,
                 action,
             }), null)
-            : await waitDaemonJobResult({
+            : await waitForJobWithInterruptCancellation({
+                homeDir,
                 daemonUrl: configuredDaemonUrl,
                 jobId: job.job_id,
-                timeoutMs: args.timeoutMs === undefined ? 180000 : Number(args.timeoutMs),
-                onStatus: (event) => statusReporter.report(event),
+                timeoutMs: args.timeoutMs === undefined
+                    ? (action === 'snapshot_dom' ? 60_000 : 180_000)
+                    : Number(args.timeoutMs),
+                cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
+                statusReporter,
             });
         assertDaemonJobSucceeded(result, statusReporter);
-        return {
+        if (action === 'snapshot_dom' && result) {
+            const snapshot = await persistDaemonSnapshot({
+                homeDir,
+                jobId: job.job_id,
+                provider,
+                result: result.result,
+            });
+            printPayload({
+                ok: true,
+                transport: 'daemon',
+                jobId: job.job_id,
+                taskId,
+                provider,
+                snapshot,
+                compactOutput: snapshot.metadataPath,
+                status: result.status,
+                statusLog: statusReporter.events,
+            }, args);
+            return;
+        }
+        printPayload({
             ok: true,
             transport: 'daemon',
             jobId: job.job_id,
+            taskId,
             provider,
             projectName,
             chatName,
-            idempotencyKey,
-            result,
+            idempotencyKey: taskId,
+            result: publicDaemonResult(result),
             compactOutput: result?.compactOutput,
             status: result?.status ?? statusReporter.lastStatus(),
             statusLog: statusReporter.events,
-        };
+        }, args);
     }
     catch (error) {
-        const cliError = error;
-        statusReporter.report({
-            event: 'daemon_failed',
-            status: 'failed',
-            jobId: job.job_id,
-            provider,
-            action,
-            errorCode: cliError.code || 'daemon_error',
-            errorMessage: cliError.message || 'Daemon run failed.',
-            retryable: Boolean(cliError.retryable),
-        });
-        attachStatusLog(cliError, statusReporter);
-        throw cliError;
+        attachStatusLog(error, statusReporter);
+        throw error;
     }
 }
+async function prepareExtensionBridge({ args, homeDir, provider, targetUrl, selectedBrowser, statusReporter, }) {
+    const existing = await readLiveBridgeMarker({ homeDir });
+    if (existing) {
+        statusReporter.report({
+            event: 'bridge_ready',
+            status: 'ready',
+            provider,
+            bridgeSession: existing.sessionId,
+        });
+        return { marker: existing, browser: normalizeBrowserId(selectedBrowser), opened: false };
+    }
+    statusReporter.report({ event: 'bridge_missing', status: 'not_ready', provider });
+    if (args.noOpen) {
+        throw usageError('extension_bridge_unavailable', 'No live Tokenless extension bridge is connected. Remove --no-open so Tokenless can open only the selected provider page, or open that provider in the configured Chromium browser first.');
+    }
+    const browser = await resolveChromiumBrowser(selectedBrowser);
+    await openProviderUrl(targetUrl, browser);
+    statusReporter.report({
+        event: 'provider_opened',
+        status: 'waiting_for_bridge',
+        provider,
+        browser: browser.browser,
+        providerUrl: targetUrl,
+    });
+    await writeTokenlessConfig({ homeDir, browser: browser.browser });
+    const marker = await waitForExtensionBridge({
+        homeDir,
+        timeoutMs: args.bridgeTimeoutMs === undefined ? undefined : Number(args.bridgeTimeoutMs),
+    });
+    statusReporter.report({
+        event: 'bridge_ready',
+        status: 'ready',
+        provider,
+        browser: browser.browser,
+        bridgeSession: marker.sessionId,
+    });
+    return { marker, browser: browser.browser, opened: true };
+}
 async function stateCommand(args) {
-    const taskId = args.taskId || args.idempotencyKey || deriveTaskId({
+    const homeDir = tokenlessHome(args.home);
+    const config = await readTokenlessConfig(homeDir);
+    const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined);
+    await ensureDaemonReady({
+        homeDir,
+        daemonUrl: configuredDaemonUrl,
+        timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+    });
+    const requestedTaskId = args.taskId || args.idempotencyKey || deriveTaskId({
         projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
         chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
     });
-    const state = await readLocalTaskState({
-        homeDir: tokenlessHome(args.home),
-        taskId,
-        jobId: args.jobId,
-        provider: args.provider || process.env.TOKENLESS_PROVIDER,
-        projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
-        chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
-        limit: args.limit === undefined ? 10 : Number(args.limit),
-    });
+    if (!requestedTaskId && !args.jobId) {
+        throw usageError('missing_task_id', 'Usage: tokenless state requires --task-id or --job-id.');
+    }
+    const providerValue = args.provider || process.env.TOKENLESS_PROVIDER || (args.jobId ? undefined : config.preferredProviders[0] || 'chatgpt');
+    const provider = providerValue ? normalizeProvider(providerValue) : undefined;
+    const daemonJobs = args.jobId
+        ? [await getDaemonJob({ daemonUrl: configuredDaemonUrl, homeDir, jobId: args.jobId })]
+        : await listDaemonJobs({
+            daemonUrl: configuredDaemonUrl,
+            homeDir,
+            taskId: requestedTaskId,
+            provider,
+            limit: Math.max(1, Number(args.limit) || 10),
+        });
+    const jobs = daemonJobs
+        .map(publicDaemonJobState)
+        .filter((job) => {
+        if (requestedTaskId && job.taskId !== requestedTaskId)
+            return false;
+        if (provider && job.provider !== provider)
+            return false;
+        return true;
+    })
+        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+    if (jobs.length === 0) {
+        throw usageError('task_state_not_found', `No daemon-backed Tokenless task state found for ${requestedTaskId ?? args.jobId}.`);
+    }
+    const latest = jobs[0];
     printPayload({
         ok: true,
-        ...state,
+        protocol: 'tokenless.daemon-task-state.v1',
+        transport: 'daemon',
+        taskId: requestedTaskId ?? latest.taskId,
+        provider: provider ?? latest.provider,
+        latest,
+        jobs: jobs.slice(0, Math.max(1, Number(args.limit) || 10)),
+    }, args);
+}
+async function cancelCommand(args) {
+    if (!args.jobId)
+        throw usageError('missing_job_id', 'Usage: tokenless cancel --job-id <job-id>.');
+    const homeDir = tokenlessHome(args.home);
+    const config = await readTokenlessConfig(homeDir);
+    const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined);
+    await ensureDaemonReady({
+        homeDir,
+        daemonUrl: configuredDaemonUrl,
+        timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+    });
+    let job;
+    try {
+        job = await cancelDaemonJob({
+            homeDir,
+            daemonUrl: configuredDaemonUrl,
+            jobId: args.jobId,
+            reason: { code: 'user_requested' },
+            requestTimeoutMs: optionalNumber(args.cancelTimeoutMs),
+        });
+    }
+    catch (error) {
+        throw cancelFailure(args.jobId, error);
+    }
+    if (job.status !== 'canceled') {
+        throw cancelFailure(args.jobId, new Error(`daemon returned status ${String(job.status)}`));
+    }
+    printPayload({
+        ok: true,
+        transport: 'daemon',
+        jobId: job.job_id,
+        status: job.status,
+        error: job.error_json,
     }, args);
 }
 async function installCommand(args) {
-    const { extensionId } = resolveExtensionId(args);
     const homeDir = tokenlessHome(args.home);
     const config = await readTokenlessConfig(homeDir);
-    const { browser } = resolveBrowser(args, config);
-    const result = await installNativeHost({
+    const { extensionId, source: extensionIdSource } = resolveInstallExtensionId(args);
+    const requestedBrowsers = args.browsers === undefined
+        ? [args.browser ?? config.browser ?? undefined]
+        : parseList(args.browsers);
+    const resolvedBrowsers = [];
+    for (const requested of requestedBrowsers) {
+        const browser = await resolveChromiumBrowser(requested);
+        if (!resolvedBrowsers.includes(browser.browser))
+            resolvedBrowsers.push(browser.browser);
+    }
+    const installed = await installRustRuntime({
         homeDir,
+        manifestHome: args.manifestHome,
         extensionId,
-        browsers: browser ? [browser] : undefined,
+        browsers: resolvedBrowsers,
+    });
+    const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined);
+    await writeTokenlessConfig({
+        homeDir,
+        browser: resolvedBrowsers[0],
+        daemonUrl: configuredDaemonUrl,
+    });
+    const daemon = await ensureDaemonReady({
+        homeDir,
+        daemonUrl: configuredDaemonUrl,
+        timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
     });
     printPayload({
         ok: true,
-        nativeHost: result,
-        extensionInstalled: Boolean(extensionId),
-        nextStep: result.manifests.length === 0
-            ? 'Install the extension, then rerun with --extension-id <id>.'
-            : 'Keep the Tokenless extension enabled; daemon jobs run from the background service worker.',
+        runtime: 'rust',
+        extensionIdSource,
+        browser: resolvedBrowsers[0],
+        browsers: resolvedBrowsers,
+        daemon: {
+            ready: true,
+            started: daemon.started,
+            url: configuredDaemonUrl,
+            pid: daemon.pid,
+            executable: installed.daemonExecutable,
+        },
+        nativeHost: {
+            runtime: 'rust',
+            protocol: NATIVE_PROTOCOL,
+            executable: installed.nativeHostExecutable,
+            manifests: installed.manifests,
+            registryCommands: installed.registryCommands,
+            allowedOrigin: installed.allowedOrigin,
+        },
+        nextStep: 'Keep the Tokenless extension enabled. Run npx tokenless run; it opens only the selected provider UI when the bridge needs waking.',
     }, args);
 }
 async function doctorCommand(args) {
     const homeDir = tokenlessHome(args.home);
-    const config = await readTokenlessConfig(homeDir);
+    let runtimeRefresh;
+    try {
+        const refreshed = await refreshInstalledRustBinaries({ homeDir });
+        runtimeRefresh = { ok: true, refreshed };
+    }
+    catch (error) {
+        runtimeRefresh = { ok: false, refreshed: [], message: error instanceof Error ? error.message : String(error) };
+    }
+    let config = { preferredProviders: [], browser: null, daemonUrl: null };
+    let configCheck;
+    try {
+        config = await readTokenlessConfig(homeDir);
+        configCheck = { ok: true, path: `${homeDir}/config.json`, value: config };
+    }
+    catch (error) {
+        configCheck = {
+            ok: false,
+            path: `${homeDir}/config.json`,
+            message: error instanceof Error ? error.message : String(error),
+        };
+    }
+    let configuredDaemonUrl = DEFAULT_DAEMON_URL;
+    let daemonUrlCheck;
+    try {
+        configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined);
+        daemonUrlCheck = { ok: true, url: configuredDaemonUrl };
+    }
+    catch (error) {
+        daemonUrlCheck = {
+            ok: false,
+            url: args.daemonUrl ?? config.daemonUrl,
+            message: error instanceof Error ? error.message : String(error),
+        };
+    }
+    const browserId = args.browser ?? config.browser ?? undefined;
+    const binaries = await inspectRustBinaries(homeDir);
+    const manifests = await inspectNativeHostManifests({
+        homeDir,
+        manifestHome: args.manifestHome,
+        browsers: browserId ? [String(browserId)] : ['chrome'],
+    });
+    const bridge = await readLiveBridgeMarker({ homeDir });
+    let browser;
+    try {
+        const resolved = await resolveChromiumBrowser(browserId);
+        browser = { ok: true, id: resolved.browser, displayName: resolved.displayName };
+    }
+    catch (error) {
+        browser = { ok: false, id: normalizeBrowserId(browserId), message: error.message };
+    }
+    let daemon;
+    try {
+        const ready = await ensureDaemonReady({
+            homeDir,
+            daemonUrl: configuredDaemonUrl,
+            timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+        });
+        daemon = {
+            ok: true,
+            ready: true,
+            url: configuredDaemonUrl,
+            homeDir: ready.actualHome,
+            daemonProtocol: ready.body?.daemon_protocol,
+            nativeProtocol: ready.body?.native_protocol,
+            version: ready.body?.version,
+            pid: ready.pid,
+        };
+    }
+    catch (error) {
+        daemon = { ok: false, ready: false, url: configuredDaemonUrl, message: error.message };
+    }
     const nodeOk = Number(process.versions.node.split('.')[0]) >= 22;
-    const { extensionId, source: extensionIdSource } = resolveExtensionId(args);
-    const { browser, source: browserSource } = resolveBrowser(args, config);
+    const checks = {
+        node: { ok: nodeOk, version: process.version, required: '>=22' },
+        tokenlessHome: { ok: true, path: homeDir },
+        runtimeRefresh,
+        rustBinaries: binaries,
+        daemon,
+        nativeHostManifests: manifests,
+        browser,
+        config: configCheck,
+        daemonUrlConfiguration: daemonUrlCheck,
+        extensionBridge: bridge
+            ? { ok: true, path: bridge.path, protocol: bridge.protocol, pid: bridge.pid, sessionId: bridge.sessionId, heartbeatAgeMs: bridge.heartbeatAgeMs }
+            : { ok: false, status: 'not_connected', message: 'Open the configured provider page to wake the extension bridge.' },
+    };
+    const ok = Object.values(checks).every((check) => check.ok === true);
     printPayload({
-        ok: nodeOk && Boolean(extensionId),
-        checks: {
-            node: { ok: nodeOk, version: process.version, required: '>=22' },
-            tokenlessHome: { ok: true, path: homeDir },
-            extensionId: {
-                ok: Boolean(extensionId),
-                extensionId,
-                source: extensionIdSource,
-            },
-            browser: {
-                ok: true,
-                browser,
-                source: browserSource,
-            },
-        },
+        ok,
+        runtime: 'rust',
+        checks,
     }, args);
+    if (!ok)
+        process.exitCode = 1;
 }
 async function configCommand(args) {
     const homeDir = tokenlessHome(args.home);
-    if (args.preferredProviders !== undefined || args.browser !== undefined) {
+    if (args.preferredProviders !== undefined || args.browser !== undefined || args.daemonUrl !== undefined) {
         const browser = args.browser === undefined ? undefined : normalizeCliBrowser(args.browser);
         const config = await writeTokenlessConfig({
             homeDir,
             preferredProviders: args.preferredProviders === undefined ? undefined : parseProviderList(args.preferredProviders),
             browser,
+            daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
         });
-        printPayload({
-            ok: true,
-            configPath: `${homeDir}/config.json`,
-            config,
-        }, args);
+        printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args);
         return;
     }
     const config = await readTokenlessConfig(homeDir);
-    printPayload({
-        ok: true,
-        configPath: `${homeDir}/config.json`,
-        config,
-    }, args);
+    printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args);
 }
 async function promptCommand(args) {
     const prompt = await promptFromArgs(args);
-    if (args.output) {
+    if (args.output)
         await fs.writeFile(args.output, `${prompt}\n`, 'utf8');
-    }
-    else {
+    else
         console.log(prompt);
-    }
 }
 async function promptFromArgs(args) {
-    const userPrompt = args.promptFile
-        ? await fs.readFile(args.promptFile, 'utf8')
-        : args.prompt;
+    const userPrompt = args.promptFile ? await fs.readFile(args.promptFile, 'utf8') : args.prompt;
     if (!userPrompt) {
         throw usageError('missing_prompt', 'Usage: tokenless run --prompt-file <path> or --prompt <text>.');
     }
@@ -480,251 +514,139 @@ async function promptFromArgs(args) {
         turnContext,
     });
 }
-function parseArgs(argv) {
-    const parsed = { files: [] };
-    for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const next = argv[index + 1];
-        if (arg === '--prompt') {
-            parsed.prompt = next;
-            index += 1;
+async function mappedDaemonTarget({ homeDir, daemonUrl, provider, taskId, }) {
+    if (!taskId)
+        return null;
+    const jobs = await listDaemonJobs({ homeDir, daemonUrl, provider, taskId, limit: 1000 });
+    for (const job of jobs) {
+        if (job.provider !== provider || daemonTaskId(job) !== taskId)
+            continue;
+        const candidate = resultUrl(job.result_json);
+        if (!candidate)
+            continue;
+        try {
+            return providerWakeUrl(provider, candidate);
         }
-        else if (arg === '--prompt-file') {
-            parsed.promptFile = next;
-            index += 1;
-        }
-        else if (arg === '--project-root') {
-            parsed.projectRoot = next;
-            index += 1;
-        }
-        else if (arg === '--project-name') {
-            parsed.projectName = next;
-            index += 1;
-        }
-        else if (arg === '--chat-name') {
-            parsed.chatName = next;
-            index += 1;
-        }
-        else if (arg === '--file') {
-            if (next !== undefined) {
-                parsed.files.push(next);
-            }
-            index += 1;
-        }
-        else if (arg === '--context') {
-            parsed.context = next;
-            index += 1;
-        }
-        else if (arg === '--context-file') {
-            parsed.contextFile = next;
-            index += 1;
-        }
-        else if (arg === '--turn-context') {
-            parsed.context = next;
-            index += 1;
-        }
-        else if (arg === '--turn-context-file') {
-            parsed.turnContextFile = next;
-            index += 1;
-        }
-        else if (arg === '--output') {
-            parsed.output = next;
-            index += 1;
-        }
-        else if (arg === '--provider') {
-            parsed.provider = next;
-            index += 1;
-        }
-        else if (arg === '--preferred-providers') {
-            parsed.preferredProviders = next;
-            index += 1;
-        }
-        else if (arg === '--action') {
-            parsed.action = next;
-            index += 1;
-        }
-        else if (arg === '--target-url') {
-            parsed.targetUrl = next;
-            index += 1;
-        }
-        else if (arg === '--idempotency-key' || arg === '--conversation-key') {
-            parsed.idempotencyKey = next;
-            index += 1;
-        }
-        else if (arg === '--task-id') {
-            parsed.taskId = next;
-            index += 1;
-        }
-        else if (arg === '--job-id') {
-            parsed.jobId = next;
-            index += 1;
-        }
-        else if (arg === '--limit') {
-            parsed.limit = next;
-            index += 1;
-        }
-        else if (arg === '--extension-id') {
-            parsed.extensionId = next;
-            index += 1;
-        }
-        else if (arg === '--browser') {
-            parsed.browser = next;
-            index += 1;
-        }
-        else if (arg === '--profile') {
-            parsed.profile = next;
-            index += 1;
-        }
-        else if (arg === '--home') {
-            parsed.home = next;
-            index += 1;
-        }
-        else if (arg === '--daemon-url') {
-            parsed.daemonUrl = next;
-            index += 1;
-        }
-        else if (arg === '--timeout-ms') {
-            parsed.timeoutMs = next;
-            index += 1;
-        }
-        else if (arg === '--read-delay-ms') {
-            parsed.readDelayMs = next;
-            index += 1;
-        }
-        else if (arg === '--read-timeout-ms') {
-            parsed.readTimeoutMs = next;
-            index += 1;
-        }
-        else if (arg === '--max-text-chars') {
-            parsed.maxTextChars = next;
-            index += 1;
-        }
-        else if (arg === '--include-text') {
-            parsed.includeText = true;
-        }
-        else if (arg === '--json') {
-            parsed.json = true;
-        }
-        else if (arg === '--quiet') {
-            parsed.quiet = true;
-        }
-        else if (arg === '--no-open') {
-            parsed.noOpen = true;
-        }
-        else if (arg === '--no-wait') {
-            parsed.noWait = true;
-        }
-        else if (arg === '--no-daemon') {
-            parsed.noDaemon = true;
+        catch {
+            // Never open an untrusted URL recovered from job metadata.
         }
     }
-    return parsed;
-}
-async function openUrl(url, { browser } = {}) {
-    const { command, args } = openCommand(url, { browser });
-    await new Promise((resolve, reject) => {
-        const child = spawn(command, args, { stdio: 'ignore', detached: true });
-        child.on('error', reject);
-        child.on('spawn', () => {
-            child.unref();
-            resolve();
-        });
-    });
-}
-function openCommand(url, { browser } = {}) {
-    if (process.platform === 'darwin') {
-        const app = macBrowserApp(browser, url);
-        return app
-            ? { command: 'open', args: ['-a', app, url] }
-            : { command: 'open', args: [url] };
-    }
-    if (process.platform === 'win32') {
-        return { command: 'cmd', args: ['/c', 'start', '', url] };
-    }
-    const linuxCommand = linuxBrowserCommand(browser);
-    if (linuxCommand) {
-        return { command: linuxCommand, args: [url] };
-    }
-    return { command: 'xdg-open', args: [url] };
-}
-function macBrowserApp(browser, url) {
-    const normalized = normalizeBrowserId(browser);
-    if (normalized === 'arc')
-        return 'Arc';
-    if (normalized === 'edge')
-        return 'Microsoft Edge';
-    if (normalized === 'brave')
-        return 'Brave Browser';
-    if (normalized === 'chrome')
-        return 'Google Chrome';
-    if (normalized === 'chrome-for-testing' || normalized === 'chrome-for-testing-legacy')
-        return 'Google Chrome for Testing';
-    if (normalized === 'chromium')
-        return 'Chromium';
-    if (url.startsWith('chrome-extension://'))
-        return 'Google Chrome';
     return null;
 }
-function linuxBrowserCommand(browser) {
-    const normalized = normalizeBrowserId(browser);
-    if (normalized === 'chrome')
-        return 'google-chrome';
-    if (normalized === 'chrome-for-testing' || normalized === 'chrome-for-testing-legacy')
-        return 'google-chrome-for-testing';
-    if (normalized === 'chromium')
-        return 'chromium';
-    if (normalized === 'edge')
-        return 'microsoft-edge';
-    if (normalized === 'brave')
-        return 'brave-browser';
-    return null;
+function publicDaemonJobState(job) {
+    const request = objectRecord(job.request_json);
+    const metadata = objectRecord(request.metadata);
+    return {
+        jobId: job.job_id,
+        taskId: daemonTaskId(job),
+        provider: job.provider,
+        action: job.action,
+        projectName: metadata.projectName,
+        chatName: metadata.chatName,
+        targetUrl: safeStateTarget(job.provider, request.targetUrl),
+        createdAt: job.created_at,
+        updatedAt: job.updated_at,
+        status: job.status,
+        state: {
+            status: job.status,
+            actor: 'tokenless-daemon',
+            updatedAt: job.updated_at,
+            error: job.error_json,
+        },
+        result: job.result_json === null && job.error_json === null
+            ? null
+            : { ok: job.status === 'succeeded', value: job.result_json, error: job.error_json },
+        error: job.error_json,
+    };
 }
-function printPayload(payload, args) {
-    if (args.json) {
-        console.log(JSON.stringify(payload, null, 2));
-        return;
-    }
-    if (payload.compactOutput) {
-        console.log(payload.compactOutput);
-        return;
-    }
-    console.log(JSON.stringify(payload, null, 2));
+function daemonTaskId(job) {
+    const request = objectRecord(job.request_json);
+    const metadata = objectRecord(request.metadata);
+    const value = request.taskId ?? request.idempotencyKey ?? request.requestId ?? metadata.taskId ?? metadata.idempotencyKey;
+    return typeof value === 'string' ? value : undefined;
 }
-async function waitLocalJobResultWithStatus({ homeDir, jobId, nonce, timeoutMs, statusReporter, taskId, }) {
+function safeStateTarget(provider, value) {
+    if (typeof value !== 'string')
+        return undefined;
     try {
-        return await waitLocalJobResult({
-            homeDir,
-            jobId,
-            nonce,
-            timeoutMs,
-            onStatus: (event) => statusReporter.report({ ...event, taskId }),
-        });
+        return providerWakeUrl(provider, value);
     }
-    catch (error) {
-        const cliError = error;
-        cliError.status = statusReporter.lastStatus();
-        cliError.statusLog = statusReporter.events;
-        throw cliError;
+    catch {
+        return undefined;
     }
 }
-function assertLocalJobSucceeded(result, statusReporter) {
-    if (!result || result.ok !== false) {
-        return;
+function resultUrl(value) {
+    if (!value || typeof value !== 'object')
+        return null;
+    const result = value;
+    const candidate = result.read?.url ?? result.url ?? result.textUrl ?? result.submit?.url ?? result.result?.read?.url ?? result.result?.url;
+    return typeof candidate === 'string' ? candidate : null;
+}
+async function waitForJobWithInterruptCancellation({ homeDir, daemonUrl, jobId, timeoutMs, cancelTimeoutMs, statusReporter, }) {
+    let interrupted = false;
+    let interruptReject;
+    const interrupt = new Promise((_resolve, reject) => { interruptReject = reject; });
+    const waitAbort = new AbortController();
+    const neverSettles = new Promise(() => undefined);
+    const onSignal = (signal) => {
+        if (interrupted)
+            return;
+        interrupted = true;
+        waitAbort.abort();
+        statusReporter.report({ event: 'cancel_requested', status: 'canceling', jobId, signal });
+        void cancelDaemonJob({
+            homeDir,
+            daemonUrl,
+            jobId,
+            reason: { code: 'signal', signal },
+            requestTimeoutMs: cancelTimeoutMs,
+        })
+            .then((job) => {
+            if (job.status !== 'canceled')
+                throw new Error(`daemon returned status ${job.status}`);
+            statusReporter.report({ event: 'cancel_confirmed', status: 'canceled', jobId, signal });
+            const error = usageError('job_interrupted', `Tokenless job ${jobId} cancellation was confirmed after ${signal}.`);
+            error.retryable = true;
+            interruptReject?.(error);
+        })
+            .catch((cancelError) => {
+            statusReporter.report({ event: 'cancel_failed', status: 'may_still_be_running', jobId, signal });
+            interruptReject?.(cancelFailure(jobId, cancelError, signal));
+        });
+    };
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+    try {
+        const guardedWait = waitDaemonJobResult({
+            homeDir,
+            daemonUrl,
+            jobId,
+            timeoutMs,
+            signal: waitAbort.signal,
+            onStatus: (event) => statusReporter.report(event),
+        }).then((result) => interrupted ? neverSettles : result, (error) => interrupted ? neverSettles : Promise.reject(error));
+        return await Promise.race([
+            guardedWait,
+            interrupt,
+        ]);
     }
-    const error = new Error(result.error?.message || `Local Tokenless job failed: ${result.status || 'failed'}`);
-    error.code = result.error?.code || result.status || 'local_job_failed';
-    error.retryable = Boolean(result.error?.retryable);
-    error.status = result.status ?? statusReporter.lastStatus();
-    error.statusLog = statusReporter.events;
-    throw error;
+    finally {
+        waitAbort.abort();
+        process.removeListener('SIGINT', onSignal);
+        process.removeListener('SIGTERM', onSignal);
+    }
+}
+function cancelFailure(jobId, cause, signal) {
+    const context = signal ? ` after ${signal}` : '';
+    const detail = cause instanceof Error && cause.message ? ` ${cause.message}` : '';
+    const error = usageError('job_cancel_failed', `Cancellation was not confirmed for Tokenless job ${jobId}${context}; the job may still be running or may already have completed.${detail}`);
+    error.retryable = true;
+    return error;
 }
 function assertDaemonJobSucceeded(result, statusReporter) {
-    if (!result || result.ok !== false) {
+    if (!result || result.ok !== false)
         return;
-    }
-    const errorPayload = result.error && typeof result.error === 'object'
-        ? result.error
-        : {};
+    const errorPayload = objectRecord(result.error);
     const error = new Error(String(errorPayload.message || `Daemon Tokenless job failed: ${result.status || 'failed'}`));
     error.code = String(errorPayload.code || result.status || 'daemon_job_failed');
     error.retryable = Boolean(errorPayload.retryable);
@@ -732,109 +654,98 @@ function assertDaemonJobSucceeded(result, statusReporter) {
     error.statusLog = statusReporter.events;
     throw error;
 }
-function attachStatusLog(error, statusReporter) {
-    const status = statusReporter.lastStatus();
-    if (status !== undefined) {
-        error.status = status;
-    }
-    error.statusLog = statusReporter.events;
-}
-function createCliStatusReporter(args) {
-    const startedAt = Date.now();
-    const events = [];
-    const report = (event) => {
-        const normalized = normalizeStatusEvent(event, startedAt);
-        events.push(normalized);
-        if (!args.json && !args.quiet) {
-            console.log(formatStatusEvent(normalized));
-        }
-    };
+function publicDaemonResult(result) {
+    if (!result)
+        return null;
     return {
-        events,
-        report,
-        lastStatus() {
-            return events.at(-1)?.status;
-        },
+        ok: result.ok,
+        status: result.status,
+        result: result.result,
+        error: result.error,
     };
 }
-function normalizeStatusEvent(event, startedAt) {
-    const now = new Date();
-    const elapsedMs = Number.isFinite(event.elapsedMs) ? event.elapsedMs : now.getTime() - startedAt;
-    return {
-        at: now.toISOString(),
-        event: event.event || event.type || 'status',
-        status: event.status,
-        jobId: event.jobId,
-        taskId: event.taskId,
-        provider: event.provider ?? event.detail?.provider,
-        action: event.action,
-        route: event.route,
-        actor: event.actor,
-        browser: event.browser,
-        taskUrl: event.taskUrl,
-        errorCode: event.errorCode,
-        errorMessage: event.errorMessage,
-        retryable: event.retryable,
-        elapsedMs,
-    };
+function assertNativeRequestSize(value) {
+    const bytes = Buffer.byteLength(JSON.stringify(value), 'utf8');
+    if (bytes <= MAX_NATIVE_MESSAGE_BYTES)
+        return;
+    throw usageError('native_message_too_large', `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes so Chrome native messaging can deliver it. Attach fewer or smaller files.`);
 }
-function formatStatusEvent(event) {
-    const parts = ['[tokenless]', event.event];
-    for (const [key, value] of [
-        ['status', event.status],
-        ['provider', event.provider],
-        ['action', event.action],
-        ['route', event.route],
-        ['taskId', event.taskId],
-        ['actor', event.actor],
-        ['browser', event.browser],
-        ['errorCode', event.errorCode],
-        ['errorMessage', event.errorMessage],
-        ['retryable', event.retryable],
-        ['elapsed', formatElapsed(event.elapsedMs)],
-    ]) {
-        if (value !== undefined && value !== null && value !== '') {
-            parts.push(`${key}=${formatStatusValue(value)}`);
+function parseArgs(argv) {
+    const parsed = { files: [] };
+    const valueFlags = {
+        '--prompt': 'prompt',
+        '--prompt-file': 'promptFile',
+        '--project-root': 'projectRoot',
+        '--project-name': 'projectName',
+        '--chat-name': 'chatName',
+        '--context': 'context',
+        '--context-file': 'contextFile',
+        '--turn-context': 'context',
+        '--turn-context-file': 'turnContextFile',
+        '--output': 'output',
+        '--provider': 'provider',
+        '--preferred-providers': 'preferredProviders',
+        '--action': 'action',
+        '--target-url': 'targetUrl',
+        '--idempotency-key': 'idempotencyKey',
+        '--conversation-key': 'idempotencyKey',
+        '--task-id': 'taskId',
+        '--job-id': 'jobId',
+        '--limit': 'limit',
+        '--extension-id': 'extensionId',
+        '--browser': 'browser',
+        '--browsers': 'browsers',
+        '--manifest-home': 'manifestHome',
+        '--home': 'home',
+        '--daemon-url': 'daemonUrl',
+        '--timeout-ms': 'timeoutMs',
+        '--daemon-start-timeout-ms': 'daemonStartTimeoutMs',
+        '--cancel-timeout-ms': 'cancelTimeoutMs',
+        '--bridge-timeout-ms': 'bridgeTimeoutMs',
+        '--read-delay-ms': 'readDelayMs',
+        '--read-timeout-ms': 'readTimeoutMs',
+        '--max-text-chars': 'maxTextChars',
+    };
+    const booleanFlags = {
+        '--include-text': 'includeText',
+        '--json': 'json',
+        '--quiet': 'quiet',
+        '--no-open': 'noOpen',
+        '--no-wait': 'noWait',
+    };
+    for (let index = 0; index < argv.length; index += 1) {
+        const arg = argv[index];
+        if (arg === '--file') {
+            const value = requireFlagValue(argv, index, arg);
+            parsed.files.push(value);
+            index += 1;
+            continue;
         }
+        const key = valueFlags[arg];
+        if (key) {
+            parsed[key] = requireFlagValue(argv, index, arg);
+            index += 1;
+            continue;
+        }
+        const booleanKey = booleanFlags[arg];
+        if (booleanKey) {
+            parsed[booleanKey] = true;
+            continue;
+        }
+        throw usageError(arg === '--no-daemon' ? 'daemon_only' : 'unknown_argument', arg === '--no-daemon'
+            ? 'Tokenless is daemon-only; --no-daemon and local task-page fallback were removed.'
+            : `Unknown Tokenless argument: ${arg}`);
     }
-    if (event.jobId) {
-        parts.push(`job=${shortJobId(event.jobId)}`);
+    return parsed;
+}
+function requireFlagValue(argv, index, flag) {
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith('--')) {
+        throw usageError('missing_argument_value', `${flag} requires a value.`);
     }
-    if (event.taskUrl && (event.event === 'opened' || event.event === 'not_opened')) {
-        parts.push(`taskUrl=${event.taskUrl}`);
-    }
-    return parts.join(' ');
+    return value;
 }
-function formatStatusValue(value) {
-    const text = String(value);
-    return /\s/.test(text) ? JSON.stringify(text) : text;
-}
-function formatElapsed(elapsedMs) {
-    const value = Number(elapsedMs);
-    if (!Number.isFinite(value))
-        return undefined;
-    return `${Math.max(0, Math.round(value / 1000))}s`;
-}
-function shortJobId(jobId) {
-    return String(jobId).slice(0, 8);
-}
-function usage() {
-    console.error([
-        'Usage:',
-        '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --context-file <file> --json',
-        '  tokenless state --task-id <task-id> --json',
-        '  tokenless snapshot-dom --provider chatgpt --extension-id <chrome-extension-id> --json',
-        '  tokenless config --preferred-providers claude,chatgpt,gemini --browser brave --json',
-        '  tokenless install --extension-id <chrome-extension-id> --json',
-        '  tokenless doctor --json',
-    ].join('\n'));
-}
-function usageError(code, message) {
-    const error = new Error(message);
-    error.code = code;
-    return error;
-}
-function resolveExtensionId(args) {
+function resolveInstallExtensionId(args) {
     const candidates = [
         ['argument', args.extensionId],
         ['environment', process.env.TOKENLESS_EXTENSION_ID],
@@ -849,34 +760,130 @@ function resolveExtensionId(args) {
         }
         return { extensionId, source };
     }
-    throw usageError('missing_extension_id', 'Usage: tokenless requires --extension-id <id>, TOKENLESS_EXTENSION_ID, or a bundled default extension id.');
+    throw usageError('missing_extension_id', 'Tokenless install needs a Chrome extension id.');
 }
-function resolveBrowser(args, config = {}) {
-    if (args.browser !== undefined) {
-        return { browser: normalizeCliBrowser(args.browser), source: 'argument' };
-    }
-    if (config.browser) {
-        return { browser: normalizeCliBrowser(config.browser), source: 'config' };
-    }
-    return { browser: null, source: 'default' };
+function normalizeExtensionId(value) {
+    if (typeof value !== 'string')
+        return null;
+    const normalized = value.trim().toLowerCase();
+    return /^[a-p]{32}$/.test(normalized) ? normalized : null;
 }
 function normalizeCliBrowser(browser) {
     const browserId = normalizeBrowserId(browser);
-    if (!browserId) {
+    if (!browserId || browserId === 'profile') {
         throw usageError('invalid_browser', 'Browser must be one of: chrome, chrome-for-testing, chromium, edge, arc, brave.');
     }
     return browserId;
 }
-function normalizeExtensionId(extensionId) {
-    if (typeof extensionId !== 'string')
-        return null;
-    const normalized = extensionId.trim().toLowerCase();
-    return /^[a-p]{32}$/.test(normalized) ? normalized : null;
+function normalizeProvider(provider) {
+    const normalized = String(provider).trim().toLowerCase();
+    if (!['chatgpt', 'claude', 'gemini'].includes(normalized)) {
+        throw usageError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini.');
+    }
+    return normalized;
 }
 function parseProviderList(value) {
-    return String(value)
-        .split(',')
-        .map((provider) => provider.trim())
-        .filter(Boolean);
+    return parseList(value).map(normalizeProvider);
+}
+function parseList(value) {
+    return [...new Set(String(value).split(',').map((entry) => entry.trim()).filter(Boolean))];
+}
+function createCliStatusReporter(args) {
+    const startedAt = Date.now();
+    const events = [];
+    const report = (event) => {
+        const normalized = normalizeStatusEvent(event, startedAt);
+        events.push(normalized);
+        if (!args.json && !args.quiet)
+            console.log(formatStatusEvent(normalized));
+    };
+    return { events, report, lastStatus: () => events.at(-1)?.status };
+}
+function normalizeStatusEvent(event, startedAt) {
+    const now = new Date();
+    return {
+        at: now.toISOString(),
+        event: event.event || event.type || 'status',
+        status: event.status,
+        jobId: event.jobId,
+        taskId: event.taskId,
+        provider: event.provider ?? event.detail?.provider,
+        action: event.action,
+        browser: event.browser,
+        providerUrl: event.providerUrl,
+        daemonUrl: event.daemonUrl,
+        daemonPid: event.daemonPid,
+        bridgeSession: event.bridgeSession,
+        actor: event.actor,
+        errorCode: event.errorCode,
+        errorMessage: event.errorMessage,
+        retryable: event.retryable,
+        elapsedMs: Number.isFinite(event.elapsedMs) ? event.elapsedMs : now.getTime() - startedAt,
+    };
+}
+function formatStatusEvent(event) {
+    const parts = ['[tokenless]', event.event];
+    for (const [key, value] of [
+        ['status', event.status],
+        ['provider', event.provider],
+        ['action', event.action],
+        ['taskId', event.taskId],
+        ['browser', event.browser],
+        ['url', event.providerUrl],
+        ['errorCode', event.errorCode],
+        ['elapsed', formatElapsed(event.elapsedMs)],
+    ]) {
+        if (value !== undefined && value !== null && value !== '')
+            parts.push(`${key}=${formatStatusValue(value)}`);
+    }
+    if (event.jobId)
+        parts.push(`job=${String(event.jobId).slice(0, 8)}`);
+    return parts.join(' ');
+}
+function printPayload(payload, args) {
+    if (args.json)
+        console.log(JSON.stringify(payload, null, 2));
+    else if (payload.compactOutput)
+        console.log(payload.compactOutput);
+    else
+        console.log(JSON.stringify(payload, null, 2));
+}
+function attachStatusLog(error, statusReporter) {
+    const status = statusReporter.lastStatus();
+    if (status !== undefined)
+        error.status = status;
+    error.statusLog = statusReporter.events;
+}
+function usage() {
+    console.error([
+        'Usage:',
+        '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
+        '  tokenless state --task-id <task-id> --json',
+        '  tokenless cancel --job-id <job-id> --json',
+        '  tokenless snapshot-dom --provider chatgpt --json',
+        '  tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json',
+        '  tokenless install [--extension-id <chrome-extension-id>] --json',
+        '  tokenless doctor --json',
+    ].join('\n'));
+}
+function usageError(code, message) {
+    const error = new Error(message);
+    error.code = code;
+    error.retryable = false;
+    return error;
+}
+function optionalNumber(value) {
+    return value === undefined ? undefined : Number(value);
+}
+function objectRecord(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+function formatStatusValue(value) {
+    const text = String(value);
+    return /\s/.test(text) ? JSON.stringify(text) : text;
+}
+function formatElapsed(value) {
+    const milliseconds = Number(value);
+    return Number.isFinite(milliseconds) ? `${Math.max(0, Math.round(milliseconds / 1000))}s` : undefined;
 }
 //# sourceMappingURL=tokenless.mjs.map

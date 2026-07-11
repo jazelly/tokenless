@@ -8,8 +8,7 @@
   "exports": {
     ".": "./dist/src/index.js",
     "./protocol": "./dist/src/protocol.js",
-    "./providers": "./dist/src/providers.js",
-    "./web-client": "./dist/src/web-client.js"
+    "./providers": "./dist/src/providers.js"
   },
   "files": [
     "dist/extension",

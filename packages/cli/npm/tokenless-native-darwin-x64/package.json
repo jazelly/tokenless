@@ -1,0 +1,29 @@
+{
+  "name": "tokenless-native-darwin-x64",
+  "version": "0.1.1",
+  "description": "Tokenless Rust runtime for darwin-x64.",
+  "license": "UNLICENSED",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/verify-native-package.mjs"
+  },
+  "tokenlessRuntime": {
+    "protocol": "tokenless.native-package.v1",
+    "platform": "darwin",
+    "arch": "x64"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

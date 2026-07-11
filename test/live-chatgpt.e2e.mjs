@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -6,7 +7,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionPath = path.join(root, 'packages/extension/extension')
+const extensionPath = path.join(root, 'packages/extension/dist/extension')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-live-chatgpt', 'runs')
 
 test('live ChatGPT DOM is driven by Tokenless extension without fixture routing', {
@@ -15,12 +16,12 @@ test('live ChatGPT DOM is driven by Tokenless extension without fixture routing'
 }, async () => {
   const { chromium } = await import('playwright')
   const {
-    createLocalJob,
     installNativeHost,
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
-    waitLocalJobResult,
+    readLiveBridgeMarker,
   } = await import('../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
 
   const artifactDir = await createArtifactDir()
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-live-chatgpt-'))
@@ -34,14 +35,9 @@ test('live ChatGPT DOM is driven by Tokenless extension without fixture routing'
   ].join('\n')
   const events = []
   let manifestBackup = []
-  let context = await launchTokenlessContext(chromium, userDataDir, tokenlessHome)
+  let context = null
 
   try {
-    const extensionId = await discoverExtensionId(context)
-    events.push({ at: new Date().toISOString(), event: 'extension_discovered', extensionId })
-    await context.close()
-    context = null
-
     const manifestHome = userDataDir
     const browsers = ['profile']
     manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
@@ -50,106 +46,115 @@ test('live ChatGPT DOM is driven by Tokenless extension without fixture routing'
     const installed = await installNativeHost({
       homeDir: tokenlessHome,
       manifestHome,
-      extensionId,
+      extensionId: DEFAULT_EXTENSION_ID,
       browsers,
     })
     events.push({
       at: new Date().toISOString(),
       event: 'native_host_installed',
       manifests: installed.manifests,
-      executable: installed.executable,
+      executable: installed.nativeHostExecutable,
     })
 
     context = await launchTokenlessContext(chromium, userDataDir, tokenlessHome)
-    const providerPage = await context.newPage()
-    await providerPage.goto('https://chatgpt.com/', { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await providerPage.screenshot({ path: path.join(artifactDir, '01-real-chatgpt-opened.png'), fullPage: true })
-    await fs.writeFile(path.join(artifactDir, '01-real-chatgpt-opened.html'), await providerPage.content(), 'utf8')
-    events.push({ at: new Date().toISOString(), event: 'real_chatgpt_opened', url: providerPage.url() })
-
-    const job = await createLocalJob({
-      homeDir: tokenlessHome,
-      provider: 'chatgpt',
-      targetUrl: 'https://chatgpt.com/',
+    const extensionId = await discoverExtensionId(context)
+    assert.equal(extensionId, DEFAULT_EXTENSION_ID)
+    events.push({ at: new Date().toISOString(), event: 'extension_discovered', extensionId })
+    const bridgeMarker = await waitForBridgeMarker(tokenlessHome, readLiveBridgeMarker)
+    events.push({
+      at: new Date().toISOString(),
+      event: 'daemon_bridge_ready',
+      sessionId: bridgeMarker.sessionId,
+    })
+    const timeoutMs = Number(process.env.TOKENLESS_LIVE_TIMEOUT_MS || 120000)
+    const cliRun = spawnSync(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'run',
+      '--prompt',
       prompt,
-      readDelayMs: 1500,
-      readTimeoutMs: Number(process.env.TOKENLESS_LIVE_READ_TIMEOUT_MS || 90000),
+      '--provider',
+      'chatgpt',
+      '--home',
+      tokenlessHome,
+      '--target-url',
+      'https://chatgpt.com/',
+      '--read-delay-ms',
+      '1500',
+      '--read-timeout-ms',
+      String(process.env.TOKENLESS_LIVE_READ_TIMEOUT_MS || 90000),
+      '--timeout-ms',
+      String(timeoutMs),
+      '--no-open',
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: timeoutMs + 30000,
     })
-    events.push({ at: new Date().toISOString(), event: 'job_created', jobId: job.jobId })
-    await copyJobFiles(tokenlessHome, job.jobId, artifactDir, 'before')
+    const result = JSON.parse(cliRun.stdout || '{}')
+    events.push({
+      at: new Date().toISOString(),
+      event: 'cli_finished',
+      exitCode: cliRun.status,
+      jobId: result.jobId,
+      ok: result.ok,
+      error: result.error,
+    })
+    await fs.writeFile(path.join(artifactDir, 'cli-result.json'), `${JSON.stringify(result, null, 2)}\n`, 'utf8')
 
-    const task = await context.newPage()
-    await task.goto(`chrome-extension://${extensionId}/task/task.html?jobId=${job.jobId}&nonce=${job.nonce}`)
-    await task.screenshot({ path: path.join(artifactDir, '02-extension-task-started.png'), fullPage: true })
-
-    const result = await waitLocalJobResult({
-      homeDir: tokenlessHome,
-      jobId: job.jobId,
-      nonce: job.nonce,
-      timeoutMs: Number(process.env.TOKENLESS_LIVE_TIMEOUT_MS || 120000),
-    }).catch(async (error) => {
-      await task.screenshot({ path: path.join(artifactDir, '03-extension-task-timeout.png'), fullPage: true }).catch(() => undefined)
-      const realChatGptPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/')) ?? providerPage
-      await realChatGptPage.screenshot({ path: path.join(artifactDir, '04-real-chatgpt-timeout.png'), fullPage: true }).catch(() => undefined)
-      await fs.writeFile(path.join(artifactDir, 'task-text-timeout.txt'), await task.locator('body').innerText().catch(() => ''), 'utf8')
-      await fs.writeFile(path.join(artifactDir, 'real-chatgpt-text-timeout.txt'), await realChatGptPage.locator('body').innerText().catch(() => ''), 'utf8')
-      await copyJobFiles(tokenlessHome, job.jobId, artifactDir, 'timeout')
-      await writeSummary(artifactDir, {
-        ok: false,
-        artifactDir,
-        mode: 'live-chatgpt',
-        fixture: false,
-        extensionId,
-        jobId: job.jobId,
-        provider: 'chatgpt',
-        targetUrl: 'https://chatgpt.com/',
-        prompt,
-        error: {
-          code: error.code || 'live_timeout',
-          message: error.message || 'Live ChatGPT run timed out.',
-        },
-        events,
+    const realChatGptPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/'))
+    if (realChatGptPage) {
+      await realChatGptPage.bringToFront()
+      await realChatGptPage.screenshot({
+        path: path.join(artifactDir, '01-real-chatgpt-after-result.png'),
+        animations: 'disabled',
       })
-      throw error
-    })
-    events.push({ at: new Date().toISOString(), event: 'job_result_received', ok: result.ok, error: result.error })
-
-    const realChatGptPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/')) ?? providerPage
-    await task.screenshot({ path: path.join(artifactDir, '03-extension-task-after-result.png'), fullPage: true })
-    await realChatGptPage.screenshot({ path: path.join(artifactDir, '04-real-chatgpt-after-result.png'), fullPage: true })
+    }
+    assert.ok(realChatGptPage, `extension did not open ChatGPT: ${JSON.stringify(context.pages().map((page) => page.url()))}`)
     await fs.writeFile(path.join(artifactDir, 'real-chatgpt-text.txt'), await realChatGptPage.locator('body').innerText().catch(() => ''), 'utf8')
-    await copyJobFiles(tokenlessHome, job.jobId, artifactDir, 'after')
+    const pageUrls = context.pages().map((page) => page.url())
+    assert.ok(pageUrls.every((url) => !url.startsWith('chrome-extension://')), JSON.stringify(pageUrls, null, 2))
 
     await writeSummary(artifactDir, {
-      ok: result.ok,
+      ok: cliRun.status === 0 && result.ok,
       artifactDir,
       mode: 'live-chatgpt',
       fixture: false,
       extensionId,
-      jobId: job.jobId,
+      jobId: result.jobId,
       provider: 'chatgpt',
       targetUrl: 'https://chatgpt.com/',
       prompt,
       compactOutput: result.compactOutput,
       error: result.error,
+      pageUrls,
       events,
     })
 
-    if (!result.ok) {
-      throw new Error(`Live ChatGPT run did not complete: ${result.error?.code || 'unknown'} ${result.error?.message || ''}`)
-    }
+    assert.equal(cliRun.status, 0, cliRun.stderr || cliRun.stdout)
+    assert.equal(result.ok, true, JSON.stringify(result, null, 2))
     assert.match(result.compactOutput || '', /TOKENLESS_LIVE_DOM_OK_48291/)
   } finally {
-    if (context) {
-      await fs.writeFile(path.join(artifactDir, 'pages.json'), `${JSON.stringify(
-        context.pages().map((page) => ({ url: page.url() })),
-        null,
-        2
-      )}\n`, 'utf8').catch(() => undefined)
+    const cleanupErrors = []
+    await attemptCleanup(cleanupErrors, 'write live E2E artifacts', async () => {
+      if (context) {
+        await fs.writeFile(path.join(artifactDir, 'pages.json'), `${JSON.stringify(
+          context.pages().map((page) => ({ url: page.url() })),
+          null,
+          2
+        )}\n`, 'utf8')
+      }
+      await fs.writeFile(path.join(artifactDir, 'events.json'), `${JSON.stringify(events, null, 2)}\n`, 'utf8')
+    })
+    await attemptCleanup(cleanupErrors, 'close live browser context', async () => context?.close())
+    await attemptCleanup(cleanupErrors, 'restore live native host manifests', async () => restoreFiles(manifestBackup))
+    await attemptCleanup(cleanupErrors, 'stop installed daemon', async () => stopInstalledDaemon(tokenlessHome))
+    await attemptCleanup(cleanupErrors, 'remove temporary live E2E state', async () => {
+      await fs.rm(tempRoot, { recursive: true, force: true })
+    })
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Tokenless live ChatGPT E2E cleanup failed')
     }
-    await fs.writeFile(path.join(artifactDir, 'events.json'), `${JSON.stringify(events, null, 2)}\n`, 'utf8')
-    await context?.close()
-    await restoreFiles(manifestBackup)
   }
 })
 
@@ -180,20 +185,19 @@ async function createArtifactDir() {
   return artifactDir
 }
 
-async function copyJobFiles(tokenlessHome, jobId, artifactDir, phase) {
-  const jobDir = path.join(tokenlessHome, 'jobs')
-  for (const kind of ['request', 'state', 'result']) {
-    const source = path.join(jobDir, `${jobId}.${kind}.json`)
-    const destination = path.join(artifactDir, `${phase}-${kind}.json`)
-    await fs.copyFile(source, destination).catch((error) => {
-      if (error.code !== 'ENOENT') throw error
-    })
-  }
-}
-
 async function writeSummary(artifactDir, payload) {
   await fs.writeFile(path.join(artifactDir, 'summary.json'), `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
   console.log(`Tokenless live ChatGPT artifacts: ${artifactDir}`)
+}
+
+async function attemptCleanup(errors, label, action) {
+  try {
+    await action()
+  } catch (error) {
+    errors.push(new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    }))
+  }
 }
 
 async function snapshotFiles(files) {
@@ -224,4 +228,35 @@ async function discoverExtensionId(context) {
   const url = new URL(worker.url())
   assert.equal(url.protocol, 'chrome-extension:')
   return url.hostname
+}
+
+async function stopInstalledDaemon(homeDir) {
+  const record = await fs.readFile(path.join(homeDir, 'daemon.pid.json'), 'utf8')
+    .then((body) => JSON.parse(body))
+    .catch(() => null)
+  if (!Number.isInteger(record?.pid)) return
+  try {
+    process.kill(record.pid, 'SIGTERM')
+  } catch {
+    return
+  }
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    try {
+      process.kill(record.pid, 0)
+    } catch {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+}
+
+async function waitForBridgeMarker(homeDir, readLiveBridgeMarker) {
+  const deadline = Date.now() + 15000
+  while (Date.now() < deadline) {
+    const marker = await readLiveBridgeMarker({ homeDir })
+    if (marker) return marker
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error('Rust extension bridge did not become live before the live ChatGPT run.')
 }

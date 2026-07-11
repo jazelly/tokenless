@@ -4,9 +4,7 @@
   "version": "0.1.0",
   "description": "Visible bridge for user-authorized ChatGPT, Gemini, and Claude web sessions.",
   "permissions": [
-    "activeTab",
     "nativeMessaging",
-    "sidePanel",
     "scripting",
     "tabs"
   ],
@@ -34,20 +32,11 @@
       "run_at": "document_idle"
     }
   ],
-  "side_panel": {
-    "default_path": "sidepanel/index.html"
+  "options_ui": {
+    "page": "settings/index.html",
+    "open_in_tab": false
   },
   "action": {
-    "default_title": "Tokenless"
-  },
-  "externally_connectable": {
-    "matches": [
-      "https://*.tokenless.dev/*",
-      "https://*.tokenless.ai/*",
-      "https://*.noop.build/*",
-      "https://*.noop.vertile.ai/*",
-      "http://localhost/*",
-      "http://127.0.0.1/*"
-    ]
+    "default_title": "Open Tokenless settings"
   }
 }

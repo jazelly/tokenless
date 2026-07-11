@@ -12,8 +12,3 @@ export {
   getProviderForUrl,
   listProviders,
 } from './providers.js'
-
-export {
-  BrowserSessionBridgeUnavailableError,
-  createExternalExtensionClient,
-} from './web-client.js'

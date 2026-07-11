@@ -2,6 +2,7 @@
 type ContentRecord = Record<string, any>
 type ContentProvider = {
   id: string
+  homeUrl: string
   hosts: string[]
   composerSelectors: string[]
   submitSelectors: string[]
@@ -19,10 +20,102 @@ if (globalState.__TOKENLESS_PROVIDER_CONTENT_LOADED__) {
   return
 }
 globalState.__TOKENLESS_PROVIDER_CONTENT_LOADED__ = true
+const PROVIDER_CONTENT_READY_TYPE = 'tokenless.provider_content_ready'
+const POST_SUBMIT_TARGET_TRANSITION_FLAG = 'allowPostSubmitTargetTransition'
+const POST_SUBMIT_TARGET_TRANSITION_PROOF = 'postSubmitTargetTransitionProof'
+const RESERVED_PROVIDER_PATH_PREFIXES = [
+  'about',
+  'account',
+  'accounts',
+  'admin',
+  'administrator',
+  'api',
+  'auth',
+  'authentication',
+  'authorize',
+  'billing',
+  'checkout',
+  'help',
+  'login',
+  'logout',
+  'oauth',
+  'password',
+  'payment',
+  'payments',
+  'plan',
+  'plans',
+  'preferences',
+  'pricing',
+  'privacy',
+  'profile',
+  'recover',
+  'register',
+  'reset',
+  'security',
+  'settings',
+  'signin',
+  'signup',
+  'sso',
+  'subscription',
+  'support',
+  'terms',
+  'upgrade',
+]
+const SAFE_STRUCTURAL_STATE_VALUES = new Set([
+  'assertive',
+  'both',
+  'false',
+  'grammar',
+  'horizontal',
+  'inherit',
+  'inline',
+  'mixed',
+  'none',
+  'off',
+  'page',
+  'plaintext-only',
+  'polite',
+  'spelling',
+  'step',
+  'true',
+  'vertical',
+])
+const SAFE_INPUT_TYPES = new Set([
+  'button',
+  'checkbox',
+  'email',
+  'number',
+  'password',
+  'radio',
+  'search',
+  'submit',
+  'tel',
+  'text',
+  'url',
+])
+const SAFE_EMPTY_ATTRIBUTE_NAMES = new Set(['disabled', 'hidden', 'open'])
+const SAFE_STATE_ATTRIBUTE_NAMES = new Set([
+  'aria-busy',
+  'aria-checked',
+  'aria-current',
+  'aria-disabled',
+  'aria-expanded',
+  'aria-haspopup',
+  'aria-hidden',
+  'aria-live',
+  'aria-modal',
+  'aria-multiline',
+  'aria-pressed',
+  'aria-readonly',
+  'aria-required',
+  'aria-selected',
+  'contenteditable',
+])
 
 const PROVIDERS: ContentProvider[] = [
   {
     id: 'chatgpt',
+    homeUrl: 'https://chatgpt.com/',
     hosts: ['chatgpt.com', 'chat.openai.com'],
     composerSelectors: [
       'div#prompt-textarea[contenteditable="true"]',
@@ -63,6 +156,7 @@ const PROVIDERS: ContentProvider[] = [
   },
   {
     id: 'gemini',
+    homeUrl: 'https://gemini.google.com/app',
     hosts: ['gemini.google.com'],
     composerSelectors: [
       'rich-textarea div[contenteditable="true"]',
@@ -86,6 +180,7 @@ const PROVIDERS: ContentProvider[] = [
   },
   {
     id: 'claude',
+    homeUrl: 'https://claude.ai/new',
     hosts: ['claude.ai'],
     composerSelectors: [
       'div[contenteditable="true"][role="textbox"]',
@@ -104,7 +199,6 @@ const PROVIDERS: ContentProvider[] = [
     blockerSelectors: [
       'iframe[src*="captcha"]',
       'a[href*="login"]',
-      'button:disabled[aria-label*="Send"]',
     ],
   },
 ]
@@ -114,16 +208,35 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true
 })
 
+void wakeBackgroundBridge()
+
 const submissionBaselines = new Map()
 
+async function wakeBackgroundBridge() {
+  if (!getProviderForUrl(location.href)) return
+  try {
+    await chrome.runtime.sendMessage({
+      type: PROVIDER_CONTENT_READY_TYPE,
+      provider: getProviderForUrl(location.href)?.id,
+      url: publicPageUrl(location.href),
+    })
+  } catch {
+    // The background service worker may be restarting; the CLI can retry.
+  }
+}
+
 async function handleMessage(message: ContentRecord) {
-  const provider = providerForMessage(message)
+  const provider = getProviderForUrl(location.href)
   if (!provider) {
     return {
       status: 'blocked',
       stopReason: 'unsupported_origin',
       message: 'Current page is not a supported provider origin.',
     }
+  }
+  const contextBlocker = validateExecutionContext(provider, message?.request, message?.type)
+  if (contextBlocker) {
+    return contextBlocker
   }
 
   if (message?.type === 'tokenless.bridge.submit') {
@@ -136,7 +249,7 @@ async function handleMessage(message: ContentRecord) {
     return snapshotDom(provider, message.request)
   }
   if (message?.type === 'tokenless.bridge.validate_landing') {
-    return validateLanding(provider, message.request)
+    return validateLanding(provider, message.request, message.type)
   }
 
   return {
@@ -146,23 +259,33 @@ async function handleMessage(message: ContentRecord) {
   }
 }
 
-async function validateLanding(provider: ContentProvider, request: ContentRecord = {}) {
+async function validateLanding(
+  provider: ContentProvider,
+  request: ContentRecord = {},
+  messageType = 'tokenless.bridge.validate_landing'
+) {
   const timeoutMs = Math.min(Number(request.landingTimeoutMs ?? 5000), 30000)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
+    const contextBlocker = validateExecutionContext(provider, request, messageType)
+    if (contextBlocker) return contextBlocker
     await dismissProviderInterruptions(provider)
     const blocker = detectBlocker(provider)
     if (blocker) {
       return blocker
     }
-    const chatSurface = chatSurfaceStatus(provider)
+    const chatSurface = chatSurfaceStatus(provider, {
+      requireComposer: allowsPostSubmitTargetTransition(provider, request, messageType),
+    })
     if (chatSurface.ready) {
+      const finalContextBlocker = validateExecutionContext(provider, request, messageType)
+      if (finalContextBlocker) return finalContextBlocker
       return {
         status: 'ready',
         provider: provider.id,
         visible: true,
         checks: chatSurface.checks,
-        url: location.href,
+        url: publicPageUrl(location.href),
         title: document.title,
       }
     }
@@ -175,56 +298,56 @@ async function validateLanding(provider: ContentProvider, request: ContentRecord
       ? 'ChatGPT page loaded, but no visible composer and send button were found.'
       : 'Provider page loaded, but no visible chat surface was found.',
     provider: provider.id,
-    url: location.href,
+    url: publicPageUrl(location.href),
   }
 }
 
 async function snapshotDom(provider: ContentProvider, request: ContentRecord = {}) {
   await dismissProviderInterruptions(provider)
-  const includeText = Boolean(request.includeText ?? request.metadata?.includeText)
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+  const includeTextValidation = resolveIncludeText(request)
+  if (includeTextValidation.ok === false) {
+    return {
+      status: 'blocked',
+      stopReason: 'invalid_include_text',
+      message: 'Snapshot includeText must be a boolean when provided.',
+      provider: provider.id,
+    }
+  }
+  const includeText = includeTextValidation.value ?? false
   const maxTextChars = Math.min(Number(request.maxTextChars ?? request.metadata?.maxTextChars ?? 4000), 100000)
+  const sourceRoot = document.documentElement
   const clone = document.documentElement.cloneNode(true) as Element
+
+  sanitizeTextNodes(sourceRoot, clone, { includeText })
+  redactAttributes(sourceRoot, clone, { includeText })
+  removeCommentNodes(clone)
 
   clone.querySelectorAll([
     'script',
+    'style',
+    'link',
+    'meta',
     'noscript',
-    'iframe[src*="accounts.google.com"]',
-    'iframe[src*="challenge-platform"]',
+    'template',
+    'iframe',
+    'object',
+    'embed',
   ].join(',')).forEach((node) => node.remove())
-
-  clone.querySelectorAll('input, textarea').forEach((node) => {
-    if (node.hasAttribute('value')) {
-      node.setAttribute('value', '[redacted]')
-    }
-    if (!includeText) {
-      node.textContent = ''
-    }
-  })
-
-  clone.querySelectorAll('[contenteditable="true"]').forEach((node) => {
-    if (!includeText) {
-      node.textContent = ''
-    }
-  })
-
-  if (!includeText) {
-    redactTextNodes(clone)
-  }
-
-  redactAttributes(clone, { includeText })
 
   return {
     status: 'snapshotted',
     provider: provider.id,
-    url: location.href,
-    title: includeText ? document.title : '[text]',
+    url: publicPageUrl(location.href),
+    title: '[text]',
     capturedAt: new Date().toISOString(),
     sanitized: true,
     includeText,
     html: `<!doctype html>\n${clone.outerHTML}`,
     selectorProbes: selectorProbeSnapshot(provider, { includeText }),
     visibleText: includeText
-      ? normalizeText(document.body?.innerText || '').slice(0, maxTextChars)
+      ? visibleTextSnapshot(document.body).slice(0, maxTextChars)
       : undefined,
   }
 }
@@ -237,20 +360,33 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
   }
 
   const composer = await waitForComposer(provider, request)
-  if (!composer) {
+  if (!composer || !isVisibleConnected(composer)) {
     return selectorDrift('composer')
   }
 
+  const composerContextBlocker = validateExecutionContext(provider, request)
+  if (composerContextBlocker) return composerContextBlocker
+
   focusComposer(composer)
+  if (!isVisibleConnected(composer)) {
+    return selectorDrift('composer')
+  }
   setComposerText(composer, request.prompt)
   await delay(150)
 
   const submitButton = await waitForActionableSubmit(provider, request)
-  if (!submitButton || (submitButton as HTMLButtonElement).disabled || submitButton.getAttribute('aria-disabled') === 'true') {
+  const submitContextBlocker = validateExecutionContext(provider, request)
+  if (submitContextBlocker) return submitContextBlocker
+  const lateBlocker = detectBlocker(provider)
+  if (lateBlocker) return lateBlocker
+  if (!isActionableSubmit(submitButton)) {
     return selectorDrift('submit')
   }
 
   const answerBaseline = answerSnapshot(provider)
+  if (!isActionableSubmit(submitButton)) {
+    return selectorDrift('submit')
+  }
   submissionBaselines.set(requestKey(request), answerBaseline)
   submitButton.click()
   return {
@@ -258,7 +394,7 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
     provider: provider.id,
     visible: true,
     answerBaseline,
-    url: location.href,
+    url: publicPageUrl(location.href),
   }
 }
 
@@ -268,10 +404,23 @@ async function readLatestAnswer(provider: ContentProvider, request: ContentRecor
   if (blocker) {
     return blocker
   }
+  if (allowsPostSubmitTargetTransition(provider, request, 'tokenless.bridge.read')) {
+    const chatSurface = chatSurfaceStatus(provider, { requireComposer: true })
+    if (!chatSurface.ready) {
+      return {
+        status: 'blocked',
+        stopReason: 'post_submit_surface_unavailable',
+        message: 'The provider conversation no longer has a visible chat composer.',
+        provider: provider.id,
+      }
+    }
+  }
 
   const timeoutMs = Math.min(Number(request.readTimeoutMs ?? 60000), 300000)
   const baseline = request.answerBaseline ?? submissionBaselines.get(requestKey(request))
   const text = await waitForStableAnswer(provider, timeoutMs, baseline)
+  const contextBlocker = validateExecutionContext(provider, request, 'tokenless.bridge.read')
+  if (contextBlocker) return contextBlocker
   if (!text) {
     return {
       status: 'blocked',
@@ -286,7 +435,7 @@ async function readLatestAnswer(provider: ContentProvider, request: ContentRecor
     provider: provider.id,
     text,
     chars: text.length,
-    url: location.href,
+    url: publicPageUrl(location.href),
   }
 }
 
@@ -295,7 +444,7 @@ function requestKey(request: ContentRecord = {}) {
 }
 
 function detectBlocker(provider: ContentProvider) {
-  const blocker = findFirst(provider.blockerSelectors)
+  const blocker = findFirstVisible(provider.blockerSelectors)
   if (!blocker) {
     return null
   }
@@ -307,24 +456,10 @@ function detectBlocker(provider: ContentProvider) {
   }
 }
 
-function findFirst(selectors: string[]): HTMLElement | null {
-  for (const selector of selectors) {
-    const node = document.querySelector(selector) as HTMLElement | null
-    if (node) {
-      return node
-    }
-  }
-  return null
-}
-
-function providerForMessage(message: ContentRecord) {
-  if (message?.type === 'tokenless.bridge.validate_landing' && message.request?.provider === 'chatgpt') {
-    return PROVIDERS.find((provider) => provider.id === 'chatgpt') ?? null
-  }
-  return getProviderForUrl(location.href)
-}
-
-function chatSurfaceStatus(provider: ContentProvider) {
+function chatSurfaceStatus(
+  provider: ContentProvider,
+  { requireComposer = false }: { requireComposer?: boolean } = {}
+) {
   const visibleComposer = findFirstVisible(provider.composerSelectors)
   const visibleSubmit = findFirstVisible(provider.submitSelectors)
   if (provider.id === 'chatgpt') {
@@ -338,7 +473,7 @@ function chatSurfaceStatus(provider: ContentProvider) {
   }
   const visibleAnswer = findFirstVisible(provider.answerSelectors)
   return {
-    ready: Boolean(visibleComposer || visibleAnswer),
+    ready: requireComposer ? Boolean(visibleComposer) : Boolean(visibleComposer || visibleAnswer),
     checks: {
       composer: Boolean(visibleComposer),
       sendButton: Boolean(visibleSubmit),
@@ -369,13 +504,13 @@ async function waitForComposer(provider: ContentProvider, request: ContentRecord
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     await dismissProviderInterruptions(provider)
-    const composer = findFirst(provider.composerSelectors)
-    if (composer && isVisible(composer)) {
+    const composer = findFirstVisible(provider.composerSelectors)
+    if (composer) {
       return composer
     }
     await delay(250)
   }
-  return findFirst(provider.composerSelectors)
+  return findFirstVisible(provider.composerSelectors)
 }
 
 async function dismissProviderInterruptions(provider: ContentProvider) {
@@ -417,15 +552,52 @@ async function dismissProviderInterruptions(provider: ContentProvider) {
 }
 
 function isVisible(node: Element) {
+  if (!node.isConnected) return false
+  const visibilityApi = node as Element & {
+    checkVisibility?: (options?: { checkOpacity?: boolean; checkVisibilityCSS?: boolean }) => boolean
+  }
+  try {
+    if (
+      typeof visibilityApi.checkVisibility === 'function' &&
+      !visibilityApi.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+    ) {
+      return false
+    }
+  } catch {
+    // Fall through to the explicit ancestor checks for older provider browsers.
+  }
+
+  for (let current: Element | null = node; current; current = current.parentElement) {
+    const style = window.getComputedStyle?.(current)
+    if (
+      !style ||
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      style.visibility === 'collapse' ||
+      style.contentVisibility === 'hidden' ||
+      Number(style.opacity) === 0
+    ) {
+      return false
+    }
+  }
+
   const rect = node.getBoundingClientRect?.()
-  const style = window.getComputedStyle?.(node)
-  return Boolean(
-    rect &&
+  return Boolean(rect && rectIntersectsViewport(rect))
+}
+
+function rectIntersectsViewport(rect: Pick<DOMRect, 'bottom' | 'height' | 'left' | 'right' | 'top' | 'width'>) {
+  return (
     rect.width > 0 &&
     rect.height > 0 &&
-    style?.visibility !== 'hidden' &&
-    style?.display !== 'none'
+    rect.bottom > 0 &&
+    rect.right > 0 &&
+    rect.top < window.innerHeight &&
+    rect.left < window.innerWidth
   )
+}
+
+function isVisibleConnected(node: Element | null): node is HTMLElement {
+  return Boolean(node?.isConnected && isVisible(node))
 }
 
 function focusComposer(composer: HTMLElement) {
@@ -471,13 +643,22 @@ async function waitForActionableSubmit(provider: ContentProvider, request: Conte
   const timeoutMs = Math.min(Number(request.submitTimeoutMs ?? 5000), 30000)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const button = findFirst(provider.submitSelectors)
-    if (button && !(button as HTMLButtonElement).disabled && button.getAttribute('aria-disabled') !== 'true') {
+    const button = findFirstVisible(provider.submitSelectors)
+    if (isActionableSubmit(button)) {
       return button
     }
     await delay(100)
   }
-  return findFirst(provider.submitSelectors)
+  const button = findFirstVisible(provider.submitSelectors)
+  return isActionableSubmit(button) ? button : null
+}
+
+function isActionableSubmit(node: HTMLElement | null): node is HTMLElement {
+  return Boolean(
+    isVisibleConnected(node) &&
+    !(node as HTMLButtonElement).disabled &&
+    node.getAttribute('aria-disabled') !== 'true'
+  )
 }
 
 async function waitForStableAnswer(provider: ContentProvider, timeoutMs: number, baseline: ContentRecord | undefined) {
@@ -582,7 +763,7 @@ function probeSelectors(selectors: string[] = [], { includeText = false }: { inc
     try {
       const matches = [...document.querySelectorAll(selector)]
       count = matches.length
-      const firstMatch = matches[0] as HTMLElement | undefined
+      const firstMatch = matches.find((node) => isVisible(node)) as HTMLElement | undefined
       const rawText = normalizeText(firstMatch?.innerText || firstMatch?.textContent || '')
       firstText = includeText ? rawText.slice(0, 240) : (rawText ? '[text]' : '')
     } catch (probeError) {
@@ -592,20 +773,89 @@ function probeSelectors(selectors: string[] = [], { includeText = false }: { inc
   })
 }
 
-function redactTextNodes(root: Node) {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  const nodes: Node[] = []
-  while (walker.nextNode()) {
-    nodes.push(walker.currentNode)
-  }
-  for (const node of nodes) {
-    if (node.nodeValue?.trim()) {
-      node.nodeValue = '[text]'
-    }
+function sanitizeTextNodes(
+  sourceRoot: Node,
+  cloneRoot: Node,
+  { includeText = false }: { includeText?: boolean } = {}
+) {
+  const sourceNodes = collectNodes(sourceRoot, NodeFilter.SHOW_TEXT)
+  const cloneNodes = collectNodes(cloneRoot, NodeFilter.SHOW_TEXT)
+  for (let index = 0; index < cloneNodes.length; index += 1) {
+    const sourceNode = sourceNodes[index]
+    const cloneNode = cloneNodes[index]
+    if (!sourceNode || !cloneNode || !cloneNode.nodeValue?.trim()) continue
+    cloneNode.nodeValue = includeText
+      ? (isVisibleTextNode(sourceNode) ? cloneNode.nodeValue : '')
+      : '[text]'
   }
 }
 
-function redactAttributes(root: ParentNode, { includeText = false }: { includeText?: boolean } = {}) {
+function removeCommentNodes(root: Node) {
+  for (const comment of collectNodes(root, NodeFilter.SHOW_COMMENT)) {
+    comment.parentNode?.removeChild(comment)
+  }
+}
+
+function collectNodes(root: Node, whatToShow: number) {
+  const walker = document.createTreeWalker(root, whatToShow)
+  const nodes: Node[] = []
+  while (walker.nextNode()) nodes.push(walker.currentNode)
+  return nodes
+}
+
+function isVisibleTextNode(node: Node) {
+  if (!node.nodeValue?.trim() || !(node.parentElement instanceof Element) || !isVisible(node.parentElement)) {
+    return false
+  }
+  const range = document.createRange()
+  range.selectNodeContents(node)
+  return [...range.getClientRects()].some((rect) => rectIntersectsViewport(rect))
+}
+
+function visibleTextSnapshot(root: Element | null) {
+  if (!root) return ''
+  return normalizeText(
+    collectNodes(root, NodeFilter.SHOW_TEXT)
+      .filter((node) => isVisibleTextNode(node))
+      .map((node) => node.nodeValue || '')
+      .join(' ')
+  )
+}
+
+function redactAttributes(
+  sourceRoot: Element,
+  cloneRoot: Element,
+  { includeText = false }: { includeText?: boolean } = {}
+) {
+  const structuralAttributes = new Set([
+    'aria-busy',
+    'aria-checked',
+    'aria-controls',
+    'aria-current',
+    'aria-describedby',
+    'aria-disabled',
+    'aria-expanded',
+    'aria-haspopup',
+    'aria-hidden',
+    'aria-labelledby',
+    'aria-live',
+    'aria-modal',
+    'aria-multiline',
+    'aria-owns',
+    'aria-pressed',
+    'aria-readonly',
+    'aria-required',
+    'aria-selected',
+    'class',
+    'contenteditable',
+    'disabled',
+    'hidden',
+    'id',
+    'open',
+    'role',
+    'tabindex',
+    'type',
+  ])
   const textLikeAttributes = new Set([
     'aria-description',
     'aria-label',
@@ -615,35 +865,332 @@ function redactAttributes(root: ParentNode, { includeText = false }: { includeTe
     'placeholder',
     'title',
   ])
-  const urlAttributes = new Set([
-    'action',
-    'formaction',
-    'href',
-    'poster',
-    'src',
-    'srcset',
-  ])
-
-  root.querySelectorAll('*').forEach((node: Element) => {
+  const sourceNodes = [sourceRoot, ...sourceRoot.querySelectorAll('*')]
+  const cloneNodes = [cloneRoot, ...cloneRoot.querySelectorAll('*')]
+  cloneNodes.forEach((node: Element, index) => {
+    const sourceNode = sourceNodes[index]
     for (const attr of [...node.attributes]) {
       const name = attr.name.toLowerCase()
-      if (
-        name.includes('token') ||
-        name.includes('secret') ||
-        name.includes('email') ||
-        name.includes('password') ||
-        name.includes('session') ||
-        name.includes('auth') ||
-        name === 'srcdoc'
-      ) {
-        node.setAttribute(attr.name, '[redacted]')
-      } else if (urlAttributes.has(name) && attr.value.trim()) {
-        node.setAttribute(attr.name, '[url]')
-      } else if (!includeText && textLikeAttributes.has(name) && attr.value.trim()) {
-        node.setAttribute(attr.name, '[text]')
+      if (structuralAttributes.has(name)) {
+        sanitizeStructuralAttribute(node, attr.name, name, attr.value)
+        continue
       }
+      if (textLikeAttributes.has(name)) {
+        if (includeText && sourceNode && isVisible(sourceNode)) {
+          continue
+        }
+        if (attr.value.trim()) {
+          node.setAttribute(attr.name, '[text]')
+        }
+        continue
+      }
+      node.removeAttribute(attr.name)
     }
   })
+}
+
+function sanitizeStructuralAttribute(
+  node: Element,
+  originalName: string,
+  name: string,
+  value: string
+) {
+  if (!value.trim()) return
+  if (SAFE_EMPTY_ATTRIBUTE_NAMES.has(name)) {
+    node.setAttribute(originalName, '')
+    return
+  }
+  const normalized = value.trim().toLowerCase()
+  if (
+    (SAFE_STATE_ATTRIBUTE_NAMES.has(name) && SAFE_STRUCTURAL_STATE_VALUES.has(normalized)) ||
+    (name === 'type' && SAFE_INPUT_TYPES.has(normalized)) ||
+    (name === 'tabindex' && /^-?\d{1,3}$/.test(normalized))
+  ) {
+    node.setAttribute(originalName, normalized)
+    return
+  }
+  node.setAttribute(originalName, '[structural]')
+}
+
+function resolveIncludeText(request: ContentRecord):
+  | { ok: true; value: boolean | undefined }
+  | { ok: false } {
+  if (request.includeText !== undefined) {
+    return typeof request.includeText === 'boolean'
+      ? { ok: true, value: request.includeText }
+      : { ok: false }
+  }
+  const metadata = request.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return { ok: true, value: undefined }
+  }
+  if (metadata.includeText === undefined) {
+    return { ok: true, value: undefined }
+  }
+  return typeof metadata.includeText === 'boolean'
+    ? { ok: true, value: metadata.includeText }
+    : { ok: false }
+}
+
+function validateExecutionContext(
+  provider: ContentProvider,
+  request: ContentRecord = {},
+  messageType?: string
+) {
+  const currentProvider = getProviderForUrl(location.href)
+  if (!currentProvider) {
+    return {
+      status: 'blocked',
+      stopReason: 'unsupported_origin',
+      message: 'Current page is not a supported provider origin.',
+    }
+  }
+  if (request.provider !== provider.id || currentProvider.id !== provider.id) {
+    return {
+      status: 'blocked',
+      stopReason: 'provider_context_mismatch',
+      message: 'Current page does not match the requested provider.',
+      provider: currentProvider.id,
+    }
+  }
+  if (
+    request.targetUrl === undefined &&
+    !providerTransitionSource(provider, location.href) &&
+    !isProviderConversationUrl(provider, location.href)
+  ) {
+    return {
+      status: 'blocked',
+      stopReason: 'target_context_mismatch',
+      message: 'Current page is not an approved provider landing or conversation URL.',
+      provider: currentProvider.id,
+    }
+  }
+  if (
+    request.targetUrl !== undefined &&
+    !matchesExpectedTarget(location.href, request.targetUrl, provider) &&
+    !areProviderTransitionSourcesEquivalent(provider, location.href, request.targetUrl) &&
+    !allowsPostSubmitTargetTransition(provider, request, messageType)
+  ) {
+    return {
+      status: 'blocked',
+      stopReason: 'target_context_mismatch',
+      message: 'Current page does not match the requested provider target.',
+      provider: currentProvider.id,
+    }
+  }
+  return null
+}
+
+function allowsPostSubmitTargetTransition(
+  provider: ContentProvider,
+  request: ContentRecord,
+  messageType: string | undefined
+) {
+  if (
+    ![
+      'tokenless.bridge.read',
+      'tokenless.bridge.validate_landing',
+    ].includes(messageType ?? '') ||
+    request[POST_SUBMIT_TARGET_TRANSITION_FLAG] !== true ||
+    !isApprovedProviderTransition(provider, request.targetUrl, location.href)
+  ) {
+    return false
+  }
+  const storedBaseline = submissionBaselines.get(requestKey(request))
+  const suppliedBaseline = request.answerBaseline
+  const proof = request[POST_SUBMIT_TARGET_TRANSITION_PROOF]
+  const transitionSource = providerTransitionSource(provider, request.targetUrl)
+  if (
+    !validAnswerBaseline(suppliedBaseline) ||
+    !proof ||
+    typeof proof !== 'object' ||
+    Array.isArray(proof) ||
+    proof.requestId !== request.requestId ||
+    proof.provider !== provider.id ||
+    proof.targetUrl !== canonicalPageUrl(new URL(String(request.targetUrl))) ||
+    proof.sourceKind !== transitionSource?.kind ||
+    proof.customGptId !== transitionSource?.customGptId ||
+    typeof proof.nonce !== 'string' ||
+    proof.nonce.length < 16 ||
+    !validAnswerBaseline(proof.answerBaseline) ||
+    proof.answerBaseline.count !== suppliedBaseline.count ||
+    proof.answerBaseline.lastText !== suppliedBaseline.lastText
+  ) {
+    return false
+  }
+  return !storedBaseline || (
+    storedBaseline.count === suppliedBaseline.count &&
+    storedBaseline.lastText === suppliedBaseline.lastText
+  )
+}
+
+function validAnswerBaseline(value: unknown): value is { count: number; lastText: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const baseline = value as ContentRecord
+  return (
+    Number.isInteger(baseline.count) &&
+    baseline.count >= 0 &&
+    typeof baseline.lastText === 'string'
+  )
+}
+
+function areProviderTransitionSourcesEquivalent(
+  provider: ContentProvider,
+  currentUrl: string,
+  targetUrl: unknown
+) {
+  const current = providerTransitionSource(provider, currentUrl)
+  const target = providerTransitionSource(provider, targetUrl)
+  return Boolean(
+    current &&
+    target &&
+    current.kind === target.kind &&
+    current.customGptId === target.customGptId
+  )
+}
+
+function isCanonicalProviderLandingTarget(provider: ContentProvider, targetUrl: unknown) {
+  if (typeof targetUrl !== 'string') return false
+  try {
+    const target = new URL(targetUrl)
+    const home = new URL(provider.homeUrl)
+    return (
+      hasSafeProviderAuthority(provider, target) &&
+      canonicalPathname(target.pathname) === canonicalPathname(home.pathname)
+    )
+  } catch {
+    return false
+  }
+}
+
+function providerTransitionSource(provider: ContentProvider, value: unknown) {
+  if (isCanonicalProviderLandingTarget(provider, value)) {
+    return { kind: 'root', customGptId: undefined }
+  }
+  if (provider.id !== 'chatgpt' || typeof value !== 'string') return null
+  try {
+    const parsed = new URL(value)
+    if (!hasSafeProviderAuthority(provider, parsed)) return null
+    const segments = canonicalPathname(parsed.pathname).split('/').filter(Boolean)
+    const customGptId = segments.length === 2 && segments[0] === 'g' ? segments[1] : undefined
+    return isCustomGptId(customGptId)
+      ? { kind: 'custom_gpt', customGptId }
+      : null
+  } catch {
+    return null
+  }
+}
+
+function isApprovedProviderTransition(
+  provider: ContentProvider,
+  sourceUrl: unknown,
+  destinationUrl: unknown
+) {
+  const source = providerTransitionSource(provider, sourceUrl)
+  const destination = providerConversationRoute(provider, destinationUrl)
+  if (!source || !destination) return false
+  if (source.kind === 'custom_gpt') {
+    return (
+      destination.kind === 'custom_gpt' &&
+      destination.customGptId === source.customGptId
+    )
+  }
+  return destination.kind === 'standard'
+}
+
+function isProviderConversationUrl(provider: ContentProvider, value: unknown) {
+  return providerConversationRoute(provider, value) !== null
+}
+
+function providerConversationRoute(provider: ContentProvider, value: unknown) {
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = new URL(value)
+    if (!hasSafeProviderAuthority(provider, parsed)) {
+      return null
+    }
+    const pathname = canonicalPathname(parsed.pathname)
+    const segments = pathname.split('/').filter(Boolean)
+    if (provider.id === 'chatgpt') {
+      if (segments.length === 2 && segments[0] === 'c') {
+        return isOpaqueProviderId(segments[1])
+          ? { kind: 'standard', customGptId: undefined }
+          : null
+      }
+      return (
+        segments.length === 4 &&
+        segments[0] === 'g' &&
+        segments[2] === 'c' &&
+        isCustomGptId(segments[1]) &&
+        isOpaqueProviderId(segments[3])
+      )
+        ? { kind: 'custom_gpt', customGptId: segments[1] }
+        : null
+    }
+    if (provider.id === 'claude') {
+      return segments.length === 2 && segments[0] === 'chat' && isOpaqueProviderId(segments[1])
+        ? { kind: 'standard', customGptId: undefined }
+        : null
+    }
+    if (provider.id === 'gemini') {
+      return segments.length === 2 && segments[0] === 'app' && isOpaqueProviderId(segments[1])
+        ? { kind: 'standard', customGptId: undefined }
+        : null
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function isCustomGptId(value: string | undefined) {
+  return Boolean(value?.startsWith('g-') && isOpaqueProviderId(value.slice(2)))
+}
+
+function isOpaqueProviderId(value: string | undefined) {
+  if (
+    !value ||
+    value.length < 8 ||
+    value.length > 128 ||
+    !/^[A-Za-z0-9_-]+$/.test(value) ||
+    !/\d/.test(value)
+  ) {
+    return false
+  }
+  const compact = value.toLowerCase().replace(/[-_]/g, '')
+  return !RESERVED_PROVIDER_PATH_PREFIXES.some((prefix) => compact.startsWith(prefix))
+}
+
+function matchesExpectedTarget(currentUrl: string, targetUrl: unknown, provider: ContentProvider) {
+  try {
+    const current = new URL(currentUrl)
+    const target = new URL(String(targetUrl))
+    return (
+      hasSafeProviderAuthority(provider, current) &&
+      hasSafeProviderAuthority(provider, target) &&
+      canonicalPageUrl(current) === canonicalPageUrl(target)
+    )
+  } catch {
+    return false
+  }
+}
+
+function canonicalPageUrl(url: URL) {
+  const pathname = canonicalPathname(url.pathname)
+  return `${url.origin}${pathname}`
+}
+
+function canonicalPathname(pathname: string) {
+  return pathname.replace(/\/+$/, '') || '/'
+}
+
+function publicPageUrl(url: string) {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return ''
+  }
 }
 
 function selectorDrift(target: string) {
@@ -669,7 +1216,16 @@ function getProviderForUrl(url: string) {
   } catch {
     return null
   }
-  const host = parsed.hostname.toLowerCase()
-  return PROVIDERS.find((provider) => provider.hosts.includes(host)) ?? null
+  return PROVIDERS.find((provider) => hasSafeProviderAuthority(provider, parsed)) ?? null
+}
+
+function hasSafeProviderAuthority(provider: ContentProvider, parsed: URL) {
+  return (
+    parsed.protocol === 'https:' &&
+    parsed.username === '' &&
+    parsed.password === '' &&
+    parsed.port === '' &&
+    provider.hosts.includes(parsed.hostname.toLowerCase())
+  )
 }
 })()

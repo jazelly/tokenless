@@ -18,6 +18,7 @@ const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8')) as
 verifyManifest(manifest)
 
 const files = await listFiles(distExtensionRoot)
+verifyExtensionArtifacts(files)
 const manifestRecord = {
   package: 'tokenless-browser-session-bridge',
   builtAt: new Date().toISOString(),
@@ -62,12 +63,37 @@ function verifyManifest(manifest: Record<string, any>) {
   if (!Array.isArray(manifest.content_scripts) || manifest.content_scripts.length === 0) {
     throw new Error('extension manifest must declare provider content scripts')
   }
-  const forbiddenPermissions = new Set(['cookies', 'webRequest', 'webRequestBlocking'])
+  const forbiddenPermissions = new Set(['cookies', 'sidePanel', 'webRequest', 'webRequestBlocking'])
   const permissions = new Set(manifest.permissions || [])
   for (const permission of forbiddenPermissions) {
     if (permissions.has(permission)) {
       throw new Error(`extension manifest must not request ${permission}`)
     }
+  }
+  if (manifest.side_panel) {
+    throw new Error('extension manifest must not declare a side panel')
+  }
+  if (manifest.externally_connectable) {
+    throw new Error('extension manifest must not allow external origins to drive the bridge')
+  }
+  if (manifest.options_ui?.page !== 'settings/index.html' || manifest.options_ui?.open_in_tab !== false) {
+    throw new Error('extension manifest must declare the embedded Tokenless Settings page')
+  }
+}
+
+function verifyExtensionArtifacts(files: string[]) {
+  const relativeFiles = files.map((file) => path.relative(distExtensionRoot, file))
+  const forbidden = relativeFiles.find((file) => (
+    file.startsWith('task/') ||
+    file.startsWith('sidepanel/') ||
+    file.startsWith('daemon/') ||
+    file.includes('runner')
+  ))
+  if (forbidden) {
+    throw new Error(`extension build must not contain obsolete execution surface: ${forbidden}`)
+  }
+  if (!relativeFiles.includes('settings/index.html') || !relativeFiles.includes('settings/index.js')) {
+    throw new Error('extension build must contain the Settings page')
   }
 }
 

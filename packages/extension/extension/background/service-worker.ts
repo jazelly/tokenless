@@ -6,6 +6,13 @@ import {
   validateBridgeRequest,
 } from '../shared/bridge-protocol.js'
 import { getProviderById, getProviderForUrl } from '../shared/provider-config.js'
+import {
+  createNativeMessage,
+  isNativeMessage,
+  NATIVE_MESSAGE_TYPES,
+  NATIVE_PROTOCOL_VERSION,
+} from '../shared/native-protocol.js'
+import { NativeDaemonBridge } from './native-daemon-bridge.js'
 import type { BridgeRequest } from '../shared/bridge-protocol.js'
 import type { ProviderConfig } from '../shared/provider-config.js'
 
@@ -14,22 +21,63 @@ type BridgeRuntimeError = Error & {
   retryable?: boolean
 }
 type ExtensionRecord = Record<string, any>
-type RuntimeMessageContext = {
-  external: boolean
-}
 
 const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 const DAEMON_JOB_RESPONSE_TYPE = 'tokenless.daemon.job_result'
 const NATIVE_REQUEST_TIMEOUT_MS = 10000
-const DAEMON_BRIDGE_RECONNECT_MS = 1000
 const PROVIDER_LANDING_TIMEOUT_MS = 8000
 const PROVIDER_LANDING_POLL_MS = 250
-let daemonBridgePort: chrome.runtime.Port | null = null
-let daemonBridgeReconnectTimer: ReturnType<typeof setTimeout> | null = null
+const PROVIDER_CONTENT_READY_TYPE = 'tokenless.provider_content_ready'
+const POST_SUBMIT_TARGET_TRANSITION_FLAG = 'allowPostSubmitTargetTransition'
+const POST_SUBMIT_TARGET_TRANSITION_PROOF = 'postSubmitTargetTransitionProof'
+const RESERVED_PROVIDER_PATH_PREFIXES = [
+  'about',
+  'account',
+  'accounts',
+  'admin',
+  'administrator',
+  'api',
+  'auth',
+  'authentication',
+  'authorize',
+  'billing',
+  'checkout',
+  'help',
+  'login',
+  'logout',
+  'oauth',
+  'password',
+  'payment',
+  'payments',
+  'plan',
+  'plans',
+  'preferences',
+  'pricing',
+  'privacy',
+  'profile',
+  'recover',
+  'register',
+  'reset',
+  'security',
+  'settings',
+  'signin',
+  'signup',
+  'sso',
+  'subscription',
+  'support',
+  'terms',
+  'upgrade',
+]
 let daemonJobQueue: Promise<void> = Promise.resolve()
+const handledDaemonJobs = new Set<string>()
+const handledDaemonJobOrder: string[] = []
+const MAX_HANDLED_DAEMON_JOBS = 1024
+const daemonBridge = new NativeDaemonBridge({
+  connectNative: () => chrome.runtime.connectNative(NATIVE_HOST_NAME),
+  onMessage: handleDaemonBridgeMessage,
+})
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => undefined)
   startDaemonBridge()
 })
 
@@ -37,36 +85,20 @@ chrome.runtime.onStartup.addListener(() => {
   startDaemonBridge()
 })
 
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!isProviderContentReadyMessage(message)) return false
+  if (!getProviderForUrl(sender.tab?.url ?? '')) return false
+
+  startDaemonBridge()
+  sendResponse({ ok: true })
+  return false
+})
+
 startDaemonBridge()
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handleRuntimeMessage(message, { external: false }).then(sendResponse)
-  return true
+chrome.action.onClicked.addListener(() => {
+  chrome.runtime.openOptionsPage().catch(() => undefined)
 })
-
-chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  handleRuntimeMessage(message, { external: true }).then(sendResponse)
-  return true
-})
-
-async function handleRuntimeMessage(message: unknown, context: RuntimeMessageContext) {
-  const validation = validateBridgeRequest(message)
-  if (validation.ok === false) {
-    return createBridgeResponse(message as Partial<BridgeRequest>, { ok: false, error: validation.error })
-  }
-  if (context.external && validation.request.action !== BRIDGE_ACTIONS.CAPABILITIES) {
-    return createBridgeResponse(validation.request, {
-      ok: false,
-      error: {
-        code: 'external_bridge_forbidden',
-        message: 'External origins are not authorized to drive Tokenless provider sessions.',
-        retryable: false,
-      },
-    })
-  }
-
-  return runBridgeRequest(validation.request)
-}
 
 async function runBridgeRequest(request: BridgeRequest) {
   try {
@@ -84,44 +116,47 @@ async function runBridgeRequest(request: BridgeRequest) {
 
     if (request.action === BRIDGE_ACTIONS.OPEN) {
       const tab = await getOrCreateProviderTab(provider, request.targetUrl)
-      const landedTab = await waitForProviderTabLoaded(tab.id, provider)
+      const landedTab = await waitForProviderTabLoaded(tab.id, provider, request.targetUrl)
       return createBridgeResponse(request, {
         ok: true,
-        result: { tabId: landedTab.id, url: landedTab.url ?? provider.homeUrl },
+        result: { tabId: landedTab.id, url: publicProviderUrl(landedTab.url ?? provider.homeUrl) || provider.homeUrl },
       })
     }
 
     const tab = await getOrCreateProviderTab(provider, request.targetUrl)
     await focusTab(tab)
-    const landedTab = await waitForProviderTabLoaded(tab.id, provider)
+    const landedTab = await waitForProviderTabLoaded(tab.id, provider, request.targetUrl)
+    const preSubmitUrl = landedTab.pendingUrl || landedTab.url || provider.homeUrl
 
     if (request.action === BRIDGE_ACTIONS.SUBMIT) {
       await validateProviderLanding(landedTab.id, provider, request)
-      const result = await sendToProviderTab(landedTab.id, { type: 'tokenless.bridge.submit', request })
-      return createBridgeResponse(request, { ok: true, result })
+      const result = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.submit', request })
+      return createBridgeResponse(request, { ok: true, result: publicSubmitResult(result) })
     }
 
     if (request.action === BRIDGE_ACTIONS.READ) {
       await validateProviderLanding(landedTab.id, provider, request)
-      const result = await sendToProviderTab(landedTab.id, { type: 'tokenless.bridge.read', request })
+      const result = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.read', request })
       return createBridgeResponse(request, { ok: true, result })
     }
 
     if (request.action === BRIDGE_ACTIONS.SNAPSHOT_DOM) {
-      const result = await sendToProviderTab(landedTab.id, { type: 'tokenless.bridge.snapshot_dom', request })
+      const result = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.snapshot_dom', request })
       return createBridgeResponse(request, { ok: true, result })
     }
 
     if (request.action === BRIDGE_ACTIONS.SUBMIT_AND_READ) {
       await validateProviderLanding(landedTab.id, provider, request)
-      const submit = await sendToProviderTab(landedTab.id, { type: 'tokenless.bridge.submit', request })
+      const submit = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.submit', request })
       const readDelayMs = Math.min(Number(request.readDelayMs ?? 2500), 30000)
       await delay(readDelayMs)
-      const read = await sendToProviderTab(landedTab.id, {
+      const readRequest = postSubmitReadRequest(provider, request, submit, preSubmitUrl)
+      await validateProviderLanding(landedTab.id, provider, readRequest)
+      const read = await sendToProviderTab(landedTab.id, provider, readRequest, {
         type: 'tokenless.bridge.read',
-        request: { ...request, answerBaseline: submit?.answerBaseline },
+        request: readRequest,
       })
-      return createBridgeResponse(request, { ok: true, result: { submit, read } })
+      return createBridgeResponse(request, { ok: true, result: { submit: publicSubmitResult(submit), read } })
     }
 
     return createBridgeResponse(request, {
@@ -141,59 +176,95 @@ async function runBridgeRequest(request: BridgeRequest) {
   }
 }
 
-function startDaemonBridge() {
-  if (daemonBridgePort) return
-  if (daemonBridgeReconnectTimer) {
-    clearTimeout(daemonBridgeReconnectTimer)
-    daemonBridgeReconnectTimer = null
+function postSubmitReadRequest(
+  provider: ProviderConfig,
+  request: BridgeRequest,
+  submit: ExtensionRecord,
+  preSubmitUrl: string
+) {
+  const effectiveTargetUrl = request.targetUrl ?? preSubmitUrl
+  const transitionSource = providerTransitionSource(provider, effectiveTargetUrl)
+  const readRequest: BridgeRequest = {
+    ...request,
+    targetUrl: effectiveTargetUrl,
+    answerBaseline: submit?.answerBaseline,
   }
-
-  let port: chrome.runtime.Port
-  try {
-    port = chrome.runtime.connectNative(NATIVE_HOST_NAME)
-  } catch {
-    scheduleDaemonBridgeReconnect()
-    return
-  }
-
-  daemonBridgePort = port
-  port.onMessage.addListener((message) => handleDaemonBridgeMessage(port, message))
-  port.onDisconnect.addListener(() => {
-    if (daemonBridgePort === port) {
-      daemonBridgePort = null
+  if (
+    submit?.status === 'submitted' &&
+    transitionSource
+  ) {
+    readRequest[POST_SUBMIT_TARGET_TRANSITION_FLAG] = true
+    readRequest[POST_SUBMIT_TARGET_TRANSITION_PROOF] = {
+      requestId: request.requestId,
+      provider: provider.id,
+      targetUrl: canonicalTabUrl(String(effectiveTargetUrl)),
+      sourceKind: transitionSource.kind,
+      customGptId: transitionSource.customGptId,
+      answerBaseline: submit.answerBaseline,
+      nonce: internalTransitionNonce(),
     }
-    scheduleDaemonBridgeReconnect()
-  })
-  port.postMessage({ type: 'tokenless.native.daemon_connect' })
+  }
+  return readRequest
 }
 
-function scheduleDaemonBridgeReconnect() {
-  if (daemonBridgeReconnectTimer) return
-  daemonBridgeReconnectTimer = setTimeout(() => {
-    daemonBridgeReconnectTimer = null
-    startDaemonBridge()
-  }, DAEMON_BRIDGE_RECONNECT_MS)
+function publicSubmitResult(submit: ExtensionRecord) {
+  if (!submit || typeof submit !== 'object' || Array.isArray(submit)) return submit
+  const { answerBaseline: _answerBaseline, ...publicSubmit } = submit
+  return publicSubmit
+}
+
+function internalTransitionNonce() {
+  return globalThis.crypto?.randomUUID?.() ?? `transition-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function startDaemonBridge() {
+  daemonBridge.start()
+}
+
+function isProviderContentReadyMessage(message: unknown) {
+  return objectRecord(message).type === PROVIDER_CONTENT_READY_TYPE
 }
 
 function handleDaemonBridgeMessage(port: chrome.runtime.Port, message: ExtensionRecord) {
-  if (message?.type !== 'tokenless.native.daemon_job' || !message.ok) return
-  const job = message.result?.job
+  if (!isNativeMessage(message) || message.type !== NATIVE_MESSAGE_TYPES.DAEMON_JOB || !message.ok) return
+  const job = objectRecord(message.result).job
+  const identity = daemonJobIdentity(job)
+  if (!identity || handledDaemonJobs.has(identity.key)) return
+  handledDaemonJobs.add(identity.key)
   daemonJobQueue = daemonJobQueue
     .catch(() => undefined)
     .then(() => runClaimedDaemonJob(job))
     .then(
-      () => postDaemonBridgeReady(port),
-      () => postDaemonBridgeReady(port)
+      () => postDaemonBridgeReady(port, identity),
+      () => postDaemonBridgeReady(port, identity)
     )
 }
 
-function postDaemonBridgeReady(port: chrome.runtime.Port) {
-  if (daemonBridgePort !== port) return
-  try {
-    port.postMessage({ type: 'tokenless.native.daemon_ready' })
-  } catch {
-    // The native process may have already disconnected after the job settled.
+function postDaemonBridgeReady(
+  port: chrome.runtime.Port,
+  identity: { key: string; jobId: string; claimToken: string }
+) {
+  const posted = daemonBridge.postIfConnected(port, createNativeMessage(NATIVE_MESSAGE_TYPES.DAEMON_READY, {
+    jobId: identity.jobId,
+    claimToken: identity.claimToken,
+  }))
+  if (!posted) {
+    handledDaemonJobs.delete(identity.key)
+    return
   }
+  handledDaemonJobOrder.push(identity.key)
+  while (handledDaemonJobOrder.length > MAX_HANDLED_DAEMON_JOBS) {
+    const oldest = handledDaemonJobOrder.shift()
+    if (oldest) handledDaemonJobs.delete(oldest)
+  }
+}
+
+function daemonJobIdentity(job: unknown) {
+  const claimedJob = objectRecord(job)
+  const jobId = stringOrUndefined(claimedJob.job_id)
+  const claimToken = stringOrUndefined(claimedJob.claim_token)
+  if (!jobId || !claimToken) return null
+  return { key: `${jobId}\u0000${claimToken}`, jobId, claimToken }
 }
 
 async function runClaimedDaemonJob(job: unknown) {
@@ -291,7 +362,7 @@ async function completeDaemonJob({
   error?: unknown
 }) {
   return nativeRequest({
-    type: 'tokenless.native.daemon_complete_job',
+    type: NATIVE_MESSAGE_TYPES.DAEMON_COMPLETE_JOB,
     daemonUrl,
     jobId,
     claimToken,
@@ -313,6 +384,17 @@ function nativeRequest(message: ExtensionRecord): Promise<any> {
     }, NATIVE_REQUEST_TIMEOUT_MS)
     port.onMessage.addListener((response) => {
       if (settled) return
+      if (!isNativeMessage(response) || response.type !== message.type) {
+        settled = true
+        clearTimeout(timeout)
+        port.disconnect()
+        reject(bridgeError(
+          'native_protocol_mismatch',
+          `Native host response must use ${NATIVE_PROTOCOL_VERSION} and match ${message.type}.`,
+          false
+        ))
+        return
+      }
       settled = true
       clearTimeout(timeout)
       resolve(response)
@@ -324,7 +406,7 @@ function nativeRequest(message: ExtensionRecord): Promise<any> {
         reject(bridgeError('native_host_disconnected', chrome.runtime.lastError?.message || 'Native host disconnected.', true))
       }
     })
-    port.postMessage(stripUndefined(message))
+    port.postMessage(createNativeMessage(message.type, stripUndefined(message)))
   })
 }
 
@@ -430,7 +512,7 @@ async function getOrCreateProviderTab(provider: ProviderConfig, targetUrl: unkno
   for (const host of provider.hosts) {
     candidates.push(...await chrome.tabs.query({ url: `https://${host}/*` }))
   }
-  if (targetUrl) {
+  if (targetUrl !== undefined) {
     const requestedKey = canonicalTabUrl(requestedUrl)
     const exactCandidate = candidates.find((tab) => (
       tab.id !== undefined && canonicalTabUrl(tab.url ?? '') === requestedKey
@@ -440,7 +522,14 @@ async function getOrCreateProviderTab(provider: ProviderConfig, targetUrl: unkno
     }
     return chrome.tabs.create({ url: requestedUrl, active: true })
   }
-  const visibleCandidate = candidates.find((tab) => tab.id !== undefined && getProviderForUrl(tab.url ?? '')?.id === provider.id)
+  const visibleCandidate = candidates.find((tab) => (
+    tab.id !== undefined &&
+    (
+      isCanonicalProviderLandingTarget(provider, tab.url ?? '') ||
+      providerTransitionSource(provider, tab.url ?? '') !== null ||
+      isProviderConversationUrl(provider, tab.url ?? '')
+    )
+  ))
   if (visibleCandidate) {
     return visibleCandidate
   }
@@ -456,11 +545,17 @@ async function focusTab(tab: chrome.tabs.Tab) {
   }
 }
 
-async function sendToProviderTab(tabId: number | undefined, message: Record<string, unknown>): Promise<any> {
+async function sendToProviderTab(
+  tabId: number | undefined,
+  provider: ProviderConfig,
+  request: BridgeRequest,
+  message: Record<string, unknown>
+): Promise<any> {
   if (tabId === undefined) {
     throw bridgeError('tab_unavailable', 'Provider tab is not available.', true)
   }
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    await validateProviderTabContext(tabId, provider, request)
     try {
       return await chrome.tabs.sendMessage(tabId, message)
     } catch (error) {
@@ -468,6 +563,7 @@ async function sendToProviderTab(tabId: number | undefined, message: Record<stri
         const message = error instanceof Error ? error.message : 'Provider content script is unavailable.'
         throw bridgeError('content_script_unavailable', message || 'Provider content script is unavailable.', true)
       }
+      await validateProviderTabContext(tabId, provider, request)
       await chrome.scripting.executeScript({
         target: { tabId },
         files: ['content/provider-content.js'],
@@ -478,7 +574,12 @@ async function sendToProviderTab(tabId: number | undefined, message: Record<stri
   throw bridgeError('content_script_unavailable', 'Provider content script is unavailable.', true)
 }
 
-async function waitForProviderTabLoaded(tabId: number | undefined, provider: ProviderConfig, timeoutMs = PROVIDER_LANDING_TIMEOUT_MS) {
+async function waitForProviderTabLoaded(
+  tabId: number | undefined,
+  provider: ProviderConfig,
+  targetUrl: unknown,
+  timeoutMs = PROVIDER_LANDING_TIMEOUT_MS
+) {
   if (tabId === undefined) {
     throw bridgeError('tab_unavailable', 'Provider tab is not available.', true)
   }
@@ -488,7 +589,7 @@ async function waitForProviderTabLoaded(tabId: number | undefined, provider: Pro
     const tab = await chrome.tabs.get(tabId)
     lastUrl = tab.pendingUrl || tab.url || lastUrl
     if (tab.status === 'complete') {
-      return tab
+      return assertProviderTabContext(tab, provider, targetUrl)
     }
     await delay(PROVIDER_LANDING_POLL_MS)
   }
@@ -500,7 +601,12 @@ async function waitForProviderTabLoaded(tabId: number | undefined, provider: Pro
 }
 
 async function validateProviderLanding(tabId: number | undefined, provider: ProviderConfig, request: BridgeRequest) {
-  const validation = await sendToProviderTab(tabId, { type: 'tokenless.bridge.validate_landing', request })
+  const validation = await sendToProviderTab(
+    tabId,
+    provider,
+    request,
+    { type: 'tokenless.bridge.validate_landing', request }
+  )
   if (validation?.status === 'ready') {
     return validation
   }
@@ -514,8 +620,222 @@ async function validateProviderLanding(tabId: number | undefined, provider: Prov
   throw bridgeError('provider_landing_unavailable', `${provider.label} page did not report a usable chat surface.`, true)
 }
 
+async function validateProviderTabContext(tabId: number, provider: ProviderConfig, request: BridgeRequest) {
+  return assertProviderTabContext(
+    await chrome.tabs.get(tabId),
+    provider,
+    request.targetUrl,
+    hasPostSubmitTargetTransitionProof(provider, request)
+  )
+}
+
+function hasPostSubmitTargetTransitionProof(provider: ProviderConfig, request: BridgeRequest) {
+  if (
+    request[POST_SUBMIT_TARGET_TRANSITION_FLAG] !== true ||
+    !providerTransitionSource(provider, request.targetUrl)
+  ) {
+    return false
+  }
+  const proof = objectRecord(request[POST_SUBMIT_TARGET_TRANSITION_PROOF])
+  const proofBaseline = objectRecord(proof.answerBaseline)
+  const requestBaseline = objectRecord(request.answerBaseline)
+  const transitionSource = providerTransitionSource(provider, request.targetUrl)
+  return (
+    Boolean(transitionSource) &&
+    proof.requestId === request.requestId &&
+    proof.provider === provider.id &&
+    proof.targetUrl === canonicalTabUrl(String(request.targetUrl)) &&
+    proof.sourceKind === transitionSource?.kind &&
+    proof.customGptId === transitionSource?.customGptId &&
+    typeof proof.nonce === 'string' &&
+    proof.nonce.length >= 16 &&
+    Number.isInteger(proofBaseline.count) &&
+    proofBaseline.count >= 0 &&
+    typeof proofBaseline.lastText === 'string' &&
+    proofBaseline.count === requestBaseline.count &&
+    proofBaseline.lastText === requestBaseline.lastText
+  )
+}
+
+function assertProviderTabContext(
+  tab: chrome.tabs.Tab,
+  provider: ProviderConfig,
+  targetUrl: unknown,
+  allowPostSubmitTargetTransition = false
+) {
+  const currentUrl = tab.pendingUrl || tab.url || ''
+  const currentProvider = getProviderForUrl(currentUrl)
+  if (
+    !currentProvider ||
+    currentProvider.id !== provider.id ||
+    !isSafeProviderAuthority(provider, currentUrl)
+  ) {
+    throw bridgeError(
+      'provider_tab_mismatch',
+      `Provider tab is no longer on the requested ${provider.label} origin.`,
+      false
+    )
+  }
+  const targetMayTransition = (
+    allowPostSubmitTargetTransition &&
+    isApprovedProviderTransition(provider, targetUrl, currentUrl)
+  )
+  const canonicalLandingEquivalent = areProviderTransitionSourcesEquivalent(provider, targetUrl, currentUrl)
+  if (
+    targetUrl === undefined &&
+    !providerTransitionSource(provider, currentUrl) &&
+    !isProviderConversationUrl(provider, currentUrl)
+  ) {
+    throw bridgeError(
+      'target_tab_mismatch',
+      `Provider tab is not on an approved ${provider.label} landing or conversation URL.`,
+      false
+    )
+  }
+  if (
+    targetUrl !== undefined &&
+    !targetMayTransition &&
+    !canonicalLandingEquivalent &&
+    canonicalTabUrl(currentUrl) !== canonicalTabUrl(safeProviderUrl(provider, targetUrl))
+  ) {
+    throw bridgeError(
+      'target_tab_mismatch',
+      `Provider tab is no longer on the requested ${provider.label} target.`,
+      false
+    )
+  }
+  return tab
+}
+
+function isCanonicalProviderLandingTarget(provider: ProviderConfig, targetUrl: unknown) {
+  if (typeof targetUrl !== 'string') return false
+  try {
+    const target = new URL(targetUrl)
+    const home = new URL(provider.homeUrl)
+    return (
+      hasSafeProviderAuthority(provider, target) &&
+      canonicalPathname(target.pathname) === canonicalPathname(home.pathname)
+    )
+  } catch {
+    return false
+  }
+}
+
+function providerTransitionSource(provider: ProviderConfig, value: unknown) {
+  if (isCanonicalProviderLandingTarget(provider, value)) {
+    return { kind: 'root', customGptId: undefined }
+  }
+  if (provider.id !== 'chatgpt' || typeof value !== 'string') return null
+  try {
+    const parsed = new URL(value)
+    if (!hasSafeProviderAuthority(provider, parsed)) return null
+    const segments = canonicalPathname(parsed.pathname).split('/').filter(Boolean)
+    const customGptId = segments.length === 2 && segments[0] === 'g' ? segments[1] : undefined
+    return isCustomGptId(customGptId)
+      ? { kind: 'custom_gpt', customGptId }
+      : null
+  } catch {
+    return null
+  }
+}
+
+function areProviderTransitionSourcesEquivalent(
+  provider: ProviderConfig,
+  leftUrl: unknown,
+  rightUrl: unknown
+) {
+  const left = providerTransitionSource(provider, leftUrl)
+  const right = providerTransitionSource(provider, rightUrl)
+  return Boolean(
+    left &&
+    right &&
+    left.kind === right.kind &&
+    left.customGptId === right.customGptId
+  )
+}
+
+function isApprovedProviderTransition(
+  provider: ProviderConfig,
+  sourceUrl: unknown,
+  destinationUrl: unknown
+) {
+  const source = providerTransitionSource(provider, sourceUrl)
+  const destination = providerConversationRoute(provider, destinationUrl)
+  if (!source || !destination) return false
+  if (source.kind === 'custom_gpt') {
+    return (
+      destination.kind === 'custom_gpt' &&
+      destination.customGptId === source.customGptId
+    )
+  }
+  return destination.kind === 'standard'
+}
+
+function isProviderConversationUrl(provider: ProviderConfig, value: unknown) {
+  return providerConversationRoute(provider, value) !== null
+}
+
+function providerConversationRoute(provider: ProviderConfig, value: unknown) {
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = new URL(value)
+    if (!hasSafeProviderAuthority(provider, parsed)) {
+      return null
+    }
+    const pathname = canonicalPathname(parsed.pathname)
+    const segments = pathname.split('/').filter(Boolean)
+    if (provider.id === 'chatgpt') {
+      if (segments.length === 2 && segments[0] === 'c') {
+        return isOpaqueProviderId(segments[1])
+          ? { kind: 'standard', customGptId: undefined }
+          : null
+      }
+      return (
+        segments.length === 4 &&
+        segments[0] === 'g' &&
+        segments[2] === 'c' &&
+        isCustomGptId(segments[1]) &&
+        isOpaqueProviderId(segments[3])
+      )
+        ? { kind: 'custom_gpt', customGptId: segments[1] }
+        : null
+    }
+    if (provider.id === 'claude') {
+      return segments.length === 2 && segments[0] === 'chat' && isOpaqueProviderId(segments[1])
+        ? { kind: 'standard', customGptId: undefined }
+        : null
+    }
+    if (provider.id === 'gemini') {
+      return segments.length === 2 && segments[0] === 'app' && isOpaqueProviderId(segments[1])
+        ? { kind: 'standard', customGptId: undefined }
+        : null
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function isCustomGptId(value: string | undefined) {
+  return Boolean(value?.startsWith('g-') && isOpaqueProviderId(value.slice(2)))
+}
+
+function isOpaqueProviderId(value: string | undefined) {
+  if (
+    !value ||
+    value.length < 8 ||
+    value.length > 128 ||
+    !/^[A-Za-z0-9_-]+$/.test(value) ||
+    !/\d/.test(value)
+  ) {
+    return false
+  }
+  const compact = value.toLowerCase().replace(/[-_]/g, '')
+  return !RESERVED_PROVIDER_PATH_PREFIXES.some((prefix) => compact.startsWith(prefix))
+}
+
 function safeProviderUrl(provider: ProviderConfig, targetUrl: unknown) {
-  if (!targetUrl) {
+  if (targetUrl === undefined) {
     return provider.homeUrl
   }
   let parsed: URL
@@ -524,19 +844,42 @@ function safeProviderUrl(provider: ProviderConfig, targetUrl: unknown) {
   } catch {
     throw bridgeError('invalid_target_url', 'Target URL must be a valid absolute URL.', false)
   }
-  if (parsed.protocol !== 'https:' || !provider.hosts.includes(parsed.hostname.toLowerCase())) {
+  if (!hasSafeProviderAuthority(provider, parsed)) {
     throw bridgeError('target_url_provider_mismatch', 'Target URL must belong to the selected provider.', false)
   }
   return parsed.href
 }
 
+function isSafeProviderAuthority(provider: ProviderConfig, value: string) {
+  try {
+    return hasSafeProviderAuthority(provider, new URL(value))
+  } catch {
+    return false
+  }
+}
+
+function hasSafeProviderAuthority(provider: ProviderConfig, parsed: URL) {
+  return (
+    parsed.protocol === 'https:' &&
+    parsed.username === '' &&
+    parsed.password === '' &&
+    parsed.port === '' &&
+    provider.hosts.includes(parsed.hostname.toLowerCase())
+  )
+}
+
 function canonicalTabUrl(url: string) {
   try {
     const parsed = new URL(url)
-    return `${parsed.origin}${parsed.pathname}`
+    const pathname = canonicalPathname(parsed.pathname)
+    return `${parsed.origin}${pathname}`
   } catch {
     return ''
   }
+}
+
+function canonicalPathname(pathname: string) {
+  return pathname.replace(/\/+$/, '') || '/'
 }
 
 function delay(ms: number) {
@@ -544,6 +887,10 @@ function delay(ms: number) {
 }
 
 function redactUrlForError(url: string) {
+  return publicProviderUrl(url)
+}
+
+function publicProviderUrl(url: string) {
   try {
     const parsed = new URL(url)
     return `${parsed.origin}${parsed.pathname}`

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tokenless Settings</title>
+    <link rel="stylesheet" href="index.css">
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Browser extension</p>
+          <h1>Tokenless Settings</h1>
+          <p class="lede">Choose provider preferences and review jobs handled by the local daemon.</p>
+        </div>
+        <span id="page-status" class="status" data-tone="loading" role="status">Connecting…</span>
+      </header>
+
+      <section class="panel" aria-labelledby="configuration-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="configuration-heading">Configuration</h2>
+            <p>Preferences are stored by the Tokenless native host on this computer.</p>
+          </div>
+        </div>
+        <div id="configuration" aria-live="polite">
+          <div class="state-card" data-state="loading">Loading configuration…</div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="history-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="history-heading">Daemon Job History</h2>
+            <p>Newest jobs appear first. Prompts and results are not displayed here.</p>
+          </div>
+          <button id="refresh" type="button" class="secondary-button">Refresh</button>
+        </div>
+        <div id="history" class="history" aria-live="polite">
+          <div class="state-card" data-state="loading">Loading daemon history…</div>
+        </div>
+      </section>
+
+      <aside class="safety-note">
+        <strong>Visible-session boundary</strong>
+        <span>Tokenless uses approved provider pages and visible DOM only. It never reads browser cookies, storage tokens, or private provider APIs.</span>
+      </aside>
+    </main>
+    <script type="module" src="index.js"></script>
+  </body>
+</html>

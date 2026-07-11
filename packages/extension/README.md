@@ -1,12 +1,13 @@
 # Tokenless
 
-Tokenless is a visible browser extension for user-authorized web AI sessions. It lets Tokenless clients request actions in the user's own browser profile without exporting cookies, tokens, or hidden provider API calls.
+Tokenless is a visible browser extension for user-authorized web AI sessions. It executes jobs pushed by the local Tokenless daemon in the user's own browser profile without exporting cookies, tokens, or hidden provider API calls.
 
 ## Surfaces
 
 - Browser extension: Manifest V3 extension under `extension/`.
 - Private workspace package: protocol and provider helpers exported from `tokenless-browser-session-bridge`.
-- Web client helper: `tokenless-browser-session-bridge/web-client` sends requests to an installed extension id from Tokenless-owned web origins.
+- Background coordinator: a versioned Native Messaging connection receives daemon jobs and drives approved provider pages.
+- Settings page: provider preferences, local daemon configuration, and redacted daemon job history opened from the extension action.
 - Build output: `npm run build -w tokenless-browser-session-bridge` writes an unpacked extension to `dist/extension`.
 
 ## Provider Scope
@@ -20,7 +21,8 @@ The first package version defines adapters for ChatGPT, Gemini, and Claude web s
 - No private provider backend calls.
 - Domain-scoped host permissions only.
 - User-visible tab focus for write actions.
-- Request/response messages use the versioned bridge protocol.
+- Native and provider request/response messages use versioned protocols.
+- No external web origin can drive a provider session.
 
 ## Local Development
 
@@ -32,15 +34,6 @@ npm test
 
 Load `packages/extension/dist/extension` as an unpacked extension in Chrome, Brave, Edge, Chromium, or Arc developer mode.
 
-```js
-import { createExternalExtensionClient } from "tokenless-browser-session-bridge/web-client";
-
-const bridge = createExternalExtensionClient({ extensionId: "installed-extension-id" });
-const response = await bridge.request({
-  provider: "chatgpt",
-  action: "submit_and_read",
-  prompt: "Review this plan.",
-});
-```
+Click the extension action to open Settings. Daemon jobs run in the background and open or reuse only the visible provider page required for the job.
 
 The current extension build targets Chromium-family browsers: Chrome, Brave, Edge, Chromium, and Arc. Firefox and Safari need target-specific manifests and Safari's containing app wrapper before release.

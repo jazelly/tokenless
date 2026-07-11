@@ -1,0 +1,29 @@
+{
+  "name": "tokenless-native-win32-arm64",
+  "version": "0.1.1",
+  "description": "Tokenless Rust runtime for win32-arm64.",
+  "license": "UNLICENSED",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/verify-native-package.mjs"
+  },
+  "tokenlessRuntime": {
+    "protocol": "tokenless.native-package.v1",
+    "platform": "win32",
+    "arch": "arm64"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

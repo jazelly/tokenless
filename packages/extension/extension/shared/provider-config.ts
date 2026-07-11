@@ -105,7 +105,6 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     blockerSelectors: Object.freeze([
       'iframe[src*="captcha"]',
       'a[href*="login"]',
-      'button:disabled[aria-label*="Send"]',
     ]),
   }),
 ])
@@ -126,5 +125,13 @@ export function getProviderForUrl(url: string): ProviderConfig | null {
     return null
   }
   const host = parsed.hostname.toLowerCase()
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== ''
+  ) {
+    return null
+  }
   return PROVIDERS.find((provider) => provider.hosts.includes(host)) ?? null
 }

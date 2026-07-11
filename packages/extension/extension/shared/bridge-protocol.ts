@@ -87,6 +87,26 @@ export function validateBridgeRequest(payload: unknown): BridgeValidation {
   if (!provider) {
     return invalid('unsupported_provider', 'Bridge provider is not supported.')
   }
+  if (request.targetUrl !== undefined) {
+    if (typeof request.targetUrl !== 'string' || request.targetUrl.trim() === '') {
+      return invalid('invalid_target_url', 'Bridge targetUrl must be a nonempty absolute URL when provided.')
+    }
+    let target: URL
+    try {
+      target = new URL(request.targetUrl)
+    } catch {
+      return invalid('invalid_target_url', 'Bridge targetUrl must be a nonempty absolute URL when provided.')
+    }
+    if (
+      target.protocol !== 'https:' ||
+      target.username !== '' ||
+      target.password !== '' ||
+      target.port !== '' ||
+      !provider.hosts.includes(target.hostname.toLowerCase())
+    ) {
+      return invalid('target_url_provider_mismatch', 'Bridge targetUrl must belong to the selected provider.')
+    }
+  }
   if (
     (request.action === BRIDGE_ACTIONS.SUBMIT || request.action === BRIDGE_ACTIONS.SUBMIT_AND_READ) &&
     (typeof request.prompt !== 'string' || request.prompt.trim() === '')
@@ -104,6 +124,10 @@ export function validateBridgeRequest(payload: unknown): BridgeValidation {
   }
   if (request.maxTextChars !== undefined && (!Number.isFinite(Number(request.maxTextChars)) || Number(request.maxTextChars) < 0)) {
     return invalid('invalid_max_text_chars', 'Bridge maxTextChars must be a nonnegative number.')
+  }
+  const includeText = resolveIncludeText(request)
+  if (includeText.ok === false) {
+    return invalid('invalid_include_text', 'Bridge includeText must be a boolean when provided.')
   }
   return valid(normalizeRequest(request))
 }
@@ -128,6 +152,7 @@ export function capabilitiesPayload() {
 }
 
 function normalizeRequest(payload: Record<string, any>): BridgeRequest {
+  const includeText = resolveIncludeText(payload)
   return {
     protocol: payload.protocol,
     requestId: payload.requestId,
@@ -140,10 +165,31 @@ function normalizeRequest(payload: Record<string, any>): BridgeRequest {
     readDelayMs: payload.readDelayMs === undefined ? undefined : Number(payload.readDelayMs),
     readTimeoutMs: payload.readTimeoutMs === undefined ? undefined : Number(payload.readTimeoutMs),
     submitTimeoutMs: payload.submitTimeoutMs === undefined ? undefined : Number(payload.submitTimeoutMs),
-    includeText: payload.includeText === undefined ? undefined : Boolean(payload.includeText),
+    includeText: includeText.ok ? includeText.value : undefined,
     maxTextChars: payload.maxTextChars === undefined ? undefined : Number(payload.maxTextChars),
     metadata: payload.metadata,
   }
+}
+
+function resolveIncludeText(payload: Record<string, any>):
+  | { ok: true; value: boolean | undefined }
+  | { ok: false } {
+  if (payload.includeText !== undefined) {
+    return typeof payload.includeText === 'boolean'
+      ? { ok: true, value: payload.includeText }
+      : { ok: false }
+  }
+  const metadata = payload.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return { ok: true, value: undefined }
+  }
+  const metadataIncludeText = (metadata as Record<string, unknown>).includeText
+  if (metadataIncludeText === undefined) {
+    return { ok: true, value: undefined }
+  }
+  return typeof metadataIncludeText === 'boolean'
+    ? { ok: true, value: metadataIncludeText }
+    : { ok: false }
 }
 
 function valid(request: BridgeRequest): BridgeValidation {

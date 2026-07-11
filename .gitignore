@@ -1,4 +1,5 @@
 node_modules/
 test-results/
+packages/cli/npm/*/bin/
 
 .env

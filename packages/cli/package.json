@@ -16,9 +16,19 @@
     "tokenless": "dist/src/tokenless.mjs"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build": "npm run build:js && npm run build:native",
+    "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build:native": "node scripts/build-rust-binaries.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "prepack": "npm run build"
+    "prepack": "npm run build:js"
+  },
+  "optionalDependencies": {
+    "tokenless-native-darwin-arm64": "0.1.1",
+    "tokenless-native-darwin-x64": "0.1.1",
+    "tokenless-native-linux-arm64": "0.1.1",
+    "tokenless-native-linux-x64": "0.1.1",
+    "tokenless-native-win32-arm64": "0.1.1",
+    "tokenless-native-win32-x64": "0.1.1"
   },
   "engines": {
     "node": ">=22"

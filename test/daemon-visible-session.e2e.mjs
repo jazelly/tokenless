@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
+import { createHash, createPublicKey } from 'node:crypto'
 import fs from 'node:fs/promises'
+import https from 'node:https'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,10 +21,13 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
   const { chromium } = await import('playwright')
   const {
     createDaemonJob,
+    getDaemonJob,
     installNativeHost,
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
+    readLiveBridgeMarker,
   } = await import('../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-daemon-e2e-'))
   const artifactDir = await createArtifactDir()
@@ -36,19 +41,15 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
   let manifestBackup = []
   let daemon
   let context
+  let providerFixture
 
   try {
     daemon = startDaemon({ homeDir: tokenlessHome, port })
     await waitForDaemonReady(daemonUrl, daemon)
     events.push({ at: new Date().toISOString(), event: 'daemon_ready', daemonUrl })
 
-    context = await launchTokenlessContext(chromium, userDataDir, tokenlessHome, daemonUrl)
-    observeContextUrls(context, observedUrls)
-    const extensionId = await discoverExtensionId(context)
-    events.push({ at: new Date().toISOString(), event: 'extension_discovered', extensionId })
-    await context.close()
-    context = null
-
+    // Install before the first browser process starts. Chromium discovers
+    // user-level Native Messaging manifests at startup.
     const manifestHome = userDataDir
     const browsers = ['profile']
     manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
@@ -57,7 +58,7 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     const installed = await installNativeHost({
       homeDir: tokenlessHome,
       manifestHome,
-      extensionId,
+      extensionId: DEFAULT_EXTENSION_ID,
       browsers,
     })
     assert.ok(installed.manifests.length >= 1)
@@ -65,53 +66,38 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
       at: new Date().toISOString(),
       event: 'native_host_installed',
       manifests: installed.manifests,
-      executable: installed.executable,
+      executable: installed.nativeHostExecutable,
     })
 
-    context = await launchTokenlessContext(chromium, userDataDir, tokenlessHome, daemonUrl)
-    observeContextUrls(context, observedUrls)
     const chatGptFixture = await fs.readFile(chatGptRealDomFixturePath, 'utf8')
-    await context.route('https://chatgpt.com/**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: chatGptFixture,
-      })
-    })
-    await context.route('http://localhost/external-probe', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: '<!doctype html><title>external probe</title><body>external probe</body>',
-      })
-    })
+    providerFixture = await startHttpsFixtureServer({ body: chatGptFixture, events })
     events.push({
       at: new Date().toISOString(),
-      event: 'provider_fixture_route_registered',
-      route: 'https://chatgpt.com/**',
+      event: 'provider_fixture_https_started',
+      port: providerFixture.port,
       realProviderDom: true,
     })
 
-    const providerFixturePage = await context.newPage()
-    await providerFixturePage.goto('https://chatgpt.com/')
-    await providerFixturePage.locator('[data-testid="composer"] [contenteditable="true"]').waitFor({ timeout: 5000 })
-    await providerFixturePage.screenshot({ path: path.join(artifactDir, '01-chatgpt-fixture-before-daemon.png'), fullPage: true })
+    context = await launchTokenlessContext(
+      chromium,
+      userDataDir,
+      tokenlessHome,
+      daemonUrl,
+      providerFixture
+    )
+    observeContextUrls(context, observedUrls)
+    const extensionId = await discoverExtensionId(context)
+    assert.equal(extensionId, DEFAULT_EXTENSION_ID)
+    events.push({ at: new Date().toISOString(), event: 'extension_discovered', extensionId })
 
-    const externalPage = await context.newPage()
-    await externalPage.goto('http://localhost/external-probe')
-    const externalBridgeRun = await externalPage.evaluate(({ extensionId }) => new Promise((resolve) => {
-      chrome.runtime.sendMessage(extensionId, {
-        protocol: 'tokenless.browser-session-bridge.v1',
-        requestId: 'external-bridge-forbidden',
-        provider: 'chatgpt',
-        action: 'submit_and_read',
-        targetUrl: 'https://chatgpt.com/',
-        prompt: 'External origins must not drive Tokenless provider sessions.',
-      }, resolve)
-    }), { extensionId })
-    assert.equal(externalBridgeRun.ok, false, JSON.stringify(externalBridgeRun, null, 2))
-    assert.equal(externalBridgeRun.error.code, 'external_bridge_forbidden')
-    await fs.writeFile(path.join(artifactDir, 'external-bridge-run-response.json'), `${JSON.stringify(externalBridgeRun, null, 2)}\n`, 'utf8')
+    await ensureDaemonBridgeStarted(context)
+    const bridgeMarker = await waitForBridgeMarker({ tokenlessHome, readLiveBridgeMarker, context })
+    events.push({
+      at: new Date().toISOString(),
+      event: 'daemon_bridge_ready',
+      sessionId: bridgeMarker.sessionId,
+    })
+    const pagesBeforeRun = new Set(context.pages())
 
     const cliRun = spawnSync(process.execPath, [
       path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
@@ -120,8 +106,6 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
       prompt,
       '--provider',
       'chatgpt',
-      '--extension-id',
-      extensionId,
       '--home',
       tokenlessHome,
       '--daemon-url',
@@ -144,20 +128,68 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     const cliPayload = JSON.parse(cliRun.stdout)
     assert.equal(cliPayload.transport, 'daemon')
     assert.equal(cliPayload.provider, 'chatgpt')
+    assert.equal(cliPayload.taskUrl, undefined)
     assert.equal(cliPayload.runnerUrl, undefined)
-    assert.doesNotMatch(cliRun.stdout, /runnerUrl|daemon\/runner\.html/)
+    assert.doesNotMatch(cliRun.stdout, /taskUrl|task\/task\.html|runnerUrl|daemon\/runner\.html/)
 
-    const created = await fetch(`${daemonUrl}/jobs/${encodeURIComponent(cliPayload.jobId)}`).then((response) => response.json())
+    const created = await getDaemonJob({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: cliPayload.jobId,
+    })
     assert.ok(['queued', 'claimed', 'succeeded'].includes(created.status), JSON.stringify(created, null, 2))
     assert.equal(created.claim_token, undefined)
     assert.match(created.request_json.prompt, /Tokenless daemon E2E DOM prompt 93742/)
     await fs.writeFile(path.join(artifactDir, 'cli-daemon-run-payload.json'), `${JSON.stringify(cliPayload, null, 2)}\n`, 'utf8')
     events.push({ at: new Date().toISOString(), event: 'cli_daemon_job_created', jobId: created.job_id })
 
-    await ensureDaemonBridgeStarted(context)
-    events.push({ at: new Date().toISOString(), event: 'daemon_bridge_ready', jobId: created.job_id })
-
-    const completed = await waitForDaemonJobStatus(daemonUrl, created.job_id, ['succeeded', 'failed'], daemon)
+    const completed = await waitForDaemonJobStatus({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: created.job_id,
+      statuses: ['succeeded', 'failed'],
+      daemon,
+      getDaemonJob,
+    })
+    await fs.writeFile(
+      path.join(artifactDir, 'daemon-terminal-job.json'),
+      `${JSON.stringify(completed, null, 2)}\n`,
+      'utf8'
+    )
+    if (completed.status !== 'succeeded') {
+      const failedProviderPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/'))
+      if (failedProviderPage) {
+        await failedProviderPage.screenshot({
+          path: path.join(artifactDir, '00-chatgpt-fixture-failure.png'),
+          fullPage: true,
+        })
+        const providerDiagnostic = await failedProviderPage.evaluate(() => {
+          const describe = (selector) => [...document.querySelectorAll(selector)].map((node) => {
+            const rect = node.getBoundingClientRect()
+            const style = getComputedStyle(node)
+            return {
+              selector,
+              connected: node.isConnected,
+              checkVisibility: node.checkVisibility?.({ checkOpacity: true, checkVisibilityCSS: true }) ?? null,
+              rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+              style: { display: style.display, visibility: style.visibility, opacity: style.opacity, contentVisibility: style.contentVisibility },
+            }
+          })
+          return {
+            url: location.href,
+            viewport: { width: innerWidth, height: innerHeight },
+            readyState: document.readyState,
+            composer: describe('#prompt-textarea'),
+            send: describe('[data-testid="composer-send-button"]'),
+          }
+        })
+        await fs.writeFile(
+          path.join(artifactDir, 'provider-failure-diagnostic.json'),
+          `${JSON.stringify(providerDiagnostic, null, 2)}\n`,
+          'utf8'
+        )
+      }
+    }
     assert.equal(completed.status, 'succeeded')
     assert.equal(completed.claim_token, undefined)
     assert.match(completed.result_json.text, /visible ChatGPT real-DOM fixture answer/)
@@ -165,17 +197,69 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     assert.doesNotMatch(completed.result_json.text, /stale ChatGPT real-DOM fixture answer/)
     assert.doesNotMatch(completed.result_json.text, /_streaming/)
 
-    const providerPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/')) ?? providerFixturePage
+    const providerPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/'))
+    assert.ok(providerPage, `extension did not open the visible ChatGPT page: ${JSON.stringify(context.pages().map((page) => page.url()))}`)
+    await providerPage.bringToFront()
+    await providerPage.screenshot({
+      path: path.join(artifactDir, '01-chatgpt-fixture-opened-by-extension.png'),
+      animations: 'disabled',
+    })
     assert.match(await providerPage.locator('[data-message-author-role="user"]').last().innerText(), /Tokenless daemon E2E DOM prompt 93742/)
     assert.match(await providerPage.locator('[data-message-author-role="assistant"]').last().innerText(), /visible ChatGPT real-DOM fixture answer/)
     const pageUrlsAfterSuccess = context.pages().map((page) => page.url())
     assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/task/task.html')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
     assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/daemon/runner.html')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/settings/')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    const pagesOpenedByRun = context.pages().filter((page) => !pagesBeforeRun.has(page))
+    assert.deepEqual(pagesOpenedByRun.map((page) => page.url()), [providerPage.url()],
+      'task execution must open exactly one visible provider page')
     assertNoTaskPageObserved(observedUrls)
     assertNoRunnerPageObserved(observedUrls)
 
+    const pagesBeforeSnapshot = new Set(context.pages())
+    const snapshotRun = spawnSync(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'snapshot-dom',
+      '--provider',
+      'chatgpt',
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      providerPage.url(),
+      '--no-open',
+      '--timeout-ms',
+      '15000',
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 30000,
+    })
+    assert.equal(snapshotRun.status, 0, snapshotRun.stderr || snapshotRun.stdout)
+    const snapshotPayload = JSON.parse(snapshotRun.stdout)
+    assert.equal(snapshotPayload.transport, 'daemon')
+    assert.equal(snapshotPayload.snapshot.sanitized, true)
+    assert.equal(snapshotPayload.snapshot.visibleTextPath, null)
+    const snapshotHtml = await fs.readFile(snapshotPayload.snapshot.htmlPath, 'utf8')
+    assert.doesNotMatch(snapshotHtml, /Tokenless daemon E2E DOM prompt 93742/)
+    assert.doesNotMatch(snapshotHtml, /visible ChatGPT real-DOM fixture answer/)
+    assert.deepEqual(
+      context.pages().filter((page) => !pagesBeforeSnapshot.has(page)).map((page) => page.url()),
+      [],
+      'snapshot-dom must reuse the provider tab without opening another page'
+    )
+    events.push({
+      at: new Date().toISOString(),
+      event: 'snapshot_completed_without_new_page',
+      jobId: snapshotPayload.jobId,
+      htmlPath: snapshotPayload.snapshot.htmlPath,
+    })
+
     const invalid = await createDaemonJob({
       daemonUrl,
+      homeDir: tokenlessHome,
       provider: 'chatgpt',
       action: 'unsupported_for_e2e',
       requestJson: {
@@ -186,7 +270,14 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     })
     await ensureDaemonBridgeStarted(context)
     events.push({ at: new Date().toISOString(), event: 'daemon_bridge_ready', jobId: invalid.job_id })
-    const failedCompleted = await waitForDaemonJobStatus(daemonUrl, invalid.job_id, ['failed'], daemon)
+    const failedCompleted = await waitForDaemonJobStatus({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: invalid.job_id,
+      statuses: ['failed'],
+      daemon,
+      getDaemonJob,
+    })
     assert.equal(failedCompleted.status, 'failed')
     assert.equal(failedCompleted.claim_token, undefined)
     assert.equal(failedCompleted.claimToken, undefined)
@@ -197,7 +288,19 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     assertNoTaskPageObserved(observedUrls)
     assertNoRunnerPageObserved(observedUrls)
 
-    await providerPage.screenshot({ path: path.join(artifactDir, '02-chatgpt-fixture-after-daemon.png'), fullPage: true })
+    const settingsPageOpenedAutomatically = observedUrls.some((entry) => entry.url.includes('/settings/'))
+    assert.equal(settingsPageOpenedAutomatically, false, JSON.stringify(observedUrls, null, 2))
+    const settingsPage = await context.newPage()
+    await settingsPage.goto(`chrome-extension://${extensionId}/settings/index.html`)
+    await settingsPage.locator('#history .job-id').getByText(`Job ID: ${created.job_id}`, { exact: true })
+      .waitFor({ timeout: 10000 })
+    await settingsPage.screenshot({ path: path.join(artifactDir, '02-settings-history-opened-explicitly.png'), fullPage: true })
+
+    await providerPage.bringToFront()
+    await providerPage.screenshot({
+      path: path.join(artifactDir, '03-chatgpt-fixture-after-daemon.png'),
+      animations: 'disabled',
+    })
     await fs.writeFile(path.join(artifactDir, 'daemon-completed-job.json'), `${JSON.stringify(completed, null, 2)}\n`, 'utf8')
     await fs.writeFile(path.join(artifactDir, 'daemon-failed-job.json'), `${JSON.stringify(failedCompleted, null, 2)}\n`, 'utf8')
     await fs.writeFile(path.join(artifactDir, 'observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8')
@@ -215,24 +318,37 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
       prompt,
       taskPageOpened: observedUrls.some((entry) => entry.url.includes('/task/task.html')),
       runnerPageOpened: observedUrls.some((entry) => entry.url.includes('/daemon/runner.html')),
+      settingsPageOpenedAutomatically,
+      settingsPageOpenedExplicitly: true,
       observedUrlCount: observedUrls.length,
       events,
     }, null, 2)}\n`, 'utf8')
     console.log(`Tokenless daemon fixture E2E artifacts: ${artifactDir}`)
   } finally {
-    if (context) {
-      await fs.writeFile(path.join(artifactDir, 'observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8').catch(() => undefined)
-      await fs.writeFile(path.join(artifactDir, 'pages.json'), `${JSON.stringify(
-        context.pages().map((page) => ({ url: page.url() })),
-        null,
-        2
-      )}\n`, 'utf8').catch(() => undefined)
+    const cleanupErrors = []
+    await attemptCleanup(cleanupErrors, 'write observed URL artifacts', async () => {
+      await fs.writeFile(path.join(artifactDir, 'observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8')
+      if (context) {
+        await fs.writeFile(path.join(artifactDir, 'pages.json'), `${JSON.stringify(
+          context.pages().map((page) => ({ url: page.url() })),
+          null,
+          2
+        )}\n`, 'utf8')
+      }
+      await fs.writeFile(path.join(artifactDir, 'events.json'), `${JSON.stringify(events, null, 2)}\n`, 'utf8')
+    })
+    await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
+    await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
+    await attemptCleanup(cleanupErrors, 'restore native host manifests', async () => restoreFiles(manifestBackup))
+    await attemptCleanup(cleanupErrors, 'stop daemon', async () => {
+      if (daemon) await stopDaemon(daemon)
+    })
+    await attemptCleanup(cleanupErrors, 'remove temporary E2E state', async () => {
+      await fs.rm(tempRoot, { recursive: true, force: true })
+    })
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Tokenless fixture E2E cleanup failed')
     }
-    await fs.writeFile(path.join(artifactDir, 'events.json'), `${JSON.stringify(events, null, 2)}\n`, 'utf8').catch(() => undefined)
-    await context?.close()
-    await restoreFiles(manifestBackup)
-    if (daemon) await stopDaemon(daemon)
-    await fs.rm(tempRoot, { recursive: true, force: true })
   }
 })
 
@@ -279,7 +395,7 @@ async function createArtifactDir() {
   return artifactDir
 }
 
-async function launchTokenlessContext(chromium, userDataDir, tokenlessHome, daemonUrl) {
+async function launchTokenlessContext(chromium, userDataDir, tokenlessHome, daemonUrl, providerFixture) {
   const options = {
     headless: process.env.TOKENLESS_E2E_HEADED === '1' ? false : false,
     env: {
@@ -290,6 +406,9 @@ async function launchTokenlessContext(chromium, userDataDir, tokenlessHome, daem
     args: [
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
+      `--host-resolver-rules=MAP chatgpt.com:443 127.0.0.1:${providerFixture.port},EXCLUDE localhost`,
+      `--ignore-certificate-errors-spki-list=${providerFixture.spkiSha256}`,
+      '--disable-quic',
       '--no-first-run',
       '--no-default-browser-check',
     ],
@@ -298,6 +417,115 @@ async function launchTokenlessContext(chromium, userDataDir, tokenlessHome, daem
     options.channel = process.env.TOKENLESS_E2E_CHANNEL
   }
   return chromium.launchPersistentContext(userDataDir, options)
+}
+
+async function startHttpsFixtureServer({ body, events }) {
+  const { generate } = await import('selfsigned')
+  const notBeforeDate = new Date()
+  const notAfterDate = new Date(notBeforeDate.getTime() + 24 * 60 * 60 * 1000)
+  const certificate = await generate([{ name: 'commonName', value: 'chatgpt.com' }], {
+    algorithm: 'sha256',
+    keySize: 2048,
+    notBeforeDate,
+    notAfterDate,
+    extensions: [
+      { name: 'basicConstraints', cA: false, critical: true },
+      { name: 'keyUsage', digitalSignature: true, keyEncipherment: true, critical: true },
+      { name: 'extKeyUsage', serverAuth: true },
+      { name: 'subjectAltName', altNames: [{ type: 2, value: 'chatgpt.com' }] },
+    ],
+  })
+  const publicKeyDer = createPublicKey(certificate.public).export({ type: 'spki', format: 'der' })
+  const spkiSha256 = createHash('sha256').update(publicKeyDer).digest('base64')
+
+  const server = https.createServer({ key: certificate.private, cert: certificate.cert }, (request, response) => {
+    const host = request.headers.host?.toLowerCase() ?? null
+    events.push({
+      at: new Date().toISOString(),
+      event: 'provider_fixture_request_served',
+      host,
+      method: request.method ?? null,
+      path: request.url ?? null,
+    })
+    if (host !== 'chatgpt.com' && host !== 'chatgpt.com:443') {
+      response.writeHead(421, { 'content-type': 'text/plain; charset=utf-8' })
+      response.end('Misdirected Request')
+      return
+    }
+    if (request.url === '/favicon.ico') {
+      response.writeHead(204, { 'cache-control': 'no-store' })
+      response.end()
+      return
+    }
+    response.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-type': 'text/html; charset=utf-8',
+      'x-content-type-options': 'nosniff',
+    })
+    response.end(body)
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string')
+
+  return {
+    port: address.port,
+    spkiSha256,
+    async close() {
+      server.closeAllConnections?.()
+      await new Promise((resolve) => server.close(resolve))
+    },
+  }
+}
+
+async function attemptCleanup(errors, label, action) {
+  try {
+    await action()
+  } catch (error) {
+    errors.push(new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    }))
+  }
+}
+
+async function waitForBridgeMarker({ tokenlessHome, readLiveBridgeMarker, context }) {
+  const deadline = Date.now() + 15000
+  let lastRawMarker = null
+  while (Date.now() < deadline) {
+    const marker = await readLiveBridgeMarker({ homeDir: tokenlessHome })
+    if (marker) return marker
+    lastRawMarker = await fs.readFile(path.join(tokenlessHome, 'extension-bridge.json'), 'utf8').catch(() => null)
+    await delay(100)
+  }
+  const workers = context.serviceWorkers()
+  const nativeDiagnostic = workers[0]
+    ? await workers[0].evaluate((hostName) => new Promise((resolve) => {
+        const port = chrome.runtime.connectNative(hostName)
+        const timeout = setTimeout(() => {
+          port.disconnect()
+          resolve({ status: 'timeout' })
+        }, 2000)
+        port.onMessage.addListener((message) => {
+          clearTimeout(timeout)
+          port.disconnect()
+          resolve({ status: 'message', message })
+        })
+        port.onDisconnect.addListener(() => {
+          clearTimeout(timeout)
+          resolve({ status: 'disconnected', error: chrome.runtime.lastError?.message ?? null })
+        })
+        port.postMessage({
+          protocol: 'tokenless.native.v1',
+          type: 'tokenless.native.daemon_connect',
+        })
+      }), 'dev.tokenless.native_host')
+    : null
+  throw new Error(
+    `Rust extension bridge did not become live; service workers: ${JSON.stringify(workers.map((worker) => worker.url()))}; last raw marker: ${lastRawMarker}; native diagnostic: ${JSON.stringify(nativeDiagnostic)}`
+  )
 }
 
 async function ensureDaemonBridgeStarted(context) {
@@ -348,6 +576,8 @@ function startDaemon({ homeDir, port }) {
     '--quiet',
     '--manifest-path',
     path.join(root, 'packages/daemon/Cargo.toml'),
+    '--bin',
+    'tokenless-daemon',
     '--',
     '--home',
     homeDir,
@@ -401,7 +631,7 @@ async function waitForDaemonReady(daemonUrl, child) {
       throw new Error(`daemon exited with ${child.exitCode}: ${child.stderrText}`)
     }
     try {
-      const response = await fetch(`${daemonUrl}/ready`)
+      const response = await fetch(`${daemonUrl}/health`)
       if (response.ok) return
       lastError = new Error(`ready returned ${response.status}`)
     } catch (error) {
@@ -412,7 +642,7 @@ async function waitForDaemonReady(daemonUrl, child) {
   throw new Error(`daemon did not become ready: ${lastError?.message || 'timeout'}\n${child.stderrText}`)
 }
 
-async function waitForDaemonJobStatus(daemonUrl, jobId, statuses, child) {
+async function waitForDaemonJobStatus({ daemonUrl, homeDir, jobId, statuses, daemon: child, getDaemonJob }) {
   const started = Date.now()
   const expected = new Set(statuses)
   let lastJob
@@ -422,13 +652,8 @@ async function waitForDaemonJobStatus(daemonUrl, jobId, statuses, child) {
       throw new Error(`daemon exited with ${child.exitCode}: ${child.stderrText}`)
     }
     try {
-      const response = await fetch(`${daemonUrl}/jobs/${encodeURIComponent(jobId)}`)
-      if (response.ok) {
-        lastJob = await response.json()
-        if (expected.has(lastJob.status)) return lastJob
-      } else {
-        lastError = new Error(`job returned ${response.status}`)
-      }
+      lastJob = await getDaemonJob({ daemonUrl, homeDir, jobId })
+      if (expected.has(lastJob.status)) return lastJob
     } catch (error) {
       lastError = error
     }

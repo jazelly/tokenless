@@ -1,826 +1,2132 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
 import fs from 'node:fs'
-import fsp from 'node:fs/promises'
-import os from 'node:os'
+import http from 'node:http'
 import path from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const extensionSource = path.join(root, 'packages/extension/extension')
+const extensionDist = path.join(root, 'packages/extension/dist/extension')
 
-test('browser extension manifest is domain limited', () => {
+test('manifest exposes Settings without task, side-panel, or external execution surfaces', () => {
   const manifest = readJson('packages/extension/extension/manifest.json')
+
   assert.equal(manifest.manifest_version, 3)
   assert.equal(manifest.name, 'Tokenless')
-  assert.deepEqual(manifest.content_scripts[0].matches, manifest.host_permissions)
-  assert.ok(!manifest.permissions.includes('alarms'))
+  assert.deepEqual(manifest.options_ui, {
+    page: 'settings/index.html',
+    open_in_tab: false,
+  })
+  assert.equal(manifest.action.default_title, 'Open Tokenless settings')
+  assert.equal(manifest.side_panel, undefined)
+  assert.equal(manifest.externally_connectable, undefined)
   assert.ok(manifest.permissions.includes('nativeMessaging'))
+  assert.ok(!manifest.permissions.includes('sidePanel'))
   assert.ok(!manifest.permissions.includes('cookies'))
   assert.ok(!manifest.permissions.includes('history'))
+  assert.deepEqual(manifest.content_scripts[0].matches, manifest.host_permissions)
   assert.ok(manifest.host_permissions.every((pattern) => pattern.startsWith('https://')))
 })
 
-test('extension routes mapped conversations by exact target URL before generic provider reuse', () => {
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
-  const targetBranch = serviceWorker.indexOf('if (targetUrl)')
-  const genericReuse = serviceWorker.indexOf('const visibleCandidate')
+test('extension build contains Settings and no task, side-panel, or runner artifacts', () => {
+  const sourceArtifacts = listRelativeFiles(extensionSource)
+  const builtArtifacts = listRelativeFiles(extensionDist)
+  const buildManifest = readJson('packages/extension/dist/extension-build-manifest.json')
+  const extensionPackage = readJson('packages/extension/package.json')
+  const recordedArtifacts = buildManifest.files.map((entry) => entry.path)
 
-  assert.ok(targetBranch > 0, 'service worker should branch on explicit targetUrl')
-  assert.ok(genericReuse > 0, 'service worker should retain generic reuse fallback')
-  assert.ok(targetBranch < genericReuse, 'explicit targetUrl routing must happen before generic provider reuse')
-  assert.match(serviceWorker, /const exactCandidate = candidates\.find/)
-  assert.match(serviceWorker, /return chrome\.tabs\.create\(\{ url: requestedUrl, active: true \}\)/)
-
-  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.ts'), 'utf8')
-  assert.match(contentScript, /url: location\.href/)
+  for (const artifacts of [sourceArtifacts, builtArtifacts, recordedArtifacts]) {
+    assert.ok(artifacts.some((file) => file === 'settings/index.html'))
+    assert.ok(artifacts.some((file) => file === 'settings/index.ts' || file === 'settings/index.js'))
+    assert.ok(artifacts.every((file) => !file.startsWith('task/')), artifacts.join('\n'))
+    assert.ok(artifacts.every((file) => !file.startsWith('sidepanel/')), artifacts.join('\n'))
+    assert.ok(artifacts.every((file) => !file.startsWith('daemon/')), artifacts.join('\n'))
+    assert.ok(artifacts.every((file) => !file.includes('runner')), artifacts.join('\n'))
+  }
+  assert.equal(extensionPackage.exports['./web-client'], undefined)
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/src/web-client.ts')), false)
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/src/web-client.js')), false)
+  for (const obsoleteDirectory of ['task', 'sidepanel', 'daemon']) {
+    assert.equal(fs.existsSync(path.join(extensionSource, obsoleteDirectory)), false)
+    assert.equal(fs.existsSync(path.join(extensionDist, obsoleteDirectory)), false)
+  }
 })
 
-test('extension validates provider landing before waiting on provider actions', () => {
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
-  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.ts'), 'utf8')
+test('native messages are constructed and validated with tokenless.native.v1', async () => {
+  const {
+    createNativeMessage,
+    isNativeMessage,
+    NATIVE_MESSAGE_TYPES,
+    NATIVE_PROTOCOL_VERSION,
+  } = await import('../packages/extension/dist/extension/shared/native-protocol.js')
 
-  assert.match(serviceWorker, /const PROVIDER_LANDING_TIMEOUT_MS = 8000/)
-  assert.match(serviceWorker, /waitForProviderTabLoaded\(tab\.id, provider\)/)
-  assert.match(serviceWorker, /validateProviderLanding\(landedTab\.id, provider, request\)/)
-  assert.match(serviceWorker, /invalid_target_url/)
-  assert.match(serviceWorker, /target_url_provider_mismatch/)
-  assert.match(serviceWorker, /parsed\.protocol !== 'https:' \|\| !provider\.hosts\.includes\(parsed\.hostname\.toLowerCase\(\)\)/)
-  assert.doesNotMatch(serviceWorker, /provider_landing_failed/)
-
-  assert.match(contentScript, /tokenless\.bridge\.validate_landing/)
-  assert.match(contentScript, /request\.landingTimeoutMs \?\? 5000/)
-  assert.match(contentScript, /provider_landing_unavailable/)
-  assert.match(contentScript, /providerForMessage/)
-  assert.match(contentScript, /chatSurfaceStatus/)
-  assert.match(contentScript, /provider\.id === 'chatgpt'/)
-  assert.match(contentScript, /Boolean\(visibleComposer && visibleSubmit\)/)
+  assert.equal(NATIVE_PROTOCOL_VERSION, 'tokenless.native.v1')
+  for (const type of Object.values(NATIVE_MESSAGE_TYPES)) {
+    const message = createNativeMessage(type, { optional: undefined })
+    assert.deepEqual(message, { protocol: NATIVE_PROTOCOL_VERSION, type })
+    assert.equal(isNativeMessage(message), true)
+  }
+  assert.equal(isNativeMessage({ protocol: 'tokenless.native.v0', type: NATIVE_MESSAGE_TYPES.READ_CONFIG }), false)
+  assert.equal(isNativeMessage({ type: NATIVE_MESSAGE_TYPES.READ_CONFIG }), false)
 })
 
-test('background maintains a native daemon bridge and runs pushed jobs through the visible provider bridge', () => {
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
+test('daemon bridge requires a v1 handshake and reconnects with bounded backoff', async () => {
+  const { NativeDaemonBridge } = await import(
+    '../packages/extension/dist/extension/background/native-daemon-bridge.js'
+  )
+  const scheduler = createManualScheduler()
+  const ports = []
+  const delivered = []
+  const bridge = new NativeDaemonBridge({
+    connectNative() {
+      const port = createBehaviorNativePort()
+      ports.push(port)
+      return port
+    },
+    onMessage(_port, message) {
+      delivered.push(message)
+    },
+    timing: {
+      handshakeTimeoutMs: 100,
+      reconnectInitialDelayMs: 10,
+      reconnectMaxDelayMs: 40,
+    },
+    setTimer: scheduler.setTimer,
+    clearTimer: scheduler.clearTimer,
+  })
 
-  assert.match(serviceWorker, /DAEMON_JOB_RESPONSE_TYPE = 'tokenless\.daemon\.job_result'/)
-  assert.match(serviceWorker, /chrome\.runtime\.connectNative\(NATIVE_HOST_NAME\)/)
-  assert.match(serviceWorker, /tokenless\.native\.daemon_connect/)
-  assert.match(serviceWorker, /tokenless\.native\.daemon_job/)
-  assert.match(serviceWorker, /tokenless\.native\.daemon_ready/)
-  assert.match(serviceWorker, /tokenless\.native\.daemon_complete_job/)
-  assert.match(serviceWorker, /daemonBridgePort/)
-  assert.match(serviceWorker, /daemonBridgeReconnectTimer/)
-  assert.match(serviceWorker, /scheduleDaemonBridgeReconnect/)
-  assert.match(serviceWorker, /port\.onDisconnect\.addListener/)
-  assert.match(serviceWorker, /daemonJobQueue = daemonJobQueue/)
-  assert.match(serviceWorker, /handleDaemonBridgeMessage\(port, message\)/)
-  assert.match(serviceWorker, /runClaimedDaemonJob\(job\)/)
-  assert.match(serviceWorker, /postDaemonBridgeReady\(port\)/)
-  assert.match(serviceWorker, /daemonBridgePort !== port/)
-  assert.match(serviceWorker, /daemonJobToBridgeRequest\(claimedJob\)/)
-  assert.match(serviceWorker, /requestJson\.prompt/)
-  assert.match(serviceWorker, /requestJson\.targetUrl/)
-  assert.doesNotMatch(
-    serviceWorker.slice(
-      serviceWorker.indexOf('function daemonJobToBridgeRequest'),
-      serviceWorker.indexOf('async function completeDaemonJob')
-    ),
-    /claim_token|claimToken/,
-    'daemon claim token must not be copied into provider bridge requests'
-  )
-  assert.match(serviceWorker, /validateBridgeRequest\(bridgeRequest\)/)
-  assert.match(serviceWorker, /runBridgeRequest\(validation\.request\)/)
-  assert.match(serviceWorker, /claimToken/)
-  assert.match(serviceWorker, /normalizeBridgeResponse\(bridgeResponse\)/)
-  assert.match(serviceWorker, /job: publicDaemonJob\(job\)/)
-  assert.match(serviceWorker, /claim_token: _claimTokenSnake/)
-  assert.match(serviceWorker, /claimToken: _claimTokenCamel/)
-  assert.doesNotMatch(serviceWorker, /chrome\.alarms/)
-  assert.doesNotMatch(serviceWorker, /tokenless\.native\.daemon_claim_next/)
-  assert.match(serviceWorker, /handleRuntimeMessage\(message, \{ external: false \}\)/)
-  assert.match(serviceWorker, /handleRuntimeMessage\(message, \{ external: true \}\)/)
-  assert.match(serviceWorker, /external_bridge_forbidden/)
-  assert.match(serviceWorker, /context\.external && validation\.request\.action !== BRIDGE_ACTIONS\.CAPABILITIES/)
-  assert.doesNotMatch(serviceWorker, /DAEMON_RUN_NEXT_MESSAGE|tokenless\.daemon\.run_next|isDaemonRunNextMessage/)
+  bridge.start()
+  bridge.start()
+  assert.equal(ports.length, 1, 'duplicate starts must share the pending port')
+  assert.deepEqual(ports[0].posted, [{
+    protocol: 'tokenless.native.v1',
+    type: 'tokenless.native.daemon_connect',
+  }])
 
-  assert.ok(
-    serviceWorker.indexOf('tokenless.native.daemon_job') < serviceWorker.indexOf('tokenless.native.daemon_complete_job'),
-    'daemon jobs must be pushed to the background before they are completed'
-  )
-  assert.ok(
-    serviceWorker.indexOf("if (context.external && validation.request.action !== BRIDGE_ACTIONS.CAPABILITIES)") <
-      serviceWorker.indexOf('return runBridgeRequest(validation.request)'),
-    'external bridge actions must be rejected before provider sessions can be driven'
-  )
-  assert.ok(
-    serviceWorker.indexOf('port.postMessage({ type: \'tokenless.native.daemon_connect\' })') <
-      serviceWorker.indexOf('tokenless.native.daemon_job'),
-    'daemon jobs must arrive through the long-lived native bridge'
-  )
-  assert.ok(
-    serviceWorker.indexOf('external_bridge_forbidden') < serviceWorker.indexOf('return runBridgeRequest(validation.request)'),
-    'external bridge actions must be rejected before provider sessions can be driven'
-  )
-  assert.ok(serviceWorker.indexOf('async function runBridgeRequest') < serviceWorker.indexOf('async function runClaimedDaemonJob'))
-  assert.match(serviceWorker, /tokenless\.bridge\.submit/)
-  assert.match(serviceWorker, /tokenless\.bridge\.read/)
-  assert.match(serviceWorker, /tokenless\.bridge\.validate_landing/)
+  await ports[0].onMessage.emit({
+    type: 'tokenless.native.daemon_connected',
+    ok: true,
+  })
+  assert.equal(ports[0].disconnectCount, 1, 'missing protocol must reject the handshake')
+  assert.deepEqual(scheduler.pendingDelays(), [10])
+
+  scheduler.runDelay(10)
+  await ports[1].onMessage.emit({
+    protocol: 'tokenless.native.v0',
+    type: 'tokenless.native.daemon_connected',
+    ok: true,
+  })
+  assert.equal(ports[1].disconnectCount, 1, 'wrong protocol must reject the handshake')
+  assert.deepEqual(scheduler.pendingDelays(), [20])
+
+  scheduler.runDelay(20)
+  await ports[2].onMessage.emit({
+    protocol: 'tokenless.native.v1',
+    type: 'tokenless.native.daemon_connect',
+    ok: false,
+    error: { code: 'daemon_unavailable' },
+  })
+  assert.equal(ports[2].disconnectCount, 1, 'ok:false daemon_connect must reject the handshake')
+  assert.deepEqual(scheduler.pendingDelays(), [40])
+
+  scheduler.runDelay(40)
+  scheduler.runDelay(100)
+  assert.equal(ports[3].disconnectCount, 1, 'handshake timeout must close the port')
+  assert.deepEqual(scheduler.pendingDelays(), [40], 'reconnect delay must stay capped')
+
+  scheduler.runDelay(40)
+  await ports[4].onMessage.emit(nativeSuccess('tokenless.native.daemon_connected', {
+    status: 'connected',
+  }))
+  assert.deepEqual(scheduler.pendingDelays(), [], 'successful handshake must clear its timeout')
+
+  await ports[4].onMessage.emit({
+    protocol: 'tokenless.native.v1',
+    type: 'tokenless.native.daemon_error',
+    ok: false,
+    error: { code: 'bridge_superseded', message: 'A newer bridge won.' },
+  })
+  assert.equal(ports[4].disconnectCount, 1)
+  assert.deepEqual(scheduler.pendingDelays(), [10], 'successful handshake must reset backoff')
+
+  bridge.start()
+  assert.equal(ports.length, 5, 'start must not bypass an existing reconnect timer')
+  scheduler.runDelay(10)
+  await ports[5].onMessage.emit(nativeSuccess('tokenless.native.daemon_connected', {
+    status: 'connected',
+  }))
+  await ports[5].onDisconnect.emit()
+  assert.deepEqual(scheduler.pendingDelays(), [10], 'physical disconnect must reconnect from base delay')
+
+  scheduler.runDelay(10)
+  await ports[6].onMessage.emit(nativeSuccess('tokenless.native.daemon_connected', {
+    status: 'connected',
+  }))
+  const recoveredJob = nativeSuccess('tokenless.native.daemon_job', { job: { job_id: 'job-recovered' } })
+  await ports[6].onMessage.emit(recoveredJob)
+  assert.deepEqual(delivered, [recoveredJob], 'messages flow only after a recovered handshake')
+  assert.ok(ports.every((port) => port.posted.every((message) => (
+    message.protocol === 'tokenless.native.v1' && message.type === 'tokenless.native.daemon_connect'
+  ))))
+
+  bridge.stop()
+  assert.deepEqual(scheduler.pendingDelays(), [])
 })
 
-test('daemon background path keeps provider sessions visible and does not inspect provider credentials', () => {
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
-  const manifest = fs.readFileSync(path.join(root, 'packages/extension/extension/manifest.json'), 'utf8')
+test('Settings model normalizes redacted daemon history and explicit configuration clears', async () => {
+  const {
+    configWritePayload,
+    normalizeHistoryEntries,
+    normalizeProviderOrder,
+  } = await import('../packages/extension/dist/extension/settings/model.js')
+  const privateMarker = 'private-claim-marker'
+  const entries = normalizeHistoryEntries([
+    {
+      job_id: 'job-202',
+      claim_token: privateMarker,
+      provider: 'chatgpt',
+      action: 'submit_and_read',
+      status: 'succeeded',
+      metadata: {
+        projectName: 'Tokenless',
+        chatName: 'Background-only execution',
+        taskId: 'project:Tokenless:chat:Background-only execution',
+      },
+      updated_at: '2026-07-10T01:02:03Z',
+    },
+    {
+      job_id: 'job-legacy',
+      provider: 'gemini',
+      action: 'read',
+      status: 'queued',
+      request_json: {
+        metadata: {
+          projectName: 'Legacy project',
+          chatName: 'Compatible history',
+          idempotencyKey: 'legacy-task',
+        },
+      },
+      created_at: '2026-07-09T01:02:03Z',
+    },
+  ])
 
+  assert.deepEqual(entries, [
+    {
+      jobId: 'job-202',
+      taskId: 'project:Tokenless:chat:Background-only execution',
+      projectName: 'Tokenless',
+      chatName: 'Background-only execution',
+      provider: 'chatgpt',
+      action: 'submit_and_read',
+      status: 'succeeded',
+      updatedAt: '2026-07-10T01:02:03Z',
+    },
+    {
+      jobId: 'job-legacy',
+      taskId: 'legacy-task',
+      projectName: 'Legacy project',
+      chatName: 'Compatible history',
+      provider: 'gemini',
+      action: 'read',
+      status: 'queued',
+      updatedAt: '2026-07-09T01:02:03Z',
+    },
+  ])
+  assert.doesNotMatch(JSON.stringify(entries), new RegExp(privateMarker))
+  assert.deepEqual(
+    normalizeProviderOrder(['claude', 'chatgpt', 'claude', 'unsupported'], ['chatgpt', 'gemini', 'claude']),
+    ['claude', 'chatgpt']
+  )
+  assert.deepEqual(configWritePayload({
+    providerOrder: ['gemini', 'chatgpt'],
+    browser: '',
+    daemonUrl: '   ',
+  }), {
+    preferredProviders: ['gemini', 'chatgpt'],
+    browser: null,
+    daemonUrl: null,
+  })
+  assert.deepEqual(configWritePayload({
+    providerOrder: ['chatgpt'],
+    browser: ' chrome ',
+    daemonUrl: ' http://127.0.0.1:7331 ',
+  }), {
+    preferredProviders: ['chatgpt'],
+    browser: 'chrome',
+    daemonUrl: 'http://127.0.0.1:7331',
+  })
+})
+
+test('built Settings UI renders, saves, refreshes, redacts, and reports failures', { timeout: 30000 }, async () => {
+  const { chromium } = await import('playwright')
+  const server = await startStaticServer(extensionDist)
+  const browser = await chromium.launch({ headless: true })
+
+  try {
+    const initialHistory = [{
+      job_id: 'job-initial',
+      claim_token: 'private-claim-marker',
+      provider: 'gemini',
+      action: 'submit_and_read',
+      status: 'succeeded',
+      metadata: {
+        projectName: 'Tokenless',
+        chatName: 'Settings behavior',
+        taskId: 'task-settings-behavior',
+      },
+      request_json: {
+        prompt: 'private-prompt-marker',
+        result: 'private-result-marker',
+      },
+      updated_at: '2026-07-10T01:02:03Z',
+    }]
+    const refreshedHistory = [{
+      job_id: 'job-refreshed',
+      provider: 'chatgpt',
+      action: 'read',
+      status: 'queued',
+      metadata: {
+        projectName: 'Tokenless',
+        chatName: 'History only refresh',
+        taskId: 'task-history-refresh',
+      },
+      updated_at: '2026-07-10T02:03:04Z',
+    }]
+    const loaded = await openSettingsPage(browser, server.url, [
+      { response: nativeSuccess('tokenless.native.read_config', {
+        preferredProviders: ['gemini', 'chatgpt'],
+        browser: 'Chrome Beta',
+        daemonUrl: 'http://127.0.0.1:7331',
+      }) },
+      { response: nativeSuccess('tokenless.native.list_history', initialHistory) },
+      { response: nativeSuccess('tokenless.native.write_config', {
+        preferredProviders: ['chatgpt', 'gemini'],
+        browser: null,
+        daemonUrl: null,
+      }) },
+      { response: nativeSuccess('tokenless.native.list_history', refreshedHistory), delayMs: 150 },
+      { response: nativeFailure('tokenless.native.list_history', 'History service offline.') },
+    ])
+
+    try {
+      const { page, pageErrors } = loaded
+      await page.getByText('Native host ready', { exact: true }).waitFor()
+      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini', 'ChatGPT'])
+      assert.equal(await page.getByLabel('Browser preference').inputValue(), 'Chrome Beta')
+      assert.equal(await page.getByLabel('Daemon URL').inputValue(), 'http://127.0.0.1:7331')
+      await page.getByText('Settings behavior', { exact: true }).waitFor()
+      assert.equal(await page.getByText('Project: Tokenless', { exact: true }).count(), 1)
+      assert.equal(await page.getByText('Task: task-settings-behavior', { exact: true }).count(), 1)
+
+      const visibleText = await page.locator('body').innerText()
+      assert.doesNotMatch(visibleText, /private-claim-marker|private-prompt-marker|private-result-marker/)
+      assert.equal(await page.getByRole('button', { name: 'Move Gemini up', exact: true }).isDisabled(), true)
+      assert.equal(await page.getByRole('button', { name: 'Move Gemini down', exact: true }).isEnabled(), true)
+      assert.equal(await page.getByRole('button', { name: 'Remove Gemini', exact: true }).isEnabled(), true)
+      assert.equal(await page.getByRole('button', { name: 'Move ChatGPT up', exact: true }).isEnabled(), true)
+      assert.equal(await page.getByRole('button', { name: 'Move ChatGPT down', exact: true }).isDisabled(), true)
+      assert.equal(await page.getByRole('button', { name: 'Remove ChatGPT', exact: true }).isEnabled(), true)
+      assert.equal(await page.getByRole('combobox', { name: 'Provider to add', exact: true }).count(), 1)
+      assert.equal(await page.getByRole('button', { name: 'Save settings', exact: true }).count(), 1)
+      assert.equal(await page.getByRole('button', { name: 'Refresh', exact: true }).count(), 1)
+
+      const removeChatGpt = page.getByRole('button', { name: 'Remove ChatGPT', exact: true })
+      await removeChatGpt.focus()
+      await page.keyboard.press('Enter')
+      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini'])
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Remove Gemini')
+      await page.getByRole('combobox', { name: 'Provider to add', exact: true }).selectOption('chatgpt')
+      await page.getByRole('button', { name: 'Add provider', exact: true }).click()
+      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini', 'ChatGPT'])
+
+      await page.getByLabel('Browser preference').fill('   ')
+      await page.getByLabel('Daemon URL').fill('')
+      const moveChatGptUp = page.getByRole('button', { name: 'Move ChatGPT up', exact: true })
+      await moveChatGptUp.focus()
+      await page.keyboard.press('Enter')
+      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['ChatGPT', 'Gemini'])
+      assert.deepEqual(await page.evaluate(() => ({
+        providerId: document.activeElement?.getAttribute('data-provider-id'),
+        action: document.activeElement?.getAttribute('data-provider-action'),
+      })), { providerId: 'chatgpt', action: 'down' })
+      await page.getByRole('button', { name: 'Save settings', exact: true }).click()
+      await page.getByText('Settings saved.', { exact: true }).waitFor()
+
+      const writeRequest = await page.evaluate(() => globalThis.__nativeMock.requests[2])
+      assert.deepEqual(writeRequest, {
+        protocol: 'tokenless.native.v1',
+        type: 'tokenless.native.write_config',
+        preferredProviders: ['chatgpt', 'gemini'],
+        browser: null,
+        daemonUrl: null,
+      })
+
+      await page.getByLabel('Browser preference').fill('firefox')
+      await page.getByLabel('Daemon URL').fill('http://127.0.0.1:7444')
+      await page.getByRole('button', { name: 'Move Gemini up', exact: true }).click()
+      const refresh = page.getByRole('button', { name: 'Refresh', exact: true })
+      await refresh.click()
+      await page.getByRole('button', { name: 'Refreshing…', exact: true }).waitFor()
+      assert.equal(await page.getByRole('button', { name: 'Refreshing…', exact: true }).isDisabled(), true)
+      assert.equal(await page.getByRole('button', { name: 'Save settings', exact: true }).isEnabled(), true)
+      assert.equal(await page.getByLabel('Browser preference').inputValue(), 'firefox')
+      assert.equal(await page.getByLabel('Daemon URL').inputValue(), 'http://127.0.0.1:7444')
+      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini', 'ChatGPT'])
+      await page.getByText('Loading daemon history…', { exact: true }).waitFor()
+      await page.getByText('History only refresh', { exact: true }).waitFor()
+      assert.equal(await page.getByLabel('Browser preference').inputValue(), 'firefox')
+      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini', 'ChatGPT'])
+
+      const requestTypes = await page.evaluate(() => globalThis.__nativeMock.requests.map((request) => request.type))
+      assert.deepEqual(requestTypes, [
+        'tokenless.native.read_config',
+        'tokenless.native.list_history',
+        'tokenless.native.write_config',
+        'tokenless.native.list_history',
+      ])
+
+      await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await page.getByText('History service offline.', { exact: true }).waitFor()
+      assert.equal(await page.locator('#page-status').textContent(), 'History refresh failed')
+      assert.equal(await page.getByLabel('Browser preference').inputValue(), 'firefox')
+      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini', 'ChatGPT'])
+
+      await page.setViewportSize({ width: 320, height: 844 })
+      const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+      assert.ok(horizontalOverflow <= 0, `Settings overflowed the narrow viewport by ${horizontalOverflow}px`)
+      assert.deepEqual(pageErrors, [])
+    } finally {
+      await loaded.context.close()
+    }
+
+    const loading = await openSettingsPage(browser, server.url, [{}, {}])
+    try {
+      const { page, pageErrors } = loading
+      await page.getByText('Loading configuration…', { exact: true }).waitFor()
+      await page.getByText('Loading daemon history…', { exact: true }).waitFor()
+      assert.equal(await page.getByRole('button', { name: 'Refreshing…', exact: true }).isDisabled(), true)
+      await page.evaluate(([configResponse, historyResponse]) => {
+        globalThis.__nativeMock.respond(0, configResponse)
+        globalThis.__nativeMock.respond(1, historyResponse)
+      }, [
+        nativeSuccess('tokenless.native.read_config', {
+          preferredProviders: [],
+          browser: null,
+          daemonUrl: null,
+        }),
+        nativeSuccess('tokenless.native.list_history', []),
+      ])
+      await page.getByText('Native host ready', { exact: true }).waitFor()
+      await page.getByText('No preference saved. New jobs default to ChatGPT.', { exact: true }).waitFor()
+      await page.getByText('No daemon jobs yet.', { exact: true }).waitFor()
+      assert.deepEqual(pageErrors, [])
+    } finally {
+      await loading.context.close()
+    }
+
+    const partial = await openSettingsPage(browser, server.url, [
+      { response: nativeFailure('tokenless.native.read_config', 'Configuration permission denied.') },
+      { response: nativeSuccess('tokenless.native.list_history', refreshedHistory) },
+    ])
+    try {
+      const { page, pageErrors } = partial
+      await page.getByText('Partially loaded', { exact: true }).waitFor()
+      await page.getByText('Configuration permission denied.', { exact: true }).waitFor()
+      await page.getByText('History only refresh', { exact: true }).waitFor()
+      assert.equal(await page.locator('#configuration [role="alert"]').count(), 1)
+      assert.deepEqual(pageErrors, [])
+    } finally {
+      await partial.context.close()
+    }
+  } finally {
+    await browser.close()
+    await server.close()
+  }
+})
+
+test('provider content uses only visible controls and snapshots a fail-closed real DOM', { timeout: 30000 }, async () => {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch({ headless: true })
+
+  try {
+    const chatgpt = await openProviderFixture(
+      browser,
+      'https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174007?secret-query-marker=yes#secret-hash-marker',
+      `
+      <!doctype html>
+      <html data-document-secret="secret-document-marker">
+        <head><title>secret-title-marker</title></head>
+        <body>
+          <!-- secret-comment-marker -->
+          <div style="opacity:0">
+            <div id="prompt-textarea" contenteditable="true">ancestor-opacity-composer-marker</div>
+          </div>
+          <div style="content-visibility:hidden">
+            <div id="content-hidden-composer" role="textbox" contenteditable="true">content-hidden-composer-marker</div>
+          </div>
+          <div style="position:fixed;left:-9999px;top:0">
+            <div id="offscreen-composer" role="textbox" contenteditable="true">offscreen-composer-marker</div>
+          </div>
+          <div id="visible-composer" role="textbox" contenteditable="true"></div>
+          <div style="visibility:hidden">
+            <button data-testid="send-button" onclick="globalThis.__clicked.push('ancestor-hidden')">Ancestor hidden send</button>
+          </div>
+          <div style="content-visibility:hidden">
+            <button data-testid="send-button" onclick="globalThis.__clicked.push('content-hidden')">Content hidden send</button>
+          </div>
+          <div style="position:fixed;left:-9999px;top:0">
+            <button data-testid="send-button" onclick="globalThis.__clicked.push('offscreen')">Offscreen send</button>
+          </div>
+          <button data-testid="send-button" onclick="globalThis.__clicked.push('visible')">Visible send</button>
+          <div style="opacity:0">
+            <div aria-label="captcha hidden-blocker-marker">hidden-blocker-text-marker</div>
+          </div>
+          <p id="visible-copy">visible-snapshot-copy</p>
+          <div style="display:none">
+            <div
+              id="secret-id-marker"
+              class="secret-class-marker"
+              data-secret="secret-data-marker"
+              onclick="secret-event-marker"
+              title="secret-attribute-marker"
+            >secret-text-marker</div>
+            <form action="/secret-form-marker">
+              <input name="secret-name-marker" value="secret-value-marker" data-auth="secret-auth-marker">
+              <button formaction="/secret-formaction-marker" type="button">secret-form-control-marker</button>
+            </form>
+            <a href="/secret-url-marker" aria-label="secret-label-marker">secret-link-marker</a>
+          </div>
+          <script>globalThis.__clicked = []</script>
+        </body>
+      </html>
+    `)
+
+    try {
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'visible-controls',
+        prompt: 'visible prompt only',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+      }
+      const submit = await chatgpt.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      assert.equal(submit.provider, 'chatgpt')
+      assert.equal(await chatgpt.page.locator('#prompt-textarea').textContent(), 'ancestor-opacity-composer-marker')
+      assert.equal(await chatgpt.page.locator('#content-hidden-composer').textContent(), 'content-hidden-composer-marker')
+      assert.equal(await chatgpt.page.locator('#offscreen-composer').textContent(), 'offscreen-composer-marker')
+      assert.match(await chatgpt.page.locator('#visible-composer').textContent(), /visible prompt only/)
+      assert.deepEqual(await chatgpt.page.evaluate(() => globalThis.__clicked), ['visible'])
+
+      const snapshot = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.snapshot_dom',
+        request: {
+          provider: 'chatgpt',
+          requestId: 'snapshot-default-redaction',
+          metadata: { includeText: false },
+        },
+      }))
+      assert.equal(snapshot.status, 'snapshotted')
+      assert.equal(snapshot.sanitized, true)
+      assert.equal(snapshot.includeText, false)
+      assert.equal(snapshot.visibleText, undefined)
+      assert.equal(snapshot.url, 'https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174007')
+      assert.match(snapshot.html, /\[text\]/)
+      assert.match(snapshot.html, /\[structural\]/)
+      assert.doesNotMatch(snapshot.html, /secret-(?:document|title|id|class|data|event|attribute|text|form|name|value|auth|formaction|url|label|link|composer|blocker)/i)
+      assert.doesNotMatch(snapshot.html, /\s(?:data-[^=\s]*|style|on\w+|value|name|action|formaction|href)=/i)
+      assert.doesNotMatch(snapshot.html, /secret-comment-marker/)
+      assert.doesNotMatch(
+        JSON.stringify(snapshot),
+        /secret-(?:query|hash|title|comment|document|id|class|data|event|attribute|text|form|name|value|auth|formaction|url|label|link)|(?:ancestor-opacity|content-hidden|offscreen|hidden-blocker)-(?:composer|text)?-?marker/i
+      )
+
+      const textSnapshot = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.snapshot_dom',
+        request: {
+          provider: 'chatgpt',
+          requestId: 'snapshot-visible-text-only',
+          includeText: true,
+        },
+      }))
+      assert.equal(textSnapshot.status, 'snapshotted')
+      assert.equal(textSnapshot.title, '[text]')
+      assert.match(textSnapshot.html, /visible prompt only/)
+      assert.match(textSnapshot.html, /visible-snapshot-copy/)
+      assert.match(textSnapshot.visibleText, /visible prompt only/)
+      assert.doesNotMatch(
+        JSON.stringify(textSnapshot),
+        /secret-(?:query|hash|title|comment|id|class|data|event|attribute|text|form|name|value|auth|formaction|url|label|link)|(?:ancestor-opacity|content-hidden|offscreen|hidden-blocker)-(?:composer|text)?-?marker/i
+      )
+
+      const malformed = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.snapshot_dom',
+        request: { provider: 'chatgpt', requestId: 'snapshot-malformed', includeText: 'false' },
+      }))
+      assert.equal(malformed.status, 'blocked')
+      assert.equal(malformed.stopReason, 'invalid_include_text')
+
+      const wrongProvider = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.read',
+        request: { provider: 'gemini', requestId: 'wrong-provider', readTimeoutMs: 0 },
+      }))
+      assert.equal(wrongProvider.status, 'blocked')
+      assert.equal(wrongProvider.stopReason, 'provider_context_mismatch')
+
+      const wrongTarget = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.read',
+        request: {
+          provider: 'chatgpt',
+          requestId: 'wrong-target',
+          targetUrl: 'https://chatgpt.com/another-conversation',
+          readTimeoutMs: 0,
+        },
+      }))
+      assert.equal(wrongTarget.status, 'blocked')
+      assert.equal(wrongTarget.stopReason, 'target_context_mismatch')
+      const preSubmitPathDrift = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.submit',
+        request: {
+          provider: 'chatgpt',
+          requestId: 'pre-submit-path-drift',
+          targetUrl: 'https://chatgpt.com/',
+          prompt: 'Must not submit after pre-submit path drift.',
+          composerTimeoutMs: 100,
+          submitTimeoutMs: 100,
+        },
+      }))
+      assert.equal(preSubmitPathDrift.status, 'blocked')
+      assert.equal(preSubmitPathDrift.stopReason, 'target_context_mismatch')
+      assert.deepEqual(chatgpt.pageErrors, [])
+    } finally {
+      await chatgpt.context.close()
+    }
+
+    const claude = await openProviderFixture(browser, 'https://claude.ai/new', `
+      <!doctype html>
+      <html>
+        <body>
+          <div id="claude-composer" role="textbox" contenteditable="true"></div>
+          <button id="claude-send" aria-label="Send message" disabled>Send</button>
+          <script>
+            globalThis.__claudeClicks = 0
+            document.querySelector('#claude-composer').addEventListener('input', () => {
+              document.querySelector('#claude-send').disabled = false
+            })
+            document.querySelector('#claude-send').addEventListener('click', () => {
+              globalThis.__claudeClicks += 1
+              history.pushState({}, '', '/chat/123e4567-e89b-12d3-a456-426614174001')
+              const answer = document.createElement('div')
+              answer.setAttribute('data-testid', 'message-assistant')
+              answer.textContent = 'Claude conversation answer'
+              document.body.append(answer)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      const submit = await claude.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.submit',
+        request: {
+          provider: 'claude',
+          requestId: 'claude-disabled-send',
+          targetUrl: 'https://claude.ai/new',
+          prompt: 'Enable the visible send button.',
+          composerTimeoutMs: 100,
+          submitTimeoutMs: 100,
+          readTimeoutMs: 2000,
+        },
+      }))
+      assert.equal(submit.status, 'submitted')
+      assert.equal(await claude.page.evaluate(() => globalThis.__claudeClicks), 1)
+      const request = {
+        provider: 'claude',
+        requestId: 'claude-disabled-send',
+        targetUrl: 'https://claude.ai/new',
+        prompt: 'Enable the visible send button.',
+        readTimeoutMs: 2000,
+      }
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'claude-transition-proof-001')
+      const read = await claude.page.evaluate(({ contentRequest, answerBaseline, transitionProof }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: {
+            ...contentRequest,
+            answerBaseline,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: transitionProof,
+          },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline, transitionProof: proof })
+      assert.equal(read.status, 'read')
+      assert.equal(read.text, 'Claude conversation answer')
+      assert.equal(read.url, 'https://claude.ai/chat/123e4567-e89b-12d3-a456-426614174001')
+      for (const unsafePath of ['/chat/settings', '/chat/settings123']) {
+        await claude.page.evaluate((pathname) => {
+          history.replaceState({}, '', pathname)
+          const answer = document.querySelector('[data-testid="message-assistant"]')
+          if (answer) answer.textContent = 'Misleading Claude settings answer'
+        }, unsafePath)
+        const blocked = await dispatchPostSubmitRead(claude.page, request, submit.answerBaseline, proof)
+        assert.equal(blocked.status, 'blocked')
+        assert.equal(blocked.stopReason, 'target_context_mismatch')
+        assert.doesNotMatch(JSON.stringify(blocked), /Misleading Claude settings answer/)
+      }
+      assert.deepEqual(claude.pageErrors, [])
+    } finally {
+      await claude.context.close()
+    }
+
+    const gemini = await openProviderFixture(browser, 'https://gemini.google.com/app', `
+      <!doctype html>
+      <html>
+        <body>
+          <rich-textarea><div role="textbox" contenteditable="true"></div></rich-textarea>
+          <button aria-label="Send message">Send</button>
+          <main id="answers"></main>
+          <script>
+            document.querySelector('button').addEventListener('click', () => {
+              history.pushState({}, '', '/app/gemini_1234567890')
+              const answer = document.createElement('message-content')
+              answer.textContent = 'Gemini conversation answer'
+              document.querySelector('#answers').append(answer)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      const request = {
+        provider: 'gemini',
+        requestId: 'gemini-conversation-transition',
+        targetUrl: 'https://gemini.google.com/app',
+        prompt: 'Start the Gemini conversation.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 2000,
+      }
+      const submit = await gemini.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'gemini-transition-proof-001')
+      const read = await gemini.page.evaluate(({ contentRequest, answerBaseline, transitionProof }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: {
+            ...contentRequest,
+            answerBaseline,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: transitionProof,
+          },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline, transitionProof: proof })
+      assert.equal(read.status, 'read')
+      assert.equal(read.text, 'Gemini conversation answer')
+      assert.equal(read.url, 'https://gemini.google.com/app/gemini_1234567890')
+      for (const unsafePath of ['/app/settings', '/app/settings123']) {
+        await gemini.page.evaluate((pathname) => {
+          history.replaceState({}, '', pathname)
+          const answer = document.querySelector('message-content')
+          if (answer) answer.textContent = 'Misleading Gemini settings answer'
+        }, unsafePath)
+        const blocked = await dispatchPostSubmitRead(gemini.page, request, submit.answerBaseline, proof)
+        assert.equal(blocked.status, 'blocked')
+        assert.equal(blocked.stopReason, 'target_context_mismatch')
+        assert.doesNotMatch(JSON.stringify(blocked), /Misleading Gemini settings answer/)
+      }
+      assert.deepEqual(gemini.pageErrors, [])
+    } finally {
+      await gemini.context.close()
+    }
+
+    const landingTransition = await openProviderFixture(browser, 'https://chatgpt.com/', `
+      <!doctype html>
+      <html>
+        <body>
+          <div id="landing-composer" role="textbox" contenteditable="true"></div>
+          <button id="landing-send" data-testid="send-button">Send</button>
+          <main id="answers"></main>
+          <script>
+            document.querySelector('#landing-send').addEventListener('click', () => {
+              history.pushState({}, '', '/c/123e4567-e89b-12d3-a456-426614174002?private-query-marker=yes#private-hash-marker')
+              const answer = document.createElement('div')
+              answer.setAttribute('data-message-author-role', 'assistant')
+              answer.textContent = 'Landing transition answer'
+              document.querySelector('#answers').append(answer)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'landing-transition',
+        targetUrl: 'https://chat.openai.com/',
+        prompt: 'Start a new conversation.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 2000,
+      }
+      const submit = await landingTransition.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      assert.equal(submit.url, 'https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174002')
+
+      const exactRead = await landingTransition.page.evaluate(({ contentRequest, answerBaseline }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: { ...contentRequest, answerBaseline },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline })
+      assert.equal(exactRead.status, 'blocked')
+      assert.equal(exactRead.stopReason, 'target_context_mismatch')
+
+      const transitionProof = postSubmitTransitionProof(request, submit.answerBaseline)
+      const transitionValidation = await dispatchPostSubmitValidation(
+        landingTransition.page,
+        request,
+        submit.answerBaseline,
+        transitionProof
+      )
+      assert.equal(transitionValidation.status, 'ready')
+      const read = await landingTransition.page.evaluate(({ contentRequest, answerBaseline, proof }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: {
+            ...contentRequest,
+            answerBaseline,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: proof,
+          },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline, proof: transitionProof })
+      assert.equal(read.status, 'read')
+      assert.equal(read.text, 'Landing transition answer')
+      assert.equal(read.url, 'https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174002')
+      assert.deepEqual(landingTransition.pageErrors, [])
+    } finally {
+      await landingTransition.context.close()
+    }
+
+    const customGptTransition = await openProviderFixture(browser, 'https://chatgpt.com/g/g-pmuQfob8d', `
+      <!doctype html>
+      <html>
+        <body>
+          <div role="textbox" contenteditable="true"></div>
+          <button data-testid="send-button">Send</button>
+          <main id="answers"></main>
+          <script>
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+              history.pushState({}, '', '/g/g-pmuQfob8d/c/123e4567-e89b-12d3-a456-426614174003')
+              const answer = document.createElement('div')
+              answer.setAttribute('data-message-author-role', 'assistant')
+              answer.textContent = 'Custom GPT conversation answer'
+              document.querySelector('#answers').append(answer)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'custom-gpt-transition',
+        targetUrl: 'https://chatgpt.com/g/g-pmuQfob8d',
+        prompt: 'Start the custom GPT conversation.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 2000,
+      }
+      const submit = await customGptTransition.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'custom-gpt-transition-proof')
+      const validation = await dispatchPostSubmitValidation(
+        customGptTransition.page,
+        request,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(validation.status, 'ready')
+      const read = await customGptTransition.page.evaluate(({ contentRequest, answerBaseline, transitionProof }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: {
+            ...contentRequest,
+            answerBaseline,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: transitionProof,
+          },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline, transitionProof: proof })
+      assert.equal(read.status, 'read')
+      assert.equal(read.text, 'Custom GPT conversation answer')
+      assert.equal(read.url, 'https://chatgpt.com/g/g-pmuQfob8d/c/123e4567-e89b-12d3-a456-426614174003')
+      await customGptTransition.page.evaluate(() => {
+        history.replaceState({}, '', '/g/g-otherGPT9/c/123e4567-e89b-12d3-a456-426614174008')
+        const answer = document.querySelector('[data-message-author-role="assistant"]')
+        if (answer) answer.textContent = 'Mismatched custom GPT answer'
+      })
+      const mismatchedRead = await dispatchPostSubmitRead(
+        customGptTransition.page,
+        request,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(mismatchedRead.status, 'blocked')
+      assert.equal(mismatchedRead.stopReason, 'target_context_mismatch')
+      assert.doesNotMatch(JSON.stringify(mismatchedRead), /Mismatched custom GPT answer/)
+      assert.deepEqual(customGptTransition.pageErrors, [])
+    } finally {
+      await customGptTransition.context.close()
+    }
+
+    const rootToCustomGpt = await openProviderFixture(browser, 'https://chatgpt.com/', `
+      <!doctype html>
+      <html>
+        <body>
+          <div role="textbox" contenteditable="true"></div>
+          <button data-testid="send-button">Send</button>
+          <main id="answers"></main>
+          <script>
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+              history.pushState({}, '', '/g/g-pmuQfob8d/c/123e4567-e89b-12d3-a456-426614174009')
+              const answer = document.createElement('div')
+              answer.setAttribute('data-message-author-role', 'assistant')
+              answer.textContent = 'Root to custom GPT answer'
+              document.querySelector('#answers').append(answer)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'root-to-custom-gpt',
+        targetUrl: 'https://chatgpt.com/',
+        prompt: 'Root may not authorize a custom GPT conversation.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 100,
+      }
+      const submit = await rootToCustomGpt.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'root-custom-negative-proof')
+      const read = await dispatchPostSubmitRead(rootToCustomGpt.page, request, submit.answerBaseline, proof)
+      assert.equal(read.status, 'blocked')
+      assert.equal(read.stopReason, 'target_context_mismatch')
+      assert.doesNotMatch(JSON.stringify(read), /Root to custom GPT answer/)
+      assert.deepEqual(rootToCustomGpt.pageErrors, [])
+    } finally {
+      await rootToCustomGpt.context.close()
+    }
+
+    const unsafeSpaTransition = await openProviderFixture(browser, 'https://chatgpt.com/', `
+      <!doctype html>
+      <html>
+        <body>
+          <div role="textbox" contenteditable="true"></div>
+          <button data-testid="send-button">Send</button>
+          <main id="answers"></main>
+          <script>
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+              history.pushState({}, '', '/c/settings')
+              const misleading = document.createElement('div')
+              misleading.setAttribute('data-message-author-role', 'assistant')
+              misleading.textContent = 'Misleading settings answer'
+              document.querySelector('#answers').append(misleading)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'unsafe-spa-transition',
+        targetUrl: 'https://chatgpt.com/',
+        prompt: 'Never authorize a settings page.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 100,
+      }
+      const submit = await unsafeSpaTransition.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'unsafe-spa-transition-proof')
+      const read = await unsafeSpaTransition.page.evaluate(({ contentRequest, answerBaseline, transitionProof }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: {
+            ...contentRequest,
+            answerBaseline,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: transitionProof,
+          },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline, transitionProof: proof })
+      assert.equal(read.status, 'blocked')
+      assert.equal(read.stopReason, 'target_context_mismatch')
+      assert.doesNotMatch(JSON.stringify(read), /Misleading settings answer/)
+      await unsafeSpaTransition.page.evaluate(() => {
+        history.replaceState({}, '', '/c/settings123')
+      })
+      const suffixedRead = await dispatchPostSubmitRead(
+        unsafeSpaTransition.page,
+        request,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(suffixedRead.status, 'blocked')
+      assert.equal(suffixedRead.stopReason, 'target_context_mismatch')
+      assert.doesNotMatch(JSON.stringify(suffixedRead), /Misleading settings answer/)
+      assert.deepEqual(unsafeSpaTransition.pageErrors, [])
+    } finally {
+      await unsafeSpaTransition.context.close()
+    }
+
+    const fullNavigation = await openProviderFixture(browser, 'https://chat.openai.com/', `
+      <!doctype html>
+      <html>
+        <body>
+          <div role="textbox" contenteditable="true"></div>
+          <button data-testid="send-button">Send</button>
+          <script>
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+              setTimeout(() => {
+                location.assign('https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174004?navigation-secret=yes#navigation-secret')
+              }, 25)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      await fullNavigation.context.route('https://chatgpt.com/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: `
+          <!doctype html>
+          <html>
+            <body>
+              <div role="textbox" contenteditable="true"></div>
+              <button data-testid="send-button">Send</button>
+              <div data-message-author-role="assistant">Full navigation answer</div>
+            </body>
+          </html>
+        `,
+      }))
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'full-navigation-transition',
+        targetUrl: 'https://chat.openai.com/',
+        prompt: 'Navigate across the ChatGPT landing alias.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 2000,
+      }
+      const navigation = fullNavigation.page.waitForURL('https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174004?navigation-secret=yes#navigation-secret')
+      const submit = await fullNavigation.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      await navigation
+      await fullNavigation.page.addScriptTag({
+        path: path.join(extensionDist, 'content/provider-content.js'),
+      })
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'full-navigation-proof-0001')
+      const transitionValidation = await dispatchPostSubmitValidation(
+        fullNavigation.page,
+        request,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(transitionValidation.status, 'ready')
+      const read = await fullNavigation.page.evaluate(({ contentRequest, answerBaseline, transitionProof }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: {
+            ...contentRequest,
+            answerBaseline,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: transitionProof,
+          },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline, transitionProof: proof })
+      assert.equal(read.status, 'read')
+      assert.equal(read.text, 'Full navigation answer')
+      assert.equal(read.url, 'https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174004')
+      await fullNavigation.page.evaluate(() => {
+        document.querySelector('[role="textbox"]')?.remove()
+        document.querySelector('[data-testid="send-button"]')?.remove()
+        const answer = document.querySelector('[data-message-author-role="assistant"]')
+        if (answer) answer.textContent = 'Misleading answer without a composer'
+      })
+      const missingSurfaceRequest = { ...request, landingTimeoutMs: 100 }
+      const missingSurfaceValidation = await dispatchPostSubmitValidation(
+        fullNavigation.page,
+        missingSurfaceRequest,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(missingSurfaceValidation.status, 'blocked')
+      assert.equal(missingSurfaceValidation.stopReason, 'provider_landing_unavailable')
+      const missingSurfaceRead = await dispatchPostSubmitRead(
+        fullNavigation.page,
+        request,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(missingSurfaceRead.status, 'blocked')
+      assert.equal(missingSurfaceRead.stopReason, 'post_submit_surface_unavailable')
+      assert.doesNotMatch(JSON.stringify(missingSurfaceRead), /Misleading answer without a composer/)
+      assert.deepEqual(fullNavigation.pageErrors, [])
+    } finally {
+      await fullNavigation.context.close()
+    }
+
+    const unsafeFullNavigation = await openProviderFixture(browser, 'https://chat.openai.com/', `
+      <!doctype html>
+      <html>
+        <body>
+          <div role="textbox" contenteditable="true"></div>
+          <button data-testid="send-button">Send</button>
+          <script>
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+              setTimeout(() => {
+                location.assign('https://chatgpt.com/auth/login')
+              }, 25)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      await unsafeFullNavigation.context.route('https://chatgpt.com/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: `
+          <!doctype html>
+          <html>
+            <body>
+              <div data-message-author-role="assistant">Misleading login answer</div>
+            </body>
+          </html>
+        `,
+      }))
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'unsafe-full-navigation',
+        targetUrl: 'https://chat.openai.com/',
+        prompt: 'Never authorize a login page.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 100,
+      }
+      const navigation = unsafeFullNavigation.page.waitForURL('https://chatgpt.com/auth/login')
+      const submit = await unsafeFullNavigation.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      await navigation
+      await unsafeFullNavigation.page.addScriptTag({
+        path: path.join(extensionDist, 'content/provider-content.js'),
+      })
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'unsafe-full-navigation-proof')
+      const read = await unsafeFullNavigation.page.evaluate(({ contentRequest, answerBaseline, transitionProof }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: {
+            ...contentRequest,
+            answerBaseline,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: transitionProof,
+          },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline, transitionProof: proof })
+      assert.equal(read.status, 'blocked')
+      assert.equal(read.stopReason, 'target_context_mismatch')
+      assert.doesNotMatch(JSON.stringify(read), /Misleading login answer/)
+      assert.deepEqual(unsafeFullNavigation.pageErrors, [])
+    } finally {
+      await unsafeFullNavigation.context.close()
+    }
+
+    const conversationTransition = await openProviderFixture(browser, 'https://chatgpt.com/c/existing', `
+      <!doctype html>
+      <html>
+        <body>
+          <div role="textbox" contenteditable="true"></div>
+          <button data-testid="send-button">Send</button>
+          <main id="answers"></main>
+          <script>
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+              history.pushState({}, '', '/c/unexpected-conversation')
+              const answer = document.createElement('div')
+              answer.setAttribute('data-message-author-role', 'assistant')
+              answer.textContent = 'Must remain blocked'
+              document.querySelector('#answers').append(answer)
+            })
+          </script>
+        </body>
+      </html>
+    `)
+    try {
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'conversation-transition',
+        targetUrl: 'https://chatgpt.com/c/existing',
+        prompt: 'Stay in this conversation.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 100,
+      }
+      const submit = await conversationTransition.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      const transitionProof = postSubmitTransitionProof(request, submit.answerBaseline)
+      const read = await conversationTransition.page.evaluate(({ contentRequest, answerBaseline, proof }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: {
+            ...contentRequest,
+            answerBaseline,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: proof,
+          },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline, proof: transitionProof })
+      assert.equal(read.status, 'blocked')
+      assert.equal(read.stopReason, 'target_context_mismatch')
+      assert.deepEqual(conversationTransition.pageErrors, [])
+    } finally {
+      await conversationTransition.context.close()
+    }
+  } finally {
+    await browser.close()
+  }
+})
+
+test('background opens Settings only on action click and jobs create only approved provider tabs', async () => {
+  const previousChrome = globalThis.chrome
+  const installed = createChromeEvent()
+  const startup = createChromeEvent()
+  const runtimeMessage = createChromeEvent()
+  const actionClicked = createChromeEvent()
+  const ports = []
+  const createdTabs = []
+  const providerMessages = []
+  let settingsOpenCount = 0
+  let nextTabId = 1
+
+  function connectNative(name) {
+    assert.equal(name, 'dev.tokenless.native_host')
+    const port = createNativePort()
+    ports.push(port)
+    return port
+  }
+
+  function createNativePort() {
+    const onMessage = createChromeEvent()
+    const onDisconnect = createChromeEvent()
+    const posted = []
+    return {
+      onMessage,
+      onDisconnect,
+      posted,
+      postMessage(message) {
+        posted.push(message)
+        if (message.type === 'tokenless.native.daemon_complete_job') {
+          queueMicrotask(() => {
+            void onMessage.emit({
+              protocol: 'tokenless.native.v1',
+              type: message.type,
+              ok: true,
+              result: {
+                job_id: message.jobId,
+                provider: 'chatgpt',
+                action: 'submit_and_read',
+                status: message.error ? 'failed' : 'succeeded',
+              },
+            })
+          })
+        }
+      },
+      disconnect() {},
+    }
+  }
+
+  globalThis.chrome = {
+    action: {
+      onClicked: actionClicked,
+    },
+    runtime: {
+      onMessage: runtimeMessage,
+      onInstalled: installed,
+      onStartup: startup,
+      connectNative,
+      async openOptionsPage() {
+        settingsOpenCount += 1
+      },
+      lastError: undefined,
+    },
+    scripting: {
+      async executeScript() {
+        throw new Error('content script should already be available in this contract test')
+      },
+    },
+    tabs: {
+      async query() {
+        return []
+      },
+      async create(details) {
+        const tab = {
+          id: nextTabId,
+          windowId: 1,
+          active: Boolean(details.active),
+          status: 'complete',
+          url: String(details.url),
+        }
+        nextTabId += 1
+        createdTabs.push(tab)
+        return tab
+      },
+      async get(tabId) {
+        return createdTabs.find((tab) => tab.id === tabId)
+      },
+      async update(tabId, details) {
+        const tab = createdTabs.find((candidate) => candidate.id === tabId)
+        if (tab) Object.assign(tab, details)
+        return tab
+      },
+      async sendMessage(tabId, message) {
+        providerMessages.push({ tabId, message })
+        if (message.type === 'tokenless.bridge.validate_landing') {
+          if (message.request?.requestId === 'job-provider-drift') {
+            const tab = createdTabs.find((candidate) => candidate.id === tabId)
+            if (tab) tab.url = 'https://gemini.google.com/app'
+          }
+          if (message.request?.requestId === 'job-chatgpt-alias-transition') {
+            const tab = createdTabs.find((candidate) => candidate.id === tabId)
+            if (tab) tab.url = 'https://chatgpt.com/'
+          }
+          return { status: 'ready' }
+        }
+        if (message.type === 'tokenless.bridge.submit') {
+          if (message.request?.requestId === 'job-visible-provider') {
+            const tab = createdTabs.find((candidate) => candidate.id === tabId)
+            if (tab) tab.url = 'https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174002?private-query=yes#private-hash'
+          }
+          if (message.request?.requestId === 'job-chatgpt-alias-transition') {
+            const tab = createdTabs.find((candidate) => candidate.id === tabId)
+            if (tab) tab.url = 'https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174005'
+          }
+          if (message.request?.requestId === 'job-unsafe-provider-path') {
+            const tab = createdTabs.find((candidate) => candidate.id === tabId)
+            if (tab) tab.url = 'https://chatgpt.com/c/settings123'
+          }
+          if (message.request?.requestId === 'job-custom-gpt-transition') {
+            const tab = createdTabs.find((candidate) => candidate.id === tabId)
+            if (tab) tab.url = 'https://chatgpt.com/g/g-pmuQfob8d/c/123e4567-e89b-12d3-a456-426614174010'
+          }
+          if (message.request?.requestId === 'job-custom-gpt-mismatch') {
+            const tab = createdTabs.find((candidate) => candidate.id === tabId)
+            if (tab) tab.url = 'https://chatgpt.com/g/g-otherGPT9/c/123e4567-e89b-12d3-a456-426614174011'
+          }
+          if (message.request?.requestId === 'job-root-custom-mismatch') {
+            const tab = createdTabs.find((candidate) => candidate.id === tabId)
+            if (tab) tab.url = 'https://chatgpt.com/g/g-pmuQfob8d/c/123e4567-e89b-12d3-a456-426614174012'
+          }
+          return {
+            status: 'submitted',
+            answerBaseline: { count: 1, lastText: 'old-private-answer-marker' },
+          }
+        }
+        if (message.type === 'tokenless.bridge.read') {
+          return {
+            status: 'complete',
+            provider: 'chatgpt',
+            text: 'Visible DOM answer',
+            url: 'https://chatgpt.com/',
+          }
+        }
+        throw new Error(`Unexpected provider message: ${message.type}`)
+      },
+    },
+    windows: {
+      async update() {},
+    },
+  }
+
+  try {
+    const serviceWorkerUrl = pathToFileURL(path.join(extensionDist, 'background/service-worker.js'))
+    serviceWorkerUrl.searchParams.set('contract', String(Date.now()))
+    await import(serviceWorkerUrl.href)
+
+    assert.equal(ports.length, 1, 'service worker should establish one long-lived native port')
+    const daemonPort = ports[0]
+    assert.deepEqual(daemonPort.posted[0], {
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_connect',
+    })
+    await daemonPort.onMessage.emit(nativeSuccess('tokenless.native.daemon_connected', {
+      status: 'connected',
+      sessionId: 'contract-session',
+    }))
+    assert.equal(settingsOpenCount, 0)
+    assert.deepEqual(createdTabs, [])
+
+    await installed.emit({ reason: 'install' })
+    await startup.emit()
+    await delay(0)
+    assert.equal(settingsOpenCount, 0, 'install and startup must not open Settings')
+    assert.deepEqual(createdTabs, [], 'install and startup must not open tabs')
+
+    await actionClicked.emit({})
+    await delay(0)
+    assert.equal(settingsOpenCount, 1, 'an explicit extension action click should open Settings')
+
+    const visibleJobMessage = {
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_job',
+      ok: true,
+      result: {
+        job: {
+          job_id: 'job-visible-provider',
+          claim_token: 'provider-private-marker',
+          provider: 'chatgpt',
+          action: 'submit_and_read',
+          status: 'claimed',
+          request_json: {
+            prompt: 'Read this through visible DOM.',
+            targetUrl: 'https://chatgpt.com/',
+            readDelayMs: 0,
+            allowPostSubmitTargetTransition: true,
+            postSubmitTargetTransitionProof: { nonce: 'daemon-forged-proof' },
+            metadata: { taskId: 'task-visible-provider' },
+          },
+        },
+      },
+    }
+    await daemonPort.onMessage.emit(visibleJobMessage)
+
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 1)
+    assert.deepEqual(daemonPort.posted.find((message) => message.type === 'tokenless.native.daemon_ready'), {
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_ready',
+      jobId: 'job-visible-provider',
+      claimToken: 'provider-private-marker',
+    })
+    assert.deepEqual(createdTabs.map((tab) => tab.url), ['https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174002?private-query=yes#private-hash'])
+    assert.ok(createdTabs.every((tab) => /^https:\/\/(chatgpt\.com|chat\.openai\.com|gemini\.google\.com|claude\.ai)\//.test(tab.url)))
+    assert.deepEqual(
+      providerMessages.map(({ message }) => message.type),
+      [
+        'tokenless.bridge.validate_landing',
+        'tokenless.bridge.submit',
+        'tokenless.bridge.validate_landing',
+        'tokenless.bridge.read',
+      ]
+    )
+    assert.deepEqual(
+      providerMessages.map(({ message }) => message.request?.allowPostSubmitTargetTransition),
+      [undefined, undefined, true, true],
+      'only the service worker may add the landing-transition flag, and only after submit'
+    )
+    assert.equal(providerMessages[0].message.request?.postSubmitTargetTransitionProof, undefined)
+    assert.equal(providerMessages[1].message.request?.postSubmitTargetTransitionProof, undefined)
+    for (const messageIndex of [2, 3]) {
+      assert.deepEqual(
+        {
+          requestId: providerMessages[messageIndex].message.request?.postSubmitTargetTransitionProof?.requestId,
+          provider: providerMessages[messageIndex].message.request?.postSubmitTargetTransitionProof?.provider,
+          targetUrl: providerMessages[messageIndex].message.request?.postSubmitTargetTransitionProof?.targetUrl,
+          answerBaseline: providerMessages[messageIndex].message.request?.postSubmitTargetTransitionProof?.answerBaseline,
+        },
+        {
+          requestId: 'job-visible-provider',
+          provider: 'chatgpt',
+          targetUrl: 'https://chatgpt.com/',
+          answerBaseline: { count: 1, lastText: 'old-private-answer-marker' },
+        }
+      )
+      assert.ok(providerMessages[messageIndex].message.request?.postSubmitTargetTransitionProof?.nonce.length >= 16)
+    }
+    assert.doesNotMatch(JSON.stringify(providerMessages), /provider-private-marker/)
+    assert.equal(settingsOpenCount, 1, 'job execution must not open Settings')
+
+    const messagesAfterFirstJob = daemonPort.posted.length
+    await daemonPort.onMessage.emit(structuredClone(visibleJobMessage))
+    await delay(25)
+    assert.equal(daemonPort.posted.length, messagesAfterFirstJob, 'duplicate claimed jobs must not emit duplicate ready')
+
+    await daemonPort.onMessage.emit({
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_job',
+      ok: true,
+      result: {
+        job: {
+          job_id: 'job-rejected-target',
+          claim_token: 'rejected-private-marker',
+          provider: 'chatgpt',
+          action: 'submit_and_read',
+          status: 'claimed',
+          request_json: {
+            prompt: 'Do not open this target.',
+            targetUrl: 'chrome-extension://extension-id/settings/index.html',
+            readDelayMs: 0,
+          },
+        },
+      },
+    })
+
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 2)
+    assert.deepEqual(createdTabs.map((tab) => tab.url), ['https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174002?private-query=yes#private-hash'])
+    assert.equal(settingsOpenCount, 1)
+
+    await daemonPort.onMessage.emit({
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_job',
+      ok: true,
+      result: {
+        job: {
+          job_id: 'job-provider-drift',
+          claim_token: 'drift-private-marker',
+          provider: 'chatgpt',
+          action: 'submit_and_read',
+          status: 'claimed',
+          request_json: {
+            prompt: 'Must not submit after cross-provider navigation.',
+            readDelayMs: 0,
+          },
+        },
+      },
+    })
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 3)
+    const driftMessages = providerMessages.filter(({ message }) => message.request?.requestId === 'job-provider-drift')
+    assert.deepEqual(driftMessages.map(({ message }) => message.type), ['tokenless.bridge.validate_landing'])
+
+    await daemonPort.onMessage.emit({
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_job',
+      ok: true,
+      result: {
+        job: {
+          job_id: 'job-chatgpt-alias-transition',
+          claim_token: 'alias-private-marker',
+          provider: 'chatgpt',
+          action: 'submit_and_read',
+          status: 'claimed',
+          request_json: {
+            prompt: 'Allow only the ChatGPT landing alias to transition.',
+            targetUrl: 'https://chat.openai.com/',
+            readDelayMs: 0,
+          },
+        },
+      },
+    })
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 4)
+    const aliasMessages = providerMessages.filter(({ message }) => (
+      message.request?.requestId === 'job-chatgpt-alias-transition'
+    ))
+    assert.deepEqual(
+      aliasMessages.map(({ message }) => ({
+        type: message.type,
+        allowTransition: message.request?.allowPostSubmitTargetTransition,
+      })),
+      [
+        { type: 'tokenless.bridge.validate_landing', allowTransition: undefined },
+        { type: 'tokenless.bridge.submit', allowTransition: undefined },
+        { type: 'tokenless.bridge.validate_landing', allowTransition: true },
+        { type: 'tokenless.bridge.read', allowTransition: true },
+      ]
+    )
+
+    await daemonPort.onMessage.emit({
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_job',
+      ok: true,
+      result: {
+        job: {
+          job_id: 'job-submit-only-baseline-private',
+          claim_token: 'submit-private-marker',
+          provider: 'chatgpt',
+          action: 'submit',
+          status: 'claimed',
+          request_json: {
+            prompt: 'Do not persist the prior answer baseline.',
+          },
+        },
+      },
+    })
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 5)
+
+    await daemonPort.onMessage.emit({
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_job',
+      ok: true,
+      result: {
+        job: {
+          job_id: 'job-unsafe-provider-path',
+          claim_token: 'unsafe-path-private-marker',
+          provider: 'chatgpt',
+          action: 'submit_and_read',
+          status: 'claimed',
+          request_json: {
+            prompt: 'Do not read misleading provider settings content.',
+            targetUrl: 'https://chatgpt.com/',
+            readDelayMs: 0,
+          },
+        },
+      },
+    })
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 6)
+    const unsafePathMessages = providerMessages.filter(({ message }) => (
+      message.request?.requestId === 'job-unsafe-provider-path'
+    ))
+    assert.deepEqual(
+      unsafePathMessages.map(({ message }) => message.type),
+      ['tokenless.bridge.validate_landing', 'tokenless.bridge.submit']
+    )
+
+    for (const job of [
+      {
+        job_id: 'job-custom-gpt-transition',
+        claim_token: 'custom-positive-private-marker',
+        targetUrl: 'https://chatgpt.com/g/g-pmuQfob8d',
+      },
+      {
+        job_id: 'job-custom-gpt-mismatch',
+        claim_token: 'custom-mismatch-private-marker',
+        targetUrl: 'https://chatgpt.com/g/g-pmuQfob8d',
+      },
+      {
+        job_id: 'job-root-custom-mismatch',
+        claim_token: 'root-custom-private-marker',
+        targetUrl: 'https://chatgpt.com/',
+      },
+    ]) {
+      await daemonPort.onMessage.emit({
+        protocol: 'tokenless.native.v1',
+        type: 'tokenless.native.daemon_job',
+        ok: true,
+        result: {
+          job: {
+            ...job,
+            provider: 'chatgpt',
+            action: 'submit_and_read',
+            status: 'claimed',
+            request_json: {
+              prompt: 'Verify custom GPT source and destination binding.',
+              targetUrl: job.targetUrl,
+              readDelayMs: 0,
+            },
+          },
+        },
+      })
+    }
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 9)
+    const customPositiveMessages = providerMessages.filter(({ message }) => (
+      message.request?.requestId === 'job-custom-gpt-transition'
+    ))
+    assert.deepEqual(
+      customPositiveMessages.map(({ message }) => message.type),
+      [
+        'tokenless.bridge.validate_landing',
+        'tokenless.bridge.submit',
+        'tokenless.bridge.validate_landing',
+        'tokenless.bridge.read',
+      ]
+    )
+    for (const blockedJobId of ['job-custom-gpt-mismatch', 'job-root-custom-mismatch']) {
+      const blockedMessages = providerMessages.filter(({ message }) => message.request?.requestId === blockedJobId)
+      assert.deepEqual(
+        blockedMessages.map(({ message }) => message.type),
+        ['tokenless.bridge.validate_landing', 'tokenless.bridge.submit']
+      )
+    }
+
+    const allNativeMessages = ports.flatMap((port) => port.posted)
+    assert.ok(allNativeMessages.length >= 5)
+    assert.ok(allNativeMessages.every((message) => message.protocol === 'tokenless.native.v1'))
+    const completionMessages = allNativeMessages.filter((message) => (
+      message.type === 'tokenless.native.daemon_complete_job'
+    ))
+    assert.doesNotMatch(
+      JSON.stringify(completionMessages),
+      /old-private-answer-marker|answerBaseline|postSubmitTargetTransitionProof/,
+      'submission correlation state must never reach public daemon results'
+    )
+    assert.ok(allNativeMessages.some((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-visible-provider' &&
+      message.claimToken === 'provider-private-marker' &&
+      message.result?.text === 'Visible DOM answer'
+    )))
+    assert.ok(allNativeMessages.some((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-rejected-target' &&
+      message.error?.code === 'target_url_provider_mismatch'
+    )))
+    assert.ok(allNativeMessages.some((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-provider-drift' &&
+      message.error?.code === 'provider_tab_mismatch'
+    )))
+    assert.ok(allNativeMessages.some((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-unsafe-provider-path' &&
+      message.error?.code === 'target_tab_mismatch'
+    )))
+    for (const blockedJobId of ['job-custom-gpt-mismatch', 'job-root-custom-mismatch']) {
+      assert.ok(allNativeMessages.some((message) => (
+        message.type === 'tokenless.native.daemon_complete_job' &&
+        message.jobId === blockedJobId &&
+        message.error?.code === 'target_tab_mismatch'
+      )))
+    }
+    assert.deepEqual(
+      allNativeMessages
+        .filter((message) => message.type === 'tokenless.native.daemon_ready')
+        .map(({ jobId, claimToken }) => ({ jobId, claimToken })),
+      [
+        { jobId: 'job-visible-provider', claimToken: 'provider-private-marker' },
+        { jobId: 'job-rejected-target', claimToken: 'rejected-private-marker' },
+        { jobId: 'job-provider-drift', claimToken: 'drift-private-marker' },
+        { jobId: 'job-chatgpt-alias-transition', claimToken: 'alias-private-marker' },
+        { jobId: 'job-submit-only-baseline-private', claimToken: 'submit-private-marker' },
+        { jobId: 'job-unsafe-provider-path', claimToken: 'unsafe-path-private-marker' },
+        { jobId: 'job-custom-gpt-transition', claimToken: 'custom-positive-private-marker' },
+        { jobId: 'job-custom-gpt-mismatch', claimToken: 'custom-mismatch-private-marker' },
+        { jobId: 'job-root-custom-mismatch', claimToken: 'root-custom-private-marker' },
+      ]
+    )
+  } finally {
+    globalThis.chrome = previousChrome
+  }
+})
+
+test('background and provider content preserve visible-session safety boundaries', () => {
+  const serviceWorker = readText('packages/extension/extension/background/service-worker.ts')
+  const contentScript = readText('packages/extension/extension/content/provider-content.ts')
+  const settingsScript = readText('packages/extension/extension/settings/index.ts')
+  const builtContentScript = readText('packages/extension/dist/extension/content/provider-content.js')
+
+  assert.doesNotMatch(serviceWorker, /onMessageExternal|externally_connectable/)
+  assert.doesNotMatch(serviceWorker, /task\/task\.html|runner\.html|chrome\.runtime\.getURL/)
+  assert.doesNotMatch(settingsScript, /chrome\.tabs\.create/)
   assert.match(serviceWorker, /getOrCreateProviderTab/)
   assert.match(serviceWorker, /focusTab\(tab\)/)
-  assert.match(serviceWorker, /sendToProviderTab/)
   assert.match(serviceWorker, /chrome\.tabs\.sendMessage/)
-  assert.doesNotMatch(serviceWorker, /chrome\.cookies/)
-  assert.doesNotMatch(serviceWorker, /document\.cookie/)
-  assert.doesNotMatch(serviceWorker, /localStorage/)
-  assert.doesNotMatch(serviceWorker, /sessionStorage/)
-  assert.doesNotMatch(serviceWorker, /provider.*fetch|fetch.*provider/)
-  assert.doesNotMatch(manifest, /"cookies"/)
-})
+  assert.match(serviceWorker, /validateProviderLanding/)
+  assert.match(serviceWorker, /hasSafeProviderAuthority/)
+  assert.match(serviceWorker, /chrome\.runtime\.onMessage\.addListener/)
+  assert.match(serviceWorker, /tokenless\.provider_content_ready/)
+  assert.match(contentScript, /chrome\.runtime\.sendMessage/)
+  assert.match(contentScript, /tokenless\.provider_content_ready/)
 
-test('daemon background path preserves existing task page native job flow', () => {
-  const taskPage = fs.readFileSync(path.join(root, 'packages/extension/extension/task/task.ts'), 'utf8')
-  const taskHtml = fs.readFileSync(path.join(root, 'packages/extension/extension/task/task.html'), 'utf8')
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
+  for (const source of [serviceWorker, contentScript]) {
+    assert.doesNotMatch(source, /chrome\.cookies|document\.cookie|localStorage|sessionStorage/)
+    assert.doesNotMatch(source, /provider.*fetch|fetch.*provider/i)
+  }
 
-  assert.match(taskHtml, /<script type="module" src="\.\/task\.js"><\/script>/)
-  assert.match(taskPage, /tokenless\.native\.claim_job/)
-  assert.match(taskPage, /chrome\.runtime\.sendMessage/)
-  assert.match(taskPage, /protocol: 'tokenless\.browser-session-bridge\.v1'/)
-  assert.match(taskPage, /tokenless\.native\.write_result/)
-  assert.match(taskPage, /tokenless\.native\.write_snapshot/)
-  assert.match(taskPage, /normalizeBridgeResponse\(bridgeResponse\)/)
-  assert.match(serviceWorker, /validateBridgeRequest\(message\)/)
-})
-
-test('daemon runner page is not part of the active extension architecture', () => {
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/extension/daemon/runner.html')), false)
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/extension/daemon/runner.ts')), false)
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/extension/daemon/runner.html')), false)
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/extension/daemon/runner.js')), false)
-})
-
-test('provider content script is safe to inject more than once', () => {
-  const serviceWorker = fs.readFileSync(path.join(root, 'packages/extension/extension/background/service-worker.ts'), 'utf8')
-  const contentScript = fs.readFileSync(path.join(root, 'packages/extension/extension/content/provider-content.ts'), 'utf8')
-  const builtContentScript = fs.readFileSync(path.join(root, 'packages/extension/dist/extension/content/provider-content.js'), 'utf8')
-
-  assert.match(serviceWorker, /chrome\.scripting\.executeScript/)
-  assert.match(contentScript, /\(\(\) => \{/)
   assert.match(contentScript, /__TOKENLESS_PROVIDER_CONTENT_LOADED__/)
   assert.doesNotMatch(builtContentScript, /\nexport \{\};/)
   assert.ok(
     contentScript.indexOf('__TOKENLESS_PROVIDER_CONTENT_LOADED__') < contentScript.search(/const PROVIDERS\b/),
-    'the duplicate-injection guard must run before top-level declarations inside the content script closure'
+    'duplicate-injection guard must run before provider declarations'
   )
 })
 
 test('browser bridge advertises sanitized DOM snapshot action', async () => {
-  const { BRIDGE_ACTIONS, capabilitiesPayload, validateBridgeRequest, BRIDGE_PROTOCOL_VERSION } = await import('../packages/extension/dist/extension/shared/bridge-protocol.js')
+  const {
+    BRIDGE_ACTIONS,
+    BRIDGE_PROTOCOL_VERSION,
+    capabilitiesPayload,
+    validateBridgeRequest,
+  } = await import('../packages/extension/dist/extension/shared/bridge-protocol.js')
 
   assert.equal(BRIDGE_ACTIONS.SNAPSHOT_DOM, 'snapshot_dom')
   assert.ok(capabilitiesPayload().actions.includes('snapshot_dom'))
-  assert.equal(validateBridgeRequest({
+  const baseRequest = {
     protocol: BRIDGE_PROTOCOL_VERSION,
     requestId: 'snapshot-1',
     provider: 'chatgpt',
     action: 'snapshot_dom',
-  }).ok, true)
-})
-
-test('extension side panel renders provider-agnostic task history from native host', () => {
-  const sidePanelHtml = fs.readFileSync(path.join(root, 'packages/extension/extension/sidepanel/index.html'), 'utf8')
-  const sidePanelJs = fs.readFileSync(path.join(root, 'packages/extension/extension/sidepanel/index.ts'), 'utf8')
-  const nativeHost = fs.readFileSync(path.join(root, 'packages/cli/dist/src/native-host.mjs'), 'utf8')
-
-  assert.match(sidePanelHtml, /Task History/)
-  assert.match(sidePanelHtml, /id="history"/)
-  assert.match(sidePanelJs, /tokenless\.native\.list_history/)
-  assert.match(sidePanelJs, /tokenless\.native\.read_config/)
-  assert.match(sidePanelJs, /tokenless\.native\.write_config/)
-  assert.match(sidePanelJs, /Save/)
-  assert.match(sidePanelHtml, /Configuration/)
-  assert.match(sidePanelJs, /Provider URL/)
-  assert.match(sidePanelJs, /projectName/)
-  assert.match(sidePanelJs, /chatName/)
-  assert.match(nativeHost, /tokenless\.native\.list_history/)
-  assert.match(nativeHost, /tokenless\.native\.read_config/)
-  assert.match(nativeHost, /tokenless\.native\.write_config/)
-  assert.match(nativeHost, /readLocalHistory/)
-  assert.match(nativeHost, /readTokenlessConfig/)
-  assert.match(nativeHost, /writeTokenlessConfig/)
-})
-
-test('Relay protocol validates required run fields', async () => {
-  const { RELAY_PROTOCOL_VERSION, createRelayRun, validateRelayRun } = await import('../packages/relay/dist/src/index.js')
-  const run = createRelayRun({ prompt: 'Review this diff.' })
-  assert.equal(run.protocol, RELAY_PROTOCOL_VERSION)
-  assert.equal(validateRelayRun(run).ok, true)
-  assert.equal(validateRelayRun({ ...run, prompt: undefined }).ok, false)
-})
-
-test('Tokenless CLI prompt redacts obvious secret values', async () => {
-  const { buildTokenlessPrompt } = await import('../packages/cli/dist/src/index.js')
-  const prompt = await buildTokenlessPrompt({
-    userPrompt: 'Review',
-    turnContext: 'token=abc123',
-    projectRoot: root,
+  }
+  assert.equal(validateBridgeRequest(baseRequest).ok, true)
+  const daemonSuppliedTransition = validateBridgeRequest({
+    ...baseRequest,
+    allowPostSubmitTargetTransition: true,
+    postSubmitTargetTransitionProof: { nonce: 'daemon-forged-proof' },
   })
-  assert.match(prompt, /token=<redacted>/)
-  assert.doesNotMatch(prompt, /abc123/)
-})
-
-test('web client posts relay requests to a configured server', async () => {
-  const { createRelayClient } = await import('../packages/client/dist/src/index.js')
-  const calls = []
-  const client = createRelayClient({
-    baseUrl: 'https://relay.example.test/',
-    async fetchImpl(url, init) {
-      calls.push({ url, init })
-      return {
-        ok: true,
-        async json() {
-          return { ok: true, result: { status: 'accepted' } }
-        },
-      }
-    },
-  })
-
-  const response = await client.createRun({ protocol: 'tokenless.relay.v1', requestId: 'r1' })
-  assert.equal(calls[0].url, 'https://relay.example.test/v1/runs')
-  assert.equal(calls[0].init.method, 'POST')
-  assert.equal(response.ok, true)
-})
-
-test('local job store requires nonce and writes compact result', async () => {
-  const {
-    completeLocalJob,
-    createLocalJob,
-    JOB_STATES,
-    readLocalJobRequest,
-    readLocalTaskState,
-    waitLocalJobResult,
-    writeDomSnapshot,
-    writeJobState,
-  } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-job-store-'))
-  const job = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    prompt: 'Say hello.',
-  })
-
-  assert.equal((await readLocalJobRequest({ homeDir, jobId: job.jobId, nonce: job.nonce })).jobId, job.jobId)
-  await assert.rejects(
-    readLocalJobRequest({ homeDir, jobId: job.jobId, nonce: 'wrong' }),
-    /nonce does not match/
-  )
-
-  await completeLocalJob({
-    homeDir,
-    jobId: job.jobId,
-    nonce: job.nonce,
-    ok: true,
-    result: { text: 'hello from visible DOM' },
-  })
-  const result = await waitLocalJobResult({ homeDir, jobId: job.jobId, nonce: job.nonce, timeoutMs: 1000 })
-  assert.equal(result.compactOutput, 'hello from visible DOM')
-  const taskState = await readLocalTaskState({ homeDir, jobId: job.jobId })
-  assert.equal(taskState.latest.jobId, job.jobId)
-  assert.equal(taskState.latest.result.compactOutput, 'hello from visible DOM')
-  assert.equal(taskState.latest.prompt, undefined)
-  assert.equal(taskState.latest.nonce, undefined)
-
-  const snapshotJob = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    action: 'snapshot_dom',
-    targetUrl: 'https://chatgpt.com/',
-  })
-  const snapshot = await writeDomSnapshot({
-    homeDir,
-    jobId: snapshotJob.jobId,
-    nonce: snapshotJob.nonce,
-    snapshot: {
-      status: 'snapshotted',
-      provider: 'chatgpt',
-      url: 'https://chatgpt.com/',
-      title: 'ChatGPT',
-      sanitized: true,
-      includeText: false,
-      html: '<!doctype html><html><body>[text]</body></html>',
-      selectorProbes: { composers: [] },
-    },
-  })
-  assert.match(snapshot.htmlPath, /snapshots\/chatgpt\/.*\/dom\.sanitized\.html$/)
-
-  await completeLocalJob({
-    homeDir,
-    jobId: snapshotJob.jobId,
-    nonce: snapshotJob.nonce,
-    ok: true,
-    result: { snapshot },
-  })
-  const snapshotResult = await waitLocalJobResult({ homeDir, jobId: snapshotJob.jobId, nonce: snapshotJob.nonce, timeoutMs: 1000 })
-  assert.equal(snapshotResult.compactOutput, snapshot.htmlPath)
-
-  const blockedJob = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    prompt: 'Blocked visible session.',
-  })
-  const blockedResult = await completeLocalJob({
-    homeDir,
-    jobId: blockedJob.jobId,
-    nonce: blockedJob.nonce,
-    ok: false,
-    error: { code: 'provider_blocker_visible', message: 'CAPTCHA is visible.', retryable: true },
-  })
-  assert.equal(blockedResult.status, JOB_STATES.BLOCKED)
-
-  const uiMismatchJob = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    prompt: 'Mismatched visible session.',
-  })
-  const uiMismatchResult = await completeLocalJob({
-    homeDir,
-    jobId: uiMismatchJob.jobId,
-    nonce: uiMismatchJob.nonce,
-    ok: false,
-    error: { code: 'selector_drift', message: 'Composer selector was not found.', retryable: true },
-  })
-  assert.equal(uiMismatchResult.status, JOB_STATES.UI_MISMATCH)
-
-  const timedOutJob = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    prompt: 'Timed out visible session.',
-  })
-  const timedOutResult = await completeLocalJob({
-    homeDir,
-    jobId: timedOutJob.jobId,
-    nonce: timedOutJob.nonce,
-    ok: false,
-    error: { code: 'provider_landing_timeout', message: 'Provider did not load.', retryable: true },
-  })
-  assert.equal(timedOutResult.status, JOB_STATES.TIMED_OUT)
-
-  const failedJob = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    prompt: 'Generic failure.',
-  })
-  const failedResult = await completeLocalJob({
-    homeDir,
-    jobId: failedJob.jobId,
-    nonce: failedJob.nonce,
-    ok: false,
-    error: { code: 'bridge_runtime_error', message: 'Unexpected bridge failure.', retryable: true },
-  })
-  assert.equal(failedResult.status, JOB_STATES.FAILED)
-
-  const pollingJob = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    prompt: 'Wait for visible DOM.',
-  })
-  const events = []
-  await writeJobState({
-    homeDir,
-    jobId: pollingJob.jobId,
-    nonce: pollingJob.nonce,
-    status: 'running',
-    actor: 'extension',
-    detail: { provider: 'chatgpt' },
-  })
-  const waiting = waitLocalJobResult({
-    homeDir,
-    jobId: pollingJob.jobId,
-    nonce: pollingJob.nonce,
-    timeoutMs: 1000,
-    pollMs: 20,
-    statusIntervalMs: 25,
-    onStatus: (event) => events.push(event),
-  })
-  await delay(70)
-  await completeLocalJob({
-    homeDir,
-    jobId: pollingJob.jobId,
-    nonce: pollingJob.nonce,
-    ok: true,
-    result: { text: 'done after polling' },
-  })
-  assert.equal((await waiting).compactOutput, 'done after polling')
-  assert.deepEqual(events.map((event) => event.type), ['state', 'poll', 'result'])
-  assert.equal(events[0].status, 'running')
-  assert.equal(events[1].status, 'running')
-  assert.equal(events[2].status, 'succeeded')
-})
-
-test('local Tokenless config stores provider preference for default runs', async () => {
-  const {
-    configPath,
-    createLocalJob,
-    readTokenlessConfig,
-    writeTokenlessConfig,
-  } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-config-'))
-
-  assert.deepEqual((await readTokenlessConfig(homeDir)).preferredProviders, [])
-
-  const config = await writeTokenlessConfig({
-    homeDir,
-    preferredProviders: ['claude', 'chatgpt', 'claude', 'unsupported', 'gemini'],
-  })
-  assert.deepEqual(config.preferredProviders, ['claude', 'chatgpt', 'gemini'])
-  assert.ok(fs.existsSync(configPath(homeDir)))
-
-  const loaded = await readTokenlessConfig(homeDir)
-  assert.deepEqual(loaded.preferredProviders, ['claude', 'chatgpt', 'gemini'])
-
-  const job = await createLocalJob({
-    homeDir,
-    provider: loaded.preferredProviders[0],
-    prompt: 'Use configured provider.',
-  })
-  assert.equal(job.provider, 'claude')
-})
-
-test('native host writes Tokenless config through native messaging protocol', async () => {
-  const {
-    readTokenlessConfig,
-  } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-native-config-'))
-  const response = await nativeHostMessage({
-    type: 'tokenless.native.write_config',
-    preferredProviders: ['gemini', 'chatgpt'],
-  }, { TOKENLESS_HOME: homeDir })
-
-  assert.equal(response.ok, true)
-  assert.deepEqual(response.result.preferredProviders, ['gemini', 'chatgpt'])
-  assert.deepEqual((await readTokenlessConfig(homeDir)).preferredProviders, ['gemini', 'chatgpt'])
-})
-
-test('local conversation mapping routes the same idempotency key to the same provider conversation', async () => {
-  const {
-    completeLocalJob,
-    conversationMapPath,
-    createLocalJob,
-    readConversationMap,
-    readLocalHistory,
-  } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-map-'))
-
-  const first = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    projectName: 'Tokenless',
-    chatName: 'Bridge history',
-    prompt: 'Start a mapped conversation.',
-  })
-
-  assert.equal(first.targetUrl, 'https://chatgpt.com/')
-  assert.equal(first.conversation.route, 'new')
-  assert.equal(first.idempotencyKey, 'project:Tokenless:chat:Bridge history')
-
-  await completeLocalJob({
-    homeDir,
-    jobId: first.jobId,
-    nonce: first.nonce,
-    ok: true,
-    result: {
-      text: 'mapped answer',
-      read: {
-        text: 'mapped answer',
-        url: 'https://chatgpt.com/c/abc-123?temporary-chat=false',
-      },
-    },
-  })
-
-  assert.ok(fs.existsSync(conversationMapPath(homeDir)))
-  const map = await readConversationMap(homeDir)
-  assert.equal(map.conversations['chatgpt:project:Tokenless:chat:Bridge history'].projectName, 'Tokenless')
-  assert.equal(map.conversations['chatgpt:project:Tokenless:chat:Bridge history'].chatName, 'Bridge history')
-  assert.equal(map.conversations['chatgpt:project:Tokenless:chat:Bridge history'].targetUrl, 'https://chatgpt.com/c/abc-123')
-  assert.equal(map.conversations['chatgpt:project:Tokenless:chat:Bridge history'].providerConversationId, 'abc-123')
-
-  const history = await readLocalHistory({ homeDir })
-  assert.equal(history.history[0].projectName, 'Tokenless')
-  assert.equal(history.history[0].chatName, 'Bridge history')
-  assert.equal(history.history[0].provider, 'chatgpt')
-  assert.equal(history.history[0].targetUrl, 'https://chatgpt.com/c/abc-123')
-  assert.equal(history.history[0].lastStatus, 'succeeded')
-  assert.equal(history.history[0].jobCount, 1)
-
-  const second = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    projectName: 'Tokenless',
-    chatName: 'Bridge history',
-    prompt: 'Continue the mapped conversation.',
-  })
-  assert.equal(second.targetUrl, 'https://chatgpt.com/c/abc-123')
-  assert.equal(second.conversation.route, 'mapped')
-
-  const unrelated = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    idempotencyKey: 'agent-thread-99',
-    prompt: 'Start a different conversation.',
-  })
-  assert.equal(unrelated.targetUrl, 'https://chatgpt.com/')
-  assert.equal(unrelated.conversation.route, 'new')
-})
-
-test('local conversation mapping derives stable keys from partial agent names only', async () => {
-  const {
-    completeLocalJob,
-    createLocalJob,
-    readConversationMap,
-    readLocalHistory,
-  } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-partial-agent-names-'))
-
-  const unnamed = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    prompt: 'Start an unnamed fallback conversation.',
-  })
-  assert.equal(unnamed.idempotencyKey, undefined)
-  assert.equal(unnamed.conversation.route, 'default')
-  await completeLocalJob({
-    homeDir,
-    jobId: unnamed.jobId,
-    nonce: unnamed.nonce,
-    ok: true,
-    result: {
-      text: 'unnamed answer',
-      read: {
-        text: 'unnamed answer',
-        url: 'https://chatgpt.com/c/unnamed-fallback',
-      },
-    },
-  })
-  assert.deepEqual((await readLocalHistory({ homeDir })).history, [])
-
-  const projectOnly = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    projectName: 'Tokenless',
-    prompt: 'Start project-only mapped conversation.',
-  })
-  assert.equal(projectOnly.idempotencyKey, 'project:Tokenless')
-  await completeLocalJob({
-    homeDir,
-    jobId: projectOnly.jobId,
-    nonce: projectOnly.nonce,
-    ok: true,
-    result: {
-      text: 'project-only answer',
-      read: {
-        text: 'project-only answer',
-        url: 'https://chatgpt.com/c/project-only',
-      },
-    },
-  })
-  const projectOnlyAgain = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    projectName: 'Tokenless',
-    prompt: 'Continue project-only mapped conversation.',
-  })
-  assert.equal(projectOnlyAgain.idempotencyKey, 'project:Tokenless')
-  assert.equal(projectOnlyAgain.targetUrl, 'https://chatgpt.com/c/project-only')
-  assert.equal(projectOnlyAgain.conversation.route, 'mapped')
-
-  const chatOnly = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    chatName: 'Bridge history',
-    prompt: 'Start chat-only mapped conversation.',
-  })
-  assert.equal(chatOnly.idempotencyKey, 'chat:Bridge history')
-  await completeLocalJob({
-    homeDir,
-    jobId: chatOnly.jobId,
-    nonce: chatOnly.nonce,
-    ok: true,
-    result: {
-      text: 'chat-only answer',
-      read: {
-        text: 'chat-only answer',
-        url: 'https://chatgpt.com/c/chat-only',
-      },
-    },
-  })
-  const chatOnlyAgain = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    chatName: 'Bridge history',
-    prompt: 'Continue chat-only mapped conversation.',
-  })
-  assert.equal(chatOnlyAgain.idempotencyKey, 'chat:Bridge history')
-  assert.equal(chatOnlyAgain.targetUrl, 'https://chatgpt.com/c/chat-only')
-  assert.equal(chatOnlyAgain.conversation.route, 'mapped')
-
-  const map = await readConversationMap(homeDir)
-  assert.equal(map.conversations['chatgpt:project:Tokenless'].targetUrl, 'https://chatgpt.com/c/project-only')
-  assert.equal(map.conversations['chatgpt:chat:Bridge history'].targetUrl, 'https://chatgpt.com/c/chat-only')
-  assert.equal(map.conversations['chatgpt:undefined'], undefined)
-
-  const history = await readLocalHistory({ homeDir })
-  assert.ok(history.history.some((entry) => (
-    entry.projectName === 'Tokenless' &&
-    entry.chatName === 'Unspecified chat' &&
-    entry.targetUrl === 'https://chatgpt.com/c/project-only'
-  )))
-  assert.ok(history.history.some((entry) => (
-    entry.projectName === 'Unspecified project' &&
-    entry.chatName === 'Bridge history' &&
-    entry.targetUrl === 'https://chatgpt.com/c/chat-only'
-  )))
-})
-
-test('local conversation mapping preserves concurrent completions', async () => {
-  const {
-    completeLocalJob,
-    createLocalJob,
-    readConversationMap,
-  } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-concurrent-'))
-  const jobs = await Promise.all(Array.from({ length: 16 }, (_, index) => createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    idempotencyKey: `agent-thread-${index}`,
-    prompt: `Start mapped conversation ${index}.`,
-  })))
-
-  await Promise.all(jobs.map((job, index) => completeLocalJob({
-    homeDir,
-    jobId: job.jobId,
-    nonce: job.nonce,
-    ok: true,
-    result: {
-      text: `mapped answer ${index}`,
-      read: {
-        text: `mapped answer ${index}`,
-        url: `https://chatgpt.com/c/conversation-${index}?temporary-chat=false`,
-      },
-    },
-  })))
-
-  const map = await readConversationMap(homeDir)
-  for (let index = 0; index < jobs.length; index += 1) {
-    assert.equal(
-      map.conversations[`chatgpt:agent-thread-${index}`].targetUrl,
-      `https://chatgpt.com/c/conversation-${index}`
-    )
+  assert.equal(daemonSuppliedTransition.ok, true)
+  assert.equal(daemonSuppliedTransition.request.allowPostSubmitTargetTransition, undefined)
+  assert.equal(daemonSuppliedTransition.request.postSubmitTargetTransitionProof, undefined)
+  assert.equal(validateBridgeRequest({ ...baseRequest, includeText: false }).ok, true)
+  const metadataFallback = validateBridgeRequest({ ...baseRequest, metadata: { includeText: true } })
+  assert.equal(metadataFallback.ok, true)
+  assert.equal(metadataFallback.request.includeText, true)
+  for (const malformed of [
+    { ...baseRequest, includeText: 'false' },
+    { ...baseRequest, includeText: 0 },
+    { ...baseRequest, includeText: null },
+    { ...baseRequest, metadata: { includeText: 'true' } },
+  ]) {
+    const validation = validateBridgeRequest(malformed)
+    assert.equal(validation.ok, false)
+    assert.equal(validation.error.code, 'invalid_include_text')
+  }
+  for (const malformedTarget of [null, false, '', 'not-an-absolute-url']) {
+    const validation = validateBridgeRequest({ ...baseRequest, targetUrl: malformedTarget })
+    assert.equal(validation.ok, false)
+    assert.equal(validation.error.code, 'invalid_target_url')
+  }
+  for (const mismatchedTarget of [
+    'https://gemini.google.com/app',
+    'https://user:password@chatgpt.com/',
+    'https://chatgpt.com:444/',
+  ]) {
+    const validation = validateBridgeRequest({ ...baseRequest, targetUrl: mismatchedTarget })
+    assert.equal(validation.ok, false)
+    assert.equal(validation.error.code, 'target_url_provider_mismatch')
   }
 })
 
-test('local conversation mapping rejects corrupt local state instead of overwriting it', async () => {
-  const {
-    completeLocalJob,
-    conversationMapPath,
-    createLocalJob,
-    readConversationMap,
-  } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-conversation-corrupt-'))
-  const mapPath = conversationMapPath(homeDir)
-  const job = await createLocalJob({
-    homeDir,
-    provider: 'chatgpt',
-    idempotencyKey: 'agent-thread-corrupt',
-    prompt: 'Start a mapped conversation.',
-  })
-
-  await fsp.writeFile(mapPath, '{not valid json', 'utf8')
-  await assert.rejects(
-    readConversationMap(homeDir),
-    /Cannot read Tokenless conversation map/
-  )
-
-  const result = await completeLocalJob({
-    homeDir,
-    jobId: job.jobId,
-    nonce: job.nonce,
-    ok: true,
-    result: {
-      text: 'answer that should not hide local state failure',
-      read: {
-        text: 'answer that should not hide local state failure',
-        url: 'https://chatgpt.com/c/corrupt-map',
-      },
-    },
-  })
-
-  assert.equal(result.ok, false)
-  assert.equal(result.status, 'failed')
-  assert.equal(result.error.code, 'conversation_map_error')
-})
-
-test('native host installer scopes manifest to extension origin', async () => {
-  const { installNativeHost, NATIVE_HOST_NAME } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-native-home-'))
-  const manifestHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-manifest-home-'))
-  const installed = await installNativeHost({
-    homeDir,
-    manifestHome,
-    extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    browsers: ['chromium'],
-  })
-
-  assert.equal(installed.manifests.length, 1)
-  assert.ok(fs.existsSync(installed.executable))
-  const manifest = JSON.parse(fs.readFileSync(installed.manifests[0], 'utf8'))
-  assert.equal(manifest.name, NATIVE_HOST_NAME)
-  assert.deepEqual(manifest.allowed_origins, ['chrome-extension://abcdefghijklmnopabcdefghijklmnop/'])
-})
-
-test('native host installer supports Brave browser manifests', async () => {
-  const { installNativeHost } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-native-home-'))
-  const manifestHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-manifest-home-'))
-  const installed = await installNativeHost({
-    homeDir,
-    manifestHome,
-    extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    browsers: ['brave-browser'],
-  })
-
-  assert.equal(installed.manifests.length, 1)
-  const expectedSegment = path.join('BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts')
-  assert.ok(installed.manifests[0].includes(expectedSegment))
-})
-
-test('native host installer supports isolated browser profile manifests', async () => {
-  const { installNativeHost } = await import('../packages/cli/dist/src/index.js')
-  const homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-native-home-'))
-  const manifestHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'tokenless-manifest-home-'))
-  const installed = await installNativeHost({
-    homeDir,
-    manifestHome,
-    extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    browsers: ['profile'],
-  })
-
-  assert.equal(installed.manifests.length, 1)
-  assert.equal(installed.manifests[0], path.join(manifestHome, 'NativeMessagingHosts', 'dev.tokenless.native_host.json'))
-})
-
-function readJson(relativePath) {
-  return JSON.parse(fs.readFileSync(path.join(root, relativePath), 'utf8'))
+function postSubmitTransitionProof(request, answerBaseline, nonce = 'contract-transition-proof-0001') {
+  const target = new URL(request.targetUrl)
+  const pathname = target.pathname.replace(/\/+$/, '') || '/'
+  const segments = pathname.split('/').filter(Boolean)
+  const customGptId = (
+    request.provider === 'chatgpt' &&
+    segments.length === 2 &&
+    segments[0] === 'g'
+  ) ? segments[1] : undefined
+  return {
+    requestId: request.requestId,
+    provider: request.provider,
+    targetUrl: `${target.origin}${pathname}`,
+    sourceKind: customGptId ? 'custom_gpt' : 'root',
+    customGptId,
+    answerBaseline,
+    nonce,
+  }
 }
 
-function nativeHostMessage(message, env = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      path.join(root, 'packages/cli/dist/src/native-host.mjs'),
-    ], {
-      cwd: root,
-      env: { ...process.env, ...env },
-      stdio: ['pipe', 'pipe', 'pipe'],
+function dispatchPostSubmitRead(page, request, answerBaseline, proof) {
+  return page.evaluate(({ contentRequest, baseline, transitionProof }) => (
+    globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.read',
+      request: {
+        ...contentRequest,
+        answerBaseline: baseline,
+        allowPostSubmitTargetTransition: true,
+        postSubmitTargetTransitionProof: transitionProof,
+      },
     })
-    let stdout = Buffer.alloc(0)
-    let stderr = ''
-    const timeout = setTimeout(() => {
-      child.kill()
-      reject(new Error('native host test timed out'))
-    }, 5000)
+  ), { contentRequest: request, baseline: answerBaseline, transitionProof: proof })
+}
 
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8')
+function dispatchPostSubmitValidation(page, request, answerBaseline, proof) {
+  return page.evaluate(({ contentRequest, baseline, transitionProof }) => (
+    globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.validate_landing',
+      request: {
+        ...contentRequest,
+        answerBaseline: baseline,
+        allowPostSubmitTargetTransition: true,
+        postSubmitTargetTransitionProof: transitionProof,
+      },
     })
-    child.on('error', (error) => {
-      clearTimeout(timeout)
-      reject(error)
-    })
-    child.on('exit', (code) => {
-      if (code && stdout.length === 0) {
-        clearTimeout(timeout)
-        reject(new Error(`native host exited with ${code}: ${stderr}`))
+  ), { contentRequest: request, baseline: answerBaseline, transitionProof: proof })
+}
+
+function createChromeEvent() {
+  const listeners = []
+  return {
+    addListener(listener) {
+      listeners.push(listener)
+    },
+    async emit(...args) {
+      await Promise.all(listeners.map((listener) => listener(...args)))
+    },
+  }
+}
+
+function createManualScheduler() {
+  let nextId = 1
+  const tasks = new Map()
+  return {
+    setTimer(callback, delayMs) {
+      assert.equal(this, globalThis, 'timer callbacks must be invoked with the Web API receiver')
+      const id = nextId
+      nextId += 1
+      tasks.set(id, { callback, delayMs: Number(delayMs) })
+      return id
+    },
+    clearTimer(id) {
+      assert.equal(this, globalThis, 'timer clear callbacks must be invoked with the Web API receiver')
+      tasks.delete(id)
+    },
+    pendingDelays() {
+      return [...tasks.values()].map((task) => task.delayMs)
+    },
+    runDelay(delayMs) {
+      const match = [...tasks.entries()].find(([, task]) => task.delayMs === delayMs)
+      assert.ok(match, `No scheduled timer has delay ${delayMs}ms; pending: ${JSON.stringify(this.pendingDelays())}`)
+      const [id, task] = match
+      tasks.delete(id)
+      task.callback()
+    },
+  }
+}
+
+function createBehaviorNativePort() {
+  const onMessage = createChromeEvent()
+  const onDisconnect = createChromeEvent()
+  return {
+    onMessage,
+    onDisconnect,
+    posted: [],
+    disconnectCount: 0,
+    postMessage(message) {
+      this.posted.push(message)
+    },
+    disconnect() {
+      this.disconnectCount += 1
+      void onDisconnect.emit()
+    },
+  }
+}
+
+function nativeSuccess(type, result) {
+  return {
+    protocol: 'tokenless.native.v1',
+    type,
+    ok: true,
+    result,
+  }
+}
+
+function nativeFailure(type, message, code = 'native_test_error') {
+  return {
+    protocol: 'tokenless.native.v1',
+    type,
+    ok: false,
+    error: { code, message, retryable: false },
+  }
+}
+
+async function openSettingsPage(browser, baseUrl, plans) {
+  const context = await browser.newContext({ viewport: { width: 900, height: 900 } })
+  const page = await context.newPage()
+  const pageErrors = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  await page.addInitScript((initialPlans) => {
+    function chromeEvent() {
+      const listeners = []
+      return {
+        addListener(listener) {
+          listeners.push(listener)
+        },
+        emit(value) {
+          for (const listener of [...listeners]) listener(value)
+        },
       }
-    })
-    child.stdout.on('data', (chunk) => {
-      stdout = Buffer.concat([stdout, chunk])
-      if (stdout.length < 4) return
-      const length = stdout.readUInt32LE(0)
-      if (stdout.length < length + 4) return
-      const body = stdout.subarray(4, length + 4)
-      clearTimeout(timeout)
-      child.kill()
-      resolve(JSON.parse(body.toString('utf8')))
-    })
+    }
 
-    const body = Buffer.from(JSON.stringify(message), 'utf8')
-    const header = Buffer.alloc(4)
-    header.writeUInt32LE(body.length, 0)
-    child.stdin.write(Buffer.concat([header, body]))
+    const mock = {
+      plans: structuredClone(initialPlans),
+      requests: [],
+      ports: [],
+      respond(index, response) {
+        const port = this.ports[index]
+        if (!port || port.disconnected) throw new Error(`Native request ${index} is not pending.`)
+        port.onMessage.emit(structuredClone(response))
+      },
+    }
+
+    Object.defineProperty(globalThis, '__nativeMock', {
+      configurable: true,
+      value: mock,
+    })
+    Object.defineProperty(globalThis, 'chrome', {
+      configurable: true,
+      value: {
+        runtime: {
+          lastError: undefined,
+          connectNative(hostName) {
+            if (hostName !== 'dev.tokenless.native_host') {
+              throw new Error(`Unexpected native host: ${hostName}`)
+            }
+            const onMessage = chromeEvent()
+            const onDisconnect = chromeEvent()
+            const port = {
+              onMessage,
+              onDisconnect,
+              disconnected: false,
+              postMessage(message) {
+                if (port.disconnected) throw new Error('Native port is disconnected.')
+                const requestIndex = mock.requests.push(structuredClone(message)) - 1
+                mock.ports[requestIndex] = port
+                const plan = mock.plans[requestIndex] ?? {}
+                if (Object.hasOwn(plan, 'response')) {
+                  setTimeout(() => {
+                    if (!port.disconnected) onMessage.emit(structuredClone(plan.response))
+                  }, Number(plan.delayMs ?? 0))
+                }
+              },
+              disconnect() {
+                if (port.disconnected) return
+                port.disconnected = true
+                onDisconnect.emit()
+              },
+            }
+            return port
+          },
+        },
+      },
+    })
+  }, plans)
+  await page.goto(`${baseUrl}/settings/index.html`, { waitUntil: 'domcontentloaded' })
+  return { context, page, pageErrors }
+}
+
+async function openProviderFixture(browser, url, html) {
+  const context = await browser.newContext({ viewport: { width: 900, height: 700 } })
+  await context.addInitScript(() => {
+    const listeners = []
+    Object.defineProperty(globalThis, 'chrome', {
+      configurable: true,
+      value: {
+        runtime: {
+          onMessage: {
+            addListener(listener) {
+              listeners.push(listener)
+            },
+          },
+        },
+      },
+    })
+    Object.defineProperty(globalThis, '__dispatchTokenlessMessage', {
+      configurable: true,
+      value(message) {
+        return new Promise((resolve, reject) => {
+          const listener = listeners[0]
+          if (!listener) {
+            reject(new Error('Provider content listener is not installed.'))
+            return
+          }
+          let responded = false
+          const keepChannelOpen = listener(message, {}, (response) => {
+            responded = true
+            resolve(response)
+          })
+          if (keepChannelOpen !== true && !responded) {
+            reject(new Error('Provider content listener did not keep the response channel open.'))
+          }
+        })
+      },
+    })
   })
+  const page = await context.newPage()
+  const pageErrors = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  const parsed = new URL(url)
+  await page.route(`${parsed.origin}/**`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body: html,
+  }))
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+  await page.addScriptTag({ path: path.join(extensionDist, 'content/provider-content.js') })
+  return { context, page, pageErrors }
+}
+
+async function startStaticServer(directory) {
+  const absoluteRoot = path.resolve(directory)
+  const server = http.createServer((request, response) => {
+    let filePath
+    try {
+      const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://127.0.0.1').pathname)
+      filePath = path.resolve(absoluteRoot, pathname.replace(/^\/+/, ''))
+    } catch {
+      response.writeHead(400).end('Bad request')
+      return
+    }
+    if (filePath !== absoluteRoot && !filePath.startsWith(`${absoluteRoot}${path.sep}`)) {
+      response.writeHead(403).end('Forbidden')
+      return
+    }
+    fs.readFile(filePath, (error, contents) => {
+      if (error) {
+        response.writeHead(error.code === 'ENOENT' ? 404 : 500).end(error.code === 'ENOENT' ? 'Not found' : 'Read failed')
+        return
+      }
+      response.writeHead(200, { 'content-type': contentType(filePath) })
+      response.end(contents)
+    })
+  })
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve())
+    }),
+  }
+}
+
+function contentType(filePath) {
+  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8'
+  if (filePath.endsWith('.js')) return 'text/javascript; charset=utf-8'
+  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8'
+  if (filePath.endsWith('.json') || filePath.endsWith('.map')) return 'application/json; charset=utf-8'
+  return 'application/octet-stream'
+}
+
+function listRelativeFiles(directory) {
+  if (!fs.existsSync(directory)) return []
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolute = path.join(directory, entry.name)
+    if (entry.isDirectory()) {
+      return listRelativeFiles(absolute).map((file) => path.join(entry.name, file))
+    }
+    return entry.isFile() ? [entry.name] : []
+  }).sort()
+}
+
+function readJson(relativePath) {
+  return JSON.parse(readText(relativePath))
+}
+
+function readText(relativePath) {
+  return fs.readFileSync(path.join(root, relativePath), 'utf8')
+}
+
+async function waitFor(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await delay(5)
+  }
+  throw new Error('Timed out waiting for extension background behavior.')
 }
 
 function delay(ms) {

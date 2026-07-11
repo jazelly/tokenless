@@ -1,77 +1,54 @@
 # Tokenless
 
-Tokenless helps agents save tokens.
-
-Many agent requests do not need to spend paid API tokens. They can be answered by the AI web apps you already use in your browser. Tokenless routes those requests to the visible web version of ChatGPT, Claude, or Gemini, then brings the answer back to your local agent.
+Tokenless is a standalone project that helps agents save tokens by routing suitable work through the visible web version of ChatGPT, Claude, or Gemini that the user is already signed into.
 
 Chinese version: [README.zh-CN.md](README.zh-CN.md)
 
 ## Core Value
 
-Tokenless solves one simple problem:
-
-> Your agent should not spend tokens on work that a free or already-open web chat can handle.
-
-When a request is a good fit, Tokenless sends it to the provider's normal web page. The answer comes back into the agent flow, so you keep working without copying prompts and responses by hand.
-
-This can reduce token usage for everyday agent work, especially for:
-
-- second opinions
-- research-style answers
-- draft writing
-- code review notes
-- explanations
-- simple transformations
-- tasks where the web chat answer is good enough
+Many requests—second opinions, research-style answers, drafts, explanations, reviews, and simple transformations—do not need another paid API call. Tokenless gives an agent a local CLI entrypoint, drives only the provider UI the user can see, and returns the visible answer to the agent flow.
 
 ## How It Works
 
-From the user's point of view:
+1. The agent invokes `npx tokenless run`.
+2. The CLI starts the packaged Rust daemon if it is not already ready for the requested Tokenless home.
+3. If the extension's Rust Native Messaging bridge is live, the CLI does not pre-open a wake tab. Otherwise it opens only the selected provider's validated HTTPS page in the configured Chromium browser; ChatGPT is the default. The extension then reuses an approved provider tab or opens one provider tab when necessary.
+4. The extension submits the prompt and reads the answer through visible DOM interaction.
+5. The Rust host completes the daemon-backed job and the CLI returns the visible result.
 
-1. You keep ChatGPT, Claude, or Gemini logged in in your browser.
-2. Your local agent asks Tokenless to run a request.
-3. Tokenless opens the visible web chat.
-4. The prompt is sent through the page you can see.
-5. The visible answer is returned to the agent.
-
-No manual copy and paste. No separate API key for that request. No hidden provider backend calls.
-
-## Why It Matters
-
-Agents are powerful, but token usage adds up quickly. A lot of agent work is not high-stakes model reasoning. It is checking, rewriting, explaining, summarizing, or getting another model's view.
-
-Tokenless gives your agent a lower-cost path for that kind of work. Use tokens where they matter. Use the web version when that is enough.
+There is no local JSON task queue, task-page fallback, local-file page, Node native host, or automatic `chrome-extension://` navigation.
 
 ## Install
 
-Install the CLI:
+Install the CLI and agent skill:
 
 ```bash
 npm install -g tokenless
-```
-
-Install the Tokenless skill so agents can call it:
-
-```bash
 npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless
 ```
 
-Install the Tokenless browser extension from the Chrome Web Store, an unpacked build, or a zip package.
-
-Then connect the extension to your machine:
+Install the Tokenless extension from the Chrome Web Store, an unpacked build, or a zip package. Then perform the one-time machine setup:
 
 ```bash
-tokenless install --extension-id <chrome-extension-id>
-tokenless doctor --extension-id <chrome-extension-id>
+tokenless install
+tokenless doctor --json
 ```
 
-Choose the web providers you want Tokenless to try first:
+The published extension id is bundled. For an unpacked development build, override it once:
 
 ```bash
-tokenless config --preferred-providers claude,chatgpt,gemini --browser brave
+tokenless install --extension-id "<chrome-extension-id>" --json
 ```
 
-This writes `~/.tokenless/config.json`. `tokenless run` and `tokenless snapshot-dom` use `--browser` first, then this configured browser, then the platform default. Supported browser ids are `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, and `brave`.
+The universal `tokenless` package contains JavaScript only. npm selects an exact-version, OS/CPU-specific optional dependency containing `tokenless-daemon` and `tokenless-native-host`; `install` copies those local binaries into `~/.tokenless/bin`, installs one exact native-host allowed origin, binds only the selected Chromium browser by default, and ensures the daemon is ready. There is no runtime executable download, install script, or Cargo requirement for end users.
+
+Configure routing and the browser explicitly when desired:
+
+```bash
+tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json
+```
+
+Without a configured browser, setup deterministically detects Chrome, Brave, Edge, Arc, then Chromium. Tokenless never sends provider URLs to the arbitrary system default browser. An explicit multi-browser native-host install is available through `tokenless install --browsers chrome,brave`, but a single browser avoids competing extension profiles claiming the same queue.
 
 ## Run A Request
 
@@ -83,23 +60,56 @@ tokenless run \
   --project-root /path/to/project \
   --prompt-file /tmp/request.md \
   --context-file /tmp/shareable-context.md \
-  --extension-id <chrome-extension-id>
+  --json
 ```
 
-Tokenless returns the provider's visible answer to the local agent.
+Normal runs do not require an extension id. The returned `taskId` is derived from the project/chat names unless `--task-id` is supplied. Reuse it on later turns. Tokenless validates every explicit or remembered target as an HTTPS URL belonging to the selected provider before opening it.
 
-If you pass the same project and chat names again, Tokenless can return to the same web conversation instead of starting over.
+`--no-open` is strict: it succeeds only when a fresh, live extension bridge marker already exists. Otherwise Tokenless fails before it queues a job, avoiding a request that waits forever.
 
-## What Is Included
+## Query Daemon-Backed State
 
-- `tokenless`: the CLI that users install and agents call.
-- `Tokenless`: the browser extension that works with visible provider pages.
-- `tokenless-relay`: an optional relay package for hosted integrations.
-- `tokenless-client`: optional helper code for apps that use the relay.
+```bash
+tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
+```
 
-Publish now:
+`state` reads jobs and task metadata from the Rust daemon's SQLite store with exact provider/task filters. It does not inspect legacy local job JSON. Prompt bodies and claim capabilities are omitted; the authenticated CLI view preserves the daemon's full `error_json` so agents retain actionable failure detail. The extension Settings history is a separate bounded scalar-only view.
+
+Cancel a detached or externally tracked job explicitly:
+
+```bash
+tokenless cancel --job-id "<job-id>" --json
+```
+
+Success means the daemon confirmed `status: canceled`. SIGINT/SIGTERM and explicit cancellation exit nonzero with `job_cancel_failed` when cancellation cannot be confirmed; the message warns that the job may still be running or may already have completed.
+
+## Capture A Sanitized DOM Snapshot
+
+```bash
+tokenless snapshot-dom --provider chatgpt --json
+```
+
+Snapshots use the same daemon and provider-only wake path. Sanitized artifacts are written under `~/.tokenless/snapshots/<provider>/`; unsanitized snapshot payloads are rejected.
+
+## Safety Boundary
+
+Tokenless operates only after the user grants extension host permission and only through user-visible provider pages. It does not bypass login, CAPTCHA, provider permissions, rate limits, or visible confirmations. It does not read provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider backend APIs.
+
+Daemon URLs must be loopback HTTP URLs. Before every token-bearing request, the CLI sends a fresh 32-byte challenge to `/ready` and verifies its HMAC-SHA256 proof with the home-local `daemon.token`; the proof binds the challenge, both protocol versions, and canonical home. A listener that only guesses those public fields never receives the bearer token or job prompt. Every job endpoint then requires that bearer token. `/health` is diagnostic only. Native messages are size-checked below Chrome's limit before a job is queued.
+
+## Packages
+
+Release as one versioned set:
 
 - `tokenless`
+- `tokenless-native-darwin-arm64`
+- `tokenless-native-darwin-x64`
+- `tokenless-native-linux-arm64`
+- `tokenless-native-linux-x64`
+- `tokenless-native-win32-arm64`
+- `tokenless-native-win32-x64`
+
+Publish all six native packages before the same-version universal `tokenless` package. The universal package declares exact versions, never `workspace:*` ranges.
 
 Do not publish yet:
 
@@ -107,53 +117,32 @@ Do not publish yet:
 - `tokenless-client`
 - `tokenless-browser-session-bridge`
 
-## Safety Boundary
-
-Tokenless works only through the visible browser session after the user grants permission.
-
-It does not bypass login, CAPTCHA, rate limits, provider permissions, or user confirmations. It does not read provider cookies, browser storage tokens, hidden auth headers, or private provider backend APIs.
-
-If the provider page asks for something the user must handle, Tokenless reports that blocker instead of trying to bypass it.
-
 ## Development
+
+Building the repository requires Node.js 22+, npm, and Rust. The CLI build places the current tuple's release binaries in `packages/cli/npm/tokenless-native-<platform>-<arch>/bin`; `npm pack` of `tokenless` remains universal and binary-free. Before a native pack is created, its publisher-only verifier executes both binaries with a finite deadline and requires exact role, npm-aligned version, and normalized target tuple, rejecting swapped or stale artifacts. Release CI must build and pack the six supported tuples (`darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, `win32-x64`) on appropriate trusted builders before publishing the universal package. Normal runtime resolution uses only the locally installed optional package and never downloads an executable.
 
 ```bash
 npm run build
+npm run lint
 npm test
 npm run test:e2e
 ```
 
-`npm run build` writes an unpacked extension to `packages/extension/dist/extension`.
-
-Load it in Chrome, Brave, Edge, Chromium, or Arc:
-
-1. Open `chrome://extensions`.
-2. Enable developer mode.
-3. Choose **Load unpacked**.
-4. Select `packages/extension/dist/extension`.
-
-Then bind the real extension id:
+The extension build is written to `packages/extension/dist/extension`. Load it through `chrome://extensions`, enable developer mode, choose **Load unpacked**, and select that directory. Then bind its real development id:
 
 ```bash
 export TOKENLESS_EXTENSION_ID="<chrome-extension-id>"
-
 tokenless install --extension-id "$TOKENLESS_EXTENSION_ID" --json
-tokenless doctor --extension-id "$TOKENLESS_EXTENSION_ID" --json
+tokenless doctor --json
 ```
 
-Run the local smoke test against a logged-in ChatGPT browser profile:
+Run a visible-session smoke test:
 
 ```bash
-open "https://chatgpt.com"
-
 cat > /tmp/tokenless-request.md <<'EOF'
 Reply with exactly this text and nothing else:
 
 TOKENLESS_LOCAL_OK_48291
-EOF
-
-cat > /tmp/tokenless-context.md <<'EOF'
-This is a local Tokenless smoke test. No private secrets are included.
 EOF
 
 tokenless run \
@@ -162,8 +151,6 @@ tokenless run \
   --chat-name "Smoke test" \
   --project-root "$(pwd)" \
   --prompt-file /tmp/tokenless-request.md \
-  --context-file /tmp/tokenless-context.md \
-  --extension-id "$TOKENLESS_EXTENSION_ID" \
   --read-timeout-ms 180000 \
   --json
 ```

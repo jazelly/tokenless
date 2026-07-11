@@ -24,6 +24,7 @@
     "@playwright/test": "^1.53.0",
     "@types/chrome": "^0.2.2",
     "@types/node": "^26.1.1",
+    "selfsigned": "^5.5.0",
     "typescript": "^7.0.2"
   }
 }

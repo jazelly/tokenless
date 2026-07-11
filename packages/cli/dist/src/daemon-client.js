@@ -2,6 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { tokenlessHome } from './job-store.js';
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331';
+export const MAX_NATIVE_MESSAGE_BYTES = 900 * 1024;
+const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 5_000;
+const DEFAULT_CANCEL_REQUEST_TIMEOUT_MS = 3_000;
 export function daemonUrl(explicitUrl) {
     const value = explicitUrl || process.env.TOKENLESS_DAEMON_URL || DEFAULT_DAEMON_URL;
     const normalized = value.replace(/\/+$/, '');
@@ -9,9 +12,22 @@ export function daemonUrl(explicitUrl) {
     return normalized;
 }
 export async function readDaemonToken({ homeDir = tokenlessHome() } = {}) {
-    return (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim();
+    const tokenPath = path.join(homeDir, 'daemon.token');
+    let token;
+    try {
+        token = (await fs.readFile(tokenPath, 'utf8')).trim();
+    }
+    catch {
+        throw daemonClientError('daemon_token_unavailable', `Cannot read the Tokenless daemon control token at ${tokenPath}.`, true);
+    }
+    if (!token) {
+        throw daemonClientError('daemon_token_unavailable', `Tokenless daemon control token is empty at ${tokenPath}.`, true);
+    }
+    return token;
 }
-export async function createDaemonJob({ daemonUrl: explicitDaemonUrl, provider, action, requestJson = {}, jobId, claimToken, }) {
+export async function createDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, provider, action, requestJson = {}, jobId, claimToken, }) {
+    assertNativeMessageSize({ provider, action, request_json: requestJson });
+    const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs });
     return daemonRequest({
         daemonUrl: explicitDaemonUrl,
         path: '/jobs',
@@ -22,17 +38,43 @@ export async function createDaemonJob({ daemonUrl: explicitDaemonUrl, provider, 
             job_id: jobId,
             claim_token: claimToken,
         },
+        token,
+        timeoutMs: requestTimeoutMs,
+        signal,
     });
 }
-export async function getDaemonJob({ daemonUrl: explicitDaemonUrl, jobId, }) {
+export async function listDaemonJobs({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, status, provider, taskId, limit = 100, } = {}) {
+    const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs });
+    const query = new URLSearchParams();
+    if (status)
+        query.set('status', status);
+    if (provider)
+        query.set('provider', provider);
+    if (taskId)
+        query.set('task_id', taskId);
+    query.set('limit', String(Math.max(1, Math.min(1000, Number(limit) || 100))));
+    return daemonRequest({
+        daemonUrl: explicitDaemonUrl,
+        method: 'GET',
+        path: `/jobs?${query.toString()}`,
+        token,
+        timeoutMs: requestTimeoutMs,
+        signal,
+    });
+}
+export async function getDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, }) {
+    const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs });
     return daemonRequest({
         daemonUrl: explicitDaemonUrl,
         method: 'GET',
         path: `/jobs/${encodeURIComponent(jobId)}`,
+        token,
+        timeoutMs: requestTimeoutMs,
+        signal,
     });
 }
-export async function claimNextDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, provider, action, } = {}) {
-    const token = await readDaemonToken({ homeDir });
+export async function claimNextDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, provider, action, } = {}) {
+    const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs });
     const query = new URLSearchParams();
     if (provider)
         query.set('provider', provider);
@@ -43,14 +85,17 @@ export async function claimNextDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir
         daemonUrl: explicitDaemonUrl,
         path: `/control/jobs/claim-next${suffix}`,
         token,
+        timeoutMs: requestTimeoutMs,
+        signal,
     });
 }
-export async function completeDaemonJob({ daemonUrl: explicitDaemonUrl, jobId, claimToken, result, error, }) {
+export async function completeDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, claimToken, result, error, }) {
     const hasResult = result !== undefined;
     const hasError = error !== undefined;
     if (hasResult === hasError) {
         throw daemonClientError('invalid_daemon_completion', 'Pass exactly one of result or error when completing a daemon job.', false);
     }
+    const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs });
     return daemonRequest({
         daemonUrl: explicitDaemonUrl,
         path: `/jobs/${encodeURIComponent(jobId)}/complete`,
@@ -59,13 +104,27 @@ export async function completeDaemonJob({ daemonUrl: explicitDaemonUrl, jobId, c
             result_json: hasResult ? result : undefined,
             error_json: hasError ? error : undefined,
         },
+        token,
+        timeoutMs: requestTimeoutMs,
+        signal,
     });
 }
-export async function waitDaemonJobResult({ daemonUrl: explicitDaemonUrl, jobId, timeoutMs = 180000, pollMs = 250, onStatus, }) {
+export async function cancelDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs = DEFAULT_CANCEL_REQUEST_TIMEOUT_MS, signal, jobId, reason, }) {
+    const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs });
+    return daemonRequest({
+        daemonUrl: explicitDaemonUrl,
+        path: `/control/jobs/${encodeURIComponent(jobId)}/cancel`,
+        ...(reason === undefined ? {} : { body: { reason } }),
+        token,
+        timeoutMs: requestTimeoutMs,
+        signal,
+    });
+}
+export async function waitDaemonJobResult({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, timeoutMs = 180000, pollMs = 250, onStatus, }) {
     const startedAt = Date.now();
     let lastStatus;
     while (Date.now() - startedAt < timeoutMs) {
-        const job = await getDaemonJob({ daemonUrl: explicitDaemonUrl, jobId });
+        const job = await getDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, jobId, requestTimeoutMs, signal });
         if (job.status !== lastStatus) {
             lastStatus = job.status;
             await onStatus?.({
@@ -86,20 +145,39 @@ export async function waitDaemonJobResult({ daemonUrl: explicitDaemonUrl, jobId,
                 compactOutput: compactDaemonOutput(job.result_json),
             };
         }
-        if (job.status === 'failed') {
+        if (job.status === 'failed' || job.status === 'canceled' || job.status === 'timed_out') {
             return {
                 ok: false,
                 status: job.status,
                 job,
-                error: job.error_json,
+                error: job.error_json ?? {
+                    code: job.status === 'canceled' ? 'job_canceled' : 'daemon_job_timed_out',
+                    message: `Daemon job ended with status ${job.status}.`,
+                    retryable: job.status === 'timed_out',
+                },
             };
         }
-        await delay(pollMs);
+        await delay(pollMs, signal);
     }
-    const error = daemonClientError('daemon_job_timeout', 'Timed out waiting for daemon job result.', true);
-    throw error;
+    try {
+        const canceled = await cancelDaemonJob({
+            daemonUrl: explicitDaemonUrl,
+            homeDir,
+            jobId,
+            reason: { code: 'client_timeout' },
+            requestTimeoutMs,
+            signal,
+        });
+        if (canceled.status !== 'canceled') {
+            throw new Error(`daemon returned status ${canceled.status}`);
+        }
+    }
+    catch (cancelError) {
+        throw daemonClientError('daemon_job_timeout_cancel_failed', `Timed out waiting for daemon job ${jobId}, and cancellation was not confirmed; the job may still be running. ${errorText(cancelError)}`, true);
+    }
+    throw daemonClientError('daemon_job_timeout', `Timed out waiting for daemon job ${jobId}; cancellation was confirmed.`, true);
 }
-async function daemonRequest({ daemonUrl: explicitDaemonUrl, method = 'POST', path: requestPath, body, token, }) {
+async function daemonRequest({ daemonUrl: explicitDaemonUrl, method = 'POST', path: requestPath, body, token, timeoutMs = DEFAULT_DAEMON_REQUEST_TIMEOUT_MS, signal, }) {
     const headers = {
         accept: 'application/json',
     };
@@ -111,21 +189,32 @@ async function daemonRequest({ daemonUrl: explicitDaemonUrl, method = 'POST', pa
     if (token) {
         headers.authorization = `Bearer ${token}`;
     }
+    const requestSignal = combinedRequestSignal(timeoutMs, signal);
     const requestInit = {
         method,
         headers,
+        signal: requestSignal,
     };
     if (payload !== undefined) {
         requestInit.body = payload;
     }
     let response;
+    let responseBody;
     try {
         response = await fetch(`${daemonUrl(explicitDaemonUrl)}${requestPath}`, requestInit);
+        responseBody = await readJsonResponse(response);
     }
-    catch {
+    catch (error) {
+        if (error?.code === 'daemon_invalid_response')
+            throw error;
+        if (signal?.aborted) {
+            throw daemonClientError('daemon_request_aborted', 'Tokenless daemon request was aborted.', true);
+        }
+        if (requestSignal.aborted) {
+            throw daemonClientError('daemon_request_timeout', `Tokenless daemon did not respond within ${normalizedTimeoutMs(timeoutMs)} ms.`, true);
+        }
         throw daemonClientError('daemon_unavailable', 'Tokenless daemon is not reachable on the configured loopback URL.', true);
     }
-    const responseBody = await readJsonResponse(response);
     if (!response.ok) {
         const message = errorMessageFromBody(responseBody) || `Tokenless daemon request failed with HTTP ${response.status}.`;
         throw daemonClientError('daemon_request_failed', message, response.status >= 500, response.status);
@@ -182,13 +271,69 @@ function isLoopbackHostname(hostname) {
 function stripUndefined(value) {
     return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined));
 }
+function assertNativeMessageSize(value) {
+    let serialized;
+    try {
+        serialized = JSON.stringify(value);
+    }
+    catch {
+        throw daemonClientError('invalid_daemon_request', 'Tokenless request must be JSON serializable.', false);
+    }
+    const bytes = Buffer.byteLength(serialized, 'utf8');
+    if (bytes > MAX_NATIVE_MESSAGE_BYTES) {
+        throw daemonClientError('native_message_too_large', `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes so the Rust native host can deliver it to the extension. Attach fewer or smaller files.`, false);
+    }
+}
 function compactDaemonOutput(value) {
     if (!value || typeof value !== 'object')
         return undefined;
     const text = value.text;
     return typeof text === 'string' && text.trim() ? text : undefined;
 }
-function delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+function errorText(error) {
+    return error instanceof Error && error.message ? error.message : String(error);
+}
+async function authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir = tokenlessHome(), requestTimeoutMs, }) {
+    const token = await readDaemonToken({ homeDir });
+    const { probeDaemonReady } = await import('./runtime.js');
+    const ready = await probeDaemonReady({
+        daemonUrl: explicitDaemonUrl,
+        homeDir,
+        daemonToken: token,
+        timeoutMs: Math.min(normalizedTimeoutMs(requestTimeoutMs), 1_000),
+    });
+    if (!ready.ok) {
+        throw daemonClientError(ready.code ?? 'daemon_identity_unverified', ready.message ?? 'Tokenless daemon identity could not be verified; refusing to send its control token.', ready.code === 'daemon_unavailable');
+    }
+    return token;
+}
+function combinedRequestSignal(timeoutMs, signal) {
+    const timeoutSignal = AbortSignal.timeout(normalizedTimeoutMs(timeoutMs));
+    return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+function normalizedTimeoutMs(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0
+        ? Math.max(1, Math.floor(numeric))
+        : DEFAULT_DAEMON_REQUEST_TIMEOUT_MS;
+}
+function delay(ms, signal) {
+    if (!signal)
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve, reject) => {
+        if (signal.aborted) {
+            reject(daemonClientError('daemon_request_aborted', 'Tokenless daemon request was aborted.', true));
+            return;
+        }
+        const timeout = setTimeout(() => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        const onAbort = () => {
+            clearTimeout(timeout);
+            reject(daemonClientError('daemon_request_aborted', 'Tokenless daemon request was aborted.', true));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+    });
 }
 //# sourceMappingURL=daemon-client.js.map

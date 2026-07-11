@@ -1,74 +1,58 @@
 # Tokenless CLI
 
-Tokenless lets a local agent use the AI sessions already open in your browser. It sends a task to a visible ChatGPT, Gemini, or Claude tab, waits for the answer, and returns the visible response without exporting provider cookies, browser storage, or hidden API tokens.
+`tokenless` is the daemon-only, agent-facing entrypoint for using a visible ChatGPT, Claude, or Gemini session without exporting provider credentials or calling hidden provider APIs.
 
 ## Install
 
 ```bash
 npm install -g tokenless
+tokenless install
+tokenless doctor --json
 ```
 
-## Set Up The Browser Bridge
+The universal package contains JavaScript only and declares exact-version optional native packages for darwin/linux on arm64/x64 and win32 on arm64/x64. npm installs only the matching package, which contains `tokenless-daemon` and `tokenless-native-host`; publisher-side prepack verification requires each executable to report the exact role, package version, and normalized target tuple before packing. One-time `install` copies those local binaries into `~/.tokenless/bin`, binds the exact Tokenless extension origin to one selected Chromium browser, and starts the loopback daemon. No install hook or normal command downloads or verifies an executable, and users do not need Rust. The published extension id is bundled; pass `--extension-id <id>` only for an unpacked or alternate extension build.
 
-Install the Tokenless browser extension through Chrome Web Store, an unpacked build, or a zip package. Then bind that extension id to the local native host:
+Configure defaults:
 
 ```bash
-tokenless install --extension-id <chrome-extension-id>
-tokenless doctor --extension-id <chrome-extension-id>
+tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json
 ```
 
-The CLI resolves the extension id in this order: `--extension-id`, `TOKENLESS_EXTENSION_ID`, then the bundled fallback in `src/default-extension-id.js`. Update that tracked file when the distributed extension id changes.
-
-## Configure Defaults
+## Agent Workflow
 
 ```bash
-tokenless config --preferred-providers claude,chatgpt,gemini --browser brave
-```
-
-This writes `~/.tokenless/config.json`. When `tokenless run` has no explicit `--provider`, it uses the first configured provider before falling back to ChatGPT. Browser selection uses `--browser` first, then this configured browser, then the platform default. Supported browser ids are `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, and `brave`. The extension side panel displays this local configuration.
-
-## Run A Task
-
-```bash
-tokenless run \
-  --provider chatgpt \
+npx tokenless run \
   --project-name "Website redesign" \
   --chat-name "Navbar review" \
   --project-root /path/to/project \
   --prompt-file /tmp/request.md \
-  --context-file /tmp/shareable-context.md \
-  --extension-id <chrome-extension-id>
-```
-
-Tokenless opens a browser task page, routes the request through the extension, submits the prompt in the visible provider UI, waits for visible answer text, and returns that answer to the local agent.
-
-By default, `tokenless run` and `tokenless snapshot-dom` print compact `[tokenless]` status lines to stdout when the local job is created, opened, polled, and completed. The first `created` event includes a stable `taskId` derived from `--project-name` and `--chat-name`, or from explicit `--task-id`. Use `--json` when the caller needs a single parseable JSON payload; the same status summary is included as `status` and `statusLog`. Use `--quiet` to suppress status lines in non-JSON mode.
-
-## Query Task State
-
-Agents can query execution state later by passing the returned task id:
-
-```bash
-tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
-```
-
-Use `--task-id <id>` on later `tokenless run` calls to continue the same task/conversation mapping explicitly.
-
-## Capture A DOM Snapshot
-
-```bash
-tokenless snapshot-dom \
-  --provider chatgpt \
-  --extension-id <chrome-extension-id> \
   --json
 ```
 
-Tokenless asks the extension to capture a sanitized DOM snapshot from the visible provider page, then writes artifacts under `~/.tokenless/snapshots/<provider>/`. It does not read provider cookies, localStorage/sessionStorage, hidden auth headers, or private provider APIs. Use `--include-text` only when the visible page text is intentionally shareable.
+`run` requires no extension id after setup. It starts the Rust daemon when needed. If the extension bridge is live, the CLI does not pre-open a wake tab; otherwise it opens only the selected provider's validated HTTPS UI in the configured Chromium browser. The extension reuses an approved provider tab when possible or opens one provider tab when necessary. ChatGPT is the provider default. Tokenless never opens a task page, extension page, local file, runner, settings, or history page.
 
-## Conversation Mapping
+Use returned task ids to inspect daemon-backed state:
 
-Use stable `--project-name` and `--chat-name` values from the calling agent. Tokenless derives a conversation key from both names, or from either single name when only one is available, unless an explicit `--idempotency-key` is provided. If neither name nor explicit key is present, Tokenless starts from a new visible chat instead of reusing a mapped conversation. It stores the local provider-conversation mapping in `~/.tokenless/meta/conversations.json`. A new key opens the provider home URL, and once ChatGPT redirects to a conversation URL such as `https://chatgpt.com/c/...`, later runs with the same key return to that same conversation. The extension side panel shows local task history grouped by project and chat, including the mapped provider URL.
+```bash
+npx tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
+```
+
+Cancel a job only through daemon-confirmed cancellation:
+
+```bash
+npx tokenless cancel --job-id "<job-id>" --json
+```
+
+If explicit cancellation or SIGINT/SIGTERM cannot be confirmed before the bounded cancel-request deadline, the CLI exits nonzero with `job_cancel_failed` and warns that the job may continue. `--cancel-timeout-ms` can shorten that deadline for automation.
+
+Capture a sanitized visible-page DOM snapshot through the same path:
+
+```bash
+npx tokenless snapshot-dom --provider chatgpt --json
+```
+
+`--no-open` requires an already-live bridge and fails before queueing otherwise. `--no-daemon` and local task-page fallback do not exist.
 
 ## Boundary
 
-Tokenless does not bypass login, CAPTCHA, provider permissions, rate limits, or user-visible confirmations. It does not read provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider backend APIs.
+Tokenless uses only visible provider DOM after user-granted extension permission. It does not read provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private backend APIs. Daemon access is loopback-only. Before every bearer-authenticated job call, the CLI verifies a fresh challenge-bound `/ready` HMAC proof covering both protocols and canonical home; an unproved listener never receives the token. `doctor` refreshes installed binaries before reading config or running checks and exits nonzero when any reported check fails.
