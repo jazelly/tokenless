@@ -340,7 +340,12 @@
           const assistant = message('assistant', 'visible ChatGPT real-DOM fixture answer_streaming for: ' + prompt)
           conversation.append(assistant)
           setTimeout(() => {
-            assistant.querySelector('.markdown').textContent = 'visible ChatGPT real-DOM fixture answer for: ' + prompt
+            const content = assistant.querySelector('.markdown')
+            content.textContent = 'visible ChatGPT real-DOM fixture answer for: ' + prompt
+            const citation = document.createElement('a')
+            citation.href = 'https://example.com/tokenless-fixture-source?utm_source=chatgpt.com&keep=fixture#citation'
+            citation.textContent = 'Fixture citation'
+            content.append(' ', citation)
             stop.remove()
             history.replaceState(null, '', '/c/123e4567-e89b-12d3-a456-426614174006')
           }, 900)

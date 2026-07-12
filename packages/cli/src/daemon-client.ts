@@ -476,8 +476,45 @@ function assertNativeMessageSize(value: unknown) {
 
 function compactDaemonOutput(value: unknown) {
   if (!value || typeof value !== 'object') return undefined
-  const text = (value as { text?: unknown }).text
-  return typeof text === 'string' && text.trim() ? text : undefined
+  const result = value as { text?: unknown; read?: unknown; sources?: unknown }
+  const text = result.text
+  if (typeof text !== 'string' || !text.trim()) return undefined
+  const sources = compactSources(result.read) ?? compactSources(result)
+  if (sources.length === 0) return text
+  return `${text.trimEnd()}\n\nSources:\n${sources.map((source) => (
+    `- ${source.title ? `${source.title}: ` : ''}${source.url}`
+  )).join('\n')}`
+}
+
+function compactSources(value: unknown) {
+  if (!value || typeof value !== 'object') return []
+  const sources = (value as { sources?: unknown }).sources
+  if (!Array.isArray(sources)) return []
+  const seen = new Set<string>()
+  const compact: Array<{ url: string; title?: string }> = []
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue
+    const url = (source as { url?: unknown }).url
+    if (typeof url !== 'string' || !isPublicHttpsUrl(url) || seen.has(url)) continue
+    seen.add(url)
+    const candidateTitle = (source as { title?: unknown }).title
+    const title = typeof candidateTitle === 'string' ? terminalText(candidateTitle).slice(0, 240) : ''
+    compact.push({ url, ...(title ? { title } : {}) })
+  }
+  return compact
+}
+
+function isPublicHttpsUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.username === '' && url.password === '' && url.port === ''
+  } catch {
+    return false
+  }
+}
+
+function terminalText(value: string) {
+  return value.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 function errorText(error: unknown) {

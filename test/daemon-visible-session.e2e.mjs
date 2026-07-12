@@ -99,7 +99,7 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     })
     const pagesBeforeRun = new Set(context.pages())
 
-    const cliRun = spawnSync(process.execPath, [
+    const cliRun = await runProcess(process.execPath, [
       path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
       'run',
       '--prompt',
@@ -123,12 +123,8 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
       '--read-timeout-ms',
       '10000',
       '--no-open',
-      '--no-wait',
       '--json',
-    ], {
-      cwd: root,
-      encoding: 'utf8',
-    })
+    ], { cwd: root })
 
     assert.equal(cliRun.status, 0, cliRun.stderr || cliRun.stdout)
     const cliPayload = JSON.parse(cliRun.stdout)
@@ -136,6 +132,15 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     assert.equal(cliPayload.provider, 'chatgpt')
     assert.equal(cliPayload.taskUrl, undefined)
     assert.equal(cliPayload.runnerUrl, undefined)
+    assert.deepEqual(cliPayload.result?.result?.read?.sources, [{
+      url: 'https://example.com/tokenless-fixture-source?keep=fixture',
+      title: 'Fixture citation',
+      domain: 'example.com',
+    }])
+    assert.match(
+      cliPayload.compactOutput,
+      /Sources:\n- Fixture citation: https:\/\/example\.com\/tokenless-fixture-source\?keep=fixture/
+    )
     assert.doesNotMatch(cliRun.stdout, /taskUrl|task\/task\.html|runnerUrl|daemon\/runner\.html/)
 
     const created = await getDaemonJob({
@@ -202,6 +207,11 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     assert.match(completed.result_json.text, /Tokenless daemon E2E DOM prompt 93742/)
     assert.doesNotMatch(completed.result_json.text, /stale ChatGPT real-DOM fixture answer/)
     assert.doesNotMatch(completed.result_json.text, /_streaming/)
+    assert.deepEqual(completed.result_json.read.sources, [{
+      url: 'https://example.com/tokenless-fixture-source?keep=fixture',
+      title: 'Fixture citation',
+      domain: 'example.com',
+    }])
     assert.equal(completed.result_json.submit.configuration.surface.status, 'chat_selected')
     assert.equal(completed.result_json.submit.configuration.model.status, 'selected')
     assert.equal(completed.result_json.submit.configuration.model.applied, 'GPT-5.5')
@@ -502,6 +512,21 @@ async function createArtifactDir() {
   const artifactDir = path.join(testResultsRoot, `${stamp}-${process.pid}-daemon`)
   await fs.mkdir(artifactDir, { recursive: true })
   return artifactDir
+}
+
+async function runProcess(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      ...options,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8') })
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8') })
+    child.once('error', reject)
+    child.once('close', (status) => resolve({ status, stdout, stderr }))
+  })
 }
 
 async function launchTokenlessContext(chromium, userDataDir, tokenlessHome, daemonUrl, providerFixture) {

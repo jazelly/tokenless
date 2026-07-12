@@ -12,6 +12,11 @@ type ContentProvider = {
   busyTextLabels?: string[]
 }
 
+type AnswerEntry = {
+  element: HTMLElement
+  text: string
+}
+
 const globalState = globalThis as typeof globalThis & {
   __TOKENLESS_PROVIDER_CONTENT_LOADED__?: boolean
 }
@@ -94,6 +99,8 @@ const SAFE_INPUT_TYPES = new Set([
   'url',
 ])
 const SAFE_EMPTY_ATTRIBUTE_NAMES = new Set(['disabled', 'hidden', 'open'])
+const MAX_VISIBLE_SOURCES = 24
+const TRACKING_QUERY_PARAMETER = /^(?:utm_[a-z0-9_]+|fbclid|gclid|dclid|msclkid)$/i
 const SAFE_STATE_ATTRIBUTE_NAMES = new Set([
   'aria-busy',
   'aria-checked',
@@ -727,10 +734,10 @@ async function readLatestAnswer(provider: ContentProvider, request: ContentRecor
 
   const timeoutMs = Math.min(Number(request.readTimeoutMs ?? 60000), MAX_VISIBLE_RESPONSE_WAIT_MS)
   const baseline = request.answerBaseline ?? submissionBaselines.get(requestKey(request))
-  const text = await waitForStableAnswer(provider, timeoutMs, baseline)
+  const answer = await waitForStableAnswer(provider, timeoutMs, baseline)
   const contextBlocker = validateExecutionContext(provider, request, 'tokenless.bridge.read')
   if (contextBlocker) return contextBlocker
-  if (!text) {
+  if (!answer) {
     return {
       status: 'blocked',
       stopReason: 'response_unavailable',
@@ -742,8 +749,12 @@ async function readLatestAnswer(provider: ContentProvider, request: ContentRecor
   return {
     status: 'read',
     provider: provider.id,
-    text,
-    chars: text.length,
+    text: answer.text,
+    chars: answer.text.length,
+    // Sources are extracted only from visible links rendered inside the final
+    // assistant response. This keeps research results attributable without
+    // collecting browser history, provider storage, or hidden network data.
+    sources: visibleAnswerSources(provider, answer.element),
     url: publicPageUrl(location.href),
   }
 }
@@ -1010,18 +1021,19 @@ async function waitForStableAnswer(provider: ContentProvider, timeoutMs: number,
   let lastText = ''
   let stableSince = 0
   while (Date.now() < deadline) {
-    const text = latestAnswerText(provider, baseline)
+    const answer = latestAnswer(provider, baseline)
+    const text = answer?.text ?? ''
     const busy = isProviderBusy(provider)
     if (text && text === lastText) {
       if (stableSince === 0) stableSince = Date.now()
-      if (!busy && Date.now() - stableSince >= 600) return text
+      if (!busy && Date.now() - stableSince >= 600) return answer
     } else {
       lastText = text
       stableSince = text ? Date.now() : 0
     }
     await delay(150)
   }
-  return latestAnswerText(provider, baseline)
+  return latestAnswer(provider, baseline)
 }
 
 function isProviderBusy(provider: ContentProvider) {
@@ -1050,43 +1062,94 @@ function isProviderBusy(provider: ContentProvider) {
   })
 }
 
-function latestAnswerText(provider: ContentProvider, baseline: ContentRecord | undefined) {
-  const answers = answerTexts(provider)
+function latestAnswer(provider: ContentProvider, baseline: ContentRecord | undefined): AnswerEntry | null {
+  const answers = answerEntries(provider)
   if (baseline?.count !== undefined) {
     if (answers.length < baseline.count) {
-      return ''
+      return null
     }
     if (answers.length === baseline.count) {
-      const lastText = answers.at(-1) ?? ''
-      return lastText && lastText !== baseline.lastText ? lastText : ''
+      const lastAnswer = answers.at(-1) ?? null
+      return lastAnswer && lastAnswer.text !== baseline.lastText ? lastAnswer : null
     }
-    return answers.at(-1) ?? ''
+    return answers.at(-1) ?? null
   }
-  return answers.at(-1) ?? ''
+  return answers.at(-1) ?? null
 }
 
 function answerSnapshot(provider: ContentProvider) {
-  const texts = answerTexts(provider)
+  const answers = answerEntries(provider)
   return {
-    count: texts.length,
-    lastText: texts.at(-1) ?? '',
+    count: answers.length,
+    lastText: answers.at(-1)?.text ?? '',
   }
 }
 
-function answerTexts(provider: ContentProvider) {
+function answerEntries(provider: ContentProvider): AnswerEntry[] {
   for (const selector of provider.answerSelectors) {
-    const texts = [...document.querySelectorAll(selector)]
+    const answers = [...document.querySelectorAll(selector)]
       .filter((node) => isVisible(node))
       .map((node) => {
         const element = node as HTMLElement
-        return normalizeText(element.innerText || element.textContent || '')
+        return {
+          element,
+          text: normalizeText(element.innerText || element.textContent || ''),
+        }
       })
-      .filter(isLikelyAssistantAnswer)
-    if (texts.length > 0) {
-      return texts
+      .filter((answer) => isLikelyAssistantAnswer(answer.text))
+    if (answers.length > 0) {
+      return answers
     }
   }
   return []
+}
+
+function visibleAnswerSources(provider: ContentProvider, answer: HTMLElement) {
+  const seen = new Set<string>()
+  const sources: Array<{ url: string; title?: string; domain: string }> = []
+  for (const anchor of [...answer.querySelectorAll('a[href]')] as HTMLAnchorElement[]) {
+    const source = visiblePublicSource(provider, anchor)
+    if (!source || seen.has(source.url)) continue
+    seen.add(source.url)
+    sources.push(source)
+    if (sources.length >= MAX_VISIBLE_SOURCES) break
+  }
+  return sources
+}
+
+function visiblePublicSource(provider: ContentProvider, anchor: HTMLAnchorElement) {
+  if (!isVisible(anchor)) return null
+  let parsed: URL
+  try {
+    parsed = new URL(anchor.href)
+  } catch {
+    return null
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== '' ||
+    provider.hosts.includes(parsed.hostname.toLowerCase())
+  ) {
+    return null
+  }
+  parsed.hash = ''
+  for (const name of [...parsed.searchParams.keys()]) {
+    if (TRACKING_QUERY_PARAMETER.test(name)) parsed.searchParams.delete(name)
+  }
+  const title = normalizeText(
+    anchor.getAttribute('aria-label') ||
+    anchor.getAttribute('title') ||
+    anchor.innerText ||
+    anchor.textContent ||
+    ''
+  ).slice(0, 240)
+  return {
+    url: parsed.toString(),
+    ...(title ? { title } : {}),
+    domain: parsed.hostname.toLowerCase(),
+  }
 }
 
 function isLikelyAssistantAnswer(text: string) {

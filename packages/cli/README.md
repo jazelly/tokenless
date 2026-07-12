@@ -61,6 +61,10 @@ npx tokenless run \
 
 For a visible provider task expected to take longer than three minutes, add `--long-running`. It extends the visible-response wait to 35 minutes and the daemon job wait to 36 minutes. Progress heartbeats are written to stderr so `--json` keeps stdout machine-readable. Do not use `--no-wait` for this mode.
 
+## Research citations
+
+When a provider visibly renders citations in the final assistant response, `run --json` returns them at `result.read.sources`. Each source contains a direct external HTTPS URL, its visible title when available, and its domain. Normal `run` output prints the same sources after the answer. Tokenless deduplicates source URLs, removes common tracking parameters, and excludes provider-internal links. Citation collection is limited to visible response DOM; it does not inspect browser history, storage, or provider APIs.
+
 Use returned task ids to inspect daemon-backed state:
 
 ```bash

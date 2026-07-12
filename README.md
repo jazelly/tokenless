@@ -1,8 +1,8 @@
+[中文](README.zh-CN.md) ｜ [English](README.md)
+
 # Tokenless
 
 Tokenless is a standalone project that helps agents save tokens by routing suitable work through the visible web version of ChatGPT, Claude, or Gemini that the user is already signed into.
-
-Chinese version: [README.zh-CN.md](README.zh-CN.md)
 
 ## Core Value
 
@@ -69,6 +69,8 @@ Normal runs do not require an extension id. The returned `taskId` is derived fro
 
 For visible provider work expected to exceed three minutes, add `--long-running` to `run`. Tokenless then keeps the job attached for up to 36 minutes, permits up to 35 minutes for the visible answer, and emits progress heartbeats without polluting JSON stdout.
 
+For research answers, the JSON result includes `result.read.sources`: deduplicated direct HTTPS links visibly rendered inside the final assistant response, with their visible title and domain. Normal terminal output appends the same sources below the answer. Tokenless excludes provider-internal links and strips common tracking parameters; it never obtains citations from browser history, storage, or provider APIs.
+
 ## Query Daemon-Backed State
 
 ```bash
@@ -92,6 +94,19 @@ tokenless snapshot-dom --provider chatgpt --json
 ```
 
 Snapshots use the same daemon and provider-only wake path. Sanitized artifacts are written under `~/.tokenless/snapshots/<provider>/`; unsanitized snapshot payloads are rejected.
+
+## Save Tokens Without Exporting Your Session
+
+Tokenless is for work that would otherwise consume another paid model/API call: research, second opinions, drafting, review, explanation, and transformations. It reuses the provider session that the user has already opened in their own browser, so the agent can return the visible answer without receiving the user's provider credentials.
+
+Only the explicitly supplied prompt, shareable turn context, and intentionally selected project files are sent to the visible provider UI. Tokenless does **not** read, export, persist, or transmit:
+
+- provider cookies or browser passwords;
+- `localStorage` or `sessionStorage` tokens;
+- hidden authorization headers or private provider backend APIs;
+- browser history, unrelated tabs, or page data outside the approved provider tab.
+
+The extension works only after the user grants host permission, and it drives the same visible controls the user can see. Login, CAPTCHA, rate limits, permission prompts, and other provider confirmations remain under the user's control.
 
 ## Safety Boundary
 

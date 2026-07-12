@@ -301,8 +301,47 @@ function assertNativeMessageSize(value) {
 function compactDaemonOutput(value) {
     if (!value || typeof value !== 'object')
         return undefined;
-    const text = value.text;
-    return typeof text === 'string' && text.trim() ? text : undefined;
+    const result = value;
+    const text = result.text;
+    if (typeof text !== 'string' || !text.trim())
+        return undefined;
+    const sources = compactSources(result.read) ?? compactSources(result);
+    if (sources.length === 0)
+        return text;
+    return `${text.trimEnd()}\n\nSources:\n${sources.map((source) => (`- ${source.title ? `${source.title}: ` : ''}${source.url}`)).join('\n')}`;
+}
+function compactSources(value) {
+    if (!value || typeof value !== 'object')
+        return [];
+    const sources = value.sources;
+    if (!Array.isArray(sources))
+        return [];
+    const seen = new Set();
+    const compact = [];
+    for (const source of sources) {
+        if (!source || typeof source !== 'object')
+            continue;
+        const url = source.url;
+        if (typeof url !== 'string' || !isPublicHttpsUrl(url) || seen.has(url))
+            continue;
+        seen.add(url);
+        const candidateTitle = source.title;
+        const title = typeof candidateTitle === 'string' ? terminalText(candidateTitle).slice(0, 240) : '';
+        compact.push({ url, ...(title ? { title } : {}) });
+    }
+    return compact;
+}
+function isPublicHttpsUrl(value) {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && url.username === '' && url.password === '' && url.port === '';
+    }
+    catch {
+        return false;
+    }
+}
+function terminalText(value) {
+    return value.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function errorText(error) {
     return error instanceof Error && error.message ? error.message : String(error);

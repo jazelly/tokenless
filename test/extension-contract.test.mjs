@@ -1222,6 +1222,44 @@ test('provider content uses only visible controls and snapshots a fail-closed re
   }
 })
 
+test('provider reads return only visible external citations from the final assistant answer', { timeout: 30000 }, async () => {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch({ headless: true })
+  const chatgpt = await openProviderFixture(browser, 'https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174005', `
+    <!doctype html>
+    <html><body>
+      <div data-message-author-role="assistant">
+        Latest visible research answer.
+        <a href="https://www.reddit.com/r/OpenAI/comments/abc123/latest/?utm_source=chatgpt.com&keep=yes#citation">Reddit evidence</a>
+        <a href="https://www.reddit.com/r/OpenAI/comments/abc123/latest/?keep=yes">Duplicate source</a>
+        <a href="https://chatgpt.com/c/private-conversation">Internal provider link</a>
+        <a href="http://example.com/not-https">Insecure source</a>
+      </div>
+    </body></html>
+  `)
+  try {
+    const read = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.read',
+      request: {
+        provider: 'chatgpt',
+        requestId: 'visible-external-citations',
+        readTimeoutMs: 2000,
+      },
+    }))
+    assert.equal(read.status, 'read')
+    assert.equal(read.text, 'Latest visible research answer. Reddit evidence Duplicate source Internal provider link Insecure source')
+    assert.deepEqual(read.sources, [{
+      url: 'https://www.reddit.com/r/OpenAI/comments/abc123/latest/?keep=yes',
+      title: 'Reddit evidence',
+      domain: 'www.reddit.com',
+    }])
+    assert.deepEqual(chatgpt.pageErrors, [])
+  } finally {
+    await chatgpt.context.close()
+    await browser.close()
+  }
+})
+
 test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade without blocking submission', { timeout: 30000 }, async () => {
   const { chromium } = await import('playwright')
   const browser = await chromium.launch({ headless: true })
