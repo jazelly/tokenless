@@ -29,6 +29,7 @@ const configuration = document.querySelector<HTMLElement>('#configuration')
 const history = document.querySelector<HTMLElement>('#history')
 const refreshButton = document.querySelector<HTMLButtonElement>('#refresh')
 const pageStatus = document.querySelector<HTMLElement>('#page-status')
+const hero = document.querySelector<HTMLElement>('.hero')
 const viewButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-view]'))
 const viewPanels = Array.from(document.querySelectorAll<HTMLElement>('[data-view-panel]'))
 
@@ -48,10 +49,12 @@ refreshButton?.addEventListener('click', () => {
   void refreshHistory()
 })
 
+setActiveView('activity')
 void loadInitialSettings()
 
 function setActiveView(view: string | undefined) {
   if (view !== 'activity' && view !== 'settings') return
+  if (hero) hero.dataset.view = view
   viewButtons.forEach((button) => {
     const active = button.dataset.view === view
     button.classList.toggle('is-active', active)

@@ -69,6 +69,24 @@ Normal runs do not require an extension id. The returned `taskId` is derived fro
 
 For visible provider work expected to exceed three minutes, add `--long-running` to `run`. Tokenless then keeps the job attached for up to 36 minutes, permits up to 35 minutes for the visible answer, and emits progress heartbeats without polluting JSON stdout.
 
+## ChatGPT Model and Intelligence
+
+By default, Tokenless enters the visible **Chat** surface and preserves the model and Intelligence setting already selected by the user. Select Sol / Pro once in ChatGPT and later runs reuse that visible configuration. When a requested control is unavailable, Tokenless reports it as `preserved_current` rather than claiming that a different setting was selected, and still submits the prompt.
+
+Strict CLI control is an explicit advanced mode. It requires the separately installed **Tokenless Debugger Control** companion and a per-run extension id; the id is never stored in Tokenless settings:
+
+```bash
+tokenless run \
+  --provider chatgpt \
+  --debugger-control-extension-id "<debugger-control-extension-id>" \
+  --model "GPT-5.6 Sol" \
+  --effort pro \
+  --prompt "..." \
+  --json
+```
+
+The default extension never requests Chrome's `debugger` permission. The companion is a separate MV3 extension restricted to ChatGPT origins; it has no content script, Native Messaging bridge, Network/Storage/CDP read path, or cookie/storage access. Its only debugger commands are a press and release for an already visible, validated control in the approved ChatGPT tab, followed immediately by detach.
+
 For research answers, the JSON result includes `result.read.sources`: deduplicated direct HTTPS links visibly rendered inside the final assistant response, with their visible title and domain. Normal terminal output appends the same sources below the answer. Tokenless excludes provider-internal links and strips common tracking parameters; it never obtains citations from browser history, storage, or provider APIs.
 
 ## Query Daemon-Backed State
@@ -147,12 +165,14 @@ npm test
 npm run test:e2e
 ```
 
-The extension build is written to `packages/extension/dist/extension`. Load it through `chrome://extensions`, enable developer mode, choose **Load unpacked**, and select that directory. Then bind its real development id:
+The default extension build is written to `packages/extension/dist/extension`. Load it through `chrome://extensions`, enable developer mode, choose **Load unpacked**, and select that directory. Then bind its real development id:
 
 ```bash
 export TOKENLESS_EXTENSION_ID="<chrome-extension-id>"
 tokenless setup --extension-id "$TOKENLESS_EXTENSION_ID" --json
 ```
+
+The separately loadable advanced companion is written to `packages/extension/dist/debugger-control`. Load it only when you need strict CLI model / Intelligence selection, copy its extension id from `chrome://extensions`, and pass that id with `--debugger-control-extension-id` for the individual run.
 
 Run a visible-session smoke test:
 

@@ -38,6 +38,8 @@ const NATIVE_REQUEST_TIMEOUT_MS = 10000
 const PROVIDER_LANDING_TIMEOUT_MS = 8000
 const PROVIDER_LANDING_POLL_MS = 250
 const PROVIDER_CONTENT_READY_TYPE = 'tokenless.provider_content_ready'
+const TRUSTED_CLICK_REQUEST_TYPE = 'tokenless.bridge.trusted_click'
+const DEBUGGER_CONTROL_CLICK_TYPE = 'tokenless.debugger-control.trusted_click.v1'
 const POST_SUBMIT_TARGET_TRANSITION_FLAG = 'allowPostSubmitTargetTransition'
 const POST_SUBMIT_TARGET_TRANSITION_PROOF = 'postSubmitTargetTransitionProof'
 let daemonJobQueue: Promise<void> = Promise.resolve()
@@ -60,12 +62,19 @@ chrome.runtime.onStartup.addListener(() => {
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!isProviderContentReadyMessage(message)) return false
-  if (!getProviderForUrl(sender.tab?.url ?? '')) return false
+  if (isProviderContentReadyMessage(message)) {
+    if (!getProviderForUrl(sender.tab?.url ?? '')) return false
 
-  startDaemonBridge()
-  sendResponse({ ok: true })
-  return false
+    startDaemonBridge()
+    sendResponse({ ok: true })
+    return false
+  }
+  if (objectRecord(message).type !== TRUSTED_CLICK_REQUEST_TYPE) return false
+
+  forwardTrustedClickToCompanion(objectRecord(message).request, sender)
+    .then(sendResponse)
+    .catch(() => sendResponse({ ok: false, code: 'debugger_control_unavailable' }))
+  return true
 })
 
 startDaemonBridge()
@@ -228,6 +237,51 @@ function isProviderContentReadyMessage(message: unknown) {
   return objectRecord(message).type === PROVIDER_CONTENT_READY_TYPE
 }
 
+async function forwardTrustedClickToCompanion(request: unknown, sender: chrome.runtime.MessageSender) {
+  const payload = objectRecord(request)
+  const tab = sender.tab
+  const tabId = tab?.id
+  const tabUrl = tab?.url
+  const provider = getProviderForUrl(tabUrl ?? '')
+  const extensionId = typeof payload.debuggerControlExtensionId === 'string'
+    ? payload.debuggerControlExtensionId
+    : ''
+  if (
+    provider?.id !== 'chatgpt' ||
+    tabId === undefined ||
+    !/^[a-p]{32}$/.test(extensionId) ||
+    payload.provider !== 'chatgpt' ||
+    canonicalProviderUrl(String(payload.expectedUrl ?? '')) !== canonicalProviderUrl(tabUrl ?? '')
+  ) {
+    return { ok: false, code: 'debugger_control_context_mismatch' }
+  }
+  const x = boundedViewportCoordinate(payload.x, payload.viewportWidth)
+  const y = boundedViewportCoordinate(payload.y, payload.viewportHeight)
+  if (x === null || y === null) return { ok: false, code: 'debugger_control_invalid_coordinate' }
+  try {
+    const response = await chrome.runtime.sendMessage(extensionId, {
+      type: DEBUGGER_CONTROL_CLICK_TYPE,
+      tabId,
+      expectedUrl: canonicalProviderUrl(tabUrl ?? ''),
+      x,
+      y,
+    })
+    return response?.ok === true
+      ? { ok: true }
+      : { ok: false, code: typeof response?.code === 'string' ? response.code : 'debugger_control_unavailable' }
+  } catch {
+    return { ok: false, code: 'debugger_control_unavailable' }
+  }
+}
+
+function boundedViewportCoordinate(value: unknown, viewport: unknown) {
+  const coordinate = Number(value)
+  const extent = Number(viewport)
+  if (!Number.isFinite(coordinate) || !Number.isFinite(extent) || extent <= 0 || extent > 10000) return null
+  const rounded = Math.round(coordinate)
+  return rounded >= 0 && rounded < extent ? rounded : null
+}
+
 function handleDaemonBridgeMessage(port: chrome.runtime.Port, message: ExtensionRecord) {
   if (!isNativeMessage(message) || message.type !== NATIVE_MESSAGE_TYPES.DAEMON_JOB || !message.ok) return
   const job = objectRecord(message.result).job
@@ -351,6 +405,7 @@ function daemonJobToBridgeRequest(job: ExtensionRecord): BridgeRequest {
     model: requestJson.model,
     modelFallbacks: requestJson.modelFallbacks,
     effort: requestJson.effort,
+    debuggerControlExtensionId: requestJson.debuggerControlExtensionId,
     metadata: requestJson.metadata,
   })
 }

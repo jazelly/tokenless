@@ -55,9 +55,20 @@ p {
   padding-bottom: 16px;
 }
 
+.hero-leading {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
 .view-tabs {
   display: flex;
   gap: 4px;
+}
+
+.hero[data-view="settings"] #refresh {
+  visibility: hidden;
 }
 
 .view-tab {
@@ -396,6 +407,20 @@ select {
   color: #9d3d2c;
 }
 
+.safety-note {
+  background: #f7f3f1;
+  border: 1px solid #ddd9d0;
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 13px 14px;
+}
+
+.safety-note strong {
+  color: #474741;
+  font-size: 12px;
+}
+
 .history {
   padding: 8px;
 }
@@ -497,7 +522,6 @@ select {
     padding: 18px;
   }
 
-  .hero,
   .section-heading,
   .form-actions {
     align-items: flex-start;

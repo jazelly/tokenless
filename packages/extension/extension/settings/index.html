@@ -8,12 +8,15 @@
   </head>
   <body>
     <main>
-      <header class="hero">
-        <nav class="view-tabs" aria-label="Tokenless panel views">
-          <button type="button" class="view-tab" data-view="activity" aria-selected="true">Activity</button>
-          <button type="button" class="view-tab" data-view="settings" aria-selected="false">Settings</button>
-        </nav>
-        <span id="page-status" class="status" data-tone="loading" role="status">Connecting…</span>
+      <header class="hero" data-view="activity">
+        <div class="hero-leading">
+          <span id="page-status" class="status" data-tone="loading" role="status">Connecting…</span>
+          <nav class="view-tabs" aria-label="Tokenless panel views">
+            <button type="button" class="view-tab is-active" data-view="activity" aria-selected="true">Activity</button>
+            <button type="button" class="view-tab" data-view="settings" aria-selected="false">Settings</button>
+          </nav>
+        </div>
+        <button id="refresh" type="button" class="secondary-button">Refresh</button>
       </header>
 
       <section class="panel" data-view-panel="settings" aria-labelledby="configuration-heading" hidden>
@@ -26,6 +29,10 @@
         <div id="configuration" aria-live="polite">
           <div class="state-card" data-state="loading">Loading configuration…</div>
         </div>
+        <aside class="safety-note" aria-label="ChatGPT control mode">
+          <strong>ChatGPT controls</strong>
+          <span>Default runs keep the visible model and Intelligence setting you selected in ChatGPT. For strict CLI selection, install the separate Debugger Control companion and pass its extension ID explicitly for that run; the ID is never saved here.</span>
+        </aside>
       </section>
 
       <section class="panel" data-view-panel="activity" aria-labelledby="history-heading">
@@ -34,7 +41,6 @@
             <h2 id="history-heading">Recent activity</h2>
             <p>Newest local jobs first. Prompts and answers are never shown here.</p>
           </div>
-          <button id="refresh" type="button" class="secondary-button">Refresh</button>
         </div>
         <div id="history" class="history" aria-live="polite">
           <div class="state-card" data-state="loading">Loading daemon history…</div>

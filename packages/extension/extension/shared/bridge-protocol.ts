@@ -55,6 +55,7 @@ export function createBridgeRequest(input: Record<string, any> = {}): BridgeRequ
     model: input.model,
     modelFallbacks: input.modelFallbacks,
     effort: input.effort,
+    debuggerControlExtensionId: input.debuggerControlExtensionId,
     metadata: input.metadata,
   }
 }
@@ -180,6 +181,7 @@ function normalizeRequest(payload: Record<string, any>): BridgeRequest {
     model: payload.model,
     modelFallbacks: payload.modelFallbacks,
     effort: payload.effort,
+    debuggerControlExtensionId: payload.debuggerControlExtensionId,
     metadata: payload.metadata,
   }
 }
@@ -192,7 +194,8 @@ function validateChatGptControls(
     payload.chatSurface !== undefined ||
     payload.model !== undefined ||
     payload.modelFallbacks !== undefined ||
-    payload.effort !== undefined
+    payload.effort !== undefined ||
+    payload.debuggerControlExtensionId !== undefined
   )
   const requiresChatGpt = (
     payload.action === BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS ||
@@ -214,6 +217,15 @@ function validateChatGptControls(
   }
   if (payload.effort !== undefined && (!isControlLabel(payload.effort) || !CHATGPT_EFFORTS.has(payload.effort))) {
     return invalid('invalid_effort', 'ChatGPT effort must be one of: instant, medium, high, extra_high, pro.')
+  }
+  if (
+    payload.debuggerControlExtensionId !== undefined &&
+    (typeof payload.debuggerControlExtensionId !== 'string' || !/^[a-p]{32}$/.test(payload.debuggerControlExtensionId))
+  ) {
+    return invalid(
+      'invalid_debugger_control_extension_id',
+      'debuggerControlExtensionId must be the explicit 32-character id of the Tokenless Debugger Control companion.'
+    )
   }
   return null
 }

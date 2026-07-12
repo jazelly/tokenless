@@ -55,6 +55,11 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'iframe[src*="captcha"]',
       '[aria-label*="captcha" i]',
     ]),
+    busySelectors: Object.freeze([
+      'button[data-testid="stop-button"]',
+      'button[aria-label*="Stop generating" i]',
+    ]),
+    busyTextLabels: Object.freeze(['stop generating']),
   }),
   Object.freeze({
     id: PROVIDER_IDS.GEMINI,

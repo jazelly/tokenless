@@ -6,20 +6,32 @@ import { spawnSync } from 'node:child_process'
 
 const packageRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const extensionRoot = path.join(packageRoot, 'extension')
+const debuggerControlRoot = path.join(packageRoot, 'control-extension')
 const distRoot = path.join(packageRoot, 'dist')
 const distExtensionRoot = path.join(distRoot, 'extension')
+const distDebuggerControlRoot = path.join(distRoot, 'debugger-control')
 
 await fs.promises.mkdir(distExtensionRoot, { recursive: true })
+await fs.promises.mkdir(distDebuggerControlRoot, { recursive: true })
 await copyStaticExtensionFiles(extensionRoot, distExtensionRoot)
+await copyStaticExtensionFiles(debuggerControlRoot, distDebuggerControlRoot)
+await copyCompiledDebuggerControlWorker()
 await prepareContentScripts(distExtensionRoot)
 await removeDevelopmentArtifacts(distExtensionRoot)
+await removeDevelopmentArtifacts(distDebuggerControlRoot)
 
 const manifestPath = path.join(distExtensionRoot, 'manifest.json')
 const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8')) as Record<string, any>
 verifyManifest(manifest)
+const debuggerControlManifest = JSON.parse(await fs.promises.readFile(
+  path.join(distDebuggerControlRoot, 'manifest.json'), 'utf8'
+)) as Record<string, any>
+verifyDebuggerControlManifest(debuggerControlManifest)
 
 const files = await listFiles(distExtensionRoot)
 verifyExtensionArtifacts(files)
+const debuggerControlFiles = await listFiles(distDebuggerControlRoot)
+verifyDebuggerControlArtifacts(debuggerControlFiles)
 const manifestRecord = {
   package: 'tokenless-browser-session-bridge',
   builtAt: new Date().toISOString(),
@@ -29,6 +41,13 @@ const manifestRecord = {
     path: path.relative(distExtensionRoot, file),
     sha256: hashFile(file),
   })),
+  debuggerControl: {
+    version: debuggerControlManifest.version,
+    files: debuggerControlFiles.map((file) => ({
+      path: path.relative(distDebuggerControlRoot, file),
+      sha256: hashFile(file),
+    })),
+  },
 }
 
 await fs.promises.writeFile(
@@ -46,12 +65,22 @@ if (process.argv.includes('--zip')) {
   if (result.status !== 0) {
     throw new Error(result.stderr || 'zip command failed')
   }
+  const debuggerZipPath = path.join(distRoot, 'tokenless-debugger-control.zip')
+  await fs.promises.rm(debuggerZipPath, { force: true })
+  const debuggerResult = spawnSync('zip', ['-qr', debuggerZipPath, '.'], {
+    cwd: distDebuggerControlRoot,
+    encoding: 'utf8',
+  })
+  if (debuggerResult.status !== 0) {
+    throw new Error(debuggerResult.stderr || 'debugger control zip command failed')
+  }
 }
 
 console.log(JSON.stringify({
   status: 'built',
   extension: distExtensionRoot,
   files: files.length,
+  debuggerControlFiles: debuggerControlFiles.length,
 }, null, 2))
 
 function verifyManifest(manifest: Record<string, any>) {
@@ -72,7 +101,7 @@ function verifyManifest(manifest: Record<string, any>) {
   if (!Array.isArray(manifest.content_scripts) || manifest.content_scripts.length === 0) {
     throw new Error('extension manifest must declare provider content scripts')
   }
-  const forbiddenPermissions = new Set(['cookies', 'webRequest', 'webRequestBlocking'])
+  const forbiddenPermissions = new Set(['cookies', 'webRequest', 'webRequestBlocking', 'debugger'])
   const permissions = new Set(manifest.permissions || [])
   for (const permission of forbiddenPermissions) {
     if (permissions.has(permission)) {
@@ -87,6 +116,28 @@ function verifyManifest(manifest: Record<string, any>) {
   }
   if (manifest.options_ui?.page !== 'settings/index.html' || manifest.options_ui?.open_in_tab !== false) {
     throw new Error('extension manifest must declare the embedded Tokenless Settings page')
+  }
+}
+
+function verifyDebuggerControlManifest(manifest: Record<string, any>) {
+  if (manifest.manifest_version !== 3 || !manifest.background?.service_worker) {
+    throw new Error('debugger control extension must use Manifest V3 with a service worker')
+  }
+  const permissions = new Set(manifest.permissions || [])
+  if (permissions.size !== 2 || !permissions.has('debugger') || !permissions.has('tabs')) {
+    throw new Error('debugger control extension must request only debugger and tabs permissions')
+  }
+  const hostPermissions = new Set(manifest.host_permissions || [])
+  if (
+    hostPermissions.size !== 2 ||
+    !hostPermissions.has('https://chatgpt.com/*') ||
+    !hostPermissions.has('https://chat.openai.com/*')
+  ) {
+    throw new Error('debugger control extension must be restricted to ChatGPT origins')
+  }
+  const allowedIds = manifest.externally_connectable?.ids
+  if (!Array.isArray(allowedIds) || allowedIds.length !== 1 || !/^[a-p]{32}$/.test(allowedIds[0])) {
+    throw new Error('debugger control extension must allow exactly the Tokenless extension id')
   }
 }
 
@@ -108,6 +159,16 @@ function verifyExtensionArtifacts(files: string[]) {
   }
   for (const icon of ['icons/tokenless-16.png', 'icons/tokenless-32.png', 'icons/tokenless-48.png', 'icons/tokenless-128.png']) {
     if (!relativeFiles.includes(icon)) throw new Error(`extension build must contain ${icon}`)
+  }
+}
+
+function verifyDebuggerControlArtifacts(files: string[]) {
+  const relativeFiles = files.map((file) => path.relative(distDebuggerControlRoot, file))
+  if (!relativeFiles.includes('background/service-worker.js')) {
+    throw new Error('debugger control extension must contain its service worker')
+  }
+  if (relativeFiles.some((file) => file.endsWith('.map') || file.endsWith('.d.ts'))) {
+    throw new Error('debugger control extension must not contain development artifacts')
   }
 }
 
@@ -140,6 +201,20 @@ async function copyStaticExtensionFiles(sourceRoot: string, targetRoot: string) 
     } else if (entry.isFile() && !entry.name.endsWith('.ts')) {
       await fs.promises.copyFile(sourcePath, targetPath)
     }
+  }
+}
+
+async function copyCompiledDebuggerControlWorker() {
+  const compiledWorker = path.join(distRoot, 'control-extension', 'background', 'service-worker.js')
+  const targetWorker = path.join(distDebuggerControlRoot, 'background', 'service-worker.js')
+  try {
+    await fs.promises.mkdir(path.dirname(targetWorker), { recursive: true })
+    await fs.promises.copyFile(compiledWorker, targetWorker)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('debugger control extension must contain its compiled service worker')
+    }
+    throw error
   }
 }
 
