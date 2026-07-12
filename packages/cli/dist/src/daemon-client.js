@@ -120,20 +120,34 @@ export async function cancelDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, r
         signal,
     });
 }
-export async function waitDaemonJobResult({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, timeoutMs = 180000, pollMs = 250, onStatus, }) {
+export async function waitDaemonJobResult({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, timeoutMs = 180000, pollMs = 250, heartbeatMs = 30000, onStatus, }) {
     const startedAt = Date.now();
     let lastStatus;
+    let lastHeartbeatAt = startedAt;
     while (Date.now() - startedAt < timeoutMs) {
         const job = await getDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, jobId, requestTimeoutMs, signal });
+        const elapsedMs = Date.now() - startedAt;
         if (job.status !== lastStatus) {
             lastStatus = job.status;
+            lastHeartbeatAt = Date.now();
             await onStatus?.({
                 event: 'daemon_status',
                 status: job.status,
                 jobId,
                 provider: job.provider,
                 action: job.action,
-                elapsedMs: Date.now() - startedAt,
+                elapsedMs,
+            });
+        }
+        else if (heartbeatMs > 0 && Date.now() - lastHeartbeatAt >= heartbeatMs) {
+            lastHeartbeatAt = Date.now();
+            await onStatus?.({
+                event: 'daemon_waiting',
+                status: job.status,
+                jobId,
+                provider: job.provider,
+                action: job.action,
+                elapsedMs,
             });
         }
         if (job.status === 'succeeded') {

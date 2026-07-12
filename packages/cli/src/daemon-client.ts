@@ -69,6 +69,7 @@ export type CompleteDaemonJobOptions = DaemonClientOptions & {
 export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
   timeoutMs?: number | undefined
   pollMs?: number | undefined
+  heartbeatMs?: number | undefined
   onStatus?: ((event: Record<string, unknown>) => unknown) | undefined
 }
 
@@ -261,21 +262,35 @@ export async function waitDaemonJobResult({
   jobId,
   timeoutMs = 180000,
   pollMs = 250,
+  heartbeatMs = 30000,
   onStatus,
 }: WaitDaemonJobResultOptions) {
   const startedAt = Date.now()
   let lastStatus: string | undefined
+  let lastHeartbeatAt = startedAt
   while (Date.now() - startedAt < timeoutMs) {
     const job = await getDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, jobId, requestTimeoutMs, signal })
+    const elapsedMs = Date.now() - startedAt
     if (job.status !== lastStatus) {
       lastStatus = job.status
+      lastHeartbeatAt = Date.now()
       await onStatus?.({
         event: 'daemon_status',
         status: job.status,
         jobId,
         provider: job.provider,
         action: job.action,
-        elapsedMs: Date.now() - startedAt,
+        elapsedMs,
+      })
+    } else if (heartbeatMs > 0 && Date.now() - lastHeartbeatAt >= heartbeatMs) {
+      lastHeartbeatAt = Date.now()
+      await onStatus?.({
+        event: 'daemon_waiting',
+        status: job.status,
+        jobId,
+        provider: job.provider,
+        action: job.action,
+        elapsedMs,
       })
     }
     if (job.status === 'succeeded') {

@@ -52,6 +52,7 @@ export type CompleteDaemonJobOptions = DaemonClientOptions & {
 export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
     timeoutMs?: number | undefined;
     pollMs?: number | undefined;
+    heartbeatMs?: number | undefined;
     onStatus?: ((event: Record<string, unknown>) => unknown) | undefined;
 };
 export declare function daemonUrl(explicitUrl?: string): string;
@@ -64,7 +65,7 @@ export declare function claimNextDaemonJob({ daemonUrl: explicitDaemonUrl, homeD
 }>;
 export declare function completeDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, claimToken, result, error, }: CompleteDaemonJobOptions): Promise<DaemonJob>;
 export declare function cancelDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, reason, }: CancelDaemonJobOptions): Promise<DaemonJob>;
-export declare function waitDaemonJobResult({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, timeoutMs, pollMs, onStatus, }: WaitDaemonJobResultOptions): Promise<{
+export declare function waitDaemonJobResult({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs, signal, jobId, timeoutMs, pollMs, heartbeatMs, onStatus, }: WaitDaemonJobResultOptions): Promise<{
     ok: boolean;
     status: string;
     job: DaemonJob;

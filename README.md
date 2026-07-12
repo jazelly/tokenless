@@ -20,27 +20,27 @@ There is no local JSON task queue, task-page fallback, local-file page, Node nat
 
 ## Install
 
-Install the CLI and agent skill:
+First install and enable the Tokenless extension in Chrome. Then run the one-time local setup:
 
 ```bash
-npm install -g tokenless
+npx tokenless setup
+```
+
+`npx` downloads the CLI when needed; install globally with `npm install -g tokenless` only if you prefer the shorter command. Agents that support skills can optionally install the Tokenless skill:
+
+```bash
 npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless
 ```
 
-Install the Tokenless extension from the Chrome Web Store, an unpacked build, or a zip package. Then perform the one-time machine setup:
-
-```bash
-tokenless install
-tokenless doctor --json
-```
+`setup` installs the local Rust runtime, binds the extension to one Chromium browser, opens ChatGPT when needed, and confirms that the browser bridge is actually connected. If ChatGPT asks you to sign in, complete that login in the visible tab. A setup that cannot see the bridge fails with a direct instruction to install or enable the extension; it never reports a false success merely because local files were written.
 
 The published extension id is bundled. For an unpacked development build, override it once:
 
 ```bash
-tokenless install --extension-id "<chrome-extension-id>" --json
+npx tokenless setup --extension-id "<chrome-extension-id>" --json
 ```
 
-The universal `tokenless` package contains JavaScript only. npm selects an exact-version, OS/CPU-specific optional dependency containing `tokenless-daemon` and `tokenless-native-host`; `install` copies those local binaries into `~/.tokenless/bin`, installs one exact native-host allowed origin, binds only the selected Chromium browser by default, and ensures the daemon is ready. There is no runtime executable download, install script, or Cargo requirement for end users.
+The universal `tokenless` package contains JavaScript only. npm selects an exact-version, OS/CPU-specific optional dependency containing `tokenless-daemon` and `tokenless-native-host`; setup copies those local binaries into `~/.tokenless/bin`, installs one exact native-host allowed origin, binds only the selected Chromium browser by default, and ensures the daemon and extension bridge are ready. There is no runtime executable download, install script, or Cargo requirement for end users.
 
 Configure routing and the browser explicitly when desired:
 
@@ -66,6 +66,8 @@ tokenless run \
 Normal runs do not require an extension id. The returned `taskId` is derived from the project/chat names unless `--task-id` is supplied. Reuse it on later turns. Tokenless validates every explicit or remembered target as an HTTPS URL belonging to the selected provider before opening it.
 
 `--no-open` is strict: it succeeds only when a fresh, live extension bridge marker already exists. Otherwise Tokenless fails before it queues a job, avoiding a request that waits forever.
+
+For visible provider work expected to exceed three minutes, add `--long-running` to `run`. Tokenless then keeps the job attached for up to 36 minutes, permits up to 35 minutes for the visible answer, and emits progress heartbeats without polluting JSON stdout.
 
 ## Query Daemon-Backed State
 
@@ -94,6 +96,8 @@ Snapshots use the same daemon and provider-only wake path. Sanitized artifacts a
 ## Safety Boundary
 
 Tokenless operates only after the user grants extension host permission and only through user-visible provider pages. It does not bypass login, CAPTCHA, provider permissions, rate limits, or visible confirmations. It does not read provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider backend APIs.
+
+See [the privacy policy](PRIVACY.md) for local data-handling details.
 
 Daemon URLs must be loopback HTTP URLs. Before every token-bearing request, the CLI sends a fresh 32-byte challenge to `/ready` and verifies its HMAC-SHA256 proof with the home-local `daemon.token`; the proof binds the challenge, both protocol versions, and canonical home. A listener that only guesses those public fields never receives the bearer token or job prompt. Every job endpoint then requires that bearer token. `/health` is diagnostic only. Native messages are size-checked below Chrome's limit before a job is queued.
 
@@ -132,8 +136,7 @@ The extension build is written to `packages/extension/dist/extension`. Load it t
 
 ```bash
 export TOKENLESS_EXTENSION_ID="<chrome-extension-id>"
-tokenless install --extension-id "$TOKENLESS_EXTENSION_ID" --json
-tokenless doctor --json
+tokenless setup --extension-id "$TOKENLESS_EXTENSION_ID" --json
 ```
 
 Run a visible-session smoke test:

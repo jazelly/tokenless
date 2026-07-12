@@ -392,6 +392,75 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
   }
 })
 
+test('an already-open browser extension reconnects after setup installs its native host', {
+  skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run fixture browser E2E' : false,
+  timeout: 90000,
+}, async () => {
+  const { chromium } = await import('playwright')
+  const {
+    installNativeHost,
+    nativeMessagingHostDirs,
+    NATIVE_HOST_NAME,
+    readLiveBridgeMarker,
+  } = await import('../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-setup-reconnect-e2e-'))
+  const userDataDir = path.join(tempRoot, 'profile')
+  const tokenlessHome = path.join(tempRoot, 'tokenless-home')
+  const events = []
+  let context
+  let providerFixture
+  let manifestBackup = []
+
+  try {
+    const chatGptFixture = await fs.readFile(chatGptRealDomFixturePath, 'utf8')
+    providerFixture = await startHttpsFixtureServer({ body: chatGptFixture, events })
+    context = await launchTokenlessContext(
+      chromium,
+      userDataDir,
+      tokenlessHome,
+      'http://127.0.0.1:7331',
+      providerFixture
+    )
+    const extensionId = await discoverExtensionId(context)
+    assert.equal(extensionId, DEFAULT_EXTENSION_ID)
+
+    await ensureDaemonBridgeStarted(context)
+    await delay(500)
+    assert.equal(await readLiveBridgeMarker({ homeDir: tokenlessHome }), null)
+
+    const browsers = ['profile']
+    manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
+      nativeMessagingHostDirs(browser, userDataDir).map((dir) => path.join(dir, `${NATIVE_HOST_NAME}.json`))
+    )))
+    await installNativeHost({
+      homeDir: tokenlessHome,
+      manifestHome: userDataDir,
+      extensionId,
+      browsers,
+    })
+
+    const providerPage = await context.newPage()
+    await providerPage.goto('https://chatgpt.com/')
+    await ensureDaemonBridgeStarted(context)
+    const marker = await waitForBridgeMarker({ tokenlessHome, readLiveBridgeMarker, context })
+    assert.equal(marker.protocol, 'tokenless.extension-bridge-state.v1')
+    assert.ok(marker.pid > 0)
+  } finally {
+    const cleanupErrors = []
+    await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
+    await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
+    await attemptCleanup(cleanupErrors, 'restore native host manifests', async () => restoreFiles(manifestBackup))
+    await attemptCleanup(cleanupErrors, 'remove temporary setup reconnect state', async () => {
+      await fs.rm(tempRoot, { recursive: true, force: true })
+    })
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Tokenless setup reconnect E2E cleanup failed')
+    }
+  }
+})
+
 function observeContextUrls(context, observedUrls) {
   const record = (event, url) => {
     observedUrls.push({ at: new Date().toISOString(), event, url })

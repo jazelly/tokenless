@@ -413,6 +413,7 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
 }
 
 const CHATGPT_EFFORT_ORDER = ['instant', 'medium', 'high', 'extra_high', 'pro'] as const
+const MAX_VISIBLE_RESPONSE_WAIT_MS = 2 * 60 * 60 * 1000
 
 type ChatGptEffort = typeof CHATGPT_EFFORT_ORDER[number]
 
@@ -711,7 +712,7 @@ async function readLatestAnswer(provider: ContentProvider, request: ContentRecor
     }
   }
 
-  const timeoutMs = Math.min(Number(request.readTimeoutMs ?? 60000), 300000)
+  const timeoutMs = Math.min(Number(request.readTimeoutMs ?? 60000), MAX_VISIBLE_RESPONSE_WAIT_MS)
   const baseline = request.answerBaseline ?? submissionBaselines.get(requestKey(request))
   const text = await waitForStableAnswer(provider, timeoutMs, baseline)
   const contextBlocker = validateExecutionContext(provider, request, 'tokenless.bridge.read')

@@ -1,8 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Tokenless",
+  "short_name": "Tokenless",
   "version": "0.1.0",
   "description": "Visible bridge for user-authorized ChatGPT, Gemini, and Claude web sessions.",
+  "homepage_url": "https://github.com/jazelly/tokenless",
+  "icons": {
+    "16": "icons/tokenless-16.png",
+    "32": "icons/tokenless-32.png",
+    "48": "icons/tokenless-48.png",
+    "128": "icons/tokenless-128.png"
+  },
   "permissions": [
     "nativeMessaging",
     "scripting",
@@ -37,6 +45,12 @@
     "open_in_tab": false
   },
   "action": {
-    "default_title": "Open Tokenless settings"
+    "default_title": "Open Tokenless settings",
+    "default_icon": {
+      "16": "icons/tokenless-16.png",
+      "32": "icons/tokenless-32.png",
+      "48": "icons/tokenless-48.png",
+      "128": "icons/tokenless-128.png"
+    }
   }
 }

@@ -12,6 +12,7 @@ const distExtensionRoot = path.join(distRoot, 'extension')
 await fs.promises.mkdir(distExtensionRoot, { recursive: true })
 await copyStaticExtensionFiles(extensionRoot, distExtensionRoot)
 await prepareContentScripts(distExtensionRoot)
+await removeDevelopmentArtifacts(distExtensionRoot)
 
 const manifestPath = path.join(distExtensionRoot, 'manifest.json')
 const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8')) as Record<string, any>
@@ -60,6 +61,14 @@ function verifyManifest(manifest: Record<string, any>) {
   if (!manifest.background?.service_worker) {
     throw new Error('extension manifest must declare a background service worker')
   }
+  const expectedIcons = ['icons/tokenless-16.png', 'icons/tokenless-32.png', 'icons/tokenless-48.png', 'icons/tokenless-128.png']
+  const iconPaths = Object.values(manifest.icons ?? {})
+  if (iconPaths.length !== expectedIcons.length || expectedIcons.some((icon) => !iconPaths.includes(icon))) {
+    throw new Error('extension manifest must declare the Tokenless production icon set')
+  }
+  if (manifest.homepage_url !== 'https://github.com/jazelly/tokenless') {
+    throw new Error('extension manifest must declare the public Tokenless homepage')
+  }
   if (!Array.isArray(manifest.content_scripts) || manifest.content_scripts.length === 0) {
     throw new Error('extension manifest must declare provider content scripts')
   }
@@ -87,13 +96,18 @@ function verifyExtensionArtifacts(files: string[]) {
     file.startsWith('task/') ||
     file.startsWith('sidepanel/') ||
     file.startsWith('daemon/') ||
-    file.includes('runner')
+    file.includes('runner') ||
+    file.endsWith('.map') ||
+    file.endsWith('.d.ts')
   ))
   if (forbidden) {
     throw new Error(`extension build must not contain obsolete execution surface: ${forbidden}`)
   }
   if (!relativeFiles.includes('settings/index.html') || !relativeFiles.includes('settings/index.js')) {
     throw new Error('extension build must contain the Settings page')
+  }
+  for (const icon of ['icons/tokenless-16.png', 'icons/tokenless-32.png', 'icons/tokenless-48.png', 'icons/tokenless-128.png']) {
+    if (!relativeFiles.includes(icon)) throw new Error(`extension build must contain ${icon}`)
   }
 }
 
@@ -136,4 +150,11 @@ async function prepareContentScripts(distExtensionRoot: string) {
     contentScriptPath,
     source.replace(/\nexport \{\};(?=\n\/\/# sourceMappingURL=)/, '')
   )
+}
+
+async function removeDevelopmentArtifacts(distExtensionRoot: string) {
+  const files = await listFiles(distExtensionRoot)
+  await Promise.all(files
+    .filter((file) => file.endsWith('.map') || file.endsWith('.d.ts'))
+    .map((file) => fs.promises.rm(file)))
 }

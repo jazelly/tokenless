@@ -5,12 +5,12 @@
 ## Install
 
 ```bash
-npm install -g tokenless
-tokenless install
-tokenless doctor --json
+npx tokenless setup
 ```
 
-The universal package contains JavaScript only and declares exact-version optional native packages for darwin/linux on arm64/x64 and win32 on arm64/x64. npm installs only the matching package, which contains `tokenless-daemon` and `tokenless-native-host`; publisher-side prepack verification requires each executable to report the exact role, package version, and normalized target tuple before packing. One-time `install` copies those local binaries into `~/.tokenless/bin`, binds the exact Tokenless extension origin to one selected Chromium browser, and starts the loopback daemon. No install hook or normal command downloads or verifies an executable, and users do not need Rust. The published extension id is bundled; pass `--extension-id <id>` only for an unpacked or alternate extension build.
+First install and enable the Tokenless extension in the Chromium browser that will hold your provider session. Then `npx tokenless setup` installs the local runtime, registers the Native Messaging host for one detected browser, opens the selected provider page when needed, and succeeds only after the extension bridge is live. Sign in to the provider in that visible page if prompted. Install globally with `npm install -g tokenless` only if you prefer the shorter `tokenless` command. `tokenless install` remains available when you only want to provision the local runtime without activating the browser bridge.
+
+The universal package contains JavaScript only and declares exact-version optional native packages for darwin/linux on arm64/x64 and win32 on arm64/x64. npm installs only the matching package, which contains `tokenless-daemon` and `tokenless-native-host`; publisher-side prepack verification requires each executable to report the exact role, package version, and normalized target tuple before packing. No install hook or normal command downloads or verifies an executable, and users do not need Rust. The published extension id is bundled; pass `--extension-id <id>` only for an unpacked or alternate extension build.
 
 Configure defaults:
 
@@ -58,6 +58,8 @@ npx tokenless run \
 ```
 
 `--effort` accepts `instant`, `medium`, `high`, `extra_high`, or `pro`. Tokenless uses visible DOM roles and selected state, not provider APIs or browser storage. When a requested model is absent it tries `--model-fallback` in order, then preserves the visible current model. When a complete five-level Intelligence menu is visible it selects the strongest available level at or below the requested level; incomplete or unlabelled menus preserve the current setting rather than guessing. In all non-safety control fallbacks, the prompt is still submitted.
+
+For a visible provider task expected to take longer than three minutes, add `--long-running`. It extends the visible-response wait to 35 minutes and the daemon job wait to 36 minutes. Progress heartbeats are written to stderr so `--json` keeps stdout machine-readable. Do not use `--no-wait` for this mode.
 
 Use returned task ids to inspect daemon-backed state:
 

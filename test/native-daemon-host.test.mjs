@@ -251,6 +251,22 @@ test('run is daemon-only and --no-open fails before job creation when bridge is 
   }
 })
 
+test('long-running jobs stay attached instead of degrading into detached work', () => {
+  const result = spawnSync(process.execPath, [
+    cliEntry,
+    'run',
+    '--prompt',
+    'wait for the visible provider result',
+    '--long-running',
+    '--no-wait',
+    '--json',
+  ], { cwd: root, encoding: 'utf8' })
+  assert.equal(result.status, 1, result.stderr)
+  const payload = JSON.parse(result.stdout)
+  assert.equal(payload.error.code, 'long_running_requires_wait')
+  assert.match(payload.error.message, /cannot be combined with --no-wait/)
+})
+
 test('run needs no extension id, skips wake with live bridge, and state reads daemon metadata', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-live-bridge-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -746,6 +762,89 @@ test('install and doctor report direct Rust binaries, daemon readiness, manifest
   }
 })
 
+test('setup provisions the Rust runtime, opens the provider, and confirms a live extension bridge', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-'))
+  const manifestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-manifest-'))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const launcher = createFakeBrowserLauncher(homeDir)
+  const env = fakeBrowserEnv(homeDir, launcher)
+  let pid
+  try {
+    const setup = spawnSync(process.execPath, [
+      cliEntry,
+      'setup',
+      '--extension-id',
+      'abcdefghijklmnopabcdefghijklmnop',
+      '--browser',
+      'profile',
+      '--manifest-home',
+      manifestHome,
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--bridge-timeout-ms',
+      '3000',
+      '--json',
+    ], { cwd: root, env, encoding: 'utf8' })
+    assert.equal(setup.status, 0, setup.stderr || setup.stdout)
+    const payload = JSON.parse(setup.stdout)
+    pid = payload.daemon.pid
+    assert.equal(payload.ok, true)
+    assert.equal(payload.status, 'ready')
+    assert.equal(payload.provider, 'chatgpt')
+    assert.equal(payload.providerOpened, true)
+    assert.equal(payload.extensionBridge.ready, true)
+    assert.equal(payload.extensionBridge.sessionId, 'fake-browser-bridge')
+    assert.equal(fs.readFileSync(path.join(homeDir, 'opened-url.txt'), 'utf8'), 'https://chatgpt.com/')
+    assert.equal(fs.existsSync(path.join(homeDir, 'bin', process.platform === 'win32' ? 'tokenless-native-host.exe' : 'tokenless-native-host')), true)
+  } finally {
+    await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(manifestHome, { recursive: true, force: true })
+  }
+})
+
+test('setup never reports success when the extension bridge does not connect', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-missing-'))
+  const manifestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-missing-manifest-'))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const launcher = createNoBridgeFakeBrowserLauncher(homeDir)
+  const env = fakeBrowserEnv(homeDir, launcher)
+  let pid
+  try {
+    const setup = spawnSync(process.execPath, [
+      cliEntry,
+      'setup',
+      '--extension-id',
+      'abcdefghijklmnopabcdefghijklmnop',
+      '--browser',
+      'profile',
+      '--manifest-home',
+      manifestHome,
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--bridge-timeout-ms',
+      '150',
+      '--json',
+    ], { cwd: root, env, encoding: 'utf8' })
+    assert.equal(setup.status, 1, setup.stderr || setup.stdout)
+    const payload = JSON.parse(setup.stdout)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.error.code, 'extension_setup_incomplete')
+    assert.match(payload.error.message, /Install or enable the Tokenless extension/i)
+    await delay(250)
+    assert.equal(fs.readFileSync(path.join(homeDir, 'opened-url.txt'), 'utf8'), 'https://chatgpt.com/')
+    pid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+  } finally {
+    await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(manifestHome, { recursive: true, force: true })
+  }
+})
+
 function importCli() {
   return import(pathToFileURL(cliIndex).href)
 }
@@ -774,6 +873,16 @@ fs.writeFileSync(path.join(home, 'extension-bridge.json'), JSON.stringify({
   connectedAt: new Date().toISOString(),
   heartbeatAt: new Date().toISOString()
 }))
+`)
+  fs.chmodSync(script, 0o755)
+  return script
+}
+
+function createNoBridgeFakeBrowserLauncher(homeDir) {
+  const script = path.join(homeDir, 'fake-chromium-without-bridge.mjs')
+  fs.writeFileSync(script, `#!/usr/bin/env node
+import fs from 'node:fs'
+fs.writeFileSync(process.env.TOKENLESS_TEST_OPEN_LOG, process.argv[2])
 `)
   fs.chmodSync(script, 0o755)
   return script

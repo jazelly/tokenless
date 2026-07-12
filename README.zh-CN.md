@@ -20,27 +20,27 @@ English version: [README.md](README.md)
 
 ## 安装
 
-安装 CLI 和 agent skill：
+先在 Chrome 中安装并启用 Tokenless 扩展，然后执行一次本机设置：
 
 ```bash
-npm install -g tokenless
+npx tokenless setup
+```
+
+`npx` 会在需要时下载 CLI；只有偏好短命令时才需要 `npm install -g tokenless`。支持 skills 的 agent 可以额外安装 Tokenless skill：
+
+```bash
 npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless
 ```
 
-从 Chrome Web Store、未打包目录或 zip package 安装 Tokenless 扩展，然后做一次本机设置：
+`setup` 会安装本地 Rust runtime、为一个 Chromium 浏览器注册 Native Messaging host、必要时打开 ChatGPT，并且只有在 extension bridge 真正连通后才返回成功。如果 ChatGPT 要求登录，请在可见标签页中完成登录；如果 bridge 没有连上，命令会明确提示安装或启用扩展，而不会只因本地文件写入成功就报告成功。
+
+发布版 extension id 已内置。未打包的开发扩展只需在设置时覆盖一次：
 
 ```bash
-tokenless install
-tokenless doctor --json
+npx tokenless setup --extension-id "<chrome-extension-id>" --json
 ```
 
-发布版 extension id 已内置。未打包的开发扩展只需在安装时覆盖一次：
-
-```bash
-tokenless install --extension-id "<chrome-extension-id>" --json
-```
-
-Universal `tokenless` package 只包含 JavaScript。npm 会按 OS/CPU 选择同版本 optional dependency，其中包含 `tokenless-daemon` 和 `tokenless-native-host`；`install` 再把这些本地 binary 复制到 `~/.tokenless/bin`，写入唯一且精确的 native-host allowed origin，默认只绑定一个选定 Chromium 浏览器，并确认 daemon 可以启动。运行时不会下载 executable，也没有 install script；终端用户不需要 Cargo。
+Universal `tokenless` package 只包含 JavaScript。npm 会按 OS/CPU 选择同版本 optional dependency，其中包含 `tokenless-daemon` 和 `tokenless-native-host`；`setup` 再把这些本地 binary 复制到 `~/.tokenless/bin`，写入唯一且精确的 native-host allowed origin，默认只绑定一个选定 Chromium 浏览器，并确认 daemon 和 extension bridge 可以使用。运行时不会下载 executable，也没有 install script；终端用户不需要 Cargo。
 
 按需配置 provider 顺序和浏览器：
 
@@ -66,6 +66,8 @@ tokenless run \
 普通 `run` 不需要 extension id。返回的 `taskId` 默认由 project/chat name 派生；后续 turn 可以继续传 `--task-id`。Tokenless 在交给 OS 打开之前，会确认显式或历史 target 是 HTTPS，而且 hostname 属于所选 provider。
 
 `--no-open` 是严格模式：只有新鲜且存活的 extension bridge marker 已存在时才继续；否则在创建 job 前清楚失败，不会把任务静默留在队列里等待。
+
+如果预计 provider 的可见任务会超过三分钟，请在 `run` 上加入 `--long-running`。此模式会将可见答案等待延长至 35 分钟、daemon job 等待延长至 36 分钟，并持续输出 progress heartbeat，同时保持 JSON stdout 可机器解析。
 
 ## 查询 daemon state
 
@@ -94,6 +96,8 @@ Snapshot 走同一条 daemon-only、provider-only wake 路径。脱敏 artifacts
 ## 安全边界
 
 Tokenless 只在用户授权 extension host permission 后，通过用户可见的 provider 页面工作。它不绕过登录、CAPTCHA、provider 权限、限流或可见确认；它不读取 provider cookies、localStorage/sessionStorage token、隐藏 auth header，也不会调用隐藏的 provider 后端接口。
+
+本地数据处理细节见 [隐私政策](PRIVACY.md)。
 
 Daemon URL 必须是 loopback HTTP。每次发送 token 的请求之前，CLI 都会向 `/ready` 发送新的 32-byte challenge，再用 home-local `daemon.token` 校验 HMAC-SHA256 proof；proof 同时绑定 challenge、两个 protocol version 和 canonical home。只猜中公开字段的伪造 listener 得不到 bearer token 或 job prompt。随后所有 job endpoint 仍要求该 bearer token；`/health` 只用于 diagnostic。Job 入队前还会做 native message size 检查。
 
@@ -132,8 +136,7 @@ npm run test:e2e
 
 ```bash
 export TOKENLESS_EXTENSION_ID="<chrome-extension-id>"
-tokenless install --extension-id "$TOKENLESS_EXTENSION_ID" --json
-tokenless doctor --json
+tokenless setup --extension-id "$TOKENLESS_EXTENSION_ID" --json
 ```
 
 运行 visible-session smoke test：

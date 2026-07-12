@@ -256,7 +256,7 @@ export async function waitForExtensionBridge({ homeDir = tokenlessHome(), timeou
             return marker;
         await delay(pollMs);
     }
-    throw runtimeError('extension_bridge_timeout', `Tokenless opened the provider page, but the Rust extension bridge did not become ready within ${timeoutMs} ms. Check the extension and native-host installation with "tokenless doctor".`, true);
+    throw runtimeError('extension_bridge_timeout', `Tokenless opened the provider page, but the Rust extension bridge did not become ready within ${timeoutMs} ms. Ensure the Tokenless extension is installed and enabled, then run "tokenless setup" again.`, true);
 }
 export function providerWakeUrl(provider, targetUrl) {
     const providerId = typeof provider === 'string' ? provider.trim().toLowerCase() : '';

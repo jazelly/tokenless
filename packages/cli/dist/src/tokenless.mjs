@@ -2,6 +2,9 @@
 import fs from 'node:fs/promises';
 import { DEFAULT_DAEMON_URL, MAX_NATIVE_MESSAGE_BYTES, NATIVE_PROTOCOL, buildTokenlessPrompt, cancelDaemonJob, createDaemonJob, daemonUrl, deriveTaskId, ensureDaemonReady, getDaemonJob, inspectNativeHostManifests, inspectRustBinaries, installRustRuntime, listDaemonJobs, normalizeBrowserId, openProviderUrl, persistDaemonSnapshot, providerWakeUrl, readLiveBridgeMarker, readTokenlessConfig, refreshInstalledRustBinaries, resolveChromiumBrowser, tokenlessHome, waitDaemonJobResult, waitForExtensionBridge, writeTokenlessConfig, } from './index.js';
 import { DEFAULT_EXTENSION_ID } from './default-extension-id.js';
+const DEFAULT_RUN_TIMEOUT_MS = 180_000;
+const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000;
+const LONG_RUNNING_JOB_TIMEOUT_MS = 2_160_000;
 let args = { files: [], json: process.argv.includes('--json') };
 try {
     const argv = process.argv.slice(2);
@@ -24,6 +27,9 @@ try {
     }
     else if (command === 'cancel') {
         await cancelCommand(args);
+    }
+    else if (command === 'setup') {
+        await setupCommand(args);
     }
     else if (command === 'install') {
         await installCommand(args);
@@ -85,6 +91,9 @@ async function snapshotDomCommand(args) {
     await executeDaemonJob({ args, action: 'snapshot_dom' });
 }
 async function executeDaemonJob({ args, action, prompt, }) {
+    if (args.longRunning && args.noWait) {
+        throw usageError('long_running_requires_wait', '--long-running keeps the web job attached and cannot be combined with --no-wait.');
+    }
     const homeDir = tokenlessHome(args.home);
     const config = await readTokenlessConfig(homeDir);
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined);
@@ -124,7 +133,9 @@ async function executeDaemonJob({ args, action, prompt, }) {
             statusReporter,
         });
         const readDelayMs = args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs);
-        const readTimeoutMs = args.readTimeoutMs === undefined ? 120000 : Number(args.readTimeoutMs);
+        const readTimeoutMs = args.readTimeoutMs === undefined
+            ? (args.longRunning ? LONG_RUNNING_READ_TIMEOUT_MS : 120_000)
+            : Number(args.readTimeoutMs);
         const requestJson = {
             requestId: taskId,
             taskId,
@@ -178,7 +189,7 @@ async function executeDaemonJob({ args, action, prompt, }) {
                 daemonUrl: configuredDaemonUrl,
                 jobId: job.job_id,
                 timeoutMs: args.timeoutMs === undefined
-                    ? (action === 'snapshot_dom' ? 60_000 : 180_000)
+                    ? (action === 'snapshot_dom' ? 60_000 : (args.longRunning ? LONG_RUNNING_JOB_TIMEOUT_MS : DEFAULT_RUN_TIMEOUT_MS))
                     : Number(args.timeoutMs),
                 cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
                 statusReporter,
@@ -237,7 +248,7 @@ async function prepareExtensionBridge({ args, homeDir, provider, targetUrl, sele
     }
     statusReporter.report({ event: 'bridge_missing', status: 'not_ready', provider });
     if (args.noOpen) {
-        throw usageError('extension_bridge_unavailable', 'No live Tokenless extension bridge is connected. Remove --no-open so Tokenless can open only the selected provider page, or open that provider in the configured Chromium browser first.');
+        throw usageError('extension_bridge_unavailable', 'No live Tokenless extension bridge is connected. Remove --no-open so Tokenless can open only the selected provider page, or run "tokenless setup" after installing and enabling the extension.');
     }
     const browser = await resolveChromiumBrowser(selectedBrowser);
     await openProviderUrl(targetUrl, browser);
@@ -349,6 +360,82 @@ async function cancelCommand(args) {
     }, args);
 }
 async function installCommand(args) {
+    const provisioned = await provisionRuntime(args);
+    printPayload({
+        ok: true,
+        runtime: 'rust',
+        extensionIdSource: provisioned.extensionIdSource,
+        browser: provisioned.browser.browser,
+        browsers: provisioned.browsers,
+        daemon: {
+            ready: true,
+            started: provisioned.daemon.started,
+            url: provisioned.daemonUrl,
+            pid: provisioned.daemon.pid,
+            executable: provisioned.installed.daemonExecutable,
+        },
+        nativeHost: {
+            runtime: 'rust',
+            protocol: NATIVE_PROTOCOL,
+            executable: provisioned.installed.nativeHostExecutable,
+            manifests: provisioned.installed.manifests,
+            registryCommands: provisioned.installed.registryCommands,
+            allowedOrigin: provisioned.installed.allowedOrigin,
+        },
+        nextStep: 'Run "tokenless setup" to open ChatGPT and verify that the Tokenless extension bridge is connected.',
+    }, args);
+}
+async function setupCommand(args) {
+    const provisioned = await provisionRuntime(args);
+    const provider = normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER || provisioned.config.preferredProviders[0] || 'chatgpt');
+    const targetUrl = providerWakeUrl(provider, args.targetUrl);
+    let marker = await readLiveBridgeMarker({ homeDir: provisioned.homeDir });
+    let opened = false;
+    if (!marker) {
+        await openProviderUrl(targetUrl, provisioned.browser);
+        opened = true;
+        try {
+            marker = await waitForExtensionBridge({
+                homeDir: provisioned.homeDir,
+                timeoutMs: args.bridgeTimeoutMs === undefined ? undefined : Number(args.bridgeTimeoutMs),
+            });
+        }
+        catch (error) {
+            throw setupBridgeUnavailable({
+                browser: provisioned.browser.displayName,
+                provider,
+                targetUrl,
+                cause: error,
+            });
+        }
+    }
+    printPayload({
+        ok: true,
+        status: 'ready',
+        runtime: 'rust',
+        provider,
+        providerUrl: targetUrl,
+        providerOpened: opened,
+        browser: {
+            id: provisioned.browser.browser,
+            displayName: provisioned.browser.displayName,
+        },
+        daemon: {
+            ready: true,
+            started: provisioned.daemon.started,
+            url: provisioned.daemonUrl,
+            pid: provisioned.daemon.pid,
+        },
+        extensionBridge: {
+            ready: true,
+            sessionId: marker.sessionId,
+            heartbeatAgeMs: marker.heartbeatAgeMs,
+        },
+        nextStep: `Sign in to ${provider} in the opened browser page if needed, then run "tokenless ${provider === 'chatgpt' ? 'chatgpt-controls' : 'run'}".`,
+        compactOutput: `Tokenless is ready in ${provisioned.browser.displayName}. ${opened ? 'The provider page is open; sign in if needed, then run your first Tokenless command.' : 'The extension bridge is already connected.'}`,
+    }, args);
+}
+async function provisionRuntime(args) {
     const homeDir = tokenlessHome(args.home);
     const config = await readTokenlessConfig(homeDir);
     const { extensionId, source: extensionIdSource } = resolveInstallExtensionId(args);
@@ -378,29 +465,16 @@ async function installCommand(args) {
         daemonUrl: configuredDaemonUrl,
         timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
     });
-    printPayload({
-        ok: true,
-        runtime: 'rust',
+    return {
+        homeDir,
+        config,
         extensionIdSource,
-        browser: resolvedBrowsers[0],
         browsers: resolvedBrowsers,
-        daemon: {
-            ready: true,
-            started: daemon.started,
-            url: configuredDaemonUrl,
-            pid: daemon.pid,
-            executable: installed.daemonExecutable,
-        },
-        nativeHost: {
-            runtime: 'rust',
-            protocol: NATIVE_PROTOCOL,
-            executable: installed.nativeHostExecutable,
-            manifests: installed.manifests,
-            registryCommands: installed.registryCommands,
-            allowedOrigin: installed.allowedOrigin,
-        },
-        nextStep: 'Keep the Tokenless extension enabled. Run npx tokenless run; it opens only the selected provider UI when the bridge needs waking.',
-    }, args);
+        browser: await resolveChromiumBrowser(resolvedBrowsers[0]),
+        installed,
+        daemon,
+        daemonUrl: configuredDaemonUrl,
+    };
 }
 async function doctorCommand(args) {
     const homeDir = tokenlessHome(args.home);
@@ -488,7 +562,7 @@ async function doctorCommand(args) {
         daemonUrlConfiguration: daemonUrlCheck,
         extensionBridge: bridge
             ? { ok: true, path: bridge.path, protocol: bridge.protocol, pid: bridge.pid, sessionId: bridge.sessionId, heartbeatAgeMs: bridge.heartbeatAgeMs }
-            : { ok: false, status: 'not_connected', message: 'Open the configured provider page to wake the extension bridge.' },
+            : { ok: false, status: 'not_connected', message: 'Run "tokenless setup" to open the configured provider page and verify the extension bridge.' },
     };
     const ok = Object.values(checks).every((check) => check.ok === true);
     printPayload({
@@ -740,6 +814,7 @@ function parseArgs(argv) {
         '--quiet': 'quiet',
         '--no-open': 'noOpen',
         '--no-wait': 'noWait',
+        '--long-running': 'longRunning',
     };
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index];
@@ -862,8 +937,10 @@ function createCliStatusReporter(args) {
     const report = (event) => {
         const normalized = normalizeStatusEvent(event, startedAt);
         events.push(normalized);
-        if (!args.json && !args.quiet)
-            console.log(formatStatusEvent(normalized));
+        if (!args.quiet) {
+            const write = args.json ? console.error : console.log;
+            write(formatStatusEvent(normalized));
+        }
     };
     return { events, report, lastStatus: () => events.at(-1)?.status };
 }
@@ -927,12 +1004,14 @@ function usage() {
         'Usage:',
         '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
         '  tokenless run --provider chatgpt --model <visible-model> --model-fallback <model,...> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
+        '  tokenless run --long-running --provider chatgpt --prompt <text> --json',
         '  tokenless chatgpt-controls --json',
         '  tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
         '  tokenless state --task-id <task-id> --json',
         '  tokenless cancel --job-id <job-id> --json',
         '  tokenless snapshot-dom --provider chatgpt --json',
         '  tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json',
+        '  tokenless setup [--provider chatgpt] [--extension-id <chrome-extension-id>] --json',
         '  tokenless install [--extension-id <chrome-extension-id>] --json',
         '  tokenless doctor --json',
     ].join('\n'));
@@ -941,6 +1020,12 @@ function usageError(code, message) {
     const error = new Error(message);
     error.code = code;
     error.retryable = false;
+    return error;
+}
+function setupBridgeUnavailable({ browser, provider, targetUrl, cause, }) {
+    const error = new Error(`Tokenless opened ${targetUrl}, but its extension bridge did not connect. Install or enable the Tokenless extension in ${browser}, then reload the ${provider} page and rerun "tokenless setup". ${cause instanceof Error ? cause.message : ''}`.trim());
+    error.code = 'extension_setup_incomplete';
+    error.retryable = true;
     return error;
 }
 function optionalNumber(value) {

@@ -8,6 +8,7 @@
     "build": "npm run build --workspaces --if-present && npm run build:scripts",
     "build:scripts": "node -e \"require('node:fs').rmSync('dist/scripts',{recursive:true,force:true})\" && tsc -p tsconfig.scripts.json",
     "lint": "npm run lint --workspaces --if-present && tsc -p tsconfig.scripts.json --noEmit",
+    "verify:extension-release": "node scripts/verify-extension-release.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node --test --test-concurrency=1 test/**/*.test.mjs",
     "test:e2e": "npm run build && TOKENLESS_E2E=1 node --test test/**/*.e2e.mjs",
