@@ -72,15 +72,15 @@ function verifyManifest(manifest: Record<string, any>) {
   if (!Array.isArray(manifest.content_scripts) || manifest.content_scripts.length === 0) {
     throw new Error('extension manifest must declare provider content scripts')
   }
-  const forbiddenPermissions = new Set(['cookies', 'sidePanel', 'webRequest', 'webRequestBlocking'])
+  const forbiddenPermissions = new Set(['cookies', 'webRequest', 'webRequestBlocking'])
   const permissions = new Set(manifest.permissions || [])
   for (const permission of forbiddenPermissions) {
     if (permissions.has(permission)) {
       throw new Error(`extension manifest must not request ${permission}`)
     }
   }
-  if (manifest.side_panel) {
-    throw new Error('extension manifest must not declare a side panel')
+  if (manifest.side_panel?.default_path !== 'settings/index.html') {
+    throw new Error('extension manifest must declare the Tokenless side panel')
   }
   if (manifest.externally_connectable) {
     throw new Error('extension manifest must not allow external origins to drive the bridge')
@@ -145,11 +145,24 @@ async function copyStaticExtensionFiles(sourceRoot: string, targetRoot: string) 
 
 async function prepareContentScripts(distExtensionRoot: string) {
   const contentScriptPath = path.join(distExtensionRoot, 'content', 'provider-content.js')
-  const source = await fs.promises.readFile(contentScriptPath, 'utf8')
+  const modulePaths = [
+    path.join(distExtensionRoot, 'shared', 'provider-config.js'),
+    path.join(distExtensionRoot, 'shared', 'provider-navigation-policy.js'),
+    contentScriptPath,
+  ]
+  const modules = await Promise.all(modulePaths.map((modulePath) => fs.promises.readFile(modulePath, 'utf8')))
   await fs.promises.writeFile(
     contentScriptPath,
-    source.replace(/\nexport \{\};(?=\n\/\/# sourceMappingURL=)/, '')
+    modules.map(classicContentScriptModule).join('\n')
   )
+}
+
+function classicContentScriptModule(source: string) {
+  return source
+    .replace(/^import[\s\S]*?from ['"][^'"]+['"];\r?\n/gm, '')
+    .replace(/^export\s+(?=(const|function|class)\b)/gm, '')
+    .replace(/^export\s*\{\};?\r?\n/gm, '')
+    .replace(/\n\/\/# sourceMappingURL=.*$/m, '')
 }
 
 async function removeDevelopmentArtifacts(distExtensionRoot: string) {

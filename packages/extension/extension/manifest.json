@@ -14,7 +14,8 @@
   "permissions": [
     "nativeMessaging",
     "scripting",
-    "tabs"
+    "tabs",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -43,6 +44,9 @@
   "options_ui": {
     "page": "settings/index.html",
     "open_in_tab": false
+  },
+  "side_panel": {
+    "default_path": "settings/index.html"
   },
   "action": {
     "default_title": "Open Tokenless settings",

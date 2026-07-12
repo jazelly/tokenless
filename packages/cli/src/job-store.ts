@@ -46,6 +46,7 @@ export function normalizeBrowserId(browser: unknown) {
     'google-chrome': 'chrome',
     googlechrome: 'chrome',
     'chrome-testing': 'chrome-for-testing',
+    'chrome-for-testing-legacy': 'chrome-for-testing',
     'chromium-browser': 'chromium',
     'microsoft-edge': 'edge',
     msedge: 'edge',

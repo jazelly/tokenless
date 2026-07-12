@@ -71,6 +71,25 @@ test('native messages are constructed and validated with tokenless.native.v1', a
   assert.equal(isNativeMessage({ type: NATIVE_MESSAGE_TYPES.READ_CONFIG }), false)
 })
 
+test('provider navigation policy centralizes approved visible-session routes', async () => {
+  const { getProviderById } = await import('../packages/extension/dist/extension/shared/provider-config.js')
+  const {
+    areProviderTransitionSourcesEquivalent,
+    canonicalProviderUrl,
+    isApprovedProviderTransition,
+    isProviderConversationUrl,
+  } = await import('../packages/extension/dist/extension/shared/provider-navigation-policy.js')
+  const chatgpt = getProviderById('chatgpt')
+  assert.ok(chatgpt)
+
+  assert.equal(canonicalProviderUrl('https://chatgpt.com/g/g-12345678/'), 'https://chatgpt.com/g/g-12345678')
+  assert.equal(isApprovedProviderTransition(chatgpt, 'https://chatgpt.com/', 'https://chatgpt.com/c/12345678'), true)
+  assert.equal(isApprovedProviderTransition(chatgpt, 'https://chatgpt.com/g/g-12345678', 'https://chatgpt.com/g/g-12345678/c/abcdefgh9'), true)
+  assert.equal(isApprovedProviderTransition(chatgpt, 'https://chatgpt.com/g/g-12345678', 'https://chatgpt.com/c/abcdefgh9'), false)
+  assert.equal(isProviderConversationUrl(chatgpt, 'https://chatgpt.com/settings'), false)
+  assert.equal(areProviderTransitionSourcesEquivalent(chatgpt, 'https://chatgpt.com/', 'https://chat.openai.com/'), true)
+})
+
 test('daemon bridge requires a v1 handshake and reconnects with bounded backoff', async () => {
   const { NativeDaemonBridge } = await import(
     '../packages/extension/dist/extension/background/native-daemon-bridge.js'
@@ -1927,10 +1946,13 @@ test('background and provider content preserve visible-session safety boundaries
 
   assert.match(contentScript, /__TOKENLESS_PROVIDER_CONTENT_LOADED__/)
   assert.doesNotMatch(builtContentScript, /\nexport \{\};/)
+  assert.doesNotMatch(builtContentScript, /^import /m)
   assert.ok(
-    contentScript.indexOf('__TOKENLESS_PROVIDER_CONTENT_LOADED__') < contentScript.search(/const PROVIDERS\b/),
-    'duplicate-injection guard must run before provider declarations'
+    contentScript.indexOf('__TOKENLESS_PROVIDER_CONTENT_LOADED__') < contentScript.search(/const SAFE_STRUCTURAL_STATE_VALUES\b/),
+    'duplicate-injection guard must run before content-script declarations'
   )
+  assert.doesNotMatch(contentScript, /const PROVIDERS\b/)
+  assert.doesNotMatch(contentScript, /function providerTransitionSource\b/)
 })
 
 test('browser bridge advertises sanitized DOM snapshot action', async () => {

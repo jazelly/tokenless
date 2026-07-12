@@ -29,6 +29,8 @@ const configuration = document.querySelector<HTMLElement>('#configuration')
 const history = document.querySelector<HTMLElement>('#history')
 const refreshButton = document.querySelector<HTMLButtonElement>('#refresh')
 const pageStatus = document.querySelector<HTMLElement>('#page-status')
+const viewButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-view]'))
+const viewPanels = Array.from(document.querySelectorAll<HTMLElement>('[data-view-panel]'))
 
 let providerOrder: string[] = []
 let browserPreference = ''
@@ -36,11 +38,29 @@ let daemonUrl = ''
 let isSaving = false
 let isHistoryRefreshing = false
 
+viewButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    setActiveView(button.dataset.view)
+  })
+})
+
 refreshButton?.addEventListener('click', () => {
   void refreshHistory()
 })
 
 void loadInitialSettings()
+
+function setActiveView(view: string | undefined) {
+  if (view !== 'activity' && view !== 'settings') return
+  viewButtons.forEach((button) => {
+    const active = button.dataset.view === view
+    button.classList.toggle('is-active', active)
+    button.setAttribute('aria-selected', String(active))
+  })
+  viewPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.viewPanel !== view
+  })
+}
 
 async function loadInitialSettings() {
   isHistoryRefreshing = true
@@ -193,8 +213,8 @@ function renderProviderRow(providerId: string, index: number) {
   controls.className = 'provider-controls'
   const providerName = providerLabel(providerId)
   controls.append(
-    rowButton('Move up', `Move ${providerName} up`, providerId, 'up', () => moveProvider(index, -1), index === 0),
-    rowButton('Move down', `Move ${providerName} down`, providerId, 'down', () => moveProvider(index, 1), index === providerOrder.length - 1),
+    rowButton('↑', `Move ${providerName} up`, providerId, 'up', () => moveProvider(index, -1), index === 0),
+    rowButton('↓', `Move ${providerName} down`, providerId, 'down', () => moveProvider(index, 1), index === providerOrder.length - 1),
     rowButton('Remove', `Remove ${providerName}`, providerId, 'remove', () => removeProvider(index), false, 'danger')
   )
   row.append(identity, controls)

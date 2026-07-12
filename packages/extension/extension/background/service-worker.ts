@@ -7,6 +7,16 @@ import {
 } from '../shared/bridge-protocol.js'
 import { getProviderById, getProviderForUrl } from '../shared/provider-config.js'
 import {
+  areProviderTransitionSourcesEquivalent,
+  canonicalProviderUrl,
+  isCanonicalProviderLandingTarget,
+  isApprovedProviderTransition,
+  isProviderConversationUrl,
+  isSafeProviderAuthority,
+  providerTransitionSource,
+  safeProviderTargetUrl,
+} from '../shared/provider-navigation-policy.js'
+import {
   createNativeMessage,
   isNativeMessage,
   NATIVE_MESSAGE_TYPES,
@@ -30,44 +40,6 @@ const PROVIDER_LANDING_POLL_MS = 250
 const PROVIDER_CONTENT_READY_TYPE = 'tokenless.provider_content_ready'
 const POST_SUBMIT_TARGET_TRANSITION_FLAG = 'allowPostSubmitTargetTransition'
 const POST_SUBMIT_TARGET_TRANSITION_PROOF = 'postSubmitTargetTransitionProof'
-const RESERVED_PROVIDER_PATH_PREFIXES = [
-  'about',
-  'account',
-  'accounts',
-  'admin',
-  'administrator',
-  'api',
-  'auth',
-  'authentication',
-  'authorize',
-  'billing',
-  'checkout',
-  'help',
-  'login',
-  'logout',
-  'oauth',
-  'password',
-  'payment',
-  'payments',
-  'plan',
-  'plans',
-  'preferences',
-  'pricing',
-  'privacy',
-  'profile',
-  'recover',
-  'register',
-  'reset',
-  'security',
-  'settings',
-  'signin',
-  'signup',
-  'sso',
-  'subscription',
-  'support',
-  'terms',
-  'upgrade',
-]
 let daemonJobQueue: Promise<void> = Promise.resolve()
 const handledDaemonJobs = new Set<string>()
 const handledDaemonJobOrder: string[] = []
@@ -79,10 +51,12 @@ const daemonBridge = new NativeDaemonBridge({
 
 chrome.runtime.onInstalled.addListener(() => {
   startDaemonBridge()
+  enableSidePanelAction()
 })
 
 chrome.runtime.onStartup.addListener(() => {
   startDaemonBridge()
+  enableSidePanelAction()
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -95,10 +69,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 })
 
 startDaemonBridge()
+enableSidePanelAction()
 
-chrome.action.onClicked.addListener(() => {
-  chrome.runtime.openOptionsPage().catch(() => undefined)
-})
+function enableSidePanelAction() {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined)
+}
 
 async function runBridgeRequest(request: BridgeRequest) {
   try {
@@ -225,7 +200,7 @@ function postSubmitReadRequest(
     readRequest[POST_SUBMIT_TARGET_TRANSITION_PROOF] = {
       requestId: request.requestId,
       provider: provider.id,
-      targetUrl: canonicalTabUrl(String(effectiveTargetUrl)),
+      targetUrl: canonicalProviderUrl(effectiveTargetUrl),
       sourceKind: transitionSource.kind,
       customGptId: transitionSource.customGptId,
       answerBaseline: submit.answerBaseline,
@@ -545,9 +520,9 @@ async function getOrCreateProviderTab(provider: ProviderConfig, targetUrl: unkno
     candidates.push(...await chrome.tabs.query({ url: `https://${host}/*` }))
   }
   if (targetUrl !== undefined) {
-    const requestedKey = canonicalTabUrl(requestedUrl)
+    const requestedKey = canonicalProviderUrl(requestedUrl)
     const exactCandidate = candidates.find((tab) => (
-      tab.id !== undefined && canonicalTabUrl(tab.url ?? '') === requestedKey
+      tab.id !== undefined && canonicalProviderUrl(tab.url ?? '') === requestedKey
     ))
     if (exactCandidate) {
       return exactCandidate
@@ -676,7 +651,7 @@ function hasPostSubmitTargetTransitionProof(provider: ProviderConfig, request: B
     Boolean(transitionSource) &&
     proof.requestId === request.requestId &&
     proof.provider === provider.id &&
-    proof.targetUrl === canonicalTabUrl(String(request.targetUrl)) &&
+    proof.targetUrl === canonicalProviderUrl(request.targetUrl) &&
     proof.sourceKind === transitionSource?.kind &&
     proof.customGptId === transitionSource?.customGptId &&
     typeof proof.nonce === 'string' &&
@@ -728,7 +703,7 @@ function assertProviderTabContext(
     targetUrl !== undefined &&
     !targetMayTransition &&
     !canonicalLandingEquivalent &&
-    canonicalTabUrl(currentUrl) !== canonicalTabUrl(safeProviderUrl(provider, targetUrl))
+    canonicalProviderUrl(currentUrl) !== canonicalProviderUrl(safeProviderUrl(provider, targetUrl))
   ) {
     throw bridgeError(
       'target_tab_mismatch',
@@ -739,179 +714,19 @@ function assertProviderTabContext(
   return tab
 }
 
-function isCanonicalProviderLandingTarget(provider: ProviderConfig, targetUrl: unknown) {
-  if (typeof targetUrl !== 'string') return false
-  try {
-    const target = new URL(targetUrl)
-    const home = new URL(provider.homeUrl)
-    return (
-      hasSafeProviderAuthority(provider, target) &&
-      canonicalPathname(target.pathname) === canonicalPathname(home.pathname)
-    )
-  } catch {
-    return false
-  }
-}
-
-function providerTransitionSource(provider: ProviderConfig, value: unknown) {
-  if (isCanonicalProviderLandingTarget(provider, value)) {
-    return { kind: 'root', customGptId: undefined }
-  }
-  if (provider.id !== 'chatgpt' || typeof value !== 'string') return null
-  try {
-    const parsed = new URL(value)
-    if (!hasSafeProviderAuthority(provider, parsed)) return null
-    const segments = canonicalPathname(parsed.pathname).split('/').filter(Boolean)
-    const customGptId = segments.length === 2 && segments[0] === 'g' ? segments[1] : undefined
-    return isCustomGptId(customGptId)
-      ? { kind: 'custom_gpt', customGptId }
-      : null
-  } catch {
-    return null
-  }
-}
-
-function areProviderTransitionSourcesEquivalent(
-  provider: ProviderConfig,
-  leftUrl: unknown,
-  rightUrl: unknown
-) {
-  const left = providerTransitionSource(provider, leftUrl)
-  const right = providerTransitionSource(provider, rightUrl)
-  return Boolean(
-    left &&
-    right &&
-    left.kind === right.kind &&
-    left.customGptId === right.customGptId
-  )
-}
-
-function isApprovedProviderTransition(
-  provider: ProviderConfig,
-  sourceUrl: unknown,
-  destinationUrl: unknown
-) {
-  const source = providerTransitionSource(provider, sourceUrl)
-  const destination = providerConversationRoute(provider, destinationUrl)
-  if (!source || !destination) return false
-  if (source.kind === 'custom_gpt') {
-    return (
-      destination.kind === 'custom_gpt' &&
-      destination.customGptId === source.customGptId
-    )
-  }
-  return destination.kind === 'standard'
-}
-
-function isProviderConversationUrl(provider: ProviderConfig, value: unknown) {
-  return providerConversationRoute(provider, value) !== null
-}
-
-function providerConversationRoute(provider: ProviderConfig, value: unknown) {
-  if (typeof value !== 'string') return null
-  try {
-    const parsed = new URL(value)
-    if (!hasSafeProviderAuthority(provider, parsed)) {
-      return null
-    }
-    const pathname = canonicalPathname(parsed.pathname)
-    const segments = pathname.split('/').filter(Boolean)
-    if (provider.id === 'chatgpt') {
-      if (segments.length === 2 && segments[0] === 'c') {
-        return isOpaqueProviderId(segments[1])
-          ? { kind: 'standard', customGptId: undefined }
-          : null
-      }
-      return (
-        segments.length === 4 &&
-        segments[0] === 'g' &&
-        segments[2] === 'c' &&
-        isCustomGptId(segments[1]) &&
-        isOpaqueProviderId(segments[3])
-      )
-        ? { kind: 'custom_gpt', customGptId: segments[1] }
-        : null
-    }
-    if (provider.id === 'claude') {
-      return segments.length === 2 && segments[0] === 'chat' && isOpaqueProviderId(segments[1])
-        ? { kind: 'standard', customGptId: undefined }
-        : null
-    }
-    if (provider.id === 'gemini') {
-      return segments.length === 2 && segments[0] === 'app' && isOpaqueProviderId(segments[1])
-        ? { kind: 'standard', customGptId: undefined }
-        : null
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-function isCustomGptId(value: string | undefined) {
-  return Boolean(value?.startsWith('g-') && isOpaqueProviderId(value.slice(2)))
-}
-
-function isOpaqueProviderId(value: string | undefined) {
-  if (
-    !value ||
-    value.length < 8 ||
-    value.length > 128 ||
-    !/^[A-Za-z0-9_-]+$/.test(value) ||
-    !/\d/.test(value)
-  ) {
-    return false
-  }
-  const compact = value.toLowerCase().replace(/[-_]/g, '')
-  return !RESERVED_PROVIDER_PATH_PREFIXES.some((prefix) => compact.startsWith(prefix))
-}
-
 function safeProviderUrl(provider: ProviderConfig, targetUrl: unknown) {
-  if (targetUrl === undefined) {
-    return provider.homeUrl
-  }
+  if (targetUrl === undefined) return provider.homeUrl
   let parsed: URL
   try {
     parsed = new URL(String(targetUrl))
   } catch {
     throw bridgeError('invalid_target_url', 'Target URL must be a valid absolute URL.', false)
   }
-  if (!hasSafeProviderAuthority(provider, parsed)) {
+  const normalized = safeProviderTargetUrl(provider, parsed.href)
+  if (!normalized) {
     throw bridgeError('target_url_provider_mismatch', 'Target URL must belong to the selected provider.', false)
   }
-  return parsed.href
-}
-
-function isSafeProviderAuthority(provider: ProviderConfig, value: string) {
-  try {
-    return hasSafeProviderAuthority(provider, new URL(value))
-  } catch {
-    return false
-  }
-}
-
-function hasSafeProviderAuthority(provider: ProviderConfig, parsed: URL) {
-  return (
-    parsed.protocol === 'https:' &&
-    parsed.username === '' &&
-    parsed.password === '' &&
-    parsed.port === '' &&
-    provider.hosts.includes(parsed.hostname.toLowerCase())
-  )
-}
-
-function canonicalTabUrl(url: string) {
-  try {
-    const parsed = new URL(url)
-    const pathname = canonicalPathname(parsed.pathname)
-    return `${parsed.origin}${pathname}`
-  } catch {
-    return ''
-  }
-}
-
-function canonicalPathname(pathname: string) {
-  return pathname.replace(/\/+$/, '') || '/'
+  return normalized
 }
 
 function delay(ms: number) {

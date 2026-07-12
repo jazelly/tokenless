@@ -3,25 +3,24 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Tokenless Settings</title>
+    <title>Tokenless</title>
     <link rel="stylesheet" href="index.css">
   </head>
   <body>
     <main>
       <header class="hero">
-        <div>
-          <p class="eyebrow">Browser extension</p>
-          <h1>Tokenless Settings</h1>
-          <p class="lede">Choose provider preferences and review jobs handled by the local daemon.</p>
-        </div>
+        <nav class="view-tabs" aria-label="Tokenless panel views">
+          <button type="button" class="view-tab" data-view="activity" aria-selected="true">Activity</button>
+          <button type="button" class="view-tab" data-view="settings" aria-selected="false">Settings</button>
+        </nav>
         <span id="page-status" class="status" data-tone="loading" role="status">Connecting…</span>
       </header>
 
-      <section class="panel" aria-labelledby="configuration-heading">
+      <section class="panel" data-view-panel="settings" aria-labelledby="configuration-heading" hidden>
         <div class="section-heading">
           <div>
-            <h2 id="configuration-heading">Configuration</h2>
-            <p>Preferences are stored by the Tokenless native host on this computer.</p>
+            <h2 id="configuration-heading">Routing</h2>
+            <p>Provider preferences are stored locally on this computer.</p>
           </div>
         </div>
         <div id="configuration" aria-live="polite">
@@ -29,11 +28,11 @@
         </div>
       </section>
 
-      <section class="panel" aria-labelledby="history-heading">
+      <section class="panel" data-view-panel="activity" aria-labelledby="history-heading">
         <div class="section-heading">
           <div>
-            <h2 id="history-heading">Daemon Job History</h2>
-            <p>Newest jobs appear first. Prompts and results are not displayed here.</p>
+            <h2 id="history-heading">Recent activity</h2>
+            <p>Newest local jobs first. Prompts and answers are never shown here.</p>
           </div>
           <button id="refresh" type="button" class="secondary-button">Refresh</button>
         </div>
@@ -42,9 +41,14 @@
         </div>
       </section>
 
-      <aside class="safety-note">
-        <strong>Visible-session boundary</strong>
-        <span>Tokenless uses approved provider pages and visible DOM only. It never reads browser cookies, storage tokens, or private provider APIs.</span>
+      <aside class="project-link">
+        <a href="https://github.com/jazelly/tokenless" target="_blank" rel="noreferrer">
+          <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-.95-2.7-.95-.36-.93-.89-1.18-.89-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.87.88 2.33.67.07-.52.28-.88.51-1.08-1.78-.2-3.65-.89-3.65-3.96 0-.88.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.12 0 0 .68-.22 2.2.82A7.7 7.7 0 0 1 8 4.8c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.52.56.83 1.27.83 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.73.54 1.48v2.2c0 .21.14.45.55.38A8 8 0 0 0 8 0Z" />
+          </svg>
+          <span>View Tokenless on GitHub</span>
+          <span class="external-mark" aria-hidden="true">↗</span>
+        </a>
       </aside>
     </main>
     <script type="module" src="index.js"></script>

@@ -13,7 +13,6 @@ const SUPPORTED_PROVIDERS: &[&str] = &["chatgpt", "claude", "gemini"];
 const SUPPORTED_BROWSERS: &[&str] = &[
     "chrome",
     "chrome-for-testing",
-    "chrome-for-testing-legacy",
     "chromium",
     "edge",
     "arc",
@@ -155,7 +154,7 @@ fn normalize_browser(value: &str) -> Result<String> {
     let normalized = match normalized.as_str() {
         "google-chrome" | "googlechrome" => "chrome",
         "chrome-testing" | "chrome-for-testing" => "chrome-for-testing",
-        "chrome-for-testing-legacy" => "chrome-for-testing-legacy",
+        "chrome-for-testing-legacy" => "chrome-for-testing",
         "chromium-browser" => "chromium",
         "microsoft-edge" | "msedge" => "edge",
         "brave-browser" => "brave",
@@ -293,5 +292,13 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(store.read(), Err(DaemonError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn legacy_chrome_for_testing_config_is_canonicalized() {
+        assert_eq!(
+            normalize_browser("chrome-for-testing-legacy").unwrap(),
+            "chrome-for-testing"
+        );
     }
 }

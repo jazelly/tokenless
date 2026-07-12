@@ -289,6 +289,11 @@ test('Chrome for Testing installs current and pre-146 native manifest compatibil
   ])
 })
 
+test('CLI canonicalizes the legacy Chrome for Testing config identifier', async () => {
+  const { normalizeBrowserId } = await importCli()
+  assert.equal(normalizeBrowserId('chrome-for-testing-legacy'), 'chrome-for-testing')
+})
+
 test('file collection rejects lexical and symlink escapes from the canonical project root', {
   skip: process.platform === 'win32' && 'Creating symlinks may require Developer Mode on Windows.',
 }, async () => {

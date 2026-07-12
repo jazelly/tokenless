@@ -1,16 +1,17 @@
+import { getProviderForUrl } from '../shared/provider-config.js'
+import {
+  areProviderTransitionSourcesEquivalent,
+  canonicalProviderUrl,
+  hasSafeProviderAuthority,
+  isApprovedProviderTransition,
+  isProviderConversationUrl,
+  providerTransitionSource,
+} from '../shared/provider-navigation-policy.js'
+import type { ProviderConfig } from '../shared/provider-config.js'
+
 (() => {
 type ContentRecord = Record<string, any>
-type ContentProvider = {
-  id: string
-  homeUrl: string
-  hosts: string[]
-  composerSelectors: string[]
-  submitSelectors: string[]
-  answerSelectors: string[]
-  blockerSelectors: string[]
-  busySelectors?: string[]
-  busyTextLabels?: string[]
-}
+type ContentProvider = ProviderConfig
 
 type AnswerEntry = {
   element: HTMLElement
@@ -28,44 +29,6 @@ globalState.__TOKENLESS_PROVIDER_CONTENT_LOADED__ = true
 const PROVIDER_CONTENT_READY_TYPE = 'tokenless.provider_content_ready'
 const POST_SUBMIT_TARGET_TRANSITION_FLAG = 'allowPostSubmitTargetTransition'
 const POST_SUBMIT_TARGET_TRANSITION_PROOF = 'postSubmitTargetTransitionProof'
-const RESERVED_PROVIDER_PATH_PREFIXES = [
-  'about',
-  'account',
-  'accounts',
-  'admin',
-  'administrator',
-  'api',
-  'auth',
-  'authentication',
-  'authorize',
-  'billing',
-  'checkout',
-  'help',
-  'login',
-  'logout',
-  'oauth',
-  'password',
-  'payment',
-  'payments',
-  'plan',
-  'plans',
-  'preferences',
-  'pricing',
-  'privacy',
-  'profile',
-  'recover',
-  'register',
-  'reset',
-  'security',
-  'settings',
-  'signin',
-  'signup',
-  'sso',
-  'subscription',
-  'support',
-  'terms',
-  'upgrade',
-]
 const SAFE_STRUCTURAL_STATE_VALUES = new Set([
   'assertive',
   'both',
@@ -118,97 +81,6 @@ const SAFE_STATE_ATTRIBUTE_NAMES = new Set([
   'aria-selected',
   'contenteditable',
 ])
-
-const PROVIDERS: ContentProvider[] = [
-  {
-    id: 'chatgpt',
-    homeUrl: 'https://chatgpt.com/',
-    hosts: ['chatgpt.com', 'chat.openai.com'],
-    composerSelectors: [
-      'div#prompt-textarea[contenteditable="true"]',
-      '#prompt-textarea[contenteditable="true"]',
-      '[data-testid="composer"] [contenteditable="true"]',
-      'div[contenteditable="true"][data-id="root"]',
-      'div.ProseMirror[contenteditable="true"]',
-      'div[role="textbox"][contenteditable="true"]',
-      'textarea[placeholder*="Message" i]',
-      'textarea[data-testid="prompt-textarea"]',
-      'textarea',
-    ],
-    submitSelectors: [
-      'button[data-testid="send-button"]',
-      'button[data-testid="composer-send-button"]',
-      'button[aria-label="Send prompt"]',
-      'button[aria-label="Send message"]',
-      'button[aria-label*="Send" i]',
-      'button[type="submit"]',
-    ],
-    answerSelectors: [
-      '[data-message-author-role="assistant"]',
-      'article[data-testid*="conversation-turn"]',
-      'main article',
-    ],
-    busySelectors: [
-      'button[data-testid="stop-button"]',
-      'button[aria-label*="Stop" i]',
-    ],
-    busyTextLabels: [
-      'stop answering',
-      'stop generating',
-    ],
-    blockerSelectors: [
-      'iframe[src*="captcha"]',
-      '[aria-label*="captcha" i]',
-    ],
-  },
-  {
-    id: 'gemini',
-    homeUrl: 'https://gemini.google.com/app',
-    hosts: ['gemini.google.com'],
-    composerSelectors: [
-      'rich-textarea div[contenteditable="true"]',
-      'div[contenteditable="true"][role="textbox"]',
-      'textarea',
-    ],
-    submitSelectors: [
-      'button[aria-label*="Send"]',
-      'button[aria-label*="submit"]',
-      'button[type="submit"]',
-    ],
-    answerSelectors: [
-      'message-content',
-      '.model-response-text',
-      'main response-container',
-    ],
-    blockerSelectors: [
-      'iframe[src*="captcha"]',
-      'a[href*="accounts.google.com"]',
-    ],
-  },
-  {
-    id: 'claude',
-    homeUrl: 'https://claude.ai/new',
-    hosts: ['claude.ai'],
-    composerSelectors: [
-      'div[contenteditable="true"][role="textbox"]',
-      'div.ProseMirror',
-      'textarea',
-    ],
-    submitSelectors: [
-      'button[aria-label*="Send"]',
-      'button[type="submit"]',
-    ],
-    answerSelectors: [
-      '[data-testid*="message"]',
-      '.font-claude-message',
-      'main div[class*="contents"]',
-    ],
-    blockerSelectors: [
-      'iframe[src*="captcha"]',
-      'a[href*="login"]',
-    ],
-  },
-]
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message).then(sendResponse)
@@ -805,7 +677,7 @@ function chatSurfaceStatus(
   }
 }
 
-function findFirstVisible(selectors: string[]): HTMLElement | null {
+function findFirstVisible(selectors: readonly string[]): HTMLElement | null {
   for (const selector of selectors) {
     let nodes
     try {
@@ -1175,7 +1047,7 @@ function selectorProbeSnapshot(provider: ContentProvider, { includeText = false 
   }
 }
 
-function probeSelectors(selectors: string[] = [], { includeText = false }: { includeText?: boolean } = {}) {
+function probeSelectors(selectors: readonly string[] = [], { includeText = false }: { includeText?: boolean } = {}) {
   return selectors.map((selector) => {
     let count = 0
     let firstText = ''
@@ -1427,7 +1299,7 @@ function allowsPostSubmitTargetTransition(
     Array.isArray(proof) ||
     proof.requestId !== request.requestId ||
     proof.provider !== provider.id ||
-    proof.targetUrl !== canonicalPageUrl(new URL(String(request.targetUrl))) ||
+    proof.targetUrl !== canonicalProviderUrl(request.targetUrl) ||
     proof.sourceKind !== transitionSource?.kind ||
     proof.customGptId !== transitionSource?.customGptId ||
     typeof proof.nonce !== 'string' ||
@@ -1454,133 +1326,6 @@ function validAnswerBaseline(value: unknown): value is { count: number; lastText
   )
 }
 
-function areProviderTransitionSourcesEquivalent(
-  provider: ContentProvider,
-  currentUrl: string,
-  targetUrl: unknown
-) {
-  const current = providerTransitionSource(provider, currentUrl)
-  const target = providerTransitionSource(provider, targetUrl)
-  return Boolean(
-    current &&
-    target &&
-    current.kind === target.kind &&
-    current.customGptId === target.customGptId
-  )
-}
-
-function isCanonicalProviderLandingTarget(provider: ContentProvider, targetUrl: unknown) {
-  if (typeof targetUrl !== 'string') return false
-  try {
-    const target = new URL(targetUrl)
-    const home = new URL(provider.homeUrl)
-    return (
-      hasSafeProviderAuthority(provider, target) &&
-      canonicalPathname(target.pathname) === canonicalPathname(home.pathname)
-    )
-  } catch {
-    return false
-  }
-}
-
-function providerTransitionSource(provider: ContentProvider, value: unknown) {
-  if (isCanonicalProviderLandingTarget(provider, value)) {
-    return { kind: 'root', customGptId: undefined }
-  }
-  if (provider.id !== 'chatgpt' || typeof value !== 'string') return null
-  try {
-    const parsed = new URL(value)
-    if (!hasSafeProviderAuthority(provider, parsed)) return null
-    const segments = canonicalPathname(parsed.pathname).split('/').filter(Boolean)
-    const customGptId = segments.length === 2 && segments[0] === 'g' ? segments[1] : undefined
-    return isCustomGptId(customGptId)
-      ? { kind: 'custom_gpt', customGptId }
-      : null
-  } catch {
-    return null
-  }
-}
-
-function isApprovedProviderTransition(
-  provider: ContentProvider,
-  sourceUrl: unknown,
-  destinationUrl: unknown
-) {
-  const source = providerTransitionSource(provider, sourceUrl)
-  const destination = providerConversationRoute(provider, destinationUrl)
-  if (!source || !destination) return false
-  if (source.kind === 'custom_gpt') {
-    return (
-      destination.kind === 'custom_gpt' &&
-      destination.customGptId === source.customGptId
-    )
-  }
-  return destination.kind === 'standard'
-}
-
-function isProviderConversationUrl(provider: ContentProvider, value: unknown) {
-  return providerConversationRoute(provider, value) !== null
-}
-
-function providerConversationRoute(provider: ContentProvider, value: unknown) {
-  if (typeof value !== 'string') return null
-  try {
-    const parsed = new URL(value)
-    if (!hasSafeProviderAuthority(provider, parsed)) {
-      return null
-    }
-    const pathname = canonicalPathname(parsed.pathname)
-    const segments = pathname.split('/').filter(Boolean)
-    if (provider.id === 'chatgpt') {
-      if (segments.length === 2 && segments[0] === 'c') {
-        return isOpaqueProviderId(segments[1])
-          ? { kind: 'standard', customGptId: undefined }
-          : null
-      }
-      return (
-        segments.length === 4 &&
-        segments[0] === 'g' &&
-        segments[2] === 'c' &&
-        isCustomGptId(segments[1]) &&
-        isOpaqueProviderId(segments[3])
-      )
-        ? { kind: 'custom_gpt', customGptId: segments[1] }
-        : null
-    }
-    if (provider.id === 'claude') {
-      return segments.length === 2 && segments[0] === 'chat' && isOpaqueProviderId(segments[1])
-        ? { kind: 'standard', customGptId: undefined }
-        : null
-    }
-    if (provider.id === 'gemini') {
-      return segments.length === 2 && segments[0] === 'app' && isOpaqueProviderId(segments[1])
-        ? { kind: 'standard', customGptId: undefined }
-        : null
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-function isCustomGptId(value: string | undefined) {
-  return Boolean(value?.startsWith('g-') && isOpaqueProviderId(value.slice(2)))
-}
-
-function isOpaqueProviderId(value: string | undefined) {
-  if (
-    !value ||
-    value.length < 8 ||
-    value.length > 128 ||
-    !/^[A-Za-z0-9_-]+$/.test(value) ||
-    !/\d/.test(value)
-  ) {
-    return false
-  }
-  const compact = value.toLowerCase().replace(/[-_]/g, '')
-  return !RESERVED_PROVIDER_PATH_PREFIXES.some((prefix) => compact.startsWith(prefix))
-}
-
 function matchesExpectedTarget(currentUrl: string, targetUrl: unknown, provider: ContentProvider) {
   try {
     const current = new URL(currentUrl)
@@ -1588,20 +1333,11 @@ function matchesExpectedTarget(currentUrl: string, targetUrl: unknown, provider:
     return (
       hasSafeProviderAuthority(provider, current) &&
       hasSafeProviderAuthority(provider, target) &&
-      canonicalPageUrl(current) === canonicalPageUrl(target)
+      canonicalProviderUrl(current.href) === canonicalProviderUrl(target.href)
     )
   } catch {
     return false
   }
-}
-
-function canonicalPageUrl(url: URL) {
-  const pathname = canonicalPathname(url.pathname)
-  return `${url.origin}${pathname}`
-}
-
-function canonicalPathname(pathname: string) {
-  return pathname.replace(/\/+$/, '') || '/'
 }
 
 function publicPageUrl(url: string) {
@@ -1629,23 +1365,4 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function getProviderForUrl(url: string) {
-  let parsed
-  try {
-    parsed = new URL(url)
-  } catch {
-    return null
-  }
-  return PROVIDERS.find((provider) => hasSafeProviderAuthority(provider, parsed)) ?? null
-}
-
-function hasSafeProviderAuthority(provider: ContentProvider, parsed: URL) {
-  return (
-    parsed.protocol === 'https:' &&
-    parsed.username === '' &&
-    parsed.password === '' &&
-    parsed.port === '' &&
-    provider.hosts.includes(parsed.hostname.toLowerCase())
-  )
-}
 })()
