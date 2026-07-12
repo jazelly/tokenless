@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
-const source = path.join(repoRoot, 'skills', 'tokenless');
+const skillNames = ['tokenless', 'tokenless-install'];
 const home = os.homedir();
 const skillRoots = [
     path.join(home, '.codex'),
@@ -11,7 +11,9 @@ const skillRoots = [
     path.join(home, '.agents'),
     path.join(home, '.claude'),
 ];
-await assertSkillSource(source);
+for (const skillName of skillNames) {
+    await assertSkillSource(path.join(repoRoot, 'skills', skillName));
+}
 const synced = [];
 const skipped = [];
 for (const root of skillRoots) {
@@ -19,11 +21,14 @@ for (const root of skillRoots) {
         skipped.push(root);
         continue;
     }
-    const destination = path.join(root, 'skills', 'tokenless');
-    await fs.rm(destination, { recursive: true, force: true });
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.cp(source, destination, { recursive: true });
-    synced.push(destination);
+    for (const skillName of skillNames) {
+        const source = path.join(repoRoot, 'skills', skillName);
+        const destination = path.join(root, 'skills', skillName);
+        await fs.rm(destination, { recursive: true, force: true });
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.cp(source, destination, { recursive: true });
+        synced.push(destination);
+    }
 }
 if (synced.length === 0) {
     throw new Error(`No known skill roots exist. Checked: ${skillRoots.join(', ')}`);

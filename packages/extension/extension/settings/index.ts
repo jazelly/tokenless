@@ -42,6 +42,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'provider.fallback': 'Fallback provider',
     'provider.moveUp': 'Move {provider} up',
     'provider.moveDown': 'Move {provider} down',
+    'provider.removeAction': 'Remove',
     'provider.remove': 'Remove {provider}',
     'provider.select': 'Provider to add',
     'provider.add': 'Add provider',
@@ -113,6 +114,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'provider.fallback': '备用 Provider',
     'provider.moveUp': '将 {provider} 上移',
     'provider.moveDown': '将 {provider} 下移',
+    'provider.removeAction': '移除',
     'provider.remove': '移除 {provider}',
     'provider.select': '选择要添加的 Provider',
     'provider.add': '添加 Provider',
@@ -384,7 +386,7 @@ function renderProviderRow(providerId: string, index: number) {
   controls.append(
     rowButton('↑', t('provider.moveUp', { provider: providerName }), providerId, 'up', () => moveProvider(index, -1), index === 0),
     rowButton('↓', t('provider.moveDown', { provider: providerName }), providerId, 'down', () => moveProvider(index, 1), index === providerOrder.length - 1),
-    rowButton(t('provider.remove'), t('provider.remove', { provider: providerName }), providerId, 'remove', () => removeProvider(index), false, 'danger')
+    rowButton(t('provider.removeAction'), t('provider.remove', { provider: providerName }), providerId, 'remove', () => removeProvider(index), false, 'danger')
   )
   row.append(identity, controls)
   return row

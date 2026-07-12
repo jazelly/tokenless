@@ -493,7 +493,7 @@ test('agent skill is a daemon-only npx workflow with provider-only automatic nav
   assert.match(skill, /npx tokenless state/)
   assert.match(skill, /Rust daemon/)
   assert.match(skill, /only page Tokenless may open automatically is the selected provider's HTTPS UI/)
-  assert.match(skill, /Do not ask for or pass an extension id on normal `run`/)
+  assert.match(skill, /do not improvise a repair or request normal-run extension IDs/i)
   assert.match(skill, /--long-running/)
   assert.match(skill, /Do not use `--no-wait`/)
   assert.match(skill, /daemon_waiting/)
@@ -515,7 +515,7 @@ test('README and architecture describe the Rust daemon-only visible-session boun
     assert.match(text, /visible/)
     assert.doesNotMatch(text, /\/Users\/jazelly/)
   }
-  assert.match(readme, /npm install -g tokenless/)
+  assert.match(readme, /npx tokenless@latest setup/)
   assert.match(readme, /Noop|standalone/i)
   assert.match(chinese, /Rust daemon/)
   assert.match(chinese, /不会调用隐藏的 provider 后端接口/)

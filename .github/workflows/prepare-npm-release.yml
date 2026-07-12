@@ -1,0 +1,33 @@
+name: Prepare npm release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: tokenless-release-preparation
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          version: npm run release:version
+          commit: 'chore(release): version tokenless packages'
+          title: 'chore(release): version tokenless packages'
+          createGithubReleases: false
