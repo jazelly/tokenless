@@ -11,35 +11,44 @@
       <header class="hero" data-view="activity">
         <div class="hero-leading">
           <span id="page-status" class="status" data-tone="loading" role="status">Connecting…</span>
-          <nav class="view-tabs" aria-label="Tokenless panel views">
-            <button type="button" class="view-tab is-active" data-view="activity" aria-selected="true">Activity</button>
-            <button type="button" class="view-tab" data-view="settings" aria-selected="false">Settings</button>
+          <nav class="view-tabs" data-i18n-aria-label="navigation.label">
+            <button type="button" class="view-tab is-active" data-view="activity" data-i18n="navigation.activity" aria-selected="true">Activity</button>
+            <button type="button" class="view-tab" data-view="settings" data-i18n="navigation.settings" aria-selected="false">Settings</button>
           </nav>
         </div>
-        <button id="refresh" type="button" class="secondary-button">Refresh</button>
+        <div class="hero-actions">
+          <button id="refresh" type="button" class="secondary-button" data-i18n="action.refresh">Refresh</button>
+        </div>
       </header>
 
       <section class="panel" data-view-panel="settings" aria-labelledby="configuration-heading" hidden>
         <div class="section-heading">
           <div>
-            <h2 id="configuration-heading">Routing</h2>
-            <p>Provider preferences are stored locally on this computer.</p>
+            <h2 id="configuration-heading" data-i18n="settings.routing">Routing</h2>
+            <p data-i18n="settings.routingDescription">Provider preferences are stored locally on this computer.</p>
+          </div>
+        </div>
+        <div class="locale-preference">
+          <div class="locale-copy">
+            <strong data-i18n="language.label">Language</strong>
+            <span data-i18n="language.description">Uses Chrome's language until you choose an override.</span>
+          </div>
+          <div class="language-switch" role="group" data-i18n-aria-label="language.label">
+            <button type="button" class="language-button" data-locale="en" aria-pressed="false">EN</button>
+            <button type="button" class="language-button" data-locale="zh-CN" aria-pressed="false">中文</button>
+            <button type="button" class="language-default-button" data-use-browser-language="true" aria-pressed="true" data-i18n="language.useChromeDefault">Use Chrome default</button>
           </div>
         </div>
         <div id="configuration" aria-live="polite">
           <div class="state-card" data-state="loading">Loading configuration…</div>
         </div>
-        <aside class="safety-note" aria-label="ChatGPT control mode">
-          <strong>ChatGPT controls</strong>
-          <span>Default runs keep the visible model and Intelligence setting you selected in ChatGPT. For strict CLI selection, install the separate Debugger Control companion and pass its extension ID explicitly for that run; the ID is never saved here.</span>
-        </aside>
       </section>
 
       <section class="panel" data-view-panel="activity" aria-labelledby="history-heading">
         <div class="section-heading">
           <div>
-            <h2 id="history-heading">Recent activity</h2>
-            <p>Newest local jobs first. Prompts and answers are never shown here.</p>
+            <h2 id="history-heading" data-i18n="activity.recent">Recent activity</h2>
+            <p data-i18n="activity.description">Newest local jobs first. Prompts and answers are never shown here.</p>
           </div>
         </div>
         <div id="history" class="history" aria-live="polite">
@@ -52,7 +61,7 @@
           <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-.95-2.7-.95-.36-.93-.89-1.18-.89-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.87.88 2.33.67.07-.52.28-.88.51-1.08-1.78-.2-3.65-.89-3.65-3.96 0-.88.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.12 0 0 .68-.22 2.2.82A7.7 7.7 0 0 1 8 4.8c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.52.56.83 1.27.83 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.73.54 1.48v2.2c0 .21.14.45.55.38A8 8 0 0 0 8 0Z" />
           </svg>
-          <span>View Tokenless on GitHub</span>
+          <span data-i18n="github.link">View Tokenless on GitHub</span>
           <span class="external-mark" aria-hidden="true">↗</span>
         </a>
       </aside>
