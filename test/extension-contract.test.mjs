@@ -478,7 +478,7 @@ test('provider content uses only visible controls and snapshots a fail-closed re
           <div style="position:fixed;left:-9999px;top:0">
             <button data-testid="send-button" onclick="globalThis.__clicked.push('offscreen')">Offscreen send</button>
           </div>
-          <button data-testid="send-button" onclick="globalThis.__clicked.push('visible')">Visible send</button>
+          <button data-testid="send-button" onclick="globalThis.__clicked.push('visible'); this.disabled = true; this.setAttribute('aria-disabled', 'true')">Visible send</button>
           <div style="opacity:0">
             <div aria-label="captcha hidden-blocker-marker">hidden-blocker-text-marker</div>
           </div>
@@ -1002,7 +1002,9 @@ test('provider content uses only visible controls and snapshots a fail-closed re
           <div role="textbox" contenteditable="true"></div>
           <button data-testid="send-button">Send</button>
           <script>
-            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', (event) => {
+              event.currentTarget.disabled = true
+              event.currentTarget.setAttribute('aria-disabled', 'true')
               setTimeout(() => {
                 location.assign('https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174004?navigation-secret=yes#navigation-secret')
               }, 25)
@@ -1102,7 +1104,9 @@ test('provider content uses only visible controls and snapshots a fail-closed re
           <div role="textbox" contenteditable="true"></div>
           <button data-testid="send-button">Send</button>
           <script>
-            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', (event) => {
+              event.currentTarget.disabled = true
+              event.currentTarget.setAttribute('aria-disabled', 'true')
               setTimeout(() => {
                 location.assign('https://chatgpt.com/auth/login')
               }, 25)
@@ -1247,6 +1251,10 @@ test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade 
         const composer = document.querySelector('#prompt-textarea')
         const send = document.querySelector('[data-testid="send-button"]')
         composer.addEventListener('input', () => { send.disabled = composer.textContent.trim().length === 0 })
+        send.addEventListener('click', () => {
+          send.disabled = true
+          send.setAttribute('aria-disabled', 'true')
+        })
         const trigger = document.querySelector('#intelligence')
         let model = 'GPT-5.6 Sol'
         let effort = 1

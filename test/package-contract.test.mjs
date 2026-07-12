@@ -200,6 +200,12 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
     const installedNative = path.join(installDir, 'node_modules', packageName)
     assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'bin')), false)
     assert.equal(fs.existsSync(path.join(installedNative, 'bin', `tokenless-daemon${executableSuffix}`)), true)
+    if (process.platform !== 'win32') {
+      const installedBin = path.join(installDir, 'node_modules', '.bin', 'tokenless')
+      assert.ok((fs.statSync(installedBin).mode & 0o111) !== 0, 'npm bin target must be executable')
+      const cliHelp = spawnSync(installedBin, ['help'], { cwd: installDir, encoding: 'utf8' })
+      assert.equal(cliHelp.status, 0, cliHelp.stderr || cliHelp.stdout)
+    }
     const exports = await import(`${pathToFileURL(path.join(installedCli, 'dist/src/index.js')).href}?smoke=${Date.now()}`)
     const resolved = exports.resolveNativePlatformPackage()
     assert.equal(fs.realpathSync(resolved.root), fs.realpathSync(installedNative))

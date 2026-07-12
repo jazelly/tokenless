@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "npm run build:js && npm run build:native",
-    "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/src/tokenless.mjs',0o755)\"",
     "build:native": "node scripts/build-rust-binaries.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build:js"

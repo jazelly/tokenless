@@ -397,17 +397,28 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
   }
 
   const answerBaseline = answerSnapshot(provider)
+  const preSubmitUrl = publicPageUrl(location.href)
   if (!isActionableSubmit(submitButton)) {
     return selectorDrift('submit')
   }
   submissionBaselines.set(requestKey(request), answerBaseline)
   submitButton.click()
+  const submission = await waitForVisibleSubmission(provider, request, answerBaseline, preSubmitUrl)
+  if (!submission) {
+    return {
+      status: 'blocked',
+      stopReason: 'submission_unconfirmed',
+      message: 'The provider send control did not produce a visible submission signal.',
+      provider: provider.id,
+    }
+  }
   return {
     status: 'submitted',
     provider: provider.id,
     visible: true,
     configuration,
     answerBaseline,
+    submission,
     url: publicPageUrl(location.href),
   }
 }
@@ -627,22 +638,24 @@ async function openChatGptIntelligenceMenu() {
     : undefined
   if (!trigger) return null
   if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const menu = [...document.querySelectorAll('[role="menu"]')]
-      .find((candidate) => isVisible(candidate) && candidate.getAttribute('aria-labelledby') === trigger.id) as HTMLElement | undefined
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const menus = [...document.querySelectorAll('[role="menu"]')]
+      .filter((candidate) => isVisible(candidate)) as HTMLElement[]
+    const menu = menus.find((candidate) => candidate.getAttribute('aria-labelledby') === trigger.id)
+      ?? menus.find((candidate) => chatGptEffortChoices(candidate).length === CHATGPT_EFFORT_ORDER.length)
     if (menu) return { trigger, menu }
-    await delay(75)
+    await delay(100)
   }
   return null
 }
 
 async function openChatGptModelMenu(trigger: HTMLElement, parentMenu: HTMLElement) {
   trigger.click()
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
     const menu = [...document.querySelectorAll('[role="menu"]')]
       .find((candidate) => candidate !== parentMenu && isVisible(candidate)) as HTMLElement | undefined
     if (menu) return menu
-    await delay(75)
+    await delay(100)
   }
   return null
 }
@@ -760,7 +773,10 @@ function chatSurfaceStatus(
   const visibleSubmit = findFirstVisible(provider.submitSelectors)
   if (provider.id === 'chatgpt') {
     return {
-      ready: Boolean(visibleComposer && visibleSubmit),
+      // Current ChatGPT omits its send button until text is present. Landing and
+      // post-submit validation therefore require the visible composer; submission
+      // itself still waits for an actionable send button after inserting the prompt.
+      ready: Boolean(visibleComposer),
       checks: {
         composer: Boolean(visibleComposer),
         sendButton: Boolean(visibleSubmit),
@@ -949,6 +965,38 @@ async function waitForActionableSubmit(provider: ContentProvider, request: Conte
   return isActionableSubmit(button) ? button : null
 }
 
+async function waitForVisibleSubmission(
+  provider: ContentProvider,
+  request: ContentRecord,
+  baseline: ContentRecord,
+  preSubmitUrl: string
+) {
+  const timeoutMs = Math.min(Number(request.submissionConfirmTimeoutMs ?? 5000), 30000)
+  const expectedPrompt = normalizeText(String(request.prompt ?? ''))
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const composer = findFirstVisible(provider.composerSelectors)
+    const composerText = normalizeText(composer?.innerText || composer?.textContent || '')
+    const answers = answerSnapshot(provider)
+    const urlChanged = publicPageUrl(location.href) !== preSubmitUrl
+    const busy = isProviderBusy(provider)
+    const answerAdded = answers.count > baseline.count
+    const composerChanged = Boolean(expectedPrompt && composerText !== expectedPrompt)
+    const submitSettled = !isActionableSubmit(findFirstVisible(provider.submitSelectors))
+    if (urlChanged || busy || answerAdded || composerChanged || submitSettled) {
+      return {
+        urlChanged,
+        busy,
+        answerCount: answers.count,
+        composerChanged,
+        submitSettled,
+      }
+    }
+    await delay(100)
+  }
+  return null
+}
+
 function isActionableSubmit(node: HTMLElement | null): node is HTMLElement {
   return Boolean(
     isVisibleConnected(node) &&
@@ -1033,12 +1081,25 @@ function answerTexts(provider: ContentProvider) {
         const element = node as HTMLElement
         return normalizeText(element.innerText || element.textContent || '')
       })
-      .filter((text) => text.length > 0)
+      .filter(isLikelyAssistantAnswer)
     if (texts.length > 0) {
       return texts
     }
   }
   return []
+}
+
+function isLikelyAssistantAnswer(text: string) {
+  if (!text) return false
+  // ChatGPT may render its source-chip row inside an assistant message before
+  // the actual response. It is not an answer and must not satisfy the read
+  // loop merely because it is visible. Keep short legitimate answers intact.
+  const words = text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+  const sourceChipWords = new Set([
+    'open', 'reddit', 'github', 'openai', 'status', 'source', 'sources',
+    'link', 'links', 'web', 'website', 'search', 'result', 'results',
+  ])
+  return !(words.length >= 3 && words.every((word) => sourceChipWords.has(word)))
 }
 
 function selectorProbeSnapshot(provider: ContentProvider, { includeText = false }: { includeText?: boolean } = {}) {
