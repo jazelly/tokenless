@@ -1,6 +1,6 @@
 [package]
 name = "tokenless-daemon"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Local Tokenless control-plane daemon foundation backed by SQLite."
 license = "MIT"
