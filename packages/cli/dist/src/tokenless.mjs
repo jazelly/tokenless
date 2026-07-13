@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { DEFAULT_DAEMON_URL, MAX_NATIVE_MESSAGE_BYTES, NATIVE_PROTOCOL, buildTokenlessPrompt, cancelDaemonJob, createDaemonJob, daemonUrl, deriveTaskId, ensureDaemonReady, getDaemonJob, inspectNativeHostManifests, inspectRustBinaries, installRustRuntime, listDaemonJobs, normalizeBrowserId, openProviderUrl, persistDaemonSnapshot, providerWakeUrl, readLiveBridgeMarker, readTokenlessConfig, refreshInstalledRustBinaries, resolveChromiumBrowser, tokenlessHome, waitDaemonJobResult, waitForExtensionBridge, writeTokenlessConfig, } from './index.js';
+import { DEFAULT_DAEMON_URL, MAX_NATIVE_MESSAGE_BYTES, NATIVE_PROTOCOL, buildTokenlessPrompt, cancelDaemonJob, createDaemonJob, daemonUrl, deriveTaskId, ensureDaemonReady, executeDirectRun, getDaemonJob, inspectNativeHostManifests, inspectRustBinaries, installRustRuntime, listDaemonJobs, normalizeBrowserId, openProviderUrl, persistDaemonSnapshot, providerWakeUrl, readLiveBridgeMarker, readTokenlessConfig, refreshInstalledRustBinaries, resolveChromiumBrowser, tokenlessHome, waitDaemonJobResult, waitForExtensionBridge, writeTokenlessConfig, } from './index.js';
 import { DEFAULT_EXTENSION_ID } from './default-extension-id.js';
 const DEFAULT_RUN_TIMEOUT_MS = 180_000;
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000;
@@ -10,6 +11,7 @@ try {
     const argv = process.argv.slice(2);
     const command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help');
     args = parseArgs(argv);
+    assertCommandRoutingArguments(command, args);
     if (command === 'run') {
         await runCommand(args);
     }
@@ -58,7 +60,12 @@ catch (error) {
             retryable: Boolean(cliError.retryable),
         },
     };
-    if (cliError.status)
+    const upstreamStatus = cliError.upstreamStatus ?? (typeof cliError.status === 'number' ? cliError.status : undefined);
+    if (upstreamStatus !== undefined)
+        payload.error.status = upstreamStatus;
+    if (cliError.requestId)
+        payload.error.requestId = cliError.requestId;
+    if (typeof cliError.status === 'string' && cliError.status)
         payload.status = cliError.status;
     if (Array.isArray(cliError.statusLog))
         payload.statusLog = cliError.statusLog;
@@ -69,8 +76,105 @@ catch (error) {
     process.exit(1);
 }
 async function runCommand(args) {
+    const mode = normalizeRunMode(args.mode);
+    if (mode === 'direct') {
+        assertDirectRunArguments(args);
+        const prompt = await promptFromArgs(args);
+        await executeDirectCommand({ args, prompt });
+        return;
+    }
+    assertVisibleRunArguments(args);
     const prompt = await promptFromArgs(args);
     await executeDaemonJob({ args, action: args.action || 'submit_and_read', prompt });
+}
+async function executeDirectCommand({ args, prompt }) {
+    const provider = normalizeDirectProvider(args.provider || process.env.TOKENLESS_PROVIDER || 'chatgpt');
+    const backend = normalizeDirectBackend(args.directBackend, provider);
+    const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME;
+    const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME;
+    const taskId = deriveTaskId({
+        projectName,
+        chatName,
+        idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
+    }) ?? `direct:${randomUUID()}`;
+    const statusReporter = createCliStatusReporter(args);
+    const abortController = new AbortController();
+    const abort = () => abortController.abort();
+    process.once('SIGINT', abort);
+    process.once('SIGTERM', abort);
+    statusReporter.report({
+        event: 'direct_started',
+        status: 'running',
+        mode: 'direct',
+        taskId,
+        provider,
+        backend,
+    });
+    try {
+        const result = await executeDirectRun({
+            provider,
+            backend,
+            prompt,
+            ...(args.model === undefined ? {} : { model: String(args.model) }),
+            ...(args.maxOutputTokens === undefined ? {} : { maxOutputTokens: Number(args.maxOutputTokens) }),
+            ...(args.temperature === undefined ? {} : { temperature: Number(args.temperature) }),
+            signal: abortController.signal,
+        }, {
+            ...(args.directBaseUrl === undefined ? {} : { baseUrl: String(args.directBaseUrl) }),
+            ...(args.timeoutMs === undefined ? {} : { timeoutMs: Number(args.timeoutMs) }),
+        });
+        statusReporter.report({
+            event: 'direct_completed',
+            status: 'completed',
+            mode: 'direct',
+            taskId,
+            provider: result.provider,
+            backend: result.backend,
+            transport: result.transport,
+            capability: result.capability,
+        });
+        printPayload({
+            ok: true,
+            protocol: result.protocol,
+            mode: 'direct',
+            backend: result.backend,
+            transport: result.transport,
+            capability: result.capability,
+            taskId,
+            provider: result.provider,
+            projectName,
+            chatName,
+            idempotencyKey: taskId,
+            ...(result.model === undefined ? {} : { model: result.model }),
+            text: result.text,
+            result,
+            compactOutput: result.text,
+            status: 'completed',
+            statusLog: statusReporter.events,
+        }, args);
+    }
+    catch (error) {
+        const cliError = error;
+        if (typeof cliError.status === 'number')
+            cliError.upstreamStatus = cliError.status;
+        statusReporter.report({
+            event: 'direct_failed',
+            status: 'failed',
+            mode: 'direct',
+            taskId,
+            provider,
+            backend,
+            errorCode: cliError.code || 'tokenless_cli_error',
+            errorMessage: cliError.message,
+            retryable: Boolean(cliError.retryable),
+        });
+        attachStatusLog(cliError, statusReporter);
+        throw error;
+    }
+    finally {
+        process.removeListener('SIGINT', abort);
+        process.removeListener('SIGTERM', abort);
+    }
 }
 async function chatGptControlsCommand(args) {
     await executeDaemonJob({
@@ -781,6 +885,9 @@ function parseArgs(argv) {
         '--turn-context-file': 'turnContextFile',
         '--output': 'output',
         '--provider': 'provider',
+        '--mode': 'mode',
+        '--direct-backend': 'directBackend',
+        '--direct-base-url': 'directBaseUrl',
         '--preferred-providers': 'preferredProviders',
         '--action': 'action',
         '--target-url': 'targetUrl',
@@ -803,6 +910,8 @@ function parseArgs(argv) {
         '--read-timeout-ms': 'readTimeoutMs',
         '--max-text-chars': 'maxTextChars',
         '--model': 'model',
+        '--max-output-tokens': 'maxOutputTokens',
+        '--temperature': 'temperature',
         '--model-fallback': 'modelFallbacks',
         '--effort': 'effort',
         '--thinking-effort': 'thinkingEffort',
@@ -837,7 +946,7 @@ function parseArgs(argv) {
             continue;
         }
         throw usageError(arg === '--no-daemon' ? 'daemon_only' : 'unknown_argument', arg === '--no-daemon'
-            ? 'Tokenless is daemon-only; --no-daemon and local task-page fallback were removed.'
+            ? 'Visible mode is daemon-only; --no-daemon and local task-page fallback remain removed. Use --mode direct for daemon-free execution.'
             : `Unknown Tokenless argument: ${arg}`);
     }
     return parsed;
@@ -885,6 +994,95 @@ function normalizeProvider(provider) {
         throw usageError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini.');
     }
     return normalized;
+}
+function assertCommandRoutingArguments(command, args) {
+    if (command === 'run')
+        return;
+    const directOnly = [
+        ['mode', '--mode'],
+        ['directBackend', '--direct-backend'],
+        ['directBaseUrl', '--direct-base-url'],
+        ['maxOutputTokens', '--max-output-tokens'],
+        ['temperature', '--temperature'],
+    ];
+    const selected = directOnly.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag);
+    if (selected.length === 0)
+        return;
+    throw usageError('direct_options_require_run', `${selected.join(', ')} is accepted only by the run command.`);
+}
+function normalizeRunMode(mode) {
+    const normalized = mode === undefined ? 'visible' : String(mode).trim().toLowerCase();
+    if (normalized !== 'visible' && normalized !== 'direct') {
+        throw usageError('invalid_run_mode', '--mode must be visible or direct.');
+    }
+    return normalized;
+}
+function normalizeDirectProvider(provider) {
+    const normalized = String(provider).trim().toLowerCase();
+    if (!['chatgpt', 'claude', 'gemini', 'grok', 'antigravity'].includes(normalized)) {
+        throw usageError('direct_unsupported_provider', 'Direct provider must be one of: chatgpt, claude, gemini, grok, antigravity.');
+    }
+    return normalized;
+}
+function normalizeDirectBackend(value, provider) {
+    if (value === undefined)
+        return provider === 'chatgpt' ? 'official-client' : 'api';
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized !== 'official-client' && normalized !== 'api') {
+        throw usageError('invalid_direct_backend', '--direct-backend must be official-client or api.');
+    }
+    return normalized;
+}
+function directVisibleOnlyArguments() {
+    return [
+        ['action', '--action'],
+        ['preferredProviders', '--preferred-providers'],
+        ['targetUrl', '--target-url'],
+        ['jobId', '--job-id'],
+        ['limit', '--limit'],
+        ['extensionId', '--extension-id'],
+        ['browser', '--browser'],
+        ['browsers', '--browsers'],
+        ['manifestHome', '--manifest-home'],
+        ['home', '--home'],
+        ['daemonUrl', '--daemon-url'],
+        ['daemonStartTimeoutMs', '--daemon-start-timeout-ms'],
+        ['cancelTimeoutMs', '--cancel-timeout-ms'],
+        ['bridgeTimeoutMs', '--bridge-timeout-ms'],
+        ['readDelayMs', '--read-delay-ms'],
+        ['readTimeoutMs', '--read-timeout-ms'],
+        ['maxTextChars', '--max-text-chars'],
+        ['modelFallbacks', '--model-fallback'],
+        ['effort', '--effort'],
+        ['thinkingEffort', '--thinking-effort'],
+        ['chatSurface', '--chat-surface'],
+        ['debuggerControlExtensionId', '--debugger-control-extension-id'],
+        ['includeText', '--include-text'],
+        ['noOpen', '--no-open'],
+        ['noWait', '--no-wait'],
+        ['longRunning', '--long-running'],
+        ['output', '--output'],
+    ];
+}
+function assertDirectRunArguments(args) {
+    const selected = directVisibleOnlyArguments()
+        .filter(([key]) => args[key] !== undefined)
+        .map(([, flag]) => flag);
+    if (selected.length > 0) {
+        throw usageError('direct_visible_option', `Direct mode does not accept visible-session option${selected.length === 1 ? '' : 's'}: ${selected.join(', ')}.`);
+    }
+}
+function assertVisibleRunArguments(args) {
+    const directOnly = [
+        ['directBackend', '--direct-backend'],
+        ['directBaseUrl', '--direct-base-url'],
+        ['maxOutputTokens', '--max-output-tokens'],
+        ['temperature', '--temperature'],
+    ];
+    const selected = directOnly.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag);
+    if (selected.length > 0) {
+        throw usageError('direct_option_requires_direct_mode', `${selected.join(', ')} requires --mode direct.`);
+    }
 }
 function requiredChatGptProvider(args) {
     if (args.provider !== undefined && normalizeProvider(args.provider) !== 'chatgpt') {
@@ -959,6 +1157,10 @@ function normalizeStatusEvent(event, startedAt) {
         at: now.toISOString(),
         event: event.event || event.type || 'status',
         status: event.status,
+        mode: event.mode,
+        backend: event.backend,
+        transport: event.transport,
+        capability: event.capability,
         jobId: event.jobId,
         taskId: event.taskId,
         provider: event.provider ?? event.detail?.provider,
@@ -979,6 +1181,8 @@ function formatStatusEvent(event) {
     const parts = ['[tokenless]', event.event];
     for (const [key, value] of [
         ['status', event.status],
+        ['mode', event.mode],
+        ['backend', event.backend],
         ['provider', event.provider],
         ['action', event.action],
         ['taskId', event.taskId],
@@ -1011,6 +1215,9 @@ function attachStatusLog(error, statusReporter) {
 function usage() {
     console.error([
         'Usage:',
+        '  tokenless run [--mode visible] --provider chatgpt --prompt <text> --json',
+        '  tokenless run --mode direct --provider chatgpt [--model <codex-model>] --prompt <text> --json',
+        '  TOKENLESS_DIRECT_CHATGPT_API_KEY=... tokenless run --mode direct --direct-backend api --provider chatgpt --model <api-model> [--direct-base-url <url>] [--max-output-tokens <count>] [--temperature <0..2>] --prompt <text> --json',
         '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
         '  tokenless run --provider chatgpt --model <visible-model> --model-fallback <model,...> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
         '  tokenless run --provider chatgpt --debugger-control-extension-id <companion-extension-id> --model <visible-model> --effort <level> --prompt <text> --json',

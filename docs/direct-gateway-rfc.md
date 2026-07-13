@@ -144,9 +144,13 @@ tokenless run \
   --json
 ```
 
-Tokenless invokes `codex exec` with the prompt on stdin, an isolated empty working directory, read-only sandboxing, ephemeral sessions, ignored user configuration/rules, and machine-readable output. Codex alone owns its OAuth credential store and upstream HTTP. Tokenless does not read `auth.json`, a keychain, access tokens, or refresh tokens.
+Tokenless invokes `codex exec` with the prompt on stdin, an isolated empty working directory, no execution environment, an explicit deny-by-default permission profile, ephemeral sessions, ignored user configuration/rules, and machine-readable output. The profile denies the filesystem root and sandboxed network access. Tokenless explicitly disables Codex skills, MCP, hooks, plugins, apps, browser/computer control, hosted search/image generation, collaboration, and shell features. A loopback-only Responses canary inspects the installed client's actual tool schema before authentication or inference and accepts only the inert planning tool. The legacy Codex `read-only` sandbox is not used because it permits host-wide reads. Codex alone owns its OAuth credential store and upstream HTTP. Tokenless does not read `auth.json`, a keychain, access tokens, or refresh tokens.
 
-`TOKENLESS_CODEX_BIN` may select an installed Codex executable by path. Tokenless checks the executable's supported flags and fails with an upgrade instruction when the installed client cannot provide the isolation contract; it never falls back to weaker arguments.
+The official-client backend currently fails closed on Windows because npm's command shim and descendant-process isolation do not provide the same direct-executable and process-group guarantees. Windows users can use the public API backend. The official-client backend is supported on macOS and Linux.
+
+`TOKENLESS_CODEX_BIN` may select a trusted installed Codex executable by path. Tokenless checks the executable's supported flags and features, proves that its root-deny profile blocks local process execution, checks provider-owned login status, requires ChatGPT authentication for this backend, and fails with an upgrade or login instruction when the client cannot provide the contract. Every Codex subprocess receives a small positive environment allowlist; API keys, endpoint overrides, proxy overrides, dynamic-loader variables, and Node injection variables are not inherited. Model-generated commands inherit none of Tokenless's parent environment, and filesystem-capable tools remain confined by the permission profile. API users select `--direct-backend api`. Tokenless never falls back to weaker arguments.
+
+Codex 0.143 does not provide a flag that suppresses `$CODEX_HOME/AGENTS.override.md` or `$CODEX_HOME/AGENTS.md` independently of its credential home. The official-client backend therefore preserves that provider-owned global-instructions behavior. Those user-authored instructions may influence the answer and are sent by Codex alongside the prompt. Tokenless does not open or parse them. Public API backends do not load Codex instructions.
 
 The API backend is explicit for ChatGPT:
 
@@ -222,6 +226,7 @@ type DirectRunRequest = {
 It returns protocol `tokenless.direct.v1` with:
 
 - the selected backend;
+- an explicit capability id (`openai.codex` for the official client and `openai.responses` for the ChatGPT API backend) so the two products are never represented as interchangeable;
 - provider and model;
 - normalized assistant text;
 - normalized usage where the upstream reports it;
@@ -247,6 +252,7 @@ An `official-client` adapter is admitted only when all of these are true:
 - authentication and token refresh remain entirely inside provider-owned code;
 - the interface has machine-readable, versionable output;
 - Tokenless can isolate filesystem, rules, hooks, plugins, and tool privileges;
+- the installed client passes Tokenless's fail-closed loopback tool-schema and permission-profile canaries before authentication or inference;
 - the adapter does not copy a first-party OAuth client, endpoint, header fingerprint, or credential cache; and
 - the adapter is not exposed by the local API broker.
 
@@ -256,10 +262,10 @@ At the reviewed date, only OpenAI Codex passes this gate for this initiative. Ot
 
 | Tokenless provider | Direct path | Request protocol | Text extraction |
 | --- | --- | --- | --- |
-| `chatgpt` | `/v1/responses` | OpenAI Responses | `output_text`, then output content |
+| `chatgpt` | `/v1/responses` | OpenAI Responses | `output_text` content blocks only |
 | `claude` | `/v1/messages` | Anthropic Messages | text content blocks |
 | `gemini` | `/v1beta/models/{model}:generateContent` | Gemini Content | candidate text parts |
-| `grok` | `/v1/responses` | OpenAI Responses | `output_text`, then output content |
+| `grok` | `/v1/responses` | OpenAI Responses | `output_text` content blocks only |
 | `antigravity` + Claude model | `/antigravity/v1/messages` | Anthropic Messages | text content blocks |
 | `antigravity` + Gemini model | `/antigravity/v1beta/models/{model}:generateContent` | Gemini Content | candidate text parts |
 
@@ -326,7 +332,7 @@ Errors may include upstream HTTP status, a bounded sanitized provider message, r
 - URL normalization, HTTPS/loopback policy, and path joining.
 - Environment precedence without secret persistence.
 - Exact provider paths, documented headers, and request bodies.
-- Codex subprocess arguments, stdin prompt delivery, isolated working directory, cancellation, output validation, and credential non-access.
+- Codex subprocess arguments, exact child environment, stdin prompt delivery, isolated working directory, permission-profile canary, cancellation, process-tree termination, output validation, and credential non-access.
 - Response normalization for all provider protocols.
 - Bounded and redacted error handling.
 - Timeout and abort behavior.
@@ -345,7 +351,7 @@ A local HTTP fixture will act as a public compatible gateway. Tests use real soc
 
 ### Optional live proof
 
-An opt-in test runs only when the operator supplies a disposable compatible-gateway URL, API key, provider, and model. It never reads provider browser or CLI credentials. CI does not require paid-provider traffic.
+An opt-in API test runs only when the operator supplies a disposable compatible-gateway URL, API key, provider, and model. A separate opt-in Codex test invokes the provider-owned executable and lets that executable use its own existing ChatGPT login; Tokenless never opens or copies its credential store. CI does not require paid-provider traffic.
 
 ## Milestones
 
