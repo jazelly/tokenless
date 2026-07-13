@@ -61,6 +61,11 @@ test('npm publishing is marker-gated, platform-complete, and cleans up in a seco
   }
 })
 
+test('npm publisher invokes Windows npm through a shell', () => {
+  const publisher = readText('scripts/release/publish-package.mjs')
+  assert.match(publisher, /shell: process\.platform === 'win32'/)
+})
+
 test('publish verification is a no-op without the tracked release marker', () => {
   const pending = path.join(root, '.changeset', 'publish-pending.json')
   assert.equal(fs.existsSync(pending), false)

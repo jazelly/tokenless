@@ -11,10 +11,15 @@ if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') {
   throw new Error(`${manifestPath} must declare a package name and version.`)
 }
 
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const npm = 'npm'
+const npmOptions = {
+  encoding: 'utf8',
+  // npm.cmd is not directly executable by child_process on Windows.
+  shell: process.platform === 'win32',
+}
 const packageSpec = `${manifest.name}@${manifest.version}`
 const lookup = spawnSync(npm, ['view', packageSpec, 'version', '--json', '--registry=https://registry.npmjs.org'], {
-  encoding: 'utf8',
+  ...npmOptions,
 })
 
 if (lookup.status === 0) {
@@ -31,7 +36,7 @@ if (!/E404|404 Not Found/.test(`${lookup.stdout}\n${lookup.stderr}`)) {
 }
 
 const publish = spawnSync(npm, ['publish', packageDirectory, '--access=public'], {
-  encoding: 'utf8',
+  ...npmOptions,
   stdio: 'inherit',
 })
 if (publish.status !== 0) process.exit(publish.status ?? 1)
