@@ -94,6 +94,7 @@ jobs:
         run: |
           # Native packages are published immediately before this job, so refresh
           # their optional-dependency entries before performing a clean install.
+          rm package-lock.json
           npm install --package-lock-only --ignore-scripts
           npm ci --ignore-scripts
       - name: Configure npm token fallback for first publication
@@ -128,6 +129,7 @@ jobs:
           git checkout -B main origin/main
           node scripts/release/verify-pending.mjs /tmp/release-output
           grep -Fx "version=$VERSION" /tmp/release-output
+          rm package-lock.json
           npm install --package-lock-only --ignore-scripts
           git rm .changeset/publish-pending.json
           git add package-lock.json

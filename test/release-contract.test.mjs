@@ -52,6 +52,7 @@ test('npm publishing is marker-gated, platform-complete, and cleans up in a seco
   assert.match(publish, /id-token: write/)
   assert.match(publish, /\.changeset\/publish-pending\.json/)
   assert.match(publish, /needs: \[prepare, publish-native\]/)
+  assert.match(publish, /rm package-lock\.json/)
   assert.match(publish, /npm install --package-lock-only --ignore-scripts/)
   assert.match(publish, /git rm \.changeset\/publish-pending\.json/)
   assert.match(publish, /git add package-lock\.json/)
