@@ -8,9 +8,39 @@ Tokenless is a standalone CLI with two isolated transports: visible browser sess
 
 You need Node.js 22+. Visible mode additionally requires the Tokenless extension installed and enabled in Chrome, Brave, Edge, Arc, or Chromium; the extension and your provider sign-in are its only manual browser steps. Direct-only use does not require the extension or a browser.
 
-Install the CLI with `npm install --global tokenless@latest`, or invoke it with `npx tokenless@latest`. The extension setup skill below is for visible mode.
+### 1. npm CLI (recommended)
 
-For visible mode, install the Tokenless setup skill:
+```bash
+npm install --global tokenless@latest
+tokenless setup --json
+tokenless doctor --json
+```
+
+`setup` opens the selected provider page when necessary. Complete any visible login or permission prompt, then let `doctor` confirm the browser bridge.
+
+### 2. npx (no global install)
+
+```bash
+npx tokenless@latest setup --json
+npx tokenless@latest doctor --json
+```
+
+### 3. Raw GitHub installer (system-wide npm install)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
+```
+
+Because this command executes with `sudo`, [review the installer source](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh) before running it. The script installs the CLI system-wide but deliberately does **not** run browser setup as root. Return to your normal desktop account, then run:
+
+```bash
+tokenless setup --json
+tokenless doctor --json
+```
+
+### 4. Required agent skill
+
+Install the Tokenless setup skill:
 
 ```bash
 npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless-install --yes

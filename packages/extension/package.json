@@ -1,6 +1,6 @@
 {
   "name": "tokenless-browser-session-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Visible browser-session bridge extension and protocol for user-authorized web AI sessions.",
   "private": true,
   "type": "module",

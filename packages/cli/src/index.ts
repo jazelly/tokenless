@@ -138,6 +138,97 @@ export type {
   OfficialCodexOptions,
 } from './direct/official-client.js'
 
+export {
+  ACCOUNT_POOL_PROTOCOL,
+  AccountPoolError,
+  AccountPoolStore,
+  accountPoolAccountLockPath,
+  accountPoolDirectDirectory,
+  accountPoolProfilePath,
+  accountPoolStatePath,
+  apiCredentialEnvironmentName,
+  normalizeAccountId,
+  normalizeRoutingDomain,
+  withProcessLocalAccountPoolSerialization,
+} from './direct/account-pool.js'
+
+export type {
+  AccountPoolProtocol,
+  AccountPoolSerialization,
+  AccountPoolSnapshot,
+  AccountRecord,
+  AccountResolution,
+  AccountStatus,
+  ApiAccountRecord,
+  BindingAssignment,
+  CodexAccountRecord,
+  MigrationResult,
+  ProjectBinding,
+  ProjectFailoverPolicy,
+} from './direct/account-pool.js'
+
+export {
+  AccountPoolLockError,
+  accountPoolLockPath,
+  createSqliteAccountPoolSerialization,
+} from './direct/account-pool-lock.js'
+
+export type { SqliteAccountPoolSerializationOptions } from './direct/account-pool-lock.js'
+
+export {
+  CODEX_ACCOUNT_CREDENTIAL_STORE,
+  CODEX_IDENTITY_FINGERPRINT_VERSION,
+  CODEX_IDENTITY_KEY_BYTES,
+  CodexProfileError,
+  assertManagedCodexHome,
+  codexIdentityKeyPath,
+  createManagedCodexHome,
+  directAccountStateDir,
+  fingerprintCodexIdentity,
+  inspectCodexAccount,
+  managedCodexHome,
+  readCodexIdentityKey,
+  readOrCreateCodexIdentityKey,
+  resolveTrustedCodexCommand,
+  resolveTrustedCodexExecutable,
+} from './direct/codex-profile.js'
+
+export type {
+  CodexAccountObservation,
+  InspectCodexAccountOptions,
+  TrustedCodexCommand,
+} from './direct/codex-profile.js'
+
+export {
+  CodexAccountAdminError,
+  addManagedCodexAccount,
+  chatGptInferenceLockPath,
+  chatGptLoginLockPath,
+  createManagedAccountPoolStore,
+  inspectManagedCodexAccount,
+  loginManagedCodexAccount,
+  publicAccountRecord,
+} from './direct/codex-account-admin.js'
+
+export type {
+  CodexAccountAdminOptions,
+  CodexAccountHealth,
+  CodexAccountStatus,
+} from './direct/codex-account-admin.js'
+
+export {
+  DEFAULT_SQLITE_LOCK_TIMEOUT_MS,
+  MAX_SQLITE_LOCK_TIMEOUT_MS,
+  SqliteLockError,
+  resolveSqliteLockTimeout,
+  withSqliteLocks,
+} from './direct/sqlite-lock.js'
+
+export type {
+  SqliteLockErrorCode,
+  WithSqliteLocksOptions,
+} from './direct/sqlite-lock.js'
+
 export { DIRECT_PROTOCOL, DirectError } from './direct/types.js'
 
 export type {

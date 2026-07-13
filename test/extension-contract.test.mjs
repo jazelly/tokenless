@@ -46,7 +46,7 @@ test('debugger companion manifest has a deliberately narrow, separate privilege 
   assert.equal(manifest.options_ui, undefined)
   assert.match(manifest.background.service_worker, /^background\//)
   assert.deepEqual(manifest.externally_connectable, {
-    ids: ['afpfljlnhlpkbkmgonoanbmcdmmfmoam'],
+    ids: ['cgiocagnojoiblhlkmdjacklcmpbbimf'],
   })
 })
 
@@ -1642,7 +1642,7 @@ test('background enables the Settings side panel and jobs create only approved p
       type: 'tokenless.bridge.trusted_click',
       request: {
         provider: 'chatgpt',
-        debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+        debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
         expectedUrl: 'https://chatgpt.com/c/visible-chat',
         x: 320,
         y: 640,
@@ -1652,7 +1652,7 @@ test('background enables the Settings side panel and jobs create only approved p
     }, { tab: { id: 42, url: 'https://chatgpt.com/c/visible-chat' } })
     assert.deepEqual(trustedClick, { ok: true })
     assert.deepEqual(forwardedDebuggerMessages, [{
-      extensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+      extensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
       payload: {
         type: 'tokenless.debugger-control.trusted_click.v1',
         tabId: 42,
@@ -2066,7 +2066,7 @@ test('debugger companion accepts only the approved extension and dispatches one 
       expectedUrl: 'https://chatgpt.com/c/visible-chat',
       x: 320,
       y: 640,
-    }, { id: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam' })
+    }, { id: 'cgiocagnojoiblhlkmdjacklcmpbbimf' })
     assert.deepEqual(response, { ok: true })
     assert.deepEqual(calls, [
       { kind: 'attach', target: { tabId: 42 }, version: '1.3' },
@@ -2132,10 +2132,10 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
   assert.equal(chatGptControls.request.effort, 'extra_high')
   const debuggerControl = validateBridgeRequest({
     ...baseRequest,
-    debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+    debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
   })
   assert.equal(debuggerControl.ok, true)
-  assert.equal(debuggerControl.request.debuggerControlExtensionId, 'afpfljlnhlpkbkmgonoanbmcdmmfmoam')
+  assert.equal(debuggerControl.request.debuggerControlExtensionId, 'cgiocagnojoiblhlkmdjacklcmpbbimf')
   for (const malformedControls of [
     { ...baseRequest, chatSurface: 'work' },
     { ...baseRequest, effort: 'maximum' },
@@ -2143,7 +2143,7 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     { ...baseRequest, modelFallbacks: 'GPT-5.5' },
     { ...baseRequest, modelFallbacks: Array.from({ length: 9 }, () => 'GPT-5.5') },
     { ...baseRequest, provider: 'gemini', effort: 'high' },
-    { ...baseRequest, provider: 'gemini', debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam' },
+    { ...baseRequest, provider: 'gemini', debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf' },
     { ...baseRequest, debuggerControlExtensionId: 'not-an-extension-id' },
     { ...baseRequest, provider: 'gemini', action: 'inspect_chatgpt_controls' },
   ]) {

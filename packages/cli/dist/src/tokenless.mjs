@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { DEFAULT_DAEMON_URL, DEFAULT_DIRECT_BROKER_HOST, DEFAULT_DIRECT_BROKER_PORT, DIRECT_BROKER_PROTOCOL, MAX_NATIVE_MESSAGE_BYTES, NATIVE_PROTOCOL, buildTokenlessPrompt, cancelDaemonJob, createDaemonJob, daemonUrl, deriveTaskId, ensureDaemonReady, executeDirectRun, getDaemonJob, inspectNativeHostManifests, inspectRustBinaries, installRustRuntime, listDaemonJobs, normalizeBrowserId, openProviderUrl, persistDaemonSnapshot, providerWakeUrl, readLiveBridgeMarker, readTokenlessConfig, refreshInstalledRustBinaries, resolveChromiumBrowser, startDirectBroker, tokenlessHome, waitDaemonJobResult, waitForExtensionBridge, writeTokenlessConfig, } from './index.js';
+import { DEFAULT_DAEMON_URL, DEFAULT_DIRECT_BROKER_HOST, DEFAULT_DIRECT_BROKER_PORT, DIRECT_BROKER_PROTOCOL, MAX_NATIVE_MESSAGE_BYTES, NATIVE_PROTOCOL, addManagedCodexAccount, buildTokenlessPrompt, cancelDaemonJob, createDaemonJob, createManagedAccountPoolStore, daemonUrl, deriveTaskId, ensureDaemonReady, executeDirectRun, getDaemonJob, inspectNativeHostManifests, inspectManagedCodexAccount, inspectRustBinaries, installRustRuntime, listDaemonJobs, loginManagedCodexAccount, normalizeBrowserId, normalizeAccountId, openProviderUrl, persistDaemonSnapshot, providerWakeUrl, publicAccountRecord, readLiveBridgeMarker, readTokenlessConfig, refreshInstalledRustBinaries, resolveChromiumBrowser, startDirectBroker, tokenlessHome, waitDaemonJobResult, waitForExtensionBridge, writeTokenlessConfig, } from './index.js';
 import { DEFAULT_EXTENSION_ID } from './default-extension-id.js';
 const DEFAULT_RUN_TIMEOUT_MS = 180_000;
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000;
@@ -10,9 +10,16 @@ let args = { files: [], json: process.argv.includes('--json') };
 try {
     const argv = process.argv.slice(2);
     const command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help');
+    const subcommand = command === 'accounts' || command === 'projects' ? argv.shift() : undefined;
     args = parseArgs(argv);
     assertCommandRoutingArguments(command, args);
-    if (command === 'run') {
+    if (command === 'accounts') {
+        await accountsCommand(subcommand, args);
+    }
+    else if (command === 'projects') {
+        await projectsCommand(subcommand, args);
+    }
+    else if (command === 'run') {
         await runCommand(args);
     }
     else if (command === 'serve') {
@@ -77,6 +84,203 @@ catch (error) {
     else
         console.error(`${payload.error.code}: ${payload.error.message}`);
     process.exit(1);
+}
+async function accountsCommand(subcommand, args) {
+    assertAccountCommandArguments(subcommand, args);
+    const homeDir = tokenlessHome(args.home);
+    const storeOptions = {
+        homeDir,
+        ...(args.lockTimeoutMs === undefined ? {} : { lockTimeoutMs: Number(args.lockTimeoutMs) }),
+    };
+    const store = createManagedAccountPoolStore(storeOptions);
+    if (subcommand === 'add') {
+        const provider = normalizeDirectProvider(args.provider);
+        const accountId = requiredAdminValue(args.account, '--account');
+        const driver = normalizeAccountDriver(args.driver, provider);
+        if (driver === 'official-codex') {
+            if (provider !== 'chatgpt') {
+                throw usageError('account_driver_invalid', 'The official-codex account driver supports only provider chatgpt.');
+            }
+            if (args.routingDomain !== undefined || args.maxConcurrency !== undefined) {
+                throw usageError('account_driver_option_invalid', 'Official Codex accounts do not accept --routing-domain or --max-concurrency.');
+            }
+            const account = await addManagedCodexAccount({
+                accountId,
+                ...(args.label === undefined ? {} : { label: String(args.label) }),
+                enabled: args.disabled !== true,
+            }, storeOptions);
+            printPayload({
+                ok: true,
+                account: publicAccountRecord(account),
+                next: `tokenless accounts login --provider chatgpt --account ${account.accountId}`,
+            }, args);
+            return;
+        }
+        const routingDomain = requiredAdminValue(args.routingDomain, '--routing-domain');
+        const account = await store.addApiAccount({
+            provider,
+            accountId,
+            routingDomain,
+            enabled: args.disabled !== true,
+            ...(args.label === undefined ? {} : { label: String(args.label) }),
+            ...(args.maxConcurrency === undefined ? {} : { maxConcurrency: Number(args.maxConcurrency) }),
+        });
+        printPayload({
+            ok: true,
+            account: publicAccountRecord(account),
+            next: `Set ${account.credentialEnv} in the broker process environment.`,
+        }, args);
+        return;
+    }
+    if (subcommand === 'login') {
+        const provider = normalizeDirectProvider(args.provider);
+        if (provider !== 'chatgpt') {
+            throw usageError('account_login_unsupported', 'Provider-owned login is currently supported only for chatgpt.');
+        }
+        const accountId = requiredAdminValue(args.account, '--account');
+        const status = await loginManagedCodexAccount(accountId, {
+            ...storeOptions,
+            ...(args.loginTimeoutMs === undefined ? {} : { loginTimeoutMs: Number(args.loginTimeoutMs) }),
+            deviceAuth: args.deviceAuth === true,
+        });
+        printPayload({ ok: true, account: status }, args);
+        return;
+    }
+    if (subcommand === 'status') {
+        const provider = normalizeDirectProvider(args.provider);
+        const accountId = requiredAdminValue(args.account, '--account');
+        const account = (await store.listAccounts({ provider }))
+            .find((candidate) => candidate.accountId === normalizeAdminAccountId(accountId));
+        if (account === undefined)
+            throw usageError('account_pool_not_found', `Account ${provider}/${accountId} was not found.`);
+        if (account.driver === 'official-codex') {
+            const status = await inspectManagedCodexAccount(account.accountId, storeOptions);
+            printPayload({ ok: status.health === 'healthy', account: status }, args);
+            if (status.health !== 'healthy')
+                process.exitCode = 1;
+            return;
+        }
+        const ok = account.enabled && Boolean(process.env[account.credentialEnv]);
+        printPayload({
+            ok,
+            account: {
+                ...publicAccountRecord(account),
+                health: account.enabled
+                    ? (process.env[account.credentialEnv] ? 'configured' : 'credential_missing')
+                    : 'disabled',
+                credentialConfigured: Boolean(process.env[account.credentialEnv]),
+            },
+        }, args);
+        if (!ok)
+            process.exitCode = 1;
+        return;
+    }
+    if (subcommand === 'list') {
+        const provider = args.provider === undefined ? undefined : normalizeDirectProvider(args.provider);
+        const accounts = await store.listAccounts(provider === undefined ? {} : { provider });
+        printPayload({ ok: true, accounts: accounts.map(publicAccountRecord) }, args);
+        return;
+    }
+    if (subcommand === 'enable' || subcommand === 'disable') {
+        const provider = normalizeDirectProvider(args.provider);
+        const accountId = requiredAdminValue(args.account, '--account');
+        const account = await store[subcommand === 'enable' ? 'enableAccount' : 'disableAccount']({ provider, accountId });
+        printPayload({ ok: true, account: publicAccountRecord(account) }, args);
+        return;
+    }
+    if (subcommand === 'remove') {
+        const provider = normalizeDirectProvider(args.provider);
+        const accountId = requiredAdminValue(args.account, '--account');
+        const account = await store.removeAccount({ provider, accountId });
+        printPayload({
+            ok: true,
+            account: publicAccountRecord(account),
+            ...(account.driver === 'official-codex' ? {
+                warning: 'The provider-owned managed profile remains on disk; Tokenless never deletes credential state implicitly.',
+            } : {}),
+        }, args);
+        return;
+    }
+    throw usageError('account_command_invalid', 'Accounts subcommand must be add, login, status, list, enable, disable, or remove.');
+}
+async function projectsCommand(subcommand, args) {
+    assertProjectCommandArguments(subcommand, args);
+    const homeDir = tokenlessHome(args.home);
+    const store = createManagedAccountPoolStore({
+        homeDir,
+        ...(args.lockTimeoutMs === undefined ? {} : { lockTimeoutMs: Number(args.lockTimeoutMs) }),
+    });
+    if (subcommand === 'pin') {
+        const resolution = await store.pinProject({
+            projectId: requiredAdminValue(args.project, '--project'),
+            provider: normalizeDirectProvider(args.provider),
+            accountId: requiredAdminValue(args.account, '--account'),
+            ...(args.failoverPolicy === undefined ? {} : { failoverPolicy: normalizeFailoverPolicy(args.failoverPolicy) }),
+        });
+        printPayload({ ok: true, project: publicProjectResolution(resolution) }, args);
+        return;
+    }
+    if (subcommand === 'resolve') {
+        const resolution = await store.resolve({
+            projectId: requiredAdminValue(args.project, '--project'),
+            provider: normalizeDirectProvider(args.provider),
+        });
+        if (resolution === null)
+            throw usageError('account_pool_not_found', 'The project/provider binding was not found.');
+        printPayload({ ok: true, project: publicProjectResolution(resolution) }, args);
+        return;
+    }
+    if (subcommand === 'unpin') {
+        const binding = await store.unpinProject({
+            projectId: requiredAdminValue(args.project, '--project'),
+            provider: normalizeDirectProvider(args.provider),
+        });
+        printPayload({
+            ok: true,
+            removed: binding === null ? null : publicProjectBinding(binding),
+        }, args);
+        return;
+    }
+    if (subcommand === 'list') {
+        const projectId = args.project === undefined ? undefined : String(args.project);
+        const provider = args.provider === undefined ? undefined : normalizeDirectProvider(args.provider);
+        const snapshot = await store.readSnapshot();
+        const accountByInternalId = new Map(snapshot.accounts.map((account) => [account.internalId, account]));
+        const projects = snapshot.bindings
+            .filter((binding) => ((projectId === undefined || binding.projectId === projectId) &&
+            (provider === undefined || binding.provider === provider)))
+            .map((binding) => {
+            const account = accountByInternalId.get(binding.accountInternalId);
+            if (account === undefined)
+                throw usageError('account_pool_invalid', 'A project binding references an unknown account.');
+            return {
+                ...publicProjectBinding(binding),
+                accountId: account.accountId,
+                driver: account.driver,
+            };
+        });
+        printPayload({ ok: true, projects }, args);
+        return;
+    }
+    throw usageError('project_command_invalid', 'Projects subcommand must be pin, resolve, list, or unpin.');
+}
+function publicProjectResolution(resolution) {
+    return {
+        ...publicProjectBinding(resolution.binding),
+        accountId: resolution.account.accountId,
+        driver: resolution.account.driver,
+    };
+}
+function publicProjectBinding(binding) {
+    return {
+        projectId: binding.projectId,
+        provider: binding.provider,
+        failoverPolicy: binding.failoverPolicy,
+        assignedBy: binding.assignedBy,
+        generation: binding.generation,
+        createdAt: binding.createdAt,
+        updatedAt: binding.updatedAt,
+    };
 }
 async function serveCommand(args) {
     assertDirectServeArguments(args);
@@ -701,9 +905,10 @@ async function doctorCommand(args) {
     catch (error) {
         daemon = { ok: false, ready: false, url: configuredDaemonUrl, message: error.message };
     }
-    const nodeOk = Number(process.versions.node.split('.')[0]) >= 22;
+    const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split('.').map(Number);
+    const nodeOk = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13);
     const checks = {
-        node: { ok: nodeOk, version: process.version, required: '>=22' },
+        node: { ok: nodeOk, version: process.version, required: '>=22.13.0' },
         tokenlessHome: { ok: true, path: homeDir },
         runtimeRefresh,
         rustBinaries: binaries,
@@ -926,6 +1131,7 @@ function parseArgs(argv) {
         '--prompt-file': 'promptFile',
         '--project-root': 'projectRoot',
         '--project-name': 'projectName',
+        '--project': 'project',
         '--chat-name': 'chatName',
         '--context': 'context',
         '--context-file': 'contextFile',
@@ -933,6 +1139,12 @@ function parseArgs(argv) {
         '--turn-context-file': 'turnContextFile',
         '--output': 'output',
         '--provider': 'provider',
+        '--account': 'account',
+        '--label': 'label',
+        '--driver': 'driver',
+        '--routing-domain': 'routingDomain',
+        '--max-concurrency': 'maxConcurrency',
+        '--failover-policy': 'failoverPolicy',
         '--mode': 'mode',
         '--direct-backend': 'directBackend',
         '--direct-base-url': 'directBaseUrl',
@@ -953,6 +1165,8 @@ function parseArgs(argv) {
         '--home': 'home',
         '--daemon-url': 'daemonUrl',
         '--timeout-ms': 'timeoutMs',
+        '--lock-timeout-ms': 'lockTimeoutMs',
+        '--login-timeout-ms': 'loginTimeoutMs',
         '--daemon-start-timeout-ms': 'daemonStartTimeoutMs',
         '--cancel-timeout-ms': 'cancelTimeoutMs',
         '--bridge-timeout-ms': 'bridgeTimeoutMs',
@@ -975,6 +1189,8 @@ function parseArgs(argv) {
         '--no-open': 'noOpen',
         '--no-wait': 'noWait',
         '--long-running': 'longRunning',
+        '--device-auth': 'deviceAuth',
+        '--disabled': 'disabled',
     };
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index];
@@ -1045,7 +1261,95 @@ function normalizeProvider(provider) {
     }
     return normalized;
 }
+function assertAccountCommandArguments(subcommand, args) {
+    const common = ['files', 'home', 'json', 'lockTimeoutMs', 'provider'];
+    const byCommand = {
+        add: [...common, 'account', 'disabled', 'driver', 'label', 'maxConcurrency', 'routingDomain'],
+        login: [...common, 'account', 'deviceAuth', 'loginTimeoutMs'],
+        status: [...common, 'account'],
+        list: common,
+        enable: [...common, 'account'],
+        disable: [...common, 'account'],
+        remove: [...common, 'account'],
+    };
+    if (subcommand === undefined || byCommand[subcommand] === undefined) {
+        throw usageError('account_command_invalid', 'Accounts subcommand must be add, login, status, list, enable, disable, or remove.');
+    }
+    assertOnlyArguments(args, new Set(byCommand[subcommand]), `accounts ${subcommand}`);
+}
+function assertProjectCommandArguments(subcommand, args) {
+    const common = ['files', 'home', 'json', 'lockTimeoutMs', 'project', 'provider'];
+    const byCommand = {
+        pin: [...common, 'account', 'failoverPolicy'],
+        resolve: common,
+        list: common,
+        unpin: common,
+    };
+    if (subcommand === undefined || byCommand[subcommand] === undefined) {
+        throw usageError('project_command_invalid', 'Projects subcommand must be pin, resolve, list, or unpin.');
+    }
+    assertOnlyArguments(args, new Set(byCommand[subcommand]), `projects ${subcommand}`);
+}
+function assertOnlyArguments(args, allowed, command) {
+    const unsupported = Object.entries(args)
+        .filter(([key, value]) => key !== 'files' && value !== undefined && !allowed.has(key))
+        .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`);
+    if (args.files.length > 0)
+        unsupported.push('--file');
+    if (unsupported.length > 0) {
+        throw usageError('admin_command_option_invalid', `${command} does not accept option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`);
+    }
+}
+function normalizeAccountDriver(value, provider) {
+    const driver = value === undefined ? (provider === 'chatgpt' ? 'official-codex' : 'api') : String(value).trim().toLowerCase();
+    if (driver !== 'official-codex' && driver !== 'api') {
+        throw usageError('account_driver_invalid', '--driver must be official-codex or api.');
+    }
+    return driver;
+}
+function normalizeFailoverPolicy(value) {
+    const policy = String(value).trim().toLowerCase();
+    if (policy !== 'availability-first' && policy !== 'strict') {
+        throw usageError('failover_policy_invalid', '--failover-policy must be availability-first or strict.');
+    }
+    return policy;
+}
+function normalizeAdminAccountId(value) {
+    try {
+        return normalizeAccountId(value);
+    }
+    catch (error) {
+        throw usageError('account_id_invalid', error.message);
+    }
+}
+function requiredAdminValue(value, flag) {
+    if (typeof value !== 'string' || value.trim() === '') {
+        throw usageError('missing_argument_value', `${flag} is required.`);
+    }
+    return value;
+}
 function assertCommandRoutingArguments(command, args) {
+    const administrationOnly = [
+        ['account', '--account'],
+        ['label', '--label'],
+        ['driver', '--driver'],
+        ['routingDomain', '--routing-domain'],
+        ['maxConcurrency', '--max-concurrency'],
+        ['project', '--project'],
+        ['failoverPolicy', '--failover-policy'],
+        ['lockTimeoutMs', '--lock-timeout-ms'],
+        ['loginTimeoutMs', '--login-timeout-ms'],
+        ['deviceAuth', '--device-auth'],
+        ['disabled', '--disabled'],
+    ];
+    if (command !== 'accounts' && command !== 'projects') {
+        const selected = administrationOnly
+            .filter(([key]) => args[key] !== undefined)
+            .map(([, flag]) => flag);
+        if (selected.length > 0) {
+            throw usageError('account_administration_options_require_command', `${selected.join(', ')} is accepted only by the accounts or projects command.`);
+        }
+    }
     const serveOnly = [
         ['host', '--host'],
         ['port', '--port'],
@@ -1057,6 +1361,8 @@ function assertCommandRoutingArguments(command, args) {
     if (command === 'run')
         return;
     if (command === 'serve')
+        return;
+    if (command === 'accounts' || command === 'projects')
         return;
     const directOnly = [
         ['mode', '--mode'],
@@ -1293,6 +1599,14 @@ function usage() {
         '  tokenless run --mode direct --provider chatgpt [--model <codex-model>] --prompt <text> --json',
         '  TOKENLESS_DIRECT_CHATGPT_API_KEY=... tokenless run --mode direct --direct-backend api --provider chatgpt --model <api-model> [--direct-base-url <url>] [--max-output-tokens <count>] [--temperature <0..2>] --prompt <text> --json',
         '  TOKENLESS_DIRECT_SERVER_KEY=... tokenless serve --mode direct [--host 127.0.0.1] [--port 8788] --json',
+        '  tokenless accounts add --provider chatgpt --account personal-one [--label Primary] --json',
+        '  tokenless accounts login --provider chatgpt --account personal-one [--device-auth] --json',
+        '  tokenless accounts add --provider claude --driver api --account work --routing-domain personal --json',
+        '  tokenless accounts status|enable|disable|remove --provider <provider> --account <id> --json',
+        '  tokenless accounts list [--provider <provider>] --json',
+        '  tokenless projects pin --project <id> --provider <provider> --account <id> [--failover-policy availability-first|strict] --json',
+        '  tokenless projects resolve|unpin --project <id> --provider <provider> --json',
+        '  tokenless projects list [--project <id>] [--provider <provider>] --json',
         '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
         '  tokenless run --provider chatgpt --model <visible-model> --model-fallback <model,...> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
         '  tokenless run --provider chatgpt --debugger-control-extension-id <companion-extension-id> --model <visible-model> --effort <level> --prompt <text> --json',

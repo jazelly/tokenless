@@ -835,8 +835,13 @@ test('setup never reports success when the extension bridge does not connect', a
     assert.equal(payload.ok, false)
     assert.equal(payload.error.code, 'extension_setup_incomplete')
     assert.match(payload.error.message, /Install or enable the Tokenless extension/i)
-    await delay(250)
-    assert.equal(fs.readFileSync(path.join(homeDir, 'opened-url.txt'), 'utf8'), 'https://chatgpt.com/')
+    const openedUrlPath = path.join(homeDir, 'opened-url.txt')
+    await waitUntil(
+      () => fs.existsSync(openedUrlPath),
+      2000,
+      'Expected setup to open the selected provider page before reporting bridge setup failure.'
+    )
+    assert.equal(fs.readFileSync(openedUrlPath, 'utf8'), 'https://chatgpt.com/')
     pid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
   } finally {
     await stopPid(pid)

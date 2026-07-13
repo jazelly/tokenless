@@ -4,13 +4,32 @@
 
 ## Install
 
-Install globally with `npm install --global tokenless@latest`, or invoke it with `npx tokenless@latest`. Run setup only for visible mode:
+For visible mode, first install and enable the Tokenless extension in the Chromium browser that will hold your provider session. Direct-only use does not require the extension or a browser.
+
+### npm (recommended)
 
 ```bash
-npx tokenless setup
+npm install --global tokenless@latest
+tokenless setup --json
+tokenless doctor --json
 ```
 
-For visible mode, first install and enable the Tokenless extension in the Chromium browser that will hold your provider session. Direct-only use does not require the extension or a browser. Then `npx tokenless setup` installs the local runtime, registers the Native Messaging host for one detected browser, opens the selected provider page when needed, and succeeds only after the extension bridge is live. Sign in to the provider in that visible page if prompted. Install globally with `npm install -g tokenless` only if you prefer the shorter `tokenless` command. `tokenless install` remains available when you only want to provision the local runtime without activating the browser bridge.
+`setup` installs the local runtime, registers the Native Messaging host for one detected browser, opens the selected provider page when needed, and succeeds only after the extension bridge is live. Sign in to the provider in that visible page if prompted. `tokenless install` remains available when you only want to provision the local runtime without activating the browser bridge.
+
+### npx (no global install)
+
+```bash
+npx tokenless@latest setup --json
+npx tokenless@latest doctor --json
+```
+
+### Raw GitHub installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
+```
+
+Because this command executes with `sudo`, [review the installer source](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh) before running it. The script installs the CLI system-wide. It intentionally does not configure the browser as root; return to your normal desktop account and run `tokenless setup --json` followed by `tokenless doctor --json`.
 
 The universal package contains JavaScript only and declares exact-version optional native packages for darwin/linux on arm64/x64 and win32 on arm64/x64. npm installs only the matching package, which contains `tokenless-daemon` and `tokenless-native-host`; publisher-side prepack verification requires each executable to report the exact role, package version, and normalized target tuple before packing. No install hook or normal command downloads or verifies an executable, and users do not need Rust. The published extension id is bundled; pass `--extension-id <id>` only for an unpacked or alternate extension build.
 

@@ -1,5 +1,6 @@
 node_modules/
 test-results/
 packages/cli/npm/*/bin/
+.DS_Store
 
 .env
