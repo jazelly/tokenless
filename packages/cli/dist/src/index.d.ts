@@ -8,8 +8,8 @@ export type { ResolveNativePlatformPackageOptions } from './platform-package.js'
 export type { BridgeMarker, ChromiumBrowser, DaemonReadyProbe, EnsureDaemonOptions, InstallRustRuntimeOptions, } from './runtime.js';
 export { executeDirectRun, resolveDirectBackend } from './direct/client.js';
 export type { ExecuteDirectRunOptions } from './direct/client.js';
-export { executeChatGptApi, MAX_DIRECT_REQUEST_BYTES } from './direct/api-client.js';
-export type { ExecuteChatGptApiOptions } from './direct/api-client.js';
+export { executeChatGptApi, executeDirectApi, MAX_DIRECT_REQUEST_BYTES, } from './direct/api-client.js';
+export type { ExecuteChatGptApiOptions, ExecuteDirectApiOptions } from './direct/api-client.js';
 export { chatGptResponsesUrl, DEFAULT_DIRECT_CHATGPT_BASE_URL, DEFAULT_DIRECT_TIMEOUT_MS, MAX_DIRECT_TIMEOUT_MS, resolveDirectApiConfig, validateDirectBaseUrl, } from './direct/config.js';
 export type { ResolvedDirectApiConfig, ResolveDirectApiConfigOptions, } from './direct/config.js';
 export { DirectOfficialClientError, runOfficialCodex } from './direct/official-client.js';

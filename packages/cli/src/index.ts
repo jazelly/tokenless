@@ -93,9 +93,13 @@ export { executeDirectRun, resolveDirectBackend } from './direct/client.js'
 
 export type { ExecuteDirectRunOptions } from './direct/client.js'
 
-export { executeChatGptApi, MAX_DIRECT_REQUEST_BYTES } from './direct/api-client.js'
+export {
+  executeChatGptApi,
+  executeDirectApi,
+  MAX_DIRECT_REQUEST_BYTES,
+} from './direct/api-client.js'
 
-export type { ExecuteChatGptApiOptions } from './direct/api-client.js'
+export type { ExecuteChatGptApiOptions, ExecuteDirectApiOptions } from './direct/api-client.js'
 
 export {
   chatGptResponsesUrl,

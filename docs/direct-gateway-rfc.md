@@ -269,7 +269,11 @@ At the reviewed date, only OpenAI Codex passes this gate for this initiative. Ot
 | `antigravity` + Claude model | `/antigravity/v1/messages` | Anthropic Messages | text content blocks |
 | `antigravity` + Gemini model | `/antigravity/v1beta/models/{model}:generateContent` | Gemini Content | candidate text parts |
 
-The first milestone implements ChatGPT. The next provider milestone adds the remaining rows without changing the direct client contract.
+Claude Messages always includes `max_tokens` (default `4096`) and accepts an explicit temperature only from `0` through `1`. Its normalized input usage is the safe sum of ordinary, cache-creation, and cache-read input tokens. Gemini requests use a bare, route-safe model identifier, force `store: false`, select only the first candidate, exclude `thought: true` parts from visible text, and include reported thought tokens in normalized output usage. Grok uses the same strict Responses text parser as ChatGPT but retains the distinct `xai.responses` capability and always sends `store: false`.
+
+Antigravity has no default upstream. It requires an explicit compatible-gateway base URL and accepts only strict lowercase `claude-*` or `gemini-*` model families before any network request. A base may point to the gateway root, a path prefix, `/antigravity`, or the matching Antigravity version root; Tokenless joins the dedicated route exactly once. Tokenless never discovers or calls an Antigravity private upstream.
+
+M1 implements ChatGPT. M2 adds every remaining row without changing the direct client contract; all API adapters share one bounded, redirect-free transport.
 
 ## Loopback API broker
 

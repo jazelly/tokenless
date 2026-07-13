@@ -6,7 +6,7 @@ export { configPath, deriveTaskId, NATIVE_HOST_NAME, normalizeBrowserId, nativeM
 export { DAEMON_LOG_FILE, DAEMON_PID_FILE, DAEMON_PROCESS_PROTOCOL, DAEMON_PROTOCOL, DAEMON_READY_PROOF_PROTOCOL, EXTENSION_BRIDGE_FILE, EXTENSION_BRIDGE_PROTOCOL, NATIVE_PROTOCOL, bundledRustBinaryPath, ensureDaemonReady, inspectNativeHostManifests, inspectRustBinaries, installNativeHost, installRustRuntime, installedRustBinaryPath, openProviderUrl, persistDaemonSnapshot, probeDaemonReady, providerWakeUrl, readLiveBridgeMarker, refreshInstalledRustBinaries, resolveChromiumBrowser, resolveDaemonBinary, waitForExtensionBridge, windowsNativeHostRegistryCommands, } from './runtime.js';
 export { NATIVE_PLATFORM_PACKAGE_PROTOCOL, NATIVE_PLATFORM_PACKAGES, nativePlatformPackageName, resolveNativePlatformPackage, } from './platform-package.js';
 export { executeDirectRun, resolveDirectBackend } from './direct/client.js';
-export { executeChatGptApi, MAX_DIRECT_REQUEST_BYTES } from './direct/api-client.js';
+export { executeChatGptApi, executeDirectApi, MAX_DIRECT_REQUEST_BYTES, } from './direct/api-client.js';
 export { chatGptResponsesUrl, DEFAULT_DIRECT_CHATGPT_BASE_URL, DEFAULT_DIRECT_TIMEOUT_MS, MAX_DIRECT_TIMEOUT_MS, resolveDirectApiConfig, validateDirectBaseUrl, } from './direct/config.js';
 export { DirectOfficialClientError, runOfficialCodex } from './direct/official-client.js';
 export { DIRECT_PROTOCOL, DirectError } from './direct/types.js';

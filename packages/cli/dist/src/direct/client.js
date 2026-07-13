@@ -1,4 +1,4 @@
-import { executeChatGptApi } from './api-client.js';
+import { executeDirectApi } from './api-client.js';
 import { runOfficialCodex } from './official-client.js';
 import { DirectError } from './types.js';
 /**
@@ -18,11 +18,11 @@ export async function executeDirectRun(request, options = {}) {
     if (request === null || typeof request !== 'object') {
         throw new DirectError('direct_configuration_error', 'A direct run request is required.');
     }
-    if (request.provider !== 'chatgpt') {
-        throw new DirectError('direct_unsupported_provider', 'This release supports direct execution only for the chatgpt provider.');
-    }
     const backend = resolveDirectBackend(request.provider, request.backend);
     if (backend === 'official-client') {
+        if (request.provider !== 'chatgpt') {
+            throw new DirectError('direct_unsupported_provider', 'The official-client backend supports only the chatgpt provider.');
+        }
         if (options.baseUrl !== undefined) {
             throw new DirectError('direct_configuration_error', 'A direct base URL is available only with backend api.');
         }
@@ -34,7 +34,7 @@ export async function executeDirectRun(request, options = {}) {
     if (options.codexExecutable !== undefined) {
         throw new DirectError('direct_configuration_error', 'A Codex executable override is available only with backend official-client.');
     }
-    return executeChatGptApi({ ...request, backend }, {
+    return executeDirectApi({ ...request, backend }, {
         ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });

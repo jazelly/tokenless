@@ -1,58 +1,116 @@
 import { isIP } from 'node:net'
 
 import { DirectError } from './types.js'
+import type { DirectProvider } from './types.js'
 
 export const DEFAULT_DIRECT_CHATGPT_BASE_URL = 'https://api.openai.com'
+export const DEFAULT_DIRECT_CLAUDE_BASE_URL = 'https://api.anthropic.com'
+export const DEFAULT_DIRECT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com'
+export const DEFAULT_DIRECT_GROK_BASE_URL = 'https://api.x.ai'
 export const DEFAULT_DIRECT_TIMEOUT_MS = 120_000
 export const MAX_DIRECT_TIMEOUT_MS = 600_000
 
 const MAX_API_KEY_CHARACTERS = 8_192
 
+type ProviderConfiguration = Readonly<{
+  label: string
+  baseUrlEnvironment: string
+  apiKeyEnvironment: string
+  defaultBaseUrl?: string | undefined
+}>
+
+const PROVIDER_CONFIGURATION: Readonly<Record<DirectProvider, ProviderConfiguration>> = {
+  chatgpt: {
+    label: 'ChatGPT',
+    baseUrlEnvironment: 'TOKENLESS_DIRECT_CHATGPT_BASE_URL',
+    apiKeyEnvironment: 'TOKENLESS_DIRECT_CHATGPT_API_KEY',
+    defaultBaseUrl: DEFAULT_DIRECT_CHATGPT_BASE_URL,
+  },
+  claude: {
+    label: 'Claude',
+    baseUrlEnvironment: 'TOKENLESS_DIRECT_CLAUDE_BASE_URL',
+    apiKeyEnvironment: 'TOKENLESS_DIRECT_CLAUDE_API_KEY',
+    defaultBaseUrl: DEFAULT_DIRECT_CLAUDE_BASE_URL,
+  },
+  gemini: {
+    label: 'Gemini',
+    baseUrlEnvironment: 'TOKENLESS_DIRECT_GEMINI_BASE_URL',
+    apiKeyEnvironment: 'TOKENLESS_DIRECT_GEMINI_API_KEY',
+    defaultBaseUrl: DEFAULT_DIRECT_GEMINI_BASE_URL,
+  },
+  grok: {
+    label: 'Grok',
+    baseUrlEnvironment: 'TOKENLESS_DIRECT_GROK_BASE_URL',
+    apiKeyEnvironment: 'TOKENLESS_DIRECT_GROK_API_KEY',
+    defaultBaseUrl: DEFAULT_DIRECT_GROK_BASE_URL,
+  },
+  antigravity: {
+    label: 'Antigravity',
+    baseUrlEnvironment: 'TOKENLESS_DIRECT_ANTIGRAVITY_BASE_URL',
+    apiKeyEnvironment: 'TOKENLESS_DIRECT_ANTIGRAVITY_API_KEY',
+  },
+}
+
 export type ResolveDirectApiConfigOptions = {
-  provider?: 'chatgpt' | undefined
+  provider?: DirectProvider | undefined
   baseUrl?: string | undefined
   timeoutMs?: number | undefined
 }
 
 export type ResolvedDirectApiConfig = Readonly<{
-  provider: 'chatgpt'
+  provider: DirectProvider
   baseUrl: string
   apiKey: string
   timeoutMs: number
 }>
 
 export function resolveDirectApiConfig(options: ResolveDirectApiConfigOptions = {}): ResolvedDirectApiConfig {
-  if (options.provider !== undefined && options.provider !== 'chatgpt') {
-    throw new DirectError(
-      'direct_unsupported_provider',
-      'The ChatGPT direct API client only supports the chatgpt provider.'
-    )
+  const provider = options.provider ?? 'chatgpt'
+  if (!isDirectProvider(provider)) {
+    throw new DirectError('direct_unsupported_provider', 'The direct API provider is not supported.')
   }
+  const providerConfiguration = PROVIDER_CONFIGURATION[provider]
 
   const explicitBaseUrl = options.baseUrl
-  const providerBaseUrl = nonemptyEnvironmentValue('TOKENLESS_DIRECT_CHATGPT_BASE_URL')
+  const providerBaseUrl = nonemptyEnvironmentValue(providerConfiguration.baseUrlEnvironment)
   const genericBaseUrl = nonemptyEnvironmentValue('TOKENLESS_DIRECT_BASE_URL')
-  const baseUrl = validateDirectBaseUrl(
-    explicitBaseUrl !== undefined
-      ? explicitBaseUrl
-      : providerBaseUrl ?? genericBaseUrl ?? DEFAULT_DIRECT_CHATGPT_BASE_URL
-  )
+  const selectedBaseUrl =
+    explicitBaseUrl ?? providerBaseUrl ?? genericBaseUrl ?? providerConfiguration.defaultBaseUrl
+  if (selectedBaseUrl === undefined) {
+    throw new DirectError(
+      'direct_configuration_error',
+      `${providerConfiguration.label} direct API routing requires ${providerConfiguration.baseUrlEnvironment}, TOKENLESS_DIRECT_BASE_URL, or an explicit base URL.`,
+    )
+  }
+  const baseUrl = validateDirectBaseUrl(selectedBaseUrl)
 
   const apiKey =
-    nonemptyEnvironmentValue('TOKENLESS_DIRECT_CHATGPT_API_KEY') ??
-    nonemptyEnvironmentValue('TOKENLESS_DIRECT_API_KEY')
+    apiKeyEnvironmentValue(providerConfiguration.apiKeyEnvironment) ??
+    apiKeyEnvironmentValue('TOKENLESS_DIRECT_API_KEY')
   if (apiKey === undefined) {
     throw new DirectError(
       'direct_configuration_error',
-      'ChatGPT direct API authentication requires TOKENLESS_DIRECT_CHATGPT_API_KEY or TOKENLESS_DIRECT_API_KEY.'
+      `${providerConfiguration.label} direct API authentication requires ${providerConfiguration.apiKeyEnvironment} or TOKENLESS_DIRECT_API_KEY.`,
     )
   }
   if (apiKey.length > MAX_API_KEY_CHARACTERS) {
-    throw new DirectError('direct_configuration_error', 'The configured ChatGPT direct API key is too large.')
+    throw new DirectError(
+      'direct_configuration_error',
+      `The configured ${providerConfiguration.label} direct API key is too large.`,
+    )
+  }
+  if (/[\u0000-\u001f\u007f]/.test(apiKey)) {
+    throw new DirectError('direct_configuration_error', 'The configured direct API key contains control characters.')
+  }
+  if (!/^[\x21-\x7e]+$/.test(apiKey)) {
+    throw new DirectError(
+      'direct_configuration_error',
+      'The configured direct API key must contain visible ASCII characters only.',
+    )
   }
 
   const timeoutMs = resolveTimeoutMs(options.timeoutMs)
-  return Object.freeze({ provider: 'chatgpt', baseUrl, apiKey, timeoutMs })
+  return Object.freeze({ provider, baseUrl, apiKey, timeoutMs })
 }
 
 export function validateDirectBaseUrl(value: string): string {
@@ -71,7 +129,7 @@ export function validateDirectBaseUrl(value: string): string {
   if (url.username !== '' || url.password !== '') {
     throw new DirectError('direct_configuration_error', 'The direct API base URL must not contain user information.')
   }
-  if (candidate.includes('?') || candidate.includes('#')) {
+  if (url.search !== '' || url.hash !== '') {
     throw new DirectError('direct_configuration_error', 'The direct API base URL must not contain a query or fragment.')
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
@@ -85,20 +143,85 @@ export function validateDirectBaseUrl(value: string): string {
   return url.toString().replace(/\/$/, '')
 }
 
+export function responsesUrl(baseUrl: string): string {
+  return versionedEndpoint(baseUrl, 'v1', 'responses')
+}
+
 export function chatGptResponsesUrl(baseUrl: string): string {
+  return responsesUrl(baseUrl)
+}
+
+export function anthropicMessagesUrl(baseUrl: string): string {
+  return versionedEndpoint(baseUrl, 'v1', 'messages')
+}
+
+export function geminiGenerateContentUrl(baseUrl: string, model: string): string {
+  return versionedEndpoint(baseUrl, 'v1beta', `models/${encodedModelSegment(model)}:generateContent`)
+}
+
+export function antigravityAnthropicMessagesUrl(baseUrl: string): string {
+  return antigravityEndpoint(baseUrl, 'v1', 'messages')
+}
+
+export function antigravityGeminiGenerateContentUrl(baseUrl: string, model: string): string {
+  return antigravityEndpoint(
+    baseUrl,
+    'v1beta',
+    `models/${encodedModelSegment(model)}:generateContent`,
+  )
+}
+
+function versionedEndpoint(baseUrl: string, version: string, route: string) {
   const url = new URL(validateDirectBaseUrl(baseUrl))
   const basePath = url.pathname.replace(/\/+$/, '')
-  url.pathname = basePath.endsWith('/v1') ? `${basePath}/responses` : `${basePath}/v1/responses`
+  url.pathname = basePath.endsWith(`/${version}`)
+    ? `${basePath}/${route}`
+    : `${basePath}/${version}/${route}`
   return url.toString()
+}
+
+function antigravityEndpoint(baseUrl: string, version: string, route: string) {
+  const url = new URL(validateDirectBaseUrl(baseUrl))
+  const basePath = url.pathname.replace(/\/+$/, '')
+  const versionRoot = /^(.*\/antigravity)\/v1(?:beta)?$/.exec(basePath)
+  if (versionRoot?.[1] !== undefined) {
+    url.pathname = `${versionRoot[1]}/${version}/${route}`
+  } else if (basePath.endsWith('/antigravity')) {
+    url.pathname = `${basePath}/${version}/${route}`
+  } else if (basePath.includes('/antigravity/')) {
+    throw new DirectError(
+      'direct_configuration_error',
+      'An Antigravity direct API base URL must stop at the gateway, /antigravity, or a version root.',
+    )
+  } else {
+    url.pathname = `${basePath}/antigravity/${version}/${route}`
+  }
+  return url.toString()
+}
+
+function encodedModelSegment(model: string) {
+  if (typeof model !== 'string' || model.trim() === '' || model.includes('\0')) {
+    throw new DirectError('direct_configuration_error', 'A nonempty model is required in the provider URL.')
+  }
+  const normalized = model.trim()
+  if (normalized.includes('..') || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(normalized)) {
+    throw new DirectError(
+      'direct_configuration_error',
+      'Provider URL models must be bare identifiers containing only letters, numbers, dot, underscore, or hyphen.',
+    )
+  }
+  return encodeURIComponent(normalized)
 }
 
 function resolveTimeoutMs(explicitTimeoutMs: number | undefined) {
   const environmentTimeout = nonemptyEnvironmentValue('TOKENLESS_DIRECT_TIMEOUT_MS')
-  const candidate = explicitTimeoutMs ?? (environmentTimeout === undefined ? DEFAULT_DIRECT_TIMEOUT_MS : Number(environmentTimeout))
+  const candidate =
+    explicitTimeoutMs ??
+    (environmentTimeout === undefined ? DEFAULT_DIRECT_TIMEOUT_MS : Number(environmentTimeout))
   if (!Number.isSafeInteger(candidate) || candidate <= 0 || candidate > MAX_DIRECT_TIMEOUT_MS) {
     throw new DirectError(
       'direct_configuration_error',
-      `The direct API timeout must be an integer between 1 and ${MAX_DIRECT_TIMEOUT_MS} milliseconds.`
+      `The direct API timeout must be an integer between 1 and ${MAX_DIRECT_TIMEOUT_MS} milliseconds.`,
     )
   }
   return candidate
@@ -107,6 +230,15 @@ function resolveTimeoutMs(explicitTimeoutMs: number | undefined) {
 function nonemptyEnvironmentValue(name: string) {
   const value = process.env[name]
   if (value === undefined || value.trim() === '') return undefined
+  return value.trim()
+}
+
+function apiKeyEnvironmentValue(name: string) {
+  const value = process.env[name]
+  if (value === undefined || value.trim() === '') return undefined
+  if (/[\u0000-\u001f\u007f]/.test(value)) {
+    throw new DirectError('direct_configuration_error', `The configured ${name} contains control characters.`)
+  }
   return value.trim()
 }
 
@@ -121,4 +253,14 @@ function isLoopbackHostname(hostname: string) {
   if (isIP(unwrapped) !== 4) return false
   const firstOctet = Number(unwrapped.split('.')[0])
   return firstOctet === 127
+}
+
+function isDirectProvider(value: unknown): value is DirectProvider {
+  return (
+    value === 'chatgpt' ||
+    value === 'claude' ||
+    value === 'gemini' ||
+    value === 'grok' ||
+    value === 'antigravity'
+  )
 }
