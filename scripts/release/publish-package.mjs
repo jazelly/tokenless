@@ -2,8 +2,9 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const packageDirectory = process.argv[2]
-if (!packageDirectory) throw new Error('Usage: node scripts/release/publish-package.mjs <package-directory>')
+const packageDirectoryArgument = process.argv[2]
+if (!packageDirectoryArgument) throw new Error('Usage: node scripts/release/publish-package.mjs <package-directory>')
+const packageDirectory = path.resolve(packageDirectoryArgument)
 
 const manifestPath = path.join(packageDirectory, 'package.json')
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
