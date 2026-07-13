@@ -53,9 +53,11 @@ export function resolveDirectApiConfig(options = {}) {
     }
     const baseUrl = validateDirectBaseUrl(selectedBaseUrl);
     const apiKey = apiKeyEnvironmentValue(providerConfiguration.apiKeyEnvironment) ??
-        apiKeyEnvironmentValue('TOKENLESS_DIRECT_API_KEY');
+        (options.providerApiKeyOnly === true ? undefined : apiKeyEnvironmentValue('TOKENLESS_DIRECT_API_KEY'));
     if (apiKey === undefined) {
-        throw new DirectError('direct_configuration_error', `${providerConfiguration.label} direct API authentication requires ${providerConfiguration.apiKeyEnvironment} or TOKENLESS_DIRECT_API_KEY.`);
+        throw new DirectError('direct_configuration_error', options.providerApiKeyOnly === true
+            ? `${providerConfiguration.label} direct broker authentication requires ${providerConfiguration.apiKeyEnvironment}.`
+            : `${providerConfiguration.label} direct API authentication requires ${providerConfiguration.apiKeyEnvironment} or TOKENLESS_DIRECT_API_KEY.`);
     }
     if (apiKey.length > MAX_API_KEY_CHARACTERS) {
         throw new DirectError('direct_configuration_error', `The configured ${providerConfiguration.label} direct API key is too large.`);

@@ -503,7 +503,7 @@ test('agent skill is a daemon-only npx workflow with provider-only automatic nav
   assert.doesNotMatch(skill, /--extension-id "<chrome-extension-id>" \\\n+  --json/)
 })
 
-test('README and architecture describe the Rust daemon-only visible-session boundary', () => {
+test('README and architecture describe isolated visible-session and direct boundaries', () => {
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
   const chinese = fs.readFileSync(path.join(root, 'README.zh-CN.md'), 'utf8')
   const architecture = fs.readFileSync(path.join(root, 'docs/architecture.md'), 'utf8')
@@ -511,8 +511,9 @@ test('README and architecture describe the Rust daemon-only visible-session boun
   for (const text of [readme, architecture, cliReadme]) {
     assert.match(text, /tokenless-daemon/)
     assert.match(text, /tokenless-native-host/)
-    assert.match(text, /daemon-only|no local JSON|There is no local JSON/i)
+    assert.match(text, /no local JSON|local task-page fallback.*do not exist/i)
     assert.match(text, /visible/)
+    assert.match(text, /direct/)
     assert.doesNotMatch(text, /\/Users\/jazelly/)
   }
   assert.match(readme, /npx tokenless@latest setup/)
@@ -520,8 +521,12 @@ test('README and architecture describe the Rust daemon-only visible-session boun
   assert.match(chinese, /Rust daemon/)
   assert.match(chinese, /不会调用隐藏的 provider 后端接口/)
   assert.match(architecture, /tokenless\.daemon\.v1/)
+  assert.match(architecture, /tokenless\.direct\.v1/)
+  assert.match(architecture, /direct broker/i)
   assert.match(architecture, /extension-bridge\.json/)
   assert.match(architecture, /900 KiB/)
+  assert.match(readme, /docs\/direct-mode\.md/)
+  assert.match(cliReadme, /tokenless serve --mode direct/)
 })
 
 function readJson(relativePath) {

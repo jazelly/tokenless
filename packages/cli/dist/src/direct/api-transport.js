@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { DirectError } from './types.js';
 const MAX_SUCCESS_BODY_BYTES = 16 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
@@ -5,6 +6,7 @@ const MAX_PROVIDER_MESSAGE_CHARACTERS = 320;
 const MAX_REQUEST_ID_CHARACTERS = 256;
 export const MAX_DIRECT_REQUEST_BYTES = 4 * 1024 * 1024;
 export async function postDirectJson(request) {
+    assertSafeTransportEnvironment(request.endpoint);
     const requestBody = serializeRequestBody(request.body);
     const operation = createAbortOperation(request.timeoutMs, request.signal);
     try {
@@ -56,6 +58,32 @@ export async function postDirectJson(request) {
     finally {
         operation.dispose();
     }
+}
+function assertSafeTransportEnvironment(endpoint) {
+    let protocol;
+    try {
+        protocol = new URL(endpoint).protocol;
+    }
+    catch {
+        throw new DirectError('direct_configuration_error', 'The direct API endpoint is not a valid absolute URL.');
+    }
+    if (protocol === 'https:' && process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+        throw new DirectError('direct_insecure_upstream', 'Direct API execution refuses to run while NODE_TLS_REJECT_UNAUTHORIZED disables HTTPS certificate verification.', { retryable: false });
+    }
+    if (protocol === 'http:' && nodeEnvironmentProxyEnabled()) {
+        throw new DirectError('direct_insecure_upstream', 'Direct API execution refuses loopback HTTP while Node environment proxying is enabled.', { retryable: false });
+    }
+}
+function nodeEnvironmentProxyEnabled() {
+    if (process.env.NODE_USE_ENV_PROXY === '1')
+        return true;
+    if (process.execArgv.some((value) => value === '--use-env-proxy' || value.startsWith('--use-env-proxy='))) {
+        return true;
+    }
+    if (process.env.NODE_OPTIONS?.includes('--use-env-proxy') === true)
+        return true;
+    const agent = http.globalAgent;
+    return agent.options?.proxyEnv !== undefined;
 }
 export function invalidResponseError(message, requestId) {
     return new DirectError('direct_invalid_response', message, {

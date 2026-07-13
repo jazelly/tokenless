@@ -4,6 +4,9 @@ import fs from 'node:fs/promises'
 
 import {
   DEFAULT_DAEMON_URL,
+  DEFAULT_DIRECT_BROKER_HOST,
+  DEFAULT_DIRECT_BROKER_PORT,
+  DIRECT_BROKER_PROTOCOL,
   MAX_NATIVE_MESSAGE_BYTES,
   NATIVE_PROTOCOL,
   buildTokenlessPrompt,
@@ -26,6 +29,7 @@ import {
   readTokenlessConfig,
   refreshInstalledRustBinaries,
   resolveChromiumBrowser,
+  startDirectBroker,
   tokenlessHome,
   waitDaemonJobResult,
   waitForExtensionBridge,
@@ -64,6 +68,8 @@ try {
   assertCommandRoutingArguments(command, args)
   if (command === 'run') {
     await runCommand(args)
+  } else if (command === 'serve') {
+    await serveCommand(args)
   } else if (command === 'chatgpt-controls' || command === 'inspect-chatgpt-controls') {
     await chatGptControlsCommand(args)
   } else if (command === 'chatgpt-configure') {
@@ -106,6 +112,55 @@ try {
   if (args.json) console.log(JSON.stringify(payload, null, 2))
   else console.error(`${payload.error.code}: ${payload.error.message}`)
   process.exit(1)
+}
+
+async function serveCommand(args: CliArgs) {
+  assertDirectServeArguments(args)
+  const serverKey = process.env.TOKENLESS_DIRECT_SERVER_KEY
+  if (serverKey === undefined) {
+    throw usageError(
+      'direct_configuration_error',
+      'tokenless serve requires TOKENLESS_DIRECT_SERVER_KEY; the broker has no unauthenticated mode.',
+    )
+  }
+
+  const abortController = new AbortController()
+  let stop!: () => void
+  const stopped = new Promise<void>((resolve) => {
+    stop = () => {
+      abortController.abort()
+      resolve()
+    }
+  })
+  process.once('SIGINT', stop)
+  process.once('SIGTERM', stop)
+
+  let broker: Awaited<ReturnType<typeof startDirectBroker>> | undefined
+  try {
+    broker = await startDirectBroker({
+      serverKey,
+      host: args.host === undefined ? DEFAULT_DIRECT_BROKER_HOST : String(args.host),
+      port: args.port === undefined ? DEFAULT_DIRECT_BROKER_PORT : Number(args.port),
+      signal: abortController.signal,
+    })
+    if (!args.quiet) {
+      printPayload({
+        ok: true,
+        protocol: DIRECT_BROKER_PROTOCOL,
+        mode: 'direct',
+        transport: 'direct-broker',
+        host: broker.host,
+        port: broker.port,
+        url: broker.url,
+        compactOutput: broker.url,
+      }, args)
+    }
+    await stopped
+  } finally {
+    process.removeListener('SIGINT', stop)
+    process.removeListener('SIGTERM', stop)
+    if (broker !== undefined) await broker.close()
+  }
 }
 
 async function runCommand(args: CliArgs) {
@@ -986,6 +1041,8 @@ function parseArgs(argv: string[]): CliArgs {
     '--mode': 'mode',
     '--direct-backend': 'directBackend',
     '--direct-base-url': 'directBaseUrl',
+    '--host': 'host',
+    '--port': 'port',
     '--preferred-providers': 'preferredProviders',
     '--action': 'action',
     '--target-url': 'targetUrl',
@@ -1107,7 +1164,19 @@ function normalizeProvider(provider: unknown) {
 }
 
 function assertCommandRoutingArguments(command: string, args: CliArgs) {
+  const serveOnly = [
+    ['host', '--host'],
+    ['port', '--port'],
+  ] as const
+  const selectedServeOnly = serveOnly.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag)
+  if (command !== 'serve' && selectedServeOnly.length > 0) {
+    throw usageError(
+      'direct_serve_options_require_serve',
+      `${selectedServeOnly.join(', ')} is accepted only by the serve command.`,
+    )
+  }
   if (command === 'run') return
+  if (command === 'serve') return
   const directOnly = [
     ['mode', '--mode'],
     ['directBackend', '--direct-backend'],
@@ -1121,6 +1190,23 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
     'direct_options_require_run',
     `${selected.join(', ')} is accepted only by the run command.`,
   )
+}
+
+function assertDirectServeArguments(args: CliArgs) {
+  if (args.mode === undefined || normalizeRunMode(args.mode) !== 'direct') {
+    throw usageError('direct_serve_mode_required', 'tokenless serve requires --mode direct.')
+  }
+  const allowed = new Set(['files', 'host', 'json', 'mode', 'port', 'quiet'])
+  const unsupported = Object.entries(args)
+    .filter(([key, value]) => key !== 'files' && value !== undefined && !allowed.has(key))
+    .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`)
+  if (args.files.length > 0) unsupported.push('--file')
+  if (unsupported.length > 0) {
+    throw usageError(
+      'direct_serve_option',
+      `Direct broker mode does not accept option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`,
+    )
+  }
 }
 
 function normalizeRunMode(mode: unknown): 'visible' | 'direct' {
@@ -1361,6 +1447,7 @@ function usage() {
     '  tokenless run [--mode visible] --provider chatgpt --prompt <text> --json',
     '  tokenless run --mode direct --provider chatgpt [--model <codex-model>] --prompt <text> --json',
     '  TOKENLESS_DIRECT_CHATGPT_API_KEY=... tokenless run --mode direct --direct-backend api --provider chatgpt --model <api-model> [--direct-base-url <url>] [--max-output-tokens <count>] [--temperature <0..2>] --prompt <text> --json',
+    '  TOKENLESS_DIRECT_SERVER_KEY=... tokenless serve --mode direct [--host 127.0.0.1] [--port 8788] --json',
     '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
     '  tokenless run --provider chatgpt --model <visible-model> --model-fallback <model,...> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
     '  tokenless run --provider chatgpt --debugger-control-extension-id <companion-extension-id> --model <visible-model> --effort <level> --prompt <text> --json',

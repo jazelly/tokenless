@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import http from 'node:http'
 import path from 'node:path'
 import test from 'node:test'
@@ -52,6 +53,119 @@ test('ChatGPT direct config uses explicit/provider/generic precedence and enviro
     assert.equal(resolved.baseUrl, 'https://generic.example.test')
     assert.equal(resolved.apiKey, 'generic-key')
   })
+})
+
+test('direct API fails closed when the process disables HTTPS certificate verification', async () => {
+  const savedTlsOverride = process.env.NODE_TLS_REJECT_UNAUTHORIZED
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+  try {
+    await withDirectEnvironment({
+      TOKENLESS_DIRECT_CHATGPT_BASE_URL: 'https://127.0.0.1:9',
+      TOKENLESS_DIRECT_CHATGPT_API_KEY: 'must-not-leave',
+    }, async () => {
+      await assert.rejects(
+        executeChatGptApi({
+          provider: 'chatgpt',
+          backend: 'api',
+          model: 'gpt-test',
+          prompt: 'no network',
+        }),
+        (error) => error.code === 'direct_insecure_upstream' && /NODE_TLS_REJECT_UNAUTHORIZED/.test(error.message),
+      )
+    })
+  } finally {
+    if (savedTlsOverride === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = savedTlsOverride
+  }
+})
+
+test('direct API keeps loopback HTTP credentials away from Node environment proxies', {
+  skip: !process.allowedNodeEnvironmentFlags.has('--use-env-proxy'),
+}, async () => {
+  const secret = 'proxy-must-never-see-this'
+  let upstreamRequests = 0
+  let proxyRequests = 0
+  let proxyRequest = ''
+
+  await withHttpServer((_request, response) => {
+    upstreamRequests += 1
+    response.writeHead(500)
+    response.end()
+  }, async (upstreamBaseUrl) => {
+    await withHttpServer(async (request, response) => {
+      proxyRequests += 1
+      proxyRequest = `${JSON.stringify(request.headers)}\n${await readRequestBody(request)}`
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'proxy' }] }] }))
+    }, async (proxyBaseUrl) => {
+      const apiClientUrl = new URL('api-client.js', directModuleRoot).href
+      const script = `
+        const { executeChatGptApi } = await import(${JSON.stringify(apiClientUrl)});
+        try {
+          await executeChatGptApi({ provider: 'chatgpt', model: 'gpt-test', prompt: 'no network' });
+          process.stdout.write(JSON.stringify({ code: 'unexpected_success' }));
+          process.exitCode = 2;
+        } catch (error) {
+          process.stdout.write(JSON.stringify({ code: error.code, message: error.message }));
+        }
+      `
+      const environment = {
+        ...process.env,
+        NODE_USE_ENV_PROXY: '1',
+        HTTP_PROXY: proxyBaseUrl,
+        http_proxy: proxyBaseUrl,
+        HTTPS_PROXY: proxyBaseUrl,
+        https_proxy: proxyBaseUrl,
+        NO_PROXY: '',
+        no_proxy: '',
+        TOKENLESS_DIRECT_CHATGPT_BASE_URL: upstreamBaseUrl,
+        TOKENLESS_DIRECT_CHATGPT_API_KEY: secret,
+      }
+      const result = await runNodeChild(
+        ['--use-env-proxy', '--input-type=module', '--eval', script],
+        environment,
+      )
+      assert.equal(result.code, 0, result.stderr)
+      assert.equal(result.signal, null)
+      assert.equal(result.stderr.includes(secret), false)
+      assert.equal(result.stdout.includes(secret), false)
+      assert.deepEqual(JSON.parse(result.stdout), {
+        code: 'direct_insecure_upstream',
+        message: 'Direct API execution refuses loopback HTTP while Node environment proxying is enabled.',
+      })
+    })
+  })
+
+  assert.equal(upstreamRequests, 0)
+  assert.equal(proxyRequests, 0)
+  assert.equal(proxyRequest.includes(secret), false)
+})
+
+test('direct API recognizes the NODE_USE_ENV_PROXY declaration before opening a loopback socket', async () => {
+  let upstreamRequests = 0
+  const savedProxyMode = process.env.NODE_USE_ENV_PROXY
+  process.env.NODE_USE_ENV_PROXY = '1'
+  try {
+    await withHttpServer((_request, response) => {
+      upstreamRequests += 1
+      response.writeHead(500)
+      response.end()
+    }, async (baseUrl) => {
+      await withDirectEnvironment({
+        TOKENLESS_DIRECT_CHATGPT_BASE_URL: baseUrl,
+        TOKENLESS_DIRECT_CHATGPT_API_KEY: 'must-not-leave',
+      }, async () => {
+        await assert.rejects(
+          executeChatGptApi({ provider: 'chatgpt', model: 'gpt-test', prompt: 'no network' }),
+          (error) => error.code === 'direct_insecure_upstream' && /environment proxying/.test(error.message),
+        )
+      })
+    })
+  } finally {
+    if (savedProxyMode === undefined) delete process.env.NODE_USE_ENV_PROXY
+    else process.env.NODE_USE_ENV_PROXY = savedProxyMode
+  }
+  assert.equal(upstreamRequests, 0)
 })
 
 test('ChatGPT Responses request uses a real socket, exact public path/auth/body, and normalized output', async () => {
@@ -396,4 +510,25 @@ async function readRequestBody(request) {
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
   return Buffer.concat(chunks).toString('utf8')
+}
+
+async function runNodeChild(args, env) {
+  const child = spawn(process.execPath, args, {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 5_000,
+  })
+  const stdout = []
+  const stderr = []
+  child.stdout.on('data', (chunk) => stdout.push(chunk))
+  child.stderr.on('data', (chunk) => stderr.push(chunk))
+  return await new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', (code, signal) => resolve({
+      code,
+      signal,
+      stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'),
+    }))
+  })
 }

@@ -1,3 +1,5 @@
+import http from 'node:http'
+
 import { DirectError } from './types.js'
 import type { DirectErrorCode } from './types.js'
 
@@ -28,6 +30,7 @@ export type DirectJsonResponse = Readonly<{
 }>
 
 export async function postDirectJson(request: DirectJsonRequest): Promise<DirectJsonResponse> {
+  assertSafeTransportEnvironment(request.endpoint)
   const requestBody = serializeRequestBody(request.body)
   const operation = createAbortOperation(request.timeoutMs, request.signal)
   try {
@@ -89,6 +92,41 @@ export async function postDirectJson(request: DirectJsonRequest): Promise<Direct
   } finally {
     operation.dispose()
   }
+}
+
+function assertSafeTransportEnvironment(endpoint: string) {
+  let protocol: string
+  try {
+    protocol = new URL(endpoint).protocol
+  } catch {
+    throw new DirectError('direct_configuration_error', 'The direct API endpoint is not a valid absolute URL.')
+  }
+  if (protocol === 'https:' && process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+    throw new DirectError(
+      'direct_insecure_upstream',
+      'Direct API execution refuses to run while NODE_TLS_REJECT_UNAUTHORIZED disables HTTPS certificate verification.',
+      { retryable: false },
+    )
+  }
+  if (protocol === 'http:' && nodeEnvironmentProxyEnabled()) {
+    throw new DirectError(
+      'direct_insecure_upstream',
+      'Direct API execution refuses loopback HTTP while Node environment proxying is enabled.',
+      { retryable: false },
+    )
+  }
+}
+
+function nodeEnvironmentProxyEnabled() {
+  if (process.env.NODE_USE_ENV_PROXY === '1') return true
+  if (process.execArgv.some((value) => value === '--use-env-proxy' || value.startsWith('--use-env-proxy='))) {
+    return true
+  }
+  if (process.env.NODE_OPTIONS?.includes('--use-env-proxy') === true) return true
+  const agent = http.globalAgent as unknown as {
+    readonly options?: { readonly proxyEnv?: unknown }
+  }
+  return agent.options?.proxyEnv !== undefined
 }
 
 export function invalidResponseError(message: string, requestId: string | undefined) {

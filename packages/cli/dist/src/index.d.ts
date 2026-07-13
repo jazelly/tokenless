@@ -10,6 +10,8 @@ export { executeDirectRun, resolveDirectBackend } from './direct/client.js';
 export type { ExecuteDirectRunOptions } from './direct/client.js';
 export { executeChatGptApi, executeDirectApi, MAX_DIRECT_REQUEST_BYTES, } from './direct/api-client.js';
 export type { ExecuteChatGptApiOptions, ExecuteDirectApiOptions } from './direct/api-client.js';
+export { DEFAULT_DIRECT_BROKER_HOST, DEFAULT_DIRECT_BROKER_PORT, DEFAULT_DIRECT_BROKER_REQUEST_BYTES, DIRECT_BROKER_CAPABILITIES_PATH, DIRECT_BROKER_HEALTH_PATH, DIRECT_BROKER_PROTOCOL, MAX_DIRECT_BROKER_REQUEST_BYTES, startDirectBroker, } from './direct/broker.js';
+export type { DirectBrokerHandle, StartDirectBrokerOptions, } from './direct/broker.js';
 export { chatGptResponsesUrl, DEFAULT_DIRECT_CHATGPT_BASE_URL, DEFAULT_DIRECT_TIMEOUT_MS, MAX_DIRECT_TIMEOUT_MS, resolveDirectApiConfig, validateDirectBaseUrl, } from './direct/config.js';
 export type { ResolvedDirectApiConfig, ResolveDirectApiConfigOptions, } from './direct/config.js';
 export { DirectOfficialClientError, runOfficialCodex } from './direct/official-client.js';

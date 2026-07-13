@@ -9,6 +9,7 @@ export type ResolveDirectApiConfigOptions = {
     provider?: DirectProvider | undefined;
     baseUrl?: string | undefined;
     timeoutMs?: number | undefined;
+    providerApiKeyOnly?: boolean | undefined;
 };
 export type ResolvedDirectApiConfig = Readonly<{
     provider: DirectProvider;

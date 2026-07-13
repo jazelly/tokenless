@@ -1,14 +1,16 @@
 # Tokenless CLI
 
-`tokenless` is the daemon-only, agent-facing entrypoint for using a visible ChatGPT, Claude, or Gemini session without exporting provider credentials or calling hidden provider APIs.
+`tokenless` is an agent-facing CLI with two isolated transports: visible ChatGPT, Claude, or Gemini browser sessions, and opt-in direct execution through provider-owned clients or documented public APIs.
 
 ## Install
+
+Install globally with `npm install --global tokenless@latest`, or invoke it with `npx tokenless@latest`. Run setup only for visible mode:
 
 ```bash
 npx tokenless setup
 ```
 
-First install and enable the Tokenless extension in the Chromium browser that will hold your provider session. Then `npx tokenless setup` installs the local runtime, registers the Native Messaging host for one detected browser, opens the selected provider page when needed, and succeeds only after the extension bridge is live. Sign in to the provider in that visible page if prompted. Install globally with `npm install -g tokenless` only if you prefer the shorter `tokenless` command. `tokenless install` remains available when you only want to provision the local runtime without activating the browser bridge.
+For visible mode, first install and enable the Tokenless extension in the Chromium browser that will hold your provider session. Direct-only use does not require the extension or a browser. Then `npx tokenless setup` installs the local runtime, registers the Native Messaging host for one detected browser, opens the selected provider page when needed, and succeeds only after the extension bridge is live. Sign in to the provider in that visible page if prompted. Install globally with `npm install -g tokenless` only if you prefer the shorter `tokenless` command. `tokenless install` remains available when you only want to provision the local runtime without activating the browser bridge.
 
 The universal package contains JavaScript only and declares exact-version optional native packages for darwin/linux on arm64/x64 and win32 on arm64/x64. npm installs only the matching package, which contains `tokenless-daemon` and `tokenless-native-host`; publisher-side prepack verification requires each executable to report the exact role, package version, and normalized target tuple before packing. No install hook or normal command downloads or verifies an executable, and users do not need Rust. The published extension id is bundled; pass `--extension-id <id>` only for an unpacked or alternate extension build.
 
@@ -30,6 +32,29 @@ npx tokenless run \
 ```
 
 `run` requires no extension id after setup. It starts the Rust daemon when needed. If the extension bridge is live, the CLI does not pre-open a wake tab; otherwise it opens only the selected provider's validated HTTPS UI in the configured Chromium browser. The extension reuses an approved provider tab when possible or opens one provider tab when necessary. ChatGPT is the provider default. Tokenless never opens a task page, extension page, local file, runner, settings, or history page.
+
+## Direct Mode
+
+Direct mode never initializes or falls back to the daemon, extension, or browser path. ChatGPT defaults to the provider-owned Codex executable on macOS and Linux. Public API execution supports ChatGPT, Claude, Gemini, Grok, and explicit Antigravity-compatible gateways; credentials are read only from environment variables.
+
+```bash
+tokenless run --mode direct --provider chatgpt --prompt "Summarize this." --json
+
+TOKENLESS_DIRECT_GEMINI_API_KEY=... \
+tokenless run --mode direct --provider gemini --model <api-model> --prompt "Summarize this." --json
+```
+
+Start an authenticated loopback API broker for compatible local clients:
+
+```bash
+TOKENLESS_DIRECT_SERVER_KEY=... \
+TOKENLESS_DIRECT_CHATGPT_API_KEY=... \
+tokenless serve --mode direct --host 127.0.0.1 --port 8788 --json
+```
+
+Every broker request, including `/health` and `/capabilities`, requires `Authorization: Bearer <TOKENLESS_DIRECT_SERVER_KEY>`. The broker strips inbound credentials and cookies, injects the selected environment credential, preserves streaming bytes, and exposes only its reviewed public inference allowlist. It never exposes the Codex backend, private provider web routes, or gateway administration/account routes. Public API traffic may be billed separately from a web subscription.
+
+Use a randomly generated server key of at least 32 visible non-whitespace characters; for example, `openssl rand -hex 32` produces a suitable value.
 
 ## ChatGPT visible controls
 
@@ -89,4 +114,4 @@ npx tokenless snapshot-dom --provider chatgpt --json
 
 ## Boundary
 
-Tokenless uses only visible provider DOM after user-granted extension permission. It does not read provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private backend APIs. Daemon access is loopback-only. Before every bearer-authenticated job call, the CLI verifies a fresh challenge-bound `/ready` HMAC proof covering both protocols and canonical home; an unproved listener never receives the token. `doctor` refreshes installed binaries before reading config or running checks and exits nonzero when any reported check fails.
+Visible mode uses only visible provider DOM after user-granted extension permission. Direct mode uses provider-owned clients or documented public APIs with environment-only credentials. Neither mode reads provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private backend APIs, and there is no cross-mode fallback. Daemon access is loopback-only. Before every bearer-authenticated visible job call, the CLI verifies a fresh challenge-bound `/ready` HMAC proof covering both protocols and canonical home; an unproved listener never receives the token. `doctor` refreshes installed binaries before reading config or running checks and exits nonzero when any reported check fails.

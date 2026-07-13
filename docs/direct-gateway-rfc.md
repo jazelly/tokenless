@@ -108,12 +108,14 @@ The implementation belongs in the public CLI package:
 
 ```text
 packages/cli/src/direct/
-  config.ts       environment-only upstream resolution and URL validation
-  client.ts       normalized direct execution and response parsing
+  api-client.ts       normalized public API execution
+  api-transport.ts    bounded redirect-free HTTP transport
+  broker.ts           authenticated loopback streaming broker
+  client.ts           direct backend selection
+  config.ts           environment-only upstream resolution and URL validation
   official-client.ts  isolated provider-owned client execution
-  providers.ts    provider contracts, paths, headers, and payloads
-  proxy.ts        authenticated loopback streaming broker
-  types.ts        public direct protocol types
+  protocols/          provider-specific public request and response contracts
+  types.ts            public direct protocol types
 ```
 
 `packages/cli/src/index.ts` exports the reusable direct client and broker APIs. `tokenless.mts` remains command orchestration rather than accumulating provider protocol logic.
@@ -131,6 +133,8 @@ tokenless run --mode visible --provider chatgpt --prompt "..."
 `--mode` is optional and defaults to `visible`.
 
 There is no automatic fallback between modes. A visible failure must not silently create API charges, and a direct failure must not silently open a browser or share the prompt with a second transport.
+
+Web subscriptions and public API accounts are separate products unless a provider explicitly documents otherwise. API and broker requests can incur provider or gateway charges independently of a ChatGPT, Claude, Gemini, or Grok web subscription. The official Codex backend can use its own supported ChatGPT-plan authentication, but Tokenless never converts that entitlement into an API credential or broker route.
 
 ### Direct mode
 
@@ -184,11 +188,12 @@ Direct mode rejects visible-only options such as browser, target URL, bridge/rea
 
 ### Environment
 
-Generic settings:
+Shared routing settings:
 
 - `TOKENLESS_DIRECT_BASE_URL`
-- `TOKENLESS_DIRECT_API_KEY`
 - `TOKENLESS_DIRECT_TIMEOUT_MS`
+
+`TOKENLESS_DIRECT_API_KEY` is accepted only for an operator-initiated normalized direct run. The broker rejects generic credentials and requires the matching provider-specific key so a local caller cannot select a route that sends one provider's secret to another provider origin.
 
 Per-provider settings take precedence:
 
@@ -205,7 +210,9 @@ Per-provider settings take precedence:
 
 API keys are intentionally unavailable as CLI flag values because command lines are commonly visible in process listings and shell history. Base URLs may be supplied with `--direct-base-url` because they are not credentials.
 
-Remote upstreams must use HTTPS. Plain HTTP is accepted only for loopback hosts, which supports local development and a local Sub2API deployment without allowing accidental cleartext credentials over a network. Base URLs with userinfo, query, or fragment are rejected. Redirects are rejected so credentials cannot cross origins.
+The broker requires the matching `TOKENLESS_DIRECT_<PROVIDER>_API_KEY` for every provider route. Missing provider-specific credentials fail before upstream contact even if `TOKENLESS_DIRECT_API_KEY` is present.
+
+Remote upstreams must use HTTPS. Plain HTTP is accepted only for loopback hosts, which supports local development and a local Sub2API deployment without allowing accidental cleartext credentials over a network. Normalized direct runs fail closed when `NODE_TLS_REJECT_UNAUTHORIZED=0` disables process-wide certificate verification. They also refuse loopback HTTP while Node environment proxying is enabled, preventing a proxy from receiving a cleartext loopback credential; HTTPS remains allowed with certificate verification. The broker bypasses global proxy agents and explicitly enables certificate verification on every HTTPS request. Base URLs with userinfo, query, or fragment are rejected. Redirects are rejected so credentials cannot cross origins.
 
 ## Direct request protocol
 
@@ -241,6 +248,8 @@ The client sends only documented authentication headers:
 - Antigravity through a compatible gateway: `x-api-key`.
 
 No caller-supplied arbitrary headers are accepted.
+
+Normalized direct-run adapters set documented provider-side storage opt-outs where their request protocol supports one. This is an adapter guarantee only; independently operated providers and gateways retain responsibility for their own logging and retention.
 
 For compatible gateways, an API key's configured group/platform must match the Tokenless provider and requested model. Tokenless cannot override server-side account grouping with a request field and reports a gateway mismatch rather than attempting a different provider.
 
@@ -288,29 +297,32 @@ tokenless serve --mode direct --port 8788
 Properties:
 
 - Binds `127.0.0.1` by default.
-- Requires `TOKENLESS_DIRECT_SERVER_KEY`; there is no unauthenticated default.
-- Accepts the local key only as `Authorization: Bearer`.
-- Removes inbound `authorization`, `x-api-key`, and `x-goog-api-key` before forwarding.
+- Requires `TOKENLESS_DIRECT_SERVER_KEY` for every route, including health and capabilities; there is no unauthenticated default.
+- Requires that local server key to contain at least 32 visible non-whitespace characters; documentation generates 32 random bytes.
+- Accepts the local key only as `Authorization: Bearer` and never forwards it.
+- Removes inbound provider credentials, cookies, credential-like headers, and hop-by-hop headers, then forwards only an explicit safe header allowlist.
 - Injects the configured outbound credential for the selected provider.
 - Does not parse or log prompt bodies.
 - Preserves provider response status, content type, request ids, rate-limit metadata, and streaming bytes.
-- Removes hop-by-hop headers and never forwards cookies.
-- Enforces request body and upstream time limits.
+- Enforces header, request body, request, upstream, and bounded graceful-shutdown limits.
 - Rejects credential query parameters.
 
-The broker supports the public inference subset reviewed in Sub2API:
+The broker supports only the following public inference subset reviewed across the pinned Sub2API route contract and official provider contracts:
 
-- OpenAI-compatible Responses, Chat Completions, embeddings, images, and video routes.
-- Anthropic Messages and token counting.
-- Gemini `v1beta` model and generation routes.
-- Dedicated Antigravity Messages and Gemini routes.
-- Model and usage discovery where supported by the selected upstream.
+- OpenAI-compatible `POST /v1/responses`, `/v1/responses/compact`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/images/generations`, and `/v1/images/edits`.
+- Grok-only `POST /v1/videos/generations`, `/v1/videos/edits`, and `/v1/videos/extensions`, plus `GET /v1/videos/{id}`. Every video route requires exact Grok selection.
+- `GET /v1/models` and `/v1/models/{id}`. ChatGPT is the default; callers targeting Claude or Grok must send an exact provider selector so an OpenAI-shaped path is never guessed across those upstreams.
+- Anthropic `POST /v1/messages` and `/v1/messages/count_tokens`.
+- Gemini `GET /v1beta/models` and `/v1beta/models/{model}`, plus `POST /v1beta/models/{model}:generateContent` and `/v1beta/models/{model}:streamGenerateContent`. These are the only verified Gemini public broker actions.
+- Dedicated Antigravity `GET /antigravity/v1/models`, `/antigravity/v1beta/models`, and `/antigravity/v1beta/models/{model}`, plus `POST /antigravity/v1/messages`, `/antigravity/v1/messages/count_tokens`, `/antigravity/v1beta/models/{model}:generateContent`, and `/antigravity/v1beta/models/{model}:streamGenerateContent` against an explicitly configured compatible gateway.
 
-OpenAI-shaped routes default to `chatgpt`; `x-tokenless-provider: grok` selects Grok. Anthropic and Gemini routes infer their provider from the protocol. Antigravity uses its dedicated path. Ambiguous or mismatched routing fails before upstream contact.
+OpenAI-shaped inference routes default to `chatgpt`; exact `x-tokenless-provider: grok` selects Grok where that route is supported. Anthropic and Gemini routes infer their provider from the unambiguous protocol path. Antigravity uses only its dedicated path and has no default upstream. Ambiguous, unsupported, or mismatched routing fails before upstream contact.
 
-The broker intentionally does not expose Sub2API admin, user, payment, OAuth, account import, or `/backend-api/*` routes.
+The broker intentionally does not expose generic `/v1/usage`, provider account or usage routes, unreviewed Gemini model actions, `/antigravity/models`, `/antigravity/v1/usage`, unversioned model aliases, Sub2API admin, user, payment, OAuth, account import, scheduling, quota, or `/backend-api/*` routes. It is not an arbitrary-path proxy.
 
 It also never routes to `official-client`. This prevents a local subscription entitlement from becoming a generic shared API.
+
+The broker preserves request bodies as opaque streaming bytes. It does not rewrite request JSON and therefore does not inject `store: false`; the local caller controls any documented provider storage field, and the configured upstream controls its logging and retention. This differs from normalized `tokenless run --mode direct` adapters, which set supported storage opt-outs themselves.
 
 ## Error contract
 
