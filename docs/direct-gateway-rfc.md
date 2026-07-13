@@ -6,6 +6,8 @@ Date: 2026-07-13
 
 Upstream reviewed: [`Wei-Shaw/sub2api@4bc7486c3b4cf0a0c4b4b551bdb3f5cb5f825ad2`](https://github.com/Wei-Shaw/sub2api/tree/4bc7486c3b4cf0a0c4b4b551bdb3f5cb5f825ad2)
 
+Account routing amendment: [Tokenless Account Pool and Project Routing](./account-pool-rfc.md)
+
 ## Summary
 
 Tokenless will support two execution modes behind one CLI:
@@ -22,6 +24,7 @@ This separation is deliberate. Sub2API is an API gateway and account scheduler, 
 - Add `tokenless run --mode direct` next to the existing visible-session mode.
 - Keep `visible` as the default so existing commands remain compatible.
 - Let ChatGPT-plan users run through the official Codex executable without Tokenless reading Codex credentials or reproducing its transport.
+- Let one local operator configure multiple isolated provider accounts, keep each project on a preferred account while healthy, and fail over persistently when that account is unavailable.
 - Support every platform exposed by the reviewed Sub2API gateway: OpenAI, Anthropic, Gemini, Grok, and Antigravity.
 - Support official public provider APIs with the same direct adapters where their protocols match.
 - Read outbound API credentials from process environment only; never persist them in Tokenless configuration or job state.
@@ -36,8 +39,8 @@ This separation is deliberate. Sub2API is an API gateway and account scheduler, 
 - Calling `chatgpt.com/backend-api`, Claude private services, Gemini Code Assist private services, or other undocumented provider backends from Tokenless.
 - Reusing a first-party CLI's OAuth credential in a Tokenless HTTP client.
 - Pretending to be Codex CLI, Claude Code, Gemini CLI, Grok CLI, or a browser.
-- Turning a provider-owned subscription client into a shared or OpenAI-compatible proxy.
-- Managing Sub2API accounts, users, payments, groups, OAuth flows, or deployment.
+- Turning a provider-owned subscription client into a network-exposed, shared, multi-user, or resale proxy.
+- Reimplementing provider OAuth flows or managing Sub2API users, payments, groups, account credentials, or deployment.
 - Guaranteeing that an independently operated gateway complies with provider terms.
 - Translating every provider feature into a lowest-common-denominator schema.
 
@@ -80,6 +83,8 @@ Tokenless therefore owns only the orchestration or downstream client boundary. A
 
 Tokenless does not inspect or attest how a compatible gateway obtains its upstream authority. Documentation must not instruct users to import subscription OAuth credentials into a gateway. Operators remain responsible for provider terms, account rules, and data handling.
 
+The local account-pool amendment does not use multiple ChatGPT subscriptions to aggregate quota, rate limits, or concurrency. ChatGPT subscription projects require an explicit local pin, all managed subscription profiles share a global inference lock, and failover is limited to proven pre-dispatch profile-local unavailability such as an operator-disabled or logged-out profile. Rate limits, quota responses, busy slots, and ambiguous post-dispatch Codex failures never rotate subscription accounts.
+
 ## Architecture
 
 ```text
@@ -90,8 +95,10 @@ Agent -> tokenless CLI -> mode |
                                   +-> public API or compatible gateway
                                       -> normalized CLI result
 
-Local API client -> loopback direct broker -> provider-specific public route
-                                             -> configured public upstream
+Local API client -> authenticated loopback broker -> project account router
+                                                  +-> isolated official Codex profile
+                                                  +-> provider-specific public route
+                                                      -> configured public upstream
 ```
 
 The mode decision occurs before any visible-session initialization. Direct mode must not:
@@ -110,6 +117,8 @@ The implementation belongs in the public CLI package:
 packages/cli/src/direct/
   api-client.ts       normalized public API execution
   api-transport.ts    bounded redirect-free HTTP transport
+  account-pool.ts     account metadata, project affinity, health, and failover
+  local-lock.ts       atomic registry and account execution leases
   broker.ts           authenticated loopback streaming broker
   client.ts           direct backend selection
   config.ts           environment-only upstream resolution and URL validation
@@ -134,7 +143,7 @@ tokenless run --mode visible --provider chatgpt --prompt "..."
 
 There is no automatic fallback between modes. A visible failure must not silently create API charges, and a direct failure must not silently open a browser or share the prompt with a second transport.
 
-Web subscriptions and public API accounts are separate products unless a provider explicitly documents otherwise. API and broker requests can incur provider or gateway charges independently of a ChatGPT, Claude, Gemini, or Grok web subscription. The official Codex backend can use its own supported ChatGPT-plan authentication, but Tokenless never converts that entitlement into an API credential or broker route.
+Web subscriptions and public API accounts are separate products unless a provider explicitly documents otherwise. Public API broker requests can incur provider or gateway charges independently of a ChatGPT, Claude, Gemini, or Grok web subscription. The project-routed ChatGPT subset invokes an isolated official Codex client profile locally; Tokenless never converts that entitlement into an API credential or sends it through Tokenless-owned HTTP transport.
 
 ### Direct mode
 
@@ -154,7 +163,7 @@ The official-client backend currently fails closed on Windows because npm's comm
 
 `TOKENLESS_CODEX_BIN` may select a trusted installed Codex executable by path. Tokenless checks the executable's supported flags and features, proves that its root-deny profile blocks local process execution, checks provider-owned login status, requires ChatGPT authentication for this backend, and fails with an upgrade or login instruction when the client cannot provide the contract. Every Codex subprocess receives a small positive environment allowlist; API keys, endpoint overrides, proxy overrides, dynamic-loader variables, and Node injection variables are not inherited. Model-generated commands inherit none of Tokenless's parent environment, and filesystem-capable tools remain confined by the permission profile. API users select `--direct-backend api`. Tokenless never falls back to weaker arguments.
 
-Codex 0.143 does not provide a flag that suppresses `$CODEX_HOME/AGENTS.override.md` or `$CODEX_HOME/AGENTS.md` independently of its credential home. The official-client backend therefore preserves that provider-owned global-instructions behavior. Those user-authored instructions may influence the answer and are sent by Codex alongside the prompt. Tokenless does not open or parse them. Public API backends do not load Codex instructions.
+Codex 0.143 does not provide a flag that suppresses `$CODEX_HOME/AGENTS.override.md` or `$CODEX_HOME/AGENTS.md` independently of its credential home. The ambient single-profile CLI backend therefore preserves that provider-owned global-instructions behavior. Tokenless-managed account profiles reject those instruction files by existence and type checks without reading them. Public API backends do not load Codex instructions.
 
 The API backend is explicit for ChatGPT:
 
@@ -263,7 +272,7 @@ An `official-client` adapter is admitted only when all of these are true:
 - Tokenless can isolate filesystem, rules, hooks, plugins, and tool privileges;
 - the installed client passes Tokenless's fail-closed loopback tool-schema and permission-profile canaries before authentication or inference;
 - the adapter does not copy a first-party OAuth client, endpoint, header fingerprint, or credential cache; and
-- the adapter is not exposed by the local API broker.
+- any broker exposure is authenticated, loopback-only, single-operator, project-routed, capability-bounded, and delegates transport to the unchanged provider client.
 
 At the reviewed date, only OpenAI Codex passes this gate for this initiative. Other providers remain on their documented public APIs or a compatible gateway.
 
@@ -301,8 +310,8 @@ Properties:
 - Requires that local server key to contain at least 32 visible non-whitespace characters; documentation generates 32 random bytes.
 - Accepts the local key only as `Authorization: Bearer` and never forwards it.
 - Removes inbound provider credentials, cookies, credential-like headers, and hop-by-hop headers, then forwards only an explicit safe header allowlist.
-- Injects the configured outbound credential for the selected provider.
-- Does not parse or log prompt bodies.
+- Injects the configured outbound credential only for selected public API accounts.
+- Does not log prompt bodies; public API routes stay opaque, while the managed Codex route parses only its bounded text subset.
 - Preserves provider response status, content type, request ids, rate-limit metadata, and streaming bytes.
 - Enforces header, request body, request, upstream, and bounded graceful-shutdown limits.
 - Rejects credential query parameters.
@@ -318,11 +327,11 @@ The broker supports only the following public inference subset reviewed across t
 
 OpenAI-shaped inference routes default to `chatgpt`; exact `x-tokenless-provider: grok` selects Grok where that route is supported. Anthropic and Gemini routes infer their provider from the unambiguous protocol path. Antigravity uses only its dedicated path and has no default upstream. Ambiguous, unsupported, or mismatched routing fails before upstream contact.
 
-The broker intentionally does not expose generic `/v1/usage`, provider account or usage routes, unreviewed Gemini model actions, `/antigravity/models`, `/antigravity/v1/usage`, unversioned model aliases, Sub2API admin, user, payment, OAuth, account import, scheduling, quota, or `/backend-api/*` routes. It is not an arbitrary-path proxy.
+The broker intentionally does not expose generic `/v1/usage`, provider account or usage routes, unreviewed Gemini model actions, `/antigravity/models`, `/antigravity/v1/usage`, unversioned model aliases, Sub2API admin, user, payment, OAuth, account import, scheduling, quota, or `/backend-api/*` routes. Account administration remains local CLI state, not an HTTP surface. The broker is not an arbitrary-path proxy.
 
-It also never routes to `official-client`. This prevents a local subscription entitlement from becoming a generic shared API.
+With an exact `x-tokenless-project` header, `POST /v1/responses` may resolve to a managed ChatGPT account and invoke its isolated official Codex profile. That adapter accepts only the bounded stateless text contract in the account-routing RFC. It rejects provider-side continuation, tools, files, images, remote connectors, and unsupported controls. All other official-client routes remain closed.
 
-The broker preserves request bodies as opaque streaming bytes. It does not rewrite request JSON and therefore does not inject `store: false`; the local caller controls any documented provider storage field, and the configured upstream controls its logging and retention. This differs from normalized `tokenless run --mode direct` adapters, which set supported storage opt-outs themselves.
+Public API routes preserve request bodies as opaque streaming bytes. They do not rewrite request JSON and therefore do not inject `store: false`; the local caller controls any documented provider storage field, and the configured upstream controls its logging and retention. The managed Codex route is the deliberate exception: it parses and validates a bounded request before passing only normalized text and an optional model to the provider-owned executable.
 
 ## Error contract
 
@@ -408,10 +417,12 @@ Acceptance: all five reviewed Sub2API platforms pass route, auth, body, response
 
 Acceptance: compatible local clients can use the broker without receiving outbound credentials; streaming and non-streaming routes work; the existing visible path remains green.
 
+M4 and later account-pool milestones are specified in the account-routing amendment. They extend the authenticated broker without weakening the completed M1-M3 credential, transport, or visible-mode boundaries.
+
 ## Release and rollback
 
 - Direct mode is opt-in and does not change the default visible behavior.
-- No configuration migration is needed because direct credentials are not persisted.
+- Existing installations need no credential migration. The optional account registry stores only metadata, environment-variable references, project bindings, and provider-owned identity fingerprints; credentials remain environment-owned or provider-client-owned.
 - The broker is a separate command and does not change the daemon protocol.
 - A direct-mode regression can be rolled back independently without changing the extension or Rust binaries.
 - Upstream compatibility is tested against a pinned route contract. Upstream drift changes fixtures and implementation together in a reviewed commit.
