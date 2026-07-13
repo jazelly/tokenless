@@ -1,6 +1,6 @@
 {
   "name": "tokenless",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Tokenless CLI for visible-session browser automation.",
   "type": "module",
   "license": "UNLICENSED",
@@ -30,12 +30,12 @@
     "prepack": "npm run build:js"
   },
   "optionalDependencies": {
-    "tokenless-native-darwin-arm64": "0.1.1",
-    "tokenless-native-darwin-x64": "0.1.1",
-    "tokenless-native-linux-arm64": "0.1.1",
-    "tokenless-native-linux-x64": "0.1.1",
-    "tokenless-native-win32-arm64": "0.1.1",
-    "tokenless-native-win32-x64": "0.1.1"
+    "tokenless-native-darwin-arm64": "0.1.2",
+    "tokenless-native-darwin-x64": "0.1.2",
+    "tokenless-native-linux-arm64": "0.1.2",
+    "tokenless-native-linux-x64": "0.1.2",
+    "tokenless-native-win32-arm64": "0.1.2",
+    "tokenless-native-win32-x64": "0.1.2"
   },
   "engines": {
     "node": ">=22"
