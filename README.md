@@ -4,9 +4,41 @@
 
 Tokenless is a standalone project that helps agents save tokens by routing suitable work through the visible web version of ChatGPT, Claude, or Gemini that the user is already signed into.
 
-## Core Value
+## Install
 
-Many requests—second opinions, research-style answers, drafts, explanations, reviews, and simple transformations—do not need another paid API call. Tokenless gives an agent a local CLI entrypoint, drives only the provider UI the user can see, and returns the visible answer to the agent flow.
+You need Node.js 22+ and the Tokenless extension installed and enabled in Chrome, Brave, Edge, Arc, or Chromium. The extension and your provider sign-in are the only manual browser steps.
+
+Install the Tokenless setup skill:
+
+```bash
+npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless-install --yes
+```
+
+Then send your agent this message:
+
+```text
+Use $tokenless-install to install Tokenless, install its main skill, and verify that it is ready.
+```
+
+The setup skill installs the main `tokenless` skill, provisions the latest CLI and local runtime, and finishes with `doctor`. It reports any required browser action directly. To upgrade or repair later, tell the agent: `Use $tokenless-install to upgrade Tokenless and verify it.`
+
+## Why Tokenless
+
+### 1. Save tokens first
+
+Use the web subscription you already have for second opinions, research-style answers, drafts, explanations, reviews, and simple transformations—work that often does not justify another paid API call. Tokenless returns the visible result to the agent workflow without consuming another model API request.
+
+### 2. Browser-native, safer by design
+
+Tokenless uses the same general extension-and-local-bridge model as browser-integrated agent tools: it drives only the visible controls in your signed-in browser. It never reads or exports provider cookies, browser passwords, storage tokens, hidden authorization headers, or private provider APIs. This keeps your credentials in the browser and avoids private API automation; provider terms and visible confirmations still apply.
+
+### 3. Free, open source, and privacy-respecting
+
+Tokenless is free and open source. It has no hosted relay that receives your browser session. Only the prompt, explicitly shareable context, and intentionally selected files are submitted to the provider's visible web UI. Your provider login, cookies, and unrelated browser data remain private.
+
+### 4. Powerful and extensible
+
+Tokenless supports ChatGPT, Claude, and Gemini today. Its visible-session adapter model is designed to extend to AI providers with compatible web interfaces, without changing the safety boundary above.
 
 ## How It Works
 
@@ -18,26 +50,12 @@ Many requests—second opinions, research-style answers, drafts, explanations, r
 
 There is no local JSON task queue, task-page fallback, local-file page, Node native host, or automatic `chrome-extension://` navigation.
 
-## Install
+## Advanced Setup
 
-First install and enable the Tokenless extension in Chrome. Then run the one-time local setup:
-
-```bash
-npx tokenless setup
-```
-
-`npx` downloads the CLI when needed; install globally with `npm install -g tokenless` only if you prefer the shorter command. Agents that support skills can optionally install the Tokenless skill:
+The published extension id is bundled. For an unpacked development build, provide its id once:
 
 ```bash
-npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless
-```
-
-`setup` installs the local Rust runtime, binds the extension to one Chromium browser, opens ChatGPT when needed, and confirms that the browser bridge is actually connected. If ChatGPT asks you to sign in, complete that login in the visible tab. A setup that cannot see the bridge fails with a direct instruction to install or enable the extension; it never reports a false success merely because local files were written.
-
-The published extension id is bundled. For an unpacked development build, override it once:
-
-```bash
-npx tokenless setup --extension-id "<chrome-extension-id>" --json
+npx tokenless@latest setup --extension-id "<chrome-extension-id>" --json
 ```
 
 The universal `tokenless` package contains JavaScript only. npm selects an exact-version, OS/CPU-specific optional dependency containing `tokenless-daemon` and `tokenless-native-host`; setup copies those local binaries into `~/.tokenless/bin`, installs one exact native-host allowed origin, binds only the selected Chromium browser by default, and ensures the daemon and extension bridge are ready. There is no runtime executable download, install script, or Cargo requirement for end users.
@@ -45,15 +63,15 @@ The universal `tokenless` package contains JavaScript only. npm selects an exact
 Configure routing and the browser explicitly when desired:
 
 ```bash
-tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json
+npx tokenless@latest config --preferred-providers chatgpt,claude,gemini --browser chrome --json
 ```
 
-Without a configured browser, setup deterministically detects Chrome, Brave, Edge, Arc, then Chromium. Tokenless never sends provider URLs to the arbitrary system default browser. An explicit multi-browser native-host install is available through `tokenless install --browsers chrome,brave`, but a single browser avoids competing extension profiles claiming the same queue.
+Without a configured browser, setup deterministically detects Chrome, Brave, Edge, Arc, then Chromium. Tokenless never sends provider URLs to the arbitrary system default browser. An explicit multi-browser native-host install is available through `npx tokenless@latest install --browsers chrome,brave`, but a single browser avoids competing extension profiles claiming the same queue.
 
 ## Run A Request
 
 ```bash
-tokenless run \
+npx tokenless run \
   --provider chatgpt \
   --project-name "Website redesign" \
   --chat-name "Navbar review" \
@@ -69,12 +87,30 @@ Normal runs do not require an extension id. The returned `taskId` is derived fro
 
 For visible provider work expected to exceed three minutes, add `--long-running` to `run`. Tokenless then keeps the job attached for up to 36 minutes, permits up to 35 minutes for the visible answer, and emits progress heartbeats without polluting JSON stdout.
 
+## ChatGPT Model and Intelligence
+
+By default, Tokenless enters the visible **Chat** surface and preserves the model and Intelligence setting already selected by the user. Select Sol / Pro once in ChatGPT and later runs reuse that visible configuration. When a requested control is unavailable, Tokenless reports it as `preserved_current` rather than claiming that a different setting was selected, and still submits the prompt.
+
+Strict CLI control is an explicit advanced mode. It requires the separately installed **Tokenless Debugger Control** companion and a per-run extension id; the id is never stored in Tokenless settings:
+
+```bash
+npx tokenless run \
+  --provider chatgpt \
+  --debugger-control-extension-id "<debugger-control-extension-id>" \
+  --model "GPT-5.6 Sol" \
+  --effort pro \
+  --prompt "..." \
+  --json
+```
+
+The default extension never requests Chrome's `debugger` permission. The companion is a separate MV3 extension restricted to ChatGPT origins; it has no content script, Native Messaging bridge, Network/Storage/CDP read path, or cookie/storage access. Its only debugger commands are a press and release for an already visible, validated control in the approved ChatGPT tab, followed immediately by detach.
+
 For research answers, the JSON result includes `result.read.sources`: deduplicated direct HTTPS links visibly rendered inside the final assistant response, with their visible title and domain. Normal terminal output appends the same sources below the answer. Tokenless excludes provider-internal links and strips common tracking parameters; it never obtains citations from browser history, storage, or provider APIs.
 
 ## Query Daemon-Backed State
 
 ```bash
-tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
+npx tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
 ```
 
 `state` reads jobs and task metadata from the Rust daemon's SQLite store with exact provider/task filters. It does not inspect legacy local job JSON. Prompt bodies and claim capabilities are omitted; the authenticated CLI view preserves the daemon's full `error_json` so agents retain actionable failure detail. The extension Settings history is a separate bounded scalar-only view.
@@ -82,7 +118,7 @@ tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
 Cancel a detached or externally tracked job explicitly:
 
 ```bash
-tokenless cancel --job-id "<job-id>" --json
+npx tokenless cancel --job-id "<job-id>" --json
 ```
 
 Success means the daemon confirmed `status: canceled`. SIGINT/SIGTERM and explicit cancellation exit nonzero with `job_cancel_failed` when cancellation cannot be confirmed; the message warns that the job may still be running or may already have completed.
@@ -90,7 +126,7 @@ Success means the daemon confirmed `status: canceled`. SIGINT/SIGTERM and explic
 ## Capture A Sanitized DOM Snapshot
 
 ```bash
-tokenless snapshot-dom --provider chatgpt --json
+npx tokenless snapshot-dom --provider chatgpt --json
 ```
 
 Snapshots use the same daemon and provider-only wake path. Sanitized artifacts are written under `~/.tokenless/snapshots/<provider>/`; unsanitized snapshot payloads are rejected.
@@ -147,12 +183,14 @@ npm test
 npm run test:e2e
 ```
 
-The extension build is written to `packages/extension/dist/extension`. Load it through `chrome://extensions`, enable developer mode, choose **Load unpacked**, and select that directory. Then bind its real development id:
+The default extension build is written to `packages/extension/dist/extension`. Load it through `chrome://extensions`, enable developer mode, choose **Load unpacked**, and select that directory. Then bind its real development id:
 
 ```bash
 export TOKENLESS_EXTENSION_ID="<chrome-extension-id>"
-tokenless setup --extension-id "$TOKENLESS_EXTENSION_ID" --json
+npx tokenless setup --extension-id "$TOKENLESS_EXTENSION_ID" --json
 ```
+
+The separately loadable advanced companion is written to `packages/extension/dist/debugger-control`. Load it only when you need strict CLI model / Intelligence selection, copy its extension id from `chrome://extensions`, and pass that id with `--debugger-control-extension-id` for the individual run.
 
 Run a visible-session smoke test:
 
@@ -163,7 +201,7 @@ Reply with exactly this text and nothing else:
 TOKENLESS_LOCAL_OK_48291
 EOF
 
-tokenless run \
+npx tokenless run \
   --provider chatgpt \
   --project-name "Tokenless local dev" \
   --chat-name "Smoke test" \

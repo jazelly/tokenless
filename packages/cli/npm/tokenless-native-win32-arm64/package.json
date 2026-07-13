@@ -3,6 +3,13 @@
   "version": "0.1.1",
   "description": "Tokenless Rust runtime for win32-arm64.",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jazelly/tokenless.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "os": [
     "win32"
   ],

@@ -1,0 +1,124 @@
+name: Publish npm packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.changeset/publish-pending.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: tokenless-npm-publish
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - id: release
+        run: node scripts/release/verify-pending.mjs "$GITHUB_OUTPUT"
+
+  publish-native:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+          - runner: windows-11-arm
+            platform: win32
+            arch: arm64
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install npm with Trusted Publishing support
+        run: npm install --global npm@11.5.1
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build and verify this native runtime
+        run: npm --prefix packages/cli run build:native
+      - name: Configure npm token fallback for first publication
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        shell: bash
+        run: npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish native runtime
+        run: node scripts/release/publish-package.mjs "packages/cli/npm/tokenless-native-${{ matrix.platform }}-${{ matrix.arch }}"
+
+  publish-cli:
+    needs: [prepare, publish-native]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install npm with Trusted Publishing support
+        run: npm install --global npm@11.5.1
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Configure npm token fallback for first publication
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        shell: bash
+        run: npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish universal CLI after every native runtime
+        run: node scripts/release/publish-package.mjs packages/cli
+
+  clear-pending-marker:
+    needs: [prepare, publish-cli]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Remove the published release marker in a second commit
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          git checkout -B main origin/main
+          node scripts/release/verify-pending.mjs /tmp/release-output
+          grep -Fx "version=$VERSION" /tmp/release-output
+          git rm .changeset/publish-pending.json
+          git commit -m "chore(release): clear publish marker for tokenless@$VERSION"
+          git push origin HEAD:main

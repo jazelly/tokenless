@@ -9,24 +9,9 @@ Use `npx tokenless` as the entrypoint when this skill applies. Do not reproduce 
 
 Tokenless is daemon-only. Its packaged Rust daemon and Rust Native Messaging host connect the CLI to the browser extension. It never uses a local JSON task queue, a local file URL, a `chrome-extension://` task page, provider cookies, browser storage tokens, hidden auth headers, or private provider APIs.
 
-## One-time user setup
+## Installation prerequisite
 
-Prerequisites:
-
-- Node.js 22 or newer.
-- A supported Chromium browser with the Tokenless extension installed.
-- The user has installed and enabled the Tokenless extension, then run `npx tokenless setup` once. The published extension id is bundled; unpacked development builds can use `--extension-id <id>`.
-
-If a run reports a missing Rust binary, native host, manifest, or extension bridge, stop and ask the user to run:
-
-```bash
-npx tokenless setup
-npx tokenless doctor --json
-```
-
-Do not ask for or pass an extension id on normal `run`, `snapshot-dom`, or `state` calls.
-
-The npm CLI resolves only its locally installed OS/CPU native package. Do not download, curl, or execute a replacement binary; a missing native package requires reinstalling `tokenless` with optional dependencies enabled.
+Require the `tokenless-install` skill to complete installation, upgrades, repairs, and `doctor` verification before this skill runs provider work. If setup is incomplete or a command reports a missing binary, native host, manifest, or extension bridge, use `tokenless-install`; do not improvise a repair or request normal-run extension IDs.
 
 ## Read provider preferences
 

@@ -319,7 +319,7 @@ async function inspectChatGptControls(provider: ContentProvider, request: Conten
   const contextBlocker = validateExecutionContext(provider, request)
   if (contextBlocker) return contextBlocker
   const surface = chatGptSurfaceSnapshot()
-  const opened = await openChatGptIntelligenceMenu()
+  const opened = await openChatGptIntelligenceMenu(request)
   if (!opened) {
     return {
       status: 'inspected',
@@ -333,7 +333,7 @@ async function inspectChatGptControls(provider: ContentProvider, request: Conten
   try {
     const effortItems = chatGptEffortChoices(opened.menu)
     const modelTrigger = findVisibleMenuSubmenuTrigger(opened.menu)
-    const modelMenu = modelTrigger ? await openChatGptModelMenu(modelTrigger, opened.menu) : null
+    const modelMenu = modelTrigger ? await openChatGptModelMenu(modelTrigger, opened.menu, request) : null
     return {
       status: 'inspected',
       provider: provider.id,
@@ -374,14 +374,14 @@ async function configureChatGptControls(provider: ContentProvider, request: Cont
   const contextBlocker = validateExecutionContext(provider, request)
   if (contextBlocker) return contextBlocker
 
-  const surface = await ensureChatGptChatSurface()
+  const surface = await ensureChatGptChatSurface(request)
   if (surface.status === 'blocked') return surface
   const model = request.model === undefined
     ? { status: 'preserved' }
-    : await selectChatGptModel(request.model, request.modelFallbacks)
+    : await selectChatGptModel(request.model, request.modelFallbacks, request)
   const effort = request.effort === undefined
     ? { status: 'preserved' }
-    : await selectChatGptEffort(request.effort)
+    : await selectChatGptEffort(request.effort, request)
   return {
     status: 'configured',
     provider: provider.id,
@@ -407,7 +407,7 @@ function chatGptSurfaceSnapshot() {
   }
 }
 
-async function ensureChatGptChatSurface() {
+async function ensureChatGptChatSurface(request: ContentRecord = {}) {
   const radios = visibleChatGptSurfaceRadios()
   if (radios.length !== 2) {
     return { status: 'not_present', available: false, selected: null }
@@ -417,7 +417,7 @@ async function ensureChatGptChatSurface() {
   if (chatRadio.getAttribute('aria-checked') === 'true') {
     return { status: 'chat_selected', available: true, selected: 0 }
   }
-  chatRadio.click()
+  await activateChatGptControl(chatRadio, request)
   for (let attempt = 0; attempt < 8; attempt += 1) {
     if (chatRadio.getAttribute('aria-checked') === 'true') {
       return { status: 'chat_selected', available: true, selected: 0, changed: true }
@@ -438,14 +438,14 @@ function visibleChatGptSurfaceRadios() {
     .filter((node) => node.closest('[role="menu"]') === null) as HTMLElement[]
 }
 
-async function selectChatGptModel(requested: unknown, fallbacks: unknown) {
+async function selectChatGptModel(requested: unknown, fallbacks: unknown, request: ContentRecord = {}) {
   const requestedLabels = [requested, ...(Array.isArray(fallbacks) ? fallbacks : [])]
     .filter((label): label is string => typeof label === 'string' && label.trim().length > 0)
-  const opened = await openChatGptIntelligenceMenu()
+  const opened = await openChatGptIntelligenceMenu(request)
   if (!opened) return { status: 'unavailable', requested: requestedLabels[0] ?? null, applied: null }
   try {
     const trigger = findVisibleMenuSubmenuTrigger(opened.menu)
-    const modelMenu = trigger ? await openChatGptModelMenu(trigger, opened.menu) : null
+    const modelMenu = trigger ? await openChatGptModelMenu(trigger, opened.menu, request) : null
     if (!modelMenu) return { status: 'unavailable', requested: requestedLabels[0] ?? null, applied: null }
     const choices = menuRadioItems(modelMenu)
     for (let fallbackIndex = 0; fallbackIndex < requestedLabels.length; fallbackIndex += 1) {
@@ -454,7 +454,7 @@ async function selectChatGptModel(requested: unknown, fallbacks: unknown) {
       const choice = choices.find((item) => isEnabledVisible(item) && modelLabelMatches(visibleControlLabel(item), label))
       if (!choice) continue
       const applied = visibleControlLabel(choice)
-      if (choice.getAttribute('aria-checked') !== 'true') choice.click()
+      if (choice.getAttribute('aria-checked') !== 'true') await activateChatGptControl(choice, request)
       return {
         status: fallbackIndex === 0 ? 'selected' : 'fallback_selected',
         requested: requestedLabels[0],
@@ -473,10 +473,10 @@ async function selectChatGptModel(requested: unknown, fallbacks: unknown) {
   }
 }
 
-async function selectChatGptEffort(requested: unknown) {
+async function selectChatGptEffort(requested: unknown, request: ContentRecord = {}) {
   const wanted = typeof requested === 'string' ? requested as ChatGptEffort : undefined
   const wantedIndex = wanted ? CHATGPT_EFFORT_ORDER.indexOf(wanted) : -1
-  const opened = await openChatGptIntelligenceMenu()
+  const opened = await openChatGptIntelligenceMenu(request)
   if (wantedIndex < 0 || !opened) return { status: 'unavailable', requested: wanted ?? null, applied: null }
   try {
     const choices = chatGptEffortChoices(opened.menu)
@@ -499,7 +499,7 @@ async function selectChatGptEffort(requested: unknown) {
         reason: 'unmapped_partial_effort_menu',
       }
     }
-    if (selection.choice.getAttribute('aria-checked') !== 'true') selection.choice.click()
+    if (selection.choice.getAttribute('aria-checked') !== 'true') await activateChatGptControl(selection.choice, request)
     return {
       status: selection.effort === wanted ? 'selected' : 'fallback_selected',
       requested: wanted,
@@ -510,13 +510,14 @@ async function selectChatGptEffort(requested: unknown) {
   }
 }
 
-async function openChatGptIntelligenceMenu() {
+async function openChatGptIntelligenceMenu(request: ContentRecord = {}) {
   const main = document.querySelector('main')
-  const trigger = main
-    ? [...main.querySelectorAll('button[aria-expanded]')].find((node) => isVisible(node)) as HTMLElement | undefined
+  const composer = findFirstVisible(PROVIDER_CHATGPT.composerSelectors)
+  const trigger = main && composer
+    ? nearestChatGptMenuTrigger(main, composer)
     : undefined
   if (!trigger) return null
-  if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
+  if (trigger.getAttribute('aria-expanded') !== 'true') await activateChatGptControl(trigger, request)
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const menus = [...document.querySelectorAll('[role="menu"]')]
       .filter((candidate) => isVisible(candidate)) as HTMLElement[]
@@ -528,8 +529,8 @@ async function openChatGptIntelligenceMenu() {
   return null
 }
 
-async function openChatGptModelMenu(trigger: HTMLElement, parentMenu: HTMLElement) {
-  trigger.click()
+async function openChatGptModelMenu(trigger: HTMLElement, parentMenu: HTMLElement, request: ContentRecord = {}) {
+  await activateChatGptControl(trigger, request)
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const menu = [...document.querySelectorAll('[role="menu"]')]
       .find((candidate) => candidate !== parentMenu && isVisible(candidate)) as HTMLElement | undefined
@@ -537,6 +538,63 @@ async function openChatGptModelMenu(trigger: HTMLElement, parentMenu: HTMLElemen
     await delay(100)
   }
   return null
+}
+
+const PROVIDER_CHATGPT = getProviderForUrl('https://chatgpt.com/')!
+
+function nearestChatGptMenuTrigger(main: Element, composer: HTMLElement) {
+  const composerRect = composer.getBoundingClientRect()
+  const candidates = [...main.querySelectorAll('button[aria-expanded][aria-haspopup="menu"]')]
+    .filter((node) => isEnabledVisible(node as HTMLElement)) as HTMLElement[]
+  return candidates.sort((left, right) => (
+    distanceToRect(left.getBoundingClientRect(), composerRect) - distanceToRect(right.getBoundingClientRect(), composerRect)
+  ))[0]
+}
+
+function distanceToRect(
+  left: Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top'>,
+  right: Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top'>
+) {
+  const leftX = (left.left + left.right) / 2
+  const leftY = (left.top + left.bottom) / 2
+  const rightX = (right.left + right.right) / 2
+  const rightY = (right.top + right.bottom) / 2
+  return Math.hypot(leftX - rightX, leftY - rightY)
+}
+
+async function activateChatGptControl(node: HTMLElement, request: ContentRecord) {
+  if (await requestTrustedChatGptClick(node, request)) return true
+  node.click()
+  return false
+}
+
+async function requestTrustedChatGptClick(node: HTMLElement, request: ContentRecord) {
+  const extensionId = request.debuggerControlExtensionId
+  if (typeof extensionId !== 'string' || !/^[a-p]{32}$/.test(extensionId) || typeof chrome.runtime.sendMessage !== 'function') {
+    return false
+  }
+  const rect = node.getBoundingClientRect()
+  if (!rectIntersectsViewport(rect)) return false
+  const x = Math.round(rect.left + rect.width / 2)
+  const y = Math.round(rect.top + rect.height / 2)
+  if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return false
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'tokenless.bridge.trusted_click',
+      request: {
+        provider: 'chatgpt',
+        debuggerControlExtensionId: extensionId,
+        expectedUrl: publicPageUrl(location.href),
+        x,
+        y,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      },
+    })
+    return response?.ok === true
+  } catch {
+    return false
+  }
 }
 
 function findVisibleMenuSubmenuTrigger(menu: HTMLElement) {

@@ -899,6 +899,7 @@ function parseArgs(argv: string[]): CliArgs {
     '--effort': 'effort',
     '--thinking-effort': 'thinkingEffort',
     '--chat-surface': 'chatSurface',
+    '--debugger-control-extension-id': 'debuggerControlExtensionId',
   }
   const booleanFlags: Record<string, string> = {
     '--include-text': 'includeText',
@@ -1011,7 +1012,8 @@ function resolveChatGptControls({
     args.modelFallbacks !== undefined ||
     args.effort !== undefined ||
     args.thinkingEffort !== undefined ||
-    args.chatSurface !== undefined
+    args.chatSurface !== undefined ||
+    args.debuggerControlExtensionId !== undefined
   )
   if (provider !== 'chatgpt') {
     if (hasRequestedControl) {
@@ -1026,11 +1028,21 @@ function resolveChatGptControls({
   }
   const effortValue = args.effort ?? args.thinkingEffort
   const effort = effortValue === undefined ? undefined : normalizeChatGptEffort(effortValue)
+  const debuggerControlExtensionId = args.debuggerControlExtensionId === undefined
+    ? undefined
+    : normalizeExtensionId(args.debuggerControlExtensionId)
+  if (args.debuggerControlExtensionId !== undefined && !debuggerControlExtensionId) {
+    throw usageError(
+      'invalid_debugger_control_extension_id',
+      '--debugger-control-extension-id must be the 32-character id of the separately installed Tokenless Debugger Control extension.'
+    )
+  }
   return {
     chatSurface,
     model: args.model === undefined ? undefined : String(args.model).trim(),
     modelFallbacks: args.modelFallbacks === undefined ? undefined : parseList(args.modelFallbacks),
     effort,
+    debuggerControlExtensionId,
   }
 }
 
@@ -1122,6 +1134,7 @@ function usage() {
     'Usage:',
     '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
     '  tokenless run --provider chatgpt --model <visible-model> --model-fallback <model,...> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
+    '  tokenless run --provider chatgpt --debugger-control-extension-id <companion-extension-id> --model <visible-model> --effort <level> --prompt <text> --json',
     '  tokenless run --long-running --provider chatgpt --prompt <text> --json',
     '  tokenless chatgpt-controls --json',
     '  tokenless chatgpt-configure --model <visible-model> --effort <level> --json',

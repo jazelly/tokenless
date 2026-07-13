@@ -7,7 +7,9 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present && npm run build:scripts",
     "build:scripts": "node -e \"require('node:fs').rmSync('dist/scripts',{recursive:true,force:true})\" && tsc -p tsconfig.scripts.json",
+    "changeset": "changeset",
     "lint": "npm run lint --workspaces --if-present && tsc -p tsconfig.scripts.json --noEmit",
+    "release:version": "node scripts/release/version.mjs",
     "verify:extension-release": "node scripts/verify-extension-release.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node --test --test-concurrency=1 test/**/*.test.mjs",
@@ -22,6 +24,7 @@
   },
   "packageManager": "npm@10",
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@playwright/test": "^1.53.0",
     "@types/chrome": "^0.2.2",
     "@types/node": "^26.1.1",

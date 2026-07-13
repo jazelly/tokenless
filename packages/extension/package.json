@@ -12,6 +12,7 @@
   },
   "files": [
     "dist/extension",
+    "dist/debugger-control",
     "dist/src",
     "README.md",
     "package.json"

@@ -8,8 +8,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const extensionSource = path.join(root, 'packages/extension/extension')
 const extensionDist = path.join(root, 'packages/extension/dist/extension')
+const debuggerControlSource = path.join(root, 'packages/extension/control-extension')
+const debuggerControlDist = path.join(root, 'packages/extension/dist/debugger-control')
 
-test('manifest exposes Settings without task, side-panel, or external execution surfaces', () => {
+test('default manifest exposes the Settings side panel without debugger or external execution surfaces', () => {
   const manifest = readJson('packages/extension/extension/manifest.json')
 
   assert.equal(manifest.manifest_version, 3)
@@ -19,19 +21,40 @@ test('manifest exposes Settings without task, side-panel, or external execution 
     open_in_tab: false,
   })
   assert.equal(manifest.action.default_title, 'Open Tokenless settings')
-  assert.equal(manifest.side_panel, undefined)
+  assert.deepEqual(manifest.side_panel, { default_path: 'settings/index.html' })
   assert.equal(manifest.externally_connectable, undefined)
   assert.ok(manifest.permissions.includes('nativeMessaging'))
-  assert.ok(!manifest.permissions.includes('sidePanel'))
+  assert.ok(manifest.permissions.includes('sidePanel'))
+  assert.ok(!manifest.permissions.includes('debugger'))
   assert.ok(!manifest.permissions.includes('cookies'))
   assert.ok(!manifest.permissions.includes('history'))
   assert.deepEqual(manifest.content_scripts[0].matches, manifest.host_permissions)
   assert.ok(manifest.host_permissions.every((pattern) => pattern.startsWith('https://')))
 })
 
-test('extension build contains Settings and no task, side-panel, or runner artifacts', () => {
+test('debugger companion manifest has a deliberately narrow, separate privilege boundary', () => {
+  const manifest = readJson('packages/extension/control-extension/manifest.json')
+
+  assert.equal(manifest.manifest_version, 3)
+  assert.deepEqual(manifest.permissions, ['debugger', 'tabs'])
+  assert.deepEqual(manifest.host_permissions, [
+    'https://chatgpt.com/*',
+    'https://chat.openai.com/*',
+  ])
+  assert.equal(manifest.content_scripts, undefined)
+  assert.equal(manifest.side_panel, undefined)
+  assert.equal(manifest.options_ui, undefined)
+  assert.match(manifest.background.service_worker, /^background\//)
+  assert.deepEqual(manifest.externally_connectable, {
+    ids: ['afpfljlnhlpkbkmgonoanbmcdmmfmoam'],
+  })
+})
+
+test('extension builds contain Settings and the separate debugger-control companion', () => {
   const sourceArtifacts = listRelativeFiles(extensionSource)
   const builtArtifacts = listRelativeFiles(extensionDist)
+  const debuggerControlSourceArtifacts = listRelativeFiles(debuggerControlSource)
+  const debuggerControlBuiltArtifacts = listRelativeFiles(debuggerControlDist)
   const buildManifest = readJson('packages/extension/dist/extension-build-manifest.json')
   const extensionPackage = readJson('packages/extension/package.json')
   const recordedArtifacts = buildManifest.files.map((entry) => entry.path)
@@ -45,6 +68,10 @@ test('extension build contains Settings and no task, side-panel, or runner artif
     assert.ok(artifacts.every((file) => !file.includes('runner')), artifacts.join('\n'))
   }
   assert.equal(extensionPackage.exports['./web-client'], undefined)
+  assert.ok(extensionPackage.files.includes('dist/debugger-control'))
+  assert.ok(debuggerControlSourceArtifacts.includes('background/service-worker.ts'))
+  assert.ok(debuggerControlBuiltArtifacts.includes('background/service-worker.js'))
+  assert.ok(buildManifest.debuggerControl.files.some((entry) => entry.path === 'background/service-worker.js'))
   assert.equal(fs.existsSync(path.join(root, 'packages/extension/src/web-client.ts')), false)
   assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/src/web-client.js')), false)
   for (const obsoleteDirectory of ['task', 'sidepanel', 'daemon']) {
@@ -331,13 +358,16 @@ test('built Settings UI renders, saves, refreshes, redacts, and reports failures
     try {
       const { page, pageErrors } = loaded
       await page.getByText('Native host ready', { exact: true }).waitFor()
+      await page.getByRole('button', { name: 'Settings', exact: true }).click()
+      await page.getByText('Language', { exact: true }).waitFor()
+      await page.getByRole('button', { name: '中文', exact: true }).click()
+      await page.getByRole('button', { name: '设置', exact: true }).waitFor()
+      await page.getByText('语言', { exact: true }).waitFor()
+      await page.getByRole('button', { name: 'EN', exact: true }).click()
+      await page.getByRole('button', { name: 'Settings', exact: true }).waitFor()
       assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini', 'ChatGPT'])
       assert.equal(await page.getByLabel('Browser preference').inputValue(), 'Chrome Beta')
       assert.equal(await page.getByLabel('Daemon URL').inputValue(), 'http://127.0.0.1:7331')
-      await page.getByText('Settings behavior', { exact: true }).waitFor()
-      assert.equal(await page.getByText('Project: Tokenless', { exact: true }).count(), 1)
-      assert.equal(await page.getByText('Task: task-settings-behavior', { exact: true }).count(), 1)
-
       const visibleText = await page.locator('body').innerText()
       assert.doesNotMatch(visibleText, /private-claim-marker|private-prompt-marker|private-result-marker/)
       assert.equal(await page.getByRole('button', { name: 'Move Gemini up', exact: true }).isDisabled(), true)
@@ -347,17 +377,10 @@ test('built Settings UI renders, saves, refreshes, redacts, and reports failures
       assert.equal(await page.getByRole('button', { name: 'Move ChatGPT down', exact: true }).isDisabled(), true)
       assert.equal(await page.getByRole('button', { name: 'Remove ChatGPT', exact: true }).isEnabled(), true)
       assert.equal(await page.getByRole('combobox', { name: 'Provider to add', exact: true }).count(), 1)
+      assert.equal(await page.getByRole('combobox', { name: 'Provider to add', exact: true }).isDisabled(), true)
+      assert.equal(await page.getByRole('button', { name: 'Add provider', exact: true }).isDisabled(), true)
       assert.equal(await page.getByRole('button', { name: 'Save settings', exact: true }).count(), 1)
-      assert.equal(await page.getByRole('button', { name: 'Refresh', exact: true }).count(), 1)
-
-      const removeChatGpt = page.getByRole('button', { name: 'Remove ChatGPT', exact: true })
-      await removeChatGpt.focus()
-      await page.keyboard.press('Enter')
-      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini'])
-      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Remove Gemini')
-      await page.getByRole('combobox', { name: 'Provider to add', exact: true }).selectOption('chatgpt')
-      await page.getByRole('button', { name: 'Add provider', exact: true }).click()
-      assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini', 'ChatGPT'])
+      assert.equal(await page.locator('#refresh').count(), 1)
 
       await page.getByLabel('Browser preference').fill('   ')
       await page.getByLabel('Daemon URL').fill('')
@@ -384,11 +407,15 @@ test('built Settings UI renders, saves, refreshes, redacts, and reports failures
       await page.getByLabel('Browser preference').fill('firefox')
       await page.getByLabel('Daemon URL').fill('http://127.0.0.1:7444')
       await page.getByRole('button', { name: 'Move Gemini up', exact: true }).click()
+      await page.getByRole('button', { name: 'Activity', exact: true }).click()
+      await page.getByText('Settings behavior', { exact: true }).waitFor()
+      assert.equal(await page.getByText('Project: Tokenless', { exact: true }).count(), 1)
+      assert.equal(await page.getByText('Task: task-settings-behavior', { exact: true }).count(), 1)
       const refresh = page.getByRole('button', { name: 'Refresh', exact: true })
       await refresh.click()
       await page.getByRole('button', { name: 'Refreshing…', exact: true }).waitFor()
       assert.equal(await page.getByRole('button', { name: 'Refreshing…', exact: true }).isDisabled(), true)
-      assert.equal(await page.getByRole('button', { name: 'Save settings', exact: true }).isEnabled(), true)
+      assert.equal(await page.locator('#configuration button[type="submit"]').isEnabled(), true)
       assert.equal(await page.getByLabel('Browser preference').inputValue(), 'firefox')
       assert.equal(await page.getByLabel('Daemon URL').inputValue(), 'http://127.0.0.1:7444')
       assert.deepEqual(await page.locator('.provider-copy strong').allTextContents(), ['Gemini', 'ChatGPT'])
@@ -422,9 +449,8 @@ test('built Settings UI renders, saves, refreshes, redacts, and reports failures
     const loading = await openSettingsPage(browser, server.url, [{}, {}])
     try {
       const { page, pageErrors } = loading
+      await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await page.getByText('Loading configuration…', { exact: true }).waitFor()
-      await page.getByText('Loading daemon history…', { exact: true }).waitFor()
-      assert.equal(await page.getByRole('button', { name: 'Refreshing…', exact: true }).isDisabled(), true)
       await page.evaluate(([configResponse, historyResponse]) => {
         globalThis.__nativeMock.respond(0, configResponse)
         globalThis.__nativeMock.respond(1, historyResponse)
@@ -438,7 +464,10 @@ test('built Settings UI renders, saves, refreshes, redacts, and reports failures
       ])
       await page.getByText('Native host ready', { exact: true }).waitFor()
       await page.getByText('No preference saved. New jobs default to ChatGPT.', { exact: true }).waitFor()
+      await page.getByRole('button', { name: 'Activity', exact: true }).click()
+      await page.getByText('Loading daemon history…', { exact: true }).waitFor({ state: 'hidden' })
       await page.getByText('No daemon jobs yet.', { exact: true }).waitFor()
+      assert.equal(await page.getByRole('button', { name: 'Refresh', exact: true }).isEnabled(), true)
       assert.deepEqual(pageErrors, [])
     } finally {
       await loading.context.close()
@@ -451,7 +480,9 @@ test('built Settings UI renders, saves, refreshes, redacts, and reports failures
     try {
       const { page, pageErrors } = partial
       await page.getByText('Partially loaded', { exact: true }).waitFor()
+      await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await page.getByText('Configuration permission denied.', { exact: true }).waitFor()
+      await page.getByRole('button', { name: 'Activity', exact: true }).click()
       await page.getByText('History only refresh', { exact: true }).waitFor()
       assert.equal(await page.locator('#configuration [role="alert"]').count(), 1)
       assert.deepEqual(pageErrors, [])
@@ -1292,8 +1323,9 @@ test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade 
         </div>
       </div>
       <main>
-        <div id="prompt-textarea" role="textbox" contenteditable="true"></div>
-        <button id="intelligence" aria-expanded="false">中等</button>
+        <button id="worked" aria-expanded="false" aria-haspopup="menu" style="position: fixed; right: 4px; top: 4px">已工作 31 秒</button>
+        <div id="prompt-textarea" role="textbox" contenteditable="true" style="height: 42px; width: 600px"></div>
+        <button id="intelligence" aria-expanded="false" aria-haspopup="menu">中等</button>
         <button data-testid="send-button" disabled>发送</button>
       </main>
       <script>
@@ -1313,6 +1345,7 @@ test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade 
           send.setAttribute('aria-disabled', 'true')
         })
         const trigger = document.querySelector('#intelligence')
+        const decoy = document.querySelector('#worked')
         let model = 'GPT-5.6 Sol'
         let effort = 1
         const effortLabels = ['即时', '中等', '高', '特高', '专业']
@@ -1362,6 +1395,7 @@ test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade 
           document.body.append(menu)
         }
         trigger.addEventListener('click', intelligenceMenu)
+        decoy.addEventListener('click', () => { throw new Error('The worked-time menu is not the Intelligence control.') })
         updateTrigger()
       </script>
     </body></html>
@@ -1421,16 +1455,16 @@ test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade 
   }
 })
 
-test('background opens Settings only on action click and jobs create only approved provider tabs', async () => {
+test('background enables the Settings side panel and jobs create only approved provider tabs', async () => {
   const previousChrome = globalThis.chrome
   const installed = createChromeEvent()
   const startup = createChromeEvent()
   const runtimeMessage = createChromeEvent()
-  const actionClicked = createChromeEvent()
   const ports = []
   const createdTabs = []
   const providerMessages = []
-  let settingsOpenCount = 0
+  const forwardedDebuggerMessages = []
+  const sidePanelCalls = []
   let nextTabId = 1
 
   function connectNative(name) {
@@ -1471,18 +1505,21 @@ test('background opens Settings only on action click and jobs create only approv
   }
 
   globalThis.chrome = {
-    action: {
-      onClicked: actionClicked,
-    },
     runtime: {
       onMessage: runtimeMessage,
       onInstalled: installed,
       onStartup: startup,
       connectNative,
-      async openOptionsPage() {
-        settingsOpenCount += 1
+      async sendMessage(extensionId, payload) {
+        forwardedDebuggerMessages.push({ extensionId, payload })
+        return { ok: true }
       },
       lastError: undefined,
+    },
+    sidePanel: {
+      async setPanelBehavior(options) {
+        sidePanelCalls.push(options)
+      },
     },
     scripting: {
       async executeScript() {
@@ -1587,18 +1624,43 @@ test('background opens Settings only on action click and jobs create only approv
       status: 'connected',
       sessionId: 'contract-session',
     }))
-    assert.equal(settingsOpenCount, 0)
+    assert.deepEqual(sidePanelCalls, [{ openPanelOnActionClick: true }])
     assert.deepEqual(createdTabs, [])
 
     await installed.emit({ reason: 'install' })
     await startup.emit()
     await delay(0)
-    assert.equal(settingsOpenCount, 0, 'install and startup must not open Settings')
+    assert.deepEqual(sidePanelCalls, [
+      { openPanelOnActionClick: true },
+      { openPanelOnActionClick: true },
+      { openPanelOnActionClick: true },
+    ], 'startup hooks configure the side panel without opening a tab')
     assert.deepEqual(createdTabs, [], 'install and startup must not open tabs')
+    const sidePanelCallsBeforeJobs = sidePanelCalls.length
 
-    await actionClicked.emit({})
-    await delay(0)
-    assert.equal(settingsOpenCount, 1, 'an explicit extension action click should open Settings')
+    const trustedClick = await invokeChromeMessageListener(runtimeMessage.listeners()[0], {
+      type: 'tokenless.bridge.trusted_click',
+      request: {
+        provider: 'chatgpt',
+        debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+        expectedUrl: 'https://chatgpt.com/c/visible-chat',
+        x: 320,
+        y: 640,
+        viewportWidth: 1280,
+        viewportHeight: 800,
+      },
+    }, { tab: { id: 42, url: 'https://chatgpt.com/c/visible-chat' } })
+    assert.deepEqual(trustedClick, { ok: true })
+    assert.deepEqual(forwardedDebuggerMessages, [{
+      extensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+      payload: {
+        type: 'tokenless.debugger-control.trusted_click.v1',
+        tabId: 42,
+        expectedUrl: 'https://chatgpt.com/c/visible-chat',
+        x: 320,
+        y: 640,
+      },
+    }])
 
     const visibleJobMessage = {
       protocol: 'tokenless.native.v1',
@@ -1667,7 +1729,7 @@ test('background opens Settings only on action click and jobs create only approv
       assert.ok(providerMessages[messageIndex].message.request?.postSubmitTargetTransitionProof?.nonce.length >= 16)
     }
     assert.doesNotMatch(JSON.stringify(providerMessages), /provider-private-marker/)
-    assert.equal(settingsOpenCount, 1, 'job execution must not open Settings')
+    assert.equal(sidePanelCalls.length, sidePanelCallsBeforeJobs, 'job execution must not change Settings state')
 
     const messagesAfterFirstJob = daemonPort.posted.length
     await daemonPort.onMessage.emit(structuredClone(visibleJobMessage))
@@ -1696,7 +1758,7 @@ test('background opens Settings only on action click and jobs create only approv
 
     await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 2)
     assert.deepEqual(createdTabs.map((tab) => tab.url), ['https://chatgpt.com/c/123e4567-e89b-12d3-a456-426614174002?private-query=yes#private-hash'])
-    assert.equal(settingsOpenCount, 1)
+    assert.equal(sidePanelCalls.length, sidePanelCallsBeforeJobs)
 
     await daemonPort.onMessage.emit({
       protocol: 'tokenless.native.v1',
@@ -1922,6 +1984,7 @@ test('background opens Settings only on action click and jobs create only approv
 
 test('background and provider content preserve visible-session safety boundaries', () => {
   const serviceWorker = readText('packages/extension/extension/background/service-worker.ts')
+  const debuggerControlWorker = readText('packages/extension/control-extension/background/service-worker.ts')
   const contentScript = readText('packages/extension/extension/content/provider-content.ts')
   const settingsScript = readText('packages/extension/extension/settings/index.ts')
   const builtContentScript = readText('packages/extension/dist/extension/content/provider-content.js')
@@ -1933,7 +1996,7 @@ test('background and provider content preserve visible-session safety boundaries
   assert.match(serviceWorker, /focusTab\(tab\)/)
   assert.match(serviceWorker, /chrome\.tabs\.sendMessage/)
   assert.match(serviceWorker, /validateProviderLanding/)
-  assert.match(serviceWorker, /hasSafeProviderAuthority/)
+  assert.match(serviceWorker, /isSafeProviderAuthority/)
   assert.match(serviceWorker, /chrome\.runtime\.onMessage\.addListener/)
   assert.match(serviceWorker, /tokenless\.provider_content_ready/)
   assert.match(contentScript, /chrome\.runtime\.sendMessage/)
@@ -1953,6 +2016,87 @@ test('background and provider content preserve visible-session safety boundaries
   )
   assert.doesNotMatch(contentScript, /const PROVIDERS\b/)
   assert.doesNotMatch(contentScript, /function providerTransitionSource\b/)
+  assert.match(serviceWorker, /forwardTrustedClickToCompanion/)
+  assert.match(debuggerControlWorker, /Input\.dispatchMouseEvent/)
+  assert.doesNotMatch(
+    debuggerControlWorker,
+    /sendCommand\([^\n]*(?:Network|Storage|Fetch|Runtime|DOM|Page)\./
+  )
+  assert.doesNotMatch(debuggerControlWorker, /connectNative|chrome\.cookies|localStorage|sessionStorage/)
+})
+
+test('debugger companion accepts only the approved extension and dispatches one input-only click before detaching', async () => {
+  const previousChrome = globalThis.chrome
+  const listeners = []
+  const calls = []
+  globalThis.chrome = {
+    runtime: {
+      onMessageExternal: {
+        addListener(listener) {
+          listeners.push(listener)
+        },
+      },
+    },
+    tabs: {
+      async get(tabId) {
+        return tabId === 42 ? { id: 42, url: 'https://chatgpt.com/c/visible-chat' } : undefined
+      },
+    },
+    debugger: {
+      async attach(target, version) {
+        calls.push({ kind: 'attach', target, version })
+      },
+      async sendCommand(target, command, params) {
+        calls.push({ kind: 'command', target, command, params })
+      },
+      async detach(target) {
+        calls.push({ kind: 'detach', target })
+      },
+    },
+  }
+  try {
+    const workerUrl = pathToFileURL(path.join(debuggerControlDist, 'background/service-worker.js'))
+    workerUrl.searchParams.set('contract', String(Date.now()))
+    await import(workerUrl.href)
+    assert.equal(listeners.length, 1)
+
+    const response = await invokeChromeMessageListener(listeners[0], {
+      type: 'tokenless.debugger-control.trusted_click.v1',
+      tabId: 42,
+      expectedUrl: 'https://chatgpt.com/c/visible-chat',
+      x: 320,
+      y: 640,
+    }, { id: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam' })
+    assert.deepEqual(response, { ok: true })
+    assert.deepEqual(calls, [
+      { kind: 'attach', target: { tabId: 42 }, version: '1.3' },
+      {
+        kind: 'command',
+        target: { tabId: 42 },
+        command: 'Input.dispatchMouseEvent',
+        params: { type: 'mousePressed', x: 320, y: 640, button: 'left', buttons: 1, clickCount: 1 },
+      },
+      {
+        kind: 'command',
+        target: { tabId: 42 },
+        command: 'Input.dispatchMouseEvent',
+        params: { type: 'mouseReleased', x: 320, y: 640, button: 'left', buttons: 0, clickCount: 1 },
+      },
+      { kind: 'detach', target: { tabId: 42 } },
+    ])
+
+    const rejected = await invokeChromeMessageListener(listeners[0], {
+      type: 'tokenless.debugger-control.trusted_click.v1',
+      tabId: 42,
+      expectedUrl: 'https://chatgpt.com/c/visible-chat',
+      x: 1,
+      y: 1,
+    }, { id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' })
+    assert.deepEqual(rejected, { ok: false, code: 'debugger_control_sender_rejected' })
+    assert.equal(calls.length, 4, 'rejected requests must not attach a debugger')
+  } finally {
+    globalThis.chrome = previousChrome
+  }
 })
 
 test('browser bridge advertises sanitized DOM snapshot action', async () => {
@@ -1986,6 +2130,12 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
   })
   assert.equal(chatGptControls.ok, true)
   assert.equal(chatGptControls.request.effort, 'extra_high')
+  const debuggerControl = validateBridgeRequest({
+    ...baseRequest,
+    debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+  })
+  assert.equal(debuggerControl.ok, true)
+  assert.equal(debuggerControl.request.debuggerControlExtensionId, 'afpfljlnhlpkbkmgonoanbmcdmmfmoam')
   for (const malformedControls of [
     { ...baseRequest, chatSurface: 'work' },
     { ...baseRequest, effort: 'maximum' },
@@ -1993,6 +2143,8 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     { ...baseRequest, modelFallbacks: 'GPT-5.5' },
     { ...baseRequest, modelFallbacks: Array.from({ length: 9 }, () => 'GPT-5.5') },
     { ...baseRequest, provider: 'gemini', effort: 'high' },
+    { ...baseRequest, provider: 'gemini', debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam' },
+    { ...baseRequest, debuggerControlExtensionId: 'not-an-extension-id' },
     { ...baseRequest, provider: 'gemini', action: 'inspect_chatgpt_controls' },
   ]) {
     const validation = validateBridgeRequest(malformedControls)
@@ -2093,7 +2245,28 @@ function createChromeEvent() {
     async emit(...args) {
       await Promise.all(listeners.map((listener) => listener(...args)))
     },
+    listeners() {
+      return [...listeners]
+    },
   }
+}
+
+function invokeChromeMessageListener(listener, message, sender) {
+  return new Promise((resolve, reject) => {
+    let completed = false
+    const timeout = setTimeout(() => {
+      if (!completed) reject(new Error('Chrome message listener did not respond.'))
+    }, 1000)
+    const keepOpen = listener(message, sender, (response) => {
+      completed = true
+      clearTimeout(timeout)
+      resolve(response)
+    })
+    if (keepOpen !== true && !completed) {
+      clearTimeout(timeout)
+      reject(new Error('Chrome message listener did not keep the response channel open.'))
+    }
+  })
 }
 
 function createManualScheduler() {

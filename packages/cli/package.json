@@ -4,6 +4,13 @@
   "description": "Tokenless CLI for visible-session browser automation.",
   "type": "module",
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jazelly/tokenless.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": "./dist/src/index.js"
   },
