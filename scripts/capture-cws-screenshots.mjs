@@ -258,8 +258,8 @@ async function capturePromoImage(browser, { width, height, logoDataUrl, outputPa
             <div class="logo-shell"><img src="${logoDataUrl}" alt=""></div>
             <div class="copy">
               <div class="name">Tokenless</div>
-              <h1>Visible AI sessions.</h1>
-              <p>Use the browser sessions you already control—without exporting session tokens.</p>
+              <h1>Save agent tokens.</h1>
+              <p>Use the web AI you already have—without leaving your agent workflow.</p>
             </div>
           </main>
         </body>
