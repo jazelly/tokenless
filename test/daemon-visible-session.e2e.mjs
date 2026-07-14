@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const extensionPath = path.join(root, 'packages/extension/dist/extension')
 const chatGptRealDomFixturePath = path.join(root, 'test/fixtures/chatgpt-real-dom-fixture.html')
+const claudeRealDomFixturePath = path.join(root, 'test/fixtures/claude-real-dom-fixture.html')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-e2e', 'runs')
 
 test('daemon job completes through extension service worker and ChatGPT real-DOM fixture without task page', {
@@ -39,6 +40,7 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
   const events = []
   const observedUrls = []
   let manifestBackup = []
+  let registryBackup = []
   let daemon
   let context
   let providerFixture
@@ -51,7 +53,12 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     // Install before the first browser process starts. Chromium discovers
     // user-level Native Messaging manifests at startup.
     const manifestHome = userDataDir
-    const browsers = ['profile']
+    const browsers = fixtureNativeHostBrowsers()
+    registryBackup = snapshotWindowsNativeHostRegistry(
+      browsers,
+      NATIVE_HOST_NAME,
+      windowsNativeHostManifestPath(tokenlessHome, NATIVE_HOST_NAME)
+    )
     manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
       nativeMessagingHostDirs(browser, manifestHome).map((dir) => path.join(dir, `${NATIVE_HOST_NAME}.json`))
     )))
@@ -70,7 +77,11 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     })
 
     const chatGptFixture = await fs.readFile(chatGptRealDomFixturePath, 'utf8')
-    providerFixture = await startHttpsFixtureServer({ body: chatGptFixture, events })
+    providerFixture = await startHttpsFixtureServer({
+      body: chatGptFixture,
+      events,
+      providerHost: 'chatgpt.com',
+    })
     events.push({
       at: new Date().toISOString(),
       event: 'provider_fixture_https_started',
@@ -83,7 +94,8 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
       userDataDir,
       tokenlessHome,
       daemonUrl,
-      providerFixture
+      providerFixture,
+      'chatgpt.com'
     )
     observeContextUrls(context, observedUrls)
     const extensionId = await discoverExtensionId(context)
@@ -390,6 +402,7 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
     await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
     await attemptCleanup(cleanupErrors, 'restore native host manifests', async () => restoreFiles(manifestBackup))
+    await attemptCleanup(cleanupErrors, 'restore native host registry', async () => restoreWindowsNativeHostRegistry(registryBackup))
     await attemptCleanup(cleanupErrors, 'stop daemon', async () => {
       if (daemon) await stopDaemon(daemon)
     })
@@ -398,6 +411,240 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     })
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, 'Tokenless fixture E2E cleanup failed')
+    }
+  }
+})
+
+test('daemon job completes through extension service worker and Claude real-DOM fixture without internal pages', {
+  skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run fixture browser E2E' : false,
+  timeout: 180000,
+}, async () => {
+  const { chromium } = await import('playwright')
+  const {
+    getDaemonJob,
+    installNativeHost,
+    nativeMessagingHostDirs,
+    NATIVE_HOST_NAME,
+    readLiveBridgeMarker,
+  } = await import('../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-claude-daemon-e2e-'))
+  const artifactDir = await createArtifactDir()
+  const userDataDir = path.join(tempRoot, 'profile')
+  const tokenlessHome = path.join(tempRoot, 'tokenless-home')
+  const port = await freePort()
+  const daemonUrl = `http://127.0.0.1:${port}`
+  const prompt = 'Tokenless Claude daemon E2E DOM prompt 68421'
+  const targetUrl = 'https://claude.ai/new'
+  const conversationUrl = 'https://claude.ai/chat/123e4567-e89b-12d3-a456-426614174001'
+  const events = []
+  const observedUrls = []
+  let manifestBackup = []
+  let registryBackup = []
+  let daemon
+  let context
+  let providerFixture
+
+  try {
+    daemon = startDaemon({ homeDir: tokenlessHome, port })
+    await waitForDaemonReady(daemonUrl, daemon)
+    events.push({ at: new Date().toISOString(), event: 'daemon_ready', daemonUrl })
+
+    const browsers = fixtureNativeHostBrowsers()
+    registryBackup = snapshotWindowsNativeHostRegistry(
+      browsers,
+      NATIVE_HOST_NAME,
+      windowsNativeHostManifestPath(tokenlessHome, NATIVE_HOST_NAME)
+    )
+    manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
+      nativeMessagingHostDirs(browser, userDataDir).map((dir) => path.join(dir, `${NATIVE_HOST_NAME}.json`))
+    )))
+    const installed = await installNativeHost({
+      homeDir: tokenlessHome,
+      manifestHome: userDataDir,
+      extensionId: DEFAULT_EXTENSION_ID,
+      browsers,
+    })
+    assert.ok(installed.manifests.length >= 1)
+    events.push({
+      at: new Date().toISOString(),
+      event: 'native_host_installed',
+      manifests: installed.manifests,
+      executable: installed.nativeHostExecutable,
+    })
+
+    const claudeFixture = await fs.readFile(claudeRealDomFixturePath, 'utf8')
+    providerFixture = await startHttpsFixtureServer({
+      body: claudeFixture,
+      events,
+      providerHost: 'claude.ai',
+    })
+    context = await launchTokenlessContext(
+      chromium,
+      userDataDir,
+      tokenlessHome,
+      daemonUrl,
+      providerFixture,
+      'claude.ai'
+    )
+    observeContextUrls(context, observedUrls)
+    const extensionId = await discoverExtensionId(context)
+    assert.equal(extensionId, DEFAULT_EXTENSION_ID)
+
+    await ensureDaemonBridgeStarted(context)
+    const bridgeMarker = await waitForBridgeMarker({ tokenlessHome, readLiveBridgeMarker, context })
+    assert.equal(bridgeMarker.protocol, 'tokenless.extension-bridge-state.v1')
+    events.push({
+      at: new Date().toISOString(),
+      event: 'daemon_bridge_ready',
+      sessionId: bridgeMarker.sessionId,
+    })
+    const pagesBeforeRun = new Set(context.pages())
+    const observedUrlCountBeforeRun = observedUrls.length
+
+    const cliRun = await runProcess(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'run',
+      '--prompt',
+      prompt,
+      '--provider',
+      'claude',
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      targetUrl,
+      '--read-delay-ms',
+      '0',
+      '--read-timeout-ms',
+      '10000',
+      '--no-open',
+      '--json',
+    ], { cwd: root })
+
+    assert.equal(cliRun.status, 0, cliRun.stderr || cliRun.stdout)
+    const cliPayload = JSON.parse(cliRun.stdout)
+    assert.equal(cliPayload.transport, 'daemon')
+    assert.equal(cliPayload.provider, 'claude')
+    assert.equal(cliPayload.taskUrl, undefined)
+    assert.equal(cliPayload.runnerUrl, undefined)
+    assert.match(cliPayload.compactOutput, /visible Claude real-DOM fixture answer/)
+    assert.match(cliPayload.compactOutput, /Tokenless Claude daemon E2E DOM prompt 68421/)
+    assert.doesNotMatch(cliRun.stdout, /taskUrl|task\/task\.html|runnerUrl|daemon\/runner\.html/)
+
+    const created = await getDaemonJob({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: cliPayload.jobId,
+    })
+    assert.ok(['queued', 'claimed', 'succeeded'].includes(created.status), JSON.stringify(created, null, 2))
+    assert.equal(created.claim_token, undefined)
+    assert.match(created.request_json.prompt, /Tokenless Claude daemon E2E DOM prompt 68421/)
+    events.push({ at: new Date().toISOString(), event: 'cli_daemon_job_created', jobId: created.job_id })
+
+    const completed = await waitForDaemonJobStatus({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: created.job_id,
+      statuses: ['succeeded', 'failed'],
+      daemon,
+      getDaemonJob,
+    })
+    await fs.writeFile(
+      path.join(artifactDir, 'claude-daemon-terminal-job.json'),
+      `${JSON.stringify(completed, null, 2)}\n`,
+      'utf8'
+    )
+    assert.equal(completed.status, 'succeeded', JSON.stringify(completed, null, 2))
+    assert.equal(completed.claim_token, undefined)
+    assert.equal(completed.result_json.read.url, conversationUrl)
+    assert.match(completed.result_json.text, /visible Claude real-DOM fixture answer/)
+    assert.match(completed.result_json.text, /Tokenless Claude daemon E2E DOM prompt 68421/)
+    assert.doesNotMatch(completed.result_json.text, /stale Claude real-DOM fixture answer/)
+    assert.doesNotMatch(completed.result_json.text, /_streaming/)
+
+    const providerPage = context.pages().find((page) => page.url().startsWith('https://claude.ai/'))
+    assert.ok(providerPage, `extension did not open the visible Claude page: ${JSON.stringify(context.pages().map((page) => page.url()))}`)
+    assert.equal(providerPage.url(), conversationUrl)
+    await providerPage.bringToFront()
+    await providerPage.screenshot({
+      path: path.join(artifactDir, '01-claude-fixture-after-daemon.png'),
+      animations: 'disabled',
+    })
+    const userMessage = providerPage.locator(
+      '[data-testid="virtual-message-list"] [data-role="user"]'
+    ).last()
+    assert.match(await userMessage.innerText(), /Tokenless Claude daemon E2E DOM prompt 68421/)
+    const assistantMessage = providerPage.locator(
+      '[data-testid="virtual-message-list"] .font-claude-response-body'
+    ).last()
+    assert.match(await assistantMessage.innerText(), /visible Claude real-DOM fixture answer/)
+    assert.match(await assistantMessage.innerText(), /Tokenless Claude daemon E2E DOM prompt 68421/)
+    assert.equal(await providerPage.locator('[data-is-streaming="true"]').count(), 0)
+
+    const pageUrlsAfterSuccess = context.pages().map((page) => page.url())
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/task/task.html')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/daemon/runner.html')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/settings/')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    const pagesOpenedByRun = context.pages().filter((page) => !pagesBeforeRun.has(page))
+    assert.deepEqual(
+      pagesOpenedByRun.map((page) => page.url()),
+      [conversationUrl],
+      'Claude task execution must open exactly one visible provider page'
+    )
+    const urlsObservedDuringRun = observedUrls
+      .slice(observedUrlCountBeforeRun)
+      .map((entry) => entry.url)
+    assert.ok(
+      urlsObservedDuringRun.every((url) => url === 'about:blank' || url.startsWith('https://claude.ai/')),
+      `Claude task execution opened a non-provider page: ${JSON.stringify(urlsObservedDuringRun, null, 2)}`
+    )
+    assertNoTaskPageObserved(observedUrls)
+    assertNoRunnerPageObserved(observedUrls)
+    assert.equal(
+      observedUrls.some((entry) => entry.url.includes('/settings/')),
+      false,
+      JSON.stringify(observedUrls, null, 2)
+    )
+
+    await fs.writeFile(path.join(artifactDir, 'claude-observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8')
+    await fs.writeFile(path.join(artifactDir, 'claude-summary.json'), `${JSON.stringify({
+      ok: true,
+      mode: 'daemon-fixture-claude',
+      fixture: true,
+      realProviderDom: true,
+      extensionId,
+      daemonUrl,
+      jobId: completed.job_id,
+      provider: 'claude',
+      targetUrl,
+      conversationUrl,
+      prompt,
+      taskPageOpened: observedUrls.some((entry) => entry.url.includes('/task/task.html')),
+      runnerPageOpened: observedUrls.some((entry) => entry.url.includes('/daemon/runner.html')),
+      settingsPageOpened: observedUrls.some((entry) => entry.url.includes('/settings/')),
+      events,
+    }, null, 2)}\n`, 'utf8')
+    console.log(`Tokenless Claude daemon fixture E2E artifacts: ${artifactDir}`)
+  } finally {
+    const cleanupErrors = []
+    await attemptCleanup(cleanupErrors, 'write Claude observed URL artifacts', async () => {
+      await fs.writeFile(path.join(artifactDir, 'claude-observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8')
+    })
+    await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
+    await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
+    await attemptCleanup(cleanupErrors, 'restore native host manifests', async () => restoreFiles(manifestBackup))
+    await attemptCleanup(cleanupErrors, 'restore native host registry', async () => restoreWindowsNativeHostRegistry(registryBackup))
+    await attemptCleanup(cleanupErrors, 'stop daemon', async () => {
+      if (daemon) await stopDaemon(daemon)
+    })
+    await attemptCleanup(cleanupErrors, 'remove temporary Claude E2E state', async () => {
+      await fs.rm(tempRoot, { recursive: true, force: true })
+    })
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Tokenless Claude fixture E2E cleanup failed')
     }
   }
 })
@@ -422,16 +669,22 @@ test('an already-open browser extension reconnects after setup installs its nati
   let context
   let providerFixture
   let manifestBackup = []
+  let registryBackup = []
 
   try {
     const chatGptFixture = await fs.readFile(chatGptRealDomFixturePath, 'utf8')
-    providerFixture = await startHttpsFixtureServer({ body: chatGptFixture, events })
+    providerFixture = await startHttpsFixtureServer({
+      body: chatGptFixture,
+      events,
+      providerHost: 'chatgpt.com',
+    })
     context = await launchTokenlessContext(
       chromium,
       userDataDir,
       tokenlessHome,
       'http://127.0.0.1:7331',
-      providerFixture
+      providerFixture,
+      'chatgpt.com'
     )
     const extensionId = await discoverExtensionId(context)
     assert.equal(extensionId, DEFAULT_EXTENSION_ID)
@@ -440,7 +693,12 @@ test('an already-open browser extension reconnects after setup installs its nati
     await delay(500)
     assert.equal(await readLiveBridgeMarker({ homeDir: tokenlessHome }), null)
 
-    const browsers = ['profile']
+    const browsers = fixtureNativeHostBrowsers()
+    registryBackup = snapshotWindowsNativeHostRegistry(
+      browsers,
+      NATIVE_HOST_NAME,
+      windowsNativeHostManifestPath(tokenlessHome, NATIVE_HOST_NAME)
+    )
     manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
       nativeMessagingHostDirs(browser, userDataDir).map((dir) => path.join(dir, `${NATIVE_HOST_NAME}.json`))
     )))
@@ -462,6 +720,7 @@ test('an already-open browser extension reconnects after setup installs its nati
     await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
     await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
     await attemptCleanup(cleanupErrors, 'restore native host manifests', async () => restoreFiles(manifestBackup))
+    await attemptCleanup(cleanupErrors, 'restore native host registry', async () => restoreWindowsNativeHostRegistry(registryBackup))
     await attemptCleanup(cleanupErrors, 'remove temporary setup reconnect state', async () => {
       await fs.rm(tempRoot, { recursive: true, force: true })
     })
@@ -469,6 +728,87 @@ test('an already-open browser extension reconnects after setup installs its nati
       throw new AggregateError(cleanupErrors, 'Tokenless setup reconnect E2E cleanup failed')
     }
   }
+})
+
+test('Windows native host registry restore planning preserves concurrent state', () => {
+  const installedDefaultValue = {
+    exists: true,
+    type: 'REG_SZ',
+    data: 'C:\\tokenless-test\\dev.tokenless.native_host.json',
+  }
+  const currentTestValue = {
+    keyExisted: true,
+    defaultValue: installedDefaultValue,
+  }
+  const previousDefaultValue = {
+    exists: true,
+    type: 'REG_EXPAND_SZ',
+    data: '%USERPROFILE%\\existing-native-host.json',
+  }
+
+  assert.deepEqual(windowsNativeHostRegistryRestorePlan({
+    keyExisted: true,
+    defaultValue: previousDefaultValue,
+    installedDefaultValue,
+  }, currentTestValue), {
+    action: 'restore_default',
+    deleteKeyIfEmpty: false,
+    value: previousDefaultValue,
+  })
+  assert.deepEqual(windowsNativeHostRegistryRestorePlan({
+    keyExisted: true,
+    defaultValue: missingWindowsRegistryDefaultValue(),
+    installedDefaultValue,
+  }, currentTestValue), {
+    action: 'delete_default',
+    deleteKeyIfEmpty: false,
+  })
+  assert.deepEqual(windowsNativeHostRegistryRestorePlan({
+    keyExisted: false,
+    defaultValue: missingWindowsRegistryDefaultValue(),
+    installedDefaultValue,
+  }, currentTestValue), {
+    action: 'delete_default',
+    deleteKeyIfEmpty: true,
+  })
+  assert.deepEqual(windowsNativeHostRegistryRestorePlan({
+    keyExisted: false,
+    defaultValue: missingWindowsRegistryDefaultValue(),
+    installedDefaultValue,
+  }, {
+    keyExisted: true,
+    defaultValue: { ...installedDefaultValue, data: 'C:\\another-process\\manifest.json' },
+  }), {
+    action: 'none',
+    deleteKeyIfEmpty: false,
+  })
+})
+
+test('Windows native host registry parsing retains type/data and validates structured state', () => {
+  const key = 'HKEY_CURRENT_USER\\Software\\TokenlessRegistryTest'
+  assert.deepEqual(parseWindowsRegistryDefaultValue([
+    key,
+    '    (Default)    REG_EXPAND_SZ    %USERPROFILE%\\existing native host.json',
+  ].join('\r\n'), key), {
+    exists: true,
+    type: 'REG_EXPAND_SZ',
+    data: '%USERPROFILE%\\existing native host.json',
+  })
+  assert.deepEqual(parseWindowsRegistryState(
+    '{"keyExisted":true,"defaultValueExisted":false,"keyIsEmpty":true}',
+    key
+  ), {
+    keyExisted: true,
+    defaultValueExisted: false,
+    keyIsEmpty: true,
+  })
+  assert.throws(
+    () => parseWindowsRegistryState(
+      '{"keyExisted":true,"defaultValueExisted":true,"keyIsEmpty":true}',
+      key
+    ),
+    /invalid state/
+  )
 })
 
 function observeContextUrls(context, observedUrls) {
@@ -529,7 +869,14 @@ async function runProcess(command, args, options = {}) {
   })
 }
 
-async function launchTokenlessContext(chromium, userDataDir, tokenlessHome, daemonUrl, providerFixture) {
+async function launchTokenlessContext(
+  chromium,
+  userDataDir,
+  tokenlessHome,
+  daemonUrl,
+  providerFixture,
+  providerHost
+) {
   const options = {
     headless: process.env.TOKENLESS_E2E_HEADED === '1' ? false : false,
     env: {
@@ -540,7 +887,7 @@ async function launchTokenlessContext(chromium, userDataDir, tokenlessHome, daem
     args: [
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
-      `--host-resolver-rules=MAP chatgpt.com:443 127.0.0.1:${providerFixture.port},EXCLUDE localhost`,
+      `--host-resolver-rules=MAP ${providerHost}:443 127.0.0.1:${providerFixture.port},EXCLUDE localhost`,
       `--ignore-certificate-errors-spki-list=${providerFixture.spkiSha256}`,
       '--disable-quic',
       '--no-first-run',
@@ -553,11 +900,11 @@ async function launchTokenlessContext(chromium, userDataDir, tokenlessHome, daem
   return chromium.launchPersistentContext(userDataDir, options)
 }
 
-async function startHttpsFixtureServer({ body, events }) {
+async function startHttpsFixtureServer({ body, events, providerHost }) {
   const { generate } = await import('selfsigned')
   const notBeforeDate = new Date()
   const notAfterDate = new Date(notBeforeDate.getTime() + 24 * 60 * 60 * 1000)
-  const certificate = await generate([{ name: 'commonName', value: 'chatgpt.com' }], {
+  const certificate = await generate([{ name: 'commonName', value: providerHost }], {
     algorithm: 'sha256',
     keySize: 2048,
     notBeforeDate,
@@ -566,7 +913,7 @@ async function startHttpsFixtureServer({ body, events }) {
       { name: 'basicConstraints', cA: false, critical: true },
       { name: 'keyUsage', digitalSignature: true, keyEncipherment: true, critical: true },
       { name: 'extKeyUsage', serverAuth: true },
-      { name: 'subjectAltName', altNames: [{ type: 2, value: 'chatgpt.com' }] },
+      { name: 'subjectAltName', altNames: [{ type: 2, value: providerHost }] },
     ],
   })
   const publicKeyDer = createPublicKey(certificate.public).export({ type: 'spki', format: 'der' })
@@ -581,7 +928,7 @@ async function startHttpsFixtureServer({ body, events }) {
       method: request.method ?? null,
       path: request.url ?? null,
     })
-    if (host !== 'chatgpt.com' && host !== 'chatgpt.com:443') {
+    if (host !== providerHost && host !== `${providerHost}:443`) {
       response.writeHead(421, { 'content-type': 'text/plain; charset=utf-8' })
       response.end('Misdirected Request')
       return
@@ -682,6 +1029,243 @@ async function discoverExtensionId(context) {
   const url = new URL(worker.url())
   assert.equal(url.protocol, 'chrome-extension:')
   return url.hostname
+}
+
+function fixtureNativeHostBrowsers() {
+  return process.platform === 'win32' ? ['chrome-for-testing'] : ['profile']
+}
+
+function windowsNativeHostManifestPath(homeDir, hostName) {
+  return path.join(homeDir, 'native-messaging', `${hostName}.json`)
+}
+
+function snapshotWindowsNativeHostRegistry(browsers, hostName, installedManifestPath) {
+  if (process.platform !== 'win32') return []
+  const installedDefaultValue = {
+    exists: true,
+    type: 'REG_SZ',
+    data: installedManifestPath,
+  }
+  return windowsNativeHostRegistryKeys(browsers, hostName).map((key) => {
+    const previous = inspectWindowsNativeHostRegistryKey(key)
+    return {
+      key,
+      keyExisted: previous.keyExisted,
+      defaultValue: previous.defaultValue,
+      installedDefaultValue,
+    }
+  })
+}
+
+function restoreWindowsNativeHostRegistry(entries) {
+  if (process.platform !== 'win32') return
+  for (const entry of [...entries].reverse()) {
+    const current = inspectWindowsNativeHostRegistryKey(entry.key)
+    const plan = windowsNativeHostRegistryRestorePlan(entry, current)
+    if (plan.action === 'none') continue
+    if (plan.action === 'restore_default') {
+      setWindowsNativeHostRegistryDefault(entry.key, plan.value)
+      continue
+    }
+    deleteWindowsNativeHostRegistryDefault(entry.key)
+    if (!plan.deleteKeyIfEmpty) continue
+    const withoutTestDefault = inspectWindowsNativeHostRegistryKey(entry.key)
+    if (withoutTestDefault.keyExisted && withoutTestDefault.keyIsEmpty) {
+      deleteEmptyWindowsNativeHostRegistryKey(entry.key)
+    }
+  }
+}
+
+function inspectWindowsNativeHostRegistryKey(key) {
+  const state = inspectWindowsNativeHostRegistryState(key)
+  if (!state.keyExisted) {
+    return {
+      keyExisted: false,
+      defaultValue: missingWindowsRegistryDefaultValue(),
+      keyIsEmpty: false,
+    }
+  }
+  if (!state.defaultValueExisted) {
+    return {
+      keyExisted: true,
+      defaultValue: missingWindowsRegistryDefaultValue(),
+      keyIsEmpty: state.keyIsEmpty,
+    }
+  }
+  const defaultQuery = spawnWindowsRegistry(['QUERY', key, '/ve'])
+  assertWindowsRegistryCommandSucceeded(defaultQuery, `inspect native host registry default value ${key}`)
+  return {
+    keyExisted: true,
+    defaultValue: parseWindowsRegistryDefaultValue(defaultQuery.stdout, key),
+    keyIsEmpty: state.keyIsEmpty,
+  }
+}
+
+function inspectWindowsNativeHostRegistryState(key) {
+  const inspected = spawnSync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    [
+      "$ErrorActionPreference = 'Stop'",
+      '$fullPath = $env:TOKENLESS_TEST_REGISTRY_KEY',
+      "$prefix = 'HKCU\\'",
+      "if (-not $fullPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Expected an HKCU registry key.' }",
+      '$relativePath = $fullPath.Substring($prefix.Length)',
+      '$registryKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($relativePath, $false)',
+      'if ($null -eq $registryKey) {',
+      "  [Console]::Out.Write('{\"keyExisted\":false,\"defaultValueExisted\":false,\"keyIsEmpty\":false}')",
+      '  exit 0',
+      '}',
+      'try {',
+      '  $valueNames = @($registryKey.GetValueNames())',
+      '  $subkeyNames = @($registryKey.GetSubKeyNames())',
+      '  $result = [ordered]@{',
+      '    keyExisted = $true',
+      "    defaultValueExisted = ($valueNames -contains '')",
+      '    keyIsEmpty = ($valueNames.Count -eq 0 -and $subkeyNames.Count -eq 0)',
+      '  }',
+      '  [Console]::Out.Write(($result | ConvertTo-Json -Compress))',
+      '} finally {',
+      '  $registryKey.Dispose()',
+      '}',
+    ].join('\n'),
+  ], {
+    encoding: 'utf8',
+    windowsHide: true,
+    env: {
+      ...process.env,
+      TOKENLESS_TEST_REGISTRY_KEY: key,
+    },
+  })
+  assertWindowsRegistryCommandSucceeded(inspected, `inspect native host registry state ${key}`)
+  return parseWindowsRegistryState(inspected.stdout, key)
+}
+
+function windowsNativeHostRegistryRestorePlan(entry, current) {
+  if (
+    !current.keyExisted ||
+    !sameWindowsRegistryDefaultValue(current.defaultValue, entry.installedDefaultValue)
+  ) {
+    return { action: 'none', deleteKeyIfEmpty: false }
+  }
+  if (entry.defaultValue.exists) {
+    return {
+      action: 'restore_default',
+      deleteKeyIfEmpty: false,
+      value: entry.defaultValue,
+    }
+  }
+  return {
+    action: 'delete_default',
+    deleteKeyIfEmpty: !entry.keyExisted,
+  }
+}
+
+function setWindowsNativeHostRegistryDefault(key, value) {
+  const restored = spawnWindowsRegistry([
+    'ADD',
+    key,
+    '/ve',
+    '/t',
+    value.type,
+    '/d',
+    value.data,
+    '/f',
+  ])
+  assertWindowsRegistryCommandSucceeded(restored, `restore native host registry default value ${key}`)
+}
+
+function deleteWindowsNativeHostRegistryDefault(key) {
+  const deleted = spawnWindowsRegistry(['DELETE', key, '/ve', '/f'])
+  if (deleted.status === 0) return
+  const current = inspectWindowsNativeHostRegistryKey(key)
+  if (!current.keyExisted || !current.defaultValue.exists) return
+  assertWindowsRegistryCommandSucceeded(deleted, `delete test native host registry default value ${key}`)
+}
+
+function deleteEmptyWindowsNativeHostRegistryKey(key) {
+  const current = inspectWindowsNativeHostRegistryKey(key)
+  if (!current.keyExisted || !current.keyIsEmpty) return
+  const deleted = spawnWindowsRegistry(['DELETE', key, '/f'])
+  if (deleted.status === 0) return
+  const afterDelete = inspectWindowsNativeHostRegistryKey(key)
+  if (!afterDelete.keyExisted) return
+  assertWindowsRegistryCommandSucceeded(deleted, `delete empty test-created native host registry key ${key}`)
+}
+
+function spawnWindowsRegistry(args) {
+  return spawnSync('reg.exe', args, { encoding: 'utf8' })
+}
+
+function assertWindowsRegistryCommandSucceeded(result, action) {
+  if (result.error) {
+    throw new Error(`Could not ${action}: ${result.error.message}`, { cause: result.error })
+  }
+  if (result.status !== 0) {
+    throw new Error(`Could not ${action}: ${result.stderr || result.stdout || `exit ${result.status}`}`)
+  }
+}
+
+function missingWindowsRegistryDefaultValue() {
+  return { exists: false, type: null, data: null }
+}
+
+function parseWindowsRegistryDefaultValue(output, key) {
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/\s(REG_[A-Z0-9_]+)(?:\s+(.*))?$/i)
+    if (!match) continue
+    return {
+      exists: true,
+      type: match[1].toUpperCase(),
+      data: (match[2] ?? '').trimEnd(),
+    }
+  }
+  throw new Error(`Native host registry key ${key} returned an unparseable default value.`)
+}
+
+function parseWindowsRegistryState(output, key) {
+  let state
+  try {
+    state = JSON.parse(output)
+  } catch (error) {
+    throw new Error(`Native host registry key ${key} returned an unparseable state.`, { cause: error })
+  }
+  if (
+    typeof state?.keyExisted !== 'boolean' ||
+    typeof state?.defaultValueExisted !== 'boolean' ||
+    typeof state?.keyIsEmpty !== 'boolean' ||
+    (!state.keyExisted && (state.defaultValueExisted || state.keyIsEmpty)) ||
+    (state.defaultValueExisted && state.keyIsEmpty)
+  ) {
+    throw new Error(`Native host registry key ${key} returned an invalid state.`)
+  }
+  return state
+}
+
+function sameWindowsRegistryDefaultValue(left, right) {
+  return Boolean(
+    left?.exists &&
+    right?.exists &&
+    left.type === right.type &&
+    left.data === right.data
+  )
+}
+
+function windowsNativeHostRegistryKeys(browsers, hostName) {
+  const roots = {
+    chrome: 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts',
+    'chrome-for-testing': 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts',
+    chromium: 'HKCU\\Software\\Chromium\\NativeMessagingHosts',
+    edge: 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts',
+    brave: 'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts',
+    arc: 'HKCU\\Software\\The Browser Company\\Arc\\NativeMessagingHosts',
+  }
+  return [...new Set(browsers
+    .map((browser) => roots[browser])
+    .filter(Boolean)
+    .map((root) => `${root}\\${hostName}`))]
 }
 
 async function snapshotFiles(files) {

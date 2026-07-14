@@ -1,0 +1,314 @@
+<!--
+  Provenance: the static DOM in this redacted, reduced fixture was captured from the
+  public SSR app shell served by https://claude.ai/new on 2026-07-15. The inline
+  behavior script is a deterministic Tokenless test shim; it is not provider JavaScript.
+-->
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Claude</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #2f2f2b;
+        background: #f7f6f2;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      #app {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 248px minmax(0, 1fr);
+      }
+
+      aside {
+        padding: 18px;
+        border-right: 1px solid #deddd8;
+        background: #efeee9;
+      }
+
+      nav {
+        display: grid;
+        gap: 10px;
+      }
+
+      nav a {
+        color: #3e3e39;
+        text-decoration: none;
+        padding: 10px 12px;
+        border-radius: 8px;
+      }
+
+      main {
+        min-width: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        height: 58px;
+        display: flex;
+        align-items: center;
+        padding: 0 24px;
+        border-bottom: 1px solid #e4e2dc;
+        background: #faf9f6;
+        font-weight: 600;
+      }
+
+      [data-testid="virtual-message-list"] {
+        width: min(800px, calc(100vw - 312px));
+        margin: 0 auto;
+        flex: 1;
+        padding: 36px 12px 190px;
+        overflow-y: auto;
+      }
+
+      .message-row {
+        margin: 0 0 24px;
+        line-height: 1.6;
+      }
+
+      .message-row[data-role="user"] {
+        width: fit-content;
+        max-width: 78%;
+        margin-left: auto;
+        padding: 10px 14px;
+        border-radius: 16px;
+        background: #e9e7e1;
+        white-space: pre-wrap;
+      }
+
+      .message-row[data-role="assistant"] {
+        max-width: 100%;
+      }
+
+      .font-claude-response-body {
+        white-space: pre-wrap;
+      }
+
+      .composer-shell {
+        position: fixed;
+        left: 248px;
+        right: 0;
+        bottom: 0;
+        padding: 26px 24px 30px;
+        background: linear-gradient(to top, #f7f6f2 78%, rgba(247, 246, 242, 0));
+      }
+
+      .composer {
+        width: min(800px, calc(100vw - 312px));
+        min-height: 104px;
+        margin: 0 auto;
+        padding: 14px;
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) 42px;
+        align-items: end;
+        gap: 10px;
+        border: 1px solid #d4d1ca;
+        border-radius: 22px;
+        background: #ffffff;
+        box-shadow: 0 8px 24px rgba(36, 35, 31, 0.08);
+      }
+
+      [data-testid="chat-input"] {
+        min-height: 48px;
+        max-height: 150px;
+        padding: 10px 4px;
+        overflow-y: auto;
+        outline: none;
+        line-height: 1.5;
+      }
+
+      [data-testid="chat-input"] p {
+        margin: 0;
+      }
+
+      [data-testid="chat-input"] p:only-child:has(br)::before {
+        content: attr(data-placeholder);
+        color: #8c8a83;
+      }
+
+      button[data-cds="Button"] {
+        width: 38px;
+        height: 38px;
+        border: 1px solid #d8d5ce;
+        border-radius: 999px;
+        background: #f8f7f4;
+        color: #34332f;
+        cursor: pointer;
+      }
+
+      button[aria-label="Send message"] {
+        border-color: #c96442;
+        background: #c96442;
+        color: #fff;
+      }
+
+      button[aria-label="Send message"][disabled] {
+        border-color: #d8d5ce;
+        background: #ddd9d1;
+        color: #8d8a82;
+        cursor: default;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <aside>
+        <nav aria-label="Primary navigation">
+          <a href="/new">New chat</a>
+          <a href="/projects" aria-label="Projects">Projects</a>
+        </nav>
+      </aside>
+      <main>
+        <header>Claude</header>
+        <div data-testid="virtual-message-list" aria-live="polite">
+          <div class="message-row" data-role="user">
+            Earlier redacted fixture prompt
+          </div>
+          <div class="message-row" data-role="assistant">
+            <div class="sr-only">Claude said:</div>
+            <div class="font-claude-response-body">stale Claude real-DOM fixture answer that must not be read</div>
+          </div>
+        </div>
+        <div class="composer-shell">
+          <div class="composer" aria-label="Message composer">
+            <input
+              id="chat-input-file-upload-onpage"
+              data-testid="file-upload"
+              aria-hidden="true"
+              tabindex="-1"
+              accept=".pdf,.doc,.docx,.txt,.md,.rtf,.csv,.json,.xml,.html,.png,.jpg,.jpeg,.gif,.webp"
+              multiple
+              aria-label="Upload files"
+              type="file"
+              hidden
+            >
+            <button
+              type="button"
+              aria-label="Add files, connectors, and more"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              data-cds="Button"
+            >+</button>
+            <div
+              contenteditable="true"
+              role="textbox"
+              enterkeyhint="enter"
+              data-testid="chat-input"
+              aria-label="Write your prompt to Claude"
+              aria-multiline="true"
+              class="tiptap ProseMirror ProseMirror-focused"
+            ><p data-placeholder="How can I help you today?"><br></p></div>
+            <button
+              type="button"
+              disabled
+              data-cds="Button"
+              aria-label="Send message"
+              data-trigger-disabled
+            >↑</button>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script>
+      const input = document.querySelector('[data-testid="chat-input"]')
+      const send = document.querySelector('button[aria-label="Send message"]')
+      const messageList = document.querySelector('[data-testid="virtual-message-list"]')
+      let messageNumber = 0
+
+      input.addEventListener('input', updateSendState)
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault()
+          send.click()
+        }
+      })
+
+      send.addEventListener('click', () => {
+        const prompt = textOf(input).trim()
+        if (send.disabled || !prompt) return
+
+        messageList.append(createMessage('user', prompt))
+
+        const assistant = createMessage(
+          'assistant',
+          'visible Claude real-DOM fixture answer_streaming for: ' + prompt
+        )
+        const response = assistant.querySelector('.font-claude-response-body')
+        response.setAttribute('data-is-streaming', 'true')
+        messageList.append(assistant)
+
+        input.innerHTML = '<p data-placeholder="How can I help you today?"><br></p>'
+        updateSendState()
+
+        setTimeout(() => {
+          response.textContent = 'visible Claude real-DOM fixture answer for: ' + prompt
+          response.removeAttribute('data-is-streaming')
+          history.replaceState(null, '', '/chat/123e4567-e89b-12d3-a456-426614174001')
+        }, 650)
+      })
+
+      function createMessage(role, text) {
+        messageNumber += 1
+        const row = document.createElement('div')
+        row.className = 'message-row'
+        row.dataset.role = role
+        row.dataset.fixtureMessage = String(messageNumber)
+
+        if (role === 'assistant') {
+          const label = document.createElement('div')
+          label.className = 'sr-only'
+          label.textContent = 'Claude said:'
+
+          const response = document.createElement('div')
+          response.className = 'font-claude-response-body'
+          response.textContent = text
+          row.append(label, response)
+        } else {
+          row.textContent = text
+        }
+
+        return row
+      }
+
+      function updateSendState() {
+        const disabled = textOf(input).trim().length === 0
+        send.disabled = disabled
+        if (disabled) {
+          send.setAttribute('data-trigger-disabled', '')
+        } else {
+          send.removeAttribute('data-trigger-disabled')
+        }
+      }
+
+      function textOf(node) {
+        return node.innerText || node.textContent || ''
+      }
+    </script>
+  </body>
+</html>
