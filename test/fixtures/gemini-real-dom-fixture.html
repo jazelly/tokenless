@@ -1,0 +1,307 @@
+<!--
+  Provenance: this redacted, reduced fixture merges the visible DOM captured from
+  https://gemini.google.com/app and the assistant-response DOM observed on a public
+  Gemini share page on 2026-07-15. The inline behavior script is a deterministic
+  Tokenless test shim; it is not provider JavaScript.
+-->
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gemini</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Arial, sans-serif;
+        color: #1f1f1f;
+        background: #fff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      bard-sidenav-container {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 236px minmax(0, 1fr);
+      }
+
+      aside {
+        padding: 18px;
+        background: #f0f4f9;
+      }
+
+      aside a,
+      aside button {
+        display: block;
+        margin-bottom: 14px;
+      }
+
+      main {
+        min-width: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        min-height: 64px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 10px 24px;
+      }
+
+      #conversation {
+        width: min(820px, calc(100vw - 300px));
+        margin: 0 auto;
+        flex: 1;
+        padding: 32px 12px 190px;
+      }
+
+      user-query,
+      response-container,
+      structured-content-container,
+      message-content {
+        display: block;
+      }
+
+      user-query {
+        width: fit-content;
+        max-width: 78%;
+        margin: 0 0 24px auto;
+        padding: 11px 16px;
+        border-radius: 20px;
+        background: #f0f4f9;
+        white-space: pre-wrap;
+      }
+
+      response-container {
+        margin: 0 0 30px;
+        line-height: 1.6;
+      }
+
+      .markdown {
+        white-space: pre-wrap;
+      }
+
+      .input-area-container {
+        position: fixed;
+        left: 236px;
+        right: 0;
+        bottom: 0;
+        padding: 26px 24px 30px;
+        background: linear-gradient(to top, #fff 78%, rgba(255, 255, 255, 0));
+      }
+
+      [data-node-type="input-area"] {
+        width: min(820px, calc(100vw - 300px));
+        min-height: 112px;
+        margin: 0 auto;
+        padding: 13px 16px;
+        border: 1px solid #c4c7c5;
+        border-radius: 28px;
+        background: #f0f4f9;
+      }
+
+      [data-test-id="textarea-wrapper"] {
+        min-height: 54px;
+      }
+
+      .ql-editor {
+        min-height: 46px;
+        padding: 12px 4px;
+        outline: none;
+        line-height: 1.45;
+      }
+
+      .ql-editor p {
+        margin: 0;
+      }
+
+      .ql-editor.ql-blank p:only-child:has(br)::before {
+        content: attr(data-placeholder);
+        color: #6f7378;
+      }
+
+      .composer-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .composer-actions button {
+        min-height: 36px;
+        padding: 7px 12px;
+        border: 0;
+        border-radius: 18px;
+        background: #e1e7ef;
+        color: #1f1f1f;
+      }
+
+      .composer-actions button[aria-label="Send message"] {
+        margin-left: auto;
+        background: #0b57d0;
+        color: #fff;
+      }
+
+      button[aria-label="Stop response"] {
+        min-height: 34px;
+        margin-top: 12px;
+      }
+
+      [role="dialog"] {
+        position: fixed;
+        left: 320px;
+        top: 80px;
+        z-index: 20;
+        min-width: 300px;
+        padding: 20px;
+        border: 1px solid #c4c7c5;
+        background: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <bard-sidenav-container>
+      <aside>
+        <button type="button" aria-label="New chat">New chat</button>
+        <a
+          aria-label="Sign in"
+          href="https://accounts.google.com/ServiceLogin?service=bard"
+        >Sign in</a>
+      </aside>
+      <main>
+        <header>
+          <strong>Gemini</strong>
+          <button
+            type="button"
+            data-test-id="bard-mode-menu-button"
+            aria-label="Open mode picker, currently Flash"
+          >Flash</button>
+        </header>
+        <section id="conversation" aria-live="polite">
+          <user-query>
+            <div class="query-text">Earlier redacted fixture prompt</div>
+          </user-query>
+          <response-container class="response-container">
+            <structured-content-container class="message-content">
+              <message-content class="ng-star-inserted">
+                <div class="markdown markdown-main-panel">
+                  stale Gemini real-DOM fixture answer that must not be read
+                </div>
+              </message-content>
+            </structured-content-container>
+          </response-container>
+        </section>
+        <div class="input-area-container">
+          <div data-node-type="input-area">
+            <div data-test-id="textarea-wrapper">
+              <rich-textarea enterkeyhint="send">
+                <div
+                  class="ql-editor ql-blank textarea new-input-ui"
+                  data-gramm="false"
+                  contenteditable="true"
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label="Enter a prompt for Gemini"
+                  data-placeholder="Ask Gemini"
+                ><p data-placeholder="Ask Gemini"><br></p></div>
+              </rich-textarea>
+            </div>
+            <div class="composer-actions">
+              <button
+                type="button"
+                aria-label="Upload &amp; tools"
+                aria-haspopup="menu"
+              >Upload &amp; tools</button>
+              <span id="send-slot"></span>
+            </div>
+          </div>
+        </div>
+      </main>
+    </bard-sidenav-container>
+    <script>
+      const input = document.querySelector('rich-textarea .ql-editor')
+      const sendSlot = document.querySelector('#send-slot')
+      const conversation = document.querySelector('#conversation')
+
+      input.addEventListener('input', updateSendButton)
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault()
+          sendSlot.querySelector('button[aria-label="Send message"]')?.click()
+        }
+      })
+
+      function updateSendButton() {
+        const hasPrompt = textOf(input).trim().length > 0
+        input.classList.toggle('ql-blank', !hasPrompt)
+        const existing = sendSlot.querySelector('button[aria-label="Send message"]')
+        if (!hasPrompt) {
+          existing?.remove()
+          return
+        }
+        if (existing) return
+
+        const send = document.createElement('button')
+        send.type = 'button'
+        send.setAttribute('aria-label', 'Send message')
+        send.textContent = 'Send'
+        send.addEventListener('click', submitPrompt)
+        sendSlot.append(send)
+      }
+
+      function submitPrompt() {
+        const prompt = textOf(input).trim()
+        if (!prompt) return
+
+        const user = document.createElement('user-query')
+        const query = document.createElement('div')
+        query.className = 'query-text'
+        query.textContent = prompt
+        user.append(query)
+        conversation.append(user)
+
+        const responseContainer = document.createElement('response-container')
+        responseContainer.className = 'response-container'
+        const structured = document.createElement('structured-content-container')
+        structured.className = 'message-content'
+        const message = document.createElement('message-content')
+        message.className = 'ng-star-inserted'
+        const markdown = document.createElement('div')
+        markdown.className = 'markdown markdown-main-panel'
+        markdown.textContent = 'visible Gemini real-DOM fixture answer_streaming for: ' + prompt
+        message.append(markdown)
+        structured.append(message)
+
+        const stop = document.createElement('button')
+        stop.type = 'button'
+        stop.setAttribute('aria-label', 'Stop response')
+        stop.textContent = 'Stop response'
+        responseContainer.append(structured, stop)
+        conversation.append(responseContainer)
+
+        input.innerHTML = '<p data-placeholder="Ask Gemini"><br></p>'
+        updateSendButton()
+
+        setTimeout(() => {
+          markdown.textContent = 'visible Gemini real-DOM fixture answer for: ' + prompt
+          stop.remove()
+          history.replaceState(null, '', '/app/4b9f2c7d1e6a')
+        }, 650)
+      }
+
+      function textOf(node) {
+        return node.innerText || node.textContent || ''
+      }
+    </script>
+  </body>
+</html>

@@ -136,39 +136,31 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
     outputName: 'gemini-dom.sanitized.html',
     selectors: {
       composers: [
-        'rich-textarea div[contenteditable="true"]',
-        'div[contenteditable="true"][role="textbox"]',
-        'textarea',
+        'rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"][aria-label="Enter a prompt for Gemini"]',
       ],
       submits: [
-        'button[aria-label*="Send" i]',
-        'button[aria-label*="submit" i]',
-        'button[type="submit"]',
+        'button[aria-label="Send message"]',
       ],
       answers: [
-        'message-content',
-        '.model-response-text',
-        'main response-container',
+        'response-container message-content',
+        'response-container structured-content-container.message-content',
       ],
       blockers: [
-        'iframe[src*="captcha"]',
-        'a[href*="accounts.google.com" i]',
+        'iframe[src^="https://www.google.com/recaptcha/"][title="reCAPTCHA"]',
       ],
       busy: [
-        'button[aria-label*="Stop response" i]',
-        'button[aria-label*="Stop" i]',
+        'button[aria-label="Stop response"]',
       ],
       modelPickers: [
-        'button[aria-label*="model" i]',
-        '[data-test-id*="model" i]',
+        'button[data-test-id="bard-mode-menu-button"][aria-label^="Open mode picker, currently "]',
       ],
       fileInputs: [
-        'input[type="file"]',
-        'button[aria-label*="Upload" i]',
-        'button[aria-label*="Add file" i]',
+        'button[aria-label="Upload & tools"][aria-haspopup="menu"]',
+        'button[data-test-id="local-images-files-uploader-button"][role="menuitem"][aria-label="Upload files. Documents, data, code files"]',
       ],
       projectLinks: [
-        'a[href*="/gems/" i]',
+        'a[href="/gems/view"]',
+        'nav a[href="/gems/view"]',
       ],
     },
   }),
@@ -336,7 +328,7 @@ export async function captureProviderDom({
           provider: providerId,
           surface,
           capturedAt: new Date().toISOString(),
-          url: publicPageUrl(location.href),
+          url: publicPageUrl(location.href, providerId),
           title: includeText ? document.title.slice(0, maxTextChars) : '[text]',
           userAgent: navigator.userAgent,
           sanitized: true,
@@ -621,13 +613,36 @@ export async function captureProviderDom({
         )
       }
 
-      function publicPageUrl(url) {
+      function publicPageUrl(url, provider) {
         try {
           const parsed = new URL(url)
-          return `${parsed.origin}${parsed.pathname}`
+          const pathname = redactedProviderPath(parsed.pathname, provider)
+          return `${parsed.origin}${pathname}`
         } catch {
           return ''
         }
+      }
+
+      function redactedProviderPath(pathname, provider) {
+        const normalized = pathname.replace(/\/+$/, '') || '/'
+        const staticPaths = {
+          chatgpt: new Set(['/']),
+          claude: new Set(['/new']),
+          gemini: new Set(['/app', '/gems/view']),
+          grok: new Set(['/']),
+        }
+        if (staticPaths[provider]?.has(normalized)) return normalized
+
+        const knownRoutePrefixes = {
+          chatgpt: new Set(['c', 'g']),
+          claude: new Set(['chat']),
+          gemini: new Set(['app', 'gems', 'share']),
+          grok: new Set(['c', 'chat']),
+        }
+        const firstSegment = normalized.split('/').filter(Boolean)[0]
+        return firstSegment && knownRoutePrefixes[provider]?.has(firstSegment)
+          ? `/${firstSegment}/[redacted]`
+          : '/[redacted]'
       }
 
       function normalizeText(text) {

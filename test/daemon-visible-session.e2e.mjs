@@ -13,6 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const extensionPath = path.join(root, 'packages/extension/dist/extension')
 const chatGptRealDomFixturePath = path.join(root, 'test/fixtures/chatgpt-real-dom-fixture.html')
 const claudeRealDomFixturePath = path.join(root, 'test/fixtures/claude-real-dom-fixture.html')
+const geminiRealDomFixturePath = path.join(root, 'test/fixtures/gemini-real-dom-fixture.html')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-e2e', 'runs')
 
 test('daemon job completes through extension service worker and ChatGPT real-DOM fixture without task page', {
@@ -401,14 +402,24 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     })
     await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
     await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
-    await attemptCleanup(cleanupErrors, 'restore native host manifests', async () => restoreFiles(manifestBackup))
-    await attemptCleanup(cleanupErrors, 'restore native host registry', async () => restoreWindowsNativeHostRegistry(registryBackup))
+    const manifestsRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host manifests',
+      async () => restoreFiles(manifestBackup)
+    )
+    const registryRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host registry',
+      async () => restoreWindowsNativeHostRegistry(registryBackup)
+    )
     await attemptCleanup(cleanupErrors, 'stop daemon', async () => {
       if (daemon) await stopDaemon(daemon)
     })
-    await attemptCleanup(cleanupErrors, 'remove temporary E2E state', async () => {
-      await fs.rm(tempRoot, { recursive: true, force: true })
-    })
+    if (manifestsRestored && registryRestored) {
+      await attemptCleanup(cleanupErrors, 'remove temporary E2E state', async () => {
+        await fs.rm(tempRoot, { recursive: true, force: true })
+      })
+    }
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, 'Tokenless fixture E2E cleanup failed')
     }
@@ -635,16 +646,281 @@ test('daemon job completes through extension service worker and Claude real-DOM 
     })
     await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
     await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
-    await attemptCleanup(cleanupErrors, 'restore native host manifests', async () => restoreFiles(manifestBackup))
-    await attemptCleanup(cleanupErrors, 'restore native host registry', async () => restoreWindowsNativeHostRegistry(registryBackup))
+    const manifestsRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host manifests',
+      async () => restoreFiles(manifestBackup)
+    )
+    const registryRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host registry',
+      async () => restoreWindowsNativeHostRegistry(registryBackup)
+    )
     await attemptCleanup(cleanupErrors, 'stop daemon', async () => {
       if (daemon) await stopDaemon(daemon)
     })
-    await attemptCleanup(cleanupErrors, 'remove temporary Claude E2E state', async () => {
-      await fs.rm(tempRoot, { recursive: true, force: true })
-    })
+    if (manifestsRestored && registryRestored) {
+      await attemptCleanup(cleanupErrors, 'remove temporary Claude E2E state', async () => {
+        await fs.rm(tempRoot, { recursive: true, force: true })
+      })
+    }
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, 'Tokenless Claude fixture E2E cleanup failed')
+    }
+  }
+})
+
+test('daemon job completes through extension service worker and Gemini real-DOM fixture without internal pages', {
+  skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run fixture browser E2E' : false,
+  timeout: 180000,
+}, async () => {
+  const { chromium } = await import('playwright')
+  const {
+    getDaemonJob,
+    installNativeHost,
+    nativeMessagingHostDirs,
+    NATIVE_HOST_NAME,
+    readLiveBridgeMarker,
+  } = await import('../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-gemini-daemon-e2e-'))
+  const artifactDir = await createArtifactDir()
+  const userDataDir = path.join(tempRoot, 'profile')
+  const tokenlessHome = path.join(tempRoot, 'tokenless-home')
+  const port = await freePort()
+  const daemonUrl = `http://127.0.0.1:${port}`
+  const prompt = 'Tokenless Gemini daemon E2E DOM prompt 52963'
+  const targetUrl = 'https://gemini.google.com/app'
+  const conversationUrl = 'https://gemini.google.com/app/4b9f2c7d1e6a'
+  const events = []
+  const observedUrls = []
+  let manifestBackup = []
+  let registryBackup = []
+  let daemon
+  let context
+  let providerFixture
+
+  try {
+    daemon = startDaemon({ homeDir: tokenlessHome, port })
+    await waitForDaemonReady(daemonUrl, daemon)
+    events.push({ at: new Date().toISOString(), event: 'daemon_ready', daemonUrl })
+
+    const browsers = fixtureNativeHostBrowsers()
+    registryBackup = snapshotWindowsNativeHostRegistry(
+      browsers,
+      NATIVE_HOST_NAME,
+      windowsNativeHostManifestPath(tokenlessHome, NATIVE_HOST_NAME)
+    )
+    manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
+      nativeMessagingHostDirs(browser, userDataDir).map((dir) => path.join(dir, `${NATIVE_HOST_NAME}.json`))
+    )))
+    const installed = await installNativeHost({
+      homeDir: tokenlessHome,
+      manifestHome: userDataDir,
+      extensionId: DEFAULT_EXTENSION_ID,
+      browsers,
+    })
+    assert.ok(installed.manifests.length >= 1)
+    events.push({
+      at: new Date().toISOString(),
+      event: 'native_host_installed',
+      manifests: installed.manifests,
+      executable: installed.nativeHostExecutable,
+    })
+
+    const geminiFixture = await fs.readFile(geminiRealDomFixturePath, 'utf8')
+    providerFixture = await startHttpsFixtureServer({
+      body: geminiFixture,
+      events,
+      providerHost: 'gemini.google.com',
+    })
+    context = await launchTokenlessContext(
+      chromium,
+      userDataDir,
+      tokenlessHome,
+      daemonUrl,
+      providerFixture,
+      'gemini.google.com'
+    )
+    observeContextUrls(context, observedUrls)
+    const extensionId = await discoverExtensionId(context)
+    assert.equal(extensionId, DEFAULT_EXTENSION_ID)
+
+    await ensureDaemonBridgeStarted(context)
+    const bridgeMarker = await waitForBridgeMarker({ tokenlessHome, readLiveBridgeMarker, context })
+    assert.equal(bridgeMarker.protocol, 'tokenless.extension-bridge-state.v1')
+    events.push({
+      at: new Date().toISOString(),
+      event: 'daemon_bridge_ready',
+      sessionId: bridgeMarker.sessionId,
+    })
+    const pagesBeforeRun = new Set(context.pages())
+    const observedUrlCountBeforeRun = observedUrls.length
+
+    const cliRun = await runProcess(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'run',
+      '--prompt',
+      prompt,
+      '--provider',
+      'gemini',
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      targetUrl,
+      '--read-delay-ms',
+      '0',
+      '--read-timeout-ms',
+      '10000',
+      '--no-open',
+      '--json',
+    ], { cwd: root })
+
+    assert.equal(cliRun.status, 0, cliRun.stderr || cliRun.stdout)
+    const cliPayload = JSON.parse(cliRun.stdout)
+    assert.equal(cliPayload.transport, 'daemon')
+    assert.equal(cliPayload.provider, 'gemini')
+    assert.equal(cliPayload.taskUrl, undefined)
+    assert.equal(cliPayload.runnerUrl, undefined)
+    assert.equal(cliPayload.result?.result?.submit?.provider, 'gemini')
+    assert.equal(cliPayload.result?.result?.submit?.url, targetUrl)
+    assert.equal(cliPayload.result?.result?.read?.provider, 'gemini')
+    assert.equal(cliPayload.result?.result?.read?.url, conversationUrl)
+    assert.match(cliPayload.compactOutput, /visible Gemini real-DOM fixture answer/)
+    assert.match(cliPayload.compactOutput, /Tokenless Gemini daemon E2E DOM prompt 52963/)
+    assert.doesNotMatch(cliRun.stdout, /taskUrl|task\/task\.html|runnerUrl|daemon\/runner\.html/)
+
+    const created = await getDaemonJob({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: cliPayload.jobId,
+    })
+    assert.ok(['queued', 'claimed', 'succeeded'].includes(created.status), JSON.stringify(created, null, 2))
+    assert.equal(created.provider, 'gemini')
+    assert.equal(created.claim_token, undefined)
+    assert.equal(created.request_json.targetUrl, targetUrl)
+    assert.match(created.request_json.prompt, /Tokenless Gemini daemon E2E DOM prompt 52963/)
+    events.push({ at: new Date().toISOString(), event: 'cli_daemon_job_created', jobId: created.job_id })
+
+    const completed = await waitForDaemonJobStatus({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: created.job_id,
+      statuses: ['succeeded', 'failed'],
+      daemon,
+      getDaemonJob,
+    })
+    await fs.writeFile(
+      path.join(artifactDir, 'gemini-daemon-terminal-job.json'),
+      `${JSON.stringify(completed, null, 2)}\n`,
+      'utf8'
+    )
+    assert.equal(completed.status, 'succeeded', JSON.stringify(completed, null, 2))
+    assert.equal(completed.provider, 'gemini')
+    assert.equal(completed.claim_token, undefined)
+    assert.equal(completed.result_json.provider, 'gemini')
+    assert.equal(completed.result_json.submit.provider, 'gemini')
+    assert.equal(completed.result_json.submit.url, targetUrl)
+    assert.equal(completed.result_json.read.provider, 'gemini')
+    assert.equal(completed.result_json.read.url, conversationUrl)
+    assert.match(completed.result_json.text, /visible Gemini real-DOM fixture answer/)
+    assert.match(completed.result_json.text, /Tokenless Gemini daemon E2E DOM prompt 52963/)
+    assert.doesNotMatch(completed.result_json.text, /stale Gemini real-DOM fixture answer/)
+    assert.doesNotMatch(completed.result_json.text, /_streaming/)
+
+    const providerPage = context.pages().find((page) => page.url().startsWith('https://gemini.google.com/'))
+    assert.ok(providerPage, `extension did not open the visible Gemini page: ${JSON.stringify(context.pages().map((page) => page.url()))}`)
+    assert.equal(providerPage.url(), conversationUrl)
+    await providerPage.bringToFront()
+    await providerPage.screenshot({
+      path: path.join(artifactDir, '01-gemini-fixture-after-daemon.png'),
+      animations: 'disabled',
+    })
+    const userMessage = providerPage.locator('user-query .query-text').last()
+    assert.match(await userMessage.innerText(), /Tokenless Gemini daemon E2E DOM prompt 52963/)
+    const assistantMessage = providerPage.locator('response-container message-content').last()
+    assert.match(await assistantMessage.innerText(), /visible Gemini real-DOM fixture answer/)
+    assert.match(await assistantMessage.innerText(), /Tokenless Gemini daemon E2E DOM prompt 52963/)
+    assert.equal(await providerPage.locator('button[aria-label="Stop response"]').count(), 0)
+
+    const pageUrlsAfterSuccess = context.pages().map((page) => page.url())
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/task/task.html')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/daemon/runner.html')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/settings/')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    const pagesOpenedByRun = context.pages().filter((page) => !pagesBeforeRun.has(page))
+    assert.deepEqual(
+      pagesOpenedByRun.map((page) => page.url()),
+      [conversationUrl],
+      'Gemini task execution must open exactly one visible provider page'
+    )
+    const urlsObservedDuringRun = observedUrls
+      .slice(observedUrlCountBeforeRun)
+      .map((entry) => entry.url)
+    assert.ok(
+      urlsObservedDuringRun.every((url) => url === 'about:blank' || url.startsWith('https://gemini.google.com/')),
+      `Gemini task execution opened a non-provider page: ${JSON.stringify(urlsObservedDuringRun, null, 2)}`
+    )
+    assertNoTaskPageObserved(observedUrls)
+    assertNoRunnerPageObserved(observedUrls)
+    assert.equal(
+      observedUrls.some((entry) => entry.url.includes('/settings/')),
+      false,
+      JSON.stringify(observedUrls, null, 2)
+    )
+
+    await fs.writeFile(path.join(artifactDir, 'gemini-cli-daemon-run-payload.json'), `${JSON.stringify(cliPayload, null, 2)}\n`, 'utf8')
+    await fs.writeFile(path.join(artifactDir, 'gemini-observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8')
+    await fs.writeFile(path.join(artifactDir, 'gemini-summary.json'), `${JSON.stringify({
+      ok: true,
+      mode: 'daemon-fixture-gemini',
+      fixture: true,
+      realProviderDom: true,
+      extensionId,
+      daemonUrl,
+      jobId: completed.job_id,
+      provider: 'gemini',
+      targetUrl,
+      conversationUrl,
+      prompt,
+      taskPageOpened: observedUrls.some((entry) => entry.url.includes('/task/task.html')),
+      runnerPageOpened: observedUrls.some((entry) => entry.url.includes('/daemon/runner.html')),
+      settingsPageOpened: observedUrls.some((entry) => entry.url.includes('/settings/')),
+      observedProviderOnly: urlsObservedDuringRun.every((url) => (
+        url === 'about:blank' || url.startsWith('https://gemini.google.com/')
+      )),
+      events,
+    }, null, 2)}\n`, 'utf8')
+    console.log(`Tokenless Gemini daemon fixture E2E artifacts: ${artifactDir}`)
+  } finally {
+    const cleanupErrors = []
+    await attemptCleanup(cleanupErrors, 'write Gemini observed URL artifacts', async () => {
+      await fs.writeFile(path.join(artifactDir, 'gemini-observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8')
+    })
+    await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
+    await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
+    const manifestsRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host manifests',
+      async () => restoreFiles(manifestBackup)
+    )
+    const registryRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host registry',
+      async () => restoreWindowsNativeHostRegistry(registryBackup)
+    )
+    await attemptCleanup(cleanupErrors, 'stop daemon', async () => {
+      if (daemon) await stopDaemon(daemon)
+    })
+    if (manifestsRestored && registryRestored) {
+      await attemptCleanup(cleanupErrors, 'remove temporary Gemini E2E state', async () => {
+        await fs.rm(tempRoot, { recursive: true, force: true })
+      })
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Tokenless Gemini fixture E2E cleanup failed')
     }
   }
 })
@@ -719,11 +995,21 @@ test('an already-open browser extension reconnects after setup installs its nati
     const cleanupErrors = []
     await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
     await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
-    await attemptCleanup(cleanupErrors, 'restore native host manifests', async () => restoreFiles(manifestBackup))
-    await attemptCleanup(cleanupErrors, 'restore native host registry', async () => restoreWindowsNativeHostRegistry(registryBackup))
-    await attemptCleanup(cleanupErrors, 'remove temporary setup reconnect state', async () => {
-      await fs.rm(tempRoot, { recursive: true, force: true })
-    })
+    const manifestsRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host manifests',
+      async () => restoreFiles(manifestBackup)
+    )
+    const registryRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host registry',
+      async () => restoreWindowsNativeHostRegistry(registryBackup)
+    )
+    if (manifestsRestored && registryRestored) {
+      await attemptCleanup(cleanupErrors, 'remove temporary setup reconnect state', async () => {
+        await fs.rm(tempRoot, { recursive: true, force: true })
+      })
+    }
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, 'Tokenless setup reconnect E2E cleanup failed')
     }
@@ -877,8 +1163,9 @@ async function launchTokenlessContext(
   providerFixture,
   providerHost
 ) {
+  const headed = process.env.TOKENLESS_E2E_HEADED === '1'
   const options = {
-    headless: process.env.TOKENLESS_E2E_HEADED === '1' ? false : false,
+    headless: !headed,
     env: {
       ...process.env,
       TOKENLESS_HOME: tokenlessHome,
@@ -896,6 +1183,10 @@ async function launchTokenlessContext(
   }
   if (process.env.TOKENLESS_E2E_CHANNEL) {
     options.channel = process.env.TOKENLESS_E2E_CHANNEL
+  } else if (!headed) {
+    // Playwright's `chromium` channel opts into new headless mode, which is the
+    // bundled full browser required for Manifest V3 extension service workers.
+    options.channel = 'chromium'
   }
   return chromium.launchPersistentContext(userDataDir, options)
 }
@@ -965,10 +1256,12 @@ async function startHttpsFixtureServer({ body, events, providerHost }) {
 async function attemptCleanup(errors, label, action) {
   try {
     await action()
+    return true
   } catch (error) {
     errors.push(new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`, {
       cause: error,
     }))
+    return false
   }
 }
 

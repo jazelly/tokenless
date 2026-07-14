@@ -108,8 +108,10 @@ test('provider navigation policy centralizes approved visible-session routes', a
   } = await import('../packages/extension/dist/extension/shared/provider-navigation-policy.js')
   const chatgpt = getProviderById('chatgpt')
   const claude = getProviderById('claude')
+  const gemini = getProviderById('gemini')
   assert.ok(chatgpt)
   assert.ok(claude)
+  assert.ok(gemini)
 
   assert.equal(canonicalProviderUrl('https://chatgpt.com/g/g-12345678/'), 'https://chatgpt.com/g/g-12345678')
   assert.equal(isApprovedProviderTransition(chatgpt, 'https://chatgpt.com/', 'https://chatgpt.com/c/12345678'), true)
@@ -122,6 +124,16 @@ test('provider navigation policy centralizes approved visible-session routes', a
   assert.equal(claude.composerSelectors[0], 'div[data-testid="chat-input"][contenteditable="true"][role="textbox"]')
   assert.equal(claude.answerSelectors.includes('[data-testid="virtual-message-list"] .font-claude-response-body'), true)
   assert.equal(claude.busySelectors.includes('[data-testid="virtual-message-list"] [data-is-streaming="true"]'), true)
+  assert.equal(isApprovedProviderTransition(gemini, 'https://gemini.google.com/app', 'https://gemini.google.com/app/4b9f2c7d1e6a'), true)
+  assert.equal(isProviderConversationUrl(gemini, 'https://gemini.google.com/app/settings123'), false)
+  assert.equal(
+    gemini.composerSelectors[0],
+    'rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"][aria-label="Enter a prompt for Gemini"]'
+  )
+  assert.deepEqual(gemini.submitSelectors, ['button[aria-label="Send message"]'])
+  assert.deepEqual(gemini.answerSelectors, ['response-container message-content'])
+  assert.deepEqual(gemini.busySelectors, ['button[aria-label="Stop response"]'])
+  assert.equal(gemini.blockerSelectors.some((selector) => selector.includes('accounts.google.com')), false)
 })
 
 test('daemon bridge requires a v1 handshake and reconnects with bounded backoff', async () => {
@@ -892,30 +904,21 @@ test('provider content uses only visible controls and snapshots a fail-closed re
       await claudeAnswerDrift.context.close()
     }
 
-    const gemini = await openProviderFixture(browser, 'https://gemini.google.com/app', `
-      <!doctype html>
-      <html>
-        <body>
-          <rich-textarea><div role="textbox" contenteditable="true"></div></rich-textarea>
-          <button aria-label="Send message">Send</button>
-          <main id="answers"></main>
-          <script>
-            document.querySelector('button').addEventListener('click', () => {
-              history.pushState({}, '', '/app/gemini_1234567890')
-              const answer = document.createElement('message-content')
-              answer.textContent = 'Gemini conversation answer'
-              document.querySelector('#answers').append(answer)
-            })
-          </script>
-        </body>
-      </html>
-    `)
+    const gemini = await openProviderFixture(
+      browser,
+      'https://gemini.google.com/app',
+      readText('test/fixtures/gemini-real-dom-fixture.html')
+    )
     try {
+      assert.equal(await gemini.page.locator('button[aria-label="Send message"]').count(), 0)
+      assert.equal(await gemini.page.locator('a[aria-label="Sign in"][href^="https://accounts.google.com/ServiceLogin"]').isVisible(), true)
+      assert.equal(await gemini.page.locator('button[data-test-id="bard-mode-menu-button"][aria-label^="Open mode picker, currently "]').isVisible(), true)
+      assert.equal(await gemini.page.locator('button[aria-label="Upload & tools"][aria-haspopup="menu"]').isVisible(), true)
       const request = {
         provider: 'gemini',
         requestId: 'gemini-conversation-transition',
         targetUrl: 'https://gemini.google.com/app',
-        prompt: 'Start the Gemini conversation.',
+        prompt: 'Start the visible Gemini conversation.',
         composerTimeoutMs: 100,
         submitTimeoutMs: 100,
         readTimeoutMs: 2000,
@@ -924,6 +927,18 @@ test('provider content uses only visible controls and snapshots a fail-closed re
         globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
       ), request)
       assert.equal(submit.status, 'submitted')
+      assert.deepEqual(submit.answerBaseline, {
+        count: 1,
+        lastText: 'stale Gemini real-DOM fixture answer that must not be read',
+      })
+      assert.equal(await gemini.page.locator('button[aria-label="Stop response"]').isVisible(), true)
+      assert.match(
+        await gemini.page.locator('response-container message-content').last().textContent(),
+        /answer_streaming/
+      )
+      assert.equal(await gemini.page.locator('button[aria-label="Send message"]').count(), 0)
+      assert.equal(await gemini.page.locator('user-query').count(), 2)
+      assert.match(await gemini.page.locator('user-query').last().textContent(), /Start the visible Gemini conversation\./)
       const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'gemini-transition-proof-001')
       const read = await gemini.page.evaluate(({ contentRequest, answerBaseline, transitionProof }) => (
         globalThis.__dispatchTokenlessMessage({
@@ -937,12 +952,19 @@ test('provider content uses only visible controls and snapshots a fail-closed re
         })
       ), { contentRequest: request, answerBaseline: submit.answerBaseline, transitionProof: proof })
       assert.equal(read.status, 'read')
-      assert.equal(read.text, 'Gemini conversation answer')
-      assert.equal(read.url, 'https://gemini.google.com/app/gemini_1234567890')
+      assert.equal(
+        read.text,
+        'visible Gemini real-DOM fixture answer for: Start the visible Gemini conversation.'
+      )
+      assert.doesNotMatch(read.text, /stale Gemini real-DOM fixture answer/)
+      assert.doesNotMatch(read.text, /_streaming/)
+      assert.equal(read.url, 'https://gemini.google.com/app/4b9f2c7d1e6a')
+      assert.equal(await gemini.page.locator('button[aria-label="Stop response"]').count(), 0)
       for (const unsafePath of ['/app/settings', '/app/settings123']) {
         await gemini.page.evaluate((pathname) => {
           history.replaceState({}, '', pathname)
-          const answer = document.querySelector('message-content')
+          const answers = [...document.querySelectorAll('response-container message-content')]
+          const answer = answers.at(-1)
           if (answer) answer.textContent = 'Misleading Gemini settings answer'
         }, unsafePath)
         const blocked = await dispatchPostSubmitRead(gemini.page, request, submit.answerBaseline, proof)
@@ -953,6 +975,148 @@ test('provider content uses only visible controls and snapshots a fail-closed re
       assert.deepEqual(gemini.pageErrors, [])
     } finally {
       await gemini.context.close()
+    }
+
+    const geminiChallengeBlocker = await openProviderFixture(
+      browser,
+      'https://gemini.google.com/app',
+      readText('test/fixtures/gemini-real-dom-fixture.html')
+    )
+    try {
+      await geminiChallengeBlocker.context.route(
+        'https://www.google.com/recaptcha/**',
+        (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html>' })
+      )
+      await geminiChallengeBlocker.page.evaluate(() => {
+        const dialog = document.createElement('div')
+        dialog.setAttribute('role', 'dialog')
+        dialog.setAttribute('aria-modal', 'true')
+        dialog.setAttribute('aria-label', 'Complete the security challenge')
+
+        const challenge = document.createElement('iframe')
+        challenge.src = 'https://www.google.com/recaptcha/api2/anchor'
+        challenge.title = 'reCAPTCHA'
+        challenge.style.cssText = 'display:block;width:280px;height:80px;border:0'
+
+        dialog.append(challenge)
+        document.body.append(dialog)
+      })
+      const blocked = await geminiChallengeBlocker.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.submit',
+        request: {
+          provider: 'gemini',
+          requestId: 'gemini-visible-challenge-blocker',
+          targetUrl: 'https://gemini.google.com/app',
+          prompt: 'This prompt must not be submitted through a visible challenge.',
+          composerTimeoutMs: 100,
+          submitTimeoutMs: 100,
+        },
+      }))
+      assert.equal(blocked.status, 'blocked')
+      assert.equal(blocked.stopReason, 'provider_blocker_visible')
+      assert.equal(await geminiChallengeBlocker.page.locator('user-query').count(), 1)
+      assert.equal(await geminiChallengeBlocker.page.locator('button[aria-label="Send message"]').count(), 0)
+      assert.deepEqual(geminiChallengeBlocker.pageErrors, [])
+    } finally {
+      await geminiChallengeBlocker.context.close()
+    }
+
+    for (const driftTarget of ['composer', 'submit']) {
+      const geminiSelectorDrift = await openProviderFixture(
+        browser,
+        'https://gemini.google.com/app',
+        readText('test/fixtures/gemini-real-dom-fixture.html')
+      )
+      try {
+        await geminiSelectorDrift.page.evaluate((target) => {
+          if (target === 'composer') {
+            const composer = document.querySelector('rich-textarea .ql-editor')
+            composer.id = 'drifted-gemini-composer'
+            composer.removeAttribute('data-gramm')
+            composer.removeAttribute('aria-label')
+            composer.className = 'fixture-drifted-composer'
+            return
+          }
+
+          const sendSlot = document.querySelector('#send-slot')
+          const observer = new MutationObserver(() => {
+            const send = sendSlot.querySelector('button[aria-label="Send message"]')
+            if (!send) return
+            send.id = 'drifted-gemini-submit'
+            send.removeAttribute('aria-label')
+            observer.disconnect()
+          })
+          observer.observe(sendSlot, { childList: true })
+        }, driftTarget)
+        const blocked = await geminiSelectorDrift.page.evaluate((target) => globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.submit',
+          request: {
+            provider: 'gemini',
+            requestId: `gemini-${target}-selector-drift`,
+            targetUrl: 'https://gemini.google.com/app',
+            prompt: `This prompt must not pass the drifted Gemini ${target} contract.`,
+            composerTimeoutMs: 100,
+            submitTimeoutMs: 100,
+          },
+        }), driftTarget)
+        assert.equal(blocked.status, 'blocked')
+        assert.equal(blocked.stopReason, 'selector_drift')
+        assert.match(blocked.message, new RegExp(`Provider ${driftTarget} selector`))
+        assert.equal(await geminiSelectorDrift.page.locator('user-query').count(), 1)
+        assert.deepEqual(geminiSelectorDrift.pageErrors, [])
+      } finally {
+        await geminiSelectorDrift.context.close()
+      }
+    }
+
+    const geminiAnswerDrift = await openProviderFixture(
+      browser,
+      'https://gemini.google.com/app',
+      readText('test/fixtures/gemini-real-dom-fixture.html')
+    )
+    try {
+      const answerDriftRequest = {
+        provider: 'gemini',
+        requestId: 'gemini-answer-selector-drift',
+        targetUrl: 'https://gemini.google.com/app',
+        prompt: 'Answer selector contract drift.',
+        readTimeoutMs: 0,
+      }
+      const submit = await geminiAnswerDrift.page.evaluate((request) => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.submit',
+        request: {
+          ...request,
+          composerTimeoutMs: 100,
+          submitTimeoutMs: 100,
+        },
+      }), answerDriftRequest)
+      assert.equal(submit.status, 'submitted')
+      await geminiAnswerDrift.page.waitForURL('https://gemini.google.com/app/4b9f2c7d1e6a')
+      await geminiAnswerDrift.page.evaluate(() => {
+        for (const answer of document.querySelectorAll('response-container message-content')) {
+          const drifted = document.createElement('div')
+          drifted.dataset.answerContract = 'drifted'
+          drifted.textContent = answer.textContent
+          answer.replaceWith(drifted)
+        }
+      })
+      const proof = postSubmitTransitionProof(
+        answerDriftRequest,
+        submit.answerBaseline,
+        'gemini-answer-drift-proof-001'
+      )
+      const blocked = await dispatchPostSubmitRead(
+        geminiAnswerDrift.page,
+        answerDriftRequest,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(blocked.status, 'blocked')
+      assert.equal(blocked.stopReason, 'response_unavailable')
+      assert.doesNotMatch(JSON.stringify(blocked), /visible Gemini real-DOM fixture answer/)
+      assert.deepEqual(geminiAnswerDrift.pageErrors, [])
+    } finally {
+      await geminiAnswerDrift.context.close()
     }
 
     const landingTransition = await openProviderFixture(browser, 'https://chatgpt.com/', `
