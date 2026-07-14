@@ -20,14 +20,12 @@ const nativeTuples = [
   ['win32', 'x64'],
 ]
 
-test('workspace packages keep standalone public product names', () => {
+test('workspace packages keep standalone product names', () => {
   const packages = Object.fromEntries(
-    ['cli', 'client', 'extension', 'relay'].map((folder) => [folder, readJson(`packages/${folder}/package.json`)])
+    ['cli', 'extension'].map((folder) => [folder, readJson(`packages/${folder}/package.json`)])
   )
   assert.equal(packages.cli.name, 'tokenless')
-  assert.equal(packages.client.name, 'tokenless-client')
   assert.equal(packages.extension.name, 'tokenless-browser-session-bridge')
-  assert.equal(packages.relay.name, 'tokenless-relay')
   assert.deepEqual(packages.cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
   for (const pkg of Object.values(packages)) {
     assert.ok(!pkg.name.startsWith('@tokenless/'))

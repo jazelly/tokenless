@@ -10,7 +10,6 @@ Tokenless is standalone. Noop and other agents may consume its packages or skill
 4. The browser extension owns provider-tab orchestration and visible DOM automation.
 5. Direct clients call a documented public provider API or delegate ChatGPT-plan work to the provider-owned Codex executable.
 6. The authenticated loopback direct broker streams an allowlisted public inference protocol to a configured public upstream without disclosing its outbound credential.
-7. The optional web client and relay support hosted integrations independently of the local agent path.
 
 ## Execution Mode Boundary
 
@@ -109,5 +108,3 @@ ChatGPT controls travel in the same authenticated job `request_json` as the prom
 Visible-session adapters operate only through selectors and text visible in user-visible ChatGPT, Claude, or Gemini pages after host permission is granted. They report login, CAPTCHA, selector drift, rate limits, and user confirmations rather than bypassing them.
 
 Direct adapters use provider-owned clients or documented public APIs with environment-only credentials. Tokenless does not store or extract provider cookies, localStorage/sessionStorage tokens, hidden authentication headers, or private provider backend API calls in either mode. It never imports subscription OAuth credentials into its broker, and the broker is not an arbitrary-path proxy. Prompt construction redacts obvious secrets and includes only user-approved files and context.
-
-The optional relay cannot directly control a user's browser; browser work still requires the extension and an authorized visible session.

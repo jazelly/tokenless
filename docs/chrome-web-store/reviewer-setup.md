@@ -110,20 +110,20 @@ the visible provider flow through the supplied test instructions instead.
 
 ### Reproducible listing screenshots
 
-After building the primary extension, generate the two extension-owned listing
-screenshots from deterministic sample data:
+After building the primary extension, generate the extension-owned listing
+screenshots and promotional images from deterministic sample data:
 
 ```bash
 npm run build --workspace tokenless-browser-session-bridge
 node scripts/capture-cws-screenshots.mjs
 ```
 
-The generated 1280×800 PNGs are written to
-`test-results/chrome-web-store/activity-1280x800.png` and
-`test-results/chrome-web-store/settings-1280x800.png`. The capture script uses
-only a local static server and a mock Native Messaging response; it never opens
-a provider page or includes a real account, prompt, or answer. Inspect the PNGs
-before uploading and regenerate them after any Settings UI change.
+The output directory contains two 1280×800 screenshots, the required 440×280
+small promo tile, an optional 1400×560 marquee image, and a 128×128 Store icon.
+The capture script uses only the canonical logo under `packages/extension/assets`,
+a local static server, and a mock Native Messaging response; it never opens a
+provider page or includes a real account, prompt, or answer. Inspect the PNGs
+before uploading and regenerate them after any Settings UI or brand change.
 
 ## Final release gate
 

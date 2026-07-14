@@ -221,8 +221,6 @@ Publish all six native packages before the same-version universal `tokenless` pa
 
 Do not publish yet:
 
-- `tokenless-relay`
-- `tokenless-client`
 - `tokenless-browser-session-bridge`
 
 ## Development

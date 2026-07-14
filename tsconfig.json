@@ -1,8 +1,6 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/client" },
-    { "path": "./packages/relay" },
     { "path": "./packages/cli" },
     { "path": "./packages/extension" }
   ]

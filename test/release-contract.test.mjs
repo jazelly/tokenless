@@ -23,8 +23,6 @@ test('Changesets release configuration tracks only the public CLI', () => {
   assert.equal(config.baseBranch, 'main')
   assert.deepEqual(config.ignore.sort(), [
     'tokenless-browser-session-bridge',
-    'tokenless-client',
-    'tokenless-relay',
   ])
   assert.ok(rootPackage.devDependencies['@changesets/cli'])
   assert.equal(rootPackage.scripts.changeset, 'changeset')

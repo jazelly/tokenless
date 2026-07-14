@@ -15,7 +15,7 @@ Tokenless offers two separate local transports. Visible mode connects the comman
 - A direct API request sends the prompt and request parameters to the selected public provider or compatible gateway. That operator's privacy, logging, retention, and billing terms apply. Provider API usage can be billed separately from a web subscription.
 - The authenticated local direct broker binds only to loopback, removes inbound provider credentials and cookies, injects an environment-supplied outbound credential, and streams only allowlisted public inference routes. It does not expose provider or gateway private, administration, account, OAuth, payment, quota, or usage APIs.
 - Broker request bodies are opaque streaming data. Tokenless does not parse or log their prompts and does not inject `store: false`; the caller controls provider-supported storage fields and the upstream controls its retention policy. Normalized `tokenless run --mode direct` adapters set documented storage opt-outs where supported.
-- Tokenless does not operate a remote service that receives provider-session data. An optional relay, if separately configured by a user, cannot control a browser and is outside this local visible-session flow.
+- Tokenless does not operate a remote service that receives provider-session data.
 
 ## User control
 
