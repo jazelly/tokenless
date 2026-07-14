@@ -147,16 +147,17 @@ async function accountsCommand(subcommand: string | undefined, args: CliArgs) {
       if (provider !== 'chatgpt') {
         throw usageError('account_driver_invalid', 'The official-codex account driver supports only provider chatgpt.')
       }
-      if (args.routingDomain !== undefined || args.maxConcurrency !== undefined) {
+      if (args.maxConcurrency !== undefined) {
         throw usageError(
           'account_driver_option_invalid',
-          'Official Codex accounts do not accept --routing-domain or --max-concurrency.',
+          'Official Codex accounts do not accept --max-concurrency.',
         )
       }
       const account = await addManagedCodexAccount(
         {
           accountId,
           ...(args.label === undefined ? {} : { label: String(args.label) }),
+          ...(args.routingDomain === undefined ? {} : { routingDomain: String(args.routingDomain) }),
           enabled: args.disabled !== true,
         },
         storeOptions,
@@ -208,22 +209,70 @@ async function accountsCommand(subcommand: string | undefined, args: CliArgs) {
     if (account === undefined) throw usageError('account_pool_not_found', `Account ${provider}/${accountId} was not found.`)
     if (account.driver === 'official-codex') {
       const status = await inspectManagedCodexAccount(account.accountId, storeOptions)
-      printPayload({ ok: status.health === 'healthy', account: status }, args)
+      printPayload({
+        ok: status.health === 'healthy' && account.health.state === 'usable',
+        account: {
+          ...publicAccountRecord(account),
+          liveStatus: status,
+        },
+      }, args)
       if (status.health !== 'healthy') process.exitCode = 1
+      if (account.health.state !== 'usable') process.exitCode = 1
       return
     }
-    const ok = account.enabled && Boolean(process.env[account.credentialEnv])
+    const ok = account.enabled && account.health.state === 'usable' && Boolean(process.env[account.credentialEnv])
     printPayload({
       ok,
       account: {
         ...publicAccountRecord(account),
-        health: account.enabled
+        credentialStatus: account.enabled
           ? (process.env[account.credentialEnv] ? 'configured' : 'credential_missing')
           : 'disabled',
         credentialConfigured: Boolean(process.env[account.credentialEnv]),
       },
     }, args)
     if (!ok) process.exitCode = 1
+    return
+  }
+
+  if (subcommand === 'set-domain') {
+    const provider = normalizeDirectProvider(args.provider)
+    const accountId = requiredAdminValue(args.account, '--account')
+    if ((args.routingDomain === undefined) === (args.isolated !== true)) {
+      throw usageError(
+        'account_routing_domain_invalid',
+        'accounts set-domain requires exactly one of --routing-domain <domain> or --isolated.',
+      )
+    }
+    const account = await store.setAccountRoutingDomain({
+      provider,
+      accountId,
+      routingDomain: args.isolated === true
+        ? null
+        : requiredAdminValue(args.routingDomain, '--routing-domain'),
+    })
+    printPayload({ ok: true, account: publicAccountRecord(account) }, args)
+    return
+  }
+
+  if (subcommand === 'clear-health') {
+    const provider = normalizeDirectProvider(args.provider)
+    const accountId = requiredAdminValue(args.account, '--account')
+    const account = await store.clearAccountHealth({ provider, accountId })
+    printPayload({ ok: true, account: publicAccountRecord(account) }, args)
+    return
+  }
+
+  if (subcommand === 'audit') {
+    const provider = args.provider === undefined ? undefined : normalizeDirectProvider(args.provider)
+    const accountId = args.account === undefined ? undefined : normalizeAdminAccountId(args.account)
+    const page = await store.readAudit({
+      ...(args.afterSequence === undefined ? {} : { afterSequence: Number(args.afterSequence) }),
+      ...(args.limit === undefined ? {} : { limit: Number(args.limit) }),
+      ...(provider === undefined ? {} : { provider }),
+      ...(accountId === undefined ? {} : { accountId }),
+    })
+    printPayload({ ok: true, audit: page }, args)
     return
   }
 
@@ -256,7 +305,10 @@ async function accountsCommand(subcommand: string | undefined, args: CliArgs) {
     return
   }
 
-  throw usageError('account_command_invalid', 'Accounts subcommand must be add, login, status, list, enable, disable, or remove.')
+  throw usageError(
+    'account_command_invalid',
+    'Accounts subcommand must be add, login, status, list, enable, disable, set-domain, clear-health, audit, or remove.',
+  )
 }
 
 async function projectsCommand(subcommand: string | undefined, args: CliArgs) {
@@ -338,6 +390,7 @@ function publicProjectBinding(binding: any) {
   return {
     projectId: binding.projectId,
     provider: binding.provider,
+    routingDomain: binding.routingDomain,
     failoverPolicy: binding.failoverPolicy,
     assignedBy: binding.assignedBy,
     generation: binding.generation,
@@ -1291,6 +1344,7 @@ function parseArgs(argv: string[]): CliArgs {
     '--label': 'label',
     '--driver': 'driver',
     '--routing-domain': 'routingDomain',
+    '--after-sequence': 'afterSequence',
     '--max-concurrency': 'maxConcurrency',
     '--failover-policy': 'failoverPolicy',
     '--mode': 'mode',
@@ -1339,6 +1393,7 @@ function parseArgs(argv: string[]): CliArgs {
     '--long-running': 'longRunning',
     '--device-auth': 'deviceAuth',
     '--disabled': 'disabled',
+    '--isolated': 'isolated',
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] as string
@@ -1431,10 +1486,16 @@ function assertAccountCommandArguments(subcommand: string | undefined, args: Cli
     list: common,
     enable: [...common, 'account'],
     disable: [...common, 'account'],
+    'set-domain': [...common, 'account', 'isolated', 'routingDomain'],
+    'clear-health': [...common, 'account'],
+    audit: [...common, 'account', 'afterSequence', 'limit'],
     remove: [...common, 'account'],
   }
   if (subcommand === undefined || byCommand[subcommand] === undefined) {
-    throw usageError('account_command_invalid', 'Accounts subcommand must be add, login, status, list, enable, disable, or remove.')
+    throw usageError(
+      'account_command_invalid',
+      'Accounts subcommand must be add, login, status, list, enable, disable, set-domain, clear-health, audit, or remove.',
+    )
   }
   assertOnlyArguments(args, new Set(byCommand[subcommand]), `accounts ${subcommand}`)
 }
@@ -1510,6 +1571,8 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
     ['loginTimeoutMs', '--login-timeout-ms'],
     ['deviceAuth', '--device-auth'],
     ['disabled', '--disabled'],
+    ['isolated', '--isolated'],
+    ['afterSequence', '--after-sequence'],
   ] as const
   if (command !== 'accounts' && command !== 'projects') {
     const selected = administrationOnly
@@ -1811,6 +1874,9 @@ function usage() {
     '  tokenless accounts login --provider chatgpt --account personal-one [--device-auth] --json',
     '  tokenless accounts add --provider claude --driver api --account work --routing-domain personal --json',
     '  tokenless accounts status|enable|disable|remove --provider <provider> --account <id> --json',
+    '  tokenless accounts set-domain --provider <provider> --account <id> (--routing-domain <domain>|--isolated) --json',
+    '  tokenless accounts clear-health --provider <provider> --account <id> --json',
+    '  tokenless accounts audit [--after-sequence <n>] [--limit <n>] [--provider <provider>] [--account <id>] --json',
     '  tokenless accounts list [--provider <provider>] --json',
     '  tokenless projects pin --project <id> --provider <provider> --account <id> [--failover-policy availability-first|strict] --json',
     '  tokenless projects resolve|unpin --project <id> --provider <provider> --json',

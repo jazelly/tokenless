@@ -55,6 +55,7 @@ test('helper SIGKILL leaves a tombstone that fences its surviving Codex process 
     client = spawnStatusClient(fixture)
     const started = await waitForStartedChild(fixture.tracePath)
     const lease = await waitForLease(fixture.leasePath, (candidate) => candidate.helperPgid === started.ppid)
+    await waitForAccountRead(fixture.tracePath, started.pid)
 
     process.kill(lease.helperPgid, 'SIGKILL')
     const exited = await waitForExit(client)
@@ -191,6 +192,7 @@ if(process.argv[2]==='app-server'){
     const message=JSON.parse(line)
     if(message.id===0) process.stdout.write(JSON.stringify({id:0,result:{userAgent:'fake'}})+'\\n')
     if(message.method==='account/read'){
+      fs.appendFileSync(tracePath,JSON.stringify({kind:'account-read',pid:process.pid})+'\\n')
       const delay=Number(fs.readFileSync(delayPath,'utf8'))
       setTimeout(()=>{
         fs.appendFileSync(tracePath,JSON.stringify({kind:'responded',pid:process.pid})+'\\n')
@@ -264,6 +266,15 @@ async function waitForLease(leasePath, predicate) {
     const lease = JSON.parse(contents)
     return predicate(lease) ? lease : undefined
   }, 3_000, 'supervisor lease did not appear')
+}
+
+async function waitForAccountRead(tracePath, pid) {
+  return await waitFor(async () => {
+    const contents = await fs.readFile(tracePath, 'utf8').catch(() => '')
+    const received = contents.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line))
+      .some((candidate) => candidate.kind === 'account-read' && candidate.pid === pid)
+    return received ? true : undefined
+  }, 3_000, 'Codex child did not receive account/read')
 }
 
 async function waitForProcessExit(pid, timeoutMs) {

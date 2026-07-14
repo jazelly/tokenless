@@ -6,7 +6,9 @@ import path from 'node:path'
 import { tokenlessHome } from '../job-store.js'
 import type { DirectProvider } from './types.js'
 
-export const ACCOUNT_POOL_PROTOCOL = 'tokenless.account-pool.v1' as const
+export const ACCOUNT_POOL_PROTOCOL = 'tokenless.account-pool.v2' as const
+
+const LEGACY_ACCOUNT_POOL_PROTOCOL = 'tokenless.account-pool.v1' as const
 
 const ACCOUNT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 const ROUTING_DOMAIN_PATTERN = ACCOUNT_ID_PATTERN
@@ -16,6 +18,11 @@ const CODEX_IDENTITY_FINGERPRINT_PATTERN = /^tokenless\.codex-identity\.v1:[A-Za
 const MAX_REGISTRY_BYTES = 4 * 1_024 * 1_024
 const MAX_LABEL_CHARACTERS = 128
 const MAX_API_CONCURRENCY = 128
+const MAX_MIGRATION_ATTEMPTS = 128
+const MAX_SECRET_FIELD_SCAN_DEPTH = 128
+const MAX_SECRET_FIELD_SCAN_NODES = 262_144
+export const MAX_ACCOUNT_POOL_AUDIT_EVENTS = 1_024
+export const MAX_ACCOUNT_POOL_AUDIT_PAGE_SIZE = 1_024
 
 const PROVIDERS = Object.freeze<DirectProvider[]>([
   'chatgpt',
@@ -25,12 +32,51 @@ const PROVIDERS = Object.freeze<DirectProvider[]>([
   'antigravity',
 ])
 
+const FORBIDDEN_SECRET_FIELD_NAMES = new Set([
+  'apikey',
+  'accesskey',
+  'accesstoken',
+  'refreshtoken',
+  'bearertoken',
+  'token',
+  'secret',
+  'password',
+  'cookie',
+  'authorization',
+  'authheader',
+  'credential',
+  'credentialvalue',
+  'rawidentity',
+  'email',
+])
+
 type JsonRecord = Record<string, unknown>
 
 export type AccountPoolProtocol = typeof ACCOUNT_POOL_PROTOCOL
 export type AccountStatus = 'pending' | 'ready'
 export type ProjectFailoverPolicy = 'availability-first' | 'strict'
 export type BindingAssignment = 'automatic' | 'explicit' | 'migration'
+export type AccountUnavailableReason =
+  | 'api_credential_invalid'
+  | 'api_credential_missing'
+  | 'api_credential_rejected'
+  | 'codex_no_account'
+  | 'codex_not_chatgpt'
+  | 'codex_identity_unverifiable'
+  | 'codex_identity_mismatch'
+  | 'codex_profile_unsafe'
+
+export type AccountHealth =
+  | Readonly<{
+      state: 'usable'
+      generation: number
+    }>
+  | Readonly<{
+      state: 'unavailable'
+      generation: number
+      reason: AccountUnavailableReason
+      observedAt: string
+    }>
 
 type AccountRecordBase = Readonly<{
   provider: DirectProvider
@@ -38,6 +84,8 @@ type AccountRecordBase = Readonly<{
   internalId: string
   enabled: boolean
   maxConcurrency: number
+  health: AccountHealth
+  routingDomain: string | null
   label?: string | undefined
   createdAt: string
   updatedAt: string
@@ -54,7 +102,6 @@ export type ApiAccountRecord = AccountRecordBase & Readonly<{
   driver: 'api'
   status: 'ready'
   credentialEnv: string
-  routingDomain: string
 }>
 
 export type AccountRecord = CodexAccountRecord | ApiAccountRecord
@@ -77,6 +124,52 @@ export type AccountPoolSnapshot = Readonly<{
   updatedAt: string | null
   accounts: AccountRecord[]
   bindings: ProjectBinding[]
+  audit: AccountPoolAuditLog
+}>
+
+export type AccountPoolAuditAction =
+  | 'account_added'
+  | 'account_removed'
+  | 'account_enabled'
+  | 'account_disabled'
+  | 'account_routing_domain_changed'
+  | 'binding_assigned'
+  | 'binding_pinned'
+  | 'binding_migrated'
+  | 'binding_unpinned'
+  | 'health_marked_unavailable'
+  | 'health_cleared'
+
+type AccountPoolAuditEventBase = Readonly<{
+  sequence: number
+  timestamp: string
+  action: AccountPoolAuditAction
+  provider: DirectProvider
+  accountId: string
+}>
+
+export type AccountPoolAuditEvent = AccountPoolAuditEventBase & Readonly<{
+  projectId?: string | undefined
+  previousAccountId?: string | null | undefined
+  bindingGeneration?: number | undefined
+  routingDomain?: string | null | undefined
+  previousRoutingDomain?: string | null | undefined
+  healthGeneration?: number | undefined
+  healthReason?: AccountUnavailableReason | undefined
+}>
+
+export type AccountPoolAuditLog = Readonly<{
+  droppedThroughSequence: number
+  nextSequence: number
+  events: AccountPoolAuditEvent[]
+}>
+
+export type AccountPoolAuditPage = Readonly<{
+  afterSequence: number
+  gap: boolean
+  droppedThroughSequence: number
+  nextSequence: number
+  events: AccountPoolAuditEvent[]
 }>
 
 export type AccountResolution = Readonly<{
@@ -90,11 +183,17 @@ export type MigrationResult = Readonly<{
   resolution: AccountResolution
 }>
 
+export type AccountHealthMutationResult = Readonly<{
+  changed: boolean
+  account: AccountRecord
+}>
+
 export type AddCodexAccountInput = Readonly<{
   provider: 'chatgpt'
   accountId: string
   driver: 'official-codex'
   enabled?: boolean | undefined
+  routingDomain?: string | null | undefined
   label?: string | undefined
 }>
 
@@ -274,6 +373,47 @@ export class AccountPoolStore {
     return cloneSnapshot(await readSnapshotFile(this.homeDir, this.stateFile))
   }
 
+  async readAudit(options: {
+    afterSequence?: number | undefined
+    limit?: number | undefined
+    provider?: DirectProvider | string | undefined
+    accountId?: string | undefined
+  } = {}): Promise<AccountPoolAuditPage> {
+    if (!isJsonRecord(options)) throw invalidError('Audit read options must be an object.')
+    assertExactKeys(options, [], ['afterSequence', 'limit', 'provider', 'accountId'], 'audit read options')
+    const snapshot = await this.readSnapshot()
+    const provider = options.provider === undefined ? undefined : normalizeProvider(options.provider)
+    const accountId = options.accountId === undefined ? undefined : normalizeAccountId(options.accountId)
+    const afterSequence = boundedInteger(
+      options.afterSequence,
+      snapshot.audit.droppedThroughSequence,
+      0,
+      Number.MAX_SAFE_INTEGER,
+      'audit after sequence',
+    )
+    const limit = boundedInteger(
+      options.limit,
+      MAX_ACCOUNT_POOL_AUDIT_PAGE_SIZE,
+      1,
+      MAX_ACCOUNT_POOL_AUDIT_PAGE_SIZE,
+      'audit page size',
+    )
+    return {
+      afterSequence,
+      gap: afterSequence < snapshot.audit.droppedThroughSequence,
+      droppedThroughSequence: snapshot.audit.droppedThroughSequence,
+      nextSequence: snapshot.audit.nextSequence,
+      events: snapshot.audit.events
+        .filter((event) => (
+          event.sequence > Math.max(afterSequence, snapshot.audit.droppedThroughSequence) &&
+          (provider === undefined || event.provider === provider) &&
+          (accountId === undefined || event.accountId === accountId)
+        ))
+        .slice(0, limit)
+        .map(cloneAuditEvent),
+    }
+  }
+
   async listAccounts(filter: { provider?: DirectProvider | string | undefined } = {}) {
     const snapshot = await this.readSnapshot()
     const provider = filter.provider === undefined ? undefined : normalizeProvider(filter.provider)
@@ -316,7 +456,12 @@ export class AccountPoolStore {
     if (!isJsonRecord(input)) throw invalidError('Account input must be an object.')
     rejectSecretFields(input, 'account input')
     if (input.driver === 'official-codex') {
-      assertExactKeys(input, ['provider', 'accountId', 'driver'], ['enabled', 'label'], 'account input')
+      assertExactKeys(
+        input,
+        ['provider', 'accountId', 'driver'],
+        ['enabled', 'label', 'routingDomain'],
+        'account input',
+      )
     } else if (input.driver === 'api') {
       assertExactKeys(
         input,
@@ -347,6 +492,9 @@ export class AccountPoolStore {
       const internalId = this.#newInternalId(snapshot)
       let account: AccountRecord
       if (input.driver === 'official-codex') {
+        const routingDomain = input.routingDomain === undefined || input.routingDomain === null
+          ? null
+          : normalizeRoutingDomain(input.routingDomain)
         account = {
           provider: 'chatgpt',
           accountId,
@@ -355,6 +503,8 @@ export class AccountPoolStore {
           status: 'pending',
           enabled,
           maxConcurrency: 1,
+          health: usableHealth(),
+          routingDomain,
           ...(label === undefined ? {} : { label }),
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -376,6 +526,7 @@ export class AccountPoolStore {
           status: 'ready',
           enabled,
           maxConcurrency,
+          health: usableHealth(),
           ...(label === undefined ? {} : { label }),
           credentialEnv: apiCredentialEnvironmentName(provider, accountId),
           routingDomain,
@@ -384,6 +535,11 @@ export class AccountPoolStore {
         }
       }
       snapshot.accounts.push(account)
+      appendAuditEvent(snapshot, timestamp, {
+        action: 'account_added',
+        provider: account.provider,
+        accountId: account.accountId,
+      })
       return { changed: true, value: cloneAccount(account) }
     })
   }
@@ -455,7 +611,7 @@ export class AccountPoolStore {
   async removeAccount(reference: AccountReference): Promise<AccountRecord> {
     const provider = normalizeProvider(reference.provider)
     const accountId = normalizeAccountId(reference.accountId)
-    return this.#mutate((snapshot) => {
+    return this.#mutate((snapshot, timestamp) => {
       const account = requireAccountBySlug(snapshot, provider, accountId)
       if (snapshot.bindings.some((binding) => binding.accountInternalId === account.internalId)) {
         throw new AccountPoolError(
@@ -464,6 +620,11 @@ export class AccountPoolStore {
         )
       }
       snapshot.accounts = snapshot.accounts.filter((candidate) => candidate.internalId !== account.internalId)
+      appendAuditEvent(snapshot, timestamp, {
+        action: 'account_removed',
+        provider: account.provider,
+        accountId: account.accountId,
+      })
       return { changed: true, value: cloneAccount(account) }
     })
   }
@@ -494,7 +655,7 @@ export class AccountPoolStore {
         projectId,
         provider,
         accountInternalId: account.internalId,
-        routingDomain: account.driver === 'api' ? account.routingDomain : null,
+        routingDomain: account.routingDomain,
         failoverPolicy,
         assignedBy: 'explicit',
         generation: (current?.generation ?? 0) + 1,
@@ -502,6 +663,17 @@ export class AccountPoolStore {
         updatedAt: timestamp,
       }
       replaceBinding(snapshot, binding)
+      appendAuditEvent(snapshot, timestamp, {
+        action: 'binding_pinned',
+        provider,
+        accountId: account.accountId,
+        projectId,
+        previousAccountId: current === undefined
+          ? null
+          : requireAccountByInternalId(snapshot, current.accountInternalId).accountId,
+        bindingGeneration: binding.generation,
+        routingDomain: binding.routingDomain,
+      })
       return {
         changed: true,
         value: resolution(snapshot.revision + 1, binding, account),
@@ -512,12 +684,21 @@ export class AccountPoolStore {
   async unpinProject(reference: ProjectReference): Promise<ProjectBinding | null> {
     const projectId = requireProjectId(reference.projectId)
     const provider = normalizeProvider(reference.provider)
-    return this.#mutate((snapshot) => {
+    return this.#mutate((snapshot, timestamp) => {
       const current = findBinding(snapshot, projectId, provider)
       if (current === undefined) return { changed: false, value: null }
+      const account = requireAccountByInternalId(snapshot, current.accountInternalId)
       snapshot.bindings = snapshot.bindings.filter((binding) => (
         binding.projectId !== projectId || binding.provider !== provider
       ))
+      appendAuditEvent(snapshot, timestamp, {
+        action: 'binding_unpinned',
+        provider,
+        accountId: account.accountId,
+        projectId,
+        bindingGeneration: current.generation,
+        routingDomain: current.routingDomain,
+      })
       return { changed: true, value: cloneBinding(current) }
     })
   }
@@ -557,6 +738,7 @@ export class AccountPoolStore {
         account.driver === 'api' &&
         account.status === 'ready' &&
         account.enabled &&
+        account.health.state === 'usable' &&
         account.routingDomain === routingDomain
       ))
       const account = selectRendezvousAccount(candidates, projectId, provider, routingDomain)
@@ -578,6 +760,14 @@ export class AccountPoolStore {
         updatedAt: timestamp,
       }
       snapshot.bindings.push(binding)
+      appendAuditEvent(snapshot, timestamp, {
+        action: 'binding_assigned',
+        provider,
+        accountId: account.accountId,
+        projectId,
+        bindingGeneration: binding.generation,
+        routingDomain,
+      })
       return {
         changed: true,
         value: resolution(snapshot.revision + 1, binding, account),
@@ -623,6 +813,12 @@ export class AccountPoolStore {
           'Strict project bindings cannot be migrated automatically; explicitly pin a different account.',
         )
       }
+      if (currentAccount.enabled && currentAccount.health.state === 'usable') {
+        throw new AccountPoolError(
+          'account_pool_conflict',
+          'A usable enabled account cannot be migrated automatically.',
+        )
+      }
       const nextAccount = requireAccountByInternalId(snapshot, nextAccountInternalId)
       if (nextAccount.provider !== provider) {
         throw new AccountPoolError('account_pool_conflict', 'Migration target belongs to a different provider.')
@@ -634,10 +830,8 @@ export class AccountPoolStore {
           'Migration target uses a different account driver; explicitly pin it instead.',
         )
       }
-      if (
-        current.routingDomain !== null &&
-        (nextAccount.driver !== 'api' || nextAccount.routingDomain !== current.routingDomain)
-      ) {
+      requireAutomaticMigrationDomain(current, currentAccount)
+      if (nextAccount.routingDomain !== current.routingDomain) {
         throw new AccountPoolError(
           'account_pool_routing_domain_mismatch',
           'Migration target belongs to a different routing domain.',
@@ -646,12 +840,13 @@ export class AccountPoolStore {
       const migrated: ProjectBinding = {
         ...current,
         accountInternalId: nextAccount.internalId,
-        routingDomain: nextAccount.driver === 'api' ? nextAccount.routingDomain : null,
+        routingDomain: nextAccount.routingDomain,
         assignedBy: 'migration',
         generation: current.generation + 1,
         updatedAt: timestamp,
       }
       replaceBinding(snapshot, migrated)
+      appendMigrationAudit(snapshot, timestamp, current, currentAccount, nextAccount, migrated)
       return {
         changed: true,
         value: {
@@ -659,6 +854,197 @@ export class AccountPoolStore {
           resolution: resolution(snapshot.revision + 1, migrated, nextAccount),
         },
       }
+    })
+  }
+
+  async migrateToEligibleIfCurrent(input: ProjectReference & {
+    expectedAccountInternalId: string
+    expectedGeneration: number
+    attemptedAccountInternalIds?: readonly string[] | undefined
+  }): Promise<MigrationResult> {
+    const projectId = requireProjectId(input.projectId)
+    const provider = normalizeProvider(input.provider)
+    const expectedAccountInternalId = requireCanonicalUuid(input.expectedAccountInternalId)
+    const expectedGeneration = boundedInteger(
+      input.expectedGeneration,
+      undefined,
+      1,
+      Number.MAX_SAFE_INTEGER,
+      'expected binding generation',
+    )
+    const attempted = requireAttemptedAccountIds(input.attemptedAccountInternalIds)
+    attempted.add(expectedAccountInternalId)
+    return this.#mutate<MigrationResult>((snapshot, timestamp) => {
+      const current = findBinding(snapshot, projectId, provider)
+      if (current === undefined) {
+        throw new AccountPoolError('account_pool_not_found', 'Project binding was not found.')
+      }
+      const currentAccount = requireAccountByInternalId(snapshot, current.accountInternalId)
+      if (
+        current.accountInternalId !== expectedAccountInternalId ||
+        current.generation !== expectedGeneration
+      ) {
+        return {
+          changed: false,
+          value: { migrated: false, resolution: resolution(snapshot.revision, current, currentAccount) },
+        }
+      }
+      if (current.failoverPolicy === 'strict') {
+        throw new AccountPoolError(
+          'account_pool_conflict',
+          'Strict project bindings cannot be migrated automatically; explicitly pin a different account.',
+        )
+      }
+      if (currentAccount.enabled && currentAccount.health.state === 'usable') {
+        throw new AccountPoolError(
+          'account_pool_conflict',
+          'A usable enabled account cannot be migrated automatically.',
+        )
+      }
+      const routingDomain = requireAutomaticMigrationDomain(current, currentAccount)
+      const candidates = snapshot.accounts.filter((account) => (
+        account.provider === provider &&
+        account.driver === currentAccount.driver &&
+        account.status === 'ready' &&
+        account.enabled &&
+        account.health.state === 'usable' &&
+        account.routingDomain === routingDomain &&
+        !attempted.has(account.internalId)
+      ))
+      const nextAccount = selectRendezvousAccount(candidates, projectId, provider, routingDomain)
+      if (nextAccount === undefined) {
+        throw new AccountPoolError(
+          'account_pool_no_eligible_account',
+          'No enabled usable account is eligible in the existing routing domain.',
+        )
+      }
+      const migrated: ProjectBinding = {
+        ...current,
+        accountInternalId: nextAccount.internalId,
+        routingDomain,
+        assignedBy: 'migration',
+        generation: current.generation + 1,
+        updatedAt: timestamp,
+      }
+      replaceBinding(snapshot, migrated)
+      appendMigrationAudit(snapshot, timestamp, current, currentAccount, nextAccount, migrated)
+      return {
+        changed: true,
+        value: {
+          migrated: true,
+          resolution: resolution(snapshot.revision + 1, migrated, nextAccount),
+        },
+      }
+    })
+  }
+
+  async markUnavailableIfCurrent(input: {
+    provider: DirectProvider | string
+    accountInternalId: string
+    expectedHealthGeneration: number
+    reason: AccountUnavailableReason
+  }): Promise<AccountHealthMutationResult> {
+    if (!isJsonRecord(input)) throw invalidError('Account health input must be an object.')
+    rejectSecretFields(input, 'account health input')
+    assertExactKeys(
+      input,
+      ['provider', 'accountInternalId', 'expectedHealthGeneration', 'reason'],
+      [],
+      'account health input',
+    )
+    const provider = normalizeProvider(input.provider)
+    const accountInternalId = requireCanonicalUuid(input.accountInternalId)
+    const expectedHealthGeneration = boundedInteger(
+      input.expectedHealthGeneration,
+      undefined,
+      0,
+      Number.MAX_SAFE_INTEGER,
+      'expected account health generation',
+    )
+    const reason = requireUnavailableReason(input.reason)
+    return this.#mutate<AccountHealthMutationResult>((snapshot, timestamp) => {
+      const account = requireAccountByInternalId(snapshot, accountInternalId)
+      if (account.provider !== provider) {
+        throw new AccountPoolError('account_pool_conflict', 'Account health provider does not match its account.')
+      }
+      requireUnavailableReasonForDriver(account.driver, reason)
+      if (account.health.generation !== expectedHealthGeneration) {
+        return { changed: false, value: { changed: false, account: cloneAccount(account) } }
+      }
+      const updated: AccountRecord = {
+        ...account,
+        health: {
+          state: 'unavailable',
+          generation: account.health.generation + 1,
+          reason,
+          observedAt: timestamp,
+        },
+        updatedAt: timestamp,
+      }
+      replaceAccount(snapshot, updated)
+      appendAuditEvent(snapshot, timestamp, {
+        action: 'health_marked_unavailable',
+        provider,
+        accountId: account.accountId,
+        healthGeneration: updated.health.generation,
+        healthReason: reason,
+      })
+      return { changed: true, value: { changed: true, account: cloneAccount(updated) } }
+    })
+  }
+
+  async clearAccountHealth(reference: AccountReference): Promise<AccountRecord> {
+    const provider = normalizeProvider(reference.provider)
+    const accountId = normalizeAccountId(reference.accountId)
+    return this.#mutate((snapshot, timestamp) => {
+      const account = requireAccountBySlug(snapshot, provider, accountId)
+      const updated: AccountRecord = {
+        ...account,
+        health: usableHealth(account.health.generation + 1),
+        updatedAt: timestamp,
+      }
+      replaceAccount(snapshot, updated)
+      appendAuditEvent(snapshot, timestamp, {
+        action: 'health_cleared',
+        provider,
+        accountId,
+        healthGeneration: updated.health.generation,
+      })
+      return { changed: true, value: cloneAccount(updated) }
+    })
+  }
+
+  async setAccountRoutingDomain(input: AccountReference & {
+    routingDomain: string | null
+  }): Promise<AccountRecord> {
+    if (!isJsonRecord(input)) throw invalidError('Account routing domain input must be an object.')
+    rejectSecretFields(input, 'account routing domain input')
+    assertExactKeys(input, ['provider', 'accountId', 'routingDomain'], [], 'account routing domain input')
+    const provider = normalizeProvider(input.provider)
+    const accountId = normalizeAccountId(input.accountId)
+    const requestedDomain = input.routingDomain === null ? null : normalizeRoutingDomain(input.routingDomain)
+    return this.#mutate((snapshot, timestamp) => {
+      const account = requireAccountBySlug(snapshot, provider, accountId)
+      if (account.driver === 'api' && requestedDomain === null) {
+        throw invalidError('Public API accounts require a routing domain.')
+      }
+      if (account.routingDomain === requestedDomain) return { changed: false, value: cloneAccount(account) }
+      if (snapshot.bindings.some((binding) => binding.accountInternalId === account.internalId)) {
+        throw new AccountPoolError(
+          'account_pool_bound_account',
+          'An account routing domain cannot change while project bindings reference it.',
+        )
+      }
+      const updated: AccountRecord = { ...account, routingDomain: requestedDomain, updatedAt: timestamp }
+      replaceAccount(snapshot, updated)
+      appendAuditEvent(snapshot, timestamp, {
+        action: 'account_routing_domain_changed',
+        provider,
+        accountId,
+        previousRoutingDomain: account.routingDomain,
+        routingDomain: requestedDomain,
+      })
+      return { changed: true, value: cloneAccount(updated) }
     })
   }
 
@@ -670,6 +1056,11 @@ export class AccountPoolStore {
       if (account.enabled === enabled) return { changed: false, value: cloneAccount(account) }
       const updated: AccountRecord = { ...account, enabled, updatedAt: timestamp }
       replaceAccount(snapshot, updated)
+      appendAuditEvent(snapshot, timestamp, {
+        action: enabled ? 'account_enabled' : 'account_disabled',
+        provider,
+        accountId,
+      })
       return { changed: true, value: cloneAccount(updated) }
     })
   }
@@ -711,6 +1102,7 @@ type MutableAccountPoolSnapshot = {
   updatedAt: string | null
   accounts: AccountRecord[]
   bindings: ProjectBinding[]
+  audit: AccountPoolAuditLog
 }
 
 function emptySnapshot(): AccountPoolSnapshot {
@@ -720,6 +1112,7 @@ function emptySnapshot(): AccountPoolSnapshot {
     updatedAt: null,
     accounts: [],
     bindings: [],
+    audit: emptyAuditLog(),
   }
 }
 
@@ -776,8 +1169,12 @@ async function writeSnapshotAtomic(homeDir: string, stateFile: string, snapshot:
   )
   let handle: fs.FileHandle | undefined
   try {
+    const encoded = `${JSON.stringify(snapshot, null, 2)}\n`
+    if (Buffer.byteLength(encoded, 'utf8') > MAX_REGISTRY_BYTES) {
+      throw invalidError('Tokenless account pool registry exceeds the size limit.')
+    }
     handle = await fs.open(temporary, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600)
-    await handle.writeFile(`${JSON.stringify(snapshot, null, 2)}\n`, { encoding: 'utf8' })
+    await handle.writeFile(encoded, { encoding: 'utf8' })
     await handle.sync()
     await handle.close()
     handle = undefined
@@ -847,8 +1244,15 @@ function assertCurrentUserAndPrivateMode(
 
 function validateSnapshot(payload: unknown): AccountPoolSnapshot {
   if (!isJsonRecord(payload)) throw invalidError('Account pool registry must be an object.')
-  assertExactKeys(payload, ['protocol', 'revision', 'updatedAt', 'accounts', 'bindings'], [], 'registry')
-  if (payload.protocol !== ACCOUNT_POOL_PROTOCOL) {
+  const commonKeys = ['protocol', 'revision', 'updatedAt', 'accounts', 'bindings']
+  let legacyInput: boolean
+  if (payload.protocol === ACCOUNT_POOL_PROTOCOL) {
+    assertExactKeys(payload, [...commonKeys, 'audit'], [], 'registry')
+    legacyInput = false
+  } else if (payload.protocol === LEGACY_ACCOUNT_POOL_PROTOCOL) {
+    assertExactKeys(payload, commonKeys, [], 'legacy registry')
+    legacyInput = true
+  } else {
     throw new AccountPoolError(
       'account_pool_unsupported_protocol',
       'Tokenless account pool registry protocol is unsupported.',
@@ -866,8 +1270,19 @@ function validateSnapshot(payload: unknown): AccountPoolSnapshot {
     throw invalidError('An uninitialized registry cannot contain records.')
   }
 
-  const accounts = payload.accounts.map((value, index) => validateAccount(value, index))
+  if (legacyInput) requireCoherentLegacyAccountShape(payload.accounts)
+  const accounts = payload.accounts.map((value, index) => validateAccount(value, index, legacyInput))
   const bindings = payload.bindings.map((value, index) => validateBinding(value, index))
+  const audit = legacyInput ? legacyAuditLog(revision) : validateAuditLog(payload.audit)
+  if (revision === 0 && audit.events.length > 0) {
+    throw invalidError('An uninitialized registry cannot contain audit events.')
+  }
+  if (
+    updatedAt !== null &&
+    audit.events.some((event) => Date.parse(event.timestamp) > Date.parse(updatedAt))
+  ) {
+    throw invalidError('Registry audit contains an event newer than the registry update timestamp.')
+  }
   const slugs = new Set<string>()
   const internalIds = new Set<string>()
   const credentialEnvironments = new Set<string>()
@@ -900,15 +1315,27 @@ function validateSnapshot(payload: unknown): AccountPoolSnapshot {
     if (account === undefined) throw invalidError('Registry contains a dangling project binding.')
     if (account.provider !== binding.provider) throw invalidError('Project binding provider does not match its account.')
     if (account.status !== 'ready') throw invalidError('Project binding targets a pending account.')
-    const expectedDomain = account.driver === 'api' ? account.routingDomain : null
+    const expectedDomain = account.routingDomain
     if (binding.routingDomain !== expectedDomain) {
       throw invalidError('Project binding routing domain does not match its account.')
     }
   }
-  return canonicalSnapshot({ protocol: ACCOUNT_POOL_PROTOCOL, revision, updatedAt, accounts, bindings })
+  return canonicalSnapshot({ protocol: ACCOUNT_POOL_PROTOCOL, revision, updatedAt, accounts, bindings, audit })
 }
 
-function validateAccount(value: unknown, index: number): AccountRecord {
+function requireCoherentLegacyAccountShape(accounts: unknown[]): void {
+  for (const [index, account] of accounts.entries()) {
+    if (!isJsonRecord(account)) continue
+    if (Object.hasOwn(account, 'health')) {
+      throw invalidError(`Legacy account ${index} cannot contain current-format health state without audit metadata.`)
+    }
+    if (account.driver === 'official-codex' && Object.hasOwn(account, 'routingDomain')) {
+      throw invalidError(`Legacy Codex account ${index} cannot contain a routing domain without audit metadata.`)
+    }
+  }
+}
+
+function validateAccount(value: unknown, index: number, allowMissingHealth: boolean): AccountRecord {
   if (!isJsonRecord(value)) throw invalidError(`Account ${index} must be an object.`)
   const driver = value.driver
   const common = [
@@ -923,9 +1350,9 @@ function validateAccount(value: unknown, index: number): AccountRecord {
     'updatedAt',
   ]
   if (driver === 'official-codex') {
-    assertExactKeys(value, common, ['label', 'identityFingerprint'], `account ${index}`)
+    assertExactKeys(value, common, ['health', 'identityFingerprint', 'label', 'routingDomain'], `account ${index}`)
   } else if (driver === 'api') {
-    assertExactKeys(value, [...common, 'credentialEnv', 'routingDomain'], ['label'], `account ${index}`)
+    assertExactKeys(value, [...common, 'credentialEnv', 'routingDomain'], ['health', 'label'], `account ${index}`)
   } else {
     throw invalidError(`Account ${index} has an unsupported driver.`)
   }
@@ -937,7 +1364,18 @@ function validateAccount(value: unknown, index: number): AccountRecord {
   const label = value.label === undefined ? undefined : requireCanonicalLabel(value.label)
   const createdAt = requireTimestamp(value.createdAt)
   const updatedAt = requireTimestamp(value.updatedAt)
+  if (value.health === undefined && !allowMissingHealth) {
+    throw invalidError(`Account ${index} health is required in the current registry format.`)
+  }
+  const health = value.health === undefined ? usableHealth() : validateAccountHealth(value.health, index)
+  if (health.state === 'unavailable') requireUnavailableReasonForDriver(driver, health.reason)
   if (Date.parse(updatedAt) < Date.parse(createdAt)) throw invalidError(`Account ${index} timestamps are inconsistent.`)
+  if (health.state === 'unavailable' && (
+    Date.parse(health.observedAt) < Date.parse(createdAt) ||
+    Date.parse(health.observedAt) > Date.parse(updatedAt)
+  )) {
+    throw invalidError(`Account ${index} health timestamp is inconsistent.`)
+  }
 
   if (driver === 'official-codex') {
     if (provider !== 'chatgpt') throw invalidError('Official Codex accounts must use the ChatGPT provider.')
@@ -951,6 +1389,9 @@ function validateAccount(value: unknown, index: number): AccountRecord {
     if (value.status === 'ready' && value.identityFingerprint === undefined) {
       throw invalidError('Ready Codex accounts require an identity fingerprint.')
     }
+    const routingDomain = value.routingDomain === undefined || value.routingDomain === null
+      ? null
+      : requireCanonicalRoutingDomain(value.routingDomain)
     return {
       provider: 'chatgpt',
       accountId,
@@ -959,6 +1400,8 @@ function validateAccount(value: unknown, index: number): AccountRecord {
       status: value.status,
       enabled,
       maxConcurrency: 1,
+      health,
+      routingDomain,
       ...(label === undefined ? {} : { label }),
       ...(value.identityFingerprint === undefined
         ? {}
@@ -989,6 +1432,7 @@ function validateAccount(value: unknown, index: number): AccountRecord {
     status: 'ready',
     enabled,
     maxConcurrency,
+    health,
     ...(label === undefined ? {} : { label }),
     credentialEnv,
     routingDomain,
@@ -1032,48 +1476,316 @@ function validateBinding(value: unknown, index: number): ProjectBinding {
   }
 }
 
-function rejectSecretFields(value: unknown, location = 'registry') {
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) => rejectSecretFields(entry, `${location}[${index}]`))
-    return
+function validateAccountHealth(value: unknown, accountIndex: number): AccountHealth {
+  if (!isJsonRecord(value)) throw invalidError(`Account ${accountIndex} health must be an object.`)
+  if (value.state === 'usable') {
+    assertExactKeys(value, ['state', 'generation'], [], `account ${accountIndex} health`)
+    return usableHealth(boundedInteger(
+      value.generation,
+      undefined,
+      0,
+      Number.MAX_SAFE_INTEGER,
+      `Account ${accountIndex} health generation`,
+    ))
   }
-  if (!isJsonRecord(value)) return
-  for (const [key, child] of Object.entries(value)) {
-    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
-    const forbidden = new Set([
-      'apikey',
-      'accesskey',
-      'accesstoken',
-      'refreshtoken',
-      'bearertoken',
-      'token',
-      'secret',
-      'password',
-      'cookie',
-      'authorization',
-      'authheader',
-      'credential',
-      'credentialvalue',
-      'rawidentity',
-      'email',
-    ])
-    if (forbidden.has(normalized)) {
-      throw new AccountPoolError(
-        'account_pool_secret_field_forbidden',
-        `Secret-bearing field ${location}.${key} is forbidden in the account pool registry.`,
-      )
+  if (value.state === 'unavailable') {
+    assertExactKeys(
+      value,
+      ['state', 'generation', 'reason', 'observedAt'],
+      [],
+      `account ${accountIndex} health`,
+    )
+    return {
+      state: 'unavailable',
+      generation: boundedInteger(
+        value.generation,
+        undefined,
+        1,
+        Number.MAX_SAFE_INTEGER,
+        `Account ${accountIndex} health generation`,
+      ),
+      reason: requireUnavailableReason(value.reason),
+      observedAt: requireTimestamp(value.observedAt),
     }
-    rejectSecretFields(child, `${location}.${key}`)
+  }
+  throw invalidError(`Account ${accountIndex} health state is unsupported.`)
+}
+
+function validateAuditLog(value: unknown): AccountPoolAuditLog {
+  if (!isJsonRecord(value)) throw invalidError('Registry audit must be an object.')
+  assertExactKeys(
+    value,
+    ['droppedThroughSequence', 'nextSequence', 'events'],
+    [],
+    'registry audit',
+  )
+  const droppedThroughSequence = boundedInteger(
+    value.droppedThroughSequence,
+    undefined,
+    0,
+    Number.MAX_SAFE_INTEGER,
+    'audit dropped-through sequence',
+  )
+  const nextSequence = boundedInteger(
+    value.nextSequence,
+    undefined,
+    1,
+    Number.MAX_SAFE_INTEGER,
+    'audit next sequence',
+  )
+  if (!Array.isArray(value.events) || value.events.length > MAX_ACCOUNT_POOL_AUDIT_EVENTS) {
+    throw invalidError(`Registry audit must contain at most ${MAX_ACCOUNT_POOL_AUDIT_EVENTS} events.`)
+  }
+  const events = value.events.map((event, index) => validateAuditEvent(event, index))
+  let expected = droppedThroughSequence + 1
+  let previousTimestamp = Number.NEGATIVE_INFINITY
+  for (const event of events) {
+    if (!Number.isSafeInteger(expected) || event.sequence !== expected) {
+      throw invalidError('Registry audit event sequences must be contiguous after the dropped prefix.')
+    }
+    const timestamp = Date.parse(event.timestamp)
+    if (timestamp < previousTimestamp) {
+      throw invalidError('Registry audit event timestamps must be monotonic.')
+    }
+    previousTimestamp = timestamp
+    expected += 1
+  }
+  if (expected !== nextSequence) {
+    throw invalidError('Registry audit next sequence does not follow its retained events.')
+  }
+  return { droppedThroughSequence, nextSequence, events }
+}
+
+function validateAuditEvent(value: unknown, index: number): AccountPoolAuditEvent {
+  if (!isJsonRecord(value)) throw invalidError(`Audit event ${index} must be an object.`)
+  const common = ['sequence', 'timestamp', 'action', 'provider', 'accountId']
+  const action = requireAuditAction(value.action)
+  if (
+    action === 'account_added' ||
+    action === 'account_removed' ||
+    action === 'account_enabled' ||
+    action === 'account_disabled'
+  ) {
+    assertExactKeys(value, common, [], `audit event ${index}`)
+  } else if (action === 'account_routing_domain_changed') {
+    assertExactKeys(value, [...common, 'previousRoutingDomain', 'routingDomain'], [], `audit event ${index}`)
+  } else if (action === 'binding_assigned') {
+    assertExactKeys(value, [...common, 'projectId', 'bindingGeneration', 'routingDomain'], [], `audit event ${index}`)
+  } else if (action === 'binding_pinned' || action === 'binding_migrated') {
+    assertExactKeys(
+      value,
+      [...common, 'projectId', 'previousAccountId', 'bindingGeneration', 'routingDomain'],
+      [],
+      `audit event ${index}`,
+    )
+  } else if (action === 'binding_unpinned') {
+    assertExactKeys(value, [...common, 'projectId', 'bindingGeneration', 'routingDomain'], [], `audit event ${index}`)
+  } else if (action === 'health_marked_unavailable') {
+    assertExactKeys(value, [...common, 'healthGeneration', 'healthReason'], [], `audit event ${index}`)
+  } else {
+    assertExactKeys(value, [...common, 'healthGeneration'], [], `audit event ${index}`)
+  }
+
+  const event: {
+    -readonly [Key in keyof AccountPoolAuditEvent]: AccountPoolAuditEvent[Key]
+  } = {
+    sequence: boundedInteger(
+      value.sequence,
+      undefined,
+      1,
+      Number.MAX_SAFE_INTEGER,
+      `Audit event ${index} sequence`,
+    ),
+    timestamp: requireTimestamp(value.timestamp),
+    action,
+    provider: requireCanonicalProvider(value.provider),
+    accountId: requireCanonicalAccountId(value.accountId),
+  }
+  if (value.projectId !== undefined) event.projectId = requireProjectId(value.projectId)
+  if (value.previousAccountId !== undefined) {
+    event.previousAccountId = value.previousAccountId === null
+      ? null
+      : requireCanonicalAccountId(value.previousAccountId)
+  }
+  if (value.bindingGeneration !== undefined) {
+    event.bindingGeneration = boundedInteger(
+      value.bindingGeneration,
+      undefined,
+      1,
+      Number.MAX_SAFE_INTEGER,
+      `Audit event ${index} binding generation`,
+    )
+  }
+  if (value.routingDomain !== undefined) {
+    event.routingDomain = value.routingDomain === null ? null : requireCanonicalRoutingDomain(value.routingDomain)
+  }
+  if (value.previousRoutingDomain !== undefined) {
+    event.previousRoutingDomain = value.previousRoutingDomain === null
+      ? null
+      : requireCanonicalRoutingDomain(value.previousRoutingDomain)
+  }
+  if (value.healthGeneration !== undefined) {
+    event.healthGeneration = boundedInteger(
+      value.healthGeneration,
+      undefined,
+      1,
+      Number.MAX_SAFE_INTEGER,
+      `Audit event ${index} health generation`,
+    )
+  }
+  if (value.healthReason !== undefined) event.healthReason = requireUnavailableReason(value.healthReason)
+  return event
+}
+
+function usableHealth(generation = 0): AccountHealth {
+  return { state: 'usable', generation }
+}
+
+function emptyAuditLog(): AccountPoolAuditLog {
+  return { droppedThroughSequence: 0, nextSequence: 1, events: [] }
+}
+
+function legacyAuditLog(revision: number): AccountPoolAuditLog {
+  return revision === 0
+    ? emptyAuditLog()
+    : { droppedThroughSequence: 1, nextSequence: 2, events: [] }
+}
+
+function appendAuditEvent(
+  snapshot: MutableAccountPoolSnapshot,
+  timestamp: string,
+  event: Omit<AccountPoolAuditEvent, 'sequence' | 'timestamp'>,
+): void {
+  if (snapshot.audit.nextSequence >= Number.MAX_SAFE_INTEGER) {
+    throw invalidError('Registry audit sequence is exhausted.')
+  }
+  const appended: AccountPoolAuditEvent = {
+    ...event,
+    sequence: snapshot.audit.nextSequence,
+    timestamp,
+  }
+  const events = [...snapshot.audit.events.map(cloneAuditEvent), appended]
+  let droppedThroughSequence = snapshot.audit.droppedThroughSequence
+  while (events.length > MAX_ACCOUNT_POOL_AUDIT_EVENTS) {
+    const removed = events.shift()
+    if (removed === undefined) throw invalidError('Registry audit pruning failed.')
+    droppedThroughSequence = removed.sequence
+  }
+  snapshot.audit = {
+    droppedThroughSequence,
+    nextSequence: snapshot.audit.nextSequence + 1,
+    events,
   }
 }
 
-function selectRendezvousAccount(
-  candidates: ApiAccountRecord[],
+function appendMigrationAudit(
+  snapshot: MutableAccountPoolSnapshot,
+  timestamp: string,
+  current: ProjectBinding,
+  currentAccount: AccountRecord,
+  nextAccount: AccountRecord,
+  migrated: ProjectBinding,
+): void {
+  appendAuditEvent(snapshot, timestamp, {
+    action: 'binding_migrated',
+    provider: migrated.provider,
+    accountId: nextAccount.accountId,
+    previousAccountId: currentAccount.accountId,
+    projectId: migrated.projectId,
+    bindingGeneration: migrated.generation,
+    routingDomain: current.routingDomain,
+  })
+}
+
+function requireAutomaticMigrationDomain(
+  binding: ProjectBinding,
+  account: AccountRecord,
+): string {
+  if (binding.routingDomain === null || account.routingDomain === null) {
+    throw new AccountPoolError(
+      'account_pool_routing_domain_mismatch',
+      'Isolated accounts without a routing domain cannot migrate automatically.',
+    )
+  }
+  if (binding.routingDomain !== account.routingDomain) {
+    throw new AccountPoolError(
+      'account_pool_routing_domain_mismatch',
+      'The current account and project binding routing domains differ.',
+    )
+  }
+  return binding.routingDomain
+}
+
+function requireAttemptedAccountIds(value: readonly string[] | undefined): Set<string> {
+  if (value === undefined) return new Set()
+  if (!Array.isArray(value) || value.length > MAX_MIGRATION_ATTEMPTS) {
+    throw invalidError(`Attempted account ids must contain at most ${MAX_MIGRATION_ATTEMPTS} entries.`)
+  }
+  const attempted = new Set<string>()
+  for (const entry of value) {
+    const internalId = requireCanonicalUuid(entry)
+    if (attempted.has(internalId)) throw invalidError('Attempted account ids must be unique.')
+    attempted.add(internalId)
+  }
+  return attempted
+}
+
+function rejectSecretFields(value: unknown, location = 'registry') {
+  const pending: Array<{ value: unknown; location: string; depth: number }> = [
+    { value, location, depth: 0 },
+  ]
+  const seen = new WeakSet<object>()
+  let scannedNodes = 0
+
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (current === undefined) break
+    scannedNodes += 1
+    if (scannedNodes > MAX_SECRET_FIELD_SCAN_NODES) {
+      throw invalidError('Secret-field validation exceeds the input node limit.')
+    }
+    if (current.value === null || typeof current.value !== 'object') continue
+    if (seen.has(current.value)) {
+      throw invalidError('Secret-field validation requires acyclic JSON-compatible input.')
+    }
+    seen.add(current.value)
+
+    let entries: [string, unknown][]
+    try {
+      entries = Object.entries(current.value)
+    } catch {
+      throw invalidError('Secret-field validation cannot inspect the input object.')
+    }
+    for (const [key, child] of entries) {
+      scannedNodes += 1
+      if (scannedNodes > MAX_SECRET_FIELD_SCAN_NODES) {
+        throw invalidError('Secret-field validation exceeds the input node limit.')
+      }
+      const childLocation = `${current.location}.${key}`
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+      if (FORBIDDEN_SECRET_FIELD_NAMES.has(normalized)) {
+        throw new AccountPoolError(
+          'account_pool_secret_field_forbidden',
+          `Secret-bearing field ${childLocation} is forbidden in the account pool registry.`,
+        )
+      }
+      if (child !== null && typeof child === 'object') {
+        if (current.depth >= MAX_SECRET_FIELD_SCAN_DEPTH) {
+          throw invalidError('Secret-field validation exceeds the input depth limit.')
+        }
+        pending.push({ value: child, location: childLocation, depth: current.depth + 1 })
+      }
+    }
+  }
+}
+
+function selectRendezvousAccount<T extends AccountRecord>(
+  candidates: T[],
   projectId: string,
   provider: DirectProvider,
   routingDomain: string,
-) {
-  let selected: ApiAccountRecord | undefined
+): T | undefined {
+  let selected: T | undefined
   let selectedScore: Buffer | undefined
   for (const candidate of candidates) {
     const hash = createHash('sha256')
@@ -1167,6 +1879,9 @@ function requireRoutableAccount(account: AccountRecord) {
   if (!account.enabled) {
     throw new AccountPoolError('account_pool_conflict', 'Disabled accounts cannot receive new project bindings.')
   }
+  if (account.health.state !== 'usable') {
+    throw new AccountPoolError('account_pool_conflict', 'Unavailable accounts cannot receive new project bindings.')
+  }
 }
 
 function canonicalSnapshot(snapshot: MutableAccountPoolSnapshot): AccountPoolSnapshot {
@@ -1180,6 +1895,7 @@ function canonicalSnapshot(snapshot: MutableAccountPoolSnapshot): AccountPoolSna
     bindings: snapshot.bindings.map(cloneBinding).sort((left, right) => (
       left.projectId.localeCompare(right.projectId) || left.provider.localeCompare(right.provider)
     )),
+    audit: cloneAuditLog(snapshot.audit),
   }
 }
 
@@ -1190,6 +1906,7 @@ function mutableSnapshot(snapshot: AccountPoolSnapshot): MutableAccountPoolSnaps
     updatedAt: snapshot.updatedAt,
     accounts: snapshot.accounts.map(cloneAccount),
     bindings: snapshot.bindings.map(cloneBinding),
+    audit: cloneAuditLog(snapshot.audit),
   }
 }
 
@@ -1198,11 +1915,23 @@ function cloneSnapshot(snapshot: AccountPoolSnapshot): AccountPoolSnapshot {
 }
 
 function cloneAccount<T extends AccountRecord>(account: T): T {
-  return { ...account } as T
+  return { ...account, health: { ...account.health } } as T
 }
 
 function cloneBinding(binding: ProjectBinding): ProjectBinding {
   return { ...binding }
+}
+
+function cloneAuditEvent(event: AccountPoolAuditEvent): AccountPoolAuditEvent {
+  return { ...event }
+}
+
+function cloneAuditLog(audit: AccountPoolAuditLog): AccountPoolAuditLog {
+  return {
+    droppedThroughSequence: audit.droppedThroughSequence,
+    nextSequence: audit.nextSequence,
+    events: audit.events.map(cloneAuditEvent),
+  }
 }
 
 function cloneValue<T>(value: T): T {
@@ -1292,6 +2021,55 @@ function requireBoolean(value: unknown, name: string) {
 function requireFailoverPolicy(value: unknown): ProjectFailoverPolicy {
   if (value !== 'availability-first' && value !== 'strict') {
     throw invalidError('Project failover policy is unsupported.')
+  }
+  return value
+}
+
+function requireUnavailableReason(value: unknown): AccountUnavailableReason {
+  if (
+    value !== 'api_credential_invalid' &&
+    value !== 'api_credential_missing' &&
+    value !== 'api_credential_rejected' &&
+    value !== 'codex_no_account' &&
+    value !== 'codex_not_chatgpt' &&
+    value !== 'codex_identity_unverifiable' &&
+    value !== 'codex_identity_mismatch' &&
+    value !== 'codex_profile_unsafe'
+  ) {
+    throw invalidError('Account unavailability reason is unsupported.')
+  }
+  return value
+}
+
+function requireUnavailableReasonForDriver(
+  driver: AccountRecord['driver'],
+  reason: AccountUnavailableReason,
+): void {
+  const apiReason = (
+    reason === 'api_credential_invalid' ||
+    reason === 'api_credential_missing' ||
+    reason === 'api_credential_rejected'
+  )
+  if ((driver === 'api') !== apiReason) {
+    throw invalidError('Account unavailability reason is incompatible with its account driver.')
+  }
+}
+
+function requireAuditAction(value: unknown): AccountPoolAuditAction {
+  if (
+    value !== 'account_added' &&
+    value !== 'account_removed' &&
+    value !== 'account_enabled' &&
+    value !== 'account_disabled' &&
+    value !== 'account_routing_domain_changed' &&
+    value !== 'binding_assigned' &&
+    value !== 'binding_pinned' &&
+    value !== 'binding_migrated' &&
+    value !== 'binding_unpinned' &&
+    value !== 'health_marked_unavailable' &&
+    value !== 'health_cleared'
+  ) {
+    throw invalidError('Account pool audit action is unsupported.')
   }
   return value
 }

@@ -2,10 +2,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
+  AccountPoolStore,
   accountPoolAccountLockPath,
+  type AccountUnavailableReason,
   type CodexAccountRecord,
   type ProjectBinding,
 } from './account-pool.js'
+import { createSqliteAccountPoolSerialization } from './account-pool-lock.js'
 import { chatGptInferenceLockPath } from './codex-account-admin.js'
 import {
   CodexChildSupervisorError,
@@ -87,9 +90,10 @@ export function createManagedCodexProjectExecutor(
   const environment = Object.freeze({ ...(options.environment ?? process.env) })
 
   return async (execution) => {
+    let homeDir: string | undefined
     try {
       validateExecution(execution)
-      const homeDir = await canonicalHome(execution.homeDir)
+      homeDir = await canonicalHome(execution.homeDir)
       const codexExecutable = await resolveTrustedCodexExecutable(options.codexExecutable)
       const result = await runCodexSupervisedOperation<unknown>({
         operation: 'infer-managed',
@@ -115,6 +119,9 @@ export function createManagedCodexProjectExecutor(
       })
       return decodeResult(result)
     } catch (error) {
+      if (homeDir !== undefined) {
+        await persistProvenUnavailability(error, execution, homeDir, lockTimeoutMs)
+      }
       throw normalizeFailure(error, execution?.signal?.aborted === true)
     }
   }
@@ -137,6 +144,8 @@ function validateExecution(execution: ManagedCodexProjectExecution): void {
     !Number.isSafeInteger(binding.generation) || binding.generation < 1 ||
     account.provider !== 'chatgpt' || account.driver !== 'official-codex' ||
     account.status !== 'ready' || !account.enabled ||
+    account.health?.state !== 'usable' ||
+    !Number.isSafeInteger(account.health.generation) || account.health.generation < 0 ||
     typeof account.identityFingerprint !== 'string' ||
     typeof request.input !== 'string' || !/\S/u.test(request.input) || !isUnicodeScalarText(request.input) ||
     Buffer.byteLength(request.input, 'utf8') > 4 * 1024 * 1024 ||
@@ -146,6 +155,45 @@ function validateExecution(execution: ManagedCodexProjectExecution): void {
       /[\u0000-\u001f\u007f]/u.test(request.model) || Buffer.byteLength(request.model, 'utf8') > 256
     ))
   ) throw unavailableFailure()
+}
+
+async function persistProvenUnavailability(
+  error: unknown,
+  execution: ManagedCodexProjectExecution,
+  homeDir: string,
+  lockTimeoutMs: number,
+): Promise<void> {
+  if (!(error instanceof CodexChildSupervisorError) || error.code !== 'codex_inference_unavailable') return
+  if (error.deliveryUnknown) return
+  const reason = durableReason(error.reason)
+  if (reason === undefined) return
+  const store = new AccountPoolStore({
+    homeDir,
+    serialize: createSqliteAccountPoolSerialization({ homeDir, timeoutMs: lockTimeoutMs }),
+  })
+  try {
+    await store.markUnavailableIfCurrent({
+      provider: 'chatgpt',
+      accountInternalId: execution.initialAccount.internalId,
+      expectedHealthGeneration: execution.initialAccount.health.generation,
+      reason,
+    })
+  } catch {
+    throw new ManagedCodexExecutorFailure(
+      'managed_executor_failed',
+      'The managed ChatGPT account health could not be persisted safely.',
+      { retryable: true, deliveryUnknown: false },
+    )
+  }
+}
+
+function durableReason(reason: string | undefined): AccountUnavailableReason | undefined {
+  if (reason === 'no_account') return 'codex_no_account'
+  if (reason === 'not_chatgpt') return 'codex_not_chatgpt'
+  if (reason === 'identity_missing') return 'codex_identity_unverifiable'
+  if (reason === 'identity_mismatch') return 'codex_identity_mismatch'
+  if (reason === 'profile_invalid') return 'codex_profile_unsafe'
+  return undefined
 }
 
 async function canonicalHome(value: string): Promise<string> {

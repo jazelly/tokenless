@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cli = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
+const adminModuleUrl = new URL('../packages/cli/dist/src/direct/codex-account-admin.js', import.meta.url)
 
 test('account and project CLI keeps administration local and redacts internal identity', async () => {
   const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-account-cli-')))
@@ -23,8 +24,21 @@ test('account and project CLI keeps administration local and redacts internal id
     assert.equal(pending.code, 0, pending.stderr)
     assert.equal(pending.body.account.accountId, 'personal-one')
     assert.equal(pending.body.account.status, 'pending')
+    assert.deepEqual(pending.body.account.health, { state: 'usable', generation: 0 })
+    assert.equal(pending.body.account.routingDomain, null)
     assert.equal(pending.body.account.internalId, undefined)
     assert.equal(pending.body.account.identityFingerprint, undefined)
+
+    const codexDomain = await runCli([
+      'accounts', 'set-domain',
+      '--home', homeDir,
+      '--provider', 'chatgpt',
+      '--account', 'personal-one',
+      '--routing-domain', 'Personal Subscriptions',
+      '--json',
+    ])
+    assert.equal(codexDomain.code, 0, codexDomain.stderr)
+    assert.equal(codexDomain.body.account.routingDomain, 'personal-subscriptions')
 
     const pendingPin = await runCli([
       'projects', 'pin',
@@ -55,6 +69,7 @@ test('account and project CLI keeps administration local and redacts internal id
       status: 'ready',
       enabled: true,
       maxConcurrency: 3,
+      health: { state: 'usable', generation: 0 },
       credentialEnv: 'TOKENLESS_DIRECT_ACCOUNT_CHATGPT_API_ONE_API_KEY',
       routingDomain: 'personal-api',
       createdAt: apiAccount.body.account.createdAt,
@@ -95,6 +110,56 @@ test('account and project CLI keeps administration local and redacts internal id
     ])
     assert.equal(removal.code, 1)
     assert.equal(removal.body.error.code, 'account_pool_bound_account')
+
+    const cleared = await runCli([
+      'accounts', 'clear-health',
+      '--home', homeDir,
+      '--provider', 'chatgpt',
+      '--account', 'api-one',
+      '--json',
+    ])
+    assert.equal(cleared.code, 0, cleared.stderr)
+    assert.deepEqual(cleared.body.account.health, { state: 'usable', generation: 1 })
+
+    const { createManagedAccountPoolStore } = await import(adminModuleUrl.href)
+    const store = createManagedAccountPoolStore({ homeDir })
+    const storedApiAccount = (await store.listAccounts({ provider: 'chatgpt' }))
+      .find((account) => account.accountId === 'api-one')
+    await store.markUnavailableIfCurrent({
+      provider: 'chatgpt',
+      accountInternalId: storedApiAccount.internalId,
+      expectedHealthGeneration: storedApiAccount.health.generation,
+      reason: 'api_credential_rejected',
+    })
+    const unavailableStatus = await runCli([
+      'accounts', 'status',
+      '--home', homeDir,
+      '--provider', 'chatgpt',
+      '--account', 'api-one',
+      '--json',
+    ], {
+      [storedApiAccount.credentialEnv]: 'configured-test-key',
+    })
+    assert.equal(unavailableStatus.code, 1)
+    assert.equal(unavailableStatus.body.account.credentialStatus, 'configured')
+    assert.equal(unavailableStatus.body.account.credentialConfigured, true)
+    assert.equal(unavailableStatus.body.account.health.state, 'unavailable')
+    assert.equal(unavailableStatus.body.account.health.reason, 'api_credential_rejected')
+
+    const audit = await runCli([
+      'accounts', 'audit',
+      '--home', homeDir,
+      '--provider', 'chatgpt',
+      '--account', 'api-one',
+      '--after-sequence', '0',
+      '--limit', '100',
+      '--json',
+    ])
+    assert.equal(audit.code, 0, audit.stderr)
+    assert.ok(audit.body.audit.events.some((event) => event.action === 'binding_pinned'))
+    assert.ok(audit.body.audit.events.some((event) => event.action === 'health_cleared'))
+    assert.ok(audit.body.audit.events.some((event) => event.action === 'health_marked_unavailable'))
+    assert.doesNotMatch(audit.stdout, /internalId|identityFingerprint|credentialEnv|API_KEY/)
 
     const listed = await runCli(['accounts', 'list', '--home', homeDir, '--json'])
     assert.equal(listed.code, 0, listed.stderr)

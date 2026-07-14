@@ -254,6 +254,8 @@ test('public account records redact internal ids and Codex fingerprints', async 
     identityFingerprint: `tokenless.codex-identity.v1:${'a'.repeat(43)}`,
     enabled: true,
     maxConcurrency: 1,
+    health: { state: 'usable', generation: 0 },
+    routingDomain: 'personal',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   }
@@ -261,6 +263,8 @@ test('public account records redact internal ids and Codex fingerprints', async 
   assert.equal(value.accountId, 'personal')
   assert.equal(value.internalId, undefined)
   assert.equal(value.identityFingerprint, undefined)
+  assert.deepEqual(value.health, { state: 'usable', generation: 0 })
+  assert.equal(value.routingDomain, 'personal')
 })
 
 test('maximum login phase budgets include both reads and the final registry lock wait', async () => {

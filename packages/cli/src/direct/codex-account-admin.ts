@@ -97,7 +97,12 @@ export function chatGptInferenceLockPath(homeDir: string): string {
 }
 
 export async function addManagedCodexAccount(
-  input: { accountId: string; label?: string | undefined; enabled?: boolean | undefined },
+  input: {
+    accountId: string
+    label?: string | undefined
+    enabled?: boolean | undefined
+    routingDomain?: string | null | undefined
+  },
   options: CodexAccountAdminOptions,
 ): Promise<CodexAccountRecord> {
   const store = createManagedAccountPoolStore(options)
@@ -293,10 +298,11 @@ export function publicAccountRecord(account: AccountRecord): Record<string, unkn
     status: account.status,
     enabled: account.enabled,
     maxConcurrency: account.maxConcurrency,
+    health: { ...account.health },
+    routingDomain: account.routingDomain,
     ...(account.label === undefined ? {} : { label: account.label }),
     ...(account.driver === 'api' ? {
       credentialEnv: account.credentialEnv,
-      routingDomain: account.routingDomain,
     } : {}),
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,

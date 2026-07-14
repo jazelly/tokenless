@@ -12,9 +12,13 @@ import {
   accountPoolAccountLockPath,
   accountPoolDirectDirectory,
   normalizeAccountId,
+  type AccountResolution,
   type CodexAccountRecord,
 } from './account-pool.js'
-import { createSqliteAccountPoolSerialization } from './account-pool-lock.js'
+import {
+  accountPoolLockPath,
+  createSqliteAccountPoolSerialization,
+} from './account-pool-lock.js'
 import { consumeBoundedLines } from './bounded-line-reader.js'
 import {
   CODEX_ACCOUNT_CREDENTIAL_STORE,
@@ -356,30 +360,20 @@ async function runManagedInference(
   ) throw helperError('codex_supervisor_invalid', 'Managed inference parameters are missing.')
 
   const resolution = await store.resolve({ projectId: request.projectId, provider: 'chatgpt' })
-  if (resolution === null) throw inferenceUnavailable('binding_missing')
-  const { account, binding } = resolution
-  if (
-    binding.projectId !== request.projectId || binding.provider !== 'chatgpt' ||
-    binding.generation !== request.expectedBindingGeneration ||
-    binding.accountInternalId !== request.expectedInternalId ||
-    account.provider !== 'chatgpt' || account.accountId !== normalizeAccountId(request.accountId) ||
-    account.internalId !== request.expectedInternalId
-  ) throw inferenceUnavailable('binding_changed')
-  if (account.driver !== 'official-codex' || account.status !== 'ready') {
-    throw inferenceUnavailable('account_not_ready')
-  }
-  if (!account.enabled) throw inferenceUnavailable('operator_disabled')
-  if (
-    account.identityFingerprint === undefined ||
-    account.identityFingerprint !== request.expectedIdentityFingerprint
-  ) throw inferenceUnavailable('identity_changed')
+  const account = requireCurrentManagedResolution(resolution, request)
 
   const prompt = decodePrompt(request.promptBase64)
   const codexHome = managedCodexHome(request.homeDir, account.internalId)
   try {
     await assertManagedCodexHome(codexHome)
-  } catch {
-    throw inferenceUnavailable('profile_invalid')
+  } catch (error) {
+    if (
+      error instanceof CodexProfileError &&
+      (error.reason === 'codex_profile_unsafe' || error.reason === 'codex_profile_configuration_forbidden')
+    ) {
+      throw inferenceUnavailable('profile_invalid')
+    }
+    throw error
   }
   let identityKey: Buffer
   try {
@@ -411,7 +405,13 @@ async function runManagedInference(
       timeoutMs: request.inferenceTimeoutMs!,
       signal,
       setChild,
-      markPromptDispatch,
+      dispatchPrompt: (dispatch) => dispatchManagedPrompt(
+        store,
+        request,
+        signal,
+        markPromptDispatch,
+        dispatch,
+      ),
     }))
   } finally {
     await waitForGroupQuiescence(process.pid, Date.now() + CODEX_GROUP_QUIESCENCE_TIMEOUT_MS, signal)
@@ -421,6 +421,59 @@ async function runManagedInference(
     ...(result.model === undefined ? {} : { model: result.model }),
     ...(result.usage === undefined ? {} : { usage: Object.freeze({ ...result.usage }) }),
   })
+}
+
+function requireCurrentManagedResolution(
+  resolution: AccountResolution | null,
+  request: CodexSupervisorRequest,
+): CodexAccountRecord {
+  if (resolution === null) throw inferenceUnavailable('binding_missing')
+  const { account, binding } = resolution
+  if (
+    binding.projectId !== request.projectId || binding.provider !== 'chatgpt' ||
+    binding.generation !== request.expectedBindingGeneration ||
+    binding.accountInternalId !== request.expectedInternalId ||
+    account.provider !== 'chatgpt' || account.accountId !== normalizeAccountId(request.accountId) ||
+    account.internalId !== request.expectedInternalId
+  ) throw inferenceUnavailable('binding_changed')
+  if (account.driver !== 'official-codex' || account.status !== 'ready') {
+    throw inferenceUnavailable('account_not_ready')
+  }
+  if (!account.enabled) throw inferenceUnavailable('operator_disabled')
+  if (account.health.state !== 'usable') throw inferenceUnavailable('health_unavailable')
+  if (
+    account.identityFingerprint === undefined ||
+    account.identityFingerprint !== request.expectedIdentityFingerprint
+  ) throw inferenceUnavailable('identity_changed')
+  return account
+}
+
+async function dispatchManagedPrompt(
+  store: AccountPoolStore,
+  request: CodexSupervisorRequest,
+  signal: AbortSignal,
+  markPromptDispatch: () => Promise<void>,
+  dispatch: () => void,
+): Promise<void> {
+  try {
+    await withSqliteLocks({
+      lockFiles: [accountPoolLockPath(store.homeDir)],
+      timeoutMs: request.lockTimeoutMs,
+      signal,
+    }, async () => {
+      const current = await store.resolve({ projectId: request.projectId!, provider: 'chatgpt' })
+      requireCurrentManagedResolution(current, request)
+      await markPromptDispatch()
+      dispatch()
+    })
+  } catch (error) {
+    if (!(error instanceof SqliteLockError)) throw error
+    throw helperError(
+      'codex_supervisor_registry_lock_failed',
+      'The managed account registry could not be locked at the prompt dispatch boundary.',
+      error.code === 'sqlite_lock_timeout',
+    )
+  }
 }
 
 function decodePrompt(encoded: string): string {
@@ -517,8 +570,14 @@ async function inspectAccount(
   try {
     const account = await readAccountFromAppServer(child, timeoutMs, signal)
     if (account === null) return Object.freeze({ state: 'unavailable', reason: 'no_account' })
-    if (!isRecord(account) || account.type !== 'chatgpt') {
+    if (!isRecord(account)) {
+      throw profileFailure('codex_account_invalid', 'Codex returned malformed account state.')
+    }
+    if (account.type === 'apiKey') {
       return Object.freeze({ state: 'unavailable', reason: 'not_chatgpt' })
+    }
+    if (account.type !== 'chatgpt') {
+      throw profileFailure('codex_account_invalid', 'Codex returned an unsupported account type.')
     }
     if (account.email === null || account.email === undefined) {
       return Object.freeze({ state: 'unverifiable', reason: 'identity_missing' })

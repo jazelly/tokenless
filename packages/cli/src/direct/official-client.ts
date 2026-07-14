@@ -181,7 +181,7 @@ export type ManagedOfficialCodexOptions = Readonly<{
   timeoutMs: number
   signal: AbortSignal
   setChild: (child: ChildProcess | undefined) => void
-  markPromptDispatch: () => Promise<void>
+  dispatchPrompt: (dispatch: () => void) => Promise<void>
 }>
 
 export type ManagedOfficialCodexResult = Readonly<{
@@ -208,8 +208,18 @@ type ChildResult = {
 type ChildLifecycle = Readonly<{
   detached: boolean
   setChild: (child: ChildProcess | undefined) => void
-  beforeStdin?: (() => Promise<void>) | undefined
+  dispatchStdin?: ((dispatch: () => void) => Promise<void>) | undefined
 }>
+
+class ManagedPromptDispatchFailure extends Error {
+  readonly original: unknown
+
+  constructor(original: unknown) {
+    super('The managed Codex prompt dispatch boundary failed.')
+    this.name = 'ManagedPromptDispatchFailure'
+    this.original = original
+  }
+}
 
 type RawCodexOutput = {
   events: unknown[]
@@ -428,7 +438,13 @@ export async function runManagedOfficialCodex(
       signal: validated.signal,
       childLifecycle: {
         ...childLifecycle,
-        beforeStdin: validated.markPromptDispatch,
+        dispatchStdin: async (dispatch) => {
+          try {
+            await validated.dispatchPrompt(dispatch)
+          } catch (error) {
+            throw new ManagedPromptDispatchFailure(error)
+          }
+        },
       },
     })
     throwForTermination(child, 'execution')
@@ -452,6 +468,7 @@ export async function runManagedOfficialCodex(
     })
   } catch (error) {
     operationFailed = true
+    if (error instanceof ManagedPromptDispatchFailure) throw error.original
     throw normalizeOfficialClientFailure(error)
   } finally {
     validated.setChild(undefined)
@@ -485,7 +502,7 @@ function validateManagedOptions(options: ManagedOfficialCodexOptions): ManagedOf
     Buffer.byteLength(options.prompt, 'utf8') > PROMPT_LIMIT_BYTES ||
     !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 ||
     !(options.signal instanceof AbortSignal) ||
-    typeof options.setChild !== 'function' || typeof options.markPromptDispatch !== 'function'
+    typeof options.setChild !== 'function' || typeof options.dispatchPrompt !== 'function'
   ) throw invalidManagedOptions('Managed official Codex options are invalid.')
   if (
     options.model !== undefined &&
@@ -1381,15 +1398,34 @@ async function runChild({
           child.stdin.end()
           return
         }
-        await childLifecycle?.beforeStdin?.()
-        if (signal?.aborted === true) throw abortFailure()
         const input = Buffer.from(stdin, 'utf8')
         if (input.length === 0) {
           child.stdin.end()
           return
         }
-        child.stdin.write(input.subarray(0, 1))
-        child.stdin.end(input.subarray(1))
+        let dispatchWindowOpen = true
+        let inputDispatched = false
+        const dispatchInput = () => {
+          if (!dispatchWindowOpen || inputDispatched) {
+            throw new Error('The managed Codex prompt dispatch callback was used out of order.')
+          }
+          if (signal?.aborted === true) throw abortFailure()
+          inputDispatched = true
+          child.stdin.write(input.subarray(0, 1))
+          child.stdin.end(input.subarray(1))
+        }
+        if (childLifecycle?.dispatchStdin === undefined) {
+          dispatchInput()
+        } else {
+          try {
+            await childLifecycle.dispatchStdin(dispatchInput)
+          } finally {
+            dispatchWindowOpen = false
+          }
+          if (!inputDispatched) {
+            throw new Error('The managed Codex prompt dispatch callback did not dispatch the prompt.')
+          }
+        }
       } catch (error) {
         if (settled) return
         inputFailure = error

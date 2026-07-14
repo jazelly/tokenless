@@ -6,6 +6,7 @@ import test from 'node:test'
 
 const adminUrl = new URL('../packages/cli/dist/src/direct/codex-account-admin.js', import.meta.url)
 const executorUrl = new URL('../packages/cli/dist/src/direct/managed-codex-executor.js', import.meta.url)
+const routerUrl = new URL('../packages/cli/dist/src/direct/project-codex-router.js', import.meta.url)
 const posixOnly = process.platform === 'win32' ? 'managed Codex inference is POSIX-only' : false
 
 const REQUIRED_DISABLED_FEATURES = [
@@ -54,7 +55,7 @@ test('managed projects stay on isolated profiles and subscription inference is g
   }
 })
 
-test('disabled, changed binding, and structured identity mismatch fail before prompt dispatch', { skip: posixOnly }, async () => {
+test('disabled, changed binding, structured identity mismatch, and malformed identity fail before prompt dispatch', { skip: posixOnly }, async () => {
   const fixture = await createFixture()
   try {
     const disabled = await fixture.execution('Project-A', 'must-not-dispatch disabled')
@@ -84,12 +85,49 @@ test('disabled, changed binding, and structured identity mismatch fail before pr
       `${JSON.stringify({ email: 'account-a@example.test' })}\n`,
       { mode: 0o600 },
     )
+    await fixture.store.clearAccountHealth({ provider: 'chatgpt', accountId: 'account-a' })
     await fs.writeFile(fixture.capabilityFailurePath, 'fail')
     await assert.rejects(
       fixture.executor(await fixture.execution('Project-A', 'must-not-dispatch capability')),
       (error) => error.code === 'managed_executor_failed' && error.deliveryUnknown === false,
     )
     assert.equal((await fixture.actualPrompts()).length, 0)
+    assert.equal((await fixture.resolve('Project-A')).account.health.state, 'usable')
+
+    await fs.rm(fixture.capabilityFailurePath)
+    await fs.writeFile(
+      path.join(fixture.codexHomes.get('account-a'), 'auth.json'),
+      `${JSON.stringify({ malformed: true })}\n`,
+      { mode: 0o600 },
+    )
+    await assert.rejects(
+      fixture.executor(await fixture.execution('Project-A', 'must-not-dispatch malformed identity')),
+      (error) => error.code === 'managed_executor_failed' && error.deliveryUnknown === false,
+    )
+    const malformedResolution = await fixture.resolve('Project-A')
+    assert.equal(malformedResolution.account.accountId, 'account-a')
+    assert.equal(malformedResolution.account.health.state, 'usable')
+    assert.equal((await fixture.actualPrompts()).length, 0)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('registry changes during capability preflight are fenced before the first prompt byte', { skip: posixOnly }, async () => {
+  const fixture = await createFixture()
+  try {
+    await fs.writeFile(fixture.capabilityPausePath, 'pause')
+    const pending = fixture.executor(await fixture.execution('Project-A', 'must-not-dispatch stale preflight'))
+    await waitFor(async () => (await fixture.trace()).some((entry) => entry.kind === 'capability-paused'))
+    await fixture.store.disableAccount({ provider: 'chatgpt', accountId: 'account-a' })
+    await fs.rm(fixture.capabilityPausePath)
+
+    await assertPreDispatchUnavailable(pending)
+    const resolution = await fixture.resolve('Project-A')
+    assert.equal(resolution.account.accountId, 'account-a')
+    assert.equal(resolution.account.enabled, false)
+    assert.equal(resolution.account.health.state, 'usable')
+    assert.deepEqual(await fixture.actualPrompts(), [])
   } finally {
     await fixture.close()
   }
@@ -123,11 +161,102 @@ test('post-dispatch nonzero, timeout, abort, and helper loss are delivery-unknow
     await assertPostDispatchFailure(fixture.executor(await fixture.execution('Project-A', 'crash-helper')))
     assert.equal((await fixture.actualPrompts()).filter((prompt) => prompt === 'crash-helper').length, 1)
 
-    const finalBinding = (await fixture.resolve('Project-A')).binding
+    const finalResolution = await fixture.resolve('Project-A')
+    const finalBinding = finalResolution.binding
     assert.equal(finalBinding.accountInternalId, initialBinding.accountInternalId)
     assert.equal(finalBinding.generation, initialBinding.generation)
+    assert.equal(finalResolution.account.health.state, 'usable')
   } finally {
     await fixture.close()
+  }
+})
+
+test('proven no-account state migrates once before prompt dispatch and remains sticky', { skip: posixOnly }, async () => {
+  const fixture = await createFixture()
+  try {
+    await fs.rm(path.join(fixture.codexHomes.get('account-a'), 'auth.json'))
+    const router = await createProjectRouter(fixture)
+    const answer = await router.execute('Project-A', {
+      input: 'fail over without replay',
+      stream: false,
+      store: false,
+    }, new AbortController().signal)
+
+    assert.equal(answer, 'answer:account-b@example.test')
+    assert.deepEqual(await fixture.actualPrompts(), ['fail over without replay'])
+    const resolution = await fixture.resolve('Project-A')
+    assert.equal(resolution.account.accountId, 'account-b')
+    assert.equal(resolution.binding.generation, 2)
+    assert.equal(resolution.binding.assignedBy, 'migration')
+    const accountA = (await fixture.store.listAccounts({ provider: 'chatgpt' }))
+      .find((account) => account.accountId === 'account-a')
+    assert.equal(accountA.health.state, 'unavailable')
+    assert.equal(accountA.health.reason, 'codex_no_account')
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('disabled managed accounts migrate before loading a body, while strict and isolated bindings do not', { skip: posixOnly }, async () => {
+  const available = await createFixture()
+  try {
+    await available.store.disableAccount({ provider: 'chatgpt', accountId: 'account-a' })
+    const router = await createProjectRouter(available)
+    let loaded = false
+    const answer = await router.executeLazy('Project-A', async () => {
+      loaded = true
+      return { input: 'predispatch migration', stream: false, store: false }
+    }, new AbortController().signal)
+    assert.equal(loaded, true)
+    assert.equal(answer, 'answer:account-b@example.test')
+    assert.deepEqual(await available.actualPrompts(), ['predispatch migration'])
+    assert.equal((await available.resolve('Project-A')).account.accountId, 'account-b')
+  } finally {
+    await available.close()
+  }
+
+  const strict = await createFixture()
+  try {
+    await strict.store.pinProject({
+      projectId: 'Project-A',
+      provider: 'chatgpt',
+      accountId: 'account-a',
+      failoverPolicy: 'strict',
+    })
+    await strict.store.disableAccount({ provider: 'chatgpt', accountId: 'account-a' })
+    const router = await createProjectRouter(strict)
+    let loaded = false
+    await assert.rejects(
+      router.executeLazy('Project-A', async () => {
+        loaded = true
+        return { input: 'must not load strict', stream: false, store: false }
+      }, new AbortController().signal),
+      (error) => error.code === 'managed_project_binding_unavailable' && error.deliveryUnknown === false,
+    )
+    assert.equal(loaded, false)
+    assert.equal((await strict.resolve('Project-A')).account.accountId, 'account-a')
+    assert.deepEqual(await strict.actualPrompts(), [])
+  } finally {
+    await strict.close()
+  }
+
+  const isolated = await createFixture({ routingDomain: null })
+  try {
+    await isolated.store.disableAccount({ provider: 'chatgpt', accountId: 'account-a' })
+    const router = await createProjectRouter(isolated)
+    let loaded = false
+    await assert.rejects(
+      router.executeLazy('Project-A', async () => {
+        loaded = true
+        return { input: 'must not load isolated', stream: false, store: false }
+      }, new AbortController().signal),
+      (error) => error.code === 'managed_project_binding_unavailable' && error.deliveryUnknown === false,
+    )
+    assert.equal(loaded, false)
+    assert.equal((await isolated.resolve('Project-A')).account.accountId, 'account-a')
+    assert.deepEqual(await isolated.actualPrompts(), [])
+  } finally {
+    await isolated.close()
   }
 })
 
@@ -137,11 +266,12 @@ async function createFixture(options = {}) {
   const tracePath = path.join(homeDir, 'trace.jsonl')
   const activePath = path.join(homeDir, 'active-inference')
   const capabilityFailurePath = path.join(homeDir, 'fail-capability')
+  const capabilityPausePath = path.join(homeDir, 'pause-capability')
   const executable = path.join(homeDir, 'fake-codex')
   await fs.writeFile(tracePath, '')
   await fs.writeFile(
     executable,
-    fakeCodexSource({ tracePath, activePath, capabilityFailurePath, homeDir }),
+    fakeCodexSource({ tracePath, activePath, capabilityFailurePath, capabilityPausePath, homeDir }),
     { mode: 0o755 },
   )
 
@@ -156,7 +286,10 @@ async function createFixture(options = {}) {
     ['account-a', 'account-a@example.test'],
     ['account-b', 'account-b@example.test'],
   ]) {
-    const pending = await addManagedCodexAccount({ accountId }, { homeDir, codexExecutable: executable })
+    const pending = await addManagedCodexAccount({
+      accountId,
+      routingDomain: options.routingDomain === undefined ? 'personal' : options.routingDomain,
+    }, { homeDir, codexExecutable: executable })
     const codexHome = path.join(homeDir, 'direct', 'provider-profiles', 'chatgpt', pending.internalId, 'codex')
     await fs.writeFile(path.join(codexHome, 'auth.json'), `${JSON.stringify({ email })}\n`, { mode: 0o600 })
     await loginManagedCodexAccount(accountId, { homeDir, codexExecutable: executable })
@@ -179,6 +312,7 @@ async function createFixture(options = {}) {
     executor,
     codexHomes,
     capabilityFailurePath,
+    capabilityPausePath,
     resolve,
     async execution(projectId, input, signal = new AbortController().signal) {
       const resolution = await resolve(projectId)
@@ -202,7 +336,28 @@ async function createFixture(options = {}) {
   }
 }
 
-function fakeCodexSource({ tracePath, activePath, capabilityFailurePath, homeDir }) {
+async function createProjectRouter(fixture) {
+  const {
+    ManagedProjectExecutorError,
+    ProjectCodexRouter,
+  } = await import(routerUrl.href)
+  return new ProjectCodexRouter({
+    homeDir: fixture.homeDir,
+    accountPoolLockTimeoutMs: 5_000,
+    executor: async (execution) => {
+      try {
+        return await fixture.executor(execution)
+      } catch (error) {
+        throw new ManagedProjectExecutorError(error.code, error.message, {
+          retryable: error.retryable,
+          deliveryUnknown: error.deliveryUnknown,
+        })
+      }
+    },
+  })
+}
+
+function fakeCodexSource({ tracePath, activePath, capabilityFailurePath, capabilityPausePath, homeDir }) {
   return `#!/usr/bin/env node
 import fs from 'node:fs'
 import http from 'node:http'
@@ -212,6 +367,7 @@ const argv=process.argv.slice(2)
 const tracePath=${JSON.stringify(tracePath)}
 const activePath=${JSON.stringify(activePath)}
 const capabilityFailurePath=${JSON.stringify(capabilityFailurePath)}
+const capabilityPausePath=${JSON.stringify(capabilityPausePath)}
 const managedRoot=${JSON.stringify(homeDir)}
 const trace=(entry)=>fs.appendFileSync(tracePath,JSON.stringify(entry)+'\\n')
 if(argv[0]==='app-server'){
@@ -221,12 +377,17 @@ if(argv[0]==='app-server'){
     if(message.id===0) process.stdout.write(JSON.stringify({id:0,result:{userAgent:'fake'}})+'\\n')
     if(message.method==='account/read'){
       const authPath=path.join(process.env.CODEX_HOME,'auth.json')
-      const account=fs.existsSync(authPath)?{type:'chatgpt',email:JSON.parse(fs.readFileSync(authPath,'utf8')).email,planType:'plus'}:null
+      const auth=fs.existsSync(authPath)?JSON.parse(fs.readFileSync(authPath,'utf8')):null
+      const account=auth===null?null:(auth.malformed===true?7:{type:'chatgpt',email:auth.email,planType:'plus'})
       trace({kind:'account-read',codexHome:process.env.CODEX_HOME})
       process.stdout.write(JSON.stringify({id:1,result:{account,requiresOpenaiAuth:true}})+'\\n')
     }
   })
 } else if(argv[0]==='exec'&&argv[1]==='--help'){
+  if(fs.existsSync(capabilityPausePath)){
+    trace({kind:'capability-paused'})
+    while(fs.existsSync(capabilityPausePath)) await new Promise((resolve)=>setTimeout(resolve,10))
+  }
   if(fs.existsSync(capabilityFailurePath)) process.exitCode=9
   else process.stdout.write('--config --disable --strict-config --ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check --color never --json --output-last-message --model\\n')
 } else if(argv[0]==='features'&&argv[1]==='list'){

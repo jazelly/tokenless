@@ -29,6 +29,8 @@ Account records have these routing fields:
 - `internalId`: an immutable Tokenless-generated UUID never accepted from inference callers;
 - `driver`: the supported provider-owned client or public API driver;
 - `enabled`: whether new work may use the account;
+- `health`: a durable `usable` or `unavailable` state with a monotonically increasing generation for compare-and-swap updates;
+- `routingDomain`: an operator-declared failover boundary; legacy and explicitly isolated Codex accounts use `null`;
 - `maxConcurrency`: the account-local execution limit;
 - optional operator label and non-secret driver configuration; and
 - a provider-owned identity fingerprint where the admitted client exposes non-secret account metadata; and
@@ -60,7 +62,8 @@ Project affinity is a strong preference beneath the higher-level availability gu
 
 Failover depends on whether Tokenless can prove that replay is safe:
 
-- A proven pre-dispatch, profile-local failure such as an operator-disabled account, a successful structured identity check returning no ChatGPT account or a different account fingerprint, or an invalid managed home may select a fallback before any prompt is sent.
+- A proven pre-dispatch, profile-local failure such as an operator-disabled account, a successful structured identity check returning no ChatGPT account, a non-ChatGPT account, an explicitly unverifiable identity, or a different account fingerprint, or an invalid managed home may select a fallback before any prompt is sent. Malformed or unavailable app-server output remains a driver-global failure and does not change account health.
+- A missing or locally invalid public API credential environment value is proven before dispatch, receives its own stable API-only health reason, and may select a fallback before any prompt byte is sent.
 - A public API driver may use an explicit, documented rejection that proves account unavailability, such as revoked authentication, to update health and migrate the next request. The initial implementation does not replay the current request after any body byte was sent. Health classification uses structured protocol status, never provider error-message matching.
 - A timeout, connection loss, process crash, or server error after dispatch is ambiguous because the provider may have accepted the prompt. Tokenless does not blindly replay that request or change the binding from that failure alone. The current caller receives an explicit ambiguous-delivery error unless a provider-documented idempotency contract proves replay safe.
 - A request-validation, unsupported-feature, or caller-cancellation error does not make the account unhealthy and does not trigger failover.
@@ -71,6 +74,10 @@ This policy boundary is intentional. OpenAI's [Terms of Use](https://openai.com/
 
 The first successful fallback for a confirmed account-health failure becomes the project's persisted preferred account. Migration is generation-checked and serialized per project so concurrent failures cannot make the binding flap between accounts. Automatic selection excludes accounts already attempted for the request and has a finite attempt and time budget. API errors expose only attempt count, delivery state, and stable machine-readable reasons; account ids are available solely in the local administrative audit view.
 
+Account-health rejection is itself generation-checked. A structured, stable reason marks only the exact account generation observed by the failing request; provider response bodies, prompts, requests, and credential material are never persisted. Operator recovery clears health by advancing the generation, so a late response from before that recovery is a no-op and cannot re-block the account. Clearing or re-enabling an old account never switches an already migrated project back.
+
+Automatic migration is deterministic rendezvous selection over enabled, ready, usable accounts with the same provider, driver, and non-null routing domain. It is allowed only after the current preferred account is disabled or durably unavailable. A `strict` binding, an isolated `null` domain, or a cross-domain candidate never migrates automatically. These rules apply to Codex profiles as well as public API accounts; ChatGPT profiles still require an explicit initial project pin.
+
 An operator may deliberately rebind a project at any time. Rebinding and automatic migration are auditable state mutations and affect new dispatches; already accepted work stays attached to the account that received it.
 
 ### Concurrency
@@ -79,7 +86,7 @@ Every account has a bounded FIFO queue within one broker process and an executio
 
 This supervisor contract assumes supported Codex descendants do not call `setsid` or otherwise escape the helper process group. A live orphan can therefore conservatively fence an account indefinitely. Recovery is an explicit local-operator action: terminate the identified old managed process group, or reboot, then retry. Tokenless does not use elapsed time, a client PID, or a guessed stale age as authority to clear a live tombstone.
 
-Waiting for an account slot is abortable and bounded. A ChatGPT subscription project returns an account-busy availability error after that budget; it never spills over to another subscription to aggregate concurrency. A public API or compatible-gateway driver may use non-persistent capacity spillover and cross-account concurrency only when the accounts belong to one operator-declared, provider-authorized failover domain. A per-project single-flight guard coordinates confirmed profile-health migration, while requests already dispatched against the previous binding are allowed to finish there.
+Waiting for an account slot is abortable and bounded. A busy project binding returns an account-busy availability error after that budget for every driver; capacity pressure never changes the selected account or spills the request to another account. Different projects may still execute concurrently on the accounts to which they are already bound. A per-project single-flight guard coordinates confirmed account-health migration, while requests already dispatched against the previous binding are allowed to finish there.
 
 ## Local state
 
@@ -107,9 +114,11 @@ direct/
 
 `account-pool.json` is one versioned document containing accounts and project bindings. Keeping both in one document makes add, remove, bind, and automatic first-use assignment atomic. Updates use a caller-owned SQLite write transaction as the cross-process advisory lock, validate the complete next document, write a mode-`0600` temporary file, fsync it, rename it on the same filesystem, and fsync the containing directory. Logical lock databases are private coordination files, never routing or credential stores. The Tokenless direct-state root and managed profile directories use mode `0700` on POSIX systems. Direct account mode requires Node.js 24.15 or later so `node:sqlite` has its release-candidate stability and does not emit experimental-runtime warnings.
 
+The same atomic document contains a bounded local administrative audit log for binding assignment, pinning, migration, and unpinning; health mark and clear; and account enable and disable. Audit events have monotonic sequence numbers and explicit retention-gap metadata. They contain only validated routing identifiers and stable reasons, never prompts, raw provider errors, request bodies, environment values, credentials, or provider identity. The state API and local CLI expose bounded paginated reads with optional provider and account filters applied before the page limit while retaining global sequence cursors.
+
 `identity-hmac.key` is a Tokenless-generated 32-byte non-provider secret, created atomically with mode `0600` when the first managed identity is registered and never exposed through HTTP or logs. Fingerprint v1 is HMAC-SHA256 over a length-prefixed tuple of provider, account type, and canonical provider identity; mutable plan type is excluded. A missing identity rejects multi-account onboarding. If a registry with fingerprints loses its key, Tokenless fails closed rather than silently generating another one. Key rotation or recovery is an explicit local operation that rechecks and relinks every managed profile before inference resumes.
 
-The registry rejects duplicate or non-canonical account slugs, duplicate internal UUIDs, dangling bindings, unknown fields that alter security behavior, path traversal, symlinked managed-profile roots, case-normalization collisions, and unsupported protocol versions. Filesystem paths and locks are derived only from validated internal UUIDs, so renaming a slug or running on a case-insensitive filesystem cannot alias two profiles. Removing an account with bindings is rejected until those projects are explicitly rebound or unbound.
+The registry rejects duplicate or non-canonical account slugs, duplicate internal UUIDs, dangling bindings, unknown fields that alter security behavior, path traversal, symlinked managed-profile roots, case-normalization collisions, and unsupported protocol versions. Current `tokenless.account-pool.v2` documents require both audit metadata and health on every account, so deleting either cannot downgrade a blocked account to usable. Only an exact, coherent pre-health `tokenless.account-pool.v1` document without audit, health, or other v2-only account markers defaults health to generation-zero usable; its next mutation atomically writes v2. Filesystem paths and locks are derived only from validated internal UUIDs, so renaming a slug or running on a case-insensitive filesystem cannot alias two profiles. Removing an account with bindings is rejected until those projects are explicitly rebound or unbound.
 
 ### Codex profile boundary
 
@@ -158,6 +167,10 @@ tokenless accounts login --provider chatgpt --account personal-one
 tokenless accounts status --provider chatgpt --account personal-one
 tokenless accounts list
 tokenless accounts enable|disable --provider <provider> --account <id>
+tokenless accounts set-domain --provider <provider> --account <id> --routing-domain <domain>
+tokenless accounts set-domain --provider <provider> --account <id> --isolated
+tokenless accounts clear-health --provider <provider> --account <id>
+tokenless accounts audit [--after-sequence <n>] [--limit <n>] [--provider <provider>] [--account <id>]
 tokenless accounts remove --provider <provider> --account <id>
 
 tokenless projects pin --project project-a --provider chatgpt --account personal-one
@@ -223,7 +236,7 @@ Each implementation milestone must include focused tests and a separate reviewer
 - real loopback `/v1/responses` non-stream and stream contract tests;
 - broker authentication, header stripping, request limits, shutdown, and error-shape regression tests;
 - duplicate project/auth headers, hostile Host/Origin, bearer scope, and account-metadata non-disclosure tests;
-- a local live proof using a logged-in Codex profile, opt-in because it consumes subscription quota; and
+- a local live proof using a logged-in Codex profile and the fixed `gpt-5.3-codex-spark` model, opt-in because it consumes subscription quota; and
 - a two-account live proof documented as operator-run because two independently authenticated ChatGPT accounts cannot be manufactured in CI.
 
 The two-account proof must demonstrate distinct provider-owned identity fingerprints, projects A and B resolving to different account ids, project A remaining on its account after restart and after account B is added, disabling A's account migrating project A to B before sending the next prompt, and re-enabling A not moving the project back automatically. Quota and rate-limit responses must not trigger this migration.

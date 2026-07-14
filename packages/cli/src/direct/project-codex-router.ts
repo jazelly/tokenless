@@ -13,6 +13,7 @@ export const DEFAULT_MANAGED_PROJECT_QUEUE_DEPTH = 128
 export const MAX_MANAGED_PROJECT_QUEUE_DEPTH = 1_024
 export const DEFAULT_MANAGED_PROJECT_QUEUE_WAIT_MS = 5 * 60_000
 export const MAX_MANAGED_PROJECT_QUEUE_WAIT_MS = 30 * 60_000
+const MAX_MANAGED_FAILOVER_ATTEMPTS = 128
 
 const PROJECT_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._~-]{0,126}[A-Za-z0-9])?$/
 
@@ -108,8 +109,9 @@ type QueueItem<T> = {
 }
 
 /**
- * Routes the strict Responses subset through an existing ChatGPT subscription
- * binding. This M5 router never creates, changes, or fails over a binding.
+ * Routes the strict Responses subset through a sticky ChatGPT subscription
+ * binding. It migrates only after durable, pre-dispatch unavailability is
+ * proven and never spills on queue pressure or ambiguous provider failures.
  */
 export class ProjectCodexRouter {
   readonly homeDir: string
@@ -167,78 +169,122 @@ export class ProjectCodexRouter {
       if (signal.aborted) throw abortedError(false)
       const request = await loadRequest(signal)
       if (signal.aborted) throw abortedError(false)
-      const resolution = await this.#resolve(canonicalProjectId)
+      const attemptedAccountInternalIds = new Set<string>()
+      let resolution = await this.#resolve(canonicalProjectId, attemptedAccountInternalIds)
       if (signal.aborted) throw abortedError(false)
-      try {
-        return await this.#executor({
-          homeDir: this.homeDir,
-          projectId: canonicalProjectId,
-          initialBinding: resolution.binding,
-          initialAccount: resolution.account,
-          request,
-          signal,
-        })
-      } catch (error) {
-        if (error instanceof ManagedProjectExecutorError) {
-          throw new ProjectCodexRouterError(
-            'managed_project_execution_failed',
-            'The managed ChatGPT execution failed.',
-            error.retryable,
-            error.deliveryUnknown,
-            error.code,
-          )
+      for (let attempt = 0; attempt < MAX_MANAGED_FAILOVER_ATTEMPTS; attempt += 1) {
+        attemptedAccountInternalIds.add(resolution.account.internalId)
+        try {
+          return await this.#executor({
+            homeDir: this.homeDir,
+            projectId: canonicalProjectId,
+            initialBinding: resolution.binding,
+            initialAccount: resolution.account,
+            request,
+            signal,
+          })
+        } catch (error) {
+          if (
+            error instanceof ManagedProjectExecutorError &&
+            error.code === 'managed_executor_unavailable' &&
+            !error.deliveryUnknown &&
+            !signal.aborted
+          ) {
+            const next = await this.#resolve(canonicalProjectId, attemptedAccountInternalIds)
+            if (
+              next.binding.generation !== resolution.binding.generation ||
+              next.account.internalId !== resolution.account.internalId
+            ) {
+              resolution = next
+              continue
+            }
+          }
+          throw projectExecutionError(error, signal)
         }
-        if (signal.aborted || isAbortError(error)) throw abortedError(true)
-        throw new ProjectCodexRouterError(
-          'managed_project_execution_failed',
-          'The managed ChatGPT execution failed.',
-          false,
-          true,
-          'managed_executor_failed',
-        )
       }
+      throw bindingUnavailableError()
     }, {
       maxQueuedRequests: this.#maxQueuedRequests,
       queueWaitTimeoutMs: this.#queueWaitTimeoutMs,
     })
   }
 
-  async #resolve(projectId: string): Promise<Readonly<{
+  async #resolve(
+    projectId: string,
+    attemptedAccountInternalIds = new Set<string>(),
+  ): Promise<Readonly<{
     binding: ProjectBinding
     account: CodexAccountRecord
   }>> {
-    let resolution
-    try {
-      resolution = await this.#store.resolve({ projectId, provider: 'chatgpt' })
-    } catch (error) {
-      throw new ProjectCodexRouterError(
-        'managed_project_binding_unavailable',
-        'The managed ChatGPT binding is unavailable.',
-        !(error instanceof AccountPoolError) || error.code === 'account_pool_unreadable',
-      )
+    for (let attempt = 0; attempt < MAX_MANAGED_FAILOVER_ATTEMPTS; attempt += 1) {
+      let resolution
+      try {
+        resolution = await this.#store.resolve({ projectId, provider: 'chatgpt' })
+      } catch (error) {
+        throw bindingUnavailableError(error)
+      }
+      if (resolution === null) {
+        throw new ProjectCodexRouterError(
+          'managed_project_binding_missing',
+          'The request requires an explicit managed ChatGPT project binding.',
+        )
+      }
+      const { account, binding } = resolution
+      if (
+        binding.provider !== 'chatgpt' ||
+        account.provider !== 'chatgpt' ||
+        account.driver !== 'official-codex' ||
+        account.status !== 'ready' ||
+        account.identityFingerprint === undefined
+      ) throw bindingUnavailableError()
+      if (account.enabled && account.health.state === 'usable') return { binding, account }
+
+      attemptedAccountInternalIds.add(account.internalId)
+      try {
+        await this.#store.migrateToEligibleIfCurrent({
+          projectId,
+          provider: 'chatgpt',
+          expectedAccountInternalId: account.internalId,
+          expectedGeneration: binding.generation,
+          attemptedAccountInternalIds: [...attemptedAccountInternalIds],
+        })
+      } catch (error) {
+        throw bindingUnavailableError(error)
+      }
     }
-    if (resolution === null) {
-      throw new ProjectCodexRouterError(
-        'managed_project_binding_missing',
-        'The request requires an explicit managed ChatGPT project binding.',
-      )
-    }
-    const { account, binding } = resolution
-    if (
-      binding.provider !== 'chatgpt' ||
-      account.provider !== 'chatgpt' ||
-      account.driver !== 'official-codex' ||
-      account.status !== 'ready' ||
-      !account.enabled ||
-      account.identityFingerprint === undefined
-    ) {
-      throw new ProjectCodexRouterError(
-        'managed_project_binding_unavailable',
-        'The managed ChatGPT binding is unavailable.',
-      )
-    }
-    return { binding, account }
+    throw bindingUnavailableError()
   }
+}
+
+function projectExecutionError(error: unknown, signal: AbortSignal): ProjectCodexRouterError {
+  if (error instanceof ProjectCodexRouterError) return error
+  if (error instanceof ManagedProjectExecutorError) {
+    return new ProjectCodexRouterError(
+      'managed_project_execution_failed',
+      'The managed ChatGPT execution failed.',
+      error.retryable,
+      error.deliveryUnknown,
+      error.code,
+    )
+  }
+  if (signal.aborted || isAbortError(error)) return abortedError(true)
+  return new ProjectCodexRouterError(
+    'managed_project_execution_failed',
+    'The managed ChatGPT execution failed.',
+    false,
+    true,
+    'managed_executor_failed',
+  )
+}
+
+function bindingUnavailableError(error?: unknown): ProjectCodexRouterError {
+  return new ProjectCodexRouterError(
+    'managed_project_binding_unavailable',
+    'The managed ChatGPT binding is unavailable.',
+    error === undefined
+      ? false
+      : !(error instanceof AccountPoolError) || error.code === 'account_pool_unreadable',
+  )
 }
 
 /** Validates without trimming or case-folding; project ids are semantic keys. */
