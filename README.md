@@ -84,6 +84,8 @@ tokenless run \
 
 The extension uses only user-visible controls after host permission is granted. Login, CAPTCHA, rate limits, and confirmations remain under your control. It never navigates automatically to a task page, local-file page, or `chrome-extension://` workflow.
 
+Time-sensitive free-plan facts, DOM provenance, and adapter acceptance boundaries are recorded in [Visible provider evidence](docs/visible-provider-evidence.md).
+
 ## Experimental: Direct/API Mode
 
 Direct mode is under active development. Use extension mode unless you specifically need an official provider client, public API, compatible gateway, local API broker, or multi-account project routing.

@@ -26,9 +26,16 @@ const manifestRecord = {
   manifestVersion: manifest.manifest_version,
   version: manifest.version,
   files: files.map((file) => ({
-    path: path.relative(distExtensionRoot, file),
+    path: portableRelativePath(distExtensionRoot, file),
     sha256: hashFile(file),
   })),
+  debuggerControl: {
+    version: debuggerControlManifest.version,
+    files: debuggerControlFiles.map((file) => ({
+      path: portableRelativePath(distDebuggerControlRoot, file),
+      sha256: hashFile(file),
+    })),
+  },
 }
 
 await fs.promises.writeFile(
@@ -114,7 +121,7 @@ function verifyManifest(manifest: Record<string, any>) {
 }
 
 function verifyExtensionArtifacts(files: string[]) {
-  const relativeFiles = files.map((file) => path.relative(distExtensionRoot, file))
+  const relativeFiles = files.map((file) => portableRelativePath(distExtensionRoot, file))
   const forbidden = relativeFiles.find((file) => (
     file.startsWith('task/') ||
     file.startsWith('sidepanel/') ||
@@ -134,6 +141,16 @@ function verifyExtensionArtifacts(files: string[]) {
   }
 }
 
+function verifyDebuggerControlArtifacts(files: string[]) {
+  const relativeFiles = files.map((file) => portableRelativePath(distDebuggerControlRoot, file))
+  if (!relativeFiles.includes('background/service-worker.js')) {
+    throw new Error('debugger control extension must contain its service worker')
+  }
+  if (relativeFiles.some((file) => file.endsWith('.map') || file.endsWith('.d.ts'))) {
+    throw new Error('debugger control extension must not contain development artifacts')
+  }
+}
+
 async function listFiles(root: string): Promise<string[]> {
   const entries = await fs.promises.readdir(root, { withFileTypes: true })
   const files: string[] = []
@@ -150,6 +167,10 @@ async function listFiles(root: string): Promise<string[]> {
 
 function hashFile(file: string) {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+}
+
+function portableRelativePath(root: string, file: string) {
+  return path.relative(root, file).split(path.sep).join('/')
 }
 
 async function copyStaticExtensionFiles(sourceRoot: string, targetRoot: string) {

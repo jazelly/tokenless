@@ -1,32 +1,64 @@
 # Test Helpers
 
-## Capture ChatGPT DOM With CDP
+## Capture Provider DOM With CDP
 
-Use `capture-chatgpt-dom-cdp.mjs` as the standard helper for grabbing a sanitized DOM snapshot from a real ChatGPT page in a browser profile that was started with Chrome DevTools Protocol enabled.
+Use `capture-provider-dom-cdp.mjs` to capture a sanitized DOM snapshot from a real provider page in a dedicated Chrome profile with the Chrome DevTools Protocol enabled. The helper supports `chatgpt`, `claude`, `gemini`, and `grok` through one provider-definition table. Each definition owns its allowed origin, launch URL, selector probes, and DOM artifact name.
 
-Start a dedicated Chrome profile:
+Start a dedicated Chrome profile at the provider page you want to inspect. For example, for Claude:
 
 ```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+google-chrome \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/tokenless-cdp-chrome-profile \
-  https://chatgpt.com/
+  https://claude.ai/new
 ```
 
-Sign in to ChatGPT in that Chrome window if needed, then capture:
+Sign in manually in that Chrome window if needed, then capture the page:
+
+```bash
+node test/helpers/capture-provider-dom-cdp.mjs --provider claude
+```
+
+The accepted provider values and default pages are:
+
+| Provider | Page |
+| --- | --- |
+| `chatgpt` | `https://chatgpt.com/` |
+| `claude` | `https://claude.ai/new` |
+| `gemini` | `https://gemini.google.com/app` |
+| `grok` | `https://grok.com/` |
+
+Artifacts are written under `test-results/<provider>-dom-captures/<timestamp>/`:
+
+- `<provider>-dom.sanitized.html`
+- `selector-probes.json`
+- `metadata.json`
+- `visible-text.txt` only when `--include-text` is passed
+
+`metadata.json` identifies the `provider`, the `visible-session-web-ui` surface, and `capturedAt`. Page query strings and fragments are omitted. DOM attributes are denied by default: the sanitizer retains only fixed structural states and static values or fragments required by the selected provider's selector probes. Arbitrary `id`, `class`, `name`, ARIA, and `data-*` values are removed, while URL attributes are reduced to safe static paths or redacted markers. Form values, hidden inputs, executable/resource elements, comments, and non-visible text are sanitized or removed before output. Selector probes never include page text unless `--include-text` is explicitly passed; even then, only text visible in the viewport is retained, and `--max-text-chars` bounds every exported text field, including the DOM snapshot, visible-text artifact, page title, and selector probe samples.
+
+The helper does not read or export provider cookies, localStorage, sessionStorage, hidden authentication headers, or private provider backend APIs. It evaluates read-only page JavaScript through CDP and writes only the sanitized DOM, probes, and metadata described above. Use a dedicated capture profile and inspect every artifact before promoting it into a test fixture.
+
+Useful options:
+
+```bash
+node test/helpers/capture-provider-dom-cdp.mjs \
+  --provider claude \
+  --url-includes /new \
+  --output-dir test-results/manual-claude-captures
+```
+
+Pass `--help` for all options. `--include-text` is deliberately opt-in because it may retain visible conversation content.
+
+## ChatGPT Compatibility Entry Point
+
+`capture-chatgpt-dom-cdp.mjs` remains available with its original command and options. It is a thin ChatGPT-only wrapper around the provider helper, and it keeps the existing default directory and DOM filename:
 
 ```bash
 node test/helpers/capture-chatgpt-dom-cdp.mjs
 ```
 
-Artifacts are written under `test-results/chatgpt-dom-captures/<timestamp>/`:
-
-- `chatgpt-dom.sanitized.html`
-- `selector-probes.json`
-- `metadata.json`
-- `visible-text.txt` only when `--include-text` is passed
-
-The helper does not read cookies, localStorage, sessionStorage, hidden auth headers, or provider backend APIs. It evaluates read-only page JavaScript through CDP and sanitizes the captured DOM by default.
+The artifacts remain under `test-results/chatgpt-dom-captures/<timestamp>/`, including `chatgpt-dom.sanitized.html`.
 
 ## Existing Daily Chrome Fallback
 

@@ -107,7 +107,9 @@ test('provider navigation policy centralizes approved visible-session routes', a
     isProviderConversationUrl,
   } = await import('../packages/extension/dist/extension/shared/provider-navigation-policy.js')
   const chatgpt = getProviderById('chatgpt')
+  const claude = getProviderById('claude')
   assert.ok(chatgpt)
+  assert.ok(claude)
 
   assert.equal(canonicalProviderUrl('https://chatgpt.com/g/g-12345678/'), 'https://chatgpt.com/g/g-12345678')
   assert.equal(isApprovedProviderTransition(chatgpt, 'https://chatgpt.com/', 'https://chatgpt.com/c/12345678'), true)
@@ -115,6 +117,11 @@ test('provider navigation policy centralizes approved visible-session routes', a
   assert.equal(isApprovedProviderTransition(chatgpt, 'https://chatgpt.com/g/g-12345678', 'https://chatgpt.com/c/abcdefgh9'), false)
   assert.equal(isProviderConversationUrl(chatgpt, 'https://chatgpt.com/settings'), false)
   assert.equal(areProviderTransitionSourcesEquivalent(chatgpt, 'https://chatgpt.com/', 'https://chat.openai.com/'), true)
+  assert.equal(isApprovedProviderTransition(claude, 'https://claude.ai/new', 'https://claude.ai/chat/123e4567-e89b-12d3-a456-426614174001'), true)
+  assert.equal(isProviderConversationUrl(claude, 'https://claude.ai/chat/settings123'), false)
+  assert.equal(claude.composerSelectors[0], 'div[data-testid="chat-input"][contenteditable="true"][role="textbox"]')
+  assert.equal(claude.answerSelectors.includes('[data-testid="virtual-message-list"] .font-claude-response-body'), true)
+  assert.equal(claude.busySelectors.includes('[data-testid="virtual-message-list"] [data-is-streaming="true"]'), true)
 })
 
 test('daemon bridge requires a v1 handshake and reconnects with bounded backoff', async () => {
@@ -662,30 +669,20 @@ test('provider content uses only visible controls and snapshots a fail-closed re
       await chatgpt.context.close()
     }
 
-    const claude = await openProviderFixture(browser, 'https://claude.ai/new', `
-      <!doctype html>
-      <html>
-        <body>
-          <div id="claude-composer" role="textbox" contenteditable="true"></div>
-          <button id="claude-send" aria-label="Send message" disabled>Send</button>
-          <script>
-            globalThis.__claudeClicks = 0
-            document.querySelector('#claude-composer').addEventListener('input', () => {
-              document.querySelector('#claude-send').disabled = false
-            })
-            document.querySelector('#claude-send').addEventListener('click', () => {
-              globalThis.__claudeClicks += 1
-              history.pushState({}, '', '/chat/123e4567-e89b-12d3-a456-426614174001')
-              const answer = document.createElement('div')
-              answer.setAttribute('data-testid', 'message-assistant')
-              answer.textContent = 'Claude conversation answer'
-              document.body.append(answer)
-            })
-          </script>
-        </body>
-      </html>
-    `)
+    const claude = await openProviderFixture(
+      browser,
+      'https://claude.ai/new',
+      readText('test/fixtures/claude-real-dom-fixture.html')
+    )
     try {
+      await claude.page.evaluate(() => {
+        const ordinaryContinue = document.createElement('button')
+        ordinaryContinue.id = 'ordinary-claude-continue'
+        ordinaryContinue.type = 'button'
+        ordinaryContinue.dataset.testid = 'continue'
+        ordinaryContinue.textContent = 'Continue writing'
+        document.querySelector('header')?.append(ordinaryContinue)
+      })
       const submit = await claude.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
         type: 'tokenless.bridge.submit',
         request: {
@@ -699,7 +696,13 @@ test('provider content uses only visible controls and snapshots a fail-closed re
         },
       }))
       assert.equal(submit.status, 'submitted')
-      assert.equal(await claude.page.evaluate(() => globalThis.__claudeClicks), 1)
+      assert.equal(await claude.page.locator('#ordinary-claude-continue').isVisible(), true)
+      assert.equal(await claude.page.locator('.message-row[data-role="user"]').count(), 2)
+      assert.equal(
+        await claude.page.locator('[data-testid="chat-input"]').getAttribute('aria-label'),
+        'Write your prompt to Claude'
+      )
+      assert.equal(await claude.page.locator('[data-testid="file-upload"]').count(), 1)
       const request = {
         provider: 'claude',
         requestId: 'claude-disabled-send',
@@ -707,6 +710,17 @@ test('provider content uses only visible controls and snapshots a fail-closed re
         prompt: 'Enable the visible send button.',
         readTimeoutMs: 2000,
       }
+      await claude.page.waitForURL(
+        'https://claude.ai/chat/123e4567-e89b-12d3-a456-426614174001'
+      )
+      await claude.page.evaluate(() => {
+        const answers = [...document.querySelectorAll('.font-claude-response-body')]
+        const answer = answers.at(-1)
+        const loginCitation = document.createElement('a')
+        loginCitation.href = '/login'
+        loginCitation.textContent = 'Authentication guide'
+        answer?.append(' ', loginCitation)
+      })
       const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'claude-transition-proof-001')
       const read = await claude.page.evaluate(({ contentRequest, answerBaseline, transitionProof }) => (
         globalThis.__dispatchTokenlessMessage({
@@ -720,12 +734,16 @@ test('provider content uses only visible controls and snapshots a fail-closed re
         })
       ), { contentRequest: request, answerBaseline: submit.answerBaseline, transitionProof: proof })
       assert.equal(read.status, 'read')
-      assert.equal(read.text, 'Claude conversation answer')
+      assert.match(read.text, /visible Claude real-DOM fixture answer for: Enable the visible send button\./)
+      assert.match(read.text, /Authentication guide/)
+      assert.doesNotMatch(read.text, /stale Claude real-DOM fixture answer/)
+      assert.doesNotMatch(read.text, /_streaming/)
       assert.equal(read.url, 'https://claude.ai/chat/123e4567-e89b-12d3-a456-426614174001')
       for (const unsafePath of ['/chat/settings', '/chat/settings123']) {
         await claude.page.evaluate((pathname) => {
           history.replaceState({}, '', pathname)
-          const answer = document.querySelector('[data-testid="message-assistant"]')
+          const answers = [...document.querySelectorAll('.font-claude-response-body')]
+          const answer = answers.at(-1)
           if (answer) answer.textContent = 'Misleading Claude settings answer'
         }, unsafePath)
         const blocked = await dispatchPostSubmitRead(claude.page, request, submit.answerBaseline, proof)
@@ -736,6 +754,142 @@ test('provider content uses only visible controls and snapshots a fail-closed re
       assert.deepEqual(claude.pageErrors, [])
     } finally {
       await claude.context.close()
+    }
+
+    const claudeLoginBlocker = await openProviderFixture(
+      browser,
+      'https://claude.ai/new',
+      readText('test/fixtures/claude-real-dom-fixture.html')
+    )
+    try {
+      await claudeLoginBlocker.page.evaluate(() => {
+        const loginForm = document.createElement('form')
+        loginForm.setAttribute('aria-label', 'Sign in to Claude')
+        loginForm.style.cssText = 'position:fixed;left:300px;top:80px;z-index:50;padding:20px;background:white'
+
+        const email = document.createElement('input')
+        email.placeholder = 'Enter your email'
+        email.setAttribute('aria-label', 'Email address')
+
+        const continueButton = document.createElement('button')
+        continueButton.type = 'button'
+        continueButton.dataset.testid = 'continue'
+        continueButton.textContent = 'Continue'
+
+        loginForm.append(email, continueButton)
+        document.body.append(loginForm)
+      })
+      const blocked = await claudeLoginBlocker.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.submit',
+        request: {
+          provider: 'claude',
+          requestId: 'claude-visible-login-blocker',
+          targetUrl: 'https://claude.ai/new',
+          prompt: 'This prompt must not be submitted through a visible login form.',
+          composerTimeoutMs: 100,
+          submitTimeoutMs: 100,
+        },
+      }))
+      assert.equal(blocked.status, 'blocked')
+      assert.equal(blocked.stopReason, 'provider_blocker_visible')
+      assert.match(blocked.message, /Continue/)
+      assert.equal(await claudeLoginBlocker.page.locator('.message-row[data-role="user"]').count(), 1)
+      assert.deepEqual(claudeLoginBlocker.pageErrors, [])
+    } finally {
+      await claudeLoginBlocker.context.close()
+    }
+
+    for (const driftTarget of ['composer', 'submit']) {
+      const claudeSelectorDrift = await openProviderFixture(
+        browser,
+        'https://claude.ai/new',
+        readText('test/fixtures/claude-real-dom-fixture.html')
+      )
+      try {
+        await claudeSelectorDrift.page.evaluate((target) => {
+          if (target === 'composer') {
+            const composer = document.querySelector('[data-testid="chat-input"]')
+            composer.id = 'drifted-claude-composer'
+            composer.removeAttribute('data-testid')
+            composer.removeAttribute('aria-label')
+            composer.removeAttribute('role')
+            composer.className = 'fixture-drifted-composer'
+            return
+          }
+          const send = document.querySelector('button[aria-label="Send message"]')
+          send.id = 'drifted-claude-submit'
+          send.removeAttribute('aria-label')
+          send.removeAttribute('data-cds')
+        }, driftTarget)
+        const blocked = await claudeSelectorDrift.page.evaluate((target) => globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.submit',
+          request: {
+            provider: 'claude',
+            requestId: `claude-${target}-selector-drift`,
+            targetUrl: 'https://claude.ai/new',
+            prompt: `This prompt must not pass the drifted Claude ${target} contract.`,
+            composerTimeoutMs: 100,
+            submitTimeoutMs: 100,
+          },
+        }), driftTarget)
+        assert.equal(blocked.status, 'blocked')
+        assert.equal(blocked.stopReason, 'selector_drift')
+        assert.match(blocked.message, new RegExp(`Provider ${driftTarget} selector`))
+        assert.equal(await claudeSelectorDrift.page.locator('.message-row[data-role="user"]').count(), 1)
+        assert.deepEqual(claudeSelectorDrift.pageErrors, [])
+      } finally {
+        await claudeSelectorDrift.context.close()
+      }
+    }
+
+    const claudeAnswerDrift = await openProviderFixture(
+      browser,
+      'https://claude.ai/new',
+      readText('test/fixtures/claude-real-dom-fixture.html')
+    )
+    try {
+      const answerDriftRequest = {
+        provider: 'claude',
+        requestId: 'claude-answer-selector-drift',
+        targetUrl: 'https://claude.ai/new',
+        prompt: 'Answer selector contract drift.',
+        readTimeoutMs: 0,
+      }
+      const submit = await claudeAnswerDrift.page.evaluate((request) => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.submit',
+        request: {
+          ...request,
+          composerTimeoutMs: 100,
+          submitTimeoutMs: 100,
+        },
+      }), answerDriftRequest)
+      assert.equal(submit.status, 'submitted')
+      await claudeAnswerDrift.page.waitForURL(
+        'https://claude.ai/chat/123e4567-e89b-12d3-a456-426614174001'
+      )
+      await claudeAnswerDrift.page.evaluate(() => {
+        for (const answer of document.querySelectorAll('.font-claude-response-body')) {
+          answer.classList.remove('font-claude-response-body')
+          answer.setAttribute('data-answer-contract', 'drifted')
+        }
+      })
+      const proof = postSubmitTransitionProof(
+        answerDriftRequest,
+        submit.answerBaseline,
+        'claude-answer-drift-proof-001'
+      )
+      const blocked = await dispatchPostSubmitRead(
+        claudeAnswerDrift.page,
+        answerDriftRequest,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(blocked.status, 'blocked')
+      assert.equal(blocked.stopReason, 'response_unavailable')
+      assert.doesNotMatch(JSON.stringify(blocked), /visible Claude real-DOM fixture answer/)
+      assert.deepEqual(claudeAnswerDrift.pageErrors, [])
+    } finally {
+      await claudeAnswerDrift.context.close()
     }
 
     const gemini = await openProviderFixture(browser, 'https://gemini.google.com/app', `
@@ -2576,7 +2730,7 @@ function listRelativeFiles(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const absolute = path.join(directory, entry.name)
     if (entry.isDirectory()) {
-      return listRelativeFiles(absolute).map((file) => path.join(entry.name, file))
+      return listRelativeFiles(absolute).map((file) => path.posix.join(entry.name, file))
     }
     return entry.isFile() ? [entry.name] : []
   }).sort()

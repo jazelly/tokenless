@@ -94,23 +94,34 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     hosts: Object.freeze(['claude.ai']),
     matchPatterns: Object.freeze(['https://claude.ai/*']),
     composerSelectors: Object.freeze([
+      'div[data-testid="chat-input"][contenteditable="true"][role="textbox"]',
+      'div[aria-label="Write your prompt to Claude"][contenteditable="true"][role="textbox"]',
       'div[contenteditable="true"][role="textbox"]',
-      'div.ProseMirror',
+      'div.ProseMirror[contenteditable="true"]',
       'textarea',
     ]),
     submitSelectors: Object.freeze([
+      'button[data-cds="Button"][aria-label="Send message"]',
+      'button[aria-label="Send message"]',
       'button[aria-label*="Send"]',
       'button[type="submit"]',
     ]),
     answerSelectors: Object.freeze([
-      '[data-testid*="message"]',
-      '.font-claude-message',
-      'main div[class*="contents"]',
+      '[data-testid="virtual-message-list"] .font-claude-response-body',
+      'main .font-claude-response-body',
+      '.font-claude-response-body',
     ]),
     blockerSelectors: Object.freeze([
       'iframe[src*="captcha"]',
-      'a[href*="login"]',
+      'button[data-testid="login-with-google"]',
+      'form:has(input[placeholder="Enter your email"]) button[data-testid="continue"]',
+      'input[placeholder="Enter your email"]',
     ]),
+    busySelectors: Object.freeze([
+      '[data-testid="virtual-message-list"] [data-is-streaming="true"]',
+      'button[aria-label*="Stop" i]',
+    ]),
+    busyTextLabels: Object.freeze(['stop']),
   }),
 ])
 
