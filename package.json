@@ -21,7 +21,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.15.0"
   },
   "packageManager": "npm@10",
   "devDependencies": {

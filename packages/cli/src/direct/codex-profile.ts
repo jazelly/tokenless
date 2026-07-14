@@ -1,58 +1,27 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHmac, randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
-import readline from 'node:readline'
 
+import { codexInspectOperationTimeoutMs, runCodexSupervisedOperation } from './codex-child-supervisor.js'
 import { DirectError } from './types.js'
 
 export const CODEX_ACCOUNT_CREDENTIAL_STORE = 'file' as const
 export const CODEX_IDENTITY_FINGERPRINT_VERSION = 'tokenless.codex-identity.v1' as const
 export const CODEX_IDENTITY_KEY_BYTES = 32
 
-const APP_SERVER_LINE_BYTES = 1024 * 1024
-const APP_SERVER_MESSAGES = 64
 const DEFAULT_ACCOUNT_READ_TIMEOUT_MS = 15_000
 const INTERNAL_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const ACCOUNT_IDENTITY_MAX_CHARACTERS = 320
 const ACCOUNT_IDENTITY_MAX_BYTES = 1024
 const MANAGED_PROFILE_FORBIDDEN_ENTRIES = new Set([
-  'AGENTS.md',
-  'AGENTS.override.md',
+  'agents.md',
+  'agents.override.md',
   'config.toml',
   'hooks',
   'plugins',
   'rules',
   'skills',
 ])
-
-const APP_SERVER_ENVIRONMENT = [
-  'APPDATA',
-  'COMSPEC',
-  'HOMEDRIVE',
-  'HOMEPATH',
-  'HOME',
-  'LANG',
-  'LANGUAGE',
-  'LC_ALL',
-  'LC_CTYPE',
-  'LOCALAPPDATA',
-  'LOGNAME',
-  'OS',
-  'PATH',
-  'PATHEXT',
-  'PROGRAMDATA',
-  'SYSTEMROOT',
-  'TEMP',
-  'TMP',
-  'TMPDIR',
-  'TZ',
-  'USER',
-  'USERNAME',
-  'USERPROFILE',
-  'WINDIR',
-] as const
 
 export type CodexAccountObservation =
   | Readonly<{ state: 'ready'; fingerprint: string }>
@@ -127,10 +96,27 @@ export async function createManagedCodexHome(homeDir: string, internalId: string
 
 export async function assertManagedCodexHome(codexHome: string): Promise<void> {
   const canonical = path.resolve(codexHome)
-  await assertPrivateOwnedDirectory(canonical)
+  const profileRoot = path.dirname(canonical)
+  const internalId = path.basename(profileRoot)
+  const chatGptRoot = path.dirname(profileRoot)
+  const providerRoot = path.dirname(chatGptRoot)
+  const directRoot = path.dirname(providerRoot)
+  const homeRoot = path.dirname(directRoot)
+  assertInternalId(internalId)
+  if (
+    path.basename(canonical) !== 'codex' || path.basename(chatGptRoot) !== 'chatgpt' ||
+    path.basename(providerRoot) !== 'provider-profiles' || path.basename(directRoot) !== 'direct'
+  ) throw profileError('codex_profile_unsafe', 'The managed Codex profile is outside the Tokenless profile layout.')
+  for (const directory of [homeRoot, directRoot, providerRoot, chatGptRoot, profileRoot, canonical]) {
+    await assertPrivateOwnedDirectory(directory)
+    if (await fs.realpath(directory) !== directory) {
+      throw profileError('codex_profile_unsafe', 'A managed Codex profile ancestor is aliased or symbolic.')
+    }
+  }
   const entries = await fs.readdir(canonical)
   for (const entry of entries) {
-    if (MANAGED_PROFILE_FORBIDDEN_ENTRIES.has(entry) || entry.endsWith('.config.toml')) {
+    const normalizedEntry = entry.toLowerCase()
+    if (MANAGED_PROFILE_FORBIDDEN_ENTRIES.has(normalizedEntry) || normalizedEntry.endsWith('.config.toml')) {
       throw profileError(
         'codex_profile_configuration_forbidden',
         'Managed Codex profiles must not contain provider instructions or configuration files.',
@@ -216,57 +202,41 @@ export async function inspectCodexAccount(options: InspectCodexAccountOptions): 
     throw profileError('codex_account_read_aborted', 'The Codex account identity check was aborted.', true)
   }
   await assertManagedCodexHome(options.codexHome)
-  const command = await resolveTrustedCodexCommand(options.executable)
   const timeoutMs = resolvePositiveTimeout(options.timeoutMs)
-  const workingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-codex-account-'))
-  let child: ChildProcessWithoutNullStreams | undefined
+  const location = managedProfileLocation(options.codexHome)
+  const executable = await resolveTrustedCodexExecutable(options.executable)
+  return runCodexSupervisedOperation<CodexAccountObservation>({
+    operation: 'inspect-profile',
+    homeDir: location.homeDir,
+    codexExecutable: executable,
+    lockFiles: [location.accountLock],
+    operationTimeoutMs: codexInspectOperationTimeoutMs(timeoutMs),
+    accountReadTimeoutMs: timeoutMs,
+    codexHome: options.codexHome,
+    identityKey: options.identityKey,
+    environment: process.env,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  })
+}
 
-  try {
-    child = spawn(
-      command.executable,
-      [
-        ...command.argsPrefix,
-        'app-server',
-        '--listen',
-        'stdio://',
-        '--strict-config',
-        '--config',
-        `cli_auth_credentials_store="${CODEX_ACCOUNT_CREDENTIAL_STORE}"`,
-        '--config',
-        'analytics.enabled=false',
-      ],
-      {
-        cwd: workingRoot,
-        env: codexAccountEnvironment(process.env, options.codexHome),
-        detached: process.platform !== 'win32',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    )
-    const account = await readAccountFromAppServer(child, timeoutMs, options.signal)
-    if (account === null) return Object.freeze({ state: 'unavailable', reason: 'no_account' })
-    if (!isRecord(account) || account.type !== 'chatgpt') {
-      return Object.freeze({ state: 'unavailable', reason: 'not_chatgpt' })
-    }
-    if (account.email === null || account.email === undefined) {
-      return Object.freeze({ state: 'unverifiable', reason: 'identity_missing' })
-    }
-    if (typeof account.email !== 'string') {
-      throw profileError('codex_account_invalid', 'Codex returned an invalid ChatGPT account identity.')
-    }
-    return Object.freeze({
-      state: 'ready',
-      fingerprint: fingerprintCodexIdentity(account.email, options.identityKey),
-    })
-  } catch (error) {
-    if (error instanceof CodexProfileError) throw error
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') {
-      throw profileError('codex_binary_missing', 'The configured Codex executable was not found.')
-    }
-    throw profileError('codex_account_read_failed', 'The official Codex account identity check failed.', true)
-  } finally {
-    if (child !== undefined) await stopChild(child)
-    await fs.rm(workingRoot, { recursive: true, force: true, maxRetries: 3 })
+function managedProfileLocation(codexHome: string): { homeDir: string; accountLock: string } {
+  const canonical = path.resolve(codexHome)
+  const profileRoot = path.dirname(canonical)
+  const internalId = path.basename(profileRoot)
+  assertInternalId(internalId)
+  const chatGptRoot = path.dirname(profileRoot)
+  const providerRoot = path.dirname(chatGptRoot)
+  const directRoot = path.dirname(providerRoot)
+  const homeDir = path.dirname(directRoot)
+  if (
+    path.basename(canonical) !== 'codex' ||
+    path.basename(chatGptRoot) !== 'chatgpt' ||
+    path.basename(providerRoot) !== 'provider-profiles' ||
+    path.basename(directRoot) !== 'direct'
+  ) throw profileError('codex_profile_unsafe', 'The managed Codex profile is outside the Tokenless profile layout.')
+  return {
+    homeDir,
+    accountLock: path.join(directRoot, 'account-locks', 'chatgpt', `${internalId}.lock`),
   }
 }
 
@@ -303,143 +273,6 @@ export async function resolveTrustedCodexCommand(
   }
   const nodeExecutable = await resolveTrustedRuntimeExecutable(process.execPath)
   return Object.freeze({ executable: nodeExecutable, argsPrefix: [canonical], source: canonical })
-}
-
-function codexAccountEnvironment(environment: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
-  const result: NodeJS.ProcessEnv = {}
-  const available = new Map<string, string>()
-  for (const [key, value] of Object.entries(environment)) {
-    if (value !== undefined && !available.has(key.toUpperCase())) available.set(key.toUpperCase(), value)
-  }
-  for (const name of APP_SERVER_ENVIRONMENT) {
-    const value = available.get(name)
-    if (value !== undefined) result[name] = value
-  }
-  result.CODEX_HOME = codexHome
-  result.CODEX_EXEC_SERVER_URL = 'none'
-  return result
-}
-
-async function readAccountFromAppServer(
-  child: ChildProcessWithoutNullStreams,
-  timeoutMs: number,
-  signal: AbortSignal | undefined,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let messages = 0
-    let stderrBytes = 0
-    const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity })
-    const timer = setTimeout(() => finish(profileError('codex_account_read_timeout', 'The Codex account identity check timed out.', true)), timeoutMs)
-    timer.unref()
-
-    const finish = (error?: Error, value?: unknown) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      lines.close()
-      signal?.removeEventListener('abort', onAbort)
-      child.removeListener('error', onError)
-      child.removeListener('exit', onExit)
-      child.stdin.removeListener('error', onStdinError)
-      if (error !== undefined) reject(error)
-      else resolve(value)
-    }
-    const send = (message: unknown) => {
-      if (!child.stdin.writable) {
-        finish(profileError('codex_account_read_failed', 'The Codex app-server input closed unexpectedly.', true))
-        return
-      }
-      child.stdin.write(`${JSON.stringify(message)}\n`, (error) => {
-        if (error !== null && error !== undefined) onStdinError()
-      })
-    }
-    const onAbort = () => finish(profileError('codex_account_read_aborted', 'The Codex account identity check was aborted.', true))
-    const onError = () => finish(profileError('codex_account_read_failed', 'The Codex app-server could not start.', true))
-    const onExit = () => finish(profileError('codex_account_read_failed', 'The Codex app-server exited before returning account state.', true))
-    const onStdinError = () => finish(profileError('codex_account_read_failed', 'The Codex app-server input closed unexpectedly.', true))
-
-    signal?.addEventListener('abort', onAbort, { once: true })
-    child.once('error', onError)
-    child.once('exit', onExit)
-    child.stdin.once('error', onStdinError)
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrBytes += chunk.length
-      if (stderrBytes > APP_SERVER_LINE_BYTES) {
-        finish(profileError('codex_account_read_failed', 'The Codex app-server returned oversized diagnostics.', true))
-      }
-    })
-    lines.on('line', (line) => {
-      if (Buffer.byteLength(line, 'utf8') > APP_SERVER_LINE_BYTES || ++messages > APP_SERVER_MESSAGES) {
-        finish(profileError('codex_account_read_failed', 'The Codex app-server returned oversized account data.', true))
-        return
-      }
-      let message: unknown
-      try {
-        message = JSON.parse(line) as unknown
-      } catch {
-        finish(profileError('codex_account_read_failed', 'The Codex app-server returned invalid JSON.', true))
-        return
-      }
-      if (!isRecord(message)) return
-      if (message.id === 0) {
-        if (message.error !== undefined || !isRecord(message.result)) {
-          finish(profileError('codex_account_read_failed', 'The Codex app-server rejected initialization.', true))
-          return
-        }
-        send({ method: 'initialized', params: {} })
-        send({ method: 'account/read', id: 1, params: { refreshToken: false } })
-        return
-      }
-      if (message.id === 1) {
-        if (message.error !== undefined || !isRecord(message.result) || !Object.hasOwn(message.result, 'account')) {
-          finish(profileError('codex_account_read_failed', 'The Codex app-server returned invalid account state.', true))
-          return
-        }
-        finish(undefined, message.result.account)
-      }
-    })
-    send({
-      method: 'initialize',
-      id: 0,
-      params: {
-        clientInfo: {
-          name: 'tokenless',
-          title: 'Tokenless',
-          version: '0.1.0',
-        },
-      },
-    })
-  })
-}
-
-async function stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  child.stdin.end()
-  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
-  if (process.platform !== 'win32' && child.pid !== undefined) {
-    try {
-      process.kill(-child.pid, 'SIGTERM')
-    } catch {
-      child.kill('SIGTERM')
-    }
-  } else {
-    child.kill('SIGTERM')
-  }
-  const timer = setTimeout(() => {
-    if (process.platform !== 'win32' && child.pid !== undefined) {
-      try {
-        process.kill(-child.pid, 'SIGKILL')
-      } catch {
-        child.kill('SIGKILL')
-      }
-    } else {
-      child.kill('SIGKILL')
-    }
-  }, 500)
-  timer.unref()
-  await exited
-  clearTimeout(timer)
 }
 
 async function assertPrivateOwnedDirectory(directory: string): Promise<void> {
@@ -537,10 +370,6 @@ function ownedByCurrentUser(uid: number): boolean {
 
 function ownedByTrustedUser(uid: number): boolean {
   return typeof process.getuid !== 'function' || uid === 0 || uid === process.getuid()
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function profileError(reason: string, message: string, retryable = false): CodexProfileError {

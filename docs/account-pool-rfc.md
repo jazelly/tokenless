@@ -75,7 +75,9 @@ An operator may deliberately rebind a project at any time. Rebinding and automat
 
 ### Concurrency
 
-Every account has a bounded FIFO queue within one broker process and an execution limit. The advisory lock guarantees cross-process mutual exclusion, not global FIFO ordering. The Codex driver hard-codes each profile limit to one because provider-owned credential refresh is not cross-process safe; configuration cannot raise it. All managed ChatGPT subscription profiles additionally share one global inference lock, so Tokenless never aggregates subscription concurrency across accounts. The Tokenless process executing a Codex operation directly holds sorted SQLite write transactions for every required logical lock throughout the full child lifetime. A process crash therefore terminates the callback and releases its locks together, without a proxy-runner failure window, PID reuse, or stale-lease recovery. Browser-based account login holds a separate global lock because the provider-owned login flow uses shared loopback ports. Managed homes are reserved for Tokenless and must not be shared with an IDE or manually launched Codex process that would bypass these locks.
+Every account has a bounded FIFO queue within one broker process and an execution limit. The advisory lock guarantees cross-process mutual exclusion, not global FIFO ordering. The Codex driver hard-codes each profile limit to one because provider-owned credential refresh is not cross-process safe; configuration cannot raise it. All managed ChatGPT subscription profiles additionally share one global inference lock, so Tokenless never aggregates subscription concurrency across accounts. A detached one-shot Tokenless helper owns the sorted SQLite write transactions, writes durable mode-`0600` lease tombstones before launching Codex, and remains the process-group leader for the complete managed operation. Codex children stay in that helper's process group and do not inherit its private control channel. If the client or helper crashes, a later contender holds the same SQLite locks and reclaims a tombstone only after proving a different boot, the exact helper process-group id reuse case, or that the old process group no longer exists. A live or unprobeable group remains fenced; Tokenless never clears or kills it speculatively. Browser-based account login holds a separate global lock because the provider-owned login flow uses shared loopback ports. Managed homes are reserved for Tokenless and must not be shared with an IDE or manually launched Codex process that would bypass these locks.
+
+This supervisor contract assumes supported Codex descendants do not call `setsid` or otherwise escape the helper process group. A live orphan can therefore conservatively fence an account indefinitely. Recovery is an explicit local-operator action: terminate the identified old managed process group, or reboot, then retry. Tokenless does not use elapsed time, a client PID, or a guessed stale age as authority to clear a live tombstone.
 
 Waiting for an account slot is abortable and bounded. A ChatGPT subscription project returns an account-busy availability error after that budget; it never spills over to another subscription to aggregate concurrency. A public API or compatible-gateway driver may use non-persistent capacity spillover and cross-account concurrency only when the accounts belong to one operator-declared, provider-authorized failover domain. A per-project single-flight guard coordinates confirmed profile-health migration, while requests already dispatched against the previous binding are allowed to finish there.
 
@@ -95,9 +97,15 @@ direct/
   account-locks/
     <provider>/
       <internal-account-uuid>.lock
+      <internal-account-uuid>.lock.codex-lease.json
+  global-locks/
+    chatgpt-login.lock
+    chatgpt-login.lock.codex-lease.json
+    chatgpt-subscription-inference.lock
+    chatgpt-subscription-inference.lock.codex-lease.json
 ```
 
-`account-pool.json` is one versioned document containing accounts and project bindings. Keeping both in one document makes add, remove, bind, and automatic first-use assignment atomic. Updates use a caller-owned SQLite write transaction as the cross-process advisory lock, validate the complete next document, write a mode-`0600` temporary file, fsync it, rename it on the same filesystem, and fsync the containing directory. Logical lock databases are private coordination files, never routing or credential stores. The Tokenless direct-state root and managed profile directories use mode `0700` on POSIX systems. Direct account mode requires Node.js 22.13 or later so `node:sqlite` is available without an experimental runtime flag.
+`account-pool.json` is one versioned document containing accounts and project bindings. Keeping both in one document makes add, remove, bind, and automatic first-use assignment atomic. Updates use a caller-owned SQLite write transaction as the cross-process advisory lock, validate the complete next document, write a mode-`0600` temporary file, fsync it, rename it on the same filesystem, and fsync the containing directory. Logical lock databases are private coordination files, never routing or credential stores. The Tokenless direct-state root and managed profile directories use mode `0700` on POSIX systems. Direct account mode requires Node.js 24.15 or later so `node:sqlite` has its release-candidate stability and does not emit experimental-runtime warnings.
 
 `identity-hmac.key` is a Tokenless-generated 32-byte non-provider secret, created atomically with mode `0600` when the first managed identity is registered and never exposed through HTTP or logs. Fingerprint v1 is HMAC-SHA256 over a length-prefixed tuple of provider, account type, and canonical provider identity; mutable plan type is excluded. A missing identity rejects multi-account onboarding. If a registry with fingerprints loses its key, Tokenless fails closed rather than silently generating another one. Key rotation or recovery is an explicit local operation that rechecks and relinks every managed profile before inference resumes.
 
@@ -116,8 +124,8 @@ Account onboarding is intentionally sequential and explicit:
 1. create an account record and managed profile;
 2. launch the provider-owned `codex login` for that profile;
 3. complete ChatGPT sign-in in the provider flow;
-4. verify that `codex login status` reports ChatGPT authentication for that profile;
-5. obtain and fingerprint non-secret identity through the allowlisted official app-server method, rejecting a duplicate account; and
+4. query the allowlisted official app-server `account/read` method for that exact profile before and after login as needed;
+5. verify and fingerprint the returned non-secret ChatGPT identity, rejecting a missing or duplicate account; and
 6. explicitly pin each ChatGPT project that may use the profile.
 
 Logging in a second account never overwrites the first account's profile. The operator-supplied label remains the only displayed human identity; raw identity returned by the official account-info method is never persisted, logged, or returned.

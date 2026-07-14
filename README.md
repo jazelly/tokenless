@@ -6,7 +6,7 @@ Tokenless is a standalone CLI with two isolated transports: visible browser sess
 
 ## Install
 
-You need Node.js 22+. Visible mode additionally requires the Tokenless extension installed and enabled in Chrome, Brave, Edge, Arc, or Chromium; the extension and your provider sign-in are its only manual browser steps. Direct-only use does not require the extension or a browser.
+You need Node.js 24.15+. Visible mode additionally requires the Tokenless extension installed and enabled in Chrome, Brave, Edge, Arc, or Chromium; the extension and your provider sign-in are its only manual browser steps. Direct-only use does not require the extension or a browser.
 
 ### 1. npm CLI (recommended)
 
@@ -227,7 +227,7 @@ Do not publish yet:
 
 ## Development
 
-Building the repository requires Node.js 22+, npm, and Rust. The CLI build places the current tuple's release binaries in `packages/cli/npm/tokenless-native-<platform>-<arch>/bin`; `npm pack` of `tokenless` remains universal and binary-free. Before a native pack is created, its publisher-only verifier executes both binaries with a finite deadline and requires exact role, npm-aligned version, and normalized target tuple, rejecting swapped or stale artifacts. Release CI must build and pack the six supported tuples (`darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, `win32-x64`) on appropriate trusted builders before publishing the universal package. Normal runtime resolution uses only the locally installed optional package and never downloads an executable.
+Building the repository requires Node.js 24.15+, npm, and Rust. The CLI build places the current tuple's release binaries in `packages/cli/npm/tokenless-native-<platform>-<arch>/bin`; `npm pack` of `tokenless` remains universal and binary-free. Before a native pack is created, its publisher-only verifier executes both binaries with a finite deadline and requires exact role, npm-aligned version, and normalized target tuple, rejecting swapped or stale artifacts. Release CI must build and pack the six supported tuples (`darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, `win32-x64`) on appropriate trusted builders before publishing the universal package. Normal runtime resolution uses only the locally installed optional package and never downloads an executable.
 
 ```bash
 npm run build

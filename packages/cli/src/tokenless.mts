@@ -1010,9 +1010,9 @@ async function doctorCommand(args: CliArgs) {
     daemon = { ok: false, ready: false, url: configuredDaemonUrl, message: (error as Error).message }
   }
   const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split('.').map(Number)
-  const nodeOk = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13)
+  const nodeOk = nodeMajor > 24 || (nodeMajor === 24 && nodeMinor >= 15)
   const checks = {
-    node: { ok: nodeOk, version: process.version, required: '>=22.13.0' },
+    node: { ok: nodeOk, version: process.version, required: '>=24.15.0' },
     tokenlessHome: { ok: true, path: homeDir },
     runtimeRefresh,
     rustBinaries: binaries,

@@ -2,7 +2,7 @@ import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
-import { DatabaseSync } from 'node:sqlite'
+import type { DatabaseSync as SqliteDatabase } from 'node:sqlite'
 
 const SQLITE_BUSY = 5
 const LOCK_RETRY_INTERVAL_MS = 10
@@ -35,9 +35,11 @@ export type WithSqliteLocksOptions = Readonly<{
 }>
 
 type HeldSqliteLock = Readonly<{
-  database: DatabaseSync
+  database: SqliteDatabase
   file: string
 }>
+
+let sqliteModulePromise: Promise<typeof import('node:sqlite')> | undefined
 
 /** Holds canonical, deterministically ordered SQLite writer locks in this process. */
 export async function withSqliteLocks<T>(
@@ -105,8 +107,9 @@ async function acquireSqliteLock(
   deadline: number,
   signal: AbortSignal | undefined,
 ): Promise<HeldSqliteLock> {
-  let database: DatabaseSync | undefined
+  let database: SqliteDatabase | undefined
   try {
+    const { DatabaseSync } = await loadSqliteModule()
     database = new DatabaseSync(file)
     await validatePrivateLockFile(file)
     database.exec('PRAGMA busy_timeout = 0')
@@ -136,6 +139,11 @@ async function acquireSqliteLock(
     if (error instanceof SqliteLockError) throw error
     throw lockFailure('Cannot open a private SQLite lock database.')
   }
+}
+
+function loadSqliteModule(): Promise<typeof import('node:sqlite')> {
+  sqliteModulePromise ??= import('node:sqlite')
+  return sqliteModulePromise
 }
 
 function releaseSqliteLocks(held: readonly HeldSqliteLock[]): SqliteLockError | undefined {

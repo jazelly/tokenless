@@ -40,12 +40,24 @@ test('managed Codex profiles reject instructions, config, and unsafe auth metada
       (error) => error.reason === 'codex_profile_configuration_forbidden',
     )
     await fs.rm(path.join(codexHome, 'AGENTS.md'))
+    await fs.writeFile(path.join(codexHome, 'AgEnTs.Md'), 'do not trust this either')
+    await assert.rejects(
+      assertManagedCodexHome(codexHome),
+      (error) => error.reason === 'codex_profile_configuration_forbidden',
+    )
+    await fs.rm(path.join(codexHome, 'AgEnTs.Md'))
     await fs.writeFile(path.join(codexHome, 'personal.config.toml'), 'model="other"')
     await assert.rejects(
       assertManagedCodexHome(codexHome),
       (error) => error.reason === 'codex_profile_configuration_forbidden',
     )
     await fs.rm(path.join(codexHome, 'personal.config.toml'))
+    await fs.writeFile(path.join(codexHome, 'Config.toml'), 'model="other"')
+    await assert.rejects(
+      assertManagedCodexHome(codexHome),
+      (error) => error.reason === 'codex_profile_configuration_forbidden',
+    )
+    await fs.rm(path.join(codexHome, 'Config.toml'))
     await fs.writeFile(path.join(codexHome, 'auth.json'), '{}', { mode: 0o644 })
     await assert.rejects(
       assertManagedCodexHome(codexHome),
@@ -53,6 +65,28 @@ test('managed Codex profiles reject instructions, config, and unsafe auth metada
     )
   } finally {
     await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('managed profile ancestor aliases are rejected before Codex dispatch', { skip: posixOnly }, async () => {
+  const fixture = await createFakeCodex({ account: null })
+  try {
+    const { createManagedCodexHome, inspectCodexAccount } = await import(moduleUrl.href)
+    const first = await createManagedCodexHome(fixture.home, randomUUID())
+    const second = await createManagedCodexHome(fixture.home, randomUUID())
+    await fs.rm(path.dirname(first), { recursive: true })
+    await fs.symlink(path.dirname(second), path.dirname(first))
+    await assert.rejects(
+      inspectCodexAccount({
+        executable: fixture.executable,
+        codexHome: first,
+        identityKey: Buffer.alloc(32, 1),
+      }),
+      (error) => error.reason === 'codex_profile_unsafe',
+    )
+    await assert.rejects(fs.access(fixture.tracePath), (error) => error.code === 'ENOENT')
+  } finally {
+    await fixture.cleanup()
   }
 })
 
@@ -213,6 +247,46 @@ test('malformed app-server output is a driver-global failure without identity le
   }
 })
 
+test('oversized unterminated and invalid UTF-8 app-server frames fail closed', { skip: posixOnly }, async () => {
+  for (const mode of ['oversized', 'invalid-utf8']) {
+    const fixture = await createFakeCodex({ outputMode: mode })
+    try {
+      const { createManagedCodexHome, inspectCodexAccount } = await import(moduleUrl.href)
+      const codexHome = await createManagedCodexHome(fixture.home, randomUUID())
+      await assert.rejects(
+        inspectCodexAccount({
+          executable: fixture.executable,
+          codexHome,
+          identityKey: Buffer.alloc(32, 2),
+          timeoutMs: 5_000,
+        }),
+        (error) => error.reason === 'codex_account_read_failed',
+      )
+    } finally {
+      await fixture.cleanup()
+    }
+  }
+})
+
+test('immediate app-server stdin closure returns a structured error without helper crash', { skip: posixOnly }, async () => {
+  const fixture = await createFakeCodex({ outputMode: 'close-input' })
+  try {
+    const { createManagedCodexHome, inspectCodexAccount } = await import(moduleUrl.href)
+    const codexHome = await createManagedCodexHome(fixture.home, randomUUID())
+    await assert.rejects(
+      inspectCodexAccount({
+        executable: fixture.executable,
+        codexHome,
+        identityKey: Buffer.alloc(32, 2),
+        timeoutMs: 5_000,
+      }),
+      (error) => error.reason === 'codex_account_read_failed',
+    )
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
 test('trusted executable validation rejects writable binaries', { skip: posixOnly }, async () => {
   const fixture = await createFakeCodex({ account: null })
   try {
@@ -228,7 +302,7 @@ test('trusted executable validation rejects writable binaries', { skip: posixOnl
   }
 })
 
-async function createFakeCodex({ account = null, malformed = false } = {}) {
+async function createFakeCodex({ account = null, malformed = false, outputMode = 'normal' } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-fake-account-'))
   const executable = path.join(home, 'codex')
   const tracePath = path.join(home, 'trace.json')
@@ -237,8 +311,10 @@ import fs from 'node:fs'
 import readline from 'node:readline'
 const account = ${JSON.stringify(account)}
 const malformed = ${JSON.stringify(malformed)}
+const outputMode = ${JSON.stringify(outputMode)}
 const tracePath = ${JSON.stringify(tracePath)}
 const trace = { argv: process.argv.slice(2), environment: process.env }
+if (outputMode === 'close-input') process.exit(0)
 const rl = readline.createInterface({ input: process.stdin })
 rl.on('line', (line) => {
   const message = JSON.parse(line)
@@ -247,7 +323,9 @@ rl.on('line', (line) => {
   } else if (message.method === 'account/read') {
     trace.accountRead = message
     fs.writeFileSync(tracePath, JSON.stringify(trace))
-    if (malformed) process.stdout.write('{not-json}\\n')
+    if (outputMode === 'oversized') process.stdout.write(Buffer.alloc(1024 * 1024 + 1, 0x78))
+    else if (outputMode === 'invalid-utf8') process.stdout.write(Buffer.from([0xff, 0x0a]))
+    else if (malformed) process.stdout.write('{not-json}\\n')
     else process.stdout.write(JSON.stringify({ id: 1, result: { account, requiresOpenaiAuth: true } }) + '\\n')
   }
 })
