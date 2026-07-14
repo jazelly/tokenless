@@ -668,11 +668,15 @@ export async function refreshInstalledRustBinaries({
   for (const name of [DAEMON_BINARY_NAME, NATIVE_HOST_BINARY_NAME] as const) {
     const source = bundledRustBinaryPath(name, packageRoot)
     const destination = installedRustBinaryPath(homeDir, name)
-    const [sourceHash, destinationHash] = await Promise.all([fileHash(source), fileHash(destination)])
+    const [sourceHash, destinationHash, destinationExecutable] = await Promise.all([
+      fileHash(source),
+      fileHash(destination),
+      isExecutable(destination),
+    ])
     if (!sourceHash) {
       throw runtimeError('rust_binary_missing', `Native runtime package is missing executable: ${source}`, false)
     }
-    if (sourceHash === destinationHash) continue
+    if (sourceHash === destinationHash && destinationExecutable) continue
     await installExecutable(source, destination)
     refreshed.push(destination)
   }

@@ -1,5 +1,9 @@
 node_modules/
 test-results/
 packages/cli/npm/*/bin/
+dist/
+packages/*/dist/
+*.tsbuildinfo
+.DS_Store
 
 .env

@@ -1,7 +1,7 @@
 {
   "name": "tokenless",
   "version": "0.1.2",
-  "description": "Tokenless CLI for visible-session browser automation.",
+  "description": "Tokenless CLI for visible browser sessions and isolated direct provider APIs.",
   "type": "module",
   "license": "UNLICENSED",
   "repository": {
@@ -38,6 +38,6 @@
     "tokenless-native-win32-x64": "0.1.2"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24.15.0"
   }
 }

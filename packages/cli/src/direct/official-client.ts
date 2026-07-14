@@ -1,0 +1,1510 @@
+import { constants as fsConstants } from 'node:fs'
+import fs from 'node:fs/promises'
+import http from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
+
+import { DIRECT_PROTOCOL, DirectError } from './types.js'
+import type { DirectErrorCode, DirectRunRequest, DirectRunResult, DirectUsage } from './types.js'
+
+const DEFAULT_TIMEOUT_MS = 120_000
+const PROCESS_OUTPUT_LIMIT_BYTES = 512 * 1024
+const DIAGNOSTIC_LIMIT_BYTES = 16 * 1024
+const LAST_MESSAGE_LIMIT_BYTES = 2 * 1024 * 1024
+const PROMPT_LIMIT_BYTES = 4 * 1024 * 1024
+const PROBE_REQUEST_LIMIT_BYTES = 1024 * 1024
+const RAW_EVENT_LIMIT = 128
+const TERMINATION_GRACE_MS = 500
+const PERMISSION_PROFILE_NAME = 'tokenless_direct'
+const SANDBOX_CANARY_OUTPUT = 'TOKENLESS_SANDBOX_CANARY_EXECUTED'
+
+const MAIN_PERMISSION_PROFILE =
+  'permissions={tokenless_direct={workspace_roots={"."=true},filesystem={":root"="deny",":workspace_roots"="read"},network={enabled=false}}}'
+
+const REQUIRED_DISABLED_FEATURES = [
+  'apps',
+  'auth_elicitation',
+  'browser_use',
+  'browser_use_external',
+  'browser_use_full_cdp_access',
+  'code_mode',
+  'code_mode_host',
+  'code_mode_only',
+  'computer_use',
+  'deferred_executor',
+  'enable_fanout',
+  'enable_mcp_apps',
+  'exec_permission_approvals',
+  'guardian_approval',
+  'hooks',
+  'image_generation',
+  'imagegenext',
+  'in_app_browser',
+  'js_repl',
+  'js_repl_tools_only',
+  'memories',
+  'multi_agent',
+  'multi_agent_v2',
+  'plugin_sharing',
+  'plugins',
+  'remote_plugin',
+  'request_permissions_tool',
+  'respect_system_proxy',
+  'search_tool',
+  'shell_snapshot',
+  'shell_tool',
+  'skill_mcp_dependency_install',
+  'standalone_web_search',
+  'tool_call_mcp_elicitation',
+  'tool_suggest',
+  'unified_exec',
+  'workspace_dependencies',
+] as const
+
+const REQUIRED_EXEC_HELP_TOKENS = [
+  '--config',
+  '--disable',
+  '--strict-config',
+  '--ephemeral',
+  '--ignore-user-config',
+  '--ignore-rules',
+  '--skip-git-repo-check',
+  '--color',
+  'never',
+  '--json',
+  '--output-last-message',
+  '--model',
+] as const
+
+const REQUIRED_SANDBOX_HELP_TOKENS = ['--config', '--permission-profile', '--cd'] as const
+
+// Codex needs its own home directory to find provider-owned authentication,
+// plus a small set of process-launch and platform variables. Everything else
+// is dropped so credentials, routing overrides, loader injection, proxies, and
+// application-specific state cannot cross this boundary accidentally.
+const ALLOWED_CHILD_ENVIRONMENT = [
+  'APPDATA',
+  'CODEX_HOME',
+  'COMSPEC',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'HOME',
+  'LANG',
+  'LANGUAGE',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LOCALAPPDATA',
+  'LOGNAME',
+  'OS',
+  'PATH',
+  'PATHEXT',
+  'PROGRAMDATA',
+  'SYSTEMROOT',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'TZ',
+  'USER',
+  'USERNAME',
+  'USERPROFILE',
+  'WINDIR',
+] as const
+
+export type DirectOfficialClientErrorReason =
+  | 'codex_aborted'
+  | 'codex_binary_missing'
+  | 'codex_binary_not_executable'
+  | 'codex_cleanup_failed'
+  | 'codex_invalid_output'
+  | 'codex_not_chatgpt_authenticated'
+  | 'codex_nonzero_exit'
+  | 'codex_operational_failure'
+  | 'codex_prompt_too_large'
+  | 'codex_timeout'
+  | 'codex_unsupported'
+  | 'invalid_request'
+  | 'unsupported_official_client_provider'
+
+export class DirectOfficialClientError extends DirectError {
+  readonly reason: DirectOfficialClientErrorReason
+  readonly stage?: OfficialCodexStage
+  readonly exitCode?: number | null
+
+  constructor({
+    code,
+    reason,
+    message,
+    retryable = false,
+    stage,
+    exitCode,
+  }: {
+    code: DirectErrorCode
+    reason: DirectOfficialClientErrorReason
+    message: string
+    retryable?: boolean
+    stage?: OfficialCodexStage
+    exitCode?: number | null
+  }) {
+    super(code, message, { retryable })
+    this.reason = reason
+    if (stage !== undefined) this.stage = stage
+    if (exitCode !== undefined) this.exitCode = exitCode
+  }
+
+  override toJSON() {
+    return {
+      ...super.toJSON(),
+      reason: this.reason,
+      ...(this.stage === undefined ? {} : { stage: this.stage }),
+      ...(this.exitCode === undefined ? {} : { exitCode: this.exitCode }),
+    }
+  }
+}
+
+export type OfficialCodexOptions = {
+  /** Overrides TOKENLESS_CODEX_BIN. The value is always spawned directly, never through a shell. */
+  executable?: string | undefined
+  /** Includes capability checks and login-status preflight, not only inference time. */
+  timeoutMs?: number | undefined
+}
+
+export type ManagedOfficialCodexOptions = Readonly<{
+  command: Readonly<{
+    executable: string
+    argsPrefix: readonly string[]
+  }>
+  codexHome: string
+  environment: Readonly<Record<string, string>>
+  prompt: string
+  model?: string | undefined
+  timeoutMs: number
+  signal: AbortSignal
+  setChild: (child: ChildProcess | undefined) => void
+  dispatchPrompt: (dispatch: () => void) => Promise<void>
+}>
+
+export type ManagedOfficialCodexResult = Readonly<{
+  text: string
+  model?: string | undefined
+  usage?: DirectUsage | undefined
+}>
+
+type OfficialCodexStage = 'capability' | 'authentication' | 'execution'
+
+type CapturedOutput = {
+  bytes: Buffer
+  truncated: boolean
+}
+
+type ChildResult = {
+  code: number | null
+  signal: NodeJS.Signals | null
+  stdout: CapturedOutput
+  stderr: CapturedOutput
+  termination: 'aborted' | 'timeout' | undefined
+}
+
+type ChildLifecycle = Readonly<{
+  detached: boolean
+  setChild: (child: ChildProcess | undefined) => void
+  dispatchStdin?: ((dispatch: () => void) => Promise<void>) | undefined
+}>
+
+class ManagedPromptDispatchFailure extends Error {
+  readonly original: unknown
+
+  constructor(original: unknown) {
+    super('The managed Codex prompt dispatch boundary failed.')
+    this.name = 'ManagedPromptDispatchFailure'
+    this.original = original
+  }
+}
+
+type RawCodexOutput = {
+  events: unknown[]
+  truncated: boolean
+}
+
+type ParsedCodexOutput = {
+  raw: RawCodexOutput
+  usage?: DirectUsage
+}
+
+/**
+ * Run the provider-owned Codex client for a ChatGPT-plan request.
+ *
+ * Tokenless never reads Codex's credential store. Codex receives the prompt only
+ * on stdin and runs from a newly-created, empty working directory.
+ */
+export async function runOfficialCodex(
+  request: DirectRunRequest,
+  options: OfficialCodexOptions = {},
+): Promise<DirectRunResult> {
+  const validated = validateRequest(request)
+  if (process.platform === 'win32') {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_unsupported',
+      message: 'The official Codex backend currently supports macOS and Linux. Use backend api on Windows.',
+    })
+  }
+
+  const executable = resolveExecutable(options.executable)
+  const timeoutMs = resolveTimeout(options.timeoutMs)
+  const deadline = Date.now() + timeoutMs
+  const childEnvironment = officialCodexEnvironment(process.env)
+  let temporaryRoot: string | undefined
+  let operationFailed = false
+
+  try {
+    throwIfAborted(request.signal)
+    temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-codex-'))
+    const preflightDirectory = path.join(temporaryRoot, 'preflight')
+    const workingDirectory = path.join(temporaryRoot, 'workspace')
+    const isolatedCodexHome = path.join(temporaryRoot, 'probe-home')
+    const outputPath = path.join(temporaryRoot, 'last-message.txt')
+    await Promise.all([
+      fs.mkdir(preflightDirectory, { mode: 0o700 }),
+      fs.mkdir(workingDirectory, { mode: 0o700 }),
+      fs.mkdir(isolatedCodexHome, { mode: 0o700 }),
+    ])
+    throwIfAborted(request.signal)
+
+    await validateCodexCapabilities({
+      executable,
+      cwd: preflightDirectory,
+      workspace: workingDirectory,
+      isolatedCodexHome,
+      deadline,
+      signal: request.signal,
+      env: childEnvironment,
+    })
+    await validateChatGptAuthentication({
+      executable,
+      cwd: preflightDirectory,
+      deadline,
+      signal: request.signal,
+      env: childEnvironment,
+    })
+
+    throwIfAborted(request.signal)
+
+    const args = [
+      'exec',
+      '--strict-config',
+      ...codexConfigurationArgs(MAIN_PERMISSION_PROFILE),
+      ...disabledFeatureArgs(),
+      '--ephemeral',
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--skip-git-repo-check',
+      '--color',
+      'never',
+      '--json',
+      '--output-last-message',
+      outputPath,
+      ...(validated.model === undefined ? [] : ['--model', validated.model]),
+    ]
+
+    const child = await runChild({
+      executable,
+      args,
+      cwd: workingDirectory,
+      env: childEnvironment,
+      stdin: request.prompt,
+      timeoutMs: remainingTime(deadline),
+      signal: request.signal,
+    })
+    throwForTermination(child, 'execution')
+    if (child.code !== 0) {
+      throw new DirectOfficialClientError({
+        code: 'direct_upstream_error',
+        reason: 'codex_nonzero_exit',
+        message: 'The official Codex client exited unsuccessfully.',
+        retryable: true,
+        stage: 'execution',
+        exitCode: child.code,
+      })
+    }
+
+    const machineOutput = parseMachineEvents(child.stdout)
+    const text = await readLastMessage(outputPath)
+
+    return {
+      protocol: DIRECT_PROTOCOL,
+      backend: 'official-client',
+      transport: 'official-codex',
+      capability: 'openai.codex',
+      provider: 'chatgpt',
+      ...(validated.model === undefined ? {} : { model: validated.model }),
+      text,
+      ...(machineOutput.usage === undefined ? {} : { usage: machineOutput.usage }),
+      raw: machineOutput.raw,
+    }
+  } catch (error) {
+    operationFailed = true
+    throw normalizeOfficialClientFailure(error)
+  } finally {
+    if (temporaryRoot !== undefined) {
+      try {
+        await fs.rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3 })
+      } catch {
+        if (!operationFailed) {
+          throw new DirectOfficialClientError({
+            code: 'direct_upstream_error',
+            reason: 'codex_cleanup_failed',
+            message: 'The official Codex client could not remove its isolated temporary files.',
+          })
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Runs one already-authorized managed profile without consulting ambient login
+ * state. The caller owns durable account/inference locks and performs structured
+ * account/read verification before entering this function.
+ */
+export async function runManagedOfficialCodex(
+  options: ManagedOfficialCodexOptions,
+): Promise<ManagedOfficialCodexResult> {
+  const validated = validateManagedOptions(options)
+  const deadline = Date.now() + validated.timeoutMs
+  const baseEnvironment = officialCodexEnvironment(validated.environment)
+  let temporaryRoot: string | undefined
+  let operationFailed = false
+
+  try {
+    throwIfAborted(validated.signal)
+    temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-managed-codex-'))
+    const preflightDirectory = path.join(temporaryRoot, 'preflight')
+    const workingDirectory = path.join(temporaryRoot, 'workspace')
+    const isolatedCodexHome = path.join(temporaryRoot, 'probe-home')
+    const outputPath = path.join(temporaryRoot, 'last-message.txt')
+    await Promise.all([
+      fs.mkdir(preflightDirectory, { mode: 0o700 }),
+      fs.mkdir(workingDirectory, { mode: 0o700 }),
+      fs.mkdir(isolatedCodexHome, { mode: 0o700 }),
+    ])
+    throwIfAborted(validated.signal)
+
+    const childLifecycle = {
+      detached: false,
+      setChild: validated.setChild,
+    }
+    await validateCodexCapabilities({
+      executable: validated.command.executable,
+      argsPrefix: validated.command.argsPrefix,
+      cwd: preflightDirectory,
+      workspace: workingDirectory,
+      isolatedCodexHome,
+      deadline,
+      signal: validated.signal,
+      env: baseEnvironment,
+      childLifecycle,
+    })
+    throwIfAborted(validated.signal)
+
+    const args = [
+      ...validated.command.argsPrefix,
+      'exec',
+      '--strict-config',
+      ...codexConfigurationArgs(MAIN_PERMISSION_PROFILE),
+      '--config',
+      'cli_auth_credentials_store="file"',
+      '--config',
+      'analytics.enabled=false',
+      ...disabledFeatureArgs(),
+      '--ephemeral',
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--skip-git-repo-check',
+      '--color',
+      'never',
+      '--json',
+      '--output-last-message',
+      outputPath,
+      ...(validated.model === undefined ? [] : ['--model', validated.model]),
+    ]
+    const child = await runChild({
+      executable: validated.command.executable,
+      args,
+      cwd: workingDirectory,
+      env: { ...baseEnvironment, CODEX_HOME: validated.codexHome },
+      stdin: validated.prompt,
+      timeoutMs: remainingTime(deadline),
+      signal: validated.signal,
+      childLifecycle: {
+        ...childLifecycle,
+        dispatchStdin: async (dispatch) => {
+          try {
+            await validated.dispatchPrompt(dispatch)
+          } catch (error) {
+            throw new ManagedPromptDispatchFailure(error)
+          }
+        },
+      },
+    })
+    throwForTermination(child, 'execution')
+    if (child.code !== 0) {
+      throw new DirectOfficialClientError({
+        code: 'direct_upstream_error',
+        reason: 'codex_nonzero_exit',
+        message: 'The managed official Codex client exited unsuccessfully.',
+        retryable: true,
+        stage: 'execution',
+        exitCode: child.code,
+      })
+    }
+
+    const machineOutput = parseMachineEvents(child.stdout)
+    const text = await readLastMessage(outputPath)
+    return Object.freeze({
+      text,
+      ...(validated.model === undefined ? {} : { model: validated.model }),
+      ...(machineOutput.usage === undefined ? {} : { usage: machineOutput.usage }),
+    })
+  } catch (error) {
+    operationFailed = true
+    if (error instanceof ManagedPromptDispatchFailure) throw error.original
+    throw normalizeOfficialClientFailure(error)
+  } finally {
+    validated.setChild(undefined)
+    if (temporaryRoot !== undefined) {
+      try {
+        await fs.rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3 })
+      } catch {
+        if (!operationFailed) {
+          throw new DirectOfficialClientError({
+            code: 'direct_upstream_error',
+            reason: 'codex_cleanup_failed',
+            message: 'The managed official Codex client could not remove its isolated temporary files.',
+          })
+        }
+      }
+    }
+  }
+}
+
+function validateManagedOptions(options: ManagedOfficialCodexOptions): ManagedOfficialCodexOptions {
+  if (options === null || typeof options !== 'object') {
+    throw invalidManagedOptions('Managed official Codex options are required.')
+  }
+  if (
+    options.command === null || typeof options.command !== 'object' ||
+    typeof options.command.executable !== 'string' || options.command.executable === '' || options.command.executable.includes('\0') ||
+    !Array.isArray(options.command.argsPrefix) ||
+    options.command.argsPrefix.some((value) => typeof value !== 'string' || value.includes('\0')) ||
+    typeof options.codexHome !== 'string' || !path.isAbsolute(options.codexHome) || options.codexHome.includes('\0') ||
+    typeof options.prompt !== 'string' || !/\S/u.test(options.prompt) ||
+    Buffer.byteLength(options.prompt, 'utf8') > PROMPT_LIMIT_BYTES ||
+    !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 ||
+    !(options.signal instanceof AbortSignal) ||
+    typeof options.setChild !== 'function' || typeof options.dispatchPrompt !== 'function'
+  ) throw invalidManagedOptions('Managed official Codex options are invalid.')
+  if (
+    options.model !== undefined &&
+    (typeof options.model !== 'string' || options.model.trim() === '' || options.model.includes('\0'))
+  ) throw invalidManagedOptions('The managed Codex model is invalid.')
+  return options
+}
+
+function invalidManagedOptions(message: string): DirectOfficialClientError {
+  return new DirectOfficialClientError({
+    code: 'direct_configuration_error',
+    reason: 'invalid_request',
+    message,
+  })
+}
+
+function normalizeOfficialClientFailure(error: unknown) {
+  if (error instanceof DirectOfficialClientError) return error
+  if (isMissingExecutableError(error)) {
+    return new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_binary_missing',
+      message: 'The Codex executable was not found. Install Codex or set TOKENLESS_CODEX_BIN.',
+    })
+  }
+  if (isNotExecutableError(error)) {
+    return new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_binary_not_executable',
+      message: 'The configured Codex executable cannot be executed.',
+    })
+  }
+  return new DirectOfficialClientError({
+    code: 'direct_upstream_error',
+    reason: 'codex_operational_failure',
+    message: 'The official Codex client could not complete its isolated operation.',
+  })
+}
+
+function validateRequest(request: DirectRunRequest) {
+  if (request === null || typeof request !== 'object') {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'invalid_request',
+      message: 'A direct run request is required for the official Codex client.',
+    })
+  }
+  if (request.provider !== 'chatgpt') {
+    throw new DirectOfficialClientError({
+      code: 'direct_unsupported_provider',
+      reason: 'unsupported_official_client_provider',
+      message: 'The official Codex client backend supports only the chatgpt provider.',
+    })
+  }
+  if (request.backend !== undefined && request.backend !== 'official-client') {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'invalid_request',
+      message: 'The official Codex runner requires backend official-client.',
+    })
+  }
+  if (typeof request.prompt !== 'string' || request.prompt.trim() === '') {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'invalid_request',
+      message: 'A nonempty prompt is required for the official Codex client.',
+    })
+  }
+  if (Buffer.byteLength(request.prompt, 'utf8') > PROMPT_LIMIT_BYTES) {
+    throw new DirectOfficialClientError({
+      code: 'direct_request_too_large',
+      reason: 'codex_prompt_too_large',
+      message: 'The official Codex client prompt exceeded the supported size limit.',
+    })
+  }
+  if (
+    request.model !== undefined &&
+    (typeof request.model !== 'string' || request.model.trim() === '' || request.model.includes('\0'))
+  ) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'invalid_request',
+      message: 'The Codex model must be nonempty when provided.',
+    })
+  }
+  if (request.maxOutputTokens !== undefined || request.temperature !== undefined) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'invalid_request',
+      message: 'The official Codex client does not accept maxOutputTokens or temperature.',
+    })
+  }
+  return { model: request.model?.trim() }
+}
+
+function resolveExecutable(option: string | undefined) {
+  const executable = option ?? process.env.TOKENLESS_CODEX_BIN ?? 'codex'
+  if (executable.trim() === '' || executable.includes('\0')) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'invalid_request',
+      message: 'The configured Codex executable must be a nonempty path or command name.',
+    })
+  }
+  return executable
+}
+
+function resolveTimeout(option: number | undefined) {
+  const environmentValue = process.env.TOKENLESS_DIRECT_TIMEOUT_MS
+  const timeout = option ?? (environmentValue === undefined ? DEFAULT_TIMEOUT_MS : Number(environmentValue))
+  if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 2_147_483_647) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'invalid_request',
+      message: 'The direct Codex timeout must be a positive integer in milliseconds.',
+    })
+  }
+  return timeout
+}
+
+function officialCodexEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {}
+  const available = new Map<string, string>()
+  for (const [key, value] of Object.entries(environment)) {
+    if (value !== undefined && !available.has(key.toUpperCase())) available.set(key.toUpperCase(), value)
+  }
+  for (const name of ALLOWED_CHILD_ENVIRONMENT) {
+    const value = available.get(name)
+    if (value !== undefined) result[name] = value
+  }
+  // This is a provider-owned fail-closed switch, not an inherited routing
+  // override. Codex omits its local/remote execution environment when it is
+  // exactly `none`, which removes model-facing shell and filesystem tools.
+  result.CODEX_EXEC_SERVER_URL = 'none'
+  return result
+}
+
+function codexConfigurationArgs(permissionProfile: string) {
+  return [
+    '--config',
+    `default_permissions="${PERMISSION_PROFILE_NAME}"`,
+    '--config',
+    permissionProfile,
+    '--config',
+    'approval_policy="never"',
+    '--config',
+    'shell_environment_policy.inherit="none"',
+    '--config',
+    'project_doc_max_bytes=0',
+    '--config',
+    'web_search="disabled"',
+    '--config',
+    'skills.include_instructions=false',
+    '--config',
+    'skills.bundled.enabled=false',
+    '--config',
+    'orchestrator.skills.enabled=false',
+    '--config',
+    'orchestrator.mcp.enabled=false',
+    '--config',
+    'tools.experimental_request_user_input.enabled=false',
+  ]
+}
+
+function disabledFeatureArgs() {
+  return REQUIRED_DISABLED_FEATURES.flatMap((feature) => ['--disable', feature])
+}
+
+async function validateCodexCapabilities({
+  executable,
+  argsPrefix = [],
+  cwd,
+  workspace,
+  isolatedCodexHome,
+  deadline,
+  signal,
+  env,
+  childLifecycle,
+}: {
+  executable: string
+  argsPrefix?: readonly string[] | undefined
+  cwd: string
+  workspace: string
+  isolatedCodexHome: string
+  deadline: number
+  signal: AbortSignal | undefined
+  env: NodeJS.ProcessEnv
+  childLifecycle?: ChildLifecycle | undefined
+}) {
+  const preflightEnvironment = { ...env, CODEX_HOME: isolatedCodexHome }
+  const execHelp = await runChild({
+    executable,
+    args: [...argsPrefix, 'exec', '--help'],
+    cwd,
+    env: preflightEnvironment,
+    timeoutMs: remainingTime(deadline),
+    signal,
+    childLifecycle,
+  })
+  throwForTermination(execHelp, 'capability')
+  if (execHelp.code !== 0) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_unsupported',
+      message: 'The installed Codex client could not report its exec capabilities.',
+      stage: 'capability',
+      exitCode: execHelp.code,
+    })
+  }
+
+  const help = Buffer.concat([execHelp.stdout.bytes, execHelp.stderr.bytes]).toString('utf8')
+  const missing = REQUIRED_EXEC_HELP_TOKENS.filter((token) => !hasHelpToken(help, token))
+  if (execHelp.stdout.truncated || execHelp.stderr.truncated || missing.length > 0) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_unsupported',
+      message:
+        missing.length === 0
+          ? 'The installed Codex client returned an oversized capability description. Upgrade Codex.'
+          : `The installed Codex client lacks required isolation capabilities (${missing.join(', ')}). Upgrade Codex.`,
+      stage: 'capability',
+    })
+  }
+
+  const features = await runChild({
+    executable,
+    args: [...argsPrefix, 'features', 'list'],
+    cwd,
+    env: preflightEnvironment,
+    timeoutMs: remainingTime(deadline),
+    signal,
+    childLifecycle,
+  })
+  throwForTermination(features, 'capability')
+  const availableFeatures = parseFeatureNames(features.stdout.bytes)
+  const missingFeatures = REQUIRED_DISABLED_FEATURES.filter((feature) => !availableFeatures.has(feature))
+  if (
+    features.code !== 0 ||
+    features.stdout.truncated ||
+    features.stderr.truncated ||
+    missingFeatures.length > 0
+  ) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_unsupported',
+      message:
+        missingFeatures.length === 0
+          ? 'The installed Codex client could not report a bounded feature catalog.'
+          : `The installed Codex client lacks required feature controls (${missingFeatures.join(', ')}). Upgrade Codex.`,
+      stage: 'capability',
+      exitCode: features.code,
+    })
+  }
+
+  const sandboxHelp = await runChild({
+    executable,
+    args: [...argsPrefix, 'sandbox', '--help'],
+    cwd,
+    env: preflightEnvironment,
+    timeoutMs: remainingTime(deadline),
+    signal,
+    childLifecycle,
+  })
+  throwForTermination(sandboxHelp, 'capability')
+  const sandboxHelpText = Buffer.concat([sandboxHelp.stdout.bytes, sandboxHelp.stderr.bytes]).toString('utf8')
+  const missingSandboxCapabilities = REQUIRED_SANDBOX_HELP_TOKENS.filter(
+    (token) => !hasHelpToken(sandboxHelpText, token),
+  )
+  if (
+    sandboxHelp.code !== 0 ||
+    sandboxHelp.stdout.truncated ||
+    sandboxHelp.stderr.truncated ||
+    missingSandboxCapabilities.length > 0
+  ) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_unsupported',
+      message:
+        missingSandboxCapabilities.length === 0
+          ? 'The installed Codex client could not report bounded sandbox capabilities.'
+          : `The installed Codex client lacks required sandbox capabilities (${missingSandboxCapabilities.join(', ')}). Upgrade Codex.`,
+      stage: 'capability',
+      exitCode: sandboxHelp.code,
+    })
+  }
+
+  await validateSandboxDeniesLocalExecution({
+    executable,
+    workspace,
+    deadline,
+    signal,
+    env: preflightEnvironment,
+    argsPrefix,
+    childLifecycle,
+  })
+  await validateCodexToolSchema({
+    executable,
+    workspace,
+    deadline,
+    signal,
+    env: preflightEnvironment,
+    argsPrefix,
+    childLifecycle,
+  })
+}
+
+function parseFeatureNames(output: Buffer) {
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(output)
+  } catch {
+    return new Set<string>()
+  }
+  const features = new Set<string>()
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^([a-z][a-z0-9_]*)\s+.+\s+(?:true|false)\s*$/.exec(line.trim())
+    if (match?.[1] !== undefined) features.add(match[1])
+  }
+  return features
+}
+
+async function validateSandboxDeniesLocalExecution({
+  executable,
+  argsPrefix = [],
+  workspace,
+  deadline,
+  signal,
+  env,
+  childLifecycle,
+}: {
+  executable: string
+  argsPrefix?: readonly string[] | undefined
+  workspace: string
+  deadline: number
+  signal: AbortSignal | undefined
+  env: NodeJS.ProcessEnv
+  childLifecycle?: ChildLifecycle | undefined
+}) {
+  const canary = await runChild({
+    executable,
+    args: [
+      ...argsPrefix,
+      'sandbox',
+      ...codexConfigurationArgs(MAIN_PERMISSION_PROFILE),
+      '--permission-profile',
+      PERMISSION_PROFILE_NAME,
+      '--cd',
+      workspace,
+      '--',
+      process.execPath,
+      '-e',
+      `process.stdout.write(${JSON.stringify(SANDBOX_CANARY_OUTPUT)})`,
+    ],
+    cwd: workspace,
+    env,
+    timeoutMs: remainingTime(deadline),
+    signal,
+    childLifecycle,
+  })
+  throwForTermination(canary, 'capability')
+
+  const stdout = canary.stdout.bytes.toString('utf8').trim()
+  const stderr = canary.stderr.bytes.toString('utf8').trim()
+  const explicitDenial = /(?:permission denied|operation not permitted|access is denied|sandbox denial)/i.test(
+    stderr,
+  )
+  // On macOS, a denied dynamic-loader/bootstrap read terminates Node with
+  // SIGABRT (128 + 6) before it can emit a diagnostic. That exact empty-output
+  // result is the platform's reproducible fail-closed signature.
+  const macOsBootstrapDenial =
+    process.platform === 'darwin' && canary.code === 134 && stdout === '' && stderr === ''
+  if (
+    canary.code === 0 ||
+    canary.code === null ||
+    canary.stdout.truncated ||
+    canary.stderr.truncated ||
+    stdout.includes(SANDBOX_CANARY_OUTPUT) ||
+    (!explicitDenial && !macOsBootstrapDenial)
+  ) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_unsupported',
+      message: 'The installed Codex client did not prove that the Tokenless sandbox denies local execution.',
+      stage: 'capability',
+      exitCode: canary.code,
+    })
+  }
+}
+
+async function validateCodexToolSchema({
+  executable,
+  argsPrefix = [],
+  workspace,
+  deadline,
+  signal,
+  env,
+  childLifecycle,
+}: {
+  executable: string
+  argsPrefix?: readonly string[] | undefined
+  workspace: string
+  deadline: number
+  signal: AbortSignal | undefined
+  env: NodeJS.ProcessEnv
+  childLifecycle?: ChildLifecycle | undefined
+}) {
+  let observed:
+    | {
+        method: string | undefined
+        url: string | undefined
+        authorization: string | undefined
+        cookie: string | undefined
+        body: unknown
+      }
+    | undefined
+  let requestCount = 0
+  let requestFailure: string | undefined
+  const server = http.createServer((request, response) => {
+    void (async () => {
+      requestCount += 1
+      try {
+        const body = await readProbeRequest(request)
+        observed = {
+          method: request.method,
+          url: request.url,
+          authorization: request.headers.authorization,
+          cookie: request.headers.cookie,
+          body,
+        }
+        response.writeHead(200, {
+          'cache-control': 'no-cache',
+          'content-type': 'text/event-stream',
+        })
+        response.end(
+          'event: response.created\n' +
+            'data: {"type":"response.created","response":{"id":"tokenless-probe"}}\n\n' +
+            'event: response.completed\n' +
+            'data: {"type":"response.completed","response":{"id":"tokenless-probe","usage":{"input_tokens":0,"input_tokens_details":null,"output_tokens":0,"output_tokens_details":null,"total_tokens":0}}}\n\n',
+        )
+      } catch (error) {
+        requestFailure = error instanceof Error ? error.message : 'invalid probe request'
+        if (!response.headersSent) response.writeHead(400, { 'content-type': 'text/plain' })
+        response.end('invalid probe request')
+      }
+    })()
+  })
+
+  await listenOnLoopback(server)
+  const address = server.address()
+  if (address === null || typeof address === 'string') {
+    await closeServer(server)
+    throw unsupportedCapability('The Codex tool-isolation probe could not bind a loopback server.')
+  }
+
+  const probeEnvironment = {
+    ...env,
+    TOKENLESS_PROBE_API_KEY: 'tokenless-probe-only',
+  }
+  const providerConfig =
+    `model_providers.tokenless_probe={name="Tokenless Probe",base_url="http://127.0.0.1:${address.port}/v1",` +
+    'env_key="TOKENLESS_PROBE_API_KEY",wire_api="responses",supports_websockets=false,request_max_retries=0,stream_max_retries=0}'
+  let child: ChildResult
+  try {
+    child = await runChild({
+      executable,
+      args: [
+        ...argsPrefix,
+        'exec',
+        '--strict-config',
+        ...codexConfigurationArgs(MAIN_PERMISSION_PROFILE),
+        ...disabledFeatureArgs(),
+        '--config',
+        'model_provider="tokenless_probe"',
+        '--config',
+        providerConfig,
+        '--ephemeral',
+        '--ignore-user-config',
+        '--ignore-rules',
+        '--skip-git-repo-check',
+        '--color',
+        'never',
+        '--json',
+        '--model',
+        'gpt-5.1',
+      ],
+      cwd: workspace,
+      env: probeEnvironment,
+      stdin: 'Return exactly OK without calling any tools.',
+      timeoutMs: remainingTime(deadline),
+      signal,
+      childLifecycle,
+    })
+  } finally {
+    await closeServer(server)
+  }
+  throwForTermination(child, 'capability')
+
+  const body = observed?.body
+  const tools = isRecord(body) && Array.isArray(body.tools) ? body.tools : undefined
+  const serializedBody = body === undefined ? '' : JSON.stringify(body)
+  const exactSafeToolSet =
+    tools?.length === 1 && isRecord(tools[0]) && tools[0].type === 'function' && tools[0].name === 'update_plan'
+  const exposesSkillContext =
+    /<skills_instructions>|SKILL\.md|(?:[/\\])\.agents(?:[/\\])skills/i.test(serializedBody)
+  if (
+    child.code !== 0 ||
+    child.stdout.truncated ||
+    child.stderr.truncated ||
+    requestCount !== 1 ||
+    requestFailure !== undefined ||
+    observed?.method !== 'POST' ||
+    observed.url !== '/v1/responses' ||
+    observed.authorization !== 'Bearer tokenless-probe-only' ||
+    observed.cookie !== undefined ||
+    exposesSkillContext ||
+    !exactSafeToolSet
+  ) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_unsupported',
+      message: 'The installed Codex client did not prove the required model-facing tool isolation.',
+      stage: 'capability',
+      exitCode: child.code,
+    })
+  }
+}
+
+async function readProbeRequest(request: http.IncomingMessage) {
+  const chunks: Buffer[] = []
+  let length = 0
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    length += bytes.length
+    if (length > PROBE_REQUEST_LIMIT_BYTES) throw new Error('oversized probe request')
+    chunks.push(bytes)
+  }
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, length))
+  return JSON.parse(text) as unknown
+}
+
+async function listenOnLoopback(server: http.Server) {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error)
+    server.once('error', onError)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', onError)
+      resolve()
+    })
+  })
+}
+
+async function closeServer(server: http.Server) {
+  if (!server.listening) return
+  const closed = new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)))
+  })
+  server.closeAllConnections()
+  await closed
+}
+
+function unsupportedCapability(message: string) {
+  return new DirectOfficialClientError({
+    code: 'direct_configuration_error',
+    reason: 'codex_unsupported',
+    message,
+    stage: 'capability',
+  })
+}
+
+async function validateChatGptAuthentication({
+  executable,
+  cwd,
+  deadline,
+  signal,
+  env,
+}: {
+  executable: string
+  cwd: string
+  deadline: number
+  signal: AbortSignal | undefined
+  env: NodeJS.ProcessEnv
+}) {
+  const child = await runChild({
+    executable,
+    args: ['login', 'status'],
+    cwd,
+    env,
+    timeoutMs: remainingTime(deadline),
+    signal,
+  })
+  throwForTermination(child, 'authentication')
+  const statusFragments = [child.stdout.bytes, child.stderr.bytes]
+    .map((bytes) => bytes.toString('utf8').trim())
+    .filter((value) => value !== '')
+  if (
+    child.code !== 0 ||
+    child.stdout.truncated ||
+    child.stderr.truncated ||
+    statusFragments.length !== 1 ||
+    !/^logged in using chatgpt$/i.test(statusFragments[0] ?? '')
+  ) {
+    throw new DirectOfficialClientError({
+      code: 'direct_configuration_error',
+      reason: 'codex_not_chatgpt_authenticated',
+      message: 'Codex is not authenticated with ChatGPT. Run codex login and choose ChatGPT.',
+      stage: 'authentication',
+      exitCode: child.code,
+    })
+  }
+}
+
+function remainingTime(deadline: number) {
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) {
+    throw new DirectOfficialClientError({
+      code: 'direct_timeout',
+      reason: 'codex_timeout',
+      message: 'The official Codex client timed out.',
+      retryable: true,
+    })
+  }
+  return remaining
+}
+
+function throwIfAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) {
+    throw new DirectOfficialClientError({
+      code: 'direct_upstream_error',
+      reason: 'codex_aborted',
+      message: 'The official Codex client request was aborted.',
+      retryable: true,
+    })
+  }
+}
+
+function throwForTermination(result: ChildResult, stage: OfficialCodexStage) {
+  if (result.termination === 'timeout') {
+    throw new DirectOfficialClientError({
+      code: 'direct_timeout',
+      reason: 'codex_timeout',
+      message: 'The official Codex client timed out.',
+      retryable: true,
+      stage,
+    })
+  }
+  if (result.termination === 'aborted') {
+    throw new DirectOfficialClientError({
+      code: 'direct_upstream_error',
+      reason: 'codex_aborted',
+      message: 'The official Codex client request was aborted.',
+      retryable: true,
+      stage,
+    })
+  }
+}
+
+async function readLastMessage(outputPath: string) {
+  let handle: fs.FileHandle
+  try {
+    handle = await fs.open(outputPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0))
+  } catch (error) {
+    if (isNodeError(error) && (error.code === 'ENOENT' || error.code === 'ELOOP')) {
+      throw invalidOutputError('The official Codex client did not produce a safe last-message file.')
+    }
+    throw error
+  }
+
+  try {
+    const stat = await handle.stat()
+    if (!stat.isFile() || stat.size === 0 || stat.size > LAST_MESSAGE_LIMIT_BYTES) {
+      throw invalidOutputError('The official Codex client produced a missing, empty, or oversized last message.')
+    }
+    const bytes = Buffer.alloc(stat.size)
+    let offset = 0
+    while (offset < stat.size) {
+      const { bytesRead } = await handle.read(bytes, offset, stat.size - offset, offset)
+      if (bytesRead === 0) {
+        throw invalidOutputError('The official Codex client produced an incomplete last message.')
+      }
+      offset += bytesRead
+    }
+    let decoded: string
+    try {
+      decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch {
+      throw invalidOutputError('The official Codex client produced a non-UTF-8 last message.')
+    }
+    const text = decoded.replace(/^\uFEFF/, '').trim()
+    if (text === '') {
+      throw invalidOutputError('The official Codex client produced an empty last message.')
+    }
+    return text
+  } finally {
+    await handle.close()
+  }
+}
+
+function parseMachineEvents(output: CapturedOutput): ParsedCodexOutput {
+  let bytes = output.bytes
+  if (output.truncated) {
+    const lastNewline = bytes.lastIndexOf(0x0a)
+    bytes = lastNewline === -1 ? Buffer.alloc(0) : bytes.subarray(0, lastNewline + 1)
+  }
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw invalidOutputError('The official Codex client produced non-UTF-8 machine output.')
+  }
+  const lines = text.split(/\r?\n/)
+
+  const events: unknown[] = []
+  let truncated = output.truncated
+  let usage: DirectUsage | undefined
+  for (const line of lines) {
+    if (line.trim() === '') continue
+    let event: unknown
+    try {
+      event = JSON.parse(line)
+    } catch {
+      throw invalidOutputError('The official Codex client produced invalid JSONL machine output.')
+    }
+    if (event === null || typeof event !== 'object' || Array.isArray(event)) {
+      throw invalidOutputError('The official Codex client produced an invalid machine event.')
+    }
+    const eventUsage = normalizeCodexUsage(event as Record<string, unknown>)
+    if (eventUsage !== undefined) usage = eventUsage
+    if (events.length < RAW_EVENT_LIMIT) events.push(event)
+    else truncated = true
+  }
+  if (events.length === 0) {
+    throw invalidOutputError('The official Codex client produced no machine events.')
+  }
+  return {
+    raw: { events, truncated },
+    ...(usage === undefined ? {} : { usage }),
+  }
+}
+
+function normalizeCodexUsage(event: Record<string, unknown>): DirectUsage | undefined {
+  if (event.type !== 'turn.completed' || !isRecord(event.usage)) return undefined
+  const inputTokens = nonnegativeInteger(event.usage.input_tokens)
+  const outputTokens = nonnegativeInteger(event.usage.output_tokens)
+  const reportedTotal = nonnegativeInteger(event.usage.total_tokens)
+  const totalTokens =
+    reportedTotal ?? (inputTokens === undefined || outputTokens === undefined ? undefined : inputTokens + outputTokens)
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) return undefined
+  return {
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+  }
+}
+
+function nonnegativeInteger(value: unknown) {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function invalidOutputError(message: string) {
+  return new DirectOfficialClientError({
+    code: 'direct_invalid_response',
+    reason: 'codex_invalid_output',
+    message,
+    stage: 'execution',
+  })
+}
+
+async function runChild({
+  executable,
+  args,
+  cwd,
+  env,
+  stdin,
+  timeoutMs,
+  signal,
+  childLifecycle,
+}: {
+  executable: string
+  args: string[]
+  cwd: string
+  env: NodeJS.ProcessEnv
+  stdin?: string
+  timeoutMs: number
+  signal?: AbortSignal | undefined
+  childLifecycle?: ChildLifecycle | undefined
+}): Promise<ChildResult> {
+  throwIfAborted(signal)
+
+  return await new Promise<ChildResult>((resolve, reject) => {
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = spawn(executable, args, {
+        cwd,
+        env,
+        detached: childLifecycle?.detached ?? process.platform !== 'win32',
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      })
+      childLifecycle?.setChild(child)
+    } catch (error) {
+      reject(error)
+      return
+    }
+
+    const stdout = createBoundedCollector(PROCESS_OUTPUT_LIMIT_BYTES)
+    const stderr = createBoundedCollector(DIAGNOSTIC_LIMIT_BYTES)
+    child.stdout.on('data', stdout.append)
+    child.stderr.on('data', stderr.append)
+    const spawned = new Promise<void>((resolveSpawn, rejectSpawn) => {
+      const onSpawn = () => {
+        child.removeListener('error', onSpawnError)
+        resolveSpawn()
+      }
+      const onSpawnError = (error: Error) => {
+        child.removeListener('spawn', onSpawn)
+        rejectSpawn(error)
+      }
+      child.once('spawn', onSpawn)
+      child.once('error', onSpawnError)
+    })
+
+    let settled = false
+    let termination: ChildResult['termination']
+    let forceTimer: NodeJS.Timeout | undefined
+    let forceKillCompleted = false
+    let finishAfterForceKill: (() => void) | undefined
+    let inputFailure: unknown
+
+    const terminate = (reason: NonNullable<ChildResult['termination']>) => {
+      if (child.exitCode !== null || child.signalCode !== null) return
+      if (termination !== undefined) return
+      termination = reason
+      terminateChildTree(child, 'SIGTERM', childLifecycle?.detached)
+      forceTimer = setTimeout(() => {
+        // Address the process group even if the direct child has already
+        // exited. A descendant may ignore SIGTERM and outlive its parent.
+        terminateChildTree(child, 'SIGKILL', childLifecycle?.detached)
+        forceKillCompleted = true
+        finishAfterForceKill?.()
+      }, TERMINATION_GRACE_MS)
+    }
+
+    const timeout = setTimeout(() => terminate('timeout'), timeoutMs)
+    const onAbort = () => terminate('aborted')
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) onAbort()
+
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      if (forceTimer !== undefined && termination === undefined) clearTimeout(forceTimer)
+      signal?.removeEventListener('abort', onAbort)
+      childLifecycle?.setChild(undefined)
+      callback()
+    }
+
+    child.once('error', (error) => finish(() => reject(error)))
+    child.once('close', (code, childSignal) => {
+      const resolveResult = () =>
+        finish(() =>
+          inputFailure === undefined
+            ? resolve({
+                code,
+                signal: childSignal,
+                stdout: stdout.result(),
+                stderr: stderr.result(),
+                termination,
+              })
+            : reject(inputFailure),
+        )
+      if (termination !== undefined && process.platform !== 'win32' && !forceKillCompleted) {
+        finishAfterForceKill = resolveResult
+        return
+      }
+      resolveResult()
+    })
+
+    child.stdin.on('error', () => {
+      // A failing process may close stdin before Node finishes writing. Its exit
+      // status and bounded stderr remain the authoritative failure signal.
+    })
+    void (async () => {
+      try {
+        await spawned
+        if (settled) return
+        if (stdin === undefined) {
+          child.stdin.end()
+          return
+        }
+        const input = Buffer.from(stdin, 'utf8')
+        if (input.length === 0) {
+          child.stdin.end()
+          return
+        }
+        let dispatchWindowOpen = true
+        let inputDispatched = false
+        const dispatchInput = () => {
+          if (!dispatchWindowOpen || inputDispatched) {
+            throw new Error('The managed Codex prompt dispatch callback was used out of order.')
+          }
+          if (signal?.aborted === true) throw abortFailure()
+          inputDispatched = true
+          child.stdin.write(input.subarray(0, 1))
+          child.stdin.end(input.subarray(1))
+        }
+        if (childLifecycle?.dispatchStdin === undefined) {
+          dispatchInput()
+        } else {
+          try {
+            await childLifecycle.dispatchStdin(dispatchInput)
+          } finally {
+            dispatchWindowOpen = false
+          }
+          if (!inputDispatched) {
+            throw new Error('The managed Codex prompt dispatch callback did not dispatch the prompt.')
+          }
+        }
+      } catch (error) {
+        if (settled) return
+        inputFailure = error
+        if (child.exitCode === null && child.signalCode === null) {
+          terminateChildTree(child, 'SIGTERM', childLifecycle?.detached)
+          const inputForceTimer = setTimeout(
+            () => terminateChildTree(child, 'SIGKILL', childLifecycle?.detached),
+            TERMINATION_GRACE_MS,
+          )
+          inputForceTimer.unref()
+          child.once('close', () => clearTimeout(inputForceTimer))
+        }
+      }
+    })()
+  })
+}
+
+function terminateChildTree(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+  detached = process.platform !== 'win32',
+) {
+  if (detached && process.platform !== 'win32' && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal)
+      return
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ESRCH') {
+        // Fall through to the direct child. A process-group kill is best effort,
+        // while the direct child must still be terminated.
+      }
+    }
+  }
+  child.kill(signal)
+}
+
+function abortFailure(): DirectOfficialClientError {
+  return new DirectOfficialClientError({
+    code: 'direct_upstream_error',
+    reason: 'codex_aborted',
+    message: 'The official Codex client request was aborted.',
+    retryable: true,
+  })
+}
+
+function createBoundedCollector(limit: number) {
+  const chunks: Buffer[] = []
+  let length = 0
+  let truncated = false
+  return {
+    append(chunk: Buffer | string) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      const remaining = limit - length
+      if (remaining > 0) {
+        const accepted = bytes.subarray(0, remaining)
+        chunks.push(accepted)
+        length += accepted.length
+      }
+      if (bytes.length > remaining) truncated = true
+    },
+    result(): CapturedOutput {
+      return { bytes: Buffer.concat(chunks, length), truncated }
+    },
+  }
+}
+
+function hasHelpToken(help: string, token: string) {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?:^|[\\s,\\[])${escaped}(?=$|[\\s,=<>\\][])`, 'm').test(help)
+}
+
+function isMissingExecutableError(error: unknown) {
+  return isNodeError(error) && error.code === 'ENOENT'
+}
+
+function isNotExecutableError(error: unknown) {
+  return isNodeError(error) && (error.code === 'EACCES' || error.code === 'EPERM' || error.code === 'ENOEXEC')
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error
+}

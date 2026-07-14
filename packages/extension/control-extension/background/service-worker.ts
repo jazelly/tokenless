@@ -1,4 +1,4 @@
-const DEFAULT_TOKENLESS_EXTENSION_ID = 'afpfljlnhlpkbkmgonoanbmcdmmfmoam'
+const DEFAULT_TOKENLESS_EXTENSION_ID = 'cgiocagnojoiblhlkmdjacklcmpbbimf'
 const TRUSTED_CLICK_TYPE = 'tokenless.debugger-control.trusted_click.v1'
 const DEBUGGER_PROTOCOL_VERSION = '1.3'
 const activeTabs = new Set<number>()

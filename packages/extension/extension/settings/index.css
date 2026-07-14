@@ -62,6 +62,24 @@ p {
   min-width: 0;
 }
 
+.brand {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.brand img {
+  border-radius: 7px;
+  display: block;
+}
+
+.brand span {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
 .hero-actions {
   align-items: center;
   display: flex;

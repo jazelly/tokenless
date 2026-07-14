@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Standalone visible-session bridge for web apps and local agents.",
+  "description": "Standalone visible-session bridge and isolated direct AI provider CLI.",
   "scripts": {
     "build": "npm run build --workspaces --if-present && npm run build:scripts",
     "build:scripts": "node -e \"require('node:fs').rmSync('dist/scripts',{recursive:true,force:true})\" && tsc -p tsconfig.scripts.json",
@@ -14,13 +14,16 @@
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node --test --test-concurrency=1 test/**/*.test.mjs",
     "test:e2e": "npm run build && TOKENLESS_E2E=1 node --test test/**/*.e2e.mjs",
+    "test:e2e:live-ambient-codex": "npm run build:js --workspace tokenless && TOKENLESS_LIVE_AMBIENT_CODEX=1 node --test --test-concurrency=1 test/live-ambient-codex.e2e.mjs",
+    "test:e2e:live-direct": "npm run build:js --workspace tokenless && TOKENLESS_LIVE_DIRECT=1 node --test test/live-direct-api.e2e.mjs",
+    "test:e2e:live-managed-codex": "npm run build:js --workspace tokenless && TOKENLESS_LIVE_MANAGED_CODEX=1 node --test test/live-managed-codex.e2e.mjs",
     "test:e2e:live-chatgpt": "npm run build && TOKENLESS_LIVE_CHATGPT=1 node --test test/live-chatgpt.e2e.mjs"
   },
   "workspaces": [
     "packages/*"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=24.15.0"
   },
   "packageManager": "npm@10",
   "devDependencies": {

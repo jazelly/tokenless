@@ -16,10 +16,7 @@ test('default manifest exposes the Settings side panel without debugger or exter
 
   assert.equal(manifest.manifest_version, 3)
   assert.equal(manifest.name, 'Tokenless')
-  assert.deepEqual(manifest.options_ui, {
-    page: 'settings/index.html',
-    open_in_tab: false,
-  })
+  assert.equal(manifest.options_ui, undefined)
   assert.equal(manifest.action.default_title, 'Open Tokenless settings')
   assert.deepEqual(manifest.side_panel, { default_path: 'settings/index.html' })
   assert.equal(manifest.externally_connectable, undefined)
@@ -46,7 +43,7 @@ test('debugger companion manifest has a deliberately narrow, separate privilege 
   assert.equal(manifest.options_ui, undefined)
   assert.match(manifest.background.service_worker, /^background\//)
   assert.deepEqual(manifest.externally_connectable, {
-    ids: ['afpfljlnhlpkbkmgonoanbmcdmmfmoam'],
+    ids: ['cgiocagnojoiblhlkmdjacklcmpbbimf'],
   })
 })
 
@@ -124,6 +121,7 @@ test('daemon bridge requires a v1 handshake and reconnects with bounded backoff'
   const scheduler = createManualScheduler()
   const ports = []
   const delivered = []
+  let runtimeLastErrorReads = 0
   const bridge = new NativeDaemonBridge({
     connectNative() {
       const port = createBehaviorNativePort()
@@ -132,6 +130,10 @@ test('daemon bridge requires a v1 handshake and reconnects with bounded backoff'
     },
     onMessage(_port, message) {
       delivered.push(message)
+    },
+    readRuntimeLastError() {
+      runtimeLastErrorReads += 1
+      return { message: 'Access to the specified native messaging host is forbidden.' }
     },
     timing: {
       handshakeTimeoutMs: 100,
@@ -204,6 +206,7 @@ test('daemon bridge requires a v1 handshake and reconnects with bounded backoff'
   }))
   await ports[5].onDisconnect.emit()
   assert.deepEqual(scheduler.pendingDelays(), [10], 'physical disconnect must reconnect from base delay')
+  assert.equal(runtimeLastErrorReads, 6, 'every disconnect must consume runtime.lastError in its callback')
 
   scheduler.runDelay(10)
   await ports[6].onMessage.emit(nativeSuccess('tokenless.native.daemon_connected', {
@@ -218,6 +221,7 @@ test('daemon bridge requires a v1 handshake and reconnects with bounded backoff'
 
   bridge.stop()
   assert.deepEqual(scheduler.pendingDelays(), [])
+  assert.equal(runtimeLastErrorReads, 7, 'intentional shutdown disconnects must also consume runtime.lastError')
 })
 
 test('Settings model normalizes redacted daemon history and explicit configuration clears', async () => {
@@ -1642,7 +1646,7 @@ test('background enables the Settings side panel and jobs create only approved p
       type: 'tokenless.bridge.trusted_click',
       request: {
         provider: 'chatgpt',
-        debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+        debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
         expectedUrl: 'https://chatgpt.com/c/visible-chat',
         x: 320,
         y: 640,
@@ -1652,7 +1656,7 @@ test('background enables the Settings side panel and jobs create only approved p
     }, { tab: { id: 42, url: 'https://chatgpt.com/c/visible-chat' } })
     assert.deepEqual(trustedClick, { ok: true })
     assert.deepEqual(forwardedDebuggerMessages, [{
-      extensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+      extensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
       payload: {
         type: 'tokenless.debugger-control.trusted_click.v1',
         tabId: 42,
@@ -2066,7 +2070,7 @@ test('debugger companion accepts only the approved extension and dispatches one 
       expectedUrl: 'https://chatgpt.com/c/visible-chat',
       x: 320,
       y: 640,
-    }, { id: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam' })
+    }, { id: 'cgiocagnojoiblhlkmdjacklcmpbbimf' })
     assert.deepEqual(response, { ok: true })
     assert.deepEqual(calls, [
       { kind: 'attach', target: { tabId: 42 }, version: '1.3' },
@@ -2132,10 +2136,10 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
   assert.equal(chatGptControls.request.effort, 'extra_high')
   const debuggerControl = validateBridgeRequest({
     ...baseRequest,
-    debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam',
+    debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
   })
   assert.equal(debuggerControl.ok, true)
-  assert.equal(debuggerControl.request.debuggerControlExtensionId, 'afpfljlnhlpkbkmgonoanbmcdmmfmoam')
+  assert.equal(debuggerControl.request.debuggerControlExtensionId, 'cgiocagnojoiblhlkmdjacklcmpbbimf')
   for (const malformedControls of [
     { ...baseRequest, chatSurface: 'work' },
     { ...baseRequest, effort: 'maximum' },
@@ -2143,7 +2147,7 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     { ...baseRequest, modelFallbacks: 'GPT-5.5' },
     { ...baseRequest, modelFallbacks: Array.from({ length: 9 }, () => 'GPT-5.5') },
     { ...baseRequest, provider: 'gemini', effort: 'high' },
-    { ...baseRequest, provider: 'gemini', debuggerControlExtensionId: 'afpfljlnhlpkbkmgonoanbmcdmmfmoam' },
+    { ...baseRequest, provider: 'gemini', debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf' },
     { ...baseRequest, debuggerControlExtensionId: 'not-an-extension-id' },
     { ...baseRequest, provider: 'gemini', action: 'inspect_chatgpt_controls' },
   ]) {

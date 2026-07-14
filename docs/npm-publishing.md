@@ -45,6 +45,17 @@ Use npm **Trusted Publishing** as the steady-state authentication method. It
 uses GitHub Actions OIDC, needs the workflow's `id-token: write` permission,
 and does not need a long-lived GitHub secret.
 
+To manage trusted publishers from a terminal, first use npm 11.15 or later and
+authenticate interactively with 2FA enabled. The command is:
+
+```bash
+npm trust github <package-name> \
+  --repo jazelly/tokenless \
+  --file publish-npm.yml \
+  --allow-publish \
+  --yes
+```
+
 For each of the seven packages, configure **Settings → Trusted publishing** on
 npmjs.com with:
 

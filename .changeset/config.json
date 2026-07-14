@@ -7,8 +7,6 @@
   "linked": [],
   "updateInternalDependencies": "patch",
   "ignore": [
-    "tokenless-browser-session-bridge",
-    "tokenless-client",
-    "tokenless-relay"
+    "tokenless-browser-session-bridge"
   ]
 }

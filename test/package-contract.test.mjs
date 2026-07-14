@@ -20,14 +20,12 @@ const nativeTuples = [
   ['win32', 'x64'],
 ]
 
-test('workspace packages keep standalone public product names', () => {
+test('workspace packages keep standalone product names', () => {
   const packages = Object.fromEntries(
-    ['cli', 'client', 'extension', 'relay'].map((folder) => [folder, readJson(`packages/${folder}/package.json`)])
+    ['cli', 'extension'].map((folder) => [folder, readJson(`packages/${folder}/package.json`)])
   )
   assert.equal(packages.cli.name, 'tokenless')
-  assert.equal(packages.client.name, 'tokenless-client')
   assert.equal(packages.extension.name, 'tokenless-browser-session-bridge')
-  assert.equal(packages.relay.name, 'tokenless-relay')
   assert.deepEqual(packages.cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
   for (const pkg of Object.values(packages)) {
     assert.ok(!pkg.name.startsWith('@tokenless/'))
@@ -76,7 +74,10 @@ test('root lockfile records every optional native runtime without foreign-platfo
   assert.equal(rootPackage.workspaces.includes('packages/cli/npm/*'), false)
   assert.deepEqual(lock.packages['packages/cli'].optionalDependencies, cliPackage.optionalDependencies)
   for (const packageName of Object.keys(cliPackage.optionalDependencies)) {
-    assert.equal(lock.packages[`packages/cli/node_modules/${packageName}`].optional, true)
+    const packageLockEntry = lock.packages[`packages/cli/node_modules/${packageName}`] ??
+      lock.packages[`node_modules/${packageName}`]
+    assert.equal(packageLockEntry?.optional, true)
+    assert.equal(packageLockEntry?.version, cliPackage.version)
   }
 })
 
@@ -92,7 +93,7 @@ test('all supported tuples resolve to strict local native package manifests', as
     const resolved = resolveNativePlatformPackage({
       platform,
       arch,
-      expectedVersion: '0.1.1',
+      expectedVersion: readJson('packages/cli/package.json').version,
       resolvePackageJson: (packageName) => path.join(cliDir, 'npm', packageName, 'package.json'),
     })
     assert.equal(resolved.name, expectedName)
@@ -503,7 +504,7 @@ test('agent skill is a daemon-only npx workflow with provider-only automatic nav
   assert.doesNotMatch(skill, /--extension-id "<chrome-extension-id>" \\\n+  --json/)
 })
 
-test('README and architecture describe the Rust daemon-only visible-session boundary', () => {
+test('README and architecture describe isolated visible-session and direct boundaries', () => {
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
   const chinese = fs.readFileSync(path.join(root, 'README.zh-CN.md'), 'utf8')
   const architecture = fs.readFileSync(path.join(root, 'docs/architecture.md'), 'utf8')
@@ -511,8 +512,9 @@ test('README and architecture describe the Rust daemon-only visible-session boun
   for (const text of [readme, architecture, cliReadme]) {
     assert.match(text, /tokenless-daemon/)
     assert.match(text, /tokenless-native-host/)
-    assert.match(text, /daemon-only|no local JSON|There is no local JSON/i)
+    assert.match(text, /no local JSON|local task-page fallback.*do not exist/i)
     assert.match(text, /visible/)
+    assert.match(text, /direct/)
     assert.doesNotMatch(text, /\/Users\/jazelly/)
   }
   assert.match(readme, /npx tokenless@latest setup/)
@@ -520,8 +522,12 @@ test('README and architecture describe the Rust daemon-only visible-session boun
   assert.match(chinese, /Rust daemon/)
   assert.match(chinese, /不会调用隐藏的 provider 后端接口/)
   assert.match(architecture, /tokenless\.daemon\.v1/)
+  assert.match(architecture, /tokenless\.direct\.v1/)
+  assert.match(architecture, /direct broker/i)
   assert.match(architecture, /extension-bridge\.json/)
   assert.match(architecture, /900 KiB/)
+  assert.match(readme, /docs\/direct-mode\.md/)
+  assert.match(cliReadme, /tokenless serve --mode direct/)
 })
 
 function readJson(relativePath) {

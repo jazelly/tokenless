@@ -2,11 +2,43 @@
 
 # Tokenless
 
-Tokenless is a standalone project that helps agents save tokens by routing suitable work through the visible web version of ChatGPT, Claude, or Gemini that the user is already signed into.
+Tokenless is a standalone CLI with two isolated transports: visible browser sessions for ChatGPT, Claude, and Gemini, and opt-in direct execution through provider-owned clients or documented public APIs.
 
 ## Install
 
-You need Node.js 22+ and the Tokenless extension installed and enabled in Chrome, Brave, Edge, Arc, or Chromium. The extension and your provider sign-in are the only manual browser steps.
+You need Node.js 24.15+. Visible mode additionally requires the Tokenless extension installed and enabled in Chrome, Brave, Edge, Arc, or Chromium; the extension and your provider sign-in are its only manual browser steps. Direct-only use does not require the extension or a browser.
+
+### 1. npm CLI (recommended)
+
+```bash
+npm install --global tokenless@latest
+tokenless setup --json
+tokenless doctor --json
+```
+
+`setup` opens the selected provider page when necessary. Complete any visible login or permission prompt, then let `doctor` confirm the browser bridge.
+
+### 2. npx (no global install)
+
+```bash
+npx tokenless@latest setup --json
+npx tokenless@latest doctor --json
+```
+
+### 3. Raw GitHub installer (system-wide npm install)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
+```
+
+Because this command executes with `sudo`, [review the installer source](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh) before running it. The script installs the CLI system-wide but deliberately does **not** run browser setup as root. Return to your normal desktop account, then run:
+
+```bash
+tokenless setup --json
+tokenless doctor --json
+```
+
+### 4. Required agent skill
 
 Install the Tokenless setup skill:
 
@@ -49,6 +81,27 @@ Tokenless supports ChatGPT, Claude, and Gemini today. Its visible-session adapte
 5. The Rust host completes the daemon-backed job and the CLI returns the visible result.
 
 There is no local JSON task queue, task-page fallback, local-file page, Node native host, or automatic `chrome-extension://` navigation.
+
+## Direct Mode
+
+Direct mode is explicit and never falls back to the extension path. ChatGPT defaults to the provider-owned Codex executable on macOS and Linux; ChatGPT API, Claude, Gemini, Grok, and Antigravity-compatible gateway requests use environment-only API credentials.
+
+```bash
+tokenless run --mode direct --provider chatgpt --prompt "Review this design." --json
+
+TOKENLESS_DIRECT_CLAUDE_API_KEY=... \
+tokenless run --mode direct --provider claude --model <api-model> --prompt "Review this design." --json
+```
+
+Local API clients can use the authenticated loopback broker without receiving the configured upstream credential:
+
+```bash
+TOKENLESS_DIRECT_SERVER_KEY=... \
+TOKENLESS_DIRECT_CHATGPT_API_KEY=... \
+tokenless serve --mode direct --port 8788 --json
+```
+
+Use a randomly generated server key of at least 32 visible non-whitespace characters. Public API usage may be billed separately from a provider web subscription. Tokenless never converts browser-session or Codex authentication into a broker credential, and it does not call private provider web backends. See [Direct mode](docs/direct-mode.md) for the provider matrix, exact route allowlist, configuration, and security boundary.
 
 ## Advanced Setup
 
@@ -146,7 +199,7 @@ The extension works only after the user grants host permission, and it drives th
 
 ## Safety Boundary
 
-Tokenless operates only after the user grants extension host permission and only through user-visible provider pages. It does not bypass login, CAPTCHA, provider permissions, rate limits, or visible confirmations. It does not read provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider backend APIs.
+Visible mode operates only after the user grants extension host permission and only through user-visible provider pages. Direct mode uses a provider-owned client or documented public API with environment-only credentials. Neither mode reads provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider backend APIs, and Tokenless never falls back between the two transports.
 
 See [the privacy policy](PRIVACY.md) for local data-handling details.
 
@@ -168,13 +221,11 @@ Publish all six native packages before the same-version universal `tokenless` pa
 
 Do not publish yet:
 
-- `tokenless-relay`
-- `tokenless-client`
 - `tokenless-browser-session-bridge`
 
 ## Development
 
-Building the repository requires Node.js 22+, npm, and Rust. The CLI build places the current tuple's release binaries in `packages/cli/npm/tokenless-native-<platform>-<arch>/bin`; `npm pack` of `tokenless` remains universal and binary-free. Before a native pack is created, its publisher-only verifier executes both binaries with a finite deadline and requires exact role, npm-aligned version, and normalized target tuple, rejecting swapped or stale artifacts. Release CI must build and pack the six supported tuples (`darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, `win32-x64`) on appropriate trusted builders before publishing the universal package. Normal runtime resolution uses only the locally installed optional package and never downloads an executable.
+Building the repository requires Node.js 24.15+, npm, and Rust. The CLI build places the current tuple's release binaries in `packages/cli/npm/tokenless-native-<platform>-<arch>/bin`; `npm pack` of `tokenless` remains universal and binary-free. Before a native pack is created, its publisher-only verifier executes both binaries with a finite deadline and requires exact role, npm-aligned version, and normalized target tuple, rejecting swapped or stale artifacts. Release CI must build and pack the six supported tuples (`darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win32-arm64`, `win32-x64`) on appropriate trusted builders before publishing the universal package. Normal runtime resolution uses only the locally installed optional package and never downloads an executable.
 
 ```bash
 npm run build
