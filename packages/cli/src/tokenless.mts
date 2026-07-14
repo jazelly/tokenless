@@ -1494,8 +1494,8 @@ function normalizeCliBrowser(browser: unknown) {
 
 function normalizeProvider(provider: unknown) {
   const normalized = String(provider).trim().toLowerCase()
-  if (!['chatgpt', 'claude', 'gemini'].includes(normalized)) {
-    throw usageError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini.')
+  if (!['chatgpt', 'claude', 'gemini', 'grok'].includes(normalized)) {
+    throw usageError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini, grok.')
   }
   return normalized
 }
@@ -1900,7 +1900,7 @@ function usage() {
     '  tokenless state --task-id <task-id> --json',
     '  tokenless cancel --job-id <job-id> --json',
     '  tokenless snapshot-dom --provider chatgpt --json',
-    '  tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json',
+    '  tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json',
     '  tokenless setup [--provider chatgpt] [--extension-id <chrome-extension-id>] --json',
     '  tokenless install [--extension-id <chrome-extension-id>] --json',
     '  tokenless doctor --json',

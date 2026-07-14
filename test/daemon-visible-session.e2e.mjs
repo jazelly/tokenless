@@ -14,6 +14,7 @@ const extensionPath = path.join(root, 'packages/extension/dist/extension')
 const chatGptRealDomFixturePath = path.join(root, 'test/fixtures/chatgpt-real-dom-fixture.html')
 const claudeRealDomFixturePath = path.join(root, 'test/fixtures/claude-real-dom-fixture.html')
 const geminiRealDomFixturePath = path.join(root, 'test/fixtures/gemini-real-dom-fixture.html')
+const grokRealDomFixturePath = path.join(root, 'test/fixtures/grok-real-dom-fixture.html')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-e2e', 'runs')
 
 test('daemon job completes through extension service worker and ChatGPT real-DOM fixture without task page', {
@@ -921,6 +922,264 @@ test('daemon job completes through extension service worker and Gemini real-DOM 
     }
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, 'Tokenless Gemini fixture E2E cleanup failed')
+    }
+  }
+})
+
+test('daemon job completes through extension service worker and Grok real-DOM fixture without internal pages', {
+  skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run fixture browser E2E' : false,
+  timeout: 180000,
+}, async () => {
+  const { chromium } = await import('playwright')
+  const {
+    getDaemonJob,
+    installNativeHost,
+    nativeMessagingHostDirs,
+    NATIVE_HOST_NAME,
+    readLiveBridgeMarker,
+  } = await import('../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-grok-daemon-e2e-'))
+  const artifactDir = await createArtifactDir()
+  const userDataDir = path.join(tempRoot, 'profile')
+  const tokenlessHome = path.join(tempRoot, 'tokenless-home')
+  const port = await freePort()
+  const daemonUrl = `http://127.0.0.1:${port}`
+  const prompt = 'Tokenless Grok daemon E2E DOM prompt 73184'
+  const targetUrl = 'https://grok.com/'
+  const conversationUrl = 'https://grok.com/c/123e4567-e89b-12d3-a456-426614174003'
+  const events = []
+  const observedUrls = []
+  let manifestBackup = []
+  let registryBackup = []
+  let daemon
+  let context
+  let providerFixture
+
+  try {
+    daemon = startDaemon({ homeDir: tokenlessHome, port })
+    await waitForDaemonReady(daemonUrl, daemon)
+    events.push({ at: new Date().toISOString(), event: 'daemon_ready', daemonUrl })
+
+    const browsers = fixtureNativeHostBrowsers()
+    registryBackup = snapshotWindowsNativeHostRegistry(
+      browsers,
+      NATIVE_HOST_NAME,
+      windowsNativeHostManifestPath(tokenlessHome, NATIVE_HOST_NAME)
+    )
+    manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
+      nativeMessagingHostDirs(browser, userDataDir).map((dir) => path.join(dir, `${NATIVE_HOST_NAME}.json`))
+    )))
+    const installed = await installNativeHost({
+      homeDir: tokenlessHome,
+      manifestHome: userDataDir,
+      extensionId: DEFAULT_EXTENSION_ID,
+      browsers,
+    })
+    assert.ok(installed.manifests.length >= 1)
+    events.push({
+      at: new Date().toISOString(),
+      event: 'native_host_installed',
+      manifests: installed.manifests,
+      executable: installed.nativeHostExecutable,
+    })
+
+    const grokFixture = await fs.readFile(grokRealDomFixturePath, 'utf8')
+    providerFixture = await startHttpsFixtureServer({
+      body: grokFixture,
+      events,
+      providerHost: 'grok.com',
+    })
+    context = await launchTokenlessContext(
+      chromium,
+      userDataDir,
+      tokenlessHome,
+      daemonUrl,
+      providerFixture,
+      'grok.com'
+    )
+    observeContextUrls(context, observedUrls)
+    const extensionId = await discoverExtensionId(context)
+    assert.equal(extensionId, DEFAULT_EXTENSION_ID)
+
+    await ensureDaemonBridgeStarted(context)
+    const bridgeMarker = await waitForBridgeMarker({ tokenlessHome, readLiveBridgeMarker, context })
+    assert.equal(bridgeMarker.protocol, 'tokenless.extension-bridge-state.v1')
+    events.push({
+      at: new Date().toISOString(),
+      event: 'daemon_bridge_ready',
+      sessionId: bridgeMarker.sessionId,
+    })
+    const pagesBeforeRun = new Set(context.pages())
+    const observedUrlCountBeforeRun = observedUrls.length
+
+    const cliRun = await runProcess(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'run',
+      '--prompt',
+      prompt,
+      '--provider',
+      'grok',
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      targetUrl,
+      '--read-delay-ms',
+      '0',
+      '--read-timeout-ms',
+      '10000',
+      '--no-open',
+      '--json',
+    ], { cwd: root })
+
+    assert.equal(cliRun.status, 0, cliRun.stderr || cliRun.stdout)
+    const cliPayload = JSON.parse(cliRun.stdout)
+    assert.equal(cliPayload.transport, 'daemon')
+    assert.equal(cliPayload.provider, 'grok')
+    assert.equal(cliPayload.taskUrl, undefined)
+    assert.equal(cliPayload.runnerUrl, undefined)
+    assert.equal(cliPayload.result?.result?.submit?.provider, 'grok')
+    assert.equal(cliPayload.result?.result?.submit?.url, conversationUrl)
+    assert.equal(cliPayload.result?.result?.read?.provider, 'grok')
+    assert.equal(cliPayload.result?.result?.read?.url, conversationUrl)
+    assert.match(cliPayload.compactOutput, /visible Grok real-DOM fixture answer/)
+    assert.match(cliPayload.compactOutput, /Tokenless Grok daemon E2E DOM prompt 73184/)
+    assert.doesNotMatch(cliRun.stdout, /taskUrl|task\/task\.html|runnerUrl|daemon\/runner\.html/)
+    assert.doesNotMatch(cliRun.stdout, /claim_token|claimToken/)
+
+    const created = await getDaemonJob({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: cliPayload.jobId,
+    })
+    assert.ok(['queued', 'claimed', 'succeeded'].includes(created.status), JSON.stringify(created, null, 2))
+    assert.equal(created.provider, 'grok')
+    assert.equal(created.claim_token, undefined)
+    assert.equal(created.claimToken, undefined)
+    assert.doesNotMatch(JSON.stringify(created), /claim_token|claimToken/)
+    assert.equal(created.request_json.targetUrl, targetUrl)
+    assert.match(created.request_json.prompt, /Tokenless Grok daemon E2E DOM prompt 73184/)
+    events.push({ at: new Date().toISOString(), event: 'cli_daemon_job_created', jobId: created.job_id })
+
+    const completed = await waitForDaemonJobStatus({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: created.job_id,
+      statuses: ['succeeded', 'failed'],
+      daemon,
+      getDaemonJob,
+    })
+    await fs.writeFile(
+      path.join(artifactDir, 'grok-daemon-terminal-job.json'),
+      `${JSON.stringify(completed, null, 2)}\n`,
+      'utf8'
+    )
+    assert.equal(completed.status, 'succeeded', JSON.stringify(completed, null, 2))
+    assert.equal(completed.provider, 'grok')
+    assert.equal(completed.claim_token, undefined)
+    assert.equal(completed.claimToken, undefined)
+    assert.doesNotMatch(JSON.stringify(completed), /claim_token|claimToken/)
+    assert.equal(completed.result_json.provider, 'grok')
+    assert.equal(completed.result_json.submit.provider, 'grok')
+    assert.equal(completed.result_json.submit.url, conversationUrl)
+    assert.equal(completed.result_json.read.provider, 'grok')
+    assert.equal(completed.result_json.read.url, conversationUrl)
+    assert.match(completed.result_json.text, /visible Grok real-DOM fixture answer/)
+    assert.match(completed.result_json.text, /Tokenless Grok daemon E2E DOM prompt 73184/)
+    assert.doesNotMatch(completed.result_json.text, /stale Grok real-DOM fixture answer/)
+
+    const providerPage = context.pages().find((page) => page.url().startsWith('https://grok.com/'))
+    assert.ok(providerPage, `extension did not open the visible Grok page: ${JSON.stringify(context.pages().map((page) => page.url()))}`)
+    assert.equal(providerPage.url(), conversationUrl)
+    await providerPage.bringToFront()
+    await providerPage.screenshot({
+      path: path.join(artifactDir, '01-grok-fixture-after-daemon.png'),
+      animations: 'disabled',
+    })
+    const userMessage = providerPage.locator('[data-testid="user-message"]').last()
+    assert.match(await userMessage.innerText(), /Tokenless Grok daemon E2E DOM prompt 73184/)
+    const assistantMessage = providerPage.locator('[data-testid="assistant-message"]').last()
+    assert.match(await assistantMessage.innerText(), /visible Grok real-DOM fixture answer/)
+    assert.match(await assistantMessage.innerText(), /Tokenless Grok daemon E2E DOM prompt 73184/)
+
+    const pageUrlsAfterSuccess = context.pages().map((page) => page.url())
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/task/task.html')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/daemon/runner.html')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    assert.ok(pageUrlsAfterSuccess.every((url) => !url.includes('/settings/')), JSON.stringify(pageUrlsAfterSuccess, null, 2))
+    const pagesOpenedByRun = context.pages().filter((page) => !pagesBeforeRun.has(page))
+    assert.deepEqual(
+      pagesOpenedByRun.map((page) => page.url()),
+      [conversationUrl],
+      'Grok task execution must open exactly one visible provider page'
+    )
+    const urlsObservedDuringRun = observedUrls
+      .slice(observedUrlCountBeforeRun)
+      .map((entry) => entry.url)
+    assert.ok(
+      urlsObservedDuringRun.every((url) => url === 'about:blank' || url.startsWith('https://grok.com/')),
+      `Grok task execution opened a non-provider page: ${JSON.stringify(urlsObservedDuringRun, null, 2)}`
+    )
+    assertNoTaskPageObserved(observedUrls)
+    assertNoRunnerPageObserved(observedUrls)
+    assert.equal(
+      observedUrls.some((entry) => entry.url.includes('/settings/')),
+      false,
+      JSON.stringify(observedUrls, null, 2)
+    )
+
+    await fs.writeFile(path.join(artifactDir, 'grok-cli-daemon-run-payload.json'), `${JSON.stringify(cliPayload, null, 2)}\n`, 'utf8')
+    await fs.writeFile(path.join(artifactDir, 'grok-observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8')
+    await fs.writeFile(path.join(artifactDir, 'grok-summary.json'), `${JSON.stringify({
+      ok: true,
+      mode: 'daemon-fixture-grok',
+      fixture: true,
+      realProviderDom: true,
+      extensionId,
+      daemonUrl,
+      jobId: completed.job_id,
+      provider: 'grok',
+      targetUrl,
+      conversationUrl,
+      prompt,
+      taskPageOpened: observedUrls.some((entry) => entry.url.includes('/task/task.html')),
+      runnerPageOpened: observedUrls.some((entry) => entry.url.includes('/daemon/runner.html')),
+      settingsPageOpened: observedUrls.some((entry) => entry.url.includes('/settings/')),
+      observedProviderOnly: urlsObservedDuringRun.every((url) => (
+        url === 'about:blank' || url.startsWith('https://grok.com/')
+      )),
+      events,
+    }, null, 2)}\n`, 'utf8')
+    console.log(`Tokenless Grok daemon fixture E2E artifacts: ${artifactDir}`)
+  } finally {
+    const cleanupErrors = []
+    await attemptCleanup(cleanupErrors, 'write Grok observed URL artifacts', async () => {
+      await fs.writeFile(path.join(artifactDir, 'grok-observed-urls.json'), `${JSON.stringify(observedUrls, null, 2)}\n`, 'utf8')
+    })
+    await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
+    await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
+    const manifestsRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host manifests',
+      async () => restoreFiles(manifestBackup)
+    )
+    const registryRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host registry',
+      async () => restoreWindowsNativeHostRegistry(registryBackup)
+    )
+    await attemptCleanup(cleanupErrors, 'stop daemon', async () => {
+      if (daemon) await stopDaemon(daemon)
+    })
+    if (manifestsRestored && registryRestored) {
+      await attemptCleanup(cleanupErrors, 'remove temporary Grok E2E state', async () => {
+        await fs.rm(tempRoot, { recursive: true, force: true })
+      })
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Tokenless Grok fixture E2E cleanup failed')
     }
   }
 })

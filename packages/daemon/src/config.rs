@@ -9,7 +9,7 @@ use url::Host;
 pub const CONFIG_PROTOCOL: &str = "tokenless.config.v1";
 pub const CONFIG_FILE_NAME: &str = "config.json";
 
-const SUPPORTED_PROVIDERS: &[&str] = &["chatgpt", "claude", "gemini"];
+const SUPPORTED_PROVIDERS: &[&str] = &["chatgpt", "claude", "gemini", "grok"];
 const SUPPORTED_BROWSERS: &[&str] = &[
     "chrome",
     "chrome-for-testing",
@@ -249,6 +249,7 @@ mod tests {
                 preferred_providers: Some(vec![
                     " Claude ".to_owned(),
                     "chatgpt".to_owned(),
+                    "GROK".to_owned(),
                     "claude".to_owned(),
                     "unsupported".to_owned(),
                 ]),
@@ -256,17 +257,17 @@ mod tests {
                 daemon_url: Some(Some("http://127.0.0.1:7331/".to_owned())),
             })
             .unwrap();
-        assert_eq!(written.preferred_providers, ["claude", "chatgpt"]);
+        assert_eq!(written.preferred_providers, ["claude", "chatgpt", "grok"]);
         assert_eq!(written.browser.as_deref(), Some("chrome"));
         assert_eq!(written.daemon_url.as_deref(), Some("http://127.0.0.1:7331"));
 
         let updated = store
             .write(ConfigUpdate {
-                preferred_providers: Some(vec!["gemini".to_owned()]),
+                preferred_providers: Some(vec!["gemini".to_owned(), "grok".to_owned()]),
                 ..ConfigUpdate::default()
             })
             .unwrap();
-        assert_eq!(updated.preferred_providers, ["gemini"]);
+        assert_eq!(updated.preferred_providers, ["gemini", "grok"]);
         assert_eq!(updated.browser.as_deref(), Some("chrome"));
         assert_eq!(updated.daemon_url.as_deref(), Some("http://127.0.0.1:7331"));
     }

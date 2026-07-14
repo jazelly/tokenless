@@ -172,39 +172,27 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
     outputName: 'grok-dom.sanitized.html',
     selectors: {
       composers: [
-        'div[contenteditable="true"][role="textbox"]',
-        'textarea[placeholder*="Ask" i]',
-        'textarea',
+        'div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"][aria-multiline="true"]',
+        'textarea[aria-label="Ask Grok anything"][placeholder="What do you want to know?"]',
       ],
       submits: [
-        'button[aria-label*="Send" i]',
-        'button[type="submit"]',
+        'button[data-testid="chat-submit"][aria-label="Submit"][type="submit"]',
       ],
       answers: [
-        '[data-testid*="message"]',
-        '[data-role="assistant"]',
-        'main article',
+        'div[data-testid="assistant-message"]',
       ],
       blockers: [
-        'iframe[src*="captcha"]',
-        'a[href*="login" i]',
-        'a[href*="sign-in" i]',
+        'div[data-testid="anon-paywall-sign-up-card"]',
       ],
-      busy: [
-        'button[aria-label*="Stop" i]',
-      ],
+      busy: [],
       modelPickers: [
-        'button[aria-label*="model" i]',
-        '[data-testid*="model" i]',
+        'button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]',
       ],
       fileInputs: [
-        'input[type="file"]',
-        'button[aria-label*="Attach" i]',
-        'button[aria-label*="Upload" i]',
+        'input[type="file"][name="files"][multiple]',
+        'button[data-testid="attach-button"][aria-label="Attach"][aria-haspopup="menu"]',
       ],
-      projectLinks: [
-        'a[href*="/project" i]',
-      ],
+      projectLinks: [],
     },
   }),
 })
@@ -637,7 +625,7 @@ export async function captureProviderDom({
           chatgpt: new Set(['c', 'g']),
           claude: new Set(['chat']),
           gemini: new Set(['app', 'gems', 'share']),
-          grok: new Set(['c', 'chat']),
+          grok: new Set(['c', 'share']),
         }
         const firstSegment = normalized.split('/').filter(Boolean)[0]
         return firstSegment && knownRoutePrefixes[provider]?.has(firstSegment)

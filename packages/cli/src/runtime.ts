@@ -29,7 +29,7 @@ const NATIVE_HOST_BINARY_NAME = 'tokenless-native-host'
 const DEFAULT_BRIDGE_MAX_AGE_MS = 15_000
 const BRIDGE_CLOCK_TOLERANCE_MS = 5_000
 const DEFAULT_DAEMON_START_TIMEOUT_MS = 10_000
-const SUPPORTED_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini'])
+const SUPPORTED_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini', 'grok'])
 
 type RuntimeError = Error & {
   code?: string
@@ -385,12 +385,13 @@ export async function waitForExtensionBridge({
 export function providerWakeUrl(provider: unknown, targetUrl?: unknown) {
   const providerId = typeof provider === 'string' ? provider.trim().toLowerCase() : ''
   if (!SUPPORTED_PROVIDERS.has(providerId)) {
-    throw runtimeError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini.', false)
+    throw runtimeError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini, grok.', false)
   }
   const homeUrls: Record<string, string> = {
     chatgpt: 'https://chatgpt.com/',
     claude: 'https://claude.ai/new',
     gemini: 'https://gemini.google.com/app',
+    grok: 'https://grok.com/',
   }
   if (targetUrl === undefined || targetUrl === null || String(targetUrl).trim() === '') {
     return homeUrls[providerId] as string
@@ -406,6 +407,7 @@ export function providerWakeUrl(provider: unknown, targetUrl?: unknown) {
     chatgpt: new Set(['chatgpt.com', 'chat.openai.com']),
     claude: new Set(['claude.ai']),
     gemini: new Set(['gemini.google.com']),
+    grok: new Set(['grok.com']),
   }
   if (
     parsed.protocol !== 'https:' ||
@@ -464,7 +466,7 @@ export async function resolveChromiumBrowser(requested?: unknown): Promise<Chrom
 export async function openProviderUrl(url: string, browser: ChromiumBrowser) {
   // Re-validate here so future callers cannot turn this into a general URL launcher.
   const parsed = new URL(url)
-  const allowedHosts = new Set(['chatgpt.com', 'chat.openai.com', 'claude.ai', 'gemini.google.com'])
+  const allowedHosts = new Set(['chatgpt.com', 'chat.openai.com', 'claude.ai', 'gemini.google.com', 'grok.com'])
   if (
     parsed.protocol !== 'https:' ||
     parsed.username !== '' ||
@@ -473,7 +475,7 @@ export async function openProviderUrl(url: string, browser: ChromiumBrowser) {
   ) {
     throw runtimeError(
       'invalid_provider_url',
-      'Tokenless only opens allowlisted ChatGPT, Claude, or Gemini HTTPS pages.',
+      'Tokenless only opens allowlisted ChatGPT, Claude, Gemini, or Grok HTTPS pages.',
       false
     )
   }

@@ -91,13 +91,13 @@ The reviewer may inspect the primary extension manifest and package. Confirm:
 
 - Manifest V3 only.
 - Host permissions limited to `chatgpt.com`, `chat.openai.com`,
-  `gemini.google.com`, and `claude.ai`.
+  `gemini.google.com`, `claude.ai`, and `grok.com`.
 - The `debugger` permission is used only for one validated visible ChatGPT
   control click at a time. The extension sends a pressed and released
   `Input.dispatchMouseEvent`, then detaches; it never uses Network, Storage,
   Fetch, Runtime, DOM, or Page CDP commands.
 - No `tabs`, `cookies`, `history`, `webRequest`, or `webRequestBlocking`
-  permission. The four provider host permissions provide URL access only for
+  permission. The five provider host permissions provide URL access only for
   matching provider tabs.
 - No remote executable code.
 - No extension page is opened automatically to act as a task runner.

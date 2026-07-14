@@ -1,6 +1,6 @@
 ---
 name: tokenless
-description: Route shareable Q&A, analysis, review, research, writing, and other non-project-writing work through a user's visible ChatGPT, Claude, or Gemini browser session to save API tokens.
+description: Route shareable Q&A, analysis, review, research, writing, and other non-project-writing work through a user's visible ChatGPT, Claude, Gemini, or Grok browser session to save API tokens.
 ---
 
 # Tokenless agent workflow
@@ -19,7 +19,7 @@ Require the `tokenless-install` skill to complete installation, upgrades, repair
 npx tokenless config --json
 ```
 
-Use the first configured `preferredProviders` entry unless the user explicitly chooses `chatgpt`, `claude`, or `gemini`. When none is configured, Tokenless defaults to ChatGPT.
+Use the first configured `preferredProviders` entry unless the user explicitly chooses `chatgpt`, `claude`, `gemini`, or `grok`. When none is configured, Tokenless defaults to ChatGPT.
 
 ## Build only shareable context
 
@@ -63,7 +63,7 @@ npx tokenless run \
 
 `--long-running` allows up to 35 minutes for a visible provider response and 36 minutes for the daemon job. Keep the command attached; its progress heartbeats arrive on stderr while stdout remains machine-readable JSON. Do not use `--no-wait`, do not replace the web task with a local agent run, and do not claim a result until the daemon reports `succeeded`.
 
-Add `--provider chatgpt`, `--provider claude`, or `--provider gemini` only when provider selection is intentional. Retain the returned `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task.
+Add `--provider chatgpt`, `--provider claude`, `--provider gemini`, or `--provider grok` only when provider selection is intentional. Retain the returned `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task.
 
 For ChatGPT, Tokenless selects the visible Chat surface before sending. Never request Work. Use `npx tokenless chatgpt-controls --json` to inspect the signed-in account's currently visible models and Intelligence levels. Add `--model "<visible model>"`, optional `--model-fallback "<model,...>"`, and `--effort instant|medium|high|extra_high|pro` to `run` when the user asks for them. A missing model tries the supplied fallback list then preserves the visible current model; unavailable or structurally ambiguous Intelligence levels preserve the current level. These control fallbacks must not prevent the prompt from being submitted.
 
@@ -94,3 +94,4 @@ Treat cancellation as successful only when the CLI returns `ok: true` and `statu
 - `chatgpt`: general coding, debugging, transformations, multimodal or browser-product reasoning, and fast iteration.
 - `claude`: long-form writing, critique, architecture tradeoffs, broad code review, and synthesis-heavy work.
 - `gemini`: large-context reading, research-style summarization, Google ecosystem context, and document comparison.
+- `grok`: current-event synthesis, concise exploration, and work that benefits from Grok's visible web experience.

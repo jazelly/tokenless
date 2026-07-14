@@ -154,6 +154,11 @@ export function providerConversationRoute(
         ? { kind: 'standard', customGptId: undefined }
         : null
     }
+    if (provider.id === 'grok') {
+      return segments.length === 2 && segments[0] === 'c' && isOpaqueProviderId(segments[1])
+        ? { kind: 'standard', customGptId: undefined }
+        : null
+    }
     return null
   } catch {
     return null

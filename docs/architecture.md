@@ -15,7 +15,7 @@ Tokenless is standalone. Noop and other agents may consume its packages or skill
 
 `tokenless run` defaults to `visible`. `--mode direct` is explicit. The decision occurs before daemon resolution, extension inspection, browser launch, Codex execution, or API configuration. Tokenless never falls back between modes: a failure in one transport is returned to the caller without resending the prompt through the other transport.
 
-Visible mode supports ChatGPT, Claude, and Gemini through user-visible provider pages. Direct mode supports ChatGPT, Claude, Gemini, Grok, and an explicitly configured Antigravity-compatible gateway. Public API traffic may be billed separately from a provider web subscription.
+Visible mode supports ChatGPT, Claude, Gemini, and Grok through user-visible provider pages. Direct mode supports ChatGPT, Claude, Gemini, Grok, and an explicitly configured Antigravity-compatible gateway. Public API traffic may be billed separately from a provider web subscription.
 
 ## Visible Session Flow
 
@@ -107,6 +107,6 @@ When ChatGPT requires a trusted user gesture for those visible controls, the con
 
 ## Safety Boundary
 
-Visible-session adapters operate only through selectors and text visible in user-visible ChatGPT, Claude, or Gemini pages after host permission is granted. They report login, CAPTCHA, selector drift, rate limits, and user confirmations rather than bypassing them.
+Visible-session adapters operate only through selectors and text visible in user-visible ChatGPT, Claude, Gemini, or Grok pages after host permission is granted. They report login, CAPTCHA, selector drift, rate limits, and user confirmations rather than bypassing them.
 
 Direct adapters use provider-owned clients or documented public APIs with environment-only credentials. Tokenless does not store or extract provider cookies, localStorage/sessionStorage tokens, hidden authentication headers, or private provider backend API calls in either mode. It never imports subscription OAuth credentials into its broker, and the broker is not an arbitrary-path proxy. Prompt construction redacts obvious secrets and includes only user-approved files and context.

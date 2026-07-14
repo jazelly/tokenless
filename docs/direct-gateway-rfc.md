@@ -189,7 +189,7 @@ Provider names are:
 - `grok`: OpenAI Responses protocol; maps to platform `grok`.
 - `antigravity`: dedicated Antigravity route; protocol is selected from an unambiguous `claude-*` or `gemini-*` model prefix.
 
-Visible mode continues to accept only `chatgpt`, `claude`, and `gemini` until visible adapters exist for other providers.
+Visible mode accepts `chatgpt`, `claude`, `gemini`, and `grok`; direct-only `antigravity` remains outside the visible-session path.
 
 `--direct-backend` accepts `official-client` or `api`. It defaults to `official-client` for ChatGPT and `api` for every other direct provider. `official-client` is rejected for a provider until that provider publishes and documents a stable programmatic client interface suitable for third-party orchestration.
 

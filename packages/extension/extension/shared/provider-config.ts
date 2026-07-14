@@ -2,6 +2,7 @@ export const PROVIDER_IDS = Object.freeze({
   CHATGPT: 'chatgpt',
   GEMINI: 'gemini',
   CLAUDE: 'claude',
+  GROK: 'grok',
 })
 
 export type ProviderId = typeof PROVIDER_IDS[keyof typeof PROVIDER_IDS]
@@ -119,6 +120,26 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'button[aria-label*="Stop" i]',
     ]),
     busyTextLabels: Object.freeze(['stop']),
+  }),
+  Object.freeze({
+    id: PROVIDER_IDS.GROK,
+    label: 'Grok',
+    homeUrl: 'https://grok.com/',
+    hosts: Object.freeze(['grok.com']),
+    matchPatterns: Object.freeze(['https://grok.com/*']),
+    composerSelectors: Object.freeze([
+      'div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"][aria-multiline="true"]',
+      'textarea[aria-label="Ask Grok anything"][placeholder="What do you want to know?"]',
+    ]),
+    submitSelectors: Object.freeze([
+      'button[data-testid="chat-submit"][aria-label="Submit"][type="submit"]',
+    ]),
+    answerSelectors: Object.freeze([
+      'div[data-testid="assistant-message"]',
+    ]),
+    blockerSelectors: Object.freeze([
+      'div[data-testid="anon-paywall-sign-up-card"]',
+    ]),
   }),
 ])
 

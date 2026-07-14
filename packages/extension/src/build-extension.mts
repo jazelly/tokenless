@@ -29,13 +29,6 @@ const manifestRecord = {
     path: portableRelativePath(distExtensionRoot, file),
     sha256: hashFile(file),
   })),
-  debuggerControl: {
-    version: debuggerControlManifest.version,
-    files: debuggerControlFiles.map((file) => ({
-      path: portableRelativePath(distDebuggerControlRoot, file),
-      sha256: hashFile(file),
-    })),
-  },
 }
 
 await fs.promises.writeFile(
@@ -84,6 +77,7 @@ function verifyManifest(manifest: Record<string, any>) {
     'https://chat.openai.com/*',
     'https://gemini.google.com/*',
     'https://claude.ai/*',
+    'https://grok.com/*',
   ])
   const hostPermissions = new Set(manifest.host_permissions || [])
   if (
@@ -138,16 +132,6 @@ function verifyExtensionArtifacts(files: string[]) {
   }
   for (const icon of ['icons/tokenless-16.png', 'icons/tokenless-32.png', 'icons/tokenless-48.png', 'icons/tokenless-128.png']) {
     if (!relativeFiles.includes(icon)) throw new Error(`extension build must contain ${icon}`)
-  }
-}
-
-function verifyDebuggerControlArtifacts(files: string[]) {
-  const relativeFiles = files.map((file) => portableRelativePath(distDebuggerControlRoot, file))
-  if (!relativeFiles.includes('background/service-worker.js')) {
-    throw new Error('debugger control extension must contain its service worker')
-  }
-  if (relativeFiles.some((file) => file.endsWith('.map') || file.endsWith('.d.ts'))) {
-    throw new Error('debugger control extension must not contain development artifacts')
   }
 }
 

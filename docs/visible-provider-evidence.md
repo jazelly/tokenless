@@ -127,3 +127,70 @@ selection through visible DOM only. Authenticated model selection, file upload,
 Gems, and saved conversation isolation remain pending the enrichment phase.
 They must not be enabled until a user-granted, authenticated capture verifies
 the controls and focused extension tests reproduce their visible state changes.
+
+## Grok
+
+Evidence reviewed on 2026-07-15:
+
+- [Grok pricing](https://x.ai/pricing) lists a Free plan at $0 per month with
+  "generous limits," but does not publish a fixed message count. Tokenless must
+  therefore treat the account's visible limit state as authoritative.
+- [Welcome to Grok](https://docs.x.ai/grok/overview) says Grok is free to start
+  and that paid SuperGrok plans raise limits. The
+  [Grok website FAQ](https://docs.x.ai/grok/faq) further distinguishes paid
+  weekly usage from separate free-tier Chat and Voice limits; those free limits
+  reset on their own provider-controlled schedule.
+- The same FAQ documents visible web uploads of up to approximately 100 files at
+  once and up to 150 MB for most individual files. Supported formats and limits
+  can vary by platform or subscription, so the live upload UI remains the
+  runtime authority.
+- The FAQ identifies `grok.com` as the supported web host and mentions Projects,
+  but does not establish a personal Free-plan Project entitlement. The
+  [Grok.com workspace guide](https://docs.x.ai/grok/user-guide) documents
+  licensed Business personal/team workspaces and their isolation. Tokenless does
+  not infer that a Free account has equivalent workspace controls.
+
+### DOM provenance
+
+The anonymous `https://grok.com/` web app and a public read-only `/share/<id>`
+conversation were inspected through their visible DOM on 2026-07-15. Repeated
+home-page loads exposed two provider-owned composer variants:
+
+- `div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"][aria-multiline="true"]`
+- `textarea[aria-label="Ask Grok anything"][placeholder="What do you want to know?"]`
+
+The same visible surfaces supplied these exact contracts:
+
+- `button[data-testid="chat-submit"][aria-label="Submit"][type="submit"]`
+- `div[data-testid="assistant-message"]` for assistant answers and
+  `div[data-testid="user-message"]` for user messages
+- `button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]`
+- `button[data-testid="attach-button"][aria-label="Attach"][aria-haspopup="menu"]`
+- `input[type="file"][name="files"][multiple]`
+- `div[data-testid="anon-paywall-sign-up-card"]`
+
+A benign anonymous prompt was entered and submitted solely to observe the
+visible state transition. Grok rendered the user message and then replaced the
+composer with the exact anonymous paywall above. This proves that an account is
+required to receive a response even though the initial anonymous composer is
+interactive. Persistent Sign in and Sign up links are not treated as blockers
+before that transition.
+
+The reduced and redacted fixture at `test/fixtures/grok-real-dom-fixture.html`
+combines the home-page controls with the public-share answer node without
+retaining public conversation text. Its inline script is a deterministic local
+test shim, not Grok JavaScript. No active authenticated response was generated
+during this capture, so the base adapter deliberately does not invent a busy
+selector. An authenticated visible-session capture is required before adding a
+busy-state contract.
+
+### Current acceptance boundary
+
+The Grok base adapter is accepted only when focused browser tests prove both
+observed composer variants, exact submit and answer selection, stale-answer
+exclusion, `/` to `/c/<opaque-id>` navigation, anonymous-paywall failure, and
+selector-drift failure. A separate fixture E2E must prove the complete CLI,
+daemon, native-host, extension service-worker, and content-script chain. Model
+selection, file attachment, and Project/workspace isolation remain gated on the
+authenticated enrichment capture even though their public controls or product
+documentation are visible.

@@ -29,11 +29,13 @@ test('primary manifest owns trusted debugger clicks without broad browser permis
   assert.ok(!manifest.permissions.includes('webRequestBlocking'))
   assert.deepEqual(manifest.content_scripts[0].matches, manifest.host_permissions)
   assert.ok(manifest.host_permissions.every((pattern) => pattern.startsWith('https://')))
+  assert.ok(manifest.host_permissions.includes('https://grok.com/*'))
   assert.deepEqual(manifest.host_permissions, [
     'https://chatgpt.com/*',
     'https://chat.openai.com/*',
     'https://gemini.google.com/*',
     'https://claude.ai/*',
+    'https://grok.com/*',
   ])
 })
 
@@ -109,9 +111,11 @@ test('provider navigation policy centralizes approved visible-session routes', a
   const chatgpt = getProviderById('chatgpt')
   const claude = getProviderById('claude')
   const gemini = getProviderById('gemini')
+  const grok = getProviderById('grok')
   assert.ok(chatgpt)
   assert.ok(claude)
   assert.ok(gemini)
+  assert.ok(grok)
 
   assert.equal(canonicalProviderUrl('https://chatgpt.com/g/g-12345678/'), 'https://chatgpt.com/g/g-12345678')
   assert.equal(isApprovedProviderTransition(chatgpt, 'https://chatgpt.com/', 'https://chatgpt.com/c/12345678'), true)
@@ -134,6 +138,20 @@ test('provider navigation policy centralizes approved visible-session routes', a
   assert.deepEqual(gemini.answerSelectors, ['response-container message-content'])
   assert.deepEqual(gemini.busySelectors, ['button[aria-label="Stop response"]'])
   assert.equal(gemini.blockerSelectors.some((selector) => selector.includes('accounts.google.com')), false)
+  assert.equal(isApprovedProviderTransition(grok, 'https://grok.com/', 'https://grok.com/c/123e4567-e89b-12d3-a456-426614174003'), true)
+  assert.equal(isProviderConversationUrl(grok, 'https://grok.com/c/settings'), false)
+  assert.equal(isProviderConversationUrl(grok, 'https://grok.com/c/settings123'), false)
+  assert.deepEqual(grok.composerSelectors, [
+    'div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"][aria-multiline="true"]',
+    'textarea[aria-label="Ask Grok anything"][placeholder="What do you want to know?"]',
+  ])
+  assert.deepEqual(grok.submitSelectors, [
+    'button[data-testid="chat-submit"][aria-label="Submit"][type="submit"]',
+  ])
+  assert.deepEqual(grok.answerSelectors, ['div[data-testid="assistant-message"]'])
+  assert.deepEqual(grok.blockerSelectors, ['div[data-testid="anon-paywall-sign-up-card"]'])
+  assert.equal(grok.busySelectors, undefined)
+  assert.equal(grok.busyTextLabels, undefined)
 })
 
 test('daemon bridge requires a v1 handshake and reconnects with bounded backoff', async () => {
@@ -1117,6 +1135,239 @@ test('provider content uses only visible controls and snapshots a fail-closed re
       assert.deepEqual(geminiAnswerDrift.pageErrors, [])
     } finally {
       await geminiAnswerDrift.context.close()
+    }
+
+    const grok = await openProviderFixture(
+      browser,
+      'https://grok.com/',
+      readText('test/fixtures/grok-real-dom-fixture.html')
+    )
+    try {
+      assert.equal(await grok.page.getByRole('button', { name: 'Sign in', exact: true }).isVisible(), true)
+      assert.equal(await grok.page.locator('button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]').isVisible(), true)
+      assert.equal(await grok.page.locator('button[data-testid="attach-button"][aria-label="Attach"][aria-haspopup="menu"]').isVisible(), true)
+      assert.equal(await grok.page.locator('input[type="file"][name="files"][multiple]').count(), 1)
+      const request = {
+        provider: 'grok',
+        requestId: 'grok-conversation-transition',
+        targetUrl: 'https://grok.com/',
+        prompt: 'Start the visible Grok conversation.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 2000,
+      }
+      const submit = await grok.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      assert.deepEqual(submit.answerBaseline, {
+        count: 1,
+        lastText: 'stale Grok real-DOM fixture answer that must not be read',
+      })
+      assert.equal(await grok.page.locator('[data-testid="user-message"]').count(), 2)
+      assert.equal(
+        await grok.page.locator('[data-testid="user-message"]').last().textContent(),
+        'Start the visible Grok conversation.'
+      )
+      assert.equal(await grok.page.locator('button[data-testid="chat-submit"]').isDisabled(), true)
+      await grok.page.waitForURL('https://grok.com/c/123e4567-e89b-12d3-a456-426614174003')
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'grok-transition-proof-001')
+      const read = await dispatchPostSubmitRead(grok.page, request, submit.answerBaseline, proof)
+      assert.equal(read.status, 'read')
+      assert.equal(
+        read.text,
+        'visible Grok real-DOM fixture answer for: Start the visible Grok conversation.'
+      )
+      assert.doesNotMatch(read.text, /stale Grok real-DOM fixture answer/)
+      assert.equal(read.url, 'https://grok.com/c/123e4567-e89b-12d3-a456-426614174003')
+      for (const unsafePath of ['/c/settings', '/c/settings123']) {
+        await grok.page.evaluate((pathname) => {
+          history.replaceState({}, '', pathname)
+          const answer = document.querySelectorAll('[data-testid="assistant-message"]')
+          answer[answer.length - 1].textContent = 'Misleading Grok settings answer'
+        }, unsafePath)
+        const blocked = await dispatchPostSubmitRead(grok.page, request, submit.answerBaseline, proof)
+        assert.equal(blocked.status, 'blocked')
+        assert.equal(blocked.stopReason, 'target_context_mismatch')
+        assert.doesNotMatch(JSON.stringify(blocked), /Misleading Grok settings answer/)
+      }
+      assert.deepEqual(grok.pageErrors, [])
+    } finally {
+      await grok.context.close()
+    }
+
+    const grokTextarea = await openProviderFixture(
+      browser,
+      'https://grok.com/',
+      readText('test/fixtures/grok-real-dom-fixture.html')
+    )
+    try {
+      await grokTextarea.page.evaluate(() => {
+        const contenteditable = document.querySelector('div[aria-label="Ask Grok anything"]')
+        const textarea = document.createElement('textarea')
+        textarea.setAttribute('aria-label', 'Ask Grok anything')
+        textarea.placeholder = 'What do you want to know?'
+        contenteditable.replaceWith(textarea)
+      })
+      const request = {
+        provider: 'grok',
+        requestId: 'grok-textarea-composer',
+        targetUrl: 'https://grok.com/',
+        prompt: 'Use the observed Grok textarea composer.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 2000,
+      }
+      const submit = await grokTextarea.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      assert.equal(
+        await grokTextarea.page.locator('[data-testid="user-message"]').last().textContent(),
+        'Use the observed Grok textarea composer.'
+      )
+      await grokTextarea.page.waitForURL('https://grok.com/c/123e4567-e89b-12d3-a456-426614174003')
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'grok-textarea-proof-001')
+      const read = await dispatchPostSubmitRead(grokTextarea.page, request, submit.answerBaseline, proof)
+      assert.equal(read.status, 'read')
+      assert.equal(
+        read.text,
+        'visible Grok real-DOM fixture answer for: Use the observed Grok textarea composer.'
+      )
+      assert.deepEqual(grokTextarea.pageErrors, [])
+    } finally {
+      await grokTextarea.context.close()
+    }
+
+    const grokAnonymousPaywall = await openProviderFixture(
+      browser,
+      'https://grok.com/',
+      readText('test/fixtures/grok-real-dom-fixture.html')
+    )
+    try {
+      await grokAnonymousPaywall.page.evaluate(() => {
+        globalThis.__fixtureGrokAnonymousPaywallDelayMs = 200
+      })
+      const request = {
+        provider: 'grok',
+        requestId: 'grok-anonymous-paywall',
+        targetUrl: 'https://grok.com/',
+        prompt: 'Reach the visible anonymous Grok account gate.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 2000,
+      }
+      const submit = await grokAnonymousPaywall.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      assert.equal(await grokAnonymousPaywall.page.locator('[data-testid="user-message"]').count(), 2)
+      assert.equal(await grokAnonymousPaywall.page.locator('[data-testid="assistant-message"]').count(), 1)
+      const blockerWaitStartedAt = Date.now()
+      const blocked = await grokAnonymousPaywall.page.evaluate(({ contentRequest, answerBaseline }) => (
+        globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.read',
+          request: { ...contentRequest, answerBaseline },
+        })
+      ), { contentRequest: request, answerBaseline: submit.answerBaseline })
+      assert.equal(blocked.status, 'blocked')
+      assert.equal(blocked.stopReason, 'provider_blocker_visible')
+      assert.match(blocked.message, /Continue your conversation/)
+      assert.ok(Date.now() - blockerWaitStartedAt < 1500, 'late Grok paywall must interrupt answer waiting')
+      assert.deepEqual(grokAnonymousPaywall.pageErrors, [])
+    } finally {
+      await grokAnonymousPaywall.context.close()
+    }
+
+    for (const driftTarget of ['composer', 'submit']) {
+      const grokSelectorDrift = await openProviderFixture(
+        browser,
+        'https://grok.com/',
+        readText('test/fixtures/grok-real-dom-fixture.html')
+      )
+      try {
+        await grokSelectorDrift.page.evaluate((target) => {
+          if (target === 'composer') {
+            const composer = document.querySelector('div[aria-label="Ask Grok anything"]')
+            composer.id = 'drifted-grok-composer'
+            composer.className = 'fixture-drifted-composer'
+            composer.removeAttribute('aria-label')
+            composer.removeAttribute('aria-multiline')
+            composer.removeAttribute('role')
+            return
+          }
+          const send = document.querySelector('button[data-testid="chat-submit"]')
+          send.id = 'drifted-grok-submit'
+          send.removeAttribute('data-testid')
+          send.removeAttribute('aria-label')
+          send.removeAttribute('type')
+        }, driftTarget)
+        const blocked = await grokSelectorDrift.page.evaluate((target) => globalThis.__dispatchTokenlessMessage({
+          type: 'tokenless.bridge.submit',
+          request: {
+            provider: 'grok',
+            requestId: `grok-${target}-selector-drift`,
+            targetUrl: 'https://grok.com/',
+            prompt: `This prompt must not pass the drifted Grok ${target} contract.`,
+            composerTimeoutMs: 100,
+            submitTimeoutMs: 100,
+          },
+        }), driftTarget)
+        assert.equal(blocked.status, 'blocked')
+        assert.equal(blocked.stopReason, 'selector_drift')
+        assert.match(blocked.message, new RegExp(`Provider ${driftTarget} selector`))
+        assert.equal(await grokSelectorDrift.page.locator('[data-testid="user-message"]').count(), 1)
+        assert.deepEqual(grokSelectorDrift.pageErrors, [])
+      } finally {
+        await grokSelectorDrift.context.close()
+      }
+    }
+
+    const grokAnswerDrift = await openProviderFixture(
+      browser,
+      'https://grok.com/',
+      readText('test/fixtures/grok-real-dom-fixture.html')
+    )
+    try {
+      const answerDriftRequest = {
+        provider: 'grok',
+        requestId: 'grok-answer-selector-drift',
+        targetUrl: 'https://grok.com/',
+        prompt: 'Answer selector contract drift.',
+        readTimeoutMs: 0,
+      }
+      const submit = await grokAnswerDrift.page.evaluate((request) => globalThis.__dispatchTokenlessMessage({
+        type: 'tokenless.bridge.submit',
+        request: {
+          ...request,
+          composerTimeoutMs: 100,
+          submitTimeoutMs: 100,
+        },
+      }), answerDriftRequest)
+      assert.equal(submit.status, 'submitted')
+      await grokAnswerDrift.page.waitForURL('https://grok.com/c/123e4567-e89b-12d3-a456-426614174003')
+      await grokAnswerDrift.page.evaluate(() => {
+        for (const answer of document.querySelectorAll('[data-testid="assistant-message"]')) {
+          answer.dataset.testid = 'drifted-assistant-message'
+        }
+      })
+      const proof = postSubmitTransitionProof(
+        answerDriftRequest,
+        submit.answerBaseline,
+        'grok-answer-drift-proof-001'
+      )
+      const blocked = await dispatchPostSubmitRead(
+        grokAnswerDrift.page,
+        answerDriftRequest,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(blocked.status, 'blocked')
+      assert.equal(blocked.stopReason, 'response_unavailable')
+      assert.doesNotMatch(JSON.stringify(blocked), /visible Grok real-DOM fixture answer/)
+      assert.deepEqual(grokAnswerDrift.pageErrors, [])
+    } finally {
+      await grokAnswerDrift.context.close()
     }
 
     const landingTransition = await openProviderFixture(browser, 'https://chatgpt.com/', `
