@@ -114,6 +114,7 @@ export {
 
 export type {
   DirectBrokerHandle,
+  ProjectApiBrokerOptions,
   StartDirectBrokerOptions,
 } from './direct/broker.js'
 

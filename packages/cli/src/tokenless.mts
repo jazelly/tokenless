@@ -69,6 +69,13 @@ type StatusReporter = {
 const DEFAULT_RUN_TIMEOUT_MS = 180_000
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000
 const LONG_RUNNING_JOB_TIMEOUT_MS = 2_160_000
+const PROJECT_API_ROUTING_DOMAIN_ENVIRONMENT = Object.freeze<Record<DirectProvider, string>>({
+  chatgpt: 'TOKENLESS_DIRECT_CHATGPT_ROUTING_DOMAIN',
+  claude: 'TOKENLESS_DIRECT_CLAUDE_ROUTING_DOMAIN',
+  gemini: 'TOKENLESS_DIRECT_GEMINI_ROUTING_DOMAIN',
+  grok: 'TOKENLESS_DIRECT_GROK_ROUTING_DOMAIN',
+  antigravity: 'TOKENLESS_DIRECT_ANTIGRAVITY_ROUTING_DOMAIN',
+})
 
 let args: CliArgs = { files: [], json: process.argv.includes('--json') }
 
@@ -423,13 +430,19 @@ async function serveCommand(args: CliArgs) {
 
   let broker: Awaited<ReturnType<typeof startDirectBroker>> | undefined
   try {
+    const homeDir = tokenlessHome(args.home)
     broker = await startDirectBroker({
       serverKey,
       host: args.host === undefined ? DEFAULT_DIRECT_BROKER_HOST : String(args.host),
       port: args.port === undefined ? DEFAULT_DIRECT_BROKER_PORT : Number(args.port),
       signal: abortController.signal,
+      projectApi: {
+        homeDir,
+        environment: process.env,
+        routingDomains: projectApiRoutingDomains(process.env),
+      },
       managedProject: {
-        homeDir: tokenlessHome(),
+        homeDir,
         executor: async (execution) => {
           try {
             return await managedCodexExecutor(execution)
@@ -461,6 +474,17 @@ async function serveCommand(args: CliArgs) {
     process.removeListener('SIGTERM', stop)
     if (broker !== undefined) await broker.close()
   }
+}
+
+function projectApiRoutingDomains(
+  environment: Readonly<Record<string, string | undefined>>,
+): Partial<Record<DirectProvider, string>> {
+  const routingDomains: Partial<Record<DirectProvider, string>> = {}
+  for (const provider of Object.keys(PROJECT_API_ROUTING_DOMAIN_ENVIRONMENT) as DirectProvider[]) {
+    const value = environment[PROJECT_API_ROUTING_DOMAIN_ENVIRONMENT[provider]]
+    if (typeof value === 'string' && value.trim() !== '') routingDomains[provider] = value
+  }
+  return routingDomains
 }
 
 async function runCommand(args: CliArgs) {
@@ -1618,7 +1642,7 @@ function assertDirectServeArguments(args: CliArgs) {
   if (args.mode === undefined || normalizeRunMode(args.mode) !== 'direct') {
     throw usageError('direct_serve_mode_required', 'tokenless serve requires --mode direct.')
   }
-  const allowed = new Set(['files', 'host', 'json', 'mode', 'port', 'quiet'])
+  const allowed = new Set(['files', 'home', 'host', 'json', 'mode', 'port', 'quiet'])
   const unsupported = Object.entries(args)
     .filter(([key, value]) => key !== 'files' && value !== undefined && !allowed.has(key))
     .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`)
@@ -1869,7 +1893,7 @@ function usage() {
     '  tokenless run [--mode visible] --provider chatgpt --prompt <text> --json',
     '  tokenless run --mode direct --provider chatgpt [--model <codex-model>] --prompt <text> --json',
     '  TOKENLESS_DIRECT_CHATGPT_API_KEY=... tokenless run --mode direct --direct-backend api --provider chatgpt --model <api-model> [--direct-base-url <url>] [--max-output-tokens <count>] [--temperature <0..2>] --prompt <text> --json',
-    '  TOKENLESS_DIRECT_SERVER_KEY=... tokenless serve --mode direct [--host 127.0.0.1] [--port 8788] --json',
+    '  TOKENLESS_DIRECT_SERVER_KEY=... tokenless serve --mode direct [--home <path>] [--host 127.0.0.1] [--port 8788] --json',
     '  tokenless accounts add --provider chatgpt --account personal-one [--label Primary] --json',
     '  tokenless accounts login --provider chatgpt --account personal-one [--device-auth] --json',
     '  tokenless accounts add --provider claude --driver api --account work --routing-domain personal --json',

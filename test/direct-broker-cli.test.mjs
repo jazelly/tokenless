@@ -154,6 +154,145 @@ test('serve command brokers a real streaming socket without touching visible-ses
   }
 })
 
+test('serve command routes project API accounts from its selected home and fails over only after exact rejection', async () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-project-api-cli-'))
+  const homeDir = path.join(temporaryRoot, 'operator-home')
+  const invalidBody = Buffer.from(JSON.stringify({
+    error: {
+      message: 'invalid redacted key',
+      type: 'invalid_request_error',
+      param: null,
+      code: 'invalid_api_key',
+    },
+  }))
+  const calls = []
+  const upstream = await startServer(async (request, response) => {
+    calls.push(request.headers.authorization)
+    await readBody(request)
+    if (request.headers.authorization === 'Bearer account-secret-a') {
+      response.writeHead(401, {
+        'content-length': String(invalidBody.byteLength),
+        'content-type': 'application/json; charset=utf-8',
+      })
+      response.end(invalidBody)
+      return
+    }
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end('{"ok":true}')
+  })
+  const baseEnvironment = {
+    ...process.env,
+    HOME: temporaryRoot,
+    USERPROFILE: temporaryRoot,
+    TOKENLESS_CODEX_BIN: path.join(temporaryRoot, 'codex-must-not-run'),
+  }
+
+  const accountA = runCliJson([
+    'accounts', 'add',
+    '--provider', 'chatgpt',
+    '--driver', 'api',
+    '--account', 'account-a',
+    '--routing-domain', 'openai-team',
+    '--home', homeDir,
+    '--json',
+  ], baseEnvironment).account
+  const accountB = runCliJson([
+    'accounts', 'add',
+    '--provider', 'chatgpt',
+    '--driver', 'api',
+    '--account', 'account-b',
+    '--routing-domain', 'openai-team',
+    '--home', homeDir,
+    '--json',
+  ], baseEnvironment).account
+  runCliJson([
+    'projects', 'pin',
+    '--project', 'Pinned-Project',
+    '--provider', 'chatgpt',
+    '--account', 'account-a',
+    '--home', homeDir,
+    '--json',
+  ], baseEnvironment)
+
+  const environment = {
+    ...baseEnvironment,
+    [accountA.credentialEnv]: 'account-secret-a',
+    [accountB.credentialEnv]: 'account-secret-b',
+    TOKENLESS_DIRECT_CHATGPT_BASE_URL: upstream.url,
+    TOKENLESS_DIRECT_CHATGPT_ROUTING_DOMAIN: 'openai-team',
+    TOKENLESS_DIRECT_SERVER_KEY: 'tokenless-project-cli-secret-32-characters',
+    TOKENLESS_DIRECT_TIMEOUT_MS: '5000',
+  }
+  const child = spawn(process.execPath, [
+    cliEntry,
+    'serve',
+    '--mode', 'direct',
+    '--home', homeDir,
+    '--host', '127.0.0.1',
+    '--port', '0',
+    '--json',
+  ], {
+    cwd: temporaryRoot,
+    env: environment,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (chunk) => { stdout += chunk })
+  child.stderr.on('data', (chunk) => { stderr += chunk })
+
+  try {
+    const startup = await waitForStartupJson(child, () => stdout, () => stderr)
+    const request = (project) => fetch(`${startup.url}/v1/responses`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer tokenless-project-cli-secret-32-characters',
+        'content-type': 'application/json',
+        'x-tokenless-project': project,
+      },
+      body: '{"model":"gpt-test","input":"hello"}',
+    })
+
+    const rejected = await request('Pinned-Project')
+    assert.equal(rejected.status, 401)
+    assert.deepEqual(Buffer.from(await rejected.arrayBuffer()), invalidBody)
+    assert.deepEqual(calls, ['Bearer account-secret-a'])
+
+    const migrated = await request('Pinned-Project')
+    assert.equal(migrated.status, 200)
+    assert.deepEqual(await migrated.json(), { ok: true })
+    const resolution = runCliJson([
+      'projects', 'resolve',
+      '--project', 'Pinned-Project',
+      '--provider', 'chatgpt',
+      '--home', homeDir,
+      '--json',
+    ], baseEnvironment)
+    assert.equal(resolution.project.accountId, 'account-b')
+
+    const assigned = await request('Unbound-Project')
+    assert.equal(assigned.status, 200)
+    assert.deepEqual(await assigned.json(), { ok: true })
+    assert.deepEqual(calls, [
+      'Bearer account-secret-a',
+      'Bearer account-secret-b',
+      'Bearer account-secret-b',
+    ])
+
+    child.kill('SIGTERM')
+    const exit = await waitForExit(child)
+    assert.equal(exit.code, 0, stderr)
+    assert.equal(exit.signal, null)
+    assert.doesNotMatch(`${stdout}\n${stderr}`, /account-secret-a|account-secret-b/)
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    await upstream.close()
+    fs.rmSync(temporaryRoot, { recursive: true, force: true })
+  }
+})
+
 function waitForStartupJson(child, stdout, stderr) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => finish(new Error(`Timed out waiting for broker startup. ${stderr()}`)), 10_000)
@@ -209,4 +348,13 @@ async function readBody(request) {
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
   return Buffer.concat(chunks).toString('utf8')
+}
+
+function runCliJson(argv, environment) {
+  const result = spawnSync(process.execPath, [cliEntry, ...argv], {
+    encoding: 'utf8',
+    env: environment,
+  })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  return JSON.parse(result.stdout)
 }

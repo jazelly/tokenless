@@ -4,7 +4,16 @@ import https from 'node:https'
 import { isIP } from 'node:net'
 import type { AddressInfo, Socket } from 'node:net'
 
-import { resolveDirectApiConfig } from './config.js'
+import {
+  DEFAULT_DIRECT_CHATGPT_BASE_URL,
+  DEFAULT_DIRECT_CLAUDE_BASE_URL,
+  DEFAULT_DIRECT_GEMINI_BASE_URL,
+  DEFAULT_DIRECT_GROK_BASE_URL,
+  DEFAULT_DIRECT_TIMEOUT_MS,
+  resolveDirectApiConfig,
+  validateDirectBaseUrl,
+} from './config.js'
+import { ApiAccountCapacityError } from './api-account-capacity.js'
 import {
   MAX_MANAGED_RESPONSES_BODY_BYTES,
   createManagedResponsesResponse,
@@ -16,6 +25,15 @@ import {
   ProjectCodexRouterError,
   type ProjectCodexRouterOptions,
 } from './project-codex-router.js'
+import {
+  ProjectAccountRouter,
+  ProjectAccountRouterError,
+  type ProjectAccountRouterOptions,
+} from './project-account-router.js'
+import {
+  proxyProjectApiRequest,
+  type ProjectApiProxyRejection,
+} from './project-api-proxy.js'
 import { ANTHROPIC_VERSION } from './protocols/anthropic-messages.js'
 import { DirectError } from './types.js'
 import type { DirectProvider } from './types.js'
@@ -122,10 +140,18 @@ type BrokerState = {
   closePromise?: Promise<void> | undefined
   readonly managedAbortControllers: Set<AbortController>
   readonly managedProjectRouter?: ProjectCodexRouter | undefined
+  readonly projectApi?: ProjectApiBrokerState | undefined
   readonly shutdownGraceMs: number
   readonly sockets: Set<Socket>
   readonly upstreamRequests: Set<http.ClientRequest>
 }
+
+type ProjectApiBrokerState = Readonly<{
+  router: ProjectAccountRouter
+  baseUrls: Readonly<Partial<Record<DirectProvider, string>>>
+  environment: Readonly<Record<string, string | undefined>>
+  timeoutMs: number
+}>
 
 class ManagedBrokerError extends DirectError {
   readonly managedCode: string
@@ -151,10 +177,16 @@ class ManagedBrokerError extends DirectError {
 const BROKER_STATES = new WeakMap<http.Server, BrokerState>()
 const REQUESTS_CLOSING_AFTER_RESPONSE = new WeakSet<http.IncomingMessage>()
 
+export type ProjectApiBrokerOptions = ProjectAccountRouterOptions & Readonly<{
+  baseUrls?: Partial<Record<DirectProvider, string>> | undefined
+  timeoutMs?: number | undefined
+}>
+
 type CreateDirectBrokerOptions = Readonly<{
   serverKey: string
   signal?: AbortSignal | undefined
   managedProject?: ProjectCodexRouterOptions | undefined
+  projectApi?: ProjectApiBrokerOptions | undefined
   maxRequestBytes?: number | undefined
   maxHeaderBytes?: number | undefined
   maxHeaderCount?: number | undefined
@@ -236,11 +268,20 @@ function createDirectBroker(options: CreateDirectBrokerOptions): http.Server {
       throw configurationError('The managed project broker configuration is invalid.')
     }
   }
+  let projectApi: ProjectApiBrokerState | undefined
+  if (options.projectApi !== undefined) {
+    try {
+      projectApi = createProjectApiBrokerState(options.projectApi)
+    } catch {
+      throw configurationError('The public API project broker configuration is invalid.')
+    }
+  }
 
   const state: BrokerState = {
     closing: false,
     managedAbortControllers: new Set(),
     ...(managedProjectRouter === undefined ? {} : { managedProjectRouter }),
+    ...(projectApi === undefined ? {} : { projectApi }),
     shutdownGraceMs,
     sockets: new Set(),
     upstreamRequests: new Set(),
@@ -433,7 +474,7 @@ async function handleBrokerRequest({
 
     const projectId = rawHeaderValues(request, 'x-tokenless-project')[0]
     if (projectId !== undefined) {
-      await handleManagedProjectRequest({
+      await handleProjectRequest({
         request,
         response,
         sendContinue,
@@ -446,7 +487,13 @@ async function handleBrokerRequest({
     }
 
     if (target.pathname === DIRECT_BROKER_HEALTH_PATH || target.pathname === DIRECT_BROKER_CAPABILITIES_PATH) {
-      handleBrokerMetadataRequest(request, response, target, state.managedProjectRouter !== undefined)
+      handleBrokerMetadataRequest(
+        request,
+        response,
+        target,
+        state.managedProjectRouter !== undefined,
+        state.projectApi !== undefined,
+      )
       return
     }
 
@@ -498,6 +545,185 @@ async function handleBrokerRequest({
     }
     rejectBrokerRequest(request, response, 400, 'direct_configuration_error', 'The direct broker rejected the request.')
   }
+}
+
+async function handleProjectRequest({
+  request,
+  response,
+  sendContinue,
+  target,
+  projectId,
+  maxRequestBytes,
+  state,
+}: {
+  request: http.IncomingMessage
+  response: http.ServerResponse
+  sendContinue: boolean
+  target: URL
+  projectId: string
+  maxRequestBytes: number
+  state: BrokerState
+}): Promise<void> {
+  if (state.projectApi !== undefined) {
+    const handled = await tryHandleProjectApiRequest({
+      request,
+      response,
+      sendContinue,
+      target,
+      projectId,
+      maxRequestBytes,
+      state,
+      projectApi: state.projectApi,
+    })
+    if (handled) return
+  }
+  await handleManagedProjectRequest({
+    request,
+    response,
+    sendContinue,
+    target,
+    projectId,
+    maxRequestBytes,
+    state,
+  })
+}
+
+async function tryHandleProjectApiRequest({
+  request,
+  response,
+  sendContinue,
+  target,
+  projectId,
+  maxRequestBytes,
+  state,
+  projectApi,
+}: {
+  request: http.IncomingMessage
+  response: http.ServerResponse
+  sendContinue: boolean
+  target: URL
+  projectId: string
+  maxRequestBytes: number
+  state: BrokerState
+  projectApi: ProjectApiBrokerState
+}): Promise<boolean> {
+  const route = classifyRoute(target.pathname)
+  if (route === undefined) {
+    rejectBrokerRequest(request, response, 404, 'direct_unsupported_provider', 'The direct broker route is not supported.')
+    return true
+  }
+  const method = request.method ?? ''
+  if (!route.methods.includes(method)) {
+    rejectBrokerRequest(request, response, 405, 'direct_configuration_error', 'The HTTP method is not supported for this route.', {
+      allow: route.methods.join(', '),
+    })
+    return true
+  }
+  const contentLength = requestContentLength(request)
+  if (method === 'GET' && ((contentLength ?? 0) > 0 || hasTransferEncoding(request))) {
+    rejectBrokerRequest(request, response, 400, 'direct_configuration_error', 'GET discovery routes do not accept request bodies.')
+    return true
+  }
+  if (contentLength !== undefined && contentLength > maxRequestBytes) {
+    rejectBrokerRequest(request, response, 413, 'direct_request_too_large', 'The direct broker request exceeded the supported size limit.')
+    return true
+  }
+  const provider = selectProvider(request, route)
+  const managedFallbackAllowed = (
+    provider === 'chatgpt' &&
+    route.pathname === '/v1/responses' &&
+    state.managedProjectRouter !== undefined
+  )
+  const abortController = new AbortController()
+  const abort = () => abortController.abort()
+  const abortOnResponseClose = () => {
+    if (!response.writableEnded) abort()
+  }
+  request.once('aborted', abort)
+  request.once('error', abort)
+  response.once('close', abortOnResponseClose)
+  response.once('error', abort)
+  state.managedAbortControllers.add(abortController)
+
+  try {
+    await projectApi.router.execute(projectId, provider, async (execution) => {
+      const baseUrl = projectApiBaseUrl(projectApi, provider)
+      const upstream = buildUpstreamUrl(baseUrl, route, target.search)
+      if (sendContinue) response.writeContinue()
+      await proxyProjectApiRequest({
+        request,
+        response,
+        provider,
+        compatibility: credentialCompatibility(route),
+        upstream,
+        requestHeaders: outboundRequestHeaders(request, provider, route, execution.credential),
+        timeoutMs: projectApi.timeoutMs,
+        maxRequestBytes,
+        safeResponseHeaders: (headers) => safeResponseHeaders(headers, execution.credential),
+        reject: (rejection) => rejectProjectApiProxyRequest(request, response, rejection),
+        reportCredentialRejection: execution.reportCredentialRejection,
+        onUpstreamRequest: (upstreamRequest, active) => {
+          if (active) state.upstreamRequests.add(upstreamRequest)
+          else state.upstreamRequests.delete(upstreamRequest)
+        },
+        onIncompleteRequest: () => closeRequestAfterResponse(request, response),
+        shouldResumeRequest: () => !REQUESTS_CLOSING_AFTER_RESPONSE.has(request),
+      })
+    }, abortController.signal)
+    return true
+  } catch (error) {
+    if (abortController.signal.aborted || response.destroyed) return true
+    if (
+      managedFallbackAllowed &&
+      error instanceof ProjectAccountRouterError &&
+      (error.code === 'project_api_binding_missing' || error.code === 'project_api_driver_mismatch')
+    ) {
+      return false
+    }
+    if (error instanceof ProjectAccountRouterError) {
+      rejectProjectAccountRouterRequest(request, response, error)
+      return true
+    }
+    if (error instanceof ApiAccountCapacityError) {
+      rejectApiAccountCapacityRequest(request, response, error)
+      return true
+    }
+    throw error
+  } finally {
+    state.managedAbortControllers.delete(abortController)
+    request.removeListener('aborted', abort)
+    request.removeListener('error', abort)
+    response.removeListener('close', abortOnResponseClose)
+    response.removeListener('error', abort)
+  }
+}
+
+function rejectProjectApiProxyRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  rejection: ProjectApiProxyRejection,
+): void {
+  rejectBrokerRequest(request, response, rejection.status, rejection.code, rejection.message)
+}
+
+function rejectProjectAccountRouterRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  error: ProjectAccountRouterError,
+): void {
+  const status = error.code === 'project_api_binding_missing' || error.code === 'project_api_driver_mismatch'
+    ? 400
+    : 503
+  rejectBrokerRequest(request, response, status, error.code, error.message)
+}
+
+function rejectApiAccountCapacityRequest(
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  error: ApiAccountCapacityError,
+): void {
+  const status = error.code === 'api_account_queue_timeout' ? 504 : 503
+  rejectBrokerRequest(request, response, status, error.code, error.message)
 }
 
 async function handleManagedProjectRequest({
@@ -829,6 +1055,7 @@ function handleBrokerMetadataRequest(
   response: http.ServerResponse,
   target: URL,
   managedProjectsEnabled: boolean,
+  projectApiEnabled: boolean,
 ) {
   if (target.search !== '') {
     rejectBrokerRequest(request, response, 400, 'direct_configuration_error', 'Broker metadata routes do not accept query parameters.')
@@ -854,9 +1081,108 @@ function handleBrokerMetadataRequest(
       providers: ['chatgpt', 'claude', 'gemini', 'grok', 'antigravity'],
       authentication: 'bearer',
       officialClient: managedProjectsEnabled,
+      projectApi: projectApiEnabled,
+      projectRouting: managedProjectsEnabled || projectApiEnabled,
       streaming: true,
     })
   }
+}
+
+function createProjectApiBrokerState(options: ProjectApiBrokerOptions): ProjectApiBrokerState {
+  if (options === null || typeof options !== 'object') throw configurationError('Public API project options are required.')
+  const {
+    baseUrls: requestedBaseUrls,
+    timeoutMs: requestedTimeoutMs,
+    ...routerOptions
+  } = options
+  const baseUrls: Partial<Record<DirectProvider, string>> = {}
+  if (requestedBaseUrls !== undefined) {
+    if (requestedBaseUrls === null || typeof requestedBaseUrls !== 'object' || Array.isArray(requestedBaseUrls)) {
+      throw configurationError('Public API project base URLs must be an object.')
+    }
+    for (const key of Object.keys(requestedBaseUrls)) {
+      if (!isDirectProviderName(key)) throw configurationError('Public API project base URL provider is unsupported.')
+      const value = requestedBaseUrls[key]
+      if (typeof value !== 'string') throw configurationError('Public API project base URLs must be strings.')
+      baseUrls[key] = validateDirectBaseUrl(value)
+    }
+  }
+  return Object.freeze({
+    router: new ProjectAccountRouter(routerOptions),
+    baseUrls: Object.freeze(baseUrls),
+    environment: options.environment ?? process.env,
+    timeoutMs: projectApiTimeoutMs(
+      requestedTimeoutMs,
+      options.environment ?? process.env,
+    ),
+  })
+}
+
+function projectApiTimeoutMs(
+  explicit: number | undefined,
+  environment: Readonly<Record<string, string | undefined>>,
+): number {
+  if (explicit !== undefined) {
+    return boundedInteger(explicit, DEFAULT_DIRECT_TIMEOUT_MS, 1, 600_000, 'public API project timeout')
+  }
+  const configured = nonemptyValue(environment.TOKENLESS_DIRECT_TIMEOUT_MS)
+  if (configured === undefined) return DEFAULT_DIRECT_TIMEOUT_MS
+  if (!/^(?:0|[1-9][0-9]*)$/.test(configured)) {
+    throw configurationError('The public API project timeout environment value is invalid.')
+  }
+  return boundedInteger(
+    Number(configured),
+    DEFAULT_DIRECT_TIMEOUT_MS,
+    1,
+    600_000,
+    'public API project timeout',
+  )
+}
+
+function projectApiBaseUrl(state: ProjectApiBrokerState, provider: DirectProvider): string {
+  const explicit = state.baseUrls[provider]
+  const providerEnvironment = state.environment[projectApiBaseUrlEnvironment(provider)]
+  const genericEnvironment = state.environment.TOKENLESS_DIRECT_BASE_URL
+  const fallback = projectApiDefaultBaseUrl(provider)
+  const selected = explicit ?? nonemptyValue(providerEnvironment) ?? nonemptyValue(genericEnvironment) ?? fallback
+  if (selected === undefined) {
+    throw configurationError('The selected public API project provider requires an operator-configured base URL.')
+  }
+  return validateDirectBaseUrl(selected)
+}
+
+function projectApiBaseUrlEnvironment(provider: DirectProvider): string {
+  if (provider === 'chatgpt') return 'TOKENLESS_DIRECT_CHATGPT_BASE_URL'
+  if (provider === 'claude') return 'TOKENLESS_DIRECT_CLAUDE_BASE_URL'
+  if (provider === 'gemini') return 'TOKENLESS_DIRECT_GEMINI_BASE_URL'
+  if (provider === 'grok') return 'TOKENLESS_DIRECT_GROK_BASE_URL'
+  return 'TOKENLESS_DIRECT_ANTIGRAVITY_BASE_URL'
+}
+
+function projectApiDefaultBaseUrl(provider: DirectProvider): string | undefined {
+  if (provider === 'chatgpt') return DEFAULT_DIRECT_CHATGPT_BASE_URL
+  if (provider === 'claude') return DEFAULT_DIRECT_CLAUDE_BASE_URL
+  if (provider === 'gemini') return DEFAULT_DIRECT_GEMINI_BASE_URL
+  if (provider === 'grok') return DEFAULT_DIRECT_GROK_BASE_URL
+  return undefined
+}
+
+function credentialCompatibility(route: BrokerRoute): 'anthropic' | 'google' | 'native' {
+  if (route.family === 'anthropic') return 'anthropic'
+  if (route.family === 'gemini') return 'google'
+  if (route.family === 'antigravity') {
+    return route.pathname.includes('/v1/messages') ? 'anthropic' : 'google'
+  }
+  return 'native'
+}
+
+function nonemptyValue(value: string | undefined): string | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  return value
+}
+
+function isDirectProviderName(value: string): value is DirectProvider {
+  return value === 'chatgpt' || value === 'claude' || value === 'gemini' || value === 'grok' || value === 'antigravity'
 }
 
 function proxyToUpstream({
