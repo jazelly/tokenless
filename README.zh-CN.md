@@ -2,13 +2,29 @@
 
 # Tokenless
 
-Tokenless 帮助智能体节省 token：它将适合的工作交给用户已登录的 ChatGPT、Claude 或 Gemini 网页版处理，并将页面上可见的回答返回给智能体。
+Tokenless 让智能体通过两种方式使用 AI：操作你已登录的服务商网页，或显式连接官方客户端和公开 API。默认且推荐使用浏览器扩展模式：它只操作可见网页界面，将浏览器凭证留在浏览器内，并避免额外消耗一次付费模型 API 请求。
+
+## 运行模式
+
+| 模式 | 传输路径 | 身份认证 | 状态 |
+| --- | --- | --- | --- |
+| 扩展模式（`visible`，默认） | ChatGPT、Claude 或 Gemini 可见网页界面 | 浏览器登录会话 | **推荐** |
+| 直连/API 模式（`direct`） | 官方 Codex 客户端、公开 API 或显式配置的兼容网关 | 官方客户端登录或环境变量 API 密钥 | **实验性，持续开发中** |
+
+两种模式完全隔离。扩展模式失败时不会自动改走付费 API；直连请求失败时也不会自动打开浏览器重试。
+
+## 为什么使用 Tokenless
+
+- **首先是节省 token。** 研究、草稿、审查、解释和内容转换可以复用已有网页订阅，不必再消耗一次模型 API 请求。
+- **原生浏览器操作，安全边界清晰。** 扩展模式只使用正常、可见的 DOM 操作，不读取 Cookie、密码、浏览器存储 token、隐藏授权请求头或私有服务商 API。
+- **不收取 Tokenless 托管服务费，源码可查看。** Tokenless 不设接收浏览器会话的托管中继；只有提示词、明确分享的上下文和主动选择的文件会提交给所选服务商。
+- **可持续扩展。** 当前可见网页适配器支持 ChatGPT、Claude 和 Gemini，也可扩展至其他具有兼容网页界面的 AI 服务商。
 
 ## 安装
 
-需要 Node.js 24.15+，并在 Chrome、Brave、Edge、Arc 或 Chromium 中安装并启用 Tokenless 扩展。启用扩展和登录服务商是仅有的手动浏览器操作。
+需要 Node.js 24.15+。扩展模式还需要在 Chrome、Brave、Edge、Arc 或 Chromium 中安装 Tokenless 扩展。
 
-### 1. 使用 npm 安装命令行工具（推荐）
+### npm（推荐）
 
 ```bash
 npm install --global tokenless@latest
@@ -16,195 +32,108 @@ tokenless setup --json
 tokenless doctor --json
 ```
 
-`setup` 会在需要时打开所选服务商页面。请完成页面上出现的登录或权限确认，再由 `doctor` 验证浏览器桥接。
+请完成 `setup` 打开的服务商登录或权限确认。只有本地运行环境与扩展桥接均可用时，`doctor` 才会成功。
 
-### 2. 使用 npx（不进行全局安装）
+不进行全局安装：
 
 ```bash
 npx tokenless@latest setup --json
 npx tokenless@latest doctor --json
 ```
 
-### 3. 从 GitHub 原始脚本进行系统级安装
+系统级安装脚本：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
 ```
 
-此命令会以 `sudo` 执行，请先[审阅安装脚本源码](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh)。脚本只会以系统级权限安装命令行工具，**不会**以 root 身份配置浏览器。请回到普通桌面用户账户，再执行：
+此命令会以 `sudo` 执行，请先[审阅脚本源码](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh)。脚本只安装命令行工具；完成后请以普通桌面用户运行 `tokenless setup --json` 和 `tokenless doctor --json`。
 
-```bash
-tokenless setup --json
-tokenless doctor --json
-```
-
-### 4. 必装的智能体技能
-
-先安装 Tokenless 安装技能：
+### 智能体技能（智能体使用时必装）
 
 ```bash
 npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless-install --yes
 ```
 
-然后把下面这句话发给你的智能体：
+然后告诉智能体：
 
 ```text
-请使用 $tokenless-install 安装 Tokenless、安装它的主要技能，并验证它已就绪。
+请使用 $tokenless-install 安装 Tokenless、安装主技能，并验证它已就绪。
 ```
 
-安装技能会安装主要的 `tokenless` 技能、配置最新版命令行工具和本地运行环境，并以 `doctor` 检查结束；如需浏览器操作，它会直接说明。以后需要升级或修复时，只需对智能体说：`Use $tokenless-install to upgrade Tokenless and verify it.`
+安装技能负责安装、升级、修复和 `doctor` 检查；遇到必须由你完成的浏览器操作时，它会给出明确步骤。
 
-## 为什么使用 Tokenless
+## 推荐：扩展模式
 
-### 1. 首先是节省 Token
-
-第二意见、研究型问答、草稿撰写、解释、审查和简单转换，通常不值得再消耗一次付费 API 调用。Tokenless 复用你已有的网页版订阅，将页面上可见的结果带回智能体工作流，而无需额外消耗一次模型 API 请求。
-
-### 2. 原生浏览器操作，安全边界清晰
-
-Tokenless 采用与浏览器集成式智能体工具同类的“扩展 + 本地桥接”架构，只操作你已登录浏览器中看得见的控件。它绝不读取或导出服务商 Cookie、浏览器密码、存储 token、隐藏授权请求头或私有服务商 API。这让凭证始终留在浏览器内，并避免私有 API 自动化；但你仍需遵守服务商条款并自行完成页面上的确认。
-
-### 3. 完全免费、开源，并尊重隐私
-
-Tokenless 完全免费且开源，没有会接收浏览器会话的托管中继服务。只有提示词、明确可分享的上下文和你主动选择的文件会被提交到服务商可见的网页界面；你的登录信息、Cookie 及无关浏览器数据始终保持私密。
-
-### 4. 功能强大且可扩展
-
-Tokenless 目前支持 ChatGPT、Claude 和 Gemini。它的可见会话适配器模型可扩展至具有兼容网页界面的 AI 服务商，同时不改变上述安全边界。
-
-## 它怎么工作
-
-1. 智能体调用 `npx tokenless run`。
-2. 命令行工具确认目标主目录对应的 Rust 守护进程（Rust daemon）已就绪；若未运行，则启动软件包自带的二进制文件。
-3. 若扩展的 Rust 原生消息桥接已连通，命令行工具不会预先打开唤醒标签页；否则它只会在已配置的 Chromium 浏览器中打开所选服务商经验证的 HTTPS 页面。扩展会复用已获准的服务商标签页，必要时仅打开一个标签页。默认服务商为 ChatGPT。
-4. 扩展只通过用户可见的 DOM 提交提示词并读取回答。
-5. Rust 原生主机完成守护进程任务，命令行工具将可见结果返回给智能体。
-
-它不设本地 JSON 任务队列回退、任务页面或本地文件页面，不使用 Node 原生主机，也不会自动打开任何 `chrome-extension://` 页面。
-
-## 高级设置
-
-发布版扩展 ID 已内置。未打包的开发扩展只需在设置时提供一次其 ID：
+扩展模式是默认值，无需显式传入 `--mode visible`。
 
 ```bash
-npx tokenless@latest setup --extension-id "<chrome-extension-id>" --json
-```
-
-通用 `tokenless` 软件包仅包含 JavaScript。npm 会按操作系统和 CPU 架构选择同版本的可选依赖，其中包含 `tokenless-daemon` 和 `tokenless-native-host`；随后 `setup` 将这些本地二进制文件复制到 `~/.tokenless/bin`，写入唯一且精确的原生主机允许来源，默认只绑定一个选定的 Chromium 浏览器，并确认守护进程和扩展桥接可用。运行时不会下载可执行文件，也不使用安装脚本；终端用户无需安装 Cargo。
-
-如有需要，可配置服务商优先顺序和浏览器：
-
-```bash
-npx tokenless@latest config --preferred-providers chatgpt,claude,gemini --browser chrome --json
-```
-
-未配置浏览器时，`setup` 会按 Chrome、Brave、Edge、Arc、Chromium 的顺序依次检测。Tokenless 不会把服务商 URL 交给可能是 Safari 的系统默认浏览器。只有显式执行 `npx tokenless@latest install --browsers chrome,brave` 才会绑定多个浏览器；默认的单浏览器配置可避免不同配置档争用同一队列。
-
-## 运行请求
-
-```bash
-npx tokenless run \
+tokenless run \
   --provider chatgpt \
   --project-name "Website redesign" \
   --chat-name "Navbar review" \
   --project-root /path/to/project \
-  --prompt-file /tmp/request.md \
-  --context-file /tmp/shareable-context.md \
+  --prompt "Review the navigation." \
   --json
 ```
 
-常规 `run` 无需扩展 ID。返回的 `taskId` 默认由项目和对话名称生成；后续轮次可继续传入 `--task-id`。在交给操作系统打开前，Tokenless 会确认指定或历史记录中的目标为 HTTPS，且主机名属于所选服务商。
+- 默认服务商为 ChatGPT，同时支持 Claude 和 Gemini。
+- 后续轮次可通过 `--task-id` 复用返回的 `taskId`。
+- 可见任务可能超过三分钟时，加入 `--long-running`。
+- 服务商显示引用链接时，研究结果会在 `result.read.sources` 中返回这些可见来源。
 
-`--no-open` 是严格模式：仅当存在新鲜且有效的扩展桥接标记时才会继续；否则会在创建任务前明确失败，不会将任务悄然留在队列中等待。
+扩展仅在用户授予主机权限后操作可见控件。登录、CAPTCHA、限流和确认步骤始终由你控制；它不会自动打开任务页、本地文件页或 `chrome-extension://` 工作流。
 
-若预计服务商的可见任务将超过三分钟，请为 `run` 加上 `--long-running`。此模式将可见答案的等待时间延长至 35 分钟、守护进程任务的等待时间延长至 36 分钟，并持续输出进度心跳，同时保持 JSON 标准输出可供机器解析。
+## 实验性：直连/API 模式
 
-## ChatGPT 模型与 Intelligence
+直连模式仍在持续开发。除非你明确需要官方客户端、公开 API、兼容网关、本地 API broker 或多账户项目路由，否则推荐使用扩展模式。
 
-默认模式会进入可见的 **Chat** 界面，并保留用户已在 ChatGPT 里选择的模型和 Intelligence。用户只需先在 ChatGPT 的 Chat 界面手动选择一次 Sol / Pro，后续运行会复用这个可见配置。若请求的选项不可用，Tokenless 会返回 `preserved_current`，不会谎称切换成功，同时仍会提交提示词。
-
-严格的 CLI 强制选择属于显式高级模式：需要另行安装 **Tokenless Debugger Control** companion，并在每一次运行时提供它的扩展 ID；该 ID 不会写入 Tokenless 设置：
+在 macOS 和 Linux 上，ChatGPT 默认调用服务商官方 Codex 客户端：
 
 ```bash
-npx tokenless run \
-  --provider chatgpt \
-  --debugger-control-extension-id "<debugger-control-extension-id>" \
-  --model "GPT-5.6 Sol" \
-  --effort pro \
-  --prompt "..." \
+codex login
+tokenless run --mode direct --provider chatgpt --prompt "Review this design." --json
+```
+
+公开 API 后端必须显式指定模型，并通过环境变量提供凭证：
+
+```bash
+TOKENLESS_DIRECT_CLAUDE_API_KEY=... \
+tokenless run \
+  --mode direct \
+  --provider claude \
+  --model <api-model> \
+  --prompt "Review this design." \
   --json
 ```
 
-默认扩展绝不请求 Chrome 的 `debugger` 权限。companion 是单独的 MV3 扩展，只限 ChatGPT 域名；它没有 content script、Native Messaging bridge、Network/Storage/CDP 读取路径，也不能访问 Cookie 或浏览器存储。它只会对已验证的 ChatGPT 标签页中已可见的控件发出一次鼠标按下和释放，然后立即 detach。
+直连模式支持 ChatGPT、Claude、Gemini、Grok，以及显式配置的 Antigravity 兼容网关。公开 API 流量可能产生独立于网页订阅的费用。Tokenless 不接受命令行参数中的 API 密钥，也不会将密钥写入自身状态。服务商列表、本地 broker、账户路由、路由白名单和安全细节见[直连模式文档](docs/direct-mode.md)。
 
-对于研究类回答，JSON 的 `result.read.sources` 会返回最终助手回答中可见的、去重后的直接 HTTPS 引用链接，以及其可见标题和域名；普通终端输出也会在正文后附上同一组来源。Tokenless 会排除服务商内部链接并移除常见追踪参数；不会从浏览器历史记录、存储空间或服务商 API 获取来源。
+## 路线图
 
-## 查询守护进程状态
+扩展模式将继续通过同一条可见、需授权的网页路径开放更多服务商原生能力：
 
-```bash
-npx tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
-```
+- 项目与工作区；
+- 文件与附件；
+- 插件、连接器与工具；
+- 图片和多模态工作流。
 
-`state` 通过精确的服务商和任务筛选，从 Rust 守护进程的 SQLite 存储中读取任务及其元数据，不读取旧版本地任务 JSON。返回结果不会暴露提示词正文或认领能力；已认证的命令行状态查询会完整保留守护进程的 `error_json`，以便智能体获得可操作的失败详情。扩展设置中的历史记录是另一项有界、仅含标量值的视图。
+目标是让智能体像用户一样完整使用服务商网页，而不依赖私有网页 API。以上内容属于路线图，不代表当前兼容性承诺。
 
-显式取消已分离或由外部追踪的任务：
-
-```bash
-npx tokenless cancel --job-id "<job-id>" --json
-```
-
-只有守护进程确认 `status: canceled` 才算成功。若 SIGINT、SIGTERM 或显式取消无法得到确认，命令行工具会以 `job_cancel_failed` 非零退出，并明确说明任务可能仍在运行，也可能已经完成。
-
-## 获取脱敏 DOM 快照
+## 常用命令
 
 ```bash
-npx tokenless snapshot-dom --provider chatgpt --json
+tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json
+tokenless state --task-id "<task-id>" --json
+tokenless cancel --job-id "<job-id>" --json
+tokenless snapshot-dom --provider chatgpt --json
 ```
 
-快照使用同一条仅限守护进程、仅限服务商的唤醒路径。脱敏产物写入 `~/.tokenless/snapshots/<provider>/`；未标记为已脱敏的载荷会被拒绝。
-
-## 节省 Token，不导出浏览器会话
-
-Tokenless 适用于原本会再消耗一次付费模型或 API 调用的工作，例如研究、第二意见、草稿撰写、审查、解释和转换。它复用用户已在自己浏览器中打开的服务商会话，让智能体接收网页上可见的回答，而不接触用户的服务商凭证。
-
-只有显式提供的提示词、可分享的当前轮次上下文和用户主动选择的项目文件会被提交到可见的服务商界面。Tokenless **不会**读取、导出、持久化或传输：
-
-- 服务商 Cookie 或浏览器密码；
-- `localStorage`、`sessionStorage` 中的 token；
-- 隐藏的授权请求头或私有服务商后端 API；
-- 浏览器历史记录、无关标签页，或获准服务商标签页以外的页面数据。
-
-扩展仅在用户授予主机权限后工作，且只操作用户在页面上看得见的控件。登录、CAPTCHA、限流、权限弹窗及其他服务商确认仍完全由用户控制。
-
-## 安全边界
-
-Tokenless 仅在用户授予扩展主机权限后，通过用户可见的服务商页面工作。它不绕过登录、CAPTCHA、服务商权限、限流或可见确认；不读取服务商 Cookie、`localStorage`/`sessionStorage` token、隐藏授权请求头，也不会调用隐藏的 provider 后端接口。
-
-本地数据处理细节见 [隐私政策](PRIVACY.md)。
-
-守护进程 URL 必须是回环 HTTP 地址。每次发送 token 的请求前，命令行工具都会向 `/ready` 发送新的 32 字节质询，并使用本地主目录的 `daemon.token` 验证 HMAC-SHA256 证明；该证明同时绑定质询、两个协议版本和规范化主目录。仅猜中公开字段的伪造监听器无法获得持有者 token 或任务提示词。此后所有任务端点仍要求该持有者 token；`/health` 仅用于诊断。任务入队前还会检查原生消息大小。
-
-## 软件包
-
-以下软件包作为同版本集合发布：
-
-- `tokenless`
-- `tokenless-native-darwin-arm64`
-- `tokenless-native-darwin-x64`
-- `tokenless-native-linux-arm64`
-- `tokenless-native-linux-x64`
-- `tokenless-native-win32-arm64`
-- `tokenless-native-win32-x64`
-
-必须先发布全部六个原生软件包，再发布同版本的通用 `tokenless` 软件包；依赖使用精确版本，不使用 `workspace:*`。
-
-以下软件包暂不发布：
-
-- `tokenless-browser-session-bridge`
+使用未打包扩展时，只需在首次设置传入真实 ID：`tokenless setup --extension-id <id> --json`。更多信息见 [CLI 参考](packages/cli/README.md)、[架构文档](docs/architecture.md)和[隐私政策](PRIVACY.md)。
 
 ## 开发
 
-构建本仓库需要 Node.js 24.15+、npm 和 Rust。命令行工具的构建会将当前目标组合的发布二进制文件写入 `packages/cli/npm/tokenless-native-<platform>-<arch>/bin`；通用 `tokenless` 软件包执行 `npm pack` 时始终不包含二进制文件。原生软件包仅供发布者使用的预打包验证器，会在限定时间内执行两个二进制文件，并严格核验其角色、与 npm 对齐的版本及规范化目标组合，拒绝被调换或过期的产物。发布 CI 必须在可信且匹配的平台构建器上生成并打包六种目标组合：`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-arm64`、`win32-x64`；全部发布后，才能发布通用软件包。正常运行仅解析本地可选软件包，绝不会在线下载可执行文件。
+需要 Node.js 24.15+、npm 和 Rust。
 
 ```bash
 npm run build
@@ -213,32 +142,4 @@ npm test
 npm run test:e2e
 ```
 
-默认扩展构建产物位于 `packages/extension/dist/extension`。打开 `chrome://extensions`、开启开发者模式、选择 **加载已解压的扩展程序**，再选择该目录。然后绑定真实的开发扩展 ID：
-
-```bash
-export TOKENLESS_EXTENSION_ID="<chrome-extension-id>"
-npx tokenless setup --extension-id "$TOKENLESS_EXTENSION_ID" --json
-```
-
-可单独加载的高级 companion 位于 `packages/extension/dist/debugger-control`。仅当需要 CLI 强制选择模型 / Intelligence 时才加载它；从 `chrome://extensions` 复制它的扩展 ID，并仅在相应命令里传入 `--debugger-control-extension-id`。
-
-运行可见会话冒烟测试：
-
-```bash
-cat > /tmp/tokenless-request.md <<'EOF'
-请只回复下面这一行文字，不要回复其他内容：
-
-TOKENLESS_LOCAL_OK_48291
-EOF
-
-npx tokenless run \
-  --provider chatgpt \
-  --project-name "Tokenless local dev" \
-  --chat-name "Smoke test" \
-  --project-root "$(pwd)" \
-  --prompt-file /tmp/tokenless-request.md \
-  --read-timeout-ms 180000 \
-  --json
-```
-
-成功标志为 `ok: true`，且 `compactOutput` 包含 `TOKENLESS_LOCAL_OK_48291`。
+扩展构建产物位于 `packages/extension/dist/extension`，可在 `chrome://extensions` 的开发者模式中加载。发布流程见 [npm 发布文档](docs/npm-publishing.md)和 [Chrome Web Store 发布文档](docs/chrome-web-store-release.md)；上述命令不会发布任何内容。

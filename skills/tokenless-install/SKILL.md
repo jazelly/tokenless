@@ -9,13 +9,13 @@ Complete this workflow before using the `tokenless` skill. Keep the user-facing 
 
 ## Install
 
-1. Check that Node.js is version 22 or newer:
+1. Check that Node.js is version 24.15 or newer:
 
    ```bash
    node --version
    ```
 
-   Stop and ask the user to install or upgrade Node.js if it is older than 22.
+   Stop and ask the user to install or upgrade Node.js if it is older than 24.15.
 
 2. Install the main Tokenless skill in the same skill scope as this installation skill:
 
@@ -70,7 +70,7 @@ Run this first:
 npx tokenless@latest doctor --json
 ```
 
-- If `node.ok` is false, require Node.js 22 or newer.
+- If `node.ok` is false, require Node.js 24.15 or newer.
 - If the browser check fails, ask the user to install a supported Chromium browser or choose one with `--browser` during `setup`.
 - If native binaries or manifests fail, rerun `npx tokenless@latest setup --json`.
 - If `extensionBridge.ok` is false, use the user-handoff procedure, then rerun setup after the user confirms the browser action is complete.

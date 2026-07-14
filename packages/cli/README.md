@@ -1,6 +1,6 @@
 # Tokenless CLI
 
-`tokenless` is an agent-facing CLI with two isolated transports: visible ChatGPT, Claude, or Gemini browser sessions, and opt-in direct execution through provider-owned clients or documented public APIs.
+`tokenless` is an agent-facing CLI with two isolated transports: recommended visible ChatGPT, Claude, or Gemini browser sessions, and an experimental opt-in direct mode through provider-owned clients or documented public APIs.
 
 ## Install
 
@@ -52,9 +52,9 @@ npx tokenless run \
 
 `run` requires no extension id after setup. It starts the Rust daemon when needed. If the extension bridge is live, the CLI does not pre-open a wake tab; otherwise it opens only the selected provider's validated HTTPS UI in the configured Chromium browser. The extension reuses an approved provider tab when possible or opens one provider tab when necessary. ChatGPT is the provider default. Tokenless never opens a task page, extension page, local file, runner, settings, or history page.
 
-## Direct Mode
+## Experimental Direct/API Mode
 
-Direct mode never initializes or falls back to the daemon, extension, or browser path. ChatGPT defaults to the provider-owned Codex executable on macOS and Linux. Public API execution supports ChatGPT, Claude, Gemini, Grok, and explicit Antigravity-compatible gateways; credentials are read only from environment variables.
+Direct mode is under active development. Prefer visible extension mode unless direct client or API integration is required. It never initializes or falls back to the daemon, extension, or browser path. ChatGPT defaults to the provider-owned Codex executable on macOS and Linux. Public API execution supports ChatGPT, Claude, Gemini, Grok, and explicit Antigravity-compatible gateways; credentials are read only from environment variables.
 
 ```bash
 tokenless run --mode direct --provider chatgpt --prompt "Summarize this." --json

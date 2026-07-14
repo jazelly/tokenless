@@ -19,7 +19,7 @@ package key and permanent extension ID:
 ## Reviewer prerequisites
 
 - Chrome or another supported Chromium browser.
-- Node.js 22 or later.
+- Node.js 24.15 or later.
 - Internet access to npm and a provider website.
 - A normal account the reviewer is already signed in to on ChatGPT, Claude, or
   Gemini. Vertile does not supply, request, or retain reviewer credentials.
