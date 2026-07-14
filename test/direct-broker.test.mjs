@@ -560,7 +560,7 @@ test('direct broker fails closed on private, ambiguous, credential-bearing, and 
         const rawResponse = await rawHttpRequest(
           broker.host,
           broker.port,
-          `POST ${rawPath} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer tokenless-local-test-key-32-characters\r\nContent-Length: 0\r\n\r\n`,
+          `POST ${rawPath} HTTP/1.1\r\nHost: ${socketAuthority(broker.host, broker.port)}\r\nAuthorization: Bearer tokenless-local-test-key-32-characters\r\nContent-Length: 0\r\n\r\n`,
         )
         assert.match(rawResponse, /^HTTP\/1\.1 400 /, rawPath)
       }
@@ -615,7 +615,7 @@ test('direct broker enforces declared and chunked body limits before completing 
         broker.port,
         [
           'POST /v1/responses HTTP/1.1',
-          'Host: localhost',
+          `Host: ${socketAuthority(broker.host, broker.port)}`,
           'Transfer-Encoding: chunked',
           'Connection: keep-alive',
           '',
@@ -624,7 +624,7 @@ test('direct broker enforces declared and chunked body limits before completing 
           '0',
           '',
           'GET /health HTTP/1.1',
-          'Host: localhost',
+          `Host: ${socketAuthority(broker.host, broker.port)}`,
           'Authorization: Bearer tokenless-local-test-key-32-characters',
           '',
           '',
@@ -676,7 +676,7 @@ test('direct broker applies a real parser header limit', async () => {
   const oversized = await rawHttpRequest(
     broker.host,
     broker.port,
-    `GET /health HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer tokenless-local-test-key-32-characters\r\nX-Large: ${'x'.repeat(2_000)}\r\n\r\n`,
+    `GET /health HTTP/1.1\r\nHost: ${socketAuthority(broker.host, broker.port)}\r\nAuthorization: Bearer tokenless-local-test-key-32-characters\r\nX-Large: ${'x'.repeat(2_000)}\r\n\r\n`,
   )
   assert.match(oversized, /^HTTP\/1\.1 431 /)
 
@@ -896,6 +896,10 @@ function rawHttpRequest(host, port, raw) {
   })
 }
 
+function socketAuthority(host, port) {
+  return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`
+}
+
 function earlyResponseUpload(host, port) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host, port })
@@ -904,7 +908,7 @@ function earlyResponseUpload(host, port) {
     socket.once('connect', () => {
       socket.write([
         'POST /v1/responses HTTP/1.1',
-        'Host: localhost',
+        `Host: ${socketAuthority(host, port)}`,
         'Authorization: Bearer tokenless-local-test-key-32-characters',
         'Content-Type: application/json',
         'Transfer-Encoding: chunked',
@@ -925,7 +929,7 @@ function earlyResponseUpload(host, port) {
         '0',
         '',
         'GET /health HTTP/1.1',
-        'Host: localhost',
+        `Host: ${socketAuthority(host, port)}`,
         'Authorization: Bearer tokenless-local-test-key-32-characters',
         '',
         '',

@@ -118,6 +118,47 @@ export type {
 } from './direct/broker.js'
 
 export {
+  DEFAULT_MANAGED_PROJECT_QUEUE_DEPTH,
+  DEFAULT_MANAGED_PROJECT_QUEUE_WAIT_MS,
+  MAX_MANAGED_PROJECT_QUEUE_DEPTH,
+  MAX_MANAGED_PROJECT_QUEUE_WAIT_MS,
+  ManagedProjectExecutorError,
+  ProjectCodexRouter,
+  ProjectCodexRouterError,
+  validateManagedProjectId,
+} from './direct/project-codex-router.js'
+
+export type {
+  ManagedProjectExecution,
+  ManagedProjectExecutor,
+  ManagedProjectExecutorErrorCode,
+  ManagedProjectRequestLoader,
+  ProjectCodexRouterErrorCode,
+  ProjectCodexRouterOptions,
+} from './direct/project-codex-router.js'
+
+export {
+  MANAGED_RESPONSES_DEFAULT_MODEL,
+  MANAGED_RESPONSES_DELTA_BYTES,
+  MAX_MANAGED_RESPONSES_BODY_BYTES,
+  MAX_MANAGED_RESPONSES_INPUT_BYTES,
+  MAX_MANAGED_RESPONSES_MODEL_BYTES,
+  MAX_MANAGED_RESPONSES_OUTPUT_BYTES,
+  createManagedResponsesEvents,
+  createManagedResponsesResponse,
+  createManagedResponsesSse,
+  encodeManagedResponsesSse,
+  parseManagedResponsesRequest,
+} from './direct/managed-responses.js'
+
+export type {
+  ManagedResponse,
+  ManagedResponseEvent,
+  ManagedResponsesMetadata,
+  ManagedResponsesRequest,
+} from './direct/managed-responses.js'
+
+export {
   chatGptResponsesUrl,
   DEFAULT_DIRECT_CHATGPT_BASE_URL,
   DEFAULT_DIRECT_TIMEOUT_MS,

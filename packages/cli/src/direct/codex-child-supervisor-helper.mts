@@ -25,12 +25,15 @@ import {
   fingerprintCodexIdentity,
   readCodexIdentityKey,
   readOrCreateCodexIdentityKey,
+  managedCodexHome,
   resolveTrustedCodexCommand,
   type CodexAccountObservation,
   type TrustedCodexCommand,
 } from './codex-profile.js'
+import { runManagedOfficialCodex } from './official-client.js'
 import {
   CODEX_SUPERVISOR_PROTOCOL,
+  CODEX_SUPERVISOR_MAX_REQUEST_LINE_BYTES,
   CODEX_CHILD_STOP_GRACE_MS,
   CODEX_GROUP_QUIESCENCE_TIMEOUT_MS,
   codexSupervisorLeasePath,
@@ -39,7 +42,7 @@ import {
 import { SqliteLockError, withSqliteLocks } from './sqlite-lock.js'
 
 const LEASE_PROTOCOL = 'tokenless.codex-lease.v1'
-const MAX_CONTROL_LINE_BYTES = 1024 * 1024
+const MAX_RESPONSE_CONTROL_LINE_BYTES = 4 * 1024 * 1024
 const MAX_APP_SERVER_LINE_BYTES = 1024 * 1024
 const MAX_APP_SERVER_MESSAGES = 64
 const LEASE_RETRY_MS = 25
@@ -60,11 +63,6 @@ type Lease = Readonly<{
   clientPid: number
   bootId: string
   createdAt: string
-}>
-
-type HelperResult = Readonly<{
-  account: CodexAccountRecord
-  observation: CodexAccountObservation
 }>
 
 class BoundedFrameQueue {
@@ -101,7 +99,7 @@ class BoundedFrameQueue {
 }
 
 const control = new net.Socket({ fd: 3, readable: true, writable: true })
-const controlFrames = new BoundedFrameQueue(control, MAX_CONTROL_LINE_BYTES, 32)
+const controlFrames = new BoundedFrameQueue(control, CODEX_SUPERVISOR_MAX_REQUEST_LINE_BYTES, 32)
 
 let activeNonce = ''
 
@@ -162,7 +160,7 @@ async function main(): Promise<void> {
 
   const operationTimer = setTimeout(abort, (2 * request.lockTimeoutMs) + request.operationTimeoutMs)
   operationTimer.unref()
-  let result: HelperResult | CodexAccountObservation
+  let result: unknown
   try {
     result = await withSqliteLocks(
       {
@@ -173,14 +171,25 @@ async function main(): Promise<void> {
       async () => {
         await establishTombstones(request, abortController.signal)
         await writeFrame({ protocol: CODEX_SUPERVISOR_PROTOCOL, type: 'locked', nonce: request.nonce })
+        const trackChild = async <T,>(operation: (setChild: (child: ChildProcess | undefined) => void) => Promise<T>) => {
+          throwIfAborted(abortController.signal)
+          return operation((child) => { activeChild = child })
+        }
         const dispatch = async <T,>(operation: (setChild: (child: ChildProcess | undefined) => void) => Promise<T>) => {
           throwIfAborted(abortController.signal)
           dispatched = true
           await writeFrame({ protocol: CODEX_SUPERVISOR_PROTOCOL, type: 'dispatching', nonce: request.nonce })
           throwIfAborted(abortController.signal)
-          return operation((child) => { activeChild = child })
+          return trackChild(operation)
         }
-        return runOperation(request, abortController.signal, dispatch)
+        const markPromptDispatch = async () => {
+          throwIfAborted(abortController.signal)
+          if (dispatched) throw helperError('codex_supervisor_protocol_error', 'The prompt dispatch boundary was entered twice.')
+          dispatched = true
+          await writeFrame({ protocol: CODEX_SUPERVISOR_PROTOCOL, type: 'dispatching', nonce: request.nonce })
+          throwIfAborted(abortController.signal)
+        }
+        return runOperation(request, abortController.signal, { dispatch, markPromptDispatch, trackChild })
       },
     )
   } catch (error) {
@@ -214,8 +223,13 @@ async function main(): Promise<void> {
 async function runOperation(
   request: CodexSupervisorRequest,
   signal: AbortSignal,
-  dispatch: <T>(operation: (setChild: (child: ChildProcess | undefined) => void) => Promise<T>) => Promise<T>,
-): Promise<HelperResult | CodexAccountObservation> {
+  supervision: Readonly<{
+    dispatch: <T>(operation: (setChild: (child: ChildProcess | undefined) => void) => Promise<T>) => Promise<T>
+    markPromptDispatch: () => Promise<void>
+    trackChild: <T>(operation: (setChild: (child: ChildProcess | undefined) => void) => Promise<T>) => Promise<T>
+  }>,
+): Promise<unknown> {
+  const { dispatch, markPromptDispatch, trackChild } = supervision
   if (request.operation === 'inspect-profile') {
     if (request.codexHome === undefined || request.identityKey === undefined) {
       throw helperError('codex_supervisor_invalid', 'Profile inspection parameters are missing.')
@@ -247,6 +261,9 @@ async function runOperation(
       timeoutMs: request.lockTimeoutMs,
     }),
   })
+  if (request.operation === 'infer-managed') {
+    return runManagedInference(request, store, signal, trackChild, markPromptDispatch)
+  }
   const account = await requireCodexAccount(store, request.accountId, request.expectedInternalId)
   if (!account.enabled && request.operation === 'inspect-managed') {
     return { account, observation: { state: 'unavailable', reason: 'no_account' } }
@@ -315,6 +332,120 @@ async function runOperation(
     setChild,
   ))
   return { account, observation }
+}
+
+async function runManagedInference(
+  request: CodexSupervisorRequest,
+  store: AccountPoolStore,
+  signal: AbortSignal,
+  trackChild: <T>(operation: (setChild: (child: ChildProcess | undefined) => void) => Promise<T>) => Promise<T>,
+  markPromptDispatch: () => Promise<void>,
+): Promise<Readonly<{
+  textBase64: string
+  model?: string | undefined
+  usage?: Readonly<{
+    inputTokens?: number | undefined
+    outputTokens?: number | undefined
+    totalTokens?: number | undefined
+  }> | undefined
+}>> {
+  if (
+    request.accountId === undefined || request.expectedInternalId === undefined ||
+    request.expectedBindingGeneration === undefined || request.expectedIdentityFingerprint === undefined ||
+    request.projectId === undefined || request.promptBase64 === undefined || request.inferenceTimeoutMs === undefined
+  ) throw helperError('codex_supervisor_invalid', 'Managed inference parameters are missing.')
+
+  const resolution = await store.resolve({ projectId: request.projectId, provider: 'chatgpt' })
+  if (resolution === null) throw inferenceUnavailable('binding_missing')
+  const { account, binding } = resolution
+  if (
+    binding.projectId !== request.projectId || binding.provider !== 'chatgpt' ||
+    binding.generation !== request.expectedBindingGeneration ||
+    binding.accountInternalId !== request.expectedInternalId ||
+    account.provider !== 'chatgpt' || account.accountId !== normalizeAccountId(request.accountId) ||
+    account.internalId !== request.expectedInternalId
+  ) throw inferenceUnavailable('binding_changed')
+  if (account.driver !== 'official-codex' || account.status !== 'ready') {
+    throw inferenceUnavailable('account_not_ready')
+  }
+  if (!account.enabled) throw inferenceUnavailable('operator_disabled')
+  if (
+    account.identityFingerprint === undefined ||
+    account.identityFingerprint !== request.expectedIdentityFingerprint
+  ) throw inferenceUnavailable('identity_changed')
+
+  const prompt = decodePrompt(request.promptBase64)
+  const codexHome = managedCodexHome(request.homeDir, account.internalId)
+  try {
+    await assertManagedCodexHome(codexHome)
+  } catch {
+    throw inferenceUnavailable('profile_invalid')
+  }
+  let identityKey: Buffer
+  try {
+    identityKey = await readCodexIdentityKey(store.homeDir)
+  } catch {
+    throw inferenceUnavailable('identity_key_invalid')
+  }
+  const command = await resolveTrustedCodexCommand(request.codexExecutable)
+  const observation = await trackChild((setChild) => inspectAccount(
+    command,
+    codexHome,
+    identityKey,
+    request.environment,
+    request.accountReadTimeoutMs ?? request.operationTimeoutMs,
+    signal,
+    setChild,
+  ))
+  if (observation.state !== 'ready') throw inferenceUnavailable(observation.reason)
+  if (observation.fingerprint !== account.identityFingerprint) throw inferenceUnavailable('identity_mismatch')
+
+  let result: Awaited<ReturnType<typeof runManagedOfficialCodex>>
+  try {
+    result = await trackChild((setChild) => runManagedOfficialCodex({
+      command,
+      codexHome,
+      environment: request.environment,
+      prompt,
+      ...(request.model === undefined ? {} : { model: request.model }),
+      timeoutMs: request.inferenceTimeoutMs!,
+      signal,
+      setChild,
+      markPromptDispatch,
+    }))
+  } finally {
+    await waitForGroupQuiescence(process.pid, Date.now() + CODEX_GROUP_QUIESCENCE_TIMEOUT_MS, signal)
+  }
+  return Object.freeze({
+    textBase64: Buffer.from(result.text, 'utf8').toString('base64'),
+    ...(result.model === undefined ? {} : { model: result.model }),
+    ...(result.usage === undefined ? {} : { usage: Object.freeze({ ...result.usage }) }),
+  })
+}
+
+function decodePrompt(encoded: string): string {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+    throw helperError('codex_supervisor_protocol_error', 'The managed inference prompt encoding is invalid.')
+  }
+  const bytes = Buffer.from(encoded, 'base64')
+  if (bytes.length === 0 || bytes.length > 4 * 1024 * 1024 || bytes.toString('base64') !== encoded) {
+    throw helperError('codex_supervisor_protocol_error', 'The managed inference prompt encoding is invalid.')
+  }
+  let prompt: string
+  try {
+    prompt = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw helperError('codex_supervisor_protocol_error', 'The managed inference prompt is not valid UTF-8.')
+  }
+  if (!/\S/u.test(prompt)) throw helperError('codex_supervisor_protocol_error', 'The managed inference prompt is empty.')
+  return prompt
+}
+
+function inferenceUnavailable(reason: string): Error & { code: string; reason: string; retryable: boolean } {
+  return Object.assign(
+    new Error('The managed ChatGPT account is unavailable before prompt dispatch.'),
+    { code: 'codex_inference_unavailable', reason, retryable: false },
+  )
 }
 
 async function runLogin(
@@ -818,7 +949,7 @@ function validateRequest(value: unknown): CodexSupervisorRequest {
   if (!isRecord(value) || value.protocol !== CODEX_SUPERVISOR_PROTOCOL) throw helperError('codex_supervisor_protocol_error', 'The managed Codex protocol is invalid.')
   if (typeof value.nonce !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value.nonce)) throw helperError('codex_supervisor_protocol_error', 'The managed Codex nonce is invalid.')
   if (!validPid(value.clientPid)) throw helperError('codex_supervisor_protocol_error', 'The managed Codex client pid is invalid.')
-  if (!['inspect-managed', 'inspect-profile', 'login-managed'].includes(String(value.operation))) throw helperError('codex_supervisor_protocol_error', 'The managed Codex operation is invalid.')
+  if (!['infer-managed', 'inspect-managed', 'inspect-profile', 'login-managed'].includes(String(value.operation))) throw helperError('codex_supervisor_protocol_error', 'The managed Codex operation is invalid.')
   if (
     typeof value.homeDir !== 'string' || value.homeDir.includes('\0') || !path.isAbsolute(value.homeDir) ||
     typeof value.codexExecutable !== 'string' || value.codexExecutable.includes('\0')
@@ -830,7 +961,8 @@ function validateRequest(value: unknown): CodexSupervisorRequest {
   ) throw helperError('codex_supervisor_protocol_error', 'The managed Codex timeouts are invalid.')
   if (
     (value.accountReadTimeoutMs !== undefined && (!Number.isSafeInteger(value.accountReadTimeoutMs) || Number(value.accountReadTimeoutMs) <= 0)) ||
-    (value.loginTimeoutMs !== undefined && (!Number.isSafeInteger(value.loginTimeoutMs) || Number(value.loginTimeoutMs) <= 0))
+    (value.loginTimeoutMs !== undefined && (!Number.isSafeInteger(value.loginTimeoutMs) || Number(value.loginTimeoutMs) <= 0)) ||
+    (value.inferenceTimeoutMs !== undefined && (!Number.isSafeInteger(value.inferenceTimeoutMs) || Number(value.inferenceTimeoutMs) <= 0 || Number(value.inferenceTimeoutMs) > 30 * 60_000))
   ) throw helperError('codex_supervisor_protocol_error', 'The managed Codex child timeouts are invalid.')
   if (
     !isRecord(value.environment) ||
@@ -841,6 +973,10 @@ function validateRequest(value: unknown): CodexSupervisorRequest {
     'lockTimeoutMs', 'nonce', 'operation', 'operationTimeoutMs', 'protocol',
   ]
   const allowedByOperation: Record<string, readonly string[]> = {
+    'infer-managed': [
+      'accountId', 'accountReadTimeoutMs', 'expectedBindingGeneration', 'expectedIdentityFingerprint',
+      'expectedInternalId', 'inferenceTimeoutMs', 'model', 'projectId', 'promptBase64',
+    ],
     'inspect-managed': ['accountId', 'accountReadTimeoutMs', 'expectedInternalId'],
     'inspect-profile': ['accountReadTimeoutMs', 'codexHome', 'identityKey'],
     'login-managed': ['accountId', 'accountReadTimeoutMs', 'deviceAuth', 'expectedInternalId', 'loginTimeoutMs'],
@@ -860,6 +996,19 @@ function validateRequest(value: unknown): CodexSupervisorRequest {
   if (value.operation === 'login-managed' && typeof value.deviceAuth !== 'boolean') {
     throw helperError('codex_supervisor_protocol_error', 'The managed login parameters are invalid.')
   }
+  if (value.operation === 'infer-managed' && (
+    !Number.isSafeInteger(value.expectedBindingGeneration) || Number(value.expectedBindingGeneration) < 1 ||
+    typeof value.expectedIdentityFingerprint !== 'string' ||
+    !/^tokenless\.codex-identity\.v1:[A-Za-z0-9_-]{43}$/.test(value.expectedIdentityFingerprint) ||
+    typeof value.projectId !== 'string' ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9._~-]{0,126}[A-Za-z0-9])?$/.test(value.projectId) ||
+    typeof value.promptBase64 !== 'string' || value.promptBase64.length > 5_592_408 ||
+    !Number.isSafeInteger(value.inferenceTimeoutMs) || Number(value.inferenceTimeoutMs) <= 0 ||
+    (value.model !== undefined && (
+      typeof value.model !== 'string' || value.model.trim() === '' || /[\u0000-\u001f\u007f]/u.test(value.model) ||
+      Buffer.byteLength(value.model, 'utf8') > 256
+    ))
+  )) throw helperError('codex_supervisor_protocol_error', 'The managed inference parameters are invalid.')
   return value as CodexSupervisorRequest
 }
 
@@ -889,6 +1038,8 @@ async function assertExpectedLockSet(request: CodexSupervisorRequest): Promise<v
     expected = [accountPoolAccountLockPath(canonicalHome, 'chatgpt', request.expectedInternalId)]
     if (request.operation === 'login-managed') {
       expected.push(path.join(accountPoolDirectDirectory(canonicalHome), 'global-locks', 'chatgpt-login.lock'))
+    } else if (request.operation === 'infer-managed') {
+      expected.push(path.join(accountPoolDirectDirectory(canonicalHome), 'global-locks', 'chatgpt-subscription-inference.lock'))
     }
   }
   const actual = [...request.lockFiles].map((file) => path.resolve(file)).sort(comparePaths)
@@ -912,11 +1063,12 @@ function publicError(error: unknown): Record<string, unknown> {
     return { code: error.code, message: error.message, retryable: error.retryable }
   }
   if (error instanceof Error) {
-    const details = error as Error & { code?: unknown; retryable?: unknown; deliveryUnknown?: unknown }
+    const details = error as Error & { code?: unknown; reason?: unknown; retryable?: unknown; deliveryUnknown?: unknown }
     return {
       code: typeof details.code === 'string' ? details.code : 'codex_supervisor_failed',
       message: error.message,
       retryable: details.retryable === true,
+      ...(typeof details.reason === 'string' ? { reason: details.reason } : {}),
       ...(details.deliveryUnknown === true ? { deliveryUnknown: true } : {}),
     }
   }
@@ -933,7 +1085,7 @@ function profileFailure(reason: string, message: string, retryable = false): Cod
 
 function writeFrame(message: unknown): Promise<void> {
   const line = `${JSON.stringify(message)}\n`
-  if (Buffer.byteLength(line, 'utf8') > MAX_CONTROL_LINE_BYTES) return Promise.reject(helperError('codex_supervisor_protocol_error', 'The managed Codex response is oversized.'))
+  if (Buffer.byteLength(line, 'utf8') > MAX_RESPONSE_CONTROL_LINE_BYTES) return Promise.reject(helperError('codex_supervisor_protocol_error', 'The managed Codex response is oversized.'))
   return new Promise((resolve, reject) => control.write(line, (error) => error === null || error === undefined ? resolve() : reject(error)))
 }
 

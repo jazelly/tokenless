@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { DIRECT_PROTOCOL, DirectError } from './types.js'
 import type { DirectErrorCode, DirectRunRequest, DirectRunResult, DirectUsage } from './types.js'
@@ -169,6 +169,27 @@ export type OfficialCodexOptions = {
   timeoutMs?: number | undefined
 }
 
+export type ManagedOfficialCodexOptions = Readonly<{
+  command: Readonly<{
+    executable: string
+    argsPrefix: readonly string[]
+  }>
+  codexHome: string
+  environment: Readonly<Record<string, string>>
+  prompt: string
+  model?: string | undefined
+  timeoutMs: number
+  signal: AbortSignal
+  setChild: (child: ChildProcess | undefined) => void
+  markPromptDispatch: () => Promise<void>
+}>
+
+export type ManagedOfficialCodexResult = Readonly<{
+  text: string
+  model?: string | undefined
+  usage?: DirectUsage | undefined
+}>
+
 type OfficialCodexStage = 'capability' | 'authentication' | 'execution'
 
 type CapturedOutput = {
@@ -183,6 +204,12 @@ type ChildResult = {
   stderr: CapturedOutput
   termination: 'aborted' | 'timeout' | undefined
 }
+
+type ChildLifecycle = Readonly<{
+  detached: boolean
+  setChild: (child: ChildProcess | undefined) => void
+  beforeStdin?: (() => Promise<void>) | undefined
+}>
 
 type RawCodexOutput = {
   events: unknown[]
@@ -323,6 +350,156 @@ export async function runOfficialCodex(
       }
     }
   }
+}
+
+/**
+ * Runs one already-authorized managed profile without consulting ambient login
+ * state. The caller owns durable account/inference locks and performs structured
+ * account/read verification before entering this function.
+ */
+export async function runManagedOfficialCodex(
+  options: ManagedOfficialCodexOptions,
+): Promise<ManagedOfficialCodexResult> {
+  const validated = validateManagedOptions(options)
+  const deadline = Date.now() + validated.timeoutMs
+  const baseEnvironment = officialCodexEnvironment(validated.environment)
+  let temporaryRoot: string | undefined
+  let operationFailed = false
+
+  try {
+    throwIfAborted(validated.signal)
+    temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-managed-codex-'))
+    const preflightDirectory = path.join(temporaryRoot, 'preflight')
+    const workingDirectory = path.join(temporaryRoot, 'workspace')
+    const isolatedCodexHome = path.join(temporaryRoot, 'probe-home')
+    const outputPath = path.join(temporaryRoot, 'last-message.txt')
+    await Promise.all([
+      fs.mkdir(preflightDirectory, { mode: 0o700 }),
+      fs.mkdir(workingDirectory, { mode: 0o700 }),
+      fs.mkdir(isolatedCodexHome, { mode: 0o700 }),
+    ])
+    throwIfAborted(validated.signal)
+
+    const childLifecycle = {
+      detached: false,
+      setChild: validated.setChild,
+    }
+    await validateCodexCapabilities({
+      executable: validated.command.executable,
+      argsPrefix: validated.command.argsPrefix,
+      cwd: preflightDirectory,
+      workspace: workingDirectory,
+      isolatedCodexHome,
+      deadline,
+      signal: validated.signal,
+      env: baseEnvironment,
+      childLifecycle,
+    })
+    throwIfAborted(validated.signal)
+
+    const args = [
+      ...validated.command.argsPrefix,
+      'exec',
+      '--strict-config',
+      ...codexConfigurationArgs(MAIN_PERMISSION_PROFILE),
+      '--config',
+      'cli_auth_credentials_store="file"',
+      '--config',
+      'analytics.enabled=false',
+      ...disabledFeatureArgs(),
+      '--ephemeral',
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--skip-git-repo-check',
+      '--color',
+      'never',
+      '--json',
+      '--output-last-message',
+      outputPath,
+      ...(validated.model === undefined ? [] : ['--model', validated.model]),
+    ]
+    const child = await runChild({
+      executable: validated.command.executable,
+      args,
+      cwd: workingDirectory,
+      env: { ...baseEnvironment, CODEX_HOME: validated.codexHome },
+      stdin: validated.prompt,
+      timeoutMs: remainingTime(deadline),
+      signal: validated.signal,
+      childLifecycle: {
+        ...childLifecycle,
+        beforeStdin: validated.markPromptDispatch,
+      },
+    })
+    throwForTermination(child, 'execution')
+    if (child.code !== 0) {
+      throw new DirectOfficialClientError({
+        code: 'direct_upstream_error',
+        reason: 'codex_nonzero_exit',
+        message: 'The managed official Codex client exited unsuccessfully.',
+        retryable: true,
+        stage: 'execution',
+        exitCode: child.code,
+      })
+    }
+
+    const machineOutput = parseMachineEvents(child.stdout)
+    const text = await readLastMessage(outputPath)
+    return Object.freeze({
+      text,
+      ...(validated.model === undefined ? {} : { model: validated.model }),
+      ...(machineOutput.usage === undefined ? {} : { usage: machineOutput.usage }),
+    })
+  } catch (error) {
+    operationFailed = true
+    throw normalizeOfficialClientFailure(error)
+  } finally {
+    validated.setChild(undefined)
+    if (temporaryRoot !== undefined) {
+      try {
+        await fs.rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3 })
+      } catch {
+        if (!operationFailed) {
+          throw new DirectOfficialClientError({
+            code: 'direct_upstream_error',
+            reason: 'codex_cleanup_failed',
+            message: 'The managed official Codex client could not remove its isolated temporary files.',
+          })
+        }
+      }
+    }
+  }
+}
+
+function validateManagedOptions(options: ManagedOfficialCodexOptions): ManagedOfficialCodexOptions {
+  if (options === null || typeof options !== 'object') {
+    throw invalidManagedOptions('Managed official Codex options are required.')
+  }
+  if (
+    options.command === null || typeof options.command !== 'object' ||
+    typeof options.command.executable !== 'string' || options.command.executable === '' || options.command.executable.includes('\0') ||
+    !Array.isArray(options.command.argsPrefix) ||
+    options.command.argsPrefix.some((value) => typeof value !== 'string' || value.includes('\0')) ||
+    typeof options.codexHome !== 'string' || !path.isAbsolute(options.codexHome) || options.codexHome.includes('\0') ||
+    typeof options.prompt !== 'string' || !/\S/u.test(options.prompt) ||
+    Buffer.byteLength(options.prompt, 'utf8') > PROMPT_LIMIT_BYTES ||
+    !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 ||
+    !(options.signal instanceof AbortSignal) ||
+    typeof options.setChild !== 'function' || typeof options.markPromptDispatch !== 'function'
+  ) throw invalidManagedOptions('Managed official Codex options are invalid.')
+  if (
+    options.model !== undefined &&
+    (typeof options.model !== 'string' || options.model.trim() === '' || options.model.includes('\0'))
+  ) throw invalidManagedOptions('The managed Codex model is invalid.')
+  return options
+}
+
+function invalidManagedOptions(message: string): DirectOfficialClientError {
+  return new DirectOfficialClientError({
+    code: 'direct_configuration_error',
+    reason: 'invalid_request',
+    message,
+  })
 }
 
 function normalizeOfficialClientFailure(error: unknown) {
@@ -479,29 +656,34 @@ function disabledFeatureArgs() {
 
 async function validateCodexCapabilities({
   executable,
+  argsPrefix = [],
   cwd,
   workspace,
   isolatedCodexHome,
   deadline,
   signal,
   env,
+  childLifecycle,
 }: {
   executable: string
+  argsPrefix?: readonly string[] | undefined
   cwd: string
   workspace: string
   isolatedCodexHome: string
   deadline: number
   signal: AbortSignal | undefined
   env: NodeJS.ProcessEnv
+  childLifecycle?: ChildLifecycle | undefined
 }) {
   const preflightEnvironment = { ...env, CODEX_HOME: isolatedCodexHome }
   const execHelp = await runChild({
     executable,
-    args: ['exec', '--help'],
+    args: [...argsPrefix, 'exec', '--help'],
     cwd,
     env: preflightEnvironment,
     timeoutMs: remainingTime(deadline),
     signal,
+    childLifecycle,
   })
   throwForTermination(execHelp, 'capability')
   if (execHelp.code !== 0) {
@@ -530,11 +712,12 @@ async function validateCodexCapabilities({
 
   const features = await runChild({
     executable,
-    args: ['features', 'list'],
+    args: [...argsPrefix, 'features', 'list'],
     cwd,
     env: preflightEnvironment,
     timeoutMs: remainingTime(deadline),
     signal,
+    childLifecycle,
   })
   throwForTermination(features, 'capability')
   const availableFeatures = parseFeatureNames(features.stdout.bytes)
@@ -559,11 +742,12 @@ async function validateCodexCapabilities({
 
   const sandboxHelp = await runChild({
     executable,
-    args: ['sandbox', '--help'],
+    args: [...argsPrefix, 'sandbox', '--help'],
     cwd,
     env: preflightEnvironment,
     timeoutMs: remainingTime(deadline),
     signal,
+    childLifecycle,
   })
   throwForTermination(sandboxHelp, 'capability')
   const sandboxHelpText = Buffer.concat([sandboxHelp.stdout.bytes, sandboxHelp.stderr.bytes]).toString('utf8')
@@ -594,6 +778,8 @@ async function validateCodexCapabilities({
     deadline,
     signal,
     env: preflightEnvironment,
+    argsPrefix,
+    childLifecycle,
   })
   await validateCodexToolSchema({
     executable,
@@ -601,6 +787,8 @@ async function validateCodexCapabilities({
     deadline,
     signal,
     env: preflightEnvironment,
+    argsPrefix,
+    childLifecycle,
   })
 }
 
@@ -621,20 +809,25 @@ function parseFeatureNames(output: Buffer) {
 
 async function validateSandboxDeniesLocalExecution({
   executable,
+  argsPrefix = [],
   workspace,
   deadline,
   signal,
   env,
+  childLifecycle,
 }: {
   executable: string
+  argsPrefix?: readonly string[] | undefined
   workspace: string
   deadline: number
   signal: AbortSignal | undefined
   env: NodeJS.ProcessEnv
+  childLifecycle?: ChildLifecycle | undefined
 }) {
   const canary = await runChild({
     executable,
     args: [
+      ...argsPrefix,
       'sandbox',
       ...codexConfigurationArgs(MAIN_PERMISSION_PROFILE),
       '--permission-profile',
@@ -650,6 +843,7 @@ async function validateSandboxDeniesLocalExecution({
     env,
     timeoutMs: remainingTime(deadline),
     signal,
+    childLifecycle,
   })
   throwForTermination(canary, 'capability')
 
@@ -683,16 +877,20 @@ async function validateSandboxDeniesLocalExecution({
 
 async function validateCodexToolSchema({
   executable,
+  argsPrefix = [],
   workspace,
   deadline,
   signal,
   env,
+  childLifecycle,
 }: {
   executable: string
+  argsPrefix?: readonly string[] | undefined
   workspace: string
   deadline: number
   signal: AbortSignal | undefined
   env: NodeJS.ProcessEnv
+  childLifecycle?: ChildLifecycle | undefined
 }) {
   let observed:
     | {
@@ -754,6 +952,7 @@ async function validateCodexToolSchema({
     child = await runChild({
       executable,
       args: [
+        ...argsPrefix,
         'exec',
         '--strict-config',
         ...codexConfigurationArgs(MAIN_PERMISSION_PROFILE),
@@ -777,6 +976,7 @@ async function validateCodexToolSchema({
       stdin: 'Return exactly OK without calling any tools.',
       timeoutMs: remainingTime(deadline),
       signal,
+      childLifecycle,
     })
   } finally {
     await closeServer(server)
@@ -1065,6 +1265,7 @@ async function runChild({
   stdin,
   timeoutMs,
   signal,
+  childLifecycle,
 }: {
   executable: string
   args: string[]
@@ -1073,6 +1274,7 @@ async function runChild({
   stdin?: string
   timeoutMs: number
   signal?: AbortSignal | undefined
+  childLifecycle?: ChildLifecycle | undefined
 }): Promise<ChildResult> {
   throwIfAborted(signal)
 
@@ -1082,11 +1284,12 @@ async function runChild({
       child = spawn(executable, args, {
         cwd,
         env,
-        detached: process.platform !== 'win32',
+        detached: childLifecycle?.detached ?? process.platform !== 'win32',
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
+      childLifecycle?.setChild(child)
     } catch (error) {
       reject(error)
       return
@@ -1096,22 +1299,35 @@ async function runChild({
     const stderr = createBoundedCollector(DIAGNOSTIC_LIMIT_BYTES)
     child.stdout.on('data', stdout.append)
     child.stderr.on('data', stderr.append)
+    const spawned = new Promise<void>((resolveSpawn, rejectSpawn) => {
+      const onSpawn = () => {
+        child.removeListener('error', onSpawnError)
+        resolveSpawn()
+      }
+      const onSpawnError = (error: Error) => {
+        child.removeListener('spawn', onSpawn)
+        rejectSpawn(error)
+      }
+      child.once('spawn', onSpawn)
+      child.once('error', onSpawnError)
+    })
 
     let settled = false
     let termination: ChildResult['termination']
     let forceTimer: NodeJS.Timeout | undefined
     let forceKillCompleted = false
     let finishAfterForceKill: (() => void) | undefined
+    let inputFailure: unknown
 
     const terminate = (reason: NonNullable<ChildResult['termination']>) => {
       if (child.exitCode !== null || child.signalCode !== null) return
       if (termination !== undefined) return
       termination = reason
-      terminateChildTree(child, 'SIGTERM')
+      terminateChildTree(child, 'SIGTERM', childLifecycle?.detached)
       forceTimer = setTimeout(() => {
         // Address the process group even if the direct child has already
         // exited. A descendant may ignore SIGTERM and outlive its parent.
-        terminateChildTree(child, 'SIGKILL')
+        terminateChildTree(child, 'SIGKILL', childLifecycle?.detached)
         forceKillCompleted = true
         finishAfterForceKill?.()
       }, TERMINATION_GRACE_MS)
@@ -1128,6 +1344,7 @@ async function runChild({
       clearTimeout(timeout)
       if (forceTimer !== undefined && termination === undefined) clearTimeout(forceTimer)
       signal?.removeEventListener('abort', onAbort)
+      childLifecycle?.setChild(undefined)
       callback()
     }
 
@@ -1135,13 +1352,15 @@ async function runChild({
     child.once('close', (code, childSignal) => {
       const resolveResult = () =>
         finish(() =>
-          resolve({
-          code,
-          signal: childSignal,
-          stdout: stdout.result(),
-          stderr: stderr.result(),
-          termination,
-          }),
+          inputFailure === undefined
+            ? resolve({
+                code,
+                signal: childSignal,
+                stdout: stdout.result(),
+                stderr: stderr.result(),
+                termination,
+              })
+            : reject(inputFailure),
         )
       if (termination !== undefined && process.platform !== 'win32' && !forceKillCompleted) {
         finishAfterForceKill = resolveResult
@@ -1154,12 +1373,46 @@ async function runChild({
       // A failing process may close stdin before Node finishes writing. Its exit
       // status and bounded stderr remain the authoritative failure signal.
     })
-    child.stdin.end(stdin)
+    void (async () => {
+      try {
+        await spawned
+        if (settled) return
+        if (stdin === undefined) {
+          child.stdin.end()
+          return
+        }
+        await childLifecycle?.beforeStdin?.()
+        if (signal?.aborted === true) throw abortFailure()
+        const input = Buffer.from(stdin, 'utf8')
+        if (input.length === 0) {
+          child.stdin.end()
+          return
+        }
+        child.stdin.write(input.subarray(0, 1))
+        child.stdin.end(input.subarray(1))
+      } catch (error) {
+        if (settled) return
+        inputFailure = error
+        if (child.exitCode === null && child.signalCode === null) {
+          terminateChildTree(child, 'SIGTERM', childLifecycle?.detached)
+          const inputForceTimer = setTimeout(
+            () => terminateChildTree(child, 'SIGKILL', childLifecycle?.detached),
+            TERMINATION_GRACE_MS,
+          )
+          inputForceTimer.unref()
+          child.once('close', () => clearTimeout(inputForceTimer))
+        }
+      }
+    })()
   })
 }
 
-function terminateChildTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals) {
-  if (process.platform !== 'win32' && child.pid !== undefined) {
+function terminateChildTree(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+  detached = process.platform !== 'win32',
+) {
+  if (detached && process.platform !== 'win32' && child.pid !== undefined) {
     try {
       process.kill(-child.pid, signal)
       return
@@ -1171,6 +1424,15 @@ function terminateChildTree(child: ChildProcessWithoutNullStreams, signal: NodeJ
     }
   }
   child.kill(signal)
+}
+
+function abortFailure(): DirectOfficialClientError {
+  return new DirectOfficialClientError({
+    code: 'direct_upstream_error',
+    reason: 'codex_aborted',
+    message: 'The official Codex client request was aborted.',
+    retryable: true,
+  })
 }
 
 function createBoundedCollector(limit: number) {

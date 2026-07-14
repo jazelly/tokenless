@@ -8,6 +8,7 @@ import {
   DEFAULT_DIRECT_BROKER_PORT,
   DIRECT_BROKER_PROTOCOL,
   MAX_NATIVE_MESSAGE_BYTES,
+  ManagedProjectExecutorError,
   NATIVE_PROTOCOL,
   addManagedCodexAccount,
   buildTokenlessPrompt,
@@ -44,6 +45,10 @@ import {
   type DirectProvider,
 } from './index.js'
 import { DEFAULT_EXTENSION_ID } from './default-extension-id.js'
+import {
+  ManagedCodexExecutorFailure,
+  createManagedCodexProjectExecutor,
+} from './direct/managed-codex-executor.js'
 
 type CliArgs = Record<string, any> & { files: string[] }
 type StatusEvent = Record<string, any>
@@ -352,6 +357,7 @@ async function serveCommand(args: CliArgs) {
   }
 
   const abortController = new AbortController()
+  const managedCodexExecutor = createManagedCodexProjectExecutor()
   let stop!: () => void
   const stopped = new Promise<void>((resolve) => {
     stop = () => {
@@ -369,6 +375,20 @@ async function serveCommand(args: CliArgs) {
       host: args.host === undefined ? DEFAULT_DIRECT_BROKER_HOST : String(args.host),
       port: args.port === undefined ? DEFAULT_DIRECT_BROKER_PORT : Number(args.port),
       signal: abortController.signal,
+      managedProject: {
+        homeDir: tokenlessHome(),
+        executor: async (execution) => {
+          try {
+            return await managedCodexExecutor(execution)
+          } catch (error) {
+            if (!(error instanceof ManagedCodexExecutorFailure)) throw error
+            throw new ManagedProjectExecutorError(error.code, error.message, {
+              retryable: error.retryable,
+              deliveryUnknown: error.deliveryUnknown,
+            })
+          }
+        },
+      },
     })
     if (!args.quiet) {
       printPayload({

@@ -9,13 +9,15 @@ import { consumeBoundedLines } from './bounded-line-reader.js'
 import { resolveSqliteLockTimeout } from './sqlite-lock.js'
 
 export const CODEX_SUPERVISOR_PROTOCOL = 'tokenless.codex-supervisor.v1' as const
-const MAX_CONTROL_LINE_BYTES = 1024 * 1024
+export const CODEX_SUPERVISOR_MAX_REQUEST_LINE_BYTES = 6 * 1024 * 1024
+const MAX_CONTROL_LINE_BYTES = 4 * 1024 * 1024
 const EXIT_GRACE_MS = 2_000
 const MAX_OPERATION_TIMEOUT_MS = 40 * 60_000
 export const CODEX_CHILD_STOP_GRACE_MS = 500
 export const CODEX_GROUP_QUIESCENCE_TIMEOUT_MS = 2_000
 export const CODEX_SUPERVISOR_FIXED_OVERHEAD_MS = 2_000
 export const CODEX_INSPECT_CLEANUP_BUDGET_MS = (3 * CODEX_CHILD_STOP_GRACE_MS) + CODEX_GROUP_QUIESCENCE_TIMEOUT_MS
+export const CODEX_INFERENCE_CLEANUP_BUDGET_MS = CODEX_INSPECT_CLEANUP_BUDGET_MS + CODEX_GROUP_QUIESCENCE_TIMEOUT_MS
 const CODEX_CHILD_ENVIRONMENT = new Set([
   'APPDATA', 'COMSPEC', 'HOMEDRIVE', 'HOMEPATH', 'HOME', 'LANG', 'LANGUAGE',
   'LC_ALL', 'LC_CTYPE', 'LOCALAPPDATA', 'LOGNAME', 'OS', 'PATH', 'PATHEXT',
@@ -23,7 +25,7 @@ const CODEX_CHILD_ENVIRONMENT = new Set([
   'USERNAME', 'USERPROFILE', 'WINDIR',
 ])
 
-export type CodexSupervisorOperation = 'inspect-managed' | 'inspect-profile' | 'login-managed'
+export type CodexSupervisorOperation = 'infer-managed' | 'inspect-managed' | 'inspect-profile' | 'login-managed'
 
 export type CodexSupervisorRequest = Readonly<{
   protocol: typeof CODEX_SUPERVISOR_PROTOCOL
@@ -39,6 +41,12 @@ export type CodexSupervisorRequest = Readonly<{
   loginTimeoutMs?: number | undefined
   accountId?: string | undefined
   expectedInternalId?: string | undefined
+  expectedBindingGeneration?: number | undefined
+  expectedIdentityFingerprint?: string | undefined
+  projectId?: string | undefined
+  promptBase64?: string | undefined
+  model?: string | undefined
+  inferenceTimeoutMs?: number | undefined
   codexHome?: string | undefined
   identityKey?: string | undefined
   deviceAuth?: boolean | undefined
@@ -56,6 +64,12 @@ export type CodexSupervisorRunOptions = Readonly<{
   loginTimeoutMs?: number | undefined
   accountId?: string | undefined
   expectedInternalId?: string | undefined
+  expectedBindingGeneration?: number | undefined
+  expectedIdentityFingerprint?: string | undefined
+  projectId?: string | undefined
+  prompt?: string | undefined
+  model?: string | undefined
+  inferenceTimeoutMs?: number | undefined
   codexHome?: string | undefined
   identityKey?: Buffer | undefined
   deviceAuth?: boolean | undefined
@@ -123,6 +137,18 @@ export function codexInspectOperationTimeoutMs(accountReadTimeoutMs: number): nu
   return accountReadTimeoutMs + CODEX_INSPECT_CLEANUP_BUDGET_MS + CODEX_SUPERVISOR_FIXED_OVERHEAD_MS
 }
 
+export function codexInferenceOperationTimeoutMs(
+  accountReadTimeoutMs: number,
+  inferenceTimeoutMs: number,
+): number {
+  return (
+    accountReadTimeoutMs +
+    inferenceTimeoutMs +
+    CODEX_INFERENCE_CLEANUP_BUDGET_MS +
+    CODEX_SUPERVISOR_FIXED_OVERHEAD_MS
+  )
+}
+
 async function buildRequest(options: CodexSupervisorRunOptions): Promise<CodexSupervisorRequest> {
   if (!Number.isSafeInteger(options.operationTimeoutMs) || options.operationTimeoutMs <= 0 || options.operationTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
     throw new CodexChildSupervisorError('codex_supervisor_invalid', 'The managed Codex operation timeout is invalid.')
@@ -131,6 +157,7 @@ async function buildRequest(options: CodexSupervisorRunOptions): Promise<CodexSu
   for (const [name, value] of [
     ['account read timeout', options.accountReadTimeoutMs],
     ['login timeout', options.loginTimeoutMs],
+    ['inference timeout', options.inferenceTimeoutMs],
   ] as const) {
     if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0 || value > 30 * 60_000)) {
       throw new CodexChildSupervisorError('codex_supervisor_invalid', `The managed Codex ${name} is invalid.`)
@@ -140,7 +167,7 @@ async function buildRequest(options: CodexSupervisorRunOptions): Promise<CodexSu
   for (const [key, value] of Object.entries(options.environment)) {
     if (value !== undefined && CODEX_CHILD_ENVIRONMENT.has(key.toUpperCase())) environment[key.toUpperCase()] = value
   }
-  return Object.freeze({
+  const request: CodexSupervisorRequest = Object.freeze({
     protocol: CODEX_SUPERVISOR_PROTOCOL,
     nonce: randomBytes(32).toString('base64url'),
     clientPid: process.pid,
@@ -154,11 +181,21 @@ async function buildRequest(options: CodexSupervisorRunOptions): Promise<CodexSu
     ...(options.loginTimeoutMs === undefined ? {} : { loginTimeoutMs: options.loginTimeoutMs }),
     ...(options.accountId === undefined ? {} : { accountId: options.accountId }),
     ...(options.expectedInternalId === undefined ? {} : { expectedInternalId: options.expectedInternalId }),
+    ...(options.expectedBindingGeneration === undefined ? {} : { expectedBindingGeneration: options.expectedBindingGeneration }),
+    ...(options.expectedIdentityFingerprint === undefined ? {} : { expectedIdentityFingerprint: options.expectedIdentityFingerprint }),
+    ...(options.projectId === undefined ? {} : { projectId: options.projectId }),
+    ...(options.prompt === undefined ? {} : { promptBase64: Buffer.from(options.prompt, 'utf8').toString('base64') }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.inferenceTimeoutMs === undefined ? {} : { inferenceTimeoutMs: options.inferenceTimeoutMs }),
     ...(options.codexHome === undefined ? {} : { codexHome: options.codexHome }),
     ...(options.identityKey === undefined ? {} : { identityKey: options.identityKey.toString('base64') }),
     ...(options.deviceAuth === undefined ? {} : { deviceAuth: options.deviceAuth }),
     environment,
   })
+  if (Buffer.byteLength(JSON.stringify(request), 'utf8') + 1 > CODEX_SUPERVISOR_MAX_REQUEST_LINE_BYTES) {
+    throw new CodexChildSupervisorError('codex_supervisor_invalid', 'The managed Codex request is oversized.')
+  }
+  return request
 }
 
 async function superviseHelper<T>(
