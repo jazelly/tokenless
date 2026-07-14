@@ -2,7 +2,7 @@
 
 Effective date: 2026-07-15
 
-Tokenless offers two separate local transports. Visible mode connects the command-line tool to browser sessions that a user has already authorized and operates through visible provider pages such as ChatGPT, Claude, and Gemini. Opt-in direct mode delegates to the provider-owned Codex executable or sends requests to a documented public provider API or an explicitly configured compatible gateway.
+Tokenless offers two separate local transports. Visible mode connects the command-line tool to browser sessions that a user has already authorized and operates through visible provider pages such as ChatGPT, Claude, Gemini, and Grok. Opt-in direct mode delegates to the provider-owned Codex executable or sends requests to a documented public provider API or an explicitly configured compatible gateway.
 
 ## Data handling
 

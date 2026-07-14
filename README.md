@@ -8,17 +8,19 @@ Tokenless lets agents use AI through either the provider website you already use
 
 | Mode | Transport | Authentication | Status |
 | --- | --- | --- | --- |
-| Extension (`visible`, default) | Visible ChatGPT, Claude, or Gemini web UI | Your browser session | **Recommended** |
+| Extension (`visible`, default) | Visible ChatGPT, Claude, Gemini, or Grok web UI | Your browser session | **Recommended** |
 | Direct/API (`direct`) | Official Codex client, documented public APIs, or an explicit compatible gateway | Provider client login or environment API key | **Experimental; active development** |
 
 The modes are isolated. Tokenless never falls back from the extension to a paid API, or from a direct request to the browser.
+
+Tokenless is standalone from Noop. In visible mode, the packaged `tokenless-daemon` and `tokenless-native-host` connect the CLI to the browser extension; there is no local JSON or local task-page fallback.
 
 ## Why Tokenless
 
 - **Save tokens first.** Reuse a web subscription for research, drafting, review, explanation, and transformations instead of spending another model API request.
 - **Browser-native safety.** Extension mode uses normal, visible DOM interactions. It does not read cookies, passwords, browser-storage tokens, hidden authorization headers, or private provider APIs.
 - **Free, MIT-licensed, and local.** Tokenless has no hosted relay for your browser session. Only the prompt, explicitly shared context, and intentionally selected files reach the chosen provider.
-- **Built to expand.** Visible adapters support ChatGPT, Claude, and Gemini today and can extend to other providers with compatible web interfaces.
+- **Built to expand.** Visible adapters support ChatGPT, Claude, Gemini, and Grok today and can extend to other providers with compatible web interfaces.
 
 ## Install
 
@@ -77,7 +79,7 @@ tokenless run \
   --json
 ```
 
-- ChatGPT is the default provider; Claude and Gemini are also supported.
+- ChatGPT is the default provider; Claude, Gemini, and Grok are also supported.
 - Reuse the returned `taskId` with `--task-id` for later turns.
 - Add `--long-running` for visible work that may exceed three minutes.
 - Research results include visible citations in `result.read.sources` when the provider renders them.
@@ -125,7 +127,7 @@ The goal is for an agent to use the provider website as fully as a person can, w
 ## Useful Commands
 
 ```bash
-tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json
+tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json
 tokenless state --task-id "<task-id>" --json
 tokenless cancel --job-id "<job-id>" --json
 tokenless snapshot-dom --provider chatgpt --json

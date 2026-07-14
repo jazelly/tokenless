@@ -12,7 +12,7 @@ Tokenless is a visible browser extension for user-authorized web AI sessions. It
 
 ## Provider Scope
 
-The first package version defines adapters for ChatGPT, Gemini, and Claude web sessions. Each adapter submits text through visible page UI and reads visible answer text through DOM selectors. It stops when the tab is not available, the page is not one of the approved origins, selectors drift, login/CAPTCHA blocks the page, or the requested action is unsupported.
+The extension defines adapters for ChatGPT, Claude, Gemini, and Grok web sessions. Each adapter submits text through visible page UI and reads visible answer text through DOM selectors. It stops when the tab is not available, the page is not one of the approved origins, selectors drift, login/CAPTCHA blocks the page, or the requested action is unsupported.
 
 ## Safety Contract
 

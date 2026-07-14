@@ -1,6 +1,6 @@
 # Tokenless CLI
 
-`tokenless` is an agent-facing CLI with two isolated transports: recommended visible ChatGPT, Claude, or Gemini browser sessions, and an experimental opt-in direct mode through provider-owned clients or documented public APIs.
+`tokenless` is an agent-facing CLI with two isolated transports: recommended visible ChatGPT, Claude, Gemini, or Grok browser sessions, and an experimental opt-in direct mode through provider-owned clients or documented public APIs.
 
 ## Install
 
@@ -36,7 +36,7 @@ The universal package contains JavaScript only and declares exact-version option
 Configure defaults:
 
 ```bash
-tokenless config --preferred-providers chatgpt,claude,gemini --browser chrome --json
+tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json
 ```
 
 ## Agent Workflow

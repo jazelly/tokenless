@@ -662,9 +662,13 @@ async function readLatestAnswer(provider: ContentProvider, request: ContentRecor
 
   const timeoutMs = Math.min(Number(request.readTimeoutMs ?? 60000), MAX_VISIBLE_RESPONSE_WAIT_MS)
   const baseline = request.answerBaseline ?? submissionBaselines.get(requestKey(request))
-  const answer = await waitForStableAnswer(provider, timeoutMs, baseline)
+  const waitResult = await waitForStableAnswer(provider, timeoutMs, baseline)
+  if (waitResult.blocker) return waitResult.blocker
+  const answer = waitResult.answer
   const contextBlocker = validateExecutionContext(provider, request, 'tokenless.bridge.read')
   if (contextBlocker) return contextBlocker
+  const lateBlocker = detectBlocker(provider)
+  if (lateBlocker) return lateBlocker
   if (!answer) {
     return {
       status: 'blocked',
@@ -949,19 +953,21 @@ async function waitForStableAnswer(provider: ContentProvider, timeoutMs: number,
   let lastText = ''
   let stableSince = 0
   while (Date.now() < deadline) {
+    const blocker = detectBlocker(provider)
+    if (blocker) return { answer: null, blocker }
     const answer = latestAnswer(provider, baseline)
     const text = answer?.text ?? ''
     const busy = isProviderBusy(provider)
     if (text && text === lastText) {
       if (stableSince === 0) stableSince = Date.now()
-      if (!busy && Date.now() - stableSince >= 600) return answer
+      if (!busy && Date.now() - stableSince >= 600) return { answer, blocker: null }
     } else {
       lastText = text
       stableSince = text ? Date.now() : 0
     }
     await delay(150)
   }
-  return latestAnswer(provider, baseline)
+  return { answer: latestAnswer(provider, baseline), blocker: detectBlocker(provider) }
 }
 
 function isProviderBusy(provider: ContentProvider) {

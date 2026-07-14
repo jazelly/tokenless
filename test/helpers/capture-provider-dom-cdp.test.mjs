@@ -24,6 +24,14 @@ const GEMINI_SELECTOR_INDEXES = Object.freeze({
   fileInputs: [0, 1],
   projectLinks: [0],
 })
+const GROK_SELECTOR_INDEXES = Object.freeze({
+  composers: [0, 1],
+  submits: [0],
+  answers: [0],
+  blockers: [0],
+  modelPickers: [0],
+  fileInputs: [0, 1],
+})
 
 test('capture sanitizer preserves provider selectors without retaining arbitrary attribute values', {
   timeout: 30000,
@@ -297,6 +305,95 @@ test('capture sanitizer preserves provider selectors without retaining arbitrary
     assert.equal(await gemsLink.getAttribute('id'), null)
     assert.equal(await gemsLink.getAttribute('data-private'), null)
     await geminiValidationPage.close()
+
+    const grokContext = browser.contexts()[0]
+    await grokContext.route('https://grok.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: secretBearingGrokFixture(),
+    }))
+    const grokProviderPage = await grokContext.newPage()
+    await grokProviderPage.goto('https://grok.com/')
+    await grokProviderPage.evaluate((privateMarker) => {
+      history.replaceState(null, '', `/c/${privateMarker}`)
+    }, PRIVATE_MARKER)
+    await browser.close()
+    browser = undefined
+
+    process.argv = [
+      'node',
+      'capture-provider-dom-cdp.mjs',
+      '--provider',
+      'grok',
+      '--cdp-url',
+      endpoint,
+      '--output-dir',
+      path.join(tempRoot, 'grok-captures'),
+    ]
+    let grokResult
+    try {
+      grokResult = await captureProviderDom()
+    } finally {
+      process.argv = savedArgv
+    }
+
+    assert.equal(grokResult.ok, true)
+    const grokMetadataText = await fs.readFile(grokResult.metadataPath, 'utf8')
+    const grokProbesText = await fs.readFile(grokResult.selectorProbesPath, 'utf8')
+    const grokHtml = await fs.readFile(grokResult.htmlPath, 'utf8')
+    const grokMetadata = JSON.parse(grokMetadataText)
+    const grokProbes = JSON.parse(grokProbesText)
+    assert.equal(grokMetadata.provider, 'grok')
+    assert.equal(grokMetadata.surface, 'visible-session-web-ui')
+    assert.equal(grokMetadata.url, 'https://grok.com/c/[redacted]')
+    assert.equal(grokResult.url, grokMetadata.url)
+    for (const artifact of [grokHtml, grokMetadataText, grokProbesText]) {
+      assert.equal(artifact.includes(PRIVATE_MARKER), false)
+    }
+    for (const [group, indexes] of Object.entries(GROK_SELECTOR_INDEXES)) {
+      for (const index of indexes) {
+        assert.equal(grokProbes[group][index].count, 1, `${group}[${index}] probe`)
+      }
+    }
+
+    browser = await chromium.connectOverCDP(endpoint)
+    const grokValidationPage = await browser.contexts()[0].newPage()
+    await grokValidationPage.setContent(grokHtml)
+    for (const [group, indexes] of Object.entries(GROK_SELECTOR_INDEXES)) {
+      for (const index of indexes) {
+        const selector = PROVIDER_DEFINITIONS.grok.selectors[group][index]
+        assert.equal(
+          await grokValidationPage.locator(selector).count(),
+          1,
+          `${group}[${index}] exact selector`
+        )
+      }
+    }
+
+    const grokComposer = grokValidationPage.locator(
+      PROVIDER_DEFINITIONS.grok.selectors.composers[0]
+    )
+    assert.equal(await grokComposer.getAttribute('class'), 'tiptap ProseMirror')
+    assert.equal(await grokComposer.getAttribute('aria-label'), 'Ask Grok anything')
+    assert.equal(await grokComposer.getAttribute('aria-multiline'), 'true')
+    assert.equal(await grokComposer.getAttribute('id'), null)
+    assert.equal(await grokComposer.getAttribute('data-private'), null)
+
+    const grokFileInput = grokValidationPage.locator(
+      PROVIDER_DEFINITIONS.grok.selectors.fileInputs[0]
+    )
+    assert.equal(await grokFileInput.getAttribute('name'), 'files')
+    assert.equal(await grokFileInput.getAttribute('multiple'), '')
+    assert.equal(await grokFileInput.getAttribute('class'), null)
+    assert.equal(await grokFileInput.getAttribute('data-private'), null)
+
+    const grokAnswer = grokValidationPage.locator(
+      PROVIDER_DEFINITIONS.grok.selectors.answers[0]
+    )
+    assert.equal(await grokAnswer.textContent(), '[text]')
+    assert.equal(await grokAnswer.getAttribute('id'), null)
+    assert.equal(await grokAnswer.getAttribute('data-private'), null)
+    await grokValidationPage.close()
   } finally {
     await browser?.close().catch(() => undefined)
     await stopControlledChrome(endpoint, chrome)
@@ -522,6 +619,91 @@ function secretBearingGeminiFixture() {
         class="${PRIVATE_MARKER}-upload-class"
         data-private="${PRIVATE_MARKER}-upload-data"
       >${PRIVATE_MARKER} upload text</button>
+    </main>
+  </body>
+</html>`
+}
+
+function secretBearingGrokFixture() {
+  return `<!doctype html>
+<html
+  id="${PRIVATE_MARKER}-html-id"
+  class="${PRIVATE_MARKER}-html-class"
+  aria-label="${PRIVATE_MARKER}-html-aria"
+  data-private="${PRIVATE_MARKER}-html-data"
+>
+  <head><title>${PRIVATE_MARKER} Grok title</title></head>
+  <body>
+    <section
+      id="${PRIVATE_MARKER}-id"
+      class="${PRIVATE_MARKER}-class"
+      name="${PRIVATE_MARKER}-name"
+      aria-label="${PRIVATE_MARKER}-aria-label"
+      data-testid="${PRIVATE_MARKER}-testid"
+      data-private="${PRIVATE_MARKER}-data"
+      custom-attribute="${PRIVATE_MARKER}-custom"
+    >${PRIVATE_MARKER} arbitrary Grok text</section>
+    <main>
+      <div
+        data-testid="assistant-message"
+        dir="auto"
+        id="${PRIVATE_MARKER}-answer-id"
+        class="${PRIVATE_MARKER}-answer-class"
+        data-private="${PRIVATE_MARKER}-answer-data"
+      >${PRIVATE_MARKER} answer text</div>
+      <div
+        class="tiptap ProseMirror ${PRIVATE_MARKER}-composer-class"
+        contenteditable="true"
+        role="textbox"
+        aria-label="Ask Grok anything"
+        aria-multiline="true"
+        aria-disabled="false"
+        id="${PRIVATE_MARKER}-composer-id"
+        data-private="${PRIVATE_MARKER}-composer-data"
+      ><p>${PRIVATE_MARKER} prompt text</p></div>
+      <textarea
+        aria-label="Ask Grok anything"
+        placeholder="What do you want to know?"
+        id="${PRIVATE_MARKER}-textarea-id"
+        class="${PRIVATE_MARKER}-textarea-class"
+        data-private="${PRIVATE_MARKER}-textarea-data"
+      >${PRIVATE_MARKER} alternate prompt text</textarea>
+      <button
+        data-testid="chat-submit"
+        aria-label="Submit"
+        type="submit"
+        class="${PRIVATE_MARKER}-submit-class"
+        data-private="${PRIVATE_MARKER}-submit-data"
+      >${PRIVATE_MARKER} submit text</button>
+      <div
+        data-testid="anon-paywall-sign-up-card"
+        id="${PRIVATE_MARKER}-paywall-id"
+        class="${PRIVATE_MARKER}-paywall-class"
+        data-private="${PRIVATE_MARKER}-paywall-data"
+      >${PRIVATE_MARKER} paywall text</div>
+      <button
+        id="model-select-trigger"
+        aria-label="Model select"
+        aria-haspopup="menu"
+        type="button"
+        class="${PRIVATE_MARKER}-model-class"
+        data-private="${PRIVATE_MARKER}-model-data"
+      >${PRIVATE_MARKER} model text</button>
+      <input
+        type="file"
+        name="files"
+        multiple
+        class="${PRIVATE_MARKER}-file-class"
+        data-private="${PRIVATE_MARKER}-file-data"
+      >
+      <button
+        data-testid="attach-button"
+        aria-label="Attach"
+        aria-haspopup="menu"
+        type="button"
+        class="${PRIVATE_MARKER}-attach-class"
+        data-private="${PRIVATE_MARKER}-attach-data"
+      >${PRIVATE_MARKER} attach text</button>
     </main>
   </body>
 </html>`

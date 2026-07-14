@@ -295,6 +295,21 @@ test('CLI canonicalizes the legacy Chrome for Testing config identifier', async 
   assert.equal(normalizeBrowserId('chrome-for-testing-legacy'), 'chrome-for-testing')
 })
 
+test('CLI config preserves Grok as a visible preferred provider', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-grok-config-'))
+  const { readTokenlessConfig, writeTokenlessConfig } = await importCli()
+  try {
+    const written = await writeTokenlessConfig({
+      homeDir,
+      preferredProviders: [' GROK ', 'chatgpt', 'grok', 'unsupported'],
+    })
+    assert.deepEqual(written.preferredProviders, ['grok', 'chatgpt'])
+    assert.deepEqual((await readTokenlessConfig(homeDir)).preferredProviders, ['grok', 'chatgpt'])
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('file collection rejects lexical and symlink escapes from the canonical project root', {
   skip: process.platform === 'win32' && 'Creating symlinks may require Developer Mode on Windows.',
 }, async () => {
@@ -387,10 +402,16 @@ test('provider wake URL accepts selected-provider HTTPS only', async () => {
   assert.equal(providerWakeUrl('chatgpt'), 'https://chatgpt.com/')
   assert.equal(providerWakeUrl('claude'), 'https://claude.ai/new')
   assert.equal(providerWakeUrl('gemini'), 'https://gemini.google.com/app')
+  assert.equal(providerWakeUrl('grok'), 'https://grok.com/')
   assert.equal(providerWakeUrl('chatgpt', 'https://chatgpt.com/c/123'), 'https://chatgpt.com/c/123')
+  assert.equal(
+    providerWakeUrl('grok', 'https://grok.com/c/6ab0dd2c-ea15-4eff-a0b2-87fa149c98cd'),
+    'https://grok.com/c/6ab0dd2c-ea15-4eff-a0b2-87fa149c98cd'
+  )
   assert.throws(() => providerWakeUrl('chatgpt', 'http://chatgpt.com/c/123'), /HTTPS/)
   assert.throws(() => providerWakeUrl('chatgpt', 'https://example.com/steal'), /selected chatgpt provider/)
   assert.throws(() => providerWakeUrl('claude', 'https://chatgpt.com/'), /selected claude provider/)
+  assert.throws(() => providerWakeUrl('grok', 'https://x.com/'), /selected grok provider/)
   await assert.rejects(
     openProviderUrl('https://example.com/', {
       browser: 'profile',
@@ -398,7 +419,7 @@ test('provider wake URL accepts selected-provider HTTPS only', async () => {
       argsPrefix: [],
       displayName: 'test',
     }),
-    /allowlisted ChatGPT, Claude, or Gemini/
+    /allowlisted ChatGPT, Claude, Gemini, or Grok/
   )
 })
 

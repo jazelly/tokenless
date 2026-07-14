@@ -5,7 +5,7 @@ import path from 'node:path'
 export const TOKENLESS_CONFIG_PROTOCOL_VERSION = 'tokenless.config.v1'
 export const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 
-const SUPPORTED_PROVIDER_IDS = Object.freeze(['chatgpt', 'claude', 'gemini'])
+const SUPPORTED_PROVIDER_IDS = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok'])
 export const SUPPORTED_BROWSER_IDS = Object.freeze([
   'chrome',
   'chrome-for-testing',

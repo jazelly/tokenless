@@ -26,7 +26,7 @@ Use the web version when the web version is enough.
 
 ---
 
-Tokenless routes suitable agent requests to the AI web apps you already use, like ChatGPT, Claude, or Gemini.
+Tokenless routes suitable agent requests to the AI web apps you already use, like ChatGPT, Claude, Gemini, or Grok.
 
 The request goes to the visible web chat.
 
@@ -114,7 +114,7 @@ Use the web AI you already have.
 
 Tokenless 会把适合的 agent 请求，路由到你已经在浏览器里使用的 AI 网页。
 
-比如 ChatGPT、Claude、Gemini。
+比如 ChatGPT、Claude、Gemini、Grok。
 
 请求发到可见的网页聊天里。
 

@@ -4,7 +4,7 @@
   "name": "Tokenless",
   "short_name": "Tokenless",
   "version": "0.1.5",
-  "description": "Visible bridge for user-authorized ChatGPT, Gemini, and Claude web sessions.",
+  "description": "Visible bridge for user-authorized ChatGPT, Claude, Gemini, and Grok web sessions.",
   "homepage_url": "https://github.com/jazelly/tokenless",
   "icons": {
     "16": "icons/tokenless-16.png",
@@ -23,7 +23,8 @@
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
     "https://gemini.google.com/*",
-    "https://claude.ai/*"
+    "https://claude.ai/*",
+    "https://grok.com/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js",
@@ -35,7 +36,8 @@
         "https://chatgpt.com/*",
         "https://chat.openai.com/*",
         "https://gemini.google.com/*",
-        "https://claude.ai/*"
+        "https://claude.ai/*",
+        "https://grok.com/*"
       ],
       "js": [
         "content/provider-content.js"
