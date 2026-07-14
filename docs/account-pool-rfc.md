@@ -1,6 +1,6 @@
 # Tokenless Account Pool and Project Routing
 
-Status: Accepted design; implementation gated by the verification section
+Status: Implemented and independently verified
 
 Date: 2026-07-13
 
@@ -179,7 +179,7 @@ tokenless projects list
 tokenless projects unpin --project project-a --provider chatgpt
 ```
 
-Commands have JSON output for automation. Credential values are never accepted as flags. Destructive removal refuses active bindings and requires a separate explicit operation to remove a provider-managed profile.
+Commands have JSON output for automation. Credential values are never accepted as flags. Registry removal refuses active bindings and never deletes a provider-managed profile; any later manual profile cleanup is separate and outside the current CLI contract.
 
 ## Provider admission
 
@@ -187,7 +187,7 @@ Subscription account support is driver-by-driver, not simulated browser traffic 
 
 | Provider | Multi-account public API | Multi-account subscription | Current admission |
 | --- | --- | --- | --- |
-| ChatGPT | environment-referenced API accounts | isolated official Codex profiles | implement first |
+| ChatGPT | environment-referenced API accounts | isolated official Codex profiles | implemented |
 | Claude | environment-referenced API accounts | none | subscription driver blocked until Anthropic documents a suitable isolated client boundary |
 | Gemini | environment-referenced API accounts | none | subscription OAuth reuse is explicitly outside this design |
 | Grok | environment-referenced API accounts | none | no admitted provider-owned subscription client |

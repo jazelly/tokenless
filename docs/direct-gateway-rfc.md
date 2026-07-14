@@ -1,6 +1,6 @@
 # Tokenless Direct Mode and Gateway Broker
 
-Status: Accepted for implementation
+Status: Implemented and independently verified
 
 Date: 2026-07-13
 
@@ -202,7 +202,7 @@ Shared routing settings:
 - `TOKENLESS_DIRECT_BASE_URL`
 - `TOKENLESS_DIRECT_TIMEOUT_MS`
 
-`TOKENLESS_DIRECT_API_KEY` is accepted only for an operator-initiated normalized direct run. The broker rejects generic credentials and requires the matching provider-specific key so a local caller cannot select a route that sends one provider's secret to another provider origin.
+`TOKENLESS_DIRECT_API_KEY` is accepted only for an operator-initiated normalized direct run. The broker rejects generic credentials. A legacy request without `x-tokenless-project` requires the matching provider-specific key; a project-routed public request uses only the credential environment named by the selected account record. This prevents a local caller from selecting a route that sends one provider's secret to another provider origin.
 
 Per-provider settings take precedence:
 
@@ -219,7 +219,7 @@ Per-provider settings take precedence:
 
 API keys are intentionally unavailable as CLI flag values because command lines are commonly visible in process listings and shell history. Base URLs may be supplied with `--direct-base-url` because they are not credentials.
 
-The broker requires the matching `TOKENLESS_DIRECT_<PROVIDER>_API_KEY` for every provider route. Missing provider-specific credentials fail before upstream contact even if `TOKENLESS_DIRECT_API_KEY` is present.
+For a request without `x-tokenless-project`, the broker requires the matching `TOKENLESS_DIRECT_<PROVIDER>_API_KEY`. A project-routed API request requires its selected account's `TOKENLESS_DIRECT_ACCOUNT_<PROVIDER>_<ACCOUNT>_API_KEY`. Missing credentials fail before upstream contact even if `TOKENLESS_DIRECT_API_KEY` is present.
 
 Remote upstreams must use HTTPS. Plain HTTP is accepted only for loopback hosts, which supports local development and a local Sub2API deployment without allowing accidental cleartext credentials over a network. Normalized direct runs fail closed when `NODE_TLS_REJECT_UNAUTHORIZED=0` disables process-wide certificate verification. They also refuse loopback HTTP while Node environment proxying is enabled, preventing a proxy from receiving a cleartext loopback credential; HTTPS remains allowed with certificate verification. The broker bypasses global proxy agents and explicitly enables certificate verification on every HTTPS request. Base URLs with userinfo, query, or fragment are rejected. Redirects are rejected so credentials cannot cross origins.
 

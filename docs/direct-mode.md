@@ -13,7 +13,7 @@ The mode is selected before Tokenless initializes a transport. There is no fallb
 
 Web subscriptions and public API accounts are separate products unless a provider explicitly documents otherwise. A ChatGPT, Claude, Gemini, or Grok web subscription does not by itself supply Tokenless with public API quota. Direct API and broker requests can incur usage charges from the provider or gateway configured by the operator.
 
-The ChatGPT `official-client` backend is the exception in transport, not in ownership: it asks the provider-owned Codex executable to use its own supported ChatGPT authentication. Tokenless never converts that entitlement into an API key and never exposes the official-client backend through the broker.
+The ChatGPT `official-client` backend is the exception in transport, not in ownership: it asks the provider-owned Codex executable to use its own supported ChatGPT authentication. Tokenless never converts that entitlement into an API key. A plain direct run uses the ambient Codex login; the authenticated broker can expose only the bounded stateless `POST /v1/responses` subset for an explicitly managed project/account binding.
 
 ## Run a direct request
 
@@ -80,7 +80,17 @@ Provider-specific settings take precedence:
 
 API keys are accepted only from the process environment. Tokenless does not put them in CLI arguments, `config.json`, the daemon database, browser storage, or job state. Remote base URLs must use HTTPS; plain HTTP is accepted only for a loopback upstream. Normalized direct runs fail closed if `NODE_TLS_REJECT_UNAUTHORIZED=0` disables process-wide certificate verification. They also refuse loopback HTTP while Node environment proxying is enabled, so a proxy cannot receive a cleartext loopback credential; HTTPS remains allowed with certificate verification. The broker bypasses global proxy agents and explicitly requires certificate verification for every HTTPS socket. Redirects are rejected.
 
-Every broker route requires the matching provider-specific `TOKENLESS_DIRECT_<PROVIDER>_API_KEY`. A missing provider key fails before an upstream socket is opened, even when `TOKENLESS_DIRECT_API_KEY` is set.
+Every legacy broker route without a project header requires the matching provider-specific `TOKENLESS_DIRECT_<PROVIDER>_API_KEY`. A project-routed public API request instead uses the selected account's `TOKENLESS_DIRECT_ACCOUNT_<PROVIDER>_<ACCOUNT>_API_KEY`; a managed ChatGPT project delegates to its isolated official Codex profile. Missing credentials fail before an upstream socket is opened, even when `TOKENLESS_DIRECT_API_KEY` is set.
+
+## Project-affine multi-account routing
+
+`x-tokenless-project` opts a broker request into durable `(project, provider)` account routing. Tokenless supports multiple public API accounts for all five direct providers and multiple ChatGPT subscription accounts through isolated official Codex profiles.
+
+An existing usable binding remains fixed across requests, restarts, new accounts, and recovery of an older account. Busy queues, 429 responses, quota, permission errors, timeouts, 5xx responses, and ambiguous or post-dispatch failures never rebalance it. Only a proven account-local unavailability signal can migrate an `availability-first` binding, and migration stays inside the exact provider, driver, and operator-defined routing domain. A `strict` binding never migrates.
+
+The response that proves an API credential rejection keeps its upstream status and body and is never replayed; the broker still applies its normal safe response-header filter. The account is marked unavailable for later requests, and the next request may persistently migrate to an eligible replacement. Repairing the old account does not switch the project back.
+
+See [Project-Affine Multi-Account Routing](./multi-account-routing.md) for two-account ChatGPT onboarding, public API account environment names, project pinning, automatic-assignment domains, failover behavior, and semantic-isolation limits.
 
 ## Local direct API broker
 
@@ -91,7 +101,7 @@ export TOKENLESS_DIRECT_SERVER_KEY="$(openssl rand -hex 32)"
 
 TOKENLESS_DIRECT_SERVER_KEY="$TOKENLESS_DIRECT_SERVER_KEY" \
 TOKENLESS_DIRECT_CHATGPT_API_KEY=... \
-tokenless serve --mode direct --host 127.0.0.1 --port 8788 --json
+tokenless serve --mode direct --home "$HOME/.tokenless" --host 127.0.0.1 --port 8788 --json
 ```
 
 Every request, including `/health` and `/capabilities`, must send the local key:
@@ -142,3 +152,12 @@ npm run test:e2e:live-direct
 ```
 
 Set `TOKENLESS_LIVE_DIRECT_BASE_URL` for an explicitly reviewed compatible gateway. Optional `TOKENLESS_LIVE_DIRECT_PROMPT`, `TOKENLESS_LIVE_DIRECT_TIMEOUT_MS`, and `TOKENLESS_LIVE_DIRECT_TEST_TIMEOUT_MS` values customize the proof. This command intentionally spends one provider or gateway API request. It never accepts a credential as a CLI argument.
+
+To prove the ambient ChatGPT login through the provider-owned Codex client, use the separate double-opt-in test. Its model is intentionally hard-coded and cannot be overridden:
+
+```bash
+TOKENLESS_LIVE_AMBIENT_CODEX_CONFIRM=I_ACCEPT_SUBSCRIPTION_USAGE \
+npm run test:e2e:live-ambient-codex
+```
+
+This spends one ChatGPT subscription request with `gpt-5.3-codex-spark`. It proves the ambient official-client path, not multi-account project routing. A live managed-project proof additionally requires an explicitly created managed account, provider-owned login, and project pin.

@@ -71,7 +71,9 @@ TOKENLESS_DIRECT_CHATGPT_API_KEY=... \
 tokenless serve --mode direct --host 127.0.0.1 --port 8788 --json
 ```
 
-Every broker request, including `/health` and `/capabilities`, requires `Authorization: Bearer <TOKENLESS_DIRECT_SERVER_KEY>`. The broker strips inbound credentials and cookies, injects the selected environment credential, preserves streaming bytes, and exposes only its reviewed public inference allowlist. It never exposes the Codex backend, private provider web routes, or gateway administration/account routes. Public API traffic may be billed separately from a web subscription.
+Every broker request, including `/health` and `/capabilities`, requires `Authorization: Bearer <TOKENLESS_DIRECT_SERVER_KEY>`. The broker strips inbound credentials and cookies, injects the selected environment credential, preserves streaming bytes, and exposes only its reviewed public inference allowlist. An exact `x-tokenless-project` can select a durable public API account binding or the bounded stateless ChatGPT `POST /v1/responses` adapter backed by an isolated official Codex profile. It never exposes private provider web routes or gateway administration/account routes. Public API traffic may be billed separately from a web subscription.
+
+See [Project-Affine Multi-Account Routing](../../docs/multi-account-routing.md) for multi-account onboarding, project pinning, routing domains, and failover rules.
 
 Use a randomly generated server key of at least 32 visible non-whitespace characters; for example, `openssl rand -hex 32` produces a suitable value.
 
