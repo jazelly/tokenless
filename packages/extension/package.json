@@ -4,7 +4,7 @@
   "description": "Visible browser-session bridge extension and protocol for user-authorized web AI sessions.",
   "private": true,
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "exports": {
     ".": "./dist/src/index.js",
     "./protocol": "./dist/src/protocol.js",

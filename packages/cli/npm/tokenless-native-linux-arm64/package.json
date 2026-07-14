@@ -2,7 +2,7 @@
   "name": "tokenless-native-linux-arm64",
   "version": "0.1.2",
   "description": "Tokenless Rust runtime for linux-arm64.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jazelly/tokenless.git"

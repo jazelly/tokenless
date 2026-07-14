@@ -17,7 +17,7 @@ The modes are isolated. Tokenless never falls back from the extension to a paid 
 
 - **Save tokens first.** Reuse a web subscription for research, drafting, review, explanation, and transformations instead of spending another model API request.
 - **Browser-native safety.** Extension mode uses normal, visible DOM interactions. It does not read cookies, passwords, browser-storage tokens, hidden authorization headers, or private provider APIs.
-- **No hosted Tokenless fee; source available.** Tokenless has no hosted relay for your browser session. Only the prompt, explicitly shared context, and intentionally selected files reach the chosen provider.
+- **Free, MIT-licensed, and local.** Tokenless has no hosted relay for your browser session. Only the prompt, explicitly shared context, and intentionally selected files reach the chosen provider.
 - **Built to expand.** Visible adapters support ChatGPT, Claude, and Gemini today and can extend to other providers with compatible web interfaces.
 
 ## Install
@@ -143,3 +143,7 @@ npm run test:e2e
 ```
 
 The extension build is written to `packages/extension/dist/extension`. Load that directory from `chrome://extensions` in developer mode. Release procedures live in [npm publishing](docs/npm-publishing.md) and [Chrome Web Store release](docs/chrome-web-store-release.md); nothing is published by the commands above.
+
+## License
+
+[MIT](LICENSE)

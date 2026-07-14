@@ -74,6 +74,5 @@ native packages exist, configure Trusted Publishing for each one, delete
 `NPM_TOKEN` from GitHub, revoke the bootstrap token, and disallow token-based
 publishing in npm package settings.
 
-Before the first public release, replace each package's `UNLICENSED` value with
-the license you intend to grant to npm users. `UNLICENSED` permits publication
-but does not grant users permission to use the code.
+Tokenless is MIT-licensed. Keep every package's `license` field set to `MIT`
+and retain the repository's root `LICENSE` file.

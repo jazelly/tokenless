@@ -3,7 +3,7 @@
   "version": "0.1.2",
   "description": "Tokenless CLI for visible browser sessions and isolated direct provider APIs.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jazelly/tokenless.git"

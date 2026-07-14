@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "description": "Standalone visible-session bridge and isolated direct AI provider CLI.",
   "scripts": {
     "build": "npm run build --workspaces --if-present && npm run build:scripts",

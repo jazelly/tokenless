@@ -29,16 +29,22 @@ test('Changesets release configuration tracks only the public CLI', () => {
   assert.equal(rootPackage.scripts['release:version'], 'node scripts/release/version.mjs')
 })
 
-test('public npm manifests are bound to the canonical repository', () => {
+test('npm manifests use the canonical repository and MIT license', () => {
+  const rootPackage = readJson('package.json')
   const cliPackage = readJson('packages/cli/package.json')
+  const extensionPackage = readJson('packages/extension/package.json')
+  assert.equal(rootPackage.license, 'MIT')
   assert.equal(cliPackage.repository.url, repositoryUrl)
   assert.equal(cliPackage.publishConfig.access, 'public')
+  assert.equal(cliPackage.license, 'MIT')
+  assert.equal(extensionPackage.license, 'MIT')
   assert.deepEqual(Object.keys(cliPackage.optionalDependencies).sort(), nativePackages)
 
   for (const packageName of nativePackages) {
     const manifest = readJson(`packages/cli/npm/${packageName}/package.json`)
     assert.equal(manifest.repository.url, repositoryUrl)
     assert.equal(manifest.publishConfig.access, 'public')
+    assert.equal(manifest.license, 'MIT')
   }
 })
 

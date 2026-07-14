@@ -2,7 +2,7 @@
   "name": "tokenless-native-darwin-x64",
   "version": "0.1.2",
   "description": "Tokenless Rust runtime for darwin-x64.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jazelly/tokenless.git"
