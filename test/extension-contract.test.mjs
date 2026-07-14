@@ -16,10 +16,7 @@ test('default manifest exposes the Settings side panel without debugger or exter
 
   assert.equal(manifest.manifest_version, 3)
   assert.equal(manifest.name, 'Tokenless')
-  assert.deepEqual(manifest.options_ui, {
-    page: 'settings/index.html',
-    open_in_tab: false,
-  })
+  assert.equal(manifest.options_ui, undefined)
   assert.equal(manifest.action.default_title, 'Open Tokenless settings')
   assert.deepEqual(manifest.side_panel, { default_path: 'settings/index.html' })
   assert.equal(manifest.externally_connectable, undefined)
@@ -124,6 +121,7 @@ test('daemon bridge requires a v1 handshake and reconnects with bounded backoff'
   const scheduler = createManualScheduler()
   const ports = []
   const delivered = []
+  let runtimeLastErrorReads = 0
   const bridge = new NativeDaemonBridge({
     connectNative() {
       const port = createBehaviorNativePort()
@@ -132,6 +130,10 @@ test('daemon bridge requires a v1 handshake and reconnects with bounded backoff'
     },
     onMessage(_port, message) {
       delivered.push(message)
+    },
+    readRuntimeLastError() {
+      runtimeLastErrorReads += 1
+      return { message: 'Access to the specified native messaging host is forbidden.' }
     },
     timing: {
       handshakeTimeoutMs: 100,
@@ -204,6 +206,7 @@ test('daemon bridge requires a v1 handshake and reconnects with bounded backoff'
   }))
   await ports[5].onDisconnect.emit()
   assert.deepEqual(scheduler.pendingDelays(), [10], 'physical disconnect must reconnect from base delay')
+  assert.equal(runtimeLastErrorReads, 6, 'every disconnect must consume runtime.lastError in its callback')
 
   scheduler.runDelay(10)
   await ports[6].onMessage.emit(nativeSuccess('tokenless.native.daemon_connected', {
@@ -218,6 +221,7 @@ test('daemon bridge requires a v1 handshake and reconnects with bounded backoff'
 
   bridge.stop()
   assert.deepEqual(scheduler.pendingDelays(), [])
+  assert.equal(runtimeLastErrorReads, 7, 'intentional shutdown disconnects must also consume runtime.lastError')
 })
 
 test('Settings model normalizes redacted daemon history and explicit configuration clears', async () => {

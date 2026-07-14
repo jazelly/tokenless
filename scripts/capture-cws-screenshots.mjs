@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const extensionRoot = path.join(root, 'packages/extension/dist/extension')
-const outputDirectory = path.join(root, 'test-results/chrome-web-store')
+const outputDirectory = path.join(root, 'packages/extension/assets/chrome-web-store')
 const contentTypes = {
   '.css': 'text/css',
   '.html': 'text/html',

@@ -14,6 +14,7 @@ export type NativeDaemonBridgeTiming = {
 export type NativeDaemonBridgeOptions = {
   connectNative: () => chrome.runtime.Port
   onMessage: (port: chrome.runtime.Port, message: NativeMessage) => void
+  readRuntimeLastError?: () => unknown
   timing?: Partial<NativeDaemonBridgeTiming>
   setTimer?: typeof setTimeout
   clearTimer?: typeof clearTimeout
@@ -28,6 +29,7 @@ const DEFAULT_TIMING: NativeDaemonBridgeTiming = Object.freeze({
 export class NativeDaemonBridge {
   readonly #connectNative: NativeDaemonBridgeOptions['connectNative']
   readonly #onMessage: NativeDaemonBridgeOptions['onMessage']
+  readonly #readRuntimeLastError: NonNullable<NativeDaemonBridgeOptions['readRuntimeLastError']>
   readonly #timing: NativeDaemonBridgeTiming
   readonly #setTimer: typeof setTimeout
   readonly #clearTimer: typeof clearTimeout
@@ -41,6 +43,7 @@ export class NativeDaemonBridge {
   constructor(options: NativeDaemonBridgeOptions) {
     this.#connectNative = options.connectNative
     this.#onMessage = options.onMessage
+    this.#readRuntimeLastError = options.readRuntimeLastError ?? (() => chrome.runtime.lastError)
     this.#timing = normalizeTiming(options.timing)
     const setTimer = options.setTimer ?? globalThis.setTimeout
     const clearTimer = options.clearTimer ?? globalThis.clearTimeout
@@ -99,7 +102,10 @@ export class NativeDaemonBridge {
     this.#connected = false
     try {
       port.onMessage.addListener((message) => this.#handleMessage(port, message))
-      port.onDisconnect.addListener(() => this.#handleDisconnect(port))
+      port.onDisconnect.addListener(() => {
+        this.#consumeRuntimeLastError()
+        this.#handleDisconnect(port)
+      })
       this.#handshakeTimer = this.#setTimer(() => {
         if (this.#port === port && !this.#connected) {
           this.#failPort(port)
@@ -145,6 +151,14 @@ export class NativeDaemonBridge {
     this.#connected = false
     this.#clearHandshakeTimer()
     this.#scheduleReconnect()
+  }
+
+  #consumeRuntimeLastError() {
+    try {
+      void this.#readRuntimeLastError()
+    } catch {
+      // Error reporting must not interrupt reconnect cleanup.
+    }
   }
 
   #failPort(port: chrome.runtime.Port) {

@@ -49,6 +49,7 @@ const MAX_HANDLED_DAEMON_JOBS = 1024
 const daemonBridge = new NativeDaemonBridge({
   connectNative: () => chrome.runtime.connectNative(NATIVE_HOST_NAME),
   onMessage: handleDaemonBridgeMessage,
+  readRuntimeLastError: () => chrome.runtime.lastError,
 })
 
 chrome.runtime.onInstalled.addListener(() => {

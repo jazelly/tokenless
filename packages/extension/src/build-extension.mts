@@ -114,8 +114,8 @@ function verifyManifest(manifest: Record<string, any>) {
   if (manifest.externally_connectable) {
     throw new Error('extension manifest must not allow external origins to drive the bridge')
   }
-  if (manifest.options_ui?.page !== 'settings/index.html' || manifest.options_ui?.open_in_tab !== false) {
-    throw new Error('extension manifest must declare the embedded Tokenless Settings page')
+  if (manifest.options_ui !== undefined) {
+    throw new Error('extension manifest must expose Settings only through the Tokenless side panel')
   }
 }
 
