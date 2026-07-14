@@ -68,24 +68,21 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     hosts: Object.freeze(['gemini.google.com']),
     matchPatterns: Object.freeze(['https://gemini.google.com/*']),
     composerSelectors: Object.freeze([
-      'rich-textarea div[contenteditable="true"]',
-      'div[contenteditable="true"][role="textbox"]',
-      'textarea',
+      'rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"][aria-label="Enter a prompt for Gemini"]',
     ]),
     submitSelectors: Object.freeze([
-      'button[aria-label*="Send"]',
-      'button[aria-label*="submit"]',
-      'button[type="submit"]',
+      'button[aria-label="Send message"]',
     ]),
     answerSelectors: Object.freeze([
-      'message-content',
-      '.model-response-text',
-      'main response-container',
+      'response-container message-content',
     ]),
     blockerSelectors: Object.freeze([
-      'iframe[src*="captcha"]',
-      'a[href*="accounts.google.com"]',
+      'iframe[src^="https://www.google.com/recaptcha/"][title="reCAPTCHA"]',
     ]),
+    busySelectors: Object.freeze([
+      'button[aria-label="Stop response"]',
+    ]),
+    busyTextLabels: Object.freeze(['stop response']),
   }),
   Object.freeze({
     id: PROVIDER_IDS.CLAUDE,

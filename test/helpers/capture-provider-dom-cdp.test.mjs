@@ -15,6 +15,15 @@ import {
 
 const PRIVATE_MARKER = 'TOKENLESS_PRIVATE_ATTRIBUTE_MARKER_7f41d9'
 const EXACT_GROUPS = ['composers', 'submits', 'answers', 'fileInputs', 'projectLinks']
+const GEMINI_SELECTOR_INDEXES = Object.freeze({
+  composers: [0],
+  submits: [0],
+  answers: [0, 1],
+  busy: [0],
+  modelPickers: [0],
+  fileInputs: [0, 1],
+  projectLinks: [0],
+})
 
 test('capture sanitizer preserves provider selectors without retaining arbitrary attribute values', {
   timeout: 30000,
@@ -173,6 +182,121 @@ test('capture sanitizer preserves provider selectors without retaining arbitrary
     })
     assert.ok(preservedDomTextLength <= 24)
     await boundedPage.close()
+
+    const geminiContext = browser.contexts()[0]
+    await geminiContext.route('https://gemini.google.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: secretBearingGeminiFixture(),
+    }))
+    const geminiProviderPage = await geminiContext.newPage()
+    await geminiProviderPage.goto('https://gemini.google.com/app')
+    await geminiProviderPage.evaluate((privateMarker) => {
+      history.replaceState(null, '', `/app/${privateMarker}`)
+    }, PRIVATE_MARKER)
+    await browser.close()
+    browser = undefined
+
+    process.argv = [
+      'node',
+      'capture-provider-dom-cdp.mjs',
+      '--provider',
+      'gemini',
+      '--cdp-url',
+      endpoint,
+      '--output-dir',
+      path.join(tempRoot, 'gemini-captures'),
+    ]
+    let geminiResult
+    try {
+      geminiResult = await captureProviderDom()
+    } finally {
+      process.argv = savedArgv
+    }
+
+    assert.equal(geminiResult.ok, true)
+    const geminiMetadataText = await fs.readFile(geminiResult.metadataPath, 'utf8')
+    const geminiProbesText = await fs.readFile(geminiResult.selectorProbesPath, 'utf8')
+    const geminiHtml = await fs.readFile(geminiResult.htmlPath, 'utf8')
+    const geminiMetadata = JSON.parse(geminiMetadataText)
+    const geminiProbes = JSON.parse(geminiProbesText)
+    assert.equal(geminiMetadata.provider, 'gemini')
+    assert.equal(geminiMetadata.surface, 'visible-session-web-ui')
+    assert.equal(geminiMetadata.url, 'https://gemini.google.com/app/[redacted]')
+    assert.equal(geminiResult.url, geminiMetadata.url)
+    for (const artifact of [geminiHtml, geminiMetadataText, geminiProbesText]) {
+      assert.equal(artifact.includes(PRIVATE_MARKER), false)
+    }
+    for (const [group, indexes] of Object.entries(GEMINI_SELECTOR_INDEXES)) {
+      for (const index of indexes) {
+        assert.equal(geminiProbes[group][index].count, 1, `${group}[${index}] probe`)
+      }
+    }
+
+    browser = await chromium.connectOverCDP(endpoint)
+    const geminiValidationPage = await browser.contexts()[0].newPage()
+    await geminiValidationPage.setContent(geminiHtml)
+    for (const [group, indexes] of Object.entries(GEMINI_SELECTOR_INDEXES)) {
+      for (const index of indexes) {
+        const selector = PROVIDER_DEFINITIONS.gemini.selectors[group][index]
+        assert.equal(
+          await geminiValidationPage.locator(selector).count(),
+          1,
+          `${group}[${index}] exact selector`
+        )
+      }
+    }
+
+    const geminiArbitraryAttributes = await geminiValidationPage.locator('section').evaluate((node) => (
+      Object.fromEntries([...node.attributes].map((attribute) => [attribute.name, attribute.value]))
+    ))
+    assert.deepEqual(geminiArbitraryAttributes, {})
+
+    const geminiComposer = geminiValidationPage.locator(
+      PROVIDER_DEFINITIONS.gemini.selectors.composers[0]
+    )
+    assert.equal(await geminiComposer.getAttribute('class'), 'ql-editor')
+    assert.equal(await geminiComposer.getAttribute('data-gramm'), 'false')
+    assert.equal(await geminiComposer.getAttribute('aria-label'), 'Enter a prompt for Gemini')
+    assert.equal(await geminiComposer.getAttribute('id'), null)
+    assert.equal(await geminiComposer.getAttribute('name'), null)
+    assert.equal(await geminiComposer.getAttribute('aria-controls'), null)
+    assert.equal(await geminiComposer.getAttribute('data-private'), null)
+
+    const geminiAnswer = geminiValidationPage.locator(
+      PROVIDER_DEFINITIONS.gemini.selectors.answers[0]
+    )
+    assert.equal(await geminiAnswer.textContent(), '[text]')
+    assert.equal(await geminiAnswer.getAttribute('id'), null)
+    assert.equal(await geminiAnswer.getAttribute('class'), null)
+    assert.equal(await geminiAnswer.getAttribute('data-private'), null)
+
+    const modelPicker = geminiValidationPage.locator(
+      PROVIDER_DEFINITIONS.gemini.selectors.modelPickers[0]
+    )
+    assert.equal(await modelPicker.getAttribute('data-test-id'), 'bard-mode-menu-button')
+    assert.equal(
+      await modelPicker.getAttribute('aria-label'),
+      'Open mode picker, currently [text]'
+    )
+    assert.equal(await modelPicker.getAttribute('data-private'), null)
+
+    const localUploader = geminiValidationPage.locator(
+      PROVIDER_DEFINITIONS.gemini.selectors.fileInputs[1]
+    )
+    assert.equal(
+      await localUploader.getAttribute('aria-label'),
+      'Upload files. Documents, data, code files'
+    )
+    assert.equal(await localUploader.getAttribute('data-private'), null)
+
+    const gemsLink = geminiValidationPage.locator(
+      PROVIDER_DEFINITIONS.gemini.selectors.projectLinks[0]
+    )
+    assert.equal(await gemsLink.getAttribute('href'), '/gems/view')
+    assert.equal(await gemsLink.getAttribute('id'), null)
+    assert.equal(await gemsLink.getAttribute('data-private'), null)
+    await geminiValidationPage.close()
   } finally {
     await browser?.close().catch(() => undefined)
     await stopControlledChrome(endpoint, chrome)
@@ -300,6 +424,104 @@ function secretBearingClaudeFixture() {
         name="${PRIVATE_MARKER}-project-name"
         data-private="${PRIVATE_MARKER}-project-data"
       >${PRIVATE_MARKER} projects text</a>
+    </main>
+  </body>
+</html>`
+}
+
+function secretBearingGeminiFixture() {
+  return `<!doctype html>
+<html
+  id="${PRIVATE_MARKER}-html-id"
+  class="${PRIVATE_MARKER}-html-class"
+  aria-label="${PRIVATE_MARKER}-html-aria"
+  data-private="${PRIVATE_MARKER}-html-data"
+>
+  <head><title>${PRIVATE_MARKER} Gemini title</title></head>
+  <body>
+    <section
+      id="${PRIVATE_MARKER}-id"
+      class="${PRIVATE_MARKER}-class"
+      name="${PRIVATE_MARKER}-name"
+      aria-label="${PRIVATE_MARKER}-aria-label"
+      aria-controls="${PRIVATE_MARKER}-aria-controls"
+      data-test-id="${PRIVATE_MARKER}-testid"
+      data-private="${PRIVATE_MARKER}-data"
+      custom-attribute="${PRIVATE_MARKER}-custom"
+    >${PRIVATE_MARKER} arbitrary Gemini text</section>
+    <nav>
+      <a
+        href="/gems/view"
+        id="${PRIVATE_MARKER}-gems-id"
+        class="${PRIVATE_MARKER}-gems-class"
+        data-private="${PRIVATE_MARKER}-gems-data"
+      >${PRIVATE_MARKER} Gems text</a>
+    </nav>
+    <main>
+      <response-container
+        id="${PRIVATE_MARKER}-response-id"
+        data-private="${PRIVATE_MARKER}-response-data"
+      >
+        <structured-content-container
+          class="message-content ${PRIVATE_MARKER}-structured-class"
+          aria-label="${PRIVATE_MARKER}-structured-aria"
+          data-private="${PRIVATE_MARKER}-structured-data"
+        >
+          <message-content
+            id="${PRIVATE_MARKER}-message-id"
+            class="${PRIVATE_MARKER}-message-class"
+            data-private="${PRIVATE_MARKER}-message-data"
+          >${PRIVATE_MARKER} answer text</message-content>
+        </structured-content-container>
+      </response-container>
+      <rich-textarea data-private="${PRIVATE_MARKER}-rich-textarea-data">
+        <div
+          class="ql-editor ${PRIVATE_MARKER}-composer-class"
+          data-gramm="false"
+          contenteditable="true"
+          role="textbox"
+          aria-multiline="true"
+          aria-label="Enter a prompt for Gemini"
+          id="${PRIVATE_MARKER}-composer-id"
+          name="${PRIVATE_MARKER}-composer-name"
+          aria-controls="${PRIVATE_MARKER}-composer-controls"
+          data-private="${PRIVATE_MARKER}-composer-data"
+        ><p>${PRIVATE_MARKER} prompt text</p></div>
+      </rich-textarea>
+      <button
+        aria-label="Send message"
+        type="button"
+        class="${PRIVATE_MARKER}-send-class"
+        data-private="${PRIVATE_MARKER}-send-data"
+      >${PRIVATE_MARKER} send text</button>
+      <button
+        aria-label="Stop response"
+        type="button"
+        class="${PRIVATE_MARKER}-stop-class"
+        data-private="${PRIVATE_MARKER}-stop-data"
+      >${PRIVATE_MARKER} stop text</button>
+      <button
+        data-test-id="bard-mode-menu-button"
+        aria-label="Open mode picker, currently Flash ${PRIVATE_MARKER}"
+        type="button"
+        class="${PRIVATE_MARKER}-model-class"
+        data-private="${PRIVATE_MARKER}-model-data"
+      >${PRIVATE_MARKER} model text</button>
+      <button
+        aria-label="Upload &amp; tools"
+        aria-haspopup="menu"
+        type="button"
+        class="${PRIVATE_MARKER}-tools-class"
+        data-private="${PRIVATE_MARKER}-tools-data"
+      >${PRIVATE_MARKER} tools text</button>
+      <button
+        data-test-id="local-images-files-uploader-button"
+        role="menuitem"
+        aria-label="Upload files. Documents, data, code files"
+        type="button"
+        class="${PRIVATE_MARKER}-upload-class"
+        data-private="${PRIVATE_MARKER}-upload-data"
+      >${PRIVATE_MARKER} upload text</button>
     </main>
   </body>
 </html>`

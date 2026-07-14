@@ -60,3 +60,70 @@ stable-answer selection, blocker detection, and selector drift failure. A
 separate fixture E2E exercises the complete CLI, daemon, native host, extension
 service worker, and content-script chain without opening an internal task or
 runner page.
+
+## Gemini
+
+Evidence reviewed on 2026-07-15:
+
+- [Gemini Apps availability and account requirements](https://support.google.com/gemini/answer/13278668?hl=en)
+  confirms that some Gemini web-app features can be used without signing in.
+  A persistent Sign in link therefore is not an authentication blocker while
+  the anonymous composer remains usable.
+- [Gemini Apps limits and upgrades](https://support.google.com/gemini/answer/16275805?hl=en)
+  documents dynamic limits for accounts without a Google AI subscription. Its
+  current table lists a 32K context window for standard access, quota windows of
+  roughly five hours, and weekly caps for some advanced access. Limits depend on
+  the model, prompt size, file size, conversation length, and capacity, and may
+  change. Tokenless must read the visible account UI and never hard-code these
+  numbers as runtime entitlement.
+- [Uploading and analyzing files](https://support.google.com/gemini/answer/14903178?hl=en)
+  currently documents up to 10 files in one prompt and a 100 MB limit for most
+  supported files. Video files can be up to 2 GB; the current free-access limits
+  list five minutes of video and 10 minutes of audio. The visible upload control
+  remains authoritative for a particular account and model.
+- The limits table lists Gems as available without a paid Google AI plan.
+  [Using Gems](https://support.google.com/gemini/answer/15146780?hl=en) still
+  requires signing in, and eligibility varies for personal, work, and school
+  accounts. Anonymous composer availability therefore does not imply Gem,
+  upload, or saved-chat eligibility.
+
+### DOM provenance
+
+Gemini evidence combines two distinct user-visible surfaces inspected on
+2026-07-15. The unauthenticated `https://gemini.google.com/app` shell supplied
+the composer and static controls:
+
+- `rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"][aria-label="Enter a prompt for Gemini"]`
+- `button[aria-label="Send message"]`, which appears after the composer becomes
+  non-empty
+- `button[data-test-id="bard-mode-menu-button"][aria-label^="Open mode picker, currently "]`
+- `button[aria-label="Upload & tools"][aria-haspopup="menu"]`
+- `button[data-test-id="local-images-files-uploader-button"][role="menuitem"][aria-label="Upload files. Documents, data, code files"]`
+
+A public, read-only `/share/<opaque-id>` conversation supplied the provider-owned
+answer hierarchy, without copying its conversation text:
+
+- `response-container message-content`
+- `response-container structured-content-container.message-content`
+
+No live prompt was submitted while collecting this evidence, so the transient
+busy control was not present in the static shell capture. The adapter uses the
+current user-facing `Stop response` label documented by Google as the exact
+`button[aria-label="Stop response"]` busy-state contract, and the local fixture
+reproduces that state transition. A new active-generation DOM capture is
+required if that accessible control drifts.
+
+The reduced and redacted fixture at
+`test/fixtures/gemini-real-dom-fixture.html` merges only those structural
+contracts. Its inline script is a deterministic test shim, not Gemini
+JavaScript. The capture helper also probes the static `/gems/view` sidebar route
+without relying on volatile element IDs, but authenticated sidebar evidence is
+still required before that route becomes an automation contract.
+
+### Current acceptance boundary
+
+The Gemini base adapter covers anonymous prompt submission and stable response
+selection through visible DOM only. Authenticated model selection, file upload,
+Gems, and saved conversation isolation remain pending the enrichment phase.
+They must not be enabled until a user-granted, authenticated capture verifies
+the controls and focused extension tests reproduce their visible state changes.
