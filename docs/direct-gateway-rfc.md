@@ -193,7 +193,7 @@ Visible mode continues to accept only `chatgpt`, `claude`, and `gemini` until vi
 
 `--direct-backend` accepts `official-client` or `api`. It defaults to `official-client` for ChatGPT and `api` for every other direct provider. `official-client` is rejected for a provider until that provider publishes and documents a stable programmatic client interface suitable for third-party orchestration.
 
-Direct mode rejects visible-only options such as browser, target URL, bridge/read delays, `--no-open`, `--no-wait`, `--long-running`, debugger companion, ChatGPT surface, and visible effort controls. `state`, `cancel`, `snapshot-dom`, and visible control commands remain visible-session commands.
+Direct mode rejects visible-only options such as browser, target URL, bridge/read delays, `--no-open`, `--no-wait`, `--long-running`, ChatGPT surface, and visible effort controls. `state`, `cancel`, `snapshot-dom`, and visible control commands remain visible-session commands.
 
 ### Environment
 

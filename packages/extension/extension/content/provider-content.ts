@@ -569,8 +569,7 @@ async function activateChatGptControl(node: HTMLElement, request: ContentRecord)
 }
 
 async function requestTrustedChatGptClick(node: HTMLElement, request: ContentRecord) {
-  const extensionId = request.debuggerControlExtensionId
-  if (typeof extensionId !== 'string' || !/^[a-p]{32}$/.test(extensionId) || typeof chrome.runtime.sendMessage !== 'function') {
+  if (typeof chrome.runtime.sendMessage !== 'function') {
     return false
   }
   const rect = node.getBoundingClientRect()
@@ -583,7 +582,6 @@ async function requestTrustedChatGptClick(node: HTMLElement, request: ContentRec
       type: 'tokenless.bridge.trusted_click',
       request: {
         provider: 'chatgpt',
-        debuggerControlExtensionId: extensionId,
         expectedUrl: publicPageUrl(location.href),
         x,
         y,

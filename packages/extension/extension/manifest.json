@@ -3,7 +3,7 @@
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu5BmI93mXNt60DyYEi+1p72YpJn/j9Mqk/s7u4TrhT2dDL85vrJxccNBvWYtu1ieovHEfXckWkO5rZy2jC/0jEQ6XfiYWrYaDAWYSU7HCLc6IpOiWjW2qfhOVXsCF4WHqCz0KrgL1jGlI8NstKUmMaahvnvrd6kPJwP/sd+ea/rZLM5Vv1PZ1EC5zv7/IH9XeAX9T99s5vz6M3TVtIWobfP+ymnW986UjBOkjw8nd9jNsvTnTH1l8zVedCrAC+kNYBxMP4kcanM0cSh4Khgz9yus+8sYU8EEs1fa/bnOue4jJ1+52IIOMpZVM0JuGFCe58m8lzzva0P0+rqU79eYMwIDAQAB",
   "name": "Tokenless",
   "short_name": "Tokenless",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Visible bridge for user-authorized ChatGPT, Gemini, and Claude web sessions.",
   "homepage_url": "https://github.com/jazelly/tokenless",
   "icons": {
@@ -13,6 +13,7 @@
     "128": "icons/tokenless-128.png"
   },
   "permissions": [
+    "debugger",
     "nativeMessaging",
     "scripting",
     "tabs",

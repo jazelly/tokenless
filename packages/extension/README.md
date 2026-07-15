@@ -8,7 +8,7 @@ Tokenless is a visible browser extension for user-authorized web AI sessions. It
 - Private workspace package: protocol and provider helpers exported from `tokenless-browser-session-bridge`.
 - Background coordinator: a versioned Native Messaging connection receives daemon jobs and drives approved provider pages.
 - Settings page: provider preferences, local daemon configuration, and redacted daemon job history opened from the extension action.
-- Build output: `npm run build -w tokenless-browser-session-bridge` writes the default unpacked extension to `dist/extension` and the separately loadable debugger companion to `dist/debugger-control`.
+- Build output: `npm run build -w tokenless-browser-session-bridge` writes the unpacked extension to `dist/extension`.
 
 ## Provider Scope
 
@@ -23,7 +23,7 @@ The first package version defines adapters for ChatGPT, Gemini, and Claude web s
 - User-visible tab focus for write actions.
 - Native and provider request/response messages use versioned protocols.
 - No external web origin can drive a provider session.
-- The default extension never has Chrome's `debugger` permission. The companion accepts only the approved Tokenless extension, validates the ChatGPT tab URL, sends only two `Input.dispatchMouseEvent` commands for one visible control, and immediately detaches.
+- The extension uses Chrome's `debugger` permission only for trusted clicks on visible ChatGPT model and Intelligence controls. The background worker validates the sending ChatGPT tab, canonical URL, and viewport coordinates, sends only two `Input.dispatchMouseEvent` commands, and immediately detaches. It never enables Network, Storage, Fetch, Runtime, DOM, or Page CDP domains.
 
 ## Local Development
 
@@ -34,8 +34,6 @@ npm test
 ```
 
 Load `packages/extension/dist/extension` as an unpacked extension in Chrome, Brave, Edge, Chromium, or Arc developer mode.
-
-Only load `packages/extension/dist/debugger-control` when testing explicit `--debugger-control-extension-id` model / Intelligence selection. It is intentionally separate from the Native Messaging extension and is restricted to the paired Tokenless extension id and ChatGPT origins.
 
 Click the extension action to open Settings. Daemon jobs run in the background and open or reuse only the visible provider page required for the job.
 

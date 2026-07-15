@@ -8,50 +8,38 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const extensionSource = path.join(root, 'packages/extension/extension')
 const extensionDist = path.join(root, 'packages/extension/dist/extension')
-const debuggerControlSource = path.join(root, 'packages/extension/control-extension')
-const debuggerControlDist = path.join(root, 'packages/extension/dist/debugger-control')
 
-test('default manifest exposes the Settings side panel without debugger or external execution surfaces', () => {
+test('primary manifest owns trusted debugger clicks without broad browser permissions', () => {
   const manifest = readJson('packages/extension/extension/manifest.json')
 
   assert.equal(manifest.manifest_version, 3)
+  assert.equal(manifest.version, '0.1.5')
   assert.equal(manifest.name, 'Tokenless')
   assert.equal(manifest.options_ui, undefined)
   assert.equal(manifest.action.default_title, 'Open Tokenless settings')
   assert.deepEqual(manifest.side_panel, { default_path: 'settings/index.html' })
   assert.equal(manifest.externally_connectable, undefined)
+  assert.equal(manifest.content_scripts.length, 1)
   assert.ok(manifest.permissions.includes('nativeMessaging'))
   assert.ok(manifest.permissions.includes('sidePanel'))
-  assert.ok(!manifest.permissions.includes('debugger'))
+  assert.ok(manifest.permissions.includes('debugger'))
   assert.ok(!manifest.permissions.includes('cookies'))
   assert.ok(!manifest.permissions.includes('history'))
+  assert.ok(!manifest.permissions.includes('webRequest'))
+  assert.ok(!manifest.permissions.includes('webRequestBlocking'))
   assert.deepEqual(manifest.content_scripts[0].matches, manifest.host_permissions)
   assert.ok(manifest.host_permissions.every((pattern) => pattern.startsWith('https://')))
-})
-
-test('debugger companion manifest has a deliberately narrow, separate privilege boundary', () => {
-  const manifest = readJson('packages/extension/control-extension/manifest.json')
-
-  assert.equal(manifest.manifest_version, 3)
-  assert.deepEqual(manifest.permissions, ['debugger', 'tabs'])
   assert.deepEqual(manifest.host_permissions, [
     'https://chatgpt.com/*',
     'https://chat.openai.com/*',
+    'https://gemini.google.com/*',
+    'https://claude.ai/*',
   ])
-  assert.equal(manifest.content_scripts, undefined)
-  assert.equal(manifest.side_panel, undefined)
-  assert.equal(manifest.options_ui, undefined)
-  assert.match(manifest.background.service_worker, /^background\//)
-  assert.deepEqual(manifest.externally_connectable, {
-    ids: ['cgiocagnojoiblhlkmdjacklcmpbbimf'],
-  })
 })
 
-test('extension builds contain Settings and the separate debugger-control companion', () => {
+test('extension build and package contain Settings and no debugger companion artifact', () => {
   const sourceArtifacts = listRelativeFiles(extensionSource)
   const builtArtifacts = listRelativeFiles(extensionDist)
-  const debuggerControlSourceArtifacts = listRelativeFiles(debuggerControlSource)
-  const debuggerControlBuiltArtifacts = listRelativeFiles(debuggerControlDist)
   const buildManifest = readJson('packages/extension/dist/extension-build-manifest.json')
   const extensionPackage = readJson('packages/extension/package.json')
   const recordedArtifacts = buildManifest.files.map((entry) => entry.path)
@@ -65,16 +53,31 @@ test('extension builds contain Settings and the separate debugger-control compan
     assert.ok(artifacts.every((file) => !file.includes('runner')), artifacts.join('\n'))
   }
   assert.equal(extensionPackage.exports['./web-client'], undefined)
-  assert.ok(extensionPackage.files.includes('dist/debugger-control'))
-  assert.ok(debuggerControlSourceArtifacts.includes('background/service-worker.ts'))
-  assert.ok(debuggerControlBuiltArtifacts.includes('background/service-worker.js'))
-  assert.ok(buildManifest.debuggerControl.files.some((entry) => entry.path === 'background/service-worker.js'))
+  assert.ok(!extensionPackage.files.includes('dist/debugger-control'))
+  assert.equal(buildManifest.debuggerControl, undefined)
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/control-extension')), false)
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/debugger-control')), false)
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/tokenless-debugger-control.zip')), false)
   assert.equal(fs.existsSync(path.join(root, 'packages/extension/src/web-client.ts')), false)
   assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/src/web-client.js')), false)
   for (const obsoleteDirectory of ['task', 'sidepanel', 'daemon']) {
     assert.equal(fs.existsSync(path.join(extensionSource, obsoleteDirectory)), false)
     assert.equal(fs.existsSync(path.join(extensionDist, obsoleteDirectory)), false)
   }
+})
+
+test('CLI, bridge, and build sources contain no companion extension plumbing', () => {
+  const removedField = ['debugger', 'ControlExtensionId'].join('')
+  const removedFlag = ['--debugger', '-control-extension-id'].join('')
+  const cli = readText('packages/cli/src/tokenless.mts')
+  const bridge = readText('packages/extension/extension/shared/bridge-protocol.ts')
+  const build = readText('packages/extension/src/build-extension.mts')
+
+  assert.ok(!cli.includes(removedField))
+  assert.ok(!cli.includes(removedFlag))
+  assert.ok(!bridge.includes(removedField))
+  assert.ok(!build.includes('control-extension'))
+  assert.ok(!build.includes('tokenless-debugger-control.zip'))
 })
 
 test('native messages are constructed and validated with tokenless.native.v1', async () => {
@@ -1431,6 +1434,13 @@ test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade 
     assert.equal(configure.model.applied, 'GPT-5.5')
     assert.equal(configure.effort.status, 'fallback_selected')
     assert.equal(configure.effort.applied, 'high')
+    const trustedClicks = await chatgpt.page.evaluate(() => (
+      globalThis.__tokenlessRuntimeMessages.filter((message) => message.type === 'tokenless.bridge.trusted_click')
+    ))
+    assert.ok(trustedClicks.length > 0)
+    assert.ok(trustedClicks.every((message) => (
+      !Object.hasOwn(message.request, ['debugger', 'ControlExtensionId'].join(''))
+    )))
     assert.equal(await chatgpt.page.locator('[role="radio"]').nth(0).getAttribute('aria-checked'), 'true')
     assert.match(await chatgpt.page.locator('#intelligence').innerText(), /5\.5/)
 
@@ -1467,7 +1477,6 @@ test('background enables the Settings side panel and jobs create only approved p
   const ports = []
   const createdTabs = []
   const providerMessages = []
-  const forwardedDebuggerMessages = []
   const sidePanelCalls = []
   let nextTabId = 1
 
@@ -1514,10 +1523,6 @@ test('background enables the Settings side panel and jobs create only approved p
       onInstalled: installed,
       onStartup: startup,
       connectNative,
-      async sendMessage(extensionId, payload) {
-        forwardedDebuggerMessages.push({ extensionId, payload })
-        return { ok: true }
-      },
       lastError: undefined,
     },
     sidePanel: {
@@ -1641,30 +1646,6 @@ test('background enables the Settings side panel and jobs create only approved p
     ], 'startup hooks configure the side panel without opening a tab')
     assert.deepEqual(createdTabs, [], 'install and startup must not open tabs')
     const sidePanelCallsBeforeJobs = sidePanelCalls.length
-
-    const trustedClick = await invokeChromeMessageListener(runtimeMessage.listeners()[0], {
-      type: 'tokenless.bridge.trusted_click',
-      request: {
-        provider: 'chatgpt',
-        debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
-        expectedUrl: 'https://chatgpt.com/c/visible-chat',
-        x: 320,
-        y: 640,
-        viewportWidth: 1280,
-        viewportHeight: 800,
-      },
-    }, { tab: { id: 42, url: 'https://chatgpt.com/c/visible-chat' } })
-    assert.deepEqual(trustedClick, { ok: true })
-    assert.deepEqual(forwardedDebuggerMessages, [{
-      extensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
-      payload: {
-        type: 'tokenless.debugger-control.trusted_click.v1',
-        tabId: 42,
-        expectedUrl: 'https://chatgpt.com/c/visible-chat',
-        x: 320,
-        y: 640,
-      },
-    }])
 
     const visibleJobMessage = {
       protocol: 'tokenless.native.v1',
@@ -1988,7 +1969,6 @@ test('background enables the Settings side panel and jobs create only approved p
 
 test('background and provider content preserve visible-session safety boundaries', () => {
   const serviceWorker = readText('packages/extension/extension/background/service-worker.ts')
-  const debuggerControlWorker = readText('packages/extension/control-extension/background/service-worker.ts')
   const contentScript = readText('packages/extension/extension/content/provider-content.ts')
   const settingsScript = readText('packages/extension/extension/settings/index.ts')
   const builtContentScript = readText('packages/extension/dist/extension/content/provider-content.js')
@@ -2020,57 +2000,129 @@ test('background and provider content preserve visible-session safety boundaries
   )
   assert.doesNotMatch(contentScript, /const PROVIDERS\b/)
   assert.doesNotMatch(contentScript, /function providerTransitionSource\b/)
-  assert.match(serviceWorker, /forwardTrustedClickToCompanion/)
-  assert.match(debuggerControlWorker, /Input\.dispatchMouseEvent/)
+  assert.match(serviceWorker, /dispatchTrustedChatGptClick/)
+  assert.match(serviceWorker, /Input\.dispatchMouseEvent/)
   assert.doesNotMatch(
-    debuggerControlWorker,
+    serviceWorker,
     /sendCommand\([^\n]*(?:Network|Storage|Fetch|Runtime|DOM|Page)\./
   )
-  assert.doesNotMatch(debuggerControlWorker, /connectNative|chrome\.cookies|localStorage|sessionStorage/)
+  assert.doesNotMatch(serviceWorker, /chrome\.cookies|localStorage|sessionStorage/)
+  assert.doesNotMatch(contentScript, /debuggerControlExtensionId|debugger-control-extension-id/)
 })
 
-test('debugger companion accepts only the approved extension and dispatches one input-only click before detaching', async () => {
+test('primary extension validates, serializes, dispatches, and detaches trusted ChatGPT clicks', async () => {
   const previousChrome = globalThis.chrome
-  const listeners = []
+  const runtimeMessage = createChromeEvent()
+  const nativePort = createBehaviorNativePort()
   const calls = []
+  let blockAttach = false
+  let releaseAttach
+  let blockDetach = false
+  let releaseDetach
+  let failCommand = false
+  let currentTabUrl = 'https://chatgpt.com/c/visible-chat?private=yes#fragment'
+  let changeUrlOnAttach = false
   globalThis.chrome = {
     runtime: {
-      onMessageExternal: {
-        addListener(listener) {
-          listeners.push(listener)
-        },
+      onMessage: runtimeMessage,
+      onInstalled: createChromeEvent(),
+      onStartup: createChromeEvent(),
+      connectNative() {
+        return nativePort
       },
+      lastError: undefined,
+    },
+    sidePanel: {
+      async setPanelBehavior() {},
     },
     tabs: {
       async get(tabId) {
-        return tabId === 42 ? { id: 42, url: 'https://chatgpt.com/c/visible-chat' } : undefined
+        return tabId === 42
+          ? { id: 42, url: currentTabUrl }
+          : undefined
       },
     },
     debugger: {
       async attach(target, version) {
         calls.push({ kind: 'attach', target, version })
+        if (changeUrlOnAttach) currentTabUrl = 'https://chatgpt.com/c/navigated-away'
+        if (blockAttach) await new Promise((resolve) => { releaseAttach = resolve })
       },
       async sendCommand(target, command, params) {
         calls.push({ kind: 'command', target, command, params })
+        if (failCommand) throw new Error('simulated input failure')
       },
       async detach(target) {
         calls.push({ kind: 'detach', target })
+        if (blockDetach) await new Promise((resolve) => { releaseDetach = resolve })
       },
     },
   }
   try {
-    const workerUrl = pathToFileURL(path.join(debuggerControlDist, 'background/service-worker.js'))
+    const workerUrl = pathToFileURL(path.join(extensionDist, 'background/service-worker.js'))
     workerUrl.searchParams.set('contract', String(Date.now()))
     await import(workerUrl.href)
-    assert.equal(listeners.length, 1)
+    await nativePort.onMessage.emit(nativeSuccess('tokenless.native.daemon_connected', { status: 'connected' }))
+    assert.equal(runtimeMessage.listeners().length, 1)
+    const listener = runtimeMessage.listeners()[0]
+    const sender = { frameId: 0, tab: { id: 42, url: 'https://chatgpt.com/c/visible-chat?sender=yes' } }
+    const request = {
+      type: 'tokenless.bridge.trusted_click',
+      request: {
+        provider: 'chatgpt',
+        expectedUrl: 'https://chatgpt.com/c/visible-chat#content-script-fragment',
+        x: 320,
+        y: 640,
+        viewportWidth: 1280,
+        viewportHeight: 800,
+      },
+    }
 
-    const response = await invokeChromeMessageListener(listeners[0], {
-      type: 'tokenless.debugger-control.trusted_click.v1',
-      tabId: 42,
-      expectedUrl: 'https://chatgpt.com/c/visible-chat',
-      x: 320,
-      y: 640,
-    }, { id: 'cgiocagnojoiblhlkmdjacklcmpbbimf' })
+    for (const [rejectedRequest, rejectedSender, code] of [
+      [request, { frameId: 0, tab: { id: 42, url: 'https://gemini.google.com/app' } }, 'debugger_control_context_mismatch'],
+      [{ ...request, request: { ...request.request, expectedUrl: 'https://chatgpt.com/c/other-chat' } }, sender, 'debugger_control_context_mismatch'],
+      [{ ...request, request: { ...request.request, x: 1280 } }, sender, 'debugger_control_invalid_coordinate'],
+      [{ ...request, request: { ...request.request, x: null } }, sender, 'debugger_control_invalid_coordinate'],
+      [{ ...request, request: { ...request.request, x: false } }, sender, 'debugger_control_invalid_coordinate'],
+      [{ ...request, request: { ...request.request, x: '' } }, sender, 'debugger_control_invalid_coordinate'],
+      [{ ...request, request: { ...request.request, x: -0.4 } }, sender, 'debugger_control_invalid_coordinate'],
+      [request, { ...sender, frameId: 1 }, 'debugger_control_context_mismatch'],
+      [request, { tab: sender.tab }, 'debugger_control_context_mismatch'],
+    ]) {
+      const rejected = await invokeChromeMessageListener(listener, rejectedRequest, rejectedSender)
+      assert.deepEqual(rejected, { ok: false, code })
+    }
+    assert.deepEqual(calls, [], 'invalid requests must not attach a debugger')
+
+    currentTabUrl = 'https://chatgpt.com/c/navigated-before-attach'
+    const rejectedBeforeAttach = await invokeChromeMessageListener(listener, request, sender)
+    assert.deepEqual(rejectedBeforeAttach, { ok: false, code: 'debugger_control_tab_rejected' })
+    assert.deepEqual(calls, [], 'a pre-attach URL mismatch must not attach a debugger')
+
+    currentTabUrl = 'https://chatgpt.com/c/visible-chat'
+    changeUrlOnAttach = true
+    const rejectedAfterAttach = await invokeChromeMessageListener(listener, request, sender)
+    assert.deepEqual(rejectedAfterAttach, { ok: false, code: 'debugger_control_tab_rejected' })
+    assert.deepEqual(calls, [
+      { kind: 'attach', target: { tabId: 42 }, version: '1.3' },
+      { kind: 'detach', target: { tabId: 42 } },
+    ], 'a post-attach URL mismatch must detach without dispatching Input')
+    calls.length = 0
+    currentTabUrl = 'https://chatgpt.com/c/visible-chat'
+    changeUrlOnAttach = false
+
+    blockAttach = true
+    blockDetach = true
+    const pending = invokeChromeMessageListener(listener, request, sender)
+    while (!calls.some((call) => call.kind === 'attach')) await delay(0)
+    const busy = await invokeChromeMessageListener(listener, request, sender)
+    assert.deepEqual(busy, { ok: false, code: 'debugger_control_busy' })
+    releaseAttach()
+    while (!calls.some((call) => call.kind === 'detach')) await delay(0)
+    const busyWhileDetaching = await invokeChromeMessageListener(listener, request, sender)
+    assert.deepEqual(busyWhileDetaching, { ok: false, code: 'debugger_control_busy' })
+    releaseDetach()
+    const response = await pending
     assert.deepEqual(response, { ok: true })
     assert.deepEqual(calls, [
       { kind: 'attach', target: { tabId: 42 }, version: '1.3' },
@@ -2089,15 +2141,21 @@ test('debugger companion accepts only the approved extension and dispatches one 
       { kind: 'detach', target: { tabId: 42 } },
     ])
 
-    const rejected = await invokeChromeMessageListener(listeners[0], {
-      type: 'tokenless.debugger-control.trusted_click.v1',
-      tabId: 42,
-      expectedUrl: 'https://chatgpt.com/c/visible-chat',
-      x: 1,
-      y: 1,
-    }, { id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' })
-    assert.deepEqual(rejected, { ok: false, code: 'debugger_control_sender_rejected' })
-    assert.equal(calls.length, 4, 'rejected requests must not attach a debugger')
+    blockAttach = false
+    blockDetach = false
+    failCommand = true
+    const failed = await invokeChromeMessageListener(listener, request, sender)
+    assert.deepEqual(failed, { ok: false, code: 'debugger_control_input_failed' })
+    assert.deepEqual(calls.slice(-3), [
+      { kind: 'attach', target: { tabId: 42 }, version: '1.3' },
+      {
+        kind: 'command',
+        target: { tabId: 42 },
+        command: 'Input.dispatchMouseEvent',
+        params: { type: 'mousePressed', x: 320, y: 640, button: 'left', buttons: 1, clickCount: 1 },
+      },
+      { kind: 'detach', target: { tabId: 42 } },
+    ], 'an Input command error must still detach')
   } finally {
     globalThis.chrome = previousChrome
   }
@@ -2134,12 +2192,6 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
   })
   assert.equal(chatGptControls.ok, true)
   assert.equal(chatGptControls.request.effort, 'extra_high')
-  const debuggerControl = validateBridgeRequest({
-    ...baseRequest,
-    debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf',
-  })
-  assert.equal(debuggerControl.ok, true)
-  assert.equal(debuggerControl.request.debuggerControlExtensionId, 'cgiocagnojoiblhlkmdjacklcmpbbimf')
   for (const malformedControls of [
     { ...baseRequest, chatSurface: 'work' },
     { ...baseRequest, effort: 'maximum' },
@@ -2147,8 +2199,6 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     { ...baseRequest, modelFallbacks: 'GPT-5.5' },
     { ...baseRequest, modelFallbacks: Array.from({ length: 9 }, () => 'GPT-5.5') },
     { ...baseRequest, provider: 'gemini', effort: 'high' },
-    { ...baseRequest, provider: 'gemini', debuggerControlExtensionId: 'cgiocagnojoiblhlkmdjacklcmpbbimf' },
-    { ...baseRequest, debuggerControlExtensionId: 'not-an-extension-id' },
     { ...baseRequest, provider: 'gemini', action: 'inspect_chatgpt_controls' },
   ]) {
     const validation = validateBridgeRequest(malformedControls)
@@ -2416,6 +2466,11 @@ async function openProviderFixture(browser, url, html) {
   const context = await browser.newContext({ viewport: { width: 900, height: 700 } })
   await context.addInitScript(() => {
     const listeners = []
+    const runtimeMessages = []
+    Object.defineProperty(globalThis, '__tokenlessRuntimeMessages', {
+      configurable: true,
+      value: runtimeMessages,
+    })
     Object.defineProperty(globalThis, 'chrome', {
       configurable: true,
       value: {
@@ -2424,6 +2479,12 @@ async function openProviderFixture(browser, url, html) {
             addListener(listener) {
               listeners.push(listener)
             },
+          },
+          async sendMessage(message) {
+            runtimeMessages.push(structuredClone(message))
+            return message?.type === 'tokenless.bridge.trusted_click'
+              ? { ok: false, code: 'debugger_control_unavailable' }
+              : { ok: true }
           },
         },
       },

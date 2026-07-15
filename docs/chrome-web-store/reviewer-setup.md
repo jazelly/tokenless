@@ -1,8 +1,7 @@
 # Tokenless Chrome Web Store Reviewer Setup
 
 Use this document to prepare and verify the exact reviewer instructions for the
-primary Tokenless extension. It is not for the parked Debugger Control
-companion.
+single Tokenless extension.
 
 ## Release inputs
 
@@ -83,8 +82,11 @@ The reviewer may inspect the primary extension manifest and package. Confirm:
 - Manifest V3 only.
 - Host permissions limited to `chatgpt.com`, `chat.openai.com`,
   `gemini.google.com`, and `claude.ai`.
-- No `debugger`, `cookies`, `history`, `webRequest`, or `webRequestBlocking`
-  permission.
+- The `debugger` permission is used only for one validated visible ChatGPT
+  control click at a time. The extension sends a pressed and released
+  `Input.dispatchMouseEvent`, then detaches; it never uses Network, Storage,
+  Fetch, Runtime, DOM, or Page CDP commands.
+- No `cookies`, `history`, `webRequest`, or `webRequestBlocking` permission.
 - No remote executable code.
 - No extension page is opened automatically to act as a task runner.
 - Native Messaging is local and explicitly set up by the user.

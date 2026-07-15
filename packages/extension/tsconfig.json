@@ -6,5 +6,5 @@
     "outDir": "dist",
     "types": ["node", "chrome"]
   },
-  "include": ["src/**/*.ts", "src/**/*.mts", "extension/**/*.ts", "control-extension/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.mts", "extension/**/*.ts"]
 }

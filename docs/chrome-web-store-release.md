@@ -20,7 +20,7 @@ The native-host manifest authorizes exactly this extension ID. Do not change the
 2. Run `npm run pack:extension --workspace tokenless-browser-session-bridge`.
 3. Verify the zip contains the Manifest V3 production files and icons, but no source maps or declaration files.
 4. Upload the zip, complete the Store privacy-practices form using [PRIVACY.md](../PRIVACY.md), and provide the policy URL from the published repository.
-5. Review permission disclosures: `nativeMessaging`, `scripting`, `tabs`, and the explicit provider host permissions.
+5. Review permission disclosures: `debugger`, `nativeMessaging`, `scripting`, `tabs`, `sidePanel`, and the explicit provider host permissions. Confirm the packaged service worker uses debugger only for validated `Input.dispatchMouseEvent` clicks and always detaches.
 6. Run `npm run verify:extension-release` and publish only after it succeeds.
 
 ## User-facing promise

@@ -39,9 +39,10 @@ const PROVIDER_LANDING_TIMEOUT_MS = 8000
 const PROVIDER_LANDING_POLL_MS = 250
 const PROVIDER_CONTENT_READY_TYPE = 'tokenless.provider_content_ready'
 const TRUSTED_CLICK_REQUEST_TYPE = 'tokenless.bridge.trusted_click'
-const DEBUGGER_CONTROL_CLICK_TYPE = 'tokenless.debugger-control.trusted_click.v1'
+const DEBUGGER_PROTOCOL_VERSION = '1.3'
 const POST_SUBMIT_TARGET_TRANSITION_FLAG = 'allowPostSubmitTargetTransition'
 const POST_SUBMIT_TARGET_TRANSITION_PROOF = 'postSubmitTargetTransitionProof'
+const activeDebuggerTabs = new Set<number>()
 let daemonJobQueue: Promise<void> = Promise.resolve()
 const handledDaemonJobs = new Set<string>()
 const handledDaemonJobOrder: string[] = []
@@ -72,7 +73,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (objectRecord(message).type !== TRUSTED_CLICK_REQUEST_TYPE) return false
 
-  forwardTrustedClickToCompanion(objectRecord(message).request, sender)
+  dispatchTrustedChatGptClick(objectRecord(message).request, sender)
     .then(sendResponse)
     .catch(() => sendResponse({ ok: false, code: 'debugger_control_unavailable' }))
   return true
@@ -238,47 +239,74 @@ function isProviderContentReadyMessage(message: unknown) {
   return objectRecord(message).type === PROVIDER_CONTENT_READY_TYPE
 }
 
-async function forwardTrustedClickToCompanion(request: unknown, sender: chrome.runtime.MessageSender) {
+async function dispatchTrustedChatGptClick(request: unknown, sender: chrome.runtime.MessageSender) {
   const payload = objectRecord(request)
   const tab = sender.tab
   const tabId = tab?.id
   const tabUrl = tab?.url
   const provider = getProviderForUrl(tabUrl ?? '')
-  const extensionId = typeof payload.debuggerControlExtensionId === 'string'
-    ? payload.debuggerControlExtensionId
-    : ''
+  const expectedUrl = canonicalProviderUrl(payload.expectedUrl)
   if (
     provider?.id !== 'chatgpt' ||
-    tabId === undefined ||
-    !/^[a-p]{32}$/.test(extensionId) ||
+    !Number.isInteger(tabId) ||
+    Number(tabId) < 0 ||
+    sender.frameId !== 0 ||
     payload.provider !== 'chatgpt' ||
-    canonicalProviderUrl(String(payload.expectedUrl ?? '')) !== canonicalProviderUrl(tabUrl ?? '')
+    expectedUrl === '' ||
+    expectedUrl !== canonicalProviderUrl(tabUrl)
   ) {
     return { ok: false, code: 'debugger_control_context_mismatch' }
   }
   const x = boundedViewportCoordinate(payload.x, payload.viewportWidth)
   const y = boundedViewportCoordinate(payload.y, payload.viewportHeight)
   if (x === null || y === null) return { ok: false, code: 'debugger_control_invalid_coordinate' }
+  const numericTabId = Number(tabId)
+  if (activeDebuggerTabs.has(numericTabId)) return { ok: false, code: 'debugger_control_busy' }
+
+  const target = { tabId: numericTabId }
+  let attached = false
+  activeDebuggerTabs.add(numericTabId)
   try {
-    const response = await chrome.runtime.sendMessage(extensionId, {
-      type: DEBUGGER_CONTROL_CLICK_TYPE,
-      tabId,
-      expectedUrl: canonicalProviderUrl(tabUrl ?? ''),
-      x,
-      y,
+    const currentTab = await chrome.tabs.get(numericTabId).catch(() => undefined)
+    if (canonicalProviderUrl(currentTab?.url) !== expectedUrl) {
+      return { ok: false, code: 'debugger_control_tab_rejected' }
+    }
+    await chrome.debugger.attach(target, DEBUGGER_PROTOCOL_VERSION)
+    attached = true
+    const attachedTab = await chrome.tabs.get(numericTabId).catch(() => undefined)
+    if (canonicalProviderUrl(attachedTab?.url) !== expectedUrl) {
+      return { ok: false, code: 'debugger_control_tab_rejected' }
+    }
+    // This privileged path is deliberately restricted to one visible mouse
+    // click. Never enable or send Network, Storage, Fetch, Runtime, DOM, or
+    // Page commands through the Tokenless bridge.
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
     })
-    return response?.ok === true
-      ? { ok: true }
-      : { ok: false, code: typeof response?.code === 'string' ? response.code : 'debugger_control_unavailable' }
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
+    })
+    return { ok: true }
   } catch {
-    return { ok: false, code: 'debugger_control_unavailable' }
+    return { ok: false, code: 'debugger_control_input_failed' }
+  } finally {
+    if (attached) await chrome.debugger.detach(target).catch(() => undefined)
+    activeDebuggerTabs.delete(numericTabId)
   }
 }
 
 function boundedViewportCoordinate(value: unknown, viewport: unknown) {
-  const coordinate = Number(value)
-  const extent = Number(viewport)
-  if (!Number.isFinite(coordinate) || !Number.isFinite(extent) || extent <= 0 || extent > 10000) return null
+  if (typeof value !== 'number' || typeof viewport !== 'number') return null
+  const coordinate = value
+  const extent = viewport
+  if (
+    !Number.isFinite(coordinate) ||
+    !Number.isFinite(extent) ||
+    coordinate < 0 ||
+    coordinate >= extent ||
+    extent <= 0 ||
+    extent > 10000
+  ) return null
   const rounded = Math.round(coordinate)
   return rounded >= 0 && rounded < extent ? rounded : null
 }
@@ -406,7 +434,6 @@ function daemonJobToBridgeRequest(job: ExtensionRecord): BridgeRequest {
     model: requestJson.model,
     modelFallbacks: requestJson.modelFallbacks,
     effort: requestJson.effort,
-    debuggerControlExtensionId: requestJson.debuggerControlExtensionId,
     metadata: requestJson.metadata,
   })
 }
