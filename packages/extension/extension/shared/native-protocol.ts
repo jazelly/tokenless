@@ -1,6 +1,8 @@
 export const NATIVE_PROTOCOL_VERSION = 'tokenless.native.v1' as const
 export const VISIBLE_ATTACHMENT_PROTOCOL_VERSION = 'tokenless.visible-attachment.v1' as const
 export const MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES = 512 * 1024
+export const MAX_VISIBLE_ATTACHMENTS = 100
+export const MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES = 512 * 1024 * 1024
 
 export const NATIVE_MESSAGE_TYPES = Object.freeze({
   DAEMON_CONNECT: 'tokenless.native.daemon_connect',

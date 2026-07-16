@@ -15,6 +15,7 @@ const chatGptRealDomFixturePath = path.join(root, 'test/fixtures/chatgpt-real-do
 const claudeRealDomFixturePath = path.join(root, 'test/fixtures/claude-real-dom-fixture.html')
 const geminiRealDomFixturePath = path.join(root, 'test/fixtures/gemini-real-dom-fixture.html')
 const grokRealDomFixturePath = path.join(root, 'test/fixtures/grok-real-dom-fixture.html')
+const providerAttachmentDomFixturePath = path.join(root, 'test/fixtures/provider-attachment-dom-fixture.html')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-e2e', 'runs')
 
 test('daemon job completes through extension service worker and ChatGPT real-DOM fixture without task page', {
@@ -423,6 +424,250 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     }
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, 'Tokenless fixture E2E cleanup failed')
+    }
+  }
+})
+
+test('visible attachment bytes traverse CLI, daemon, native host, extension, and ChatGPT DOM before prompt submission', {
+  skip: process.env.TOKENLESS_E2E !== '1' ? 'set TOKENLESS_E2E=1 to run fixture browser E2E' : false,
+  timeout: 180000,
+}, async () => {
+  const { chromium } = await import('playwright')
+  const {
+    getDaemonJob,
+    installNativeHost,
+    nativeMessagingHostDirs,
+    NATIVE_HOST_NAME,
+    readLiveBridgeMarker,
+  } = await import('../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-attachment-e2e-'))
+  const userDataDir = path.join(tempRoot, 'profile')
+  const tokenlessHome = path.join(tempRoot, 'tokenless-home')
+  const nativePackageRoot = path.join(
+    root,
+    'packages/cli/npm',
+    `tokenless-native-${process.platform}-${process.arch}`
+  )
+  const privateSourceMarker = 'private-source-path-must-not-cross-57419'
+  const sourceDir = path.join(tempRoot, privateSourceMarker)
+  const sourcePath = path.join(sourceDir, 'visible-e2e-note.txt')
+  const attachmentBytes = Buffer.from([
+    'Tokenless visible attachment E2E bytes.\n',
+    'This payload proves the browser FileList received the exact source bytes.\n',
+    'Unicode: π, 中文, مرحبا.\n',
+  ].join(''), 'utf8')
+  const expectedSha256 = createHash('sha256').update(attachmentBytes).digest('hex')
+  const prompt = 'Read the locally attached E2E note 57419.'
+  const port = await freePort()
+  const daemonUrl = `http://127.0.0.1:${port}`
+  const events = []
+  let manifestBackup = []
+  let registryBackup = []
+  let daemon
+  let context
+  let providerFixture
+
+  try {
+    await fs.mkdir(sourceDir, { recursive: true })
+    await fs.writeFile(sourcePath, attachmentBytes)
+
+    daemon = startDaemon({ homeDir: tokenlessHome, port })
+    await waitForDaemonReady(daemonUrl, daemon)
+
+    // Install before Chromium starts so the real Manifest V3 service worker can
+    // connect to the real Rust native host for this isolated test profile.
+    const browsers = fixtureNativeHostBrowsers()
+    registryBackup = snapshotWindowsNativeHostRegistry(
+      browsers,
+      NATIVE_HOST_NAME,
+      windowsNativeHostManifestPath(tokenlessHome, NATIVE_HOST_NAME)
+    )
+    manifestBackup = await snapshotFiles(browsers.flatMap((browser) => (
+      nativeMessagingHostDirs(browser, userDataDir).map((dir) => path.join(dir, `${NATIVE_HOST_NAME}.json`))
+    )))
+    const installed = await installNativeHost({
+      homeDir: tokenlessHome,
+      manifestHome: userDataDir,
+      extensionId: DEFAULT_EXTENSION_ID,
+      browsers,
+      packageRoot: nativePackageRoot,
+    })
+    assert.ok(installed.manifests.length >= 1)
+
+    providerFixture = await startHttpsFixtureServer({
+      body: await fs.readFile(providerAttachmentDomFixturePath, 'utf8'),
+      events,
+      providerHost: 'chatgpt.com',
+    })
+    context = await launchTokenlessContext(
+      chromium,
+      userDataDir,
+      tokenlessHome,
+      daemonUrl,
+      providerFixture,
+      'chatgpt.com'
+    )
+    assert.equal(await discoverExtensionId(context), DEFAULT_EXTENSION_ID)
+    await ensureDaemonBridgeStarted(context)
+    await waitForBridgeMarker({ tokenlessHome, readLiveBridgeMarker, context })
+
+    const cliRun = await runProcess(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'run',
+      '--prompt',
+      prompt,
+      '--provider',
+      'chatgpt',
+      '--attach-file',
+      sourcePath,
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      'https://chatgpt.com/',
+      '--read-delay-ms',
+      '0',
+      '--read-timeout-ms',
+      '10000',
+      '--no-open',
+      '--json',
+    ], { cwd: root })
+    assert.equal(cliRun.status, 0, `${cliRun.stderr}\n${cliRun.stdout}`)
+
+    const cliPayload = JSON.parse(cliRun.stdout)
+    assert.equal(cliPayload.transport, 'daemon')
+    assert.equal(cliPayload.provider, 'chatgpt')
+    assert.match(cliPayload.compactOutput, /visible attachment fixture answer/)
+    const completed = await waitForDaemonJobStatus({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: cliPayload.jobId,
+      statuses: ['succeeded', 'failed'],
+      daemon,
+      getDaemonJob,
+    })
+    assert.equal(completed.status, 'succeeded', JSON.stringify(completed.error_json, null, 2))
+    assert.match(completed.result_json.text, /visible attachment fixture answer/)
+
+    const attachments = completed.request_json.attachments
+    assert.equal(attachments.length, 1)
+    const descriptor = attachments[0]
+    assert.deepEqual(Object.keys(descriptor).sort(), [
+      'attachmentId',
+      'bundleId',
+      'name',
+      'protocol',
+      'sha256',
+      'size',
+      'type',
+    ])
+    assert.deepEqual(descriptor, {
+      protocol: 'tokenless.visible-attachment.v1',
+      bundleId: descriptor.bundleId,
+      attachmentId: descriptor.attachmentId,
+      name: path.basename(sourcePath),
+      type: 'text/plain',
+      size: attachmentBytes.byteLength,
+      sha256: expectedSha256,
+    })
+
+    const providerPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/'))
+    assert.ok(providerPage, `extension did not open the ChatGPT fixture: ${JSON.stringify(context.pages().map((page) => page.url()))}`)
+    const visibleEvidence = await providerPage.evaluate(async () => {
+      const input = document.querySelector('input#upload-files[type="file"][multiple]')
+      const file = input?.files?.[0]
+      if (!file) return null
+      const bytes = [...new Uint8Array(await file.arrayBuffer())]
+      const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes))
+      const sha256 = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('')
+      const fixture = globalThis.__attachmentFixture
+      return {
+        assistantText: document.querySelector('[data-message-author-role="assistant"]')?.textContent ?? '',
+        bytes,
+        chipText: document.querySelector('#attachment-evidence .attachment-chip')?.textContent ?? '',
+        events: [...fixture.events],
+        file: { name: file.name, size: file.size, type: file.type, sha256 },
+        records: fixture.records,
+        submissions: fixture.submissions,
+        userText: document.querySelector('[data-message-author-role="user"]')?.textContent ?? '',
+      }
+    })
+    assert.ok(visibleEvidence, 'the exact ChatGPT file input must retain a FileList entry')
+    assert.deepEqual(visibleEvidence.file, {
+      name: path.basename(sourcePath),
+      size: attachmentBytes.byteLength,
+      type: 'text/plain',
+      sha256: expectedSha256,
+    })
+    assert.deepEqual(visibleEvidence.bytes, [...attachmentBytes])
+    assert.equal(visibleEvidence.chipText, path.basename(sourcePath))
+    assert.deepEqual(visibleEvidence.records, [{
+      bytes: [...attachmentBytes],
+      name: path.basename(sourcePath),
+      size: attachmentBytes.byteLength,
+      type: 'text/plain',
+    }])
+    assert.equal(visibleEvidence.submissions.length, 1)
+    assert.equal(visibleEvidence.submissions[0].fileName, path.basename(sourcePath))
+    assert.equal(visibleEvidence.submissions[0].submittedAfterVisibleAttachment, true)
+    assert.match(visibleEvidence.submissions[0].prompt, /Read the locally attached E2E note 57419/)
+    assert.match(visibleEvidence.userText, /Read the locally attached E2E note 57419/)
+    assert.match(visibleEvidence.assistantText, /visible attachment fixture answer/)
+    const chipVisibleIndex = visibleEvidence.events.indexOf('chip-visible')
+    const submitIndex = visibleEvidence.events.indexOf('submit')
+    assert.ok(chipVisibleIndex >= 0, JSON.stringify(visibleEvidence.events))
+    assert.ok(submitIndex > chipVisibleIndex, JSON.stringify(visibleEvidence.events))
+    assert.ok(
+      visibleEvidence.events.slice(chipVisibleIndex + 1, submitIndex).includes('prompt-input'),
+      JSON.stringify(visibleEvidence.events)
+    )
+
+    const stagedBundlePath = path.join(tokenlessHome, 'attachments', descriptor.bundleId)
+    const stagedFilePath = path.join(stagedBundlePath, `${descriptor.attachmentId}.bin`)
+    await waitForPathAbsent(stagedBundlePath)
+    assert.equal(await pathExists(stagedBundlePath), false, 'terminal completion must remove the staged bundle')
+    assert.equal(await pathExists(sourcePath), true, 'terminal cleanup must not remove the source file')
+
+    const externallyVisible = JSON.stringify({
+      cliPayload,
+      cliStderr: cliRun.stderr,
+      daemonStdout: daemon.stdoutText,
+      daemonStderr: daemon.stderrText,
+      fixture: visibleEvidence,
+      request: completed.request_json,
+      result: completed.result_json,
+    })
+    assertNoPrivateAttachmentPaths(externallyVisible, [sourceDir, sourcePath, stagedBundlePath, stagedFilePath])
+    assert.doesNotMatch(externallyVisible, /sourcePath|stagedPath|private-source-path-must-not-cross-57419/)
+  } finally {
+    const cleanupErrors = []
+    await attemptCleanup(cleanupErrors, 'close browser context', async () => context?.close())
+    await attemptCleanup(cleanupErrors, 'close provider fixture', async () => providerFixture?.close())
+    const manifestsRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host manifests',
+      async () => restoreFiles(manifestBackup)
+    )
+    const registryRestored = await attemptCleanup(
+      cleanupErrors,
+      'restore native host registry',
+      async () => restoreWindowsNativeHostRegistry(registryBackup)
+    )
+    await attemptCleanup(cleanupErrors, 'stop daemon', async () => {
+      if (daemon) await stopDaemon(daemon)
+    })
+    if (manifestsRestored && registryRestored) {
+      await attemptCleanup(cleanupErrors, 'remove temporary E2E state', async () => {
+        await fs.rm(tempRoot, { recursive: true, force: true })
+      })
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, 'Tokenless visible attachment E2E cleanup failed')
     }
   }
 })
@@ -1930,6 +2175,39 @@ async function waitForDaemonJobStatus({ daemonUrl, homeDir, jobId, statuses, dae
     await delay(250)
   }
   throw new Error(`daemon job ${jobId} did not reach ${statuses.join(', ')}; last=${JSON.stringify(lastJob)} error=${lastError?.message || 'timeout'}\n${child.stderrText}`)
+}
+
+async function waitForPathAbsent(targetPath, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!await pathExists(targetPath)) return
+    await delay(50)
+  }
+}
+
+async function pathExists(targetPath) {
+  try {
+    await fs.stat(targetPath)
+    return true
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+function assertNoPrivateAttachmentPaths(value, privatePaths) {
+  const normalizedValue = value
+    .replaceAll('\\\\', '/')
+    .replaceAll('\\', '/')
+    .toLowerCase()
+  for (const privatePath of privatePaths) {
+    const normalizedPath = privatePath.replaceAll('\\', '/').toLowerCase()
+    assert.equal(
+      normalizedValue.includes(normalizedPath),
+      false,
+      `private attachment path crossed the visible bridge: ${privatePath}`
+    )
+  }
 }
 
 function freePort() {

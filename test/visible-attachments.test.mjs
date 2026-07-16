@@ -39,7 +39,11 @@ test('visible attachment staging copies bytes into a private path and returns a 
       size: bytes.length,
       sha256: createHash('sha256').update(bytes).digest('hex'),
     })
-    assert.doesNotMatch(JSON.stringify(descriptor), /sourcePath|stagedPath|report\.txt.*[\\/]|tokenless-visible-attachment-/i)
+    const serializedDescriptor = JSON.stringify(descriptor)
+    assert.doesNotMatch(serializedDescriptor, /sourcePath|stagedPath/i)
+    assert.equal(serializedDescriptor.includes(directory), false)
+    assert.equal(serializedDescriptor.includes(homeDir), false)
+    assert.equal(serializedDescriptor.includes(sourcePath), false)
     const stagedPath = visibleAttachmentPath(homeDir, descriptor.bundleId, descriptor.attachmentId)
     assert.deepEqual(await fs.readFile(stagedPath), bytes)
     if (process.platform !== 'win32') {
@@ -75,8 +79,12 @@ test('visible attachment staging fails closed on collisions, size limits, and ba
     const homeDir = path.join(directory, 'home')
     const first = path.join(directory, 'first.txt')
     const second = path.join(directory, 'second.txt')
+    const aggregateFirst = path.join(directory, 'aggregate-first.txt')
+    const aggregateSecond = path.join(directory, 'aggregate-second.txt')
     await fs.writeFile(first, 'first')
     await fs.writeFile(second, 'second is too large')
+    await fs.writeFile(aggregateFirst, '1234')
+    await fs.writeFile(aggregateSecond, '5678')
 
     await stageVisibleAttachment({
       homeDir,
@@ -103,6 +111,19 @@ test('visible attachment staging fails closed on collisions, size limits, and ba
     )
     await assert.rejects(
       fs.stat(path.join(homeDir, 'attachments', 'batch-rollback')),
+      { code: 'ENOENT' }
+    )
+    await assert.rejects(
+      stageVisibleAttachments({
+        homeDir,
+        bundleId: 'aggregate-rollback',
+        maxBytes: 6,
+        files: [{ sourcePath: aggregateFirst }, { sourcePath: aggregateSecond }],
+      }),
+      /aggregate staging limit|staging limit/
+    )
+    await assert.rejects(
+      fs.stat(path.join(homeDir, 'attachments', 'aggregate-rollback')),
       { code: 'ENOENT' }
     )
   })

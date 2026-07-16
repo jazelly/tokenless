@@ -148,6 +148,30 @@ test('canonical provider targets expose stable conversation and project scopes',
   assert.equal(claudeProject?.scope.kind, 'project')
   assert.equal(claudeProject?.scope.key, claudeProjectChat?.scope.key)
 
+  for (const target of [
+    'https://chatgpt.com/g/g-p-12345678',
+    'https://chatgpt.com/g/g-p-12345678/project/files',
+    'https://chatgpt.com/g/g-p-12345678/c',
+    'https://chatgpt.com/g/g-p-12345678/c/short',
+    'https://chatgpt.com/g/g-p-12345678/c/abcdefgh9/files',
+    'https://chatgpt.com/g/g-p-12345678/files',
+  ]) {
+    const unknownProjectRoute = canonicalProviderTarget(chatgpt, target)
+    assert.equal(unknownProjectRoute?.scope.kind, 'path', target)
+    assert.notEqual(unknownProjectRoute?.scope.key, chatGptProject?.scope.key, target)
+  }
+
+  for (const target of [
+    'https://claude.ai/project/123e4567-e89b-12d3-a456-426614174002/files',
+    'https://claude.ai/project/123e4567-e89b-12d3-a456-426614174002/chat',
+    'https://claude.ai/project/123e4567-e89b-12d3-a456-426614174002/chat/short',
+    'https://claude.ai/project/123e4567-e89b-12d3-a456-426614174002/chat/abcdefg9/files',
+  ]) {
+    const unknownProjectRoute = canonicalProviderTarget(claude, target)
+    assert.equal(unknownProjectRoute?.scope.kind, 'path', target)
+    assert.notEqual(unknownProjectRoute?.scope.key, claudeProject?.scope.key, target)
+  }
+
   assert.equal(
     canonicalProviderTarget(chatgpt, 'https://chatgpt.com/c/12345678?model=auto'),
     null
@@ -163,4 +187,45 @@ test('canonical provider targets expose stable conversation and project scopes',
     canonicalProviderUrl(liveConversationWithPrivateLocationState),
     'https://chatgpt.com/c/12345678'
   )
+})
+
+test('provider transitions keep ChatGPT and Claude conversations inside the requested project', async () => {
+  const { getProviderById } = await import(extensionProvidersUrl)
+  const {
+    areProviderTransitionSourcesEquivalent,
+    isApprovedProviderTransition,
+    isProviderConversationUrl,
+    providerTransitionSource,
+  } = await import(extensionPolicyUrl)
+  const chatgpt = getProviderById('chatgpt')
+  const claude = getProviderById('claude')
+  assert.ok(chatgpt)
+  assert.ok(claude)
+
+  const chatGptProject = 'https://chatgpt.com/g/g-p-12345678/project'
+  const chatGptProjectChat = 'https://chatgpt.com/g/g-p-12345678/c/abcdefgh9'
+  const anotherChatGptProjectChat = 'https://chatgpt.com/g/g-p-87654321/c/abcdefgh9'
+  assert.deepEqual(providerTransitionSource(chatgpt, chatGptProject), {
+    kind: 'project',
+    customGptId: undefined,
+    projectId: 'g-p-12345678',
+  })
+  assert.equal(isProviderConversationUrl(chatgpt, chatGptProjectChat), true)
+  assert.equal(isApprovedProviderTransition(chatgpt, chatGptProject, chatGptProjectChat), true)
+  assert.equal(isApprovedProviderTransition(chatgpt, chatGptProject, anotherChatGptProjectChat), false)
+  assert.equal(isApprovedProviderTransition(chatgpt, chatGptProject, 'https://chatgpt.com/c/abcdefgh9'), false)
+  assert.equal(areProviderTransitionSourcesEquivalent(chatgpt, chatGptProject, chatGptProject), true)
+
+  const claudeProject = 'https://claude.ai/project/123e4567-e89b-12d3-a456-426614174002'
+  const claudeProjectChat = `${claudeProject}/chat/abcdefg9`
+  const anotherClaudeProjectChat = 'https://claude.ai/project/223e4567-e89b-12d3-a456-426614174002/chat/abcdefg9'
+  assert.deepEqual(providerTransitionSource(claude, claudeProject), {
+    kind: 'project',
+    customGptId: undefined,
+    projectId: '123e4567-e89b-12d3-a456-426614174002',
+  })
+  assert.equal(isProviderConversationUrl(claude, claudeProjectChat), true)
+  assert.equal(isApprovedProviderTransition(claude, claudeProject, claudeProjectChat), true)
+  assert.equal(isApprovedProviderTransition(claude, claudeProject, anotherClaudeProjectChat), false)
+  assert.equal(isApprovedProviderTransition(claude, claudeProject, 'https://claude.ai/chat/abcdefg9'), false)
 })

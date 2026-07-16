@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
+import path from 'node:path'
 
 import {
   DEFAULT_DAEMON_URL,
@@ -35,7 +36,9 @@ import {
   readLiveBridgeMarker,
   readTokenlessConfig,
   refreshInstalledRustBinaries,
+  removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
+  stageVisibleAttachments,
   startDirectBroker,
   tokenlessHome,
   waitDaemonJobResult,
@@ -50,7 +53,7 @@ import {
   createManagedCodexProjectExecutor,
 } from './direct/managed-codex-executor.js'
 
-type CliArgs = Record<string, any> & { files: string[] }
+type CliArgs = Record<string, any> & { attachFiles: string[]; files: string[] }
 type StatusEvent = Record<string, any>
 type CliError = Error & {
   code?: string
@@ -77,7 +80,7 @@ const PROJECT_API_ROUTING_DOMAIN_ENVIRONMENT = Object.freeze<Record<DirectProvid
   antigravity: 'TOKENLESS_DIRECT_ANTIGRAVITY_ROUTING_DOMAIN',
 })
 
-let args: CliArgs = { files: [], json: process.argv.includes('--json') }
+let args: CliArgs = { attachFiles: [], files: [], json: process.argv.includes('--json') }
 
 try {
   const argv = process.argv.slice(2)
@@ -651,6 +654,8 @@ async function executeDaemonJob({
     idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
   })
   const statusReporter = createCliStatusReporter(args)
+  let stagedAttachmentBundleId: string | undefined
+  let daemonJobSubmissionStarted = false
 
   try {
     const daemon = await ensureDaemonReady({
@@ -683,6 +688,19 @@ async function executeDaemonJob({
     const readTimeoutMs = args.readTimeoutMs === undefined
       ? (args.longRunning ? LONG_RUNNING_READ_TIMEOUT_MS : 120_000)
       : Number(args.readTimeoutMs)
+    const attachments = args.attachFiles.length > 0
+      ? await stageVisibleAttachments({
+          homeDir,
+          files: args.attachFiles.map((sourcePath) => ({
+            sourcePath,
+            type: visibleAttachmentMediaType(sourcePath),
+          })),
+        })
+      : undefined
+    stagedAttachmentBundleId = attachments?.[0]?.bundleId
+    if (attachments && attachments.some((attachment) => attachment.bundleId !== stagedAttachmentBundleId)) {
+      throw usageError('attachment_bundle_invalid', 'Visible attachments must be staged into one private bundle.')
+    }
     const requestJson = {
       requestId: taskId,
       taskId,
@@ -695,6 +713,7 @@ async function executeDaemonJob({
       maxTextChars: action === 'snapshot_dom' && args.maxTextChars !== undefined
         ? Number(args.maxTextChars)
         : undefined,
+      attachments,
       ...providerControls,
       metadata: {
         source: 'tokenless-cli',
@@ -708,6 +727,11 @@ async function executeDaemonJob({
     }
     assertNativeRequestSize({ provider, action, request_json: requestJson })
 
+    // From this point onward a transport error can be ambiguous: the daemon
+    // may have durably created the job before the response was lost. Leave the
+    // bundle for job-aware orphan cleanup instead of deleting bytes that a
+    // queued job may still reference.
+    daemonJobSubmissionStarted = true
     const job = await createDaemonJob({
       daemonUrl: configuredDaemonUrl,
       homeDir,
@@ -781,9 +805,34 @@ async function executeDaemonJob({
       statusLog: statusReporter.events,
     }, args)
   } catch (error) {
+    if (stagedAttachmentBundleId && !daemonJobSubmissionStarted) {
+      await removeStagedVisibleAttachmentBundle({
+        homeDir,
+        bundleId: stagedAttachmentBundleId,
+      }).catch(() => undefined)
+    }
     attachStatusLog(error as CliError, statusReporter)
     throw error
   }
+}
+
+function visibleAttachmentMediaType(sourcePath: string) {
+  const extension = path.extname(sourcePath).toLowerCase()
+  return ({
+    '.csv': 'text/csv',
+    '.gif': 'image/gif',
+    '.html': 'text/html',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.json': 'application/json',
+    '.md': 'text/markdown',
+    '.pdf': 'application/pdf',
+    '.png': 'image/png',
+    '.rtf': 'application/rtf',
+    '.txt': 'text/plain',
+    '.webp': 'image/webp',
+    '.xml': 'application/xml',
+  } as Record<string, string>)[extension] ?? 'application/octet-stream'
 }
 
 async function prepareExtensionBridge({
@@ -1358,7 +1407,7 @@ function assertNativeRequestSize(value: unknown) {
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const parsed: CliArgs = { files: [] }
+  const parsed: CliArgs = { attachFiles: [], files: [] }
   const valueFlags: Record<string, string> = {
     '--prompt': 'prompt',
     '--prompt-file': 'promptFile',
@@ -1431,6 +1480,12 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === '--file') {
       const value = requireFlagValue(argv, index, arg)
       parsed.files.push(value)
+      index += 1
+      continue
+    }
+    if (arg === '--attach-file') {
+      const value = requireFlagValue(argv, index, arg)
+      parsed.attachFiles.push(value)
       index += 1
       continue
     }
@@ -1547,7 +1602,7 @@ function assertProjectCommandArguments(subcommand: string | undefined, args: Cli
 
 function assertOnlyArguments(args: CliArgs, allowed: Set<string>, command: string) {
   const unsupported = Object.entries(args)
-    .filter(([key, value]) => key !== 'files' && value !== undefined && !allowed.has(key))
+    .filter(([key, value]) => !['attachFiles', 'files'].includes(key) && value !== undefined && !allowed.has(key))
     .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`)
   if (args.files.length > 0) unsupported.push('--file')
   if (unsupported.length > 0) {
@@ -1590,6 +1645,9 @@ function requiredAdminValue(value: unknown, flag: string): string {
 }
 
 function assertCommandRoutingArguments(command: string, args: CliArgs) {
+  if (command !== 'run' && args.attachFiles.length > 0) {
+    throw usageError('attachment_requires_visible_run', '--attach-file is accepted only by tokenless run in visible mode.')
+  }
   const administrationOnly = [
     ['account', '--account'],
     ['label', '--label'],
@@ -1649,9 +1707,9 @@ function assertDirectServeArguments(args: CliArgs) {
   if (args.mode === undefined || normalizeRunMode(args.mode) !== 'direct') {
     throw usageError('direct_serve_mode_required', 'tokenless serve requires --mode direct.')
   }
-  const allowed = new Set(['files', 'home', 'host', 'json', 'mode', 'port', 'quiet'])
+  const allowed = new Set(['attachFiles', 'files', 'home', 'host', 'json', 'mode', 'port', 'quiet'])
   const unsupported = Object.entries(args)
-    .filter(([key, value]) => key !== 'files' && value !== undefined && !allowed.has(key))
+    .filter(([key, value]) => !['attachFiles', 'files'].includes(key) && value !== undefined && !allowed.has(key))
     .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`)
   if (args.files.length > 0) unsupported.push('--file')
   if (unsupported.length > 0) {
@@ -1722,9 +1780,10 @@ function directVisibleOnlyArguments() {
 }
 
 function assertDirectRunArguments(args: CliArgs) {
-  const selected = directVisibleOnlyArguments()
+  const selected: string[] = directVisibleOnlyArguments()
     .filter(([key]) => args[key] !== undefined)
     .map(([, flag]) => flag)
+  if (args.attachFiles.length > 0) selected.push('--attach-file')
   if (selected.length > 0) {
     throw usageError(
       'direct_visible_option',
@@ -1746,6 +1805,13 @@ function assertVisibleRunArguments(args: CliArgs) {
       'direct_option_requires_direct_mode',
       `${selected.join(', ')} requires --mode direct.`,
     )
+  }
+  if (args.attachFiles.length > 100) {
+    throw usageError('too_many_attachments', '--attach-file accepts at most 100 files per visible request.')
+  }
+  const action = String(args.action ?? 'submit_and_read')
+  if (args.attachFiles.length > 0 && !['submit', 'submit_and_read'].includes(action)) {
+    throw usageError('attachment_action_unsupported', '--attach-file requires the submit or submit_and_read visible action.')
   }
 }
 
@@ -1957,6 +2023,7 @@ function usage() {
     '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
     '  tokenless run --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> [--model-fallback <model,...>] --prompt <text> --json',
     '  tokenless run --provider chatgpt --model <visible-model> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
+    '  tokenless run --provider <chatgpt|claude|gemini|grok> --attach-file <path> [--attach-file <path>] --prompt <text> --json',
     '  tokenless run --long-running --provider chatgpt --prompt <text> --json',
     '  tokenless provider-controls --provider <chatgpt|claude|gemini|grok> --json',
     '  tokenless provider-configure --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> --json',

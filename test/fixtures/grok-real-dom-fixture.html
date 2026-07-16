@@ -145,6 +145,36 @@
         background: #fff;
         box-shadow: 0 12px 36px rgba(0, 0, 0, 0.14);
       }
+
+      [role="menu"][data-fixture="grok-model-menu"] {
+        position: fixed;
+        right: 78px;
+        bottom: 150px;
+        z-index: 30;
+        min-width: 250px;
+        padding: 8px;
+        border: 1px solid #d4d4d4;
+        border-radius: 16px;
+        background: #fff;
+      }
+
+      [role="menuitem"][data-radix-collection-item] {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 9px 11px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+
+      [role="menuitem"][aria-disabled="true"] {
+        opacity: .45;
+        cursor: default;
+      }
+
+      [role="menuitem"] .font-semibold {
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -162,6 +192,7 @@
             type="button"
             aria-label="Model select"
             aria-haspopup="menu"
+            aria-expanded="false"
           >Fast</button>
         </header>
         <section id="conversation" aria-live="polite">
@@ -207,6 +238,14 @@
       const form = document.querySelector('.composer')
       const submit = document.querySelector('button[data-testid="chat-submit"]')
       const conversation = document.querySelector('#conversation')
+      const modelTrigger = document.querySelector('#model-select-trigger')
+      const grokModels = [
+        { label: 'Fast', sublabel: 'Quick responses' },
+        { label: 'Auto', sublabel: 'Chooses Fast or Expert' },
+        { label: 'Expert', sublabel: 'Thinks hard' },
+        { label: 'Heavy', sublabel: 'Team of Experts' },
+      ]
+      let selectedGrokModel = 'Fast'
 
       document.addEventListener('input', (event) => {
         if (event.target.matches('[aria-label="Ask Grok anything"]')) updateSubmitState()
@@ -214,6 +253,7 @@
 
       document.addEventListener('keydown', (event) => {
         if (
+          event.target instanceof Element &&
           event.target.matches('[aria-label="Ask Grok anything"]') &&
           event.key === 'Enter' &&
           !event.shiftKey
@@ -221,7 +261,53 @@
           event.preventDefault()
           form.requestSubmit()
         }
+        if (event.key === 'Escape') dismissGrokModelMenu()
       })
+
+      modelTrigger.addEventListener('click', () => {
+        if (modelTrigger.getAttribute('aria-expanded') === 'true') {
+          dismissGrokModelMenu()
+        } else {
+          createGrokModelMenu()
+        }
+      })
+
+      function createGrokModelMenu() {
+        dismissGrokModelMenu()
+        modelTrigger.setAttribute('aria-expanded', 'true')
+        const menu = document.createElement('div')
+        menu.setAttribute('role', 'menu')
+        menu.dataset.fixture = 'grok-model-menu'
+        const enabled = new Set(Array.isArray(globalThis.__fixtureGrokEnabledModels)
+          ? globalThis.__fixtureGrokEnabledModels
+          : grokModels.map((model) => model.label))
+        for (const model of grokModels) {
+          const item = document.createElement('div')
+          item.setAttribute('role', 'menuitem')
+          item.setAttribute('data-radix-collection-item', '')
+          item.setAttribute('aria-disabled', String(!enabled.has(model.label)))
+          const label = document.createElement('span')
+          label.className = 'font-semibold text-sm'
+          label.textContent = model.label
+          const sublabel = document.createElement('span')
+          sublabel.className = 'text-xs text-secondary'
+          sublabel.textContent = model.sublabel
+          item.append(label, sublabel)
+          item.addEventListener('click', () => {
+            if (item.getAttribute('aria-disabled') === 'true') return
+            selectedGrokModel = model.label
+            modelTrigger.textContent = selectedGrokModel
+            dismissGrokModelMenu()
+          })
+          menu.append(item)
+        }
+        document.body.append(menu)
+      }
+
+      function dismissGrokModelMenu() {
+        document.querySelector('[role="menu"][data-fixture="grok-model-menu"]')?.remove()
+        modelTrigger.setAttribute('aria-expanded', 'false')
+      }
 
       form.addEventListener('submit', (event) => {
         event.preventDefault()

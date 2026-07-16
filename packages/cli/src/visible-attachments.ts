@@ -206,15 +206,26 @@ export async function stageVisibleAttachments({
     throw new TypeError('files must contain at least one visible attachment.')
   }
   validateSafeId(bundleId, 'bundleId')
+  const aggregateByteLimit = validatePositiveSafeInteger(maxBytes, 'maxBytes')
   const descriptors: VisibleAttachmentDescriptor[] = []
+  let aggregateBytes = 0
   try {
     for (const file of files) {
-      descriptors.push(await stageVisibleAttachment({
+      const remainingBytes = aggregateByteLimit - aggregateBytes
+      if (remainingBytes <= 0) {
+        throw new Error(`Visible attachments exceed the ${aggregateByteLimit}-byte aggregate staging limit.`)
+      }
+      const fileByteLimit = file.maxBytes === undefined
+        ? remainingBytes
+        : Math.min(validatePositiveSafeInteger(file.maxBytes, 'file.maxBytes'), remainingBytes)
+      const descriptor = await stageVisibleAttachment({
         ...file,
         homeDir,
         bundleId,
-        maxBytes: file.maxBytes ?? maxBytes,
-      }))
+        maxBytes: fileByteLimit,
+      })
+      descriptors.push(descriptor)
+      aggregateBytes += descriptor.size
     }
     return descriptors
   } catch (error) {
@@ -294,18 +305,25 @@ async function ensureAttachmentBundle(homeDir: string, bundleId: string) {
   const home = await fs.realpath(requestedHome)
   if (process.platform !== 'win32') await fs.chmod(home, 0o700)
   const rootCandidate = path.join(home, VISIBLE_ATTACHMENT_DIRECTORY)
-  await fs.mkdir(rootCandidate, { mode: 0o700 })
-  await assertRegularDirectory(rootCandidate, 'visible attachment root')
+  await createOrVerifyAttachmentDirectory(rootCandidate, 'visible attachment root')
   const root = await fs.realpath(rootCandidate)
   assertExactChild(home, root, VISIBLE_ATTACHMENT_DIRECTORY, 'visible attachment root')
   if (process.platform !== 'win32') await fs.chmod(root, 0o700)
   const bundleCandidate = path.join(root, validateSafeId(bundleId, 'bundleId'))
-  await fs.mkdir(bundleCandidate, { mode: 0o700 })
-  await assertRegularDirectory(bundleCandidate, 'visible attachment bundle')
+  await createOrVerifyAttachmentDirectory(bundleCandidate, 'visible attachment bundle')
   const bundle = await fs.realpath(bundleCandidate)
   assertExactChild(root, bundle, bundleId, 'visible attachment bundle')
   if (process.platform !== 'win32') await fs.chmod(bundle, 0o700)
   return { root, bundle }
+}
+
+async function createOrVerifyAttachmentDirectory(directory: string, label: string) {
+  try {
+    await fs.mkdir(directory, { mode: 0o700 })
+  } catch (error) {
+    if (!isFileSystemError(error, 'EEXIST')) throw error
+  }
+  await assertRegularDirectory(directory, label)
 }
 
 async function existingCanonicalAttachmentRoot(homeDir: string) {
@@ -452,7 +470,14 @@ function sameFileIdentity(
   left: { dev: bigint; ino: bigint },
   right: { dev: bigint; ino: bigint }
 ) {
-  return left.dev === right.dev && left.ino === right.ino
+  // Node reports `dev === 0n` for path-based stat calls on Windows while the
+  // handle-based stat for the same NTFS file carries the real volume id. The
+  // file index (`ino`) remains stable across both views, so treat a zero device
+  // id as unknown only on Windows instead of rejecting every legitimate file.
+  return left.ino === right.ino && (
+    left.dev === right.dev ||
+    (process.platform === 'win32' && (left.dev === 0n || right.dev === 0n))
+  )
 }
 
 function assertExactChild(parent: string, candidate: string, childName: string, label: string) {

@@ -14,6 +14,7 @@ export type NativeDaemonBridgeTiming = {
 export type NativeDaemonBridgeOptions = {
   connectNative: () => chrome.runtime.Port
   onMessage: (port: chrome.runtime.Port, message: NativeMessage) => void
+  onDisconnect?: (port: chrome.runtime.Port) => void
   readRuntimeLastError?: () => unknown
   timing?: Partial<NativeDaemonBridgeTiming>
   setTimer?: typeof setTimeout
@@ -29,6 +30,7 @@ const DEFAULT_TIMING: NativeDaemonBridgeTiming = Object.freeze({
 export class NativeDaemonBridge {
   readonly #connectNative: NativeDaemonBridgeOptions['connectNative']
   readonly #onMessage: NativeDaemonBridgeOptions['onMessage']
+  readonly #onDisconnect: NonNullable<NativeDaemonBridgeOptions['onDisconnect']>
   readonly #readRuntimeLastError: NonNullable<NativeDaemonBridgeOptions['readRuntimeLastError']>
   readonly #timing: NativeDaemonBridgeTiming
   readonly #setTimer: typeof setTimeout
@@ -43,6 +45,7 @@ export class NativeDaemonBridge {
   constructor(options: NativeDaemonBridgeOptions) {
     this.#connectNative = options.connectNative
     this.#onMessage = options.onMessage
+    this.#onDisconnect = options.onDisconnect ?? (() => undefined)
     this.#readRuntimeLastError = options.readRuntimeLastError ?? (() => chrome.runtime.lastError)
     this.#timing = normalizeTiming(options.timing)
     const setTimer = options.setTimer ?? globalThis.setTimeout
@@ -69,7 +72,10 @@ export class NativeDaemonBridge {
     const port = this.#port
     this.#port = null
     this.#connected = false
-    if (port) disconnectQuietly(port)
+    if (port) {
+      this.#notifyDisconnect(port)
+      disconnectQuietly(port)
+    }
   }
 
   isConnectedPort(port: chrome.runtime.Port) {
@@ -85,6 +91,10 @@ export class NativeDaemonBridge {
       this.#failPort(port)
       return false
     }
+  }
+
+  reconnectIfCurrent(port: chrome.runtime.Port) {
+    if (this.#port === port) this.#failPort(port)
   }
 
   #connect() {
@@ -136,7 +146,7 @@ export class NativeDaemonBridge {
       return
     }
 
-    if (message.type === NATIVE_MESSAGE_TYPES.DAEMON_ERROR || message.ok === false) {
+    if (message.type === NATIVE_MESSAGE_TYPES.DAEMON_ERROR) {
       this.#failPort(port)
       return
     }
@@ -150,6 +160,7 @@ export class NativeDaemonBridge {
     this.#port = null
     this.#connected = false
     this.#clearHandshakeTimer()
+    this.#notifyDisconnect(port)
     this.#scheduleReconnect()
   }
 
@@ -166,8 +177,17 @@ export class NativeDaemonBridge {
     this.#port = null
     this.#connected = false
     this.#clearHandshakeTimer()
+    this.#notifyDisconnect(port)
     disconnectQuietly(port)
     this.#scheduleReconnect()
+  }
+
+  #notifyDisconnect(port: chrome.runtime.Port) {
+    try {
+      this.#onDisconnect(port)
+    } catch {
+      // Consumer cleanup must not interrupt bridge reconnection.
+    }
   }
 
   #scheduleReconnect() {

@@ -88,6 +88,41 @@ The extension uses only user-visible controls after host permission is granted. 
 
 Time-sensitive free-plan facts, DOM provenance, and adapter acceptance boundaries are recorded in [Visible provider evidence](docs/visible-provider-evidence.md).
 
+### Visible models, files, and Projects
+
+Inspect the exact model labels available in the current provider UI, then use
+one of those labels in a run:
+
+```bash
+tokenless provider-controls --provider chatgpt --json
+tokenless run \
+  --provider chatgpt \
+  --model "<exact-visible-model>" \
+  --model-fallback "<exact-visible-fallback>" \
+  --attach-file ./brief.pdf \
+  --prompt "Review this brief." \
+  --json
+```
+
+Model selection is captured for ChatGPT, Gemini, and Grok. It uses exact visible
+labels, ordered fallbacks, and selected-state verification. Claude model
+selection remains disabled until its authenticated menu is captured.
+
+Visible file attachment is captured for ChatGPT, Claude, and Grok. Local paths
+never cross the daemon/extension protocol, and submission waits for the provider
+to show the filename.
+
+Gemini upload remains disabled until its authenticated exact file input is
+captured.
+
+For an existing ChatGPT or Claude Project, pass its exact signed-in web URL with
+`--target-url`. Tokenless then permits only a same-Project conversation route
+after submission.
+
+Tokenless does not create or select Projects, and Gemini/Grok Project routes are
+not yet verified. See the [CLI reference](packages/cli/README.md) for accepted
+route shapes and safety details.
+
 ## Experimental: Direct/API Mode
 
 Direct mode is under active development. Use extension mode unless you specifically need an official provider client, public API, compatible gateway, local API broker, or multi-account project routing.
@@ -115,10 +150,12 @@ Direct mode supports ChatGPT, Claude, Gemini, Grok, and explicit Antigravity-com
 
 ## Roadmap
 
-The extension roadmap is to expose more provider-native web capabilities through the same visible, permissioned UI path:
+The extension roadmap is to finish the remaining provider-native web contracts
+through the same visible, permissioned UI path:
 
-- projects and workspaces;
-- files and attachments;
+- authenticated Claude model selection and Gemini file upload;
+- an authenticated Grok active-generation busy-state contract;
+- native Project discovery and verified Gemini/Grok isolation;
 - plugins, connectors, and tools;
 - image and multimodal workflows.
 
@@ -128,6 +165,7 @@ The goal is for an agent to use the provider website as fully as a person can, w
 
 ```bash
 tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json
+tokenless provider-controls --provider gemini --json
 tokenless state --task-id "<task-id>" --json
 tokenless cancel --job-id "<job-id>" --json
 tokenless snapshot-dom --provider chatgpt --json

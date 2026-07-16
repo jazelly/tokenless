@@ -1,5 +1,12 @@
 import { getProviderById, listProviders } from './provider-config.js'
 import { safeProviderTargetUrl } from './provider-navigation-policy.js'
+import {
+  isNativeAttachmentDescriptor,
+  MAX_VISIBLE_ATTACHMENTS,
+  MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES,
+  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
+} from './native-protocol.js'
+import type { NativeAttachmentDescriptor } from './native-protocol.js'
 
 export const BRIDGE_PROTOCOL_VERSION = 'tokenless.browser-session-bridge.v1'
 
@@ -58,6 +65,7 @@ export function createBridgeRequest(input: Record<string, any> = {}): BridgeRequ
     model: input.model,
     modelFallbacks: input.modelFallbacks,
     effort: input.effort,
+    attachments: input.attachments,
     metadata: input.metadata,
   }
 }
@@ -90,6 +98,8 @@ export function validateBridgeRequest(payload: unknown): BridgeValidation {
   if (!ACTIONS.has(request.action)) {
     return invalid('unsupported_action', 'Bridge action is not supported.')
   }
+  const attachmentError = validateAttachments(request)
+  if (attachmentError) return attachmentError
   if (request.action === BRIDGE_ACTIONS.CAPABILITIES) {
     return valid(normalizeRequest(request))
   }
@@ -153,6 +163,12 @@ export function capabilitiesPayload() {
       matchPatterns: [...provider.matchPatterns],
     })),
     actions: [...ACTIONS],
+    attachments: {
+      protocol: VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
+      actions: [BRIDGE_ACTIONS.SUBMIT, BRIDGE_ACTIONS.SUBMIT_AND_READ],
+      maxFiles: MAX_VISIBLE_ATTACHMENTS,
+      maxRequestBytes: MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES,
+    },
     safety: {
       visibleOnly: true,
       exportsCookies: false,
@@ -184,7 +200,75 @@ function normalizeRequest(payload: Record<string, any>): BridgeRequest {
       ? payload.modelFallbacks.map((model: unknown) => typeof model === 'string' ? model.trim() : model)
       : payload.modelFallbacks,
     effort: payload.effort,
+    attachments: Array.isArray(payload.attachments)
+      ? payload.attachments.map(normalizeAttachmentDescriptor)
+      : payload.attachments,
     metadata: payload.metadata,
+  }
+}
+
+function validateAttachments(payload: Record<string, any>): BridgeValidation | null {
+  if (payload.attachments === undefined) return null
+  if (
+    payload.action !== BRIDGE_ACTIONS.SUBMIT &&
+    payload.action !== BRIDGE_ACTIONS.SUBMIT_AND_READ
+  ) {
+    return invalid(
+      'attachments_unsupported_for_action',
+      'Visible attachments are accepted only by submit actions.'
+    )
+  }
+  if (!Array.isArray(payload.attachments) || payload.attachments.length === 0) {
+    return invalid('invalid_attachments', 'attachments must be a nonempty array when provided.')
+  }
+  if (payload.attachments.length > MAX_VISIBLE_ATTACHMENTS) {
+    return invalid(
+      'too_many_attachments',
+      `attachments may contain at most ${MAX_VISIBLE_ATTACHMENTS} visible files.`
+    )
+  }
+
+  let bundleId: string | undefined
+  let totalBytes = 0
+  const attachmentIds = new Set<string>()
+  for (const value of payload.attachments) {
+    if (!isNativeAttachmentDescriptor(value)) {
+      return invalid('invalid_attachment', 'Every visible attachment descriptor must be valid and contain no unknown fields.')
+    }
+    if (bundleId === undefined) bundleId = value.bundleId
+    if (value.bundleId !== bundleId) {
+      return invalid('attachment_bundle_mismatch', 'Visible attachments in one request must share one bundleId.')
+    }
+    if (attachmentIds.has(value.attachmentId)) {
+      return invalid('duplicate_attachment', 'Visible attachment identities must be unique within a request.')
+    }
+    attachmentIds.add(value.attachmentId)
+    if (value.size > MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES) {
+      return invalid(
+        'attachment_too_large',
+        `Each visible attachment may contain at most ${MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES} bytes.`
+      )
+    }
+    totalBytes += value.size
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES) {
+      return invalid(
+        'attachments_too_large',
+        `Visible attachments may contain at most ${MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES} bytes in total.`
+      )
+    }
+  }
+  return null
+}
+
+function normalizeAttachmentDescriptor(value: NativeAttachmentDescriptor): NativeAttachmentDescriptor {
+  return {
+    protocol: value.protocol,
+    bundleId: value.bundleId,
+    attachmentId: value.attachmentId,
+    name: value.name,
+    type: value.type,
+    size: value.size,
+    sha256: value.sha256,
   }
 }
 

@@ -63,6 +63,20 @@ const SAFE_INPUT_TYPES = new Set([
 ])
 const SAFE_EMPTY_ATTRIBUTE_NAMES = new Set(['disabled', 'hidden', 'open'])
 const MAX_VISIBLE_SOURCES = 24
+const ATTACHMENT_MESSAGE_TYPES = Object.freeze({
+  ABORT: 'tokenless.bridge.attachment_abort',
+  CHUNK: 'tokenless.bridge.attachment_chunk',
+  COMMIT: 'tokenless.bridge.attachment_commit',
+  COMMIT_BATCH: 'tokenless.bridge.attachment_commit_batch',
+  PREPARE: 'tokenless.bridge.attachment_prepare',
+})
+const MAX_ATTACHMENTS_PER_REQUEST = 100
+const MAX_ATTACHMENT_BYTES_PER_REQUEST = 512 * 1024 * 1024
+const MAX_ATTACHMENT_CHUNK_BYTES = 512 * 1024
+const MAX_ATTACHMENT_REQUEST_LEDGERS = 32
+const MAX_ACTIVE_ATTACHMENT_TRANSFERS = 16
+const ATTACHMENT_TRANSFER_TTL_MS = 10 * 60 * 1000
+const ATTACHMENT_EVIDENCE_TIMEOUT_MS = 5000
 const TRACKING_QUERY_PARAMETER = /^(?:utm_[a-z0-9_]+|fbclid|gclid|dclid|msclkid)$/i
 const SAFE_STATE_ATTRIBUTE_NAMES = new Set([
   'aria-busy',
@@ -81,6 +95,42 @@ const SAFE_STATE_ATTRIBUTE_NAMES = new Set([
   'aria-selected',
   'contenteditable',
 ])
+
+type AttachmentTransfer = {
+  attachmentId: string
+  chunks: ArrayBuffer[]
+  digest: IncrementalSha256
+  mimeType: string
+  name: string
+  receivedBytes: number
+  requestId: string
+  sha256: string
+  size: number
+  updatedAt: number
+}
+
+type AttachmentLedgerEntry = {
+  committed: boolean
+  committedInput?: HTMLInputElement
+  size: number
+}
+
+type AttachmentRequestLedger = {
+  attachments: Map<string, AttachmentLedgerEntry>
+  declaredBytes: number
+  updatedAt: number
+}
+
+type PreparedSubmission = {
+  configuration: ContentRecord | undefined
+  updatedAt: number
+  url: string
+}
+
+const attachmentTransfers = new Map<string, AttachmentTransfer>()
+const attachmentRequestLedgers = new Map<string, AttachmentRequestLedger>()
+const preparedSubmissions = new Map<string, PreparedSubmission>()
+let attachmentSurfaceRequiresReload = false
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message).then(sendResponse)
@@ -119,7 +169,30 @@ async function handleMessage(message: ContentRecord) {
   }
 
   if (message?.type === 'tokenless.bridge.submit') {
+    pruneAttachmentState()
+    if (attachmentSurfaceRequiresReload) {
+      return attachmentBlocked(
+        provider,
+        'attachment_cleanup_required',
+        'A partially attached request was aborted. Reload the provider page before submitting another prompt.'
+      )
+    }
+    if (hasCommittedAttachmentForDifferentRequest(message.request?.requestId)) {
+      poisonAttachmentSurface()
+      return attachmentBlocked(
+        provider,
+        'attachment_cleanup_required',
+        'A visible attachment belongs to a different request. Reload the provider page before submitting.'
+      )
+    }
+    const incompleteAttachment = activeAttachmentForRequest(message.request?.requestId)
+    if (incompleteAttachment) {
+      return attachmentBlocked(provider, 'attachment_incomplete', 'An attachment is still being received and the prompt cannot be submitted.')
+    }
     return submitPrompt(provider, message.request)
+  }
+  if (message?.type === 'tokenless.bridge.prepare_submit') {
+    return preparePromptSubmission(provider, message.request)
   }
   if (message?.type === 'tokenless.bridge.read') {
     return readLatestAnswer(provider, message.request)
@@ -139,6 +212,21 @@ async function handleMessage(message: ContentRecord) {
   ) {
     return configureProviderControls(provider, message.request)
   }
+  if (message?.type === ATTACHMENT_MESSAGE_TYPES.PREPARE) {
+    return prepareVisibleAttachment(provider, message)
+  }
+  if (message?.type === ATTACHMENT_MESSAGE_TYPES.CHUNK) {
+    return receiveVisibleAttachmentChunk(provider, message)
+  }
+  if (message?.type === ATTACHMENT_MESSAGE_TYPES.COMMIT) {
+    return commitVisibleAttachment(provider, message)
+  }
+  if (message?.type === ATTACHMENT_MESSAGE_TYPES.COMMIT_BATCH) {
+    return commitVisibleAttachmentBatch(provider, message)
+  }
+  if (message?.type === ATTACHMENT_MESSAGE_TYPES.ABORT) {
+    return abortVisibleAttachment(provider, message)
+  }
   if (message?.type === 'tokenless.bridge.validate_landing') {
     return validateLanding(provider, message.request, message.type)
   }
@@ -148,6 +236,691 @@ async function handleMessage(message: ContentRecord) {
     stopReason: 'unsupported_message',
     message: 'Content bridge message is not supported.',
   }
+}
+
+async function prepareVisibleAttachment(provider: ContentProvider, message: ContentRecord) {
+  pruneAttachmentState()
+  if (attachmentSurfaceRequiresReload) {
+    return attachmentBlocked(
+      provider,
+      'attachment_cleanup_required',
+      'Reload the provider page before attaching files after a partial attachment failure.'
+    )
+  }
+  const identity = validateAttachmentIdentity(message)
+  if (!identity) {
+    return attachmentBlocked(provider, 'invalid_attachment_message', 'Attachment request identifiers are invalid or do not match.')
+  }
+  if (hasCommittedAttachmentForDifferentRequest(identity.requestId)) {
+    poisonAttachmentSurface()
+    return attachmentBlocked(
+      provider,
+      'attachment_cleanup_required',
+      'A visible attachment belongs to a different request. Reload the provider page before attaching another file.'
+    )
+  }
+  const metadata = validateAttachmentMetadata(message)
+  if (!metadata) {
+    return attachmentBlocked(provider, 'invalid_attachment_metadata', 'Attachment name, MIME type, size, or SHA-256 metadata is invalid.')
+  }
+  const surface = resolveProviderAttachmentSurface(provider, metadata.name, metadata.mimeType)
+  if (surface.status === 'blocked') return surface
+
+  const transferKey = attachmentTransferKey(identity.requestId, identity.attachmentId)
+  if (attachmentTransfers.has(transferKey)) {
+    return attachmentBlocked(provider, 'attachment_already_prepared', 'Attachment transfer is already prepared for this request.')
+  }
+  let ledger = attachmentRequestLedgers.get(identity.requestId)
+  if (!ledger) {
+    if (attachmentRequestLedgers.size >= MAX_ATTACHMENT_REQUEST_LEDGERS) {
+      return attachmentBlocked(provider, 'attachment_capacity_exceeded', 'Too many attachment requests are active on this page.')
+    }
+    ledger = { attachments: new Map(), declaredBytes: 0, updatedAt: Date.now() }
+    attachmentRequestLedgers.set(identity.requestId, ledger)
+  }
+  if (ledger.attachments.has(identity.attachmentId)) {
+    return attachmentBlocked(provider, 'attachment_replay_blocked', 'Attachment identifier was already used for this request.')
+  }
+  if (
+    ledger.attachments.size >= MAX_ATTACHMENTS_PER_REQUEST ||
+    ledger.declaredBytes + metadata.size > MAX_ATTACHMENT_BYTES_PER_REQUEST
+  ) {
+    return attachmentBlocked(provider, 'attachment_request_limit_exceeded', 'Attachment count or declared bytes exceed the per-request limit.')
+  }
+  if (attachmentTransfers.size >= MAX_ACTIVE_ATTACHMENT_TRANSFERS) {
+    return attachmentBlocked(provider, 'attachment_capacity_exceeded', 'Too many attachment transfers are active on this page.')
+  }
+
+  const now = Date.now()
+  ledger.attachments.set(identity.attachmentId, { committed: false, size: metadata.size })
+  ledger.declaredBytes += metadata.size
+  ledger.updatedAt = now
+  attachmentTransfers.set(transferKey, {
+    ...identity,
+    ...metadata,
+    chunks: [],
+    digest: new IncrementalSha256(),
+    receivedBytes: 0,
+    updatedAt: now,
+  })
+  return {
+    status: 'prepared',
+    provider: provider.id,
+    requestId: identity.requestId,
+    attachmentId: identity.attachmentId,
+    expectedBytes: metadata.size,
+  }
+}
+
+function receiveVisibleAttachmentChunk(provider: ContentProvider, message: ContentRecord) {
+  pruneAttachmentState()
+  const identity = validateAttachmentIdentity(message)
+  if (!identity) {
+    return attachmentBlocked(provider, 'invalid_attachment_message', 'Attachment request identifiers are invalid or do not match.')
+  }
+  const transfer = attachmentTransfers.get(attachmentTransferKey(identity.requestId, identity.attachmentId))
+  if (!transfer) {
+    return attachmentBlocked(provider, 'attachment_not_prepared', 'Attachment transfer was not prepared or has expired.')
+  }
+  if (!Number.isSafeInteger(message.offset) || message.offset < 0 || message.offset !== transfer.receivedBytes) {
+    return attachmentBlocked(provider, 'attachment_offset_mismatch', 'Attachment chunk offset is not the next expected byte.')
+  }
+  const chunk = decodeAttachmentChunk(message.dataBase64)
+  if (!chunk) {
+    return attachmentBlocked(provider, 'invalid_attachment_chunk', 'Attachment chunk is not valid bounded base64 data.')
+  }
+  if (transfer.receivedBytes + chunk.byteLength > transfer.size) {
+    return attachmentBlocked(provider, 'attachment_size_mismatch', 'Attachment chunk exceeds the declared attachment size.')
+  }
+  if (activeAttachmentBufferBytes() + chunk.byteLength > MAX_ATTACHMENT_BYTES_PER_REQUEST) {
+    return attachmentBlocked(provider, 'attachment_capacity_exceeded', 'Buffered attachment bytes exceed the page limit.')
+  }
+
+  transfer.chunks.push(chunk)
+  transfer.digest.update(new Uint8Array(chunk))
+  transfer.receivedBytes += chunk.byteLength
+  transfer.updatedAt = Date.now()
+  const ledger = attachmentRequestLedgers.get(identity.requestId)
+  if (ledger) ledger.updatedAt = transfer.updatedAt
+  return {
+    status: 'chunk_received',
+    provider: provider.id,
+    requestId: identity.requestId,
+    attachmentId: identity.attachmentId,
+    receivedBytes: transfer.receivedBytes,
+    expectedBytes: transfer.size,
+  }
+}
+
+async function commitVisibleAttachment(provider: ContentProvider, message: ContentRecord) {
+  const identity = validateAttachmentIdentity(message)
+  if (!identity) {
+    return attachmentBlocked(provider, 'invalid_attachment_message', 'Attachment request identifiers are invalid or do not match.')
+  }
+  return commitVisibleAttachmentIds(provider, identity.requestId, [identity.attachmentId])
+}
+
+async function commitVisibleAttachmentBatch(provider: ContentProvider, message: ContentRecord) {
+  const requestId = boundedAttachmentIdentifier(message.requestId)
+  if (
+    !requestId ||
+    message.request?.requestId !== requestId ||
+    !Array.isArray(message.attachmentIds) ||
+    message.attachmentIds.length < 1 ||
+    message.attachmentIds.length > MAX_ATTACHMENTS_PER_REQUEST
+  ) {
+    return attachmentBlocked(provider, 'invalid_attachment_message', 'Attachment batch identifiers are invalid or do not match.')
+  }
+  const attachmentIds = message.attachmentIds.map(boundedAttachmentIdentifier)
+  if (attachmentIds.some((value: string | null) => !value)) {
+    return attachmentBlocked(provider, 'invalid_attachment_message', 'Attachment batch contains an invalid identifier.')
+  }
+  const uniqueIds = new Set(attachmentIds as string[])
+  if (uniqueIds.size !== attachmentIds.length) {
+    return attachmentBlocked(provider, 'invalid_attachment_message', 'Attachment batch identifiers must be unique.')
+  }
+  return commitVisibleAttachmentIds(provider, requestId, attachmentIds as string[])
+}
+
+async function commitVisibleAttachmentIds(
+  provider: ContentProvider,
+  requestId: string,
+  attachmentIds: string[]
+) {
+  pruneAttachmentState()
+  const requestLedger = attachmentRequestLedgers.get(requestId)
+  if (
+    !requestLedger ||
+    requestLedger.attachments.size !== attachmentIds.length ||
+    attachmentIds.some((attachmentId) => !requestLedger.attachments.has(attachmentId))
+  ) {
+    releaseAttachmentTransfers([...attachmentTransfers.values()].filter((transfer) => transfer.requestId === requestId))
+    return attachmentBlocked(
+      provider,
+      'attachment_batch_mismatch',
+      'Every attachment prepared for this request must be committed together.'
+    )
+  }
+  const transfers: AttachmentTransfer[] = []
+  for (const attachmentId of attachmentIds) {
+    const transfer = attachmentTransfers.get(attachmentTransferKey(requestId, attachmentId))
+    if (!transfer) {
+      releaseAttachmentTransfers(transfers)
+      return attachmentBlocked(provider, 'attachment_not_prepared', 'Attachment transfer was not prepared or has expired.')
+    }
+    transfers.push(transfer)
+    if (transfer.receivedBytes !== transfer.size) {
+      releaseAttachmentTransfers(transfers)
+      return attachmentBlocked(provider, 'attachment_incomplete', 'Attachment bytes are incomplete and cannot be committed.')
+    }
+  }
+
+  let batchInput: HTMLInputElement | undefined
+  let batchRoot: HTMLElement | undefined
+  const files: File[] = []
+  const evidenceBaselines: Array<{ name: string; baseline: Set<HTMLElement> }> = []
+  try {
+    for (const transfer of transfers) {
+      const surface = resolveProviderAttachmentSurface(provider, transfer.name, transfer.mimeType)
+      if (surface.status === 'blocked') {
+        releaseAttachmentTransfers(transfers)
+        return surface
+      }
+      if (!batchInput) {
+        batchInput = surface.input
+        batchRoot = surface.root
+        if (surface.input.files && surface.input.files.length > 0) {
+          releaseAttachmentTransfers(transfers)
+          return attachmentBlocked(
+            provider,
+            'attachment_surface_not_clean',
+            'The provider file input already contains a file that does not belong to this request.'
+          )
+        }
+      } else if (surface.input !== batchInput || surface.root !== batchRoot) {
+        releaseAttachmentTransfers(transfers)
+        return attachmentBlocked(provider, 'attachment_surface_changed', 'The provider attachment surface changed during the request.')
+      }
+      const file = new File(transfer.chunks, transfer.name, { type: transfer.mimeType, lastModified: 0 })
+      const actualSha256 = transfer.digest.hexDigest()
+      if (actualSha256 !== transfer.sha256) {
+        releaseAttachmentTransfers(transfers)
+        return attachmentBlocked(provider, 'attachment_hash_mismatch', 'Attachment bytes do not match the declared SHA-256 digest.')
+      }
+      files.push(file)
+      evidenceBaselines.push({
+        name: transfer.name,
+        baseline: new Set(visibleFilenameEvidence(surface.root, transfer.name)),
+      })
+    }
+    if (!batchInput || !batchRoot) throw new Error('attachment surface unavailable')
+    const dataTransfer = new DataTransfer()
+    for (const file of files) dataTransfer.items.add(file)
+    batchInput.files = dataTransfer.files
+    batchInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+    batchInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+  } catch {
+    releaseAttachmentTransfers(transfers)
+    poisonAttachmentSurface()
+    return attachmentBlocked(provider, 'attachment_injection_failed', 'The exact visible provider file input rejected the attachment.')
+  }
+
+  const committedInput = batchInput
+  const committedRoot = batchRoot
+  if (!committedInput || !committedRoot) {
+    releaseAttachmentTransfers(transfers)
+    poisonAttachmentSurface()
+    return attachmentBlocked(provider, 'attachment_injection_failed', 'The provider attachment surface disappeared during injection.')
+  }
+  const evidence = await waitForNewFilenameEvidenceBatch(committedRoot, evidenceBaselines)
+  if (!evidence) {
+    clearAttachmentInput(committedInput)
+    poisonAttachmentSurface()
+    return attachmentBlocked(provider, 'attachment_unconfirmed', 'The provider did not show every attachment filename near the composer.')
+  }
+
+  const ledger = attachmentRequestLedgers.get(requestId)
+  for (const transfer of transfers) {
+    attachmentTransfers.delete(attachmentTransferKey(requestId, transfer.attachmentId))
+    const ledgerEntry = ledger?.attachments.get(transfer.attachmentId)
+    if (ledgerEntry) {
+      ledgerEntry.committed = true
+      ledgerEntry.committedInput = committedInput
+    }
+  }
+  if (ledger) ledger.updatedAt = Date.now()
+  const attached = transfers.map((transfer) => ({
+    attachmentId: transfer.attachmentId,
+    name: transfer.name,
+    size: transfer.size,
+    mimeType: transfer.mimeType,
+    sha256: transfer.sha256,
+    visible: true,
+  }))
+  return attachmentIds.length === 1 ? {
+    status: 'attached',
+    provider: provider.id,
+    requestId,
+    ...attached[0],
+  } : { status: 'attached', provider: provider.id, requestId, attachments: attached }
+}
+
+function abortVisibleAttachment(provider: ContentProvider, message: ContentRecord) {
+  pruneAttachmentState()
+  const identity = validateAttachmentIdentity(message)
+  if (!identity) {
+    return attachmentBlocked(provider, 'invalid_attachment_message', 'Attachment request identifiers are invalid or do not match.')
+  }
+  const transfer = attachmentTransfers.get(attachmentTransferKey(identity.requestId, identity.attachmentId))
+  const ledger = attachmentRequestLedgers.get(identity.requestId)
+  const ledgerEntry = ledger?.attachments.get(identity.attachmentId)
+  if (transfer) releaseAttachmentTransfer(transfer, true)
+  if (ledgerEntry?.committed) poisonAttachmentSurface()
+  return {
+    status: 'aborted',
+    provider: provider.id,
+    requestId: identity.requestId,
+    attachmentId: identity.attachmentId,
+    released: Boolean(transfer || ledgerEntry),
+    requiresReload: Boolean(ledgerEntry?.committed),
+  }
+}
+
+function validateAttachmentIdentity(message: ContentRecord) {
+  const requestId = boundedAttachmentIdentifier(message.requestId)
+  const attachmentId = boundedAttachmentIdentifier(message.attachmentId)
+  if (!requestId || !attachmentId || message.request?.requestId !== requestId) return null
+  return { requestId, attachmentId }
+}
+
+function validateAttachmentMetadata(message: ContentRecord) {
+  const name = typeof message.name === 'string' ? message.name : ''
+  const mimeType = typeof message.mimeType === 'string' ? message.mimeType.toLowerCase() : ''
+  const sha256 = typeof message.sha256 === 'string' ? message.sha256.toLowerCase() : ''
+  const size = message.size
+  if (
+    name.length < 1 ||
+    name.length > 255 ||
+    name.trim() !== name ||
+    /[\\/\u0000-\u001f\u007f]/.test(name) ||
+    name === '.' ||
+    name === '..' ||
+    !/^[a-z0-9!#$&^_.+\-]+\/[a-z0-9!#$&^_.+\-]+$/i.test(mimeType) ||
+    !Number.isSafeInteger(size) ||
+    size < 0 ||
+    size > MAX_ATTACHMENT_BYTES_PER_REQUEST ||
+    !/^[a-f0-9]{64}$/.test(sha256)
+  ) {
+    return null
+  }
+  return { mimeType, name, sha256, size }
+}
+
+function boundedAttachmentIdentifier(value: unknown) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 256 || value.trim() !== value) return null
+  return /[\u0000-\u001f\u007f]/.test(value) ? null : value
+}
+
+function decodeAttachmentChunk(value: unknown) {
+  if (
+    typeof value !== 'string' ||
+    value.length < 4 ||
+    value.length > Math.ceil(MAX_ATTACHMENT_CHUNK_BYTES / 3) * 4 ||
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return null
+  }
+  try {
+    const binary = atob(value)
+    if (binary.length < 1 || binary.length > MAX_ATTACHMENT_CHUNK_BYTES) return null
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+    return bytes.buffer
+  } catch {
+    return null
+  }
+}
+
+function attachmentTransferKey(requestId: string, attachmentId: string) {
+  return `${requestId}\u0000${attachmentId}`
+}
+
+function activeAttachmentBufferBytes() {
+  let total = 0
+  for (const transfer of attachmentTransfers.values()) total += transfer.receivedBytes
+  return total
+}
+
+function activeAttachmentForRequest(requestId: unknown) {
+  if (typeof requestId !== 'string') return null
+  return [...attachmentTransfers.values()].find((transfer) => transfer.requestId === requestId) ?? null
+}
+
+function releaseAttachmentRequestLedger(requestId: unknown) {
+  if (typeof requestId === 'string') attachmentRequestLedgers.delete(requestId)
+}
+
+function pruneAttachmentState(now = Date.now()) {
+  for (const transfer of attachmentTransfers.values()) {
+    if (now - transfer.updatedAt > ATTACHMENT_TRANSFER_TTL_MS) releaseAttachmentTransfer(transfer, true)
+  }
+  for (const [requestId, ledger] of attachmentRequestLedgers) {
+    if (now - ledger.updatedAt <= ATTACHMENT_TRANSFER_TTL_MS) continue
+    if ([...ledger.attachments.values()].some((entry) => entry.committed)) {
+      poisonAttachmentSurface()
+      return
+    }
+    attachmentRequestLedgers.delete(requestId)
+  }
+}
+
+function prunePreparedSubmissions(now = Date.now()) {
+  for (const [key, prepared] of preparedSubmissions) {
+    if (now - prepared.updatedAt > ATTACHMENT_TRANSFER_TTL_MS) preparedSubmissions.delete(key)
+  }
+}
+
+function hasCommittedAttachmentForDifferentRequest(requestId: unknown) {
+  if (typeof requestId !== 'string') return false
+  for (const [ledgerRequestId, ledger] of attachmentRequestLedgers) {
+    if (
+      ledgerRequestId !== requestId &&
+      [...ledger.attachments.values()].some((entry) => entry.committed)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+function poisonAttachmentSurface() {
+  attachmentSurfaceRequiresReload = true
+  for (const ledger of attachmentRequestLedgers.values()) {
+    for (const entry of ledger.attachments.values()) {
+      if (entry.committedInput?.isConnected) clearAttachmentInput(entry.committedInput)
+    }
+  }
+  attachmentTransfers.clear()
+  attachmentRequestLedgers.clear()
+  preparedSubmissions.clear()
+}
+
+function releaseAttachmentTransfer(transfer: AttachmentTransfer, releaseLedgerEntry: boolean) {
+  attachmentTransfers.delete(attachmentTransferKey(transfer.requestId, transfer.attachmentId))
+  if (!releaseLedgerEntry) return
+  const ledger = attachmentRequestLedgers.get(transfer.requestId)
+  const entry = ledger?.attachments.get(transfer.attachmentId)
+  if (!ledger || !entry || entry.committed) return
+  ledger.attachments.delete(transfer.attachmentId)
+  ledger.declaredBytes -= entry.size
+  ledger.updatedAt = Date.now()
+  if (ledger.attachments.size === 0) attachmentRequestLedgers.delete(transfer.requestId)
+}
+
+function releaseAttachmentTransfers(transfers: AttachmentTransfer[]) {
+  for (const transfer of transfers) releaseAttachmentTransfer(transfer, true)
+}
+
+function resolveProviderAttachmentSurface(provider: ContentProvider, name: string, mimeType: string):
+  | { input: HTMLInputElement; root: HTMLElement; status: 'ready' }
+  | ContentRecord {
+  const selector = providerAttachmentInputSelector(provider)
+  if (!selector) {
+    return attachmentBlocked(provider, 'attachment_input_unavailable', `${provider.label} has no authenticated exact file input selector captured yet.`)
+  }
+  const matches = [...document.querySelectorAll(selector)]
+    .filter((element): element is HTMLInputElement => element instanceof HTMLInputElement && element.isConnected)
+  const input = matches[0]
+  if (matches.length !== 1 || !input || input.disabled) {
+    return attachmentBlocked(provider, 'attachment_input_unavailable', 'Exactly one enabled provider file input was not found.')
+  }
+  if (!attachmentAcceptedByInput(input, name, mimeType)) {
+    return attachmentBlocked(provider, 'attachment_type_unavailable', 'The provider file input does not visibly accept this attachment type.')
+  }
+  const composer = findFirstVisible(provider.composerSelectors)
+  const root = composer ? nearestAttachmentSurfaceRoot(input, composer) : null
+  if (!composer || !root) {
+    return attachmentBlocked(provider, 'attachment_surface_unavailable', 'The exact provider file input was not found near a visible composer.')
+  }
+  return { input, root, status: 'ready' }
+}
+
+function providerAttachmentInputSelector(provider: ContentProvider) {
+  if (provider.id === 'chatgpt') return 'input#upload-files[type="file"][multiple]'
+  if (provider.id === 'claude') {
+    return 'input#chat-input-file-upload-onpage[data-testid="file-upload"][aria-label="Upload files"][type="file"][multiple]'
+  }
+  if (provider.id === 'grok') return 'input[type="file"][name="files"][multiple]'
+  return null
+}
+
+function attachmentAcceptedByInput(input: HTMLInputElement, name: string, mimeType: string) {
+  const accept = input.getAttribute('accept')?.trim()
+  if (!accept) return true
+  const lowerName = name.toLowerCase()
+  const lowerType = mimeType.toLowerCase()
+  return accept.split(',').some((rawToken) => {
+    const token = rawToken.trim().toLowerCase()
+    if (!token) return false
+    if (token.startsWith('.')) return lowerName.endsWith(token)
+    if (token.endsWith('/*')) return lowerType.startsWith(token.slice(0, -1))
+    return token === lowerType
+  })
+}
+
+function nearestAttachmentSurfaceRoot(input: HTMLInputElement, composer: HTMLElement) {
+  const composerAncestors = new Map<Element, number>()
+  let composerAncestor: Element | null = composer
+  for (let distance = 0; composerAncestor && distance <= 8; distance += 1) {
+    composerAncestors.set(composerAncestor, distance)
+    composerAncestor = composerAncestor.parentElement
+  }
+  let inputAncestor: Element | null = input
+  for (let distance = 0; inputAncestor && distance <= 8; distance += 1) {
+    const composerDistance = composerAncestors.get(inputAncestor)
+    if (
+      composerDistance !== undefined &&
+      inputAncestor !== document.body &&
+      inputAncestor !== document.documentElement &&
+      inputAncestor instanceof HTMLElement &&
+      isVisible(inputAncestor)
+    ) {
+      return inputAncestor
+    }
+    inputAncestor = inputAncestor.parentElement
+  }
+  return null
+}
+
+const SHA256_ROUND_CONSTANTS = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+])
+
+class IncrementalSha256 {
+  private readonly state = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ])
+  private readonly block = new Uint8Array(64)
+  private blockLength = 0
+  private byteLength = 0
+
+  update(data: Uint8Array) {
+    this.byteLength += data.byteLength
+    let offset = 0
+    if (this.blockLength > 0) {
+      const copied = Math.min(64 - this.blockLength, data.byteLength)
+      this.block.set(data.subarray(0, copied), this.blockLength)
+      this.blockLength += copied
+      offset = copied
+      if (this.blockLength === 64) {
+        this.transform(this.block)
+        this.blockLength = 0
+      }
+    }
+    while (offset + 64 <= data.byteLength) {
+      this.transform(data.subarray(offset, offset + 64))
+      offset += 64
+    }
+    if (offset < data.byteLength) {
+      const remaining = data.subarray(offset)
+      this.block.set(remaining, 0)
+      this.blockLength = remaining.byteLength
+    }
+  }
+
+  hexDigest() {
+    const digest = this.copy()
+    digest.finish()
+    return [...digest.state].map((word) => word.toString(16).padStart(8, '0')).join('')
+  }
+
+  private copy() {
+    const copy = new IncrementalSha256()
+    copy.state.set(this.state)
+    copy.block.set(this.block)
+    copy.blockLength = this.blockLength
+    copy.byteLength = this.byteLength
+    return copy
+  }
+
+  private finish() {
+    const bitLength = this.byteLength * 8
+    this.block[this.blockLength] = 0x80
+    this.blockLength += 1
+    if (this.blockLength > 56) {
+      this.block.fill(0, this.blockLength)
+      this.transform(this.block)
+      this.blockLength = 0
+    }
+    this.block.fill(0, this.blockLength, 56)
+    const high = Math.floor(bitLength / 0x100000000)
+    const low = bitLength >>> 0
+    this.block[56] = high >>> 24
+    this.block[57] = high >>> 16
+    this.block[58] = high >>> 8
+    this.block[59] = high
+    this.block[60] = low >>> 24
+    this.block[61] = low >>> 16
+    this.block[62] = low >>> 8
+    this.block[63] = low
+    this.transform(this.block)
+    this.blockLength = 0
+  }
+
+  private transform(block: Uint8Array) {
+    const schedule = new Uint32Array(64)
+    for (let index = 0; index < 16; index += 1) {
+      const offset = index * 4
+      schedule[index] = (
+        (block[offset]! << 24) |
+        (block[offset + 1]! << 16) |
+        (block[offset + 2]! << 8) |
+        block[offset + 3]!
+      ) >>> 0
+    }
+    for (let index = 16; index < 64; index += 1) {
+      const prior15 = schedule[index - 15]!
+      const prior2 = schedule[index - 2]!
+      const small0 = rotateRight(prior15, 7) ^ rotateRight(prior15, 18) ^ (prior15 >>> 3)
+      const small1 = rotateRight(prior2, 17) ^ rotateRight(prior2, 19) ^ (prior2 >>> 10)
+      schedule[index] = (schedule[index - 16]! + small0 + schedule[index - 7]! + small1) >>> 0
+    }
+
+    let a = this.state[0]!
+    let b = this.state[1]!
+    let c = this.state[2]!
+    let d = this.state[3]!
+    let e = this.state[4]!
+    let f = this.state[5]!
+    let g = this.state[6]!
+    let h = this.state[7]!
+    for (let index = 0; index < 64; index += 1) {
+      const big1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25)
+      const choose = (e & f) ^ (~e & g)
+      const temporary1 = (h + big1 + choose + SHA256_ROUND_CONSTANTS[index]! + schedule[index]!) >>> 0
+      const big0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22)
+      const majority = (a & b) ^ (a & c) ^ (b & c)
+      const temporary2 = (big0 + majority) >>> 0
+      h = g
+      g = f
+      f = e
+      e = (d + temporary1) >>> 0
+      d = c
+      c = b
+      b = a
+      a = (temporary1 + temporary2) >>> 0
+    }
+    this.state[0] = (this.state[0]! + a) >>> 0
+    this.state[1] = (this.state[1]! + b) >>> 0
+    this.state[2] = (this.state[2]! + c) >>> 0
+    this.state[3] = (this.state[3]! + d) >>> 0
+    this.state[4] = (this.state[4]! + e) >>> 0
+    this.state[5] = (this.state[5]! + f) >>> 0
+    this.state[6] = (this.state[6]! + g) >>> 0
+    this.state[7] = (this.state[7]! + h) >>> 0
+  }
+}
+
+function rotateRight(value: number, bits: number) {
+  return (value >>> bits) | (value << (32 - bits))
+}
+
+function visibleFilenameEvidence(root: HTMLElement, name: string) {
+  const candidates = [root, ...root.querySelectorAll('*')]
+    .filter((element): element is HTMLElement => element instanceof HTMLElement && isVisible(element))
+    .filter((element) => elementShowsFilename(element, name))
+  return candidates.filter((candidate) => (
+    !candidates.some((other) => other !== candidate && candidate.contains(other))
+  ))
+}
+
+function elementShowsFilename(element: HTMLElement, name: string) {
+  const expected = normalizedFilenameEvidence(name)
+  const values = [element.getAttribute('aria-label'), element.getAttribute('title')]
+  if (typeof element.innerText === 'string') values.push(...element.innerText.split(/[\r\n]+/))
+  return values.some((value) => typeof value === 'string' && normalizedFilenameEvidence(value) === expected)
+}
+
+function normalizedFilenameEvidence(value: string) {
+  return normalizeText(value).normalize('NFKC').toLocaleLowerCase()
+}
+
+async function waitForNewFilenameEvidenceBatch(
+  root: HTMLElement,
+  evidenceBaselines: Array<{ name: string; baseline: Set<HTMLElement> }>
+) {
+  const deadline = Date.now() + ATTACHMENT_EVIDENCE_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const everyFilenameVisible = evidenceBaselines.every(({ name, baseline }) => (
+      visibleFilenameEvidence(root, name).some((element) => !baseline.has(element))
+    ))
+    if (everyFilenameVisible) return true
+    await delay(100)
+  }
+  return false
+}
+
+function clearAttachmentInput(input: HTMLInputElement) {
+  try {
+    input.files = new DataTransfer().files
+    input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+  } catch {
+    // A provider may replace or lock the input after accepting a file. Submission still remains blocked.
+  }
+}
+
+function attachmentBlocked(provider: ContentProvider, stopReason: string, message: string) {
+  return { status: 'blocked', stopReason, message, provider: provider.id }
 }
 
 async function validateLanding(
@@ -243,6 +1016,40 @@ async function snapshotDom(provider: ContentProvider, request: ContentRecord = {
   }
 }
 
+async function preparePromptSubmission(provider: ContentProvider, request: ContentRecord): Promise<ContentRecord> {
+  prunePreparedSubmissions()
+  await dismissProviderInterruptions(provider)
+  const blocker = detectBlocker(provider)
+  if (blocker) return blocker
+
+  const configuration: ContentRecord | undefined = provider.id === 'chatgpt' || hasRequestedModelControl(request)
+    ? await configureProviderControls(provider, request)
+    : undefined
+  if (configuration?.status === 'blocked') return configuration
+
+  const composer = await waitForComposer(provider, request)
+  if (!composer || !isVisibleConnected(composer)) return selectorDrift('composer')
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+
+  preparedSubmissions.set(requestKey(request), {
+    configuration,
+    updatedAt: Date.now(),
+    url: canonicalProviderUrl(location.href),
+  })
+  while (preparedSubmissions.size > MAX_ATTACHMENT_REQUEST_LEDGERS) {
+    const oldest = preparedSubmissions.keys().next().value
+    if (typeof oldest !== 'string') break
+    preparedSubmissions.delete(oldest)
+  }
+  return {
+    status: 'prepared',
+    provider: provider.id,
+    configuration,
+    url: publicPageUrl(location.href),
+  }
+}
+
 async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
   await dismissProviderInterruptions(provider)
   const blocker = detectBlocker(provider)
@@ -250,11 +1057,15 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
     return blocker
   }
 
-  const configuration = provider.id === 'chatgpt' || hasRequestedModelControl(request)
-    ? await configureProviderControls(provider, request)
-    : undefined
-  if (configuration?.status === 'blocked') {
-    return configuration
+  const key = requestKey(request)
+  const prepared = preparedSubmissions.get(key)
+  preparedSubmissions.delete(key)
+  let configuration = prepared?.configuration
+  if (!prepared || prepared.url !== canonicalProviderUrl(location.href)) {
+    const preparation: ContentRecord = await preparePromptSubmission(provider, request)
+    if (preparation?.status === 'blocked') return preparation
+    configuration = preparation.configuration
+    preparedSubmissions.delete(key)
   }
 
   const composer = await waitForComposer(provider, request)
@@ -297,6 +1108,7 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
       provider: provider.id,
     }
   }
+  releaseAttachmentRequestLedger(request.requestId)
   return {
     status: 'submitted',
     provider: provider.id,
@@ -319,6 +1131,10 @@ function hasRequestedModelControl(request: ContentRecord = {}) {
 
 async function inspectProviderControls(provider: ContentProvider, request: ContentRecord = {}) {
   if (provider.id === 'chatgpt') return inspectChatGptControls(provider, request)
+  if (provider.id === 'gemini') return inspectGeminiControls(provider, request)
+  if (provider.id === 'grok') return inspectGrokControls(provider, request)
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
   return {
     status: 'inspected',
     provider: provider.id,
@@ -330,6 +1146,10 @@ async function inspectProviderControls(provider: ContentProvider, request: Conte
 
 async function configureProviderControls(provider: ContentProvider, request: ContentRecord = {}) {
   if (provider.id === 'chatgpt') return configureChatGptControls(provider, request)
+  if (provider.id === 'gemini') return configureGeminiControls(provider, request)
+  if (provider.id === 'grok') return configureGrokControls(provider, request)
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
   return {
     status: 'blocked',
     stopReason: 'model_control_unavailable',
@@ -337,6 +1157,257 @@ async function configureProviderControls(provider: ContentProvider, request: Con
     provider: provider.id,
     requested: typeof request.model === 'string' ? request.model : null,
   }
+}
+
+type VisibleModelChoice = {
+  element: HTMLElement
+  label: string
+  selected: boolean
+  available: boolean
+}
+
+async function inspectGeminiControls(provider: ContentProvider, request: ContentRecord = {}) {
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+  const opened = await openGeminiModelMenu()
+  if (!opened) return unavailableModelInspection(provider)
+  try {
+    const models = geminiModelChoices(opened.menu)
+    return inspectedModelControls(provider, models)
+  } finally {
+    dismissProviderMenus()
+  }
+}
+
+async function configureGeminiControls(provider: ContentProvider, request: ContentRecord = {}) {
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+  if (request.model === undefined) return configuredPreservingModel(provider)
+  const selection = await selectGeminiModel(request.model, request.modelFallbacks)
+  return configuredOrBlockedModel(provider, selection)
+}
+
+async function selectGeminiModel(requested: unknown, fallbacks: unknown) {
+  const requestedLabels = requestedModelLabels(requested, fallbacks)
+  for (let fallbackIndex = 0; fallbackIndex < requestedLabels.length; fallbackIndex += 1) {
+    const label = requestedLabels[fallbackIndex]
+    if (!label) continue
+    const opened = await openGeminiModelMenu()
+    if (!opened) break
+    const choice = geminiModelChoices(opened.menu)
+      .find((candidate) => candidate.available && modelLabelMatches(candidate.label, label))
+    if (!choice) {
+      dismissProviderMenus()
+      continue
+    }
+    if (!choice.selected) choice.element.click()
+    const verified = await waitForGeminiModelSelection(label)
+    dismissProviderMenus()
+    if (!verified) continue
+    return selectedModelResult(requestedLabels, label, fallbackIndex)
+  }
+  dismissProviderMenus()
+  return unavailableModelResult(requestedLabels)
+}
+
+async function waitForGeminiModelSelection(label: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const opened = await openGeminiModelMenu()
+    const selected = opened
+      ? geminiModelChoices(opened.menu).some((choice) => choice.selected && modelLabelMatches(choice.label, label))
+      : false
+    if (selected) return true
+    dismissProviderMenus()
+    await delay(100)
+  }
+  return false
+}
+
+async function openGeminiModelMenu() {
+  const trigger = findFirstVisible([
+    'button[data-test-id="bard-mode-menu-button"][aria-haspopup]',
+  ])
+  if (!trigger || !isEnabledVisible(trigger)) return null
+  if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const menu = ([...document.querySelectorAll('[role="menu"]')] as HTMLElement[])
+      .find((candidate) => (
+        isVisible(candidate) &&
+        candidate.querySelector('gem-menu-item[role="menuitem"][data-mode-id]') !== null
+      ))
+    if (menu) return { trigger, menu }
+    await delay(100)
+  }
+  return null
+}
+
+function geminiModelChoices(menu: HTMLElement): VisibleModelChoice[] {
+  return ([...menu.querySelectorAll('gem-menu-item[role="menuitem"][data-mode-id]')] as HTMLElement[])
+    .filter((item) => isVisible(item))
+    .map((element) => ({
+      element,
+      label: normalizeText(element.querySelector('.label')?.textContent || ''),
+      selected: element.getAttribute('data-active') === 'true' || element.classList.contains('selected'),
+      available: isEnabledVisible(element),
+    }))
+    .filter((choice) => choice.label.length > 0)
+}
+
+async function inspectGrokControls(provider: ContentProvider, request: ContentRecord = {}) {
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+  const opened = await openGrokModelMenu()
+  if (!opened) return unavailableModelInspection(provider)
+  try {
+    return inspectedModelControls(provider, grokModelChoices(opened.menu, opened.trigger))
+  } finally {
+    dismissProviderMenus()
+  }
+}
+
+async function configureGrokControls(provider: ContentProvider, request: ContentRecord = {}) {
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+  if (request.model === undefined) return configuredPreservingModel(provider)
+  const selection = await selectGrokModel(request.model, request.modelFallbacks)
+  return configuredOrBlockedModel(provider, selection)
+}
+
+async function selectGrokModel(requested: unknown, fallbacks: unknown) {
+  const requestedLabels = requestedModelLabels(requested, fallbacks)
+  for (let fallbackIndex = 0; fallbackIndex < requestedLabels.length; fallbackIndex += 1) {
+    const label = requestedLabels[fallbackIndex]
+    if (!label) continue
+    const opened = await openGrokModelMenu()
+    if (!opened) break
+    const choice = grokModelChoices(opened.menu, opened.trigger)
+      .find((candidate) => candidate.available && modelLabelMatches(candidate.label, label))
+    if (!choice) {
+      dismissProviderMenus()
+      continue
+    }
+    if (!choice.selected) choice.element.click()
+    const verified = await waitForGrokModelSelection(opened.trigger, label)
+    dismissProviderMenus()
+    if (!verified) continue
+    return selectedModelResult(requestedLabels, label, fallbackIndex)
+  }
+  dismissProviderMenus()
+  return unavailableModelResult(requestedLabels)
+}
+
+async function waitForGrokModelSelection(trigger: HTMLElement, label: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (modelLabelMatches(visibleControlLabel(trigger), label)) return true
+    await delay(100)
+  }
+  return false
+}
+
+async function openGrokModelMenu() {
+  const trigger = findFirstVisible([
+    'button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]',
+  ])
+  if (!trigger || !isEnabledVisible(trigger)) return null
+  if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const menu = ([...document.querySelectorAll('[role="menu"]')] as HTMLElement[])
+      .find((candidate) => (
+        isVisible(candidate) &&
+        candidate.querySelector('[role="menuitem"][data-radix-collection-item] span.font-semibold') !== null
+      ))
+    if (menu) return { trigger, menu }
+    await delay(100)
+  }
+  return null
+}
+
+function grokModelChoices(menu: HTMLElement, trigger: HTMLElement): VisibleModelChoice[] {
+  const selectedLabel = visibleControlLabel(trigger)
+  return ([...menu.querySelectorAll('[role="menuitem"][data-radix-collection-item]')] as HTMLElement[])
+    .filter((item) => isVisible(item))
+    .map((element) => ({
+      element,
+      label: normalizeText(element.querySelector('span.font-semibold')?.textContent || ''),
+      selected: modelLabelMatches(selectedLabel, normalizeText(element.querySelector('span.font-semibold')?.textContent || '')),
+      available: isEnabledVisible(element),
+    }))
+    .filter((choice) => choice.label.length > 0)
+}
+
+function requestedModelLabels(requested: unknown, fallbacks: unknown) {
+  return [requested, ...(Array.isArray(fallbacks) ? fallbacks : [])]
+    .filter((label): label is string => typeof label === 'string' && label.trim().length > 0)
+    .map((label) => normalizeText(label))
+}
+
+function selectedModelResult(requestedLabels: string[], applied: string, fallbackIndex: number) {
+  return {
+    status: fallbackIndex === 0 ? 'selected' : 'fallback_selected',
+    requested: requestedLabels[0] ?? null,
+    applied,
+    fallback: fallbackIndex === 0 ? null : applied,
+  }
+}
+
+function unavailableModelResult(requestedLabels: string[]) {
+  return { status: 'unavailable', requested: requestedLabels[0] ?? null, applied: null }
+}
+
+function inspectedModelControls(provider: ContentProvider, models: VisibleModelChoice[]) {
+  return {
+    status: 'inspected',
+    provider: provider.id,
+    visible: true,
+    controls: {
+      available: models.length > 0,
+      efforts: [],
+      models: models.map(({ label, selected, available }) => ({ label, selected, available })),
+    },
+    url: publicPageUrl(location.href),
+  }
+}
+
+function unavailableModelInspection(provider: ContentProvider) {
+  return inspectedModelControls(provider, [])
+}
+
+function configuredPreservingModel(provider: ContentProvider) {
+  return {
+    status: 'configured',
+    provider: provider.id,
+    visible: true,
+    model: { status: 'preserved' },
+    url: publicPageUrl(location.href),
+  }
+}
+
+function configuredOrBlockedModel(provider: ContentProvider, model: ContentRecord) {
+  if (model.status === 'unavailable') {
+    return {
+      status: 'blocked',
+      stopReason: 'model_control_unavailable',
+      message: `The requested model is not an available exact label in the visible ${provider.label} model menu.`,
+      provider: provider.id,
+      model,
+    }
+  }
+  return {
+    status: 'configured',
+    provider: provider.id,
+    visible: true,
+    model,
+    url: publicPageUrl(location.href),
+  }
+}
+
+function dismissProviderMenus() {
+  document.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Escape',
+    code: 'Escape',
+    bubbles: true,
+    cancelable: true,
+  }))
 }
 
 async function inspectChatGptControls(provider: ContentProvider, request: ContentRecord = {}) {
@@ -1401,6 +2472,7 @@ function allowsPostSubmitTargetTransition(
     proof.targetUrl !== canonicalProviderUrl(request.targetUrl) ||
     proof.sourceKind !== transitionSource?.kind ||
     proof.customGptId !== transitionSource?.customGptId ||
+    proof.projectId !== transitionSource?.projectId ||
     typeof proof.nonce !== 'string' ||
     proof.nonce.length < 16 ||
     !validAnswerBaseline(proof.answerBaseline) ||

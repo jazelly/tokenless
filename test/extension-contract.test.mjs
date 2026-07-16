@@ -1514,6 +1514,78 @@ test('provider content uses only visible controls and snapshots a fail-closed re
       await customGptTransition.context.close()
     }
 
+    const projectTransition = await openProviderFixture(
+      browser,
+      'https://chatgpt.com/g/g-p-12345678/project',
+      `
+        <!doctype html>
+        <html>
+          <body>
+            <div role="textbox" contenteditable="true"></div>
+            <button data-testid="send-button">Send</button>
+            <main id="answers"></main>
+            <script>
+              document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+                history.pushState({}, '', '/g/g-p-12345678/c/123e4567-e89b-12d3-a456-426614174010')
+                const answer = document.createElement('div')
+                answer.setAttribute('data-message-author-role', 'assistant')
+                answer.textContent = 'Project-isolated conversation answer'
+                document.querySelector('#answers').append(answer)
+              })
+            </script>
+          </body>
+        </html>
+      `
+    )
+    try {
+      const request = {
+        provider: 'chatgpt',
+        requestId: 'project-transition',
+        targetUrl: 'https://chatgpt.com/g/g-p-12345678/project',
+        prompt: 'Start a project-isolated conversation.',
+        composerTimeoutMs: 100,
+        submitTimeoutMs: 100,
+        readTimeoutMs: 2000,
+      }
+      const submit = await projectTransition.page.evaluate((contentRequest) => (
+        globalThis.__dispatchTokenlessMessage({ type: 'tokenless.bridge.submit', request: contentRequest })
+      ), request)
+      assert.equal(submit.status, 'submitted')
+      const proof = postSubmitTransitionProof(request, submit.answerBaseline, 'project-transition-proof-001')
+      const validation = await dispatchPostSubmitValidation(
+        projectTransition.page,
+        request,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(validation.status, 'ready')
+      const read = await dispatchPostSubmitRead(
+        projectTransition.page,
+        request,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(read.status, 'read')
+      assert.equal(read.text, 'Project-isolated conversation answer')
+      await projectTransition.page.evaluate(() => {
+        history.replaceState({}, '', '/g/g-p-87654321/c/123e4567-e89b-12d3-a456-426614174011')
+        const answer = document.querySelector('[data-message-author-role="assistant"]')
+        if (answer) answer.textContent = 'Cross-project answer must remain private'
+      })
+      const crossProjectRead = await dispatchPostSubmitRead(
+        projectTransition.page,
+        request,
+        submit.answerBaseline,
+        proof
+      )
+      assert.equal(crossProjectRead.status, 'blocked')
+      assert.equal(crossProjectRead.stopReason, 'target_context_mismatch')
+      assert.doesNotMatch(JSON.stringify(crossProjectRead), /Cross-project answer must remain private/)
+      assert.deepEqual(projectTransition.pageErrors, [])
+    } finally {
+      await projectTransition.context.close()
+    }
+
     const rootToCustomGpt = await openProviderFixture(browser, 'https://chatgpt.com/', `
       <!doctype html>
       <html>
@@ -2086,6 +2158,89 @@ test('generic controls report unavailable and block model selection when a provi
   }
 })
 
+test('Gemini and Grok model adapters inventory real DOM labels, switch visibly, and require exact matches', { timeout: 30000 }, async () => {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch({ headless: true })
+  const gemini = await openProviderFixture(
+    browser,
+    'https://gemini.google.com/app',
+    readText('test/fixtures/gemini-real-dom-fixture.html')
+  )
+  const grok = await openProviderFixture(
+    browser,
+    'https://grok.com/',
+    readText('test/fixtures/grok-real-dom-fixture.html')
+  )
+  try {
+    await gemini.page.evaluate(() => {
+      globalThis.__fixtureGeminiEnabledModels = ['3.5 Flash', '3.5 Thinking', '3.1 Pro']
+    })
+    const geminiInspect = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.inspect_controls',
+      request: { provider: 'gemini', requestId: 'gemini-model-inspect' },
+    }))
+    assert.deepEqual(
+      geminiInspect.controls.models.map(({ label, selected, available }) => ({ label, selected, available })),
+      [
+        { label: '3.5 Flash', selected: true, available: true },
+        { label: '3.5 Thinking', selected: false, available: true },
+        { label: '3.1 Pro', selected: false, available: true },
+      ]
+    )
+    const geminiSelection = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.configure_controls',
+      request: { provider: 'gemini', requestId: 'gemini-model-select', model: '3.5 Thinking' },
+    }))
+    assert.equal(geminiSelection.status, 'configured')
+    assert.equal(geminiSelection.model.status, 'selected')
+    assert.equal(geminiSelection.model.applied, '3.5 Thinking')
+    assert.equal(await gemini.page.locator('[data-test-id="bard-mode-menu-button"]').innerText(), 'Thinking')
+
+    const geminiExactFailure = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.configure_controls',
+      request: { provider: 'gemini', requestId: 'gemini-model-exact', model: '3.5' },
+    }))
+    assert.equal(geminiExactFailure.status, 'blocked')
+    assert.equal(geminiExactFailure.stopReason, 'model_control_unavailable')
+
+    const grokInspect = await grok.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.inspect_controls',
+      request: { provider: 'grok', requestId: 'grok-model-inspect' },
+    }))
+    assert.deepEqual(grokInspect.controls.models.map((model) => model.label), ['Fast', 'Auto', 'Expert', 'Heavy'])
+    assert.equal(grokInspect.controls.models.find((model) => model.label === 'Fast')?.selected, true)
+
+    const grokSelection = await grok.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.configure_controls',
+      request: { provider: 'grok', requestId: 'grok-model-select', model: 'Heavy' },
+    }))
+    assert.equal(grokSelection.status, 'configured')
+    assert.equal(grokSelection.model.status, 'selected')
+    assert.equal(grokSelection.model.applied, 'Heavy')
+    assert.equal(await grok.page.locator('#model-select-trigger').innerText(), 'Heavy')
+
+    const grokFallback = await grok.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.configure_controls',
+      request: {
+        provider: 'grok',
+        requestId: 'grok-model-fallback',
+        model: 'Not a visible model',
+        modelFallbacks: ['Auto'],
+      },
+    }))
+    assert.equal(grokFallback.status, 'configured')
+    assert.equal(grokFallback.model.status, 'fallback_selected')
+    assert.equal(grokFallback.model.applied, 'Auto')
+    assert.equal(await grok.page.locator('#model-select-trigger').innerText(), 'Auto')
+    assert.deepEqual(gemini.pageErrors, [])
+    assert.deepEqual(grok.pageErrors, [])
+  } finally {
+    await gemini.context.close()
+    await grok.context.close()
+    await browser.close()
+  }
+})
+
 test('background enables the Settings side panel and jobs create only approved provider tabs', async () => {
   const previousChrome = globalThis.chrome
   const installed = createChromeEvent()
@@ -2114,7 +2269,14 @@ test('background enables the Settings side panel and jobs create only approved p
       posted,
       postMessage(message) {
         posted.push(message)
-        if (message.type === 'tokenless.native.daemon_complete_job') {
+        if (message.type === 'tokenless.native.daemon_ready') {
+          queueMicrotask(() => {
+            void onMessage.emit(nativeSuccess(message.type, {
+              status: 'ready',
+              jobId: message.jobId,
+            }, message.requestId))
+          })
+        } else if (message.type === 'tokenless.native.daemon_complete_job') {
           queueMicrotask(() => {
             void onMessage.emit({
               protocol: 'tokenless.native.v1',
@@ -2303,7 +2465,10 @@ test('background enables the Settings side panel and jobs create only approved p
     await daemonPort.onMessage.emit(visibleJobMessage)
 
     await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 1)
-    assert.deepEqual(daemonPort.posted.find((message) => message.type === 'tokenless.native.daemon_ready'), {
+    const daemonReady = daemonPort.posted.find((message) => message.type === 'tokenless.native.daemon_ready')
+    assert.match(daemonReady.requestId, /^native-/)
+    const { requestId: _correlationId, ...publicDaemonReady } = daemonReady
+    assert.deepEqual(publicDaemonReady, {
       protocol: 'tokenless.native.v1',
       type: 'tokenless.native.daemon_ready',
       jobId: 'job-visible-provider',
@@ -2938,12 +3103,24 @@ function postSubmitTransitionProof(request, answerBaseline, nonce = 'contract-tr
     segments.length === 2 &&
     segments[0] === 'g'
   ) ? segments[1] : undefined
+  const projectId = request.provider === 'chatgpt' &&
+    segments.length === 3 &&
+    segments[0] === 'g' &&
+    segments[1]?.startsWith('g-p-') &&
+    segments[2] === 'project'
+      ? segments[1]
+      : request.provider === 'claude' &&
+          segments.length === 2 &&
+          segments[0] === 'project'
+        ? segments[1]
+        : undefined
   return {
     requestId: request.requestId,
     provider: request.provider,
     targetUrl: `${target.origin}${pathname}`,
-    sourceKind: customGptId ? 'custom_gpt' : 'root',
+    sourceKind: projectId ? 'project' : customGptId ? 'custom_gpt' : 'root',
     customGptId,
+    projectId,
     answerBaseline,
     nonce,
   }

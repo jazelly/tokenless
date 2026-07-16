@@ -1,0 +1,256 @@
+<!--
+  Reduced attachment-only fixture assembled from the exact visible file-input and
+  composer nodes captured for ChatGPT, Claude, and Grok on 2026-07-16. Gemini is
+  intentionally limited to its authenticated composer because no authenticated
+  Gemini file input has been captured yet. The behavior below is a deterministic
+  Tokenless test shim, not provider JavaScript.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tokenless attachment DOM fixture</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: system-ui, sans-serif;
+      }
+
+      .composer-shell {
+        width: min(720px, calc(100vw - 48px));
+        min-height: 140px;
+        padding: 20px;
+        border: 1px solid #aaa;
+        border-radius: 18px;
+      }
+
+      [contenteditable="true"] {
+        min-height: 52px;
+        padding: 12px;
+        border: 1px solid #ccc;
+      }
+
+      .attachment-chip {
+        display: inline-block;
+        margin: 8px 8px 0 0;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #eee;
+      }
+
+      [data-testid="conversation-panel"] {
+        width: min(720px, calc(100vw - 48px));
+        margin-bottom: 16px;
+      }
+
+      article[data-message-author-role] {
+        margin: 8px 0;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: #f5f5f5;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="fixture-root"></main>
+    <script>
+      const host = location.hostname
+      const root = document.querySelector('#fixture-root')
+      const records = []
+      const events = []
+      const submissions = []
+      Object.defineProperty(globalThis, '__attachmentFixture', {
+        configurable: true,
+        value: { events, records, submissions, suppressVisibleSubmit: false },
+      })
+
+      if (host === 'chatgpt.com') {
+        root.innerHTML = `
+          <div data-testid="conversation-panel"></div>
+          <form class="composer-shell" data-testid="composer" aria-label="Message composer">
+            <button id="intelligence-control" type="button" aria-expanded="false" aria-haspopup="menu">Medium</button>
+            <input id="upload-files" type="file" accept="text/plain,.txt" multiple hidden>
+            <input data-decoy-file-input type="file" multiple hidden>
+            <div id="attachment-evidence"></div>
+            <div id="prompt-textarea" class="ProseMirror" data-id="root" contenteditable="true" role="textbox" aria-label="Message ChatGPT"></div>
+            <button data-testid="composer-send-button" aria-label="Send message" aria-disabled="true" disabled type="submit">Send</button>
+          </form>`
+      } else if (host === 'claude.ai') {
+        root.innerHTML = `
+          <section class="composer-shell" aria-label="Message composer">
+            <input id="chat-input-file-upload-onpage" data-testid="file-upload" aria-hidden="true" tabindex="-1" accept=".pdf,.doc,.docx,.txt,.md,.rtf,.csv,.json,.xml,.html,.png,.jpg,.jpeg,.gif,.webp" multiple aria-label="Upload files" type="file" hidden>
+            <input data-decoy-file-input type="file" multiple hidden>
+            <div id="attachment-evidence"></div>
+            <div contenteditable="true" role="textbox" data-testid="chat-input" aria-label="Write your prompt to Claude" aria-multiline="true" class="tiptap ProseMirror"><p><br></p></div>
+            <button type="button" data-cds="Button" aria-label="Send message">Send</button>
+          </section>`
+      } else if (host === 'grok.com') {
+        root.innerHTML = `
+          <section class="composer-shell" aria-label="Message composer">
+            <input type="file" name="files" accept="text/plain,.txt" multiple hidden>
+            <input data-decoy-file-input type="file" multiple hidden>
+            <div id="attachment-evidence"></div>
+            <div class="tiptap ProseMirror" contenteditable="true" role="textbox" aria-label="Ask Grok anything" aria-multiline="true"></div>
+            <button data-testid="chat-submit" aria-label="Submit" type="submit">Send</button>
+          </section>`
+      } else if (host === 'gemini.google.com') {
+        root.innerHTML = `
+          <section class="composer-shell" aria-label="Message composer">
+            <input data-decoy-file-input type="file" multiple hidden>
+            <div id="attachment-evidence"></div>
+            <rich-textarea><div class="ql-editor" data-gramm="false" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Enter a prompt for Gemini"></div></rich-textarea>
+            <button aria-label="Send message" type="button">Send</button>
+          </section>`
+      }
+
+      const exactInput = root.querySelector([
+        '#upload-files',
+        '#chat-input-file-upload-onpage',
+        'input[name="files"]',
+      ].join(','))
+
+      const intelligence = root.querySelector('#intelligence-control')
+      if (intelligence) {
+        let selectedModel = 'GPT-5.6 Sol'
+        const dismissIntelligenceMenus = () => {
+          document.querySelectorAll('[data-attachment-fixture-model-menu]').forEach((menu) => menu.remove())
+          intelligence.setAttribute('aria-expanded', 'false')
+        }
+        const createModelMenu = () => {
+          const menu = document.createElement('div')
+          menu.dataset.attachmentFixtureModelMenu = 'true'
+          menu.setAttribute('role', 'menu')
+          menu.style.cssText = 'position:fixed;left:420px;bottom:90px;display:grid;background:white'
+          for (const model of ['GPT-5.6 Sol', 'GPT-5.5']) {
+            const item = document.createElement('button')
+            item.type = 'button'
+            item.setAttribute('role', 'menuitemradio')
+            item.setAttribute('aria-checked', String(model === selectedModel))
+            item.textContent = model
+            item.addEventListener('click', () => {
+              selectedModel = model
+              events.push('model-selected:' + model)
+              dismissIntelligenceMenus()
+            })
+            menu.append(item)
+          }
+          document.body.append(menu)
+        }
+        intelligence.addEventListener('click', () => {
+          dismissIntelligenceMenus()
+          intelligence.setAttribute('aria-expanded', 'true')
+          const menu = document.createElement('div')
+          menu.dataset.attachmentFixtureModelMenu = 'true'
+          menu.setAttribute('role', 'menu')
+          menu.setAttribute('aria-labelledby', intelligence.id)
+          menu.style.cssText = 'position:fixed;left:260px;bottom:90px;display:grid;background:white'
+          const submenu = document.createElement('button')
+          submenu.type = 'button'
+          submenu.setAttribute('role', 'menuitem')
+          submenu.setAttribute('aria-haspopup', 'menu')
+          submenu.textContent = selectedModel
+          submenu.addEventListener('click', createModelMenu)
+          menu.append(submenu)
+          document.body.append(menu)
+        })
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') dismissIntelligenceMenus()
+        })
+      }
+
+      if (exactInput) {
+        exactInput.addEventListener('input', () => events.push('input'))
+        exactInput.addEventListener('change', async () => {
+          events.push('change')
+          const files = [...(exactInput.files || [])]
+          if (!files.length) return
+          for (const file of files) {
+            const bytes = [...new Uint8Array(await file.arrayBuffer())]
+            records.push({ bytes, name: file.name, size: file.size, type: file.type })
+            const chip = document.createElement('span')
+            chip.className = 'attachment-chip'
+            chip.textContent = file.name
+            document.querySelector('#attachment-evidence').append(chip)
+            events.push('chip-visible')
+          }
+          updateChatGptSendState()
+        })
+      }
+
+      const chatGptComposer = root.querySelector('#prompt-textarea')
+      const chatGptForm = root.querySelector('form[data-testid="composer"]')
+      const chatGptSend = root.querySelector('[data-testid="composer-send-button"]')
+      if (chatGptComposer && chatGptForm && chatGptSend) {
+        chatGptComposer.addEventListener('input', () => {
+          events.push('prompt-input')
+          updateChatGptSendState()
+        })
+        chatGptForm.addEventListener('submit', (event) => {
+          event.preventDefault()
+          if (chatGptSend.disabled || chatGptSend.getAttribute('aria-disabled') === 'true') return
+          if (globalThis.__attachmentFixture.suppressVisibleSubmit) {
+            events.push('submit-suppressed')
+            return
+          }
+
+          const prompt = textOf(chatGptComposer).trim()
+          const files = [...(exactInput.files || [])]
+          const chips = [...document.querySelectorAll('#attachment-evidence .attachment-chip')]
+          const submittedAfterVisibleAttachment = files.length > 0 && files.every((file) => (
+            chips.some((chip) => textOf(chip) === file.name)
+          ))
+          events.push('submit')
+          submissions.push({
+            fileName: files[0] ? files[0].name : null,
+            fileNames: files.map((file) => file.name),
+            prompt,
+            submittedAfterVisibleAttachment,
+          })
+          document.querySelector('[data-testid="conversation-panel"]').append(message('user', prompt))
+          chatGptComposer.textContent = ''
+          updateChatGptSendState()
+
+          const stop = document.createElement('button')
+          stop.dataset.testid = 'stop-button'
+          stop.setAttribute('aria-label', 'Stop generating')
+          stop.textContent = 'Stop generating'
+          document.body.append(stop)
+          setTimeout(() => {
+            document.querySelector('[data-testid="conversation-panel"]').append(
+              message('assistant', 'visible attachment fixture answer for: ' + prompt)
+            )
+            stop.remove()
+          }, 80)
+        })
+      }
+
+      function updateChatGptSendState() {
+        if (!chatGptComposer || !chatGptSend) return
+        const hasPrompt = textOf(chatGptComposer).trim().length > 0
+        const hasVisibleAttachment = Boolean(document.querySelector('#attachment-evidence .attachment-chip'))
+        const disabled = !(hasPrompt && hasVisibleAttachment)
+        chatGptSend.disabled = disabled
+        chatGptSend.setAttribute('aria-disabled', String(disabled))
+      }
+
+      function message(role, text) {
+        const article = document.createElement('article')
+        article.dataset.messageAuthorRole = role
+        article.dataset.testid = 'conversation-turn-' + crypto.randomUUID()
+        const content = document.createElement('div')
+        content.className = role === 'assistant' ? 'markdown prose' : 'whitespace-pre-wrap'
+        content.textContent = text
+        article.append(content)
+        return article
+      }
+
+      function textOf(node) {
+        return node && (node.innerText || node.textContent) || ''
+      }
+    </script>
+  </body>
+</html>
