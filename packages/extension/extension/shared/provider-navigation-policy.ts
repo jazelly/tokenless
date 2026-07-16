@@ -1,12 +1,14 @@
 import type { ProviderConfig, ProviderId } from './provider-config.js'
 
 export type ProviderTransitionSource =
-  | { kind: 'root'; customGptId: undefined }
-  | { kind: 'custom_gpt'; customGptId: string }
+  | { kind: 'root'; customGptId: undefined; projectId: undefined }
+  | { kind: 'custom_gpt'; customGptId: string; projectId: undefined }
+  | { kind: 'project'; customGptId: undefined; projectId: string }
 
 export type ProviderConversationRoute =
-  | { kind: 'standard'; customGptId: undefined }
-  | { kind: 'custom_gpt'; customGptId: string }
+  | { kind: 'standard'; customGptId: undefined; projectId: undefined }
+  | { kind: 'custom_gpt'; customGptId: string; projectId: undefined }
+  | { kind: 'project'; customGptId: undefined; projectId: string }
 
 export type ProviderTargetScope = Readonly<{
   kind: 'landing' | 'conversation' | 'custom_gpt' | 'project' | 'path'
@@ -95,15 +97,34 @@ export function providerTransitionSource(
   value: unknown
 ): ProviderTransitionSource | null {
   if (isCanonicalProviderLandingTarget(provider, value)) {
-    return { kind: 'root', customGptId: undefined }
+    return { kind: 'root', customGptId: undefined, projectId: undefined }
   }
-  if (provider.id !== 'chatgpt') return null
   const parsed = parseProviderRoute(provider, value)
   if (!parsed) return null
   const segments = canonicalPathSegments(parsed.pathname)
-  const customGptId = segments.length === 2 && segments[0] === 'g' ? segments[1] : undefined
-  if (!isCustomGptId(customGptId)) return null
-  return { kind: 'custom_gpt', customGptId: customGptId as string }
+  if (provider.id === 'chatgpt') {
+    const projectId = (
+      segments.length === 3 &&
+      segments[0] === 'g' &&
+      segments[2] === 'project' &&
+      isChatGptProjectId(segments[1])
+    ) ? segments[1] : undefined
+    if (projectId) {
+      return { kind: 'project', customGptId: undefined, projectId }
+    }
+    const customGptId = segments.length === 2 && segments[0] === 'g' ? segments[1] : undefined
+    if (!isCustomGptId(customGptId) || isChatGptProjectId(customGptId)) return null
+    return { kind: 'custom_gpt', customGptId: customGptId as string, projectId: undefined }
+  }
+  if (
+    provider.id === 'claude' &&
+    segments.length === 2 &&
+    segments[0] === 'project' &&
+    isOpaqueProviderId(segments[1])
+  ) {
+    return { kind: 'project', customGptId: undefined, projectId: segments[1] as string }
+  }
+  return null
 }
 
 export function areProviderTransitionSourcesEquivalent(
@@ -117,7 +138,8 @@ export function areProviderTransitionSourcesEquivalent(
     left &&
     right &&
     left.kind === right.kind &&
-    left.customGptId === right.customGptId
+    left.customGptId === right.customGptId &&
+    left.projectId === right.projectId
   )
 }
 
@@ -131,6 +153,9 @@ export function isApprovedProviderTransition(
   if (!source || !destination) return false
   if (source.kind === 'custom_gpt') {
     return destination.kind === 'custom_gpt' && destination.customGptId === source.customGptId
+  }
+  if (source.kind === 'project') {
+    return destination.kind === 'project' && destination.projectId === source.projectId
   }
   return destination.kind === 'standard'
 }
@@ -148,31 +173,45 @@ export function providerConversationRoute(
   const segments = canonicalPathSegments(parsed.pathname)
   if (provider.id === 'chatgpt') {
     if (segments.length === 2 && segments[0] === 'c') {
-      return isOpaqueProviderId(segments[1]) ? { kind: 'standard', customGptId: undefined } : null
+      return isOpaqueProviderId(segments[1])
+        ? { kind: 'standard', customGptId: undefined, projectId: undefined }
+        : null
     }
-    return (
+    if (
       segments.length === 4 &&
       segments[0] === 'g' &&
       segments[2] === 'c' &&
       isCustomGptId(segments[1]) &&
       isOpaqueProviderId(segments[3])
-    )
-      ? { kind: 'custom_gpt', customGptId: segments[1] as string }
-      : null
+    ) {
+      return isChatGptProjectId(segments[1])
+        ? { kind: 'project', customGptId: undefined, projectId: segments[1] as string }
+        : { kind: 'custom_gpt', customGptId: segments[1] as string, projectId: undefined }
+    }
+    return null
   }
   if (provider.id === 'claude') {
-    return segments.length === 2 && segments[0] === 'chat' && isOpaqueProviderId(segments[1])
-      ? { kind: 'standard', customGptId: undefined }
+    if (segments.length === 2 && segments[0] === 'chat' && isOpaqueProviderId(segments[1])) {
+      return { kind: 'standard', customGptId: undefined, projectId: undefined }
+    }
+    return (
+      segments.length === 4 &&
+      segments[0] === 'project' &&
+      segments[2] === 'chat' &&
+      isOpaqueProviderId(segments[1]) &&
+      isOpaqueProviderId(segments[3])
+    )
+      ? { kind: 'project', customGptId: undefined, projectId: segments[1] as string }
       : null
   }
   if (provider.id === 'gemini') {
     return segments.length === 2 && segments[0] === 'app' && isOpaqueProviderId(segments[1])
-      ? { kind: 'standard', customGptId: undefined }
+      ? { kind: 'standard', customGptId: undefined, projectId: undefined }
       : null
   }
   if (provider.id === 'grok') {
     return segments.length === 2 && segments[0] === 'c' && isOpaqueProviderId(segments[1])
-      ? { kind: 'standard', customGptId: undefined }
+      ? { kind: 'standard', customGptId: undefined, projectId: undefined }
       : null
   }
   return null
@@ -245,8 +284,19 @@ function providerTargetScope(provider: ProviderConfig, pathname: string): Provid
 
   if (provider.id === 'chatgpt' && segments[0] === 'g' && isCustomGptId(segments[1])) {
     const id = segments[1] as string
-    const kind = id.startsWith('g-p-') ? 'project' : 'custom_gpt'
-    return Object.freeze({ kind, key: key(kind, id), id })
+    if (isChatGptProjectId(id)) {
+      const isProjectLanding = segments.length === 3 && segments[2] === 'project'
+      const isProjectConversation = (
+        segments.length === 4 &&
+        segments[2] === 'c' &&
+        isOpaqueProviderId(segments[3])
+      )
+      if (isProjectLanding || isProjectConversation) {
+        return Object.freeze({ kind: 'project', key: key('project', id), id })
+      }
+    } else {
+      return Object.freeze({ kind: 'custom_gpt', key: key('custom_gpt', id), id })
+    }
   }
 
   if (
@@ -255,7 +305,15 @@ function providerTargetScope(provider: ProviderConfig, pathname: string): Provid
     isOpaqueProviderId(segments[1])
   ) {
     const id = segments[1] as string
-    return Object.freeze({ kind: 'project', key: key('project', id), id })
+    const isProjectLanding = segments.length === 2
+    const isProjectConversation = (
+      segments.length === 4 &&
+      segments[2] === 'chat' &&
+      isOpaqueProviderId(segments[3])
+    )
+    if (isProjectLanding || isProjectConversation) {
+      return Object.freeze({ kind: 'project', key: key('project', id), id })
+    }
   }
 
   const conversationId = providerConversationId(provider, segments)
@@ -281,6 +339,10 @@ function providerConversationId(provider: ProviderConfig, segments: string[]) {
 
 function isCustomGptId(value: string | undefined) {
   return Boolean(value?.startsWith('g-') && isOpaqueProviderId(value.slice(2)))
+}
+
+function isChatGptProjectId(value: string | undefined) {
+  return Boolean(value?.startsWith('g-p-') && isOpaqueProviderId(value.slice(4)))
 }
 
 function isOpaqueProviderId(value: string | undefined) {

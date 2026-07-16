@@ -77,33 +77,130 @@ See [Project-Affine Multi-Account Routing](../../docs/multi-account-routing.md) 
 
 Use a randomly generated server key of at least 32 visible non-whitespace characters; for example, `openssl rand -hex 32` produces a suitable value.
 
-## ChatGPT visible controls
+## Visible provider controls
 
-ChatGPT runs enforce the visible `Chat` surface before submission. Use the visible control inventory to discover what the signed-in account currently exposes:
+Use the generic visible control inventory to discover the exact models that the
+current provider page exposes:
 
 ```bash
-npx tokenless chatgpt-controls --json
+npx tokenless provider-controls --provider gemini --json
 ```
 
-Configure a new ChatGPT turn or attach the same controls to `run`:
+Configure a visible model without submitting a prompt, or attach the same
+selection to `run`:
 
 ```bash
-npx tokenless chatgpt-configure \
-  --model "GPT-5.6 Sol" \
-  --model-fallback "GPT-5.5,o3" \
-  --effort pro \
+npx tokenless provider-configure \
+  --provider grok \
+  --model "Expert" \
+  --model-fallback "Auto,Fast" \
   --json
 
 npx tokenless run \
-  --provider chatgpt \
-  --model "GPT-5.6 Sol" \
-  --model-fallback "GPT-5.5,o3" \
-  --effort extra_high \
+  --provider gemini \
+  --model "3.5 Thinking" \
+  --model-fallback "3.5 Flash" \
   --prompt "Review this design." \
   --json
 ```
 
-`--effort` accepts `instant`, `medium`, `high`, `extra_high`, or `pro`. Tokenless uses visible DOM roles and selected state, not provider APIs or browser storage. When a requested model is absent it tries `--model-fallback` in order, then preserves the visible current model. When a complete five-level Intelligence menu is visible it selects the strongest available level at or below the requested level; incomplete or unlabelled menus preserve the current setting rather than guessing. In all non-safety control fallbacks, the prompt is still submitted.
+Model matching uses the complete visible label after case and whitespace
+normalization; it is not substring or fuzzy matching.
+
+Tokenless tries the requested label and then each `--model-fallback` in order,
+verifies the visible selected state, and blocks before prompt submission if none
+is available.
+
+ChatGPT, Gemini, and Grok currently expose captured model-menu contracts. Claude
+control inventory reports no available models, and any Claude model request
+fails closed until an authenticated real-DOM model selector is captured.
+
+ChatGPT-specific `chatgpt-controls` and `chatgpt-configure` remain compatibility
+aliases. ChatGPT runs enforce the visible `Chat` surface.
+
+`--effort` accepts `instant`, `medium`, `high`, `extra_high`, or `pro` and is not
+accepted for the other providers.
+
+When a complete five-level ChatGPT Intelligence menu is visible, Tokenless
+selects the strongest available level at or below the requested effort.
+
+Incomplete or unlabelled effort menus preserve the current effort rather than
+guessing. A missing requested model never silently preserves another model.
+
+## Visible file attachments
+
+Repeat `--attach-file` to add local files through the provider's visible file
+input before the prompt is submitted:
+
+```bash
+npx tokenless run \
+  --provider claude \
+  --attach-file ./brief.pdf \
+  --attach-file ./notes.md \
+  --prompt "Compare these files." \
+  --json
+```
+
+This option is visible-mode only and is accepted only for `submit` and
+`submit_and_read`. Tokenless accepts at most 100 files and 512 MiB total per
+request.
+
+The provider's visible `accept` attribute and account limits may be stricter and
+always win.
+
+ChatGPT, Claude, and Grok have exact captured file-input selectors. Gemini
+upload fails closed until an authenticated exact input is captured.
+
+The CLI stages each regular, non-symlink file in a private Tokenless bundle and
+computes its size and SHA-256. Only path-free descriptors cross the daemon and
+extension protocols.
+
+The native host streams bytes for the claimed job. The content script verifies
+the hash before constructing a browser `File`.
+
+The exact provider input must accept the file, and a new visible filename must
+appear near the composer. Otherwise the file is cleared and the prompt is not
+submitted.
+
+The pipeline never reads browser cookies, storage, hidden auth headers, or
+private provider APIs.
+
+## Provider-native Project isolation
+
+Use `--target-url` with an exact existing ChatGPT or Claude Project URL when the
+provider conversation must stay inside that Project:
+
+```bash
+npx tokenless run \
+  --provider chatgpt \
+  --target-url "https://chatgpt.com/g/<g-p-project-id>/project" \
+  --prompt "Review the project context." \
+  --json
+
+npx tokenless run \
+  --provider claude \
+  --target-url "https://claude.ai/project/<project-id>" \
+  --prompt "Review the project knowledge." \
+  --json
+```
+
+Tokenless validates the strict provider HTTPS origin and exact Project route.
+
+After submission, ChatGPT may navigate only to
+`/g/<same-g-p-project-id>/c/<conversation-id>`, and Claude only to
+`/project/<same-project-id>/chat/<conversation-id>`.
+
+Cross-Project and ordinary chat transitions fail closed before response text is
+read.
+
+This does not discover, create, or click a provider Project. Copy the existing
+Project URL from the visible signed-in browser session.
+
+Gemini and Grok have no verified Project route, so `--target-url` is not a
+Project-isolation guarantee for those providers.
+
+`--project-name` remains Tokenless task metadata used to derive task ids. It does
+not select a provider-native Project and may be used alongside `--target-url`.
 
 For a visible provider task expected to take longer than three minutes, add `--long-running`. It extends the visible-response wait to 35 minutes and the daemon job wait to 36 minutes. Progress heartbeats are written to stderr so `--json` keeps stdout machine-readable. Do not use `--no-wait` for this mode.
 

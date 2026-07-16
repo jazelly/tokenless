@@ -167,6 +167,39 @@
         border: 1px solid #c4c7c5;
         background: #fff;
       }
+
+      [role="menu"][data-fixture="gemini-model-menu"] {
+        position: fixed;
+        right: 80px;
+        bottom: 145px;
+        z-index: 30;
+        min-width: 280px;
+        padding: 8px;
+        border: 1px solid #c4c7c5;
+        border-radius: 16px;
+        background: #fff;
+      }
+
+      gem-menu-item[role="menuitem"] {
+        display: block;
+        padding: 10px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+
+      gem-menu-item[aria-disabled="true"] {
+        opacity: .45;
+        cursor: default;
+      }
+
+      gem-menu-item .label,
+      gem-menu-item .sublabel {
+        display: block;
+      }
+
+      gem-menu-item .label {
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -185,6 +218,8 @@
             type="button"
             data-test-id="bard-mode-menu-button"
             aria-label="Open mode picker, currently Flash"
+            aria-haspopup="true"
+            aria-expanded="false"
           >Flash</button>
         </header>
         <section id="conversation" aria-live="polite">
@@ -232,6 +267,13 @@
       const input = document.querySelector('rich-textarea .ql-editor')
       const sendSlot = document.querySelector('#send-slot')
       const conversation = document.querySelector('#conversation')
+      const modelTrigger = document.querySelector('[data-test-id="bard-mode-menu-button"]')
+      const geminiModels = [
+        { id: 'fbb127bbb056c959', label: '3.5 Flash', shortLabel: 'Flash', sublabel: 'All-around help' },
+        { id: '5bf011840784117a', label: '3.5 Thinking', shortLabel: 'Thinking', sublabel: 'Solves complex problems' },
+        { id: '9d8ca3786ebdfbea', label: '3.1 Pro', shortLabel: 'Pro', sublabel: 'Advanced math and code' },
+      ]
+      let selectedGeminiModel = '3.5 Flash'
 
       input.addEventListener('input', updateSendButton)
       input.addEventListener('keydown', (event) => {
@@ -240,6 +282,64 @@
           sendSlot.querySelector('button[aria-label="Send message"]')?.click()
         }
       })
+
+      modelTrigger.addEventListener('click', () => {
+        if (modelTrigger.getAttribute('aria-expanded') === 'true') {
+          dismissGeminiModelMenu()
+        } else {
+          createGeminiModelMenu()
+        }
+      })
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') dismissGeminiModelMenu()
+      })
+
+      function enabledGeminiModels() {
+        return new Set(Array.isArray(globalThis.__fixtureGeminiEnabledModels)
+          ? globalThis.__fixtureGeminiEnabledModels
+          : ['3.5 Flash'])
+      }
+
+      function createGeminiModelMenu() {
+        dismissGeminiModelMenu()
+        modelTrigger.setAttribute('aria-expanded', 'true')
+        const menu = document.createElement('div')
+        menu.setAttribute('role', 'menu')
+        menu.dataset.fixture = 'gemini-model-menu'
+        const enabled = enabledGeminiModels()
+        for (const model of geminiModels) {
+          const item = document.createElement('gem-menu-item')
+          const selected = model.label === selectedGeminiModel
+          item.setAttribute('role', 'menuitem')
+          item.setAttribute('data-mode-id', model.id)
+          item.setAttribute('data-test-id', 'bard-mode-option-' + model.id)
+          item.setAttribute('data-active', String(selected))
+          item.setAttribute('aria-haspopup', 'false')
+          item.setAttribute('aria-disabled', String(!enabled.has(model.label)))
+          if (selected) item.classList.add('selected')
+          const label = document.createElement('span')
+          label.className = 'label'
+          label.textContent = model.label
+          const sublabel = document.createElement('div')
+          sublabel.className = 'sublabel'
+          sublabel.textContent = model.sublabel
+          item.append(label, sublabel)
+          item.addEventListener('click', () => {
+            if (item.getAttribute('aria-disabled') === 'true') return
+            selectedGeminiModel = model.label
+            modelTrigger.textContent = model.shortLabel
+            modelTrigger.setAttribute('aria-label', 'Open mode picker, currently ' + model.shortLabel)
+            dismissGeminiModelMenu()
+          })
+          menu.append(item)
+        }
+        document.body.append(menu)
+      }
+
+      function dismissGeminiModelMenu() {
+        document.querySelector('[role="menu"][data-fixture="gemini-model-menu"]')?.remove()
+        modelTrigger.setAttribute('aria-expanded', 'false')
+      }
 
       function updateSendButton() {
         const hasPrompt = textOf(input).trim().length > 0

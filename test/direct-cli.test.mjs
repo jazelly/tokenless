@@ -262,6 +262,7 @@ test('direct mode rejects visible-only flags before provider or daemon preflight
       '--provider', 'chatgpt',
       '--home', poisonHome,
       '--browser', 'chrome',
+      '--attach-file', poisonHome,
       '--no-open',
       '--prompt', 'must not leave the CLI',
       '--json',
@@ -271,6 +272,7 @@ test('direct mode rejects visible-only flags before provider or daemon preflight
     assert.equal(payload.error.code, 'direct_visible_option')
     assert.match(payload.error.message, /--browser/)
     assert.match(payload.error.message, /--home/)
+    assert.match(payload.error.message, /--attach-file/)
     assert.match(payload.error.message, /--no-open/)
     assert.equal(fs.existsSync(marker), false)
     assert.equal(fs.readFileSync(poisonHome, 'utf8'), 'must remain untouched')

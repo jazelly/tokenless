@@ -19,11 +19,14 @@ import {
 import {
   createNativeMessage,
   isNativeMessage,
+  MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES,
   NATIVE_MESSAGE_TYPES,
   NATIVE_PROTOCOL_VERSION,
+  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from '../shared/native-protocol.js'
 import { NativeDaemonBridge } from './native-daemon-bridge.js'
 import type { BridgeRequest } from '../shared/bridge-protocol.js'
+import type { NativeAttachmentDescriptor, NativeMessage } from '../shared/native-protocol.js'
 import type { ProviderConfig } from '../shared/provider-config.js'
 
 type BridgeRuntimeError = Error & {
@@ -31,6 +34,11 @@ type BridgeRuntimeError = Error & {
   retryable?: boolean
 }
 type ExtensionRecord = Record<string, any>
+type DaemonAttachmentContext = {
+  port: chrome.runtime.Port
+  jobId: string
+  claimToken: string
+}
 
 const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 const DAEMON_JOB_RESPONSE_TYPE = 'tokenless.daemon.job_result'
@@ -43,13 +51,29 @@ const DEBUGGER_PROTOCOL_VERSION = '1.3'
 const POST_SUBMIT_TARGET_TRANSITION_FLAG = 'allowPostSubmitTargetTransition'
 const POST_SUBMIT_TARGET_TRANSITION_PROOF = 'postSubmitTargetTransitionProof'
 const activeDebuggerTabs = new Set<number>()
+const CONTENT_ATTACHMENT_MESSAGE_TYPES = Object.freeze({
+  PREPARE: 'tokenless.bridge.attachment_prepare',
+  CHUNK: 'tokenless.bridge.attachment_chunk',
+  COMMIT: 'tokenless.bridge.attachment_commit',
+  COMMIT_BATCH: 'tokenless.bridge.attachment_commit_batch',
+  ABORT: 'tokenless.bridge.attachment_abort',
+})
+const SAFE_NATIVE_IDENTIFIER = /^[A-Za-z0-9_-]{1,64}$/
 let daemonJobQueue: Promise<void> = Promise.resolve()
 const handledDaemonJobs = new Set<string>()
 const handledDaemonJobOrder: string[] = []
 const MAX_HANDLED_DAEMON_JOBS = 1024
+const pendingNativeBridgeRequests = new Map<string, {
+  port: chrome.runtime.Port
+  expectedType: string
+  timeout: ReturnType<typeof setTimeout>
+  resolve: (message: NativeMessage) => void
+  reject: (error: BridgeRuntimeError) => void
+}>()
 const daemonBridge = new NativeDaemonBridge({
   connectNative: () => chrome.runtime.connectNative(NATIVE_HOST_NAME),
   onMessage: handleDaemonBridgeMessage,
+  onDisconnect: rejectPersistentNativeRequests,
   readRuntimeLastError: () => chrome.runtime.lastError,
 })
 
@@ -86,7 +110,10 @@ function enableSidePanelAction() {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined)
 }
 
-async function runBridgeRequest(request: BridgeRequest) {
+async function runBridgeRequest(
+  request: BridgeRequest,
+  attachmentContext?: DaemonAttachmentContext
+) {
   try {
     if (request.action === BRIDGE_ACTIONS.CAPABILITIES) {
       return createBridgeResponse(request, { ok: true, result: capabilitiesPayload() })
@@ -109,7 +136,9 @@ async function runBridgeRequest(request: BridgeRequest) {
       })
     }
 
-    const tab = await getOrCreateProviderTab(provider, request.targetUrl)
+    const tab = await getOrCreateProviderTab(provider, request.targetUrl, {
+      forceNew: hasVisibleAttachments(request),
+    })
     await focusTab(tab)
     const landedTab = await waitForProviderTabLoaded(tab.id, provider, request.targetUrl)
     const preSubmitUrl = landedTab.pendingUrl || landedTab.url || provider.homeUrl
@@ -157,7 +186,7 @@ async function runBridgeRequest(request: BridgeRequest) {
 
     if (request.action === BRIDGE_ACTIONS.SUBMIT) {
       await validateProviderLanding(landedTab.id, provider, request)
-      const result = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.submit', request })
+      const result = await submitVisiblePrompt(landedTab.id, provider, request, attachmentContext)
       if (isModelControlBlock(result)) return modelControlBlockResponse(request, result)
       return createBridgeResponse(request, { ok: true, result: publicSubmitResult(result) })
     }
@@ -175,7 +204,7 @@ async function runBridgeRequest(request: BridgeRequest) {
 
     if (request.action === BRIDGE_ACTIONS.SUBMIT_AND_READ) {
       await validateProviderLanding(landedTab.id, provider, request)
-      const submit = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.submit', request })
+      const submit = await submitVisiblePrompt(landedTab.id, provider, request, attachmentContext)
       if (isModelControlBlock(submit)) return modelControlBlockResponse(request, submit)
       const readDelayMs = Math.min(Number(request.readDelayMs ?? 2500), 30000)
       await delay(readDelayMs)
@@ -205,6 +234,262 @@ async function runBridgeRequest(request: BridgeRequest) {
   }
 }
 
+async function submitVisiblePrompt(
+  tabId: number | undefined,
+  provider: ProviderConfig,
+  request: BridgeRequest,
+  attachmentContext: DaemonAttachmentContext | undefined
+) {
+  const attachments = request.attachments as NativeAttachmentDescriptor[] | undefined
+  if (!attachments?.length) {
+    return sendToProviderTab(tabId, provider, request, { type: 'tokenless.bridge.submit', request })
+  }
+
+  const prepared = await sendToProviderTab(tabId, provider, request, {
+    type: 'tokenless.bridge.prepare_submit',
+    request,
+  })
+  if (prepared?.status === 'blocked') return prepared
+  if (prepared?.status !== 'prepared') {
+    throw bridgeError(
+      'attachment_content_protocol_mismatch',
+      'Provider page did not prepare model controls and the visible composer before attachment delivery.',
+      false
+    )
+  }
+
+  try {
+    await deliverVisibleAttachments(tabId, provider, request, attachmentContext)
+    const result = await sendToProviderTab(tabId, provider, request, {
+      type: 'tokenless.bridge.submit',
+      request,
+    })
+    if (result?.status !== 'submitted') await abortVisibleAttachments(tabId, provider, request, attachments)
+    return result
+  } catch (error) {
+    await abortVisibleAttachments(tabId, provider, request, attachments)
+    throw error
+  }
+}
+
+async function deliverVisibleAttachments(
+  tabId: number | undefined,
+  provider: ProviderConfig,
+  request: BridgeRequest,
+  context: DaemonAttachmentContext | undefined
+) {
+  const attachments = request.attachments as NativeAttachmentDescriptor[] | undefined
+  if (!attachments?.length) return
+  if (!context) {
+    throw bridgeError(
+      'attachment_transport_unavailable',
+      'Visible attachments require an active daemon-native bridge claim.',
+      false
+    )
+  }
+  for (const descriptor of attachments) {
+    await deliverVisibleAttachment(tabId, provider, request, context, descriptor)
+  }
+  const committed = await sendToProviderTab(tabId, provider, request, {
+    type: CONTENT_ATTACHMENT_MESSAGE_TYPES.COMMIT_BATCH,
+    request,
+    requestId: request.requestId,
+    attachmentIds: attachments.map((descriptor) => descriptor.attachmentId),
+  })
+  requireContentAttachmentStatus(committed, 'attached', attachments[0]!)
+}
+
+async function abortVisibleAttachments(
+  tabId: number | undefined,
+  provider: ProviderConfig,
+  request: BridgeRequest,
+  attachments: NativeAttachmentDescriptor[]
+) {
+  await Promise.all(attachments.map((descriptor) => sendToProviderTab(tabId, provider, request, {
+    type: CONTENT_ATTACHMENT_MESSAGE_TYPES.ABORT,
+    request,
+    requestId: request.requestId,
+    attachmentId: descriptor.attachmentId,
+  }).catch(() => undefined)))
+}
+
+async function deliverVisibleAttachment(
+  tabId: number | undefined,
+  provider: ProviderConfig,
+  request: BridgeRequest,
+  context: DaemonAttachmentContext,
+  descriptor: NativeAttachmentDescriptor
+) {
+  let handleId: string | undefined
+  try {
+    const prepared = await sendToProviderTab(tabId, provider, request, {
+      type: CONTENT_ATTACHMENT_MESSAGE_TYPES.PREPARE,
+      request,
+      requestId: request.requestId,
+      attachmentId: descriptor.attachmentId,
+      name: descriptor.name,
+      mimeType: descriptor.type,
+      size: descriptor.size,
+      sha256: descriptor.sha256,
+    })
+    requireContentAttachmentStatus(prepared, 'prepared', descriptor)
+
+    const openedMessage = await persistentNativeRequest(context.port, NATIVE_MESSAGE_TYPES.ATTACHMENT_OPEN, {
+      jobId: context.jobId,
+      claimToken: context.claimToken,
+      bundleId: descriptor.bundleId,
+      attachmentId: descriptor.attachmentId,
+    })
+    const opened = validateOpenedAttachment(openedMessage, descriptor)
+    handleId = opened.handleId
+    const maxBytes = Math.min(opened.maxChunkBytes, MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES)
+    let offset = 0
+
+    while (true) {
+      const readMessage = await persistentNativeRequest(context.port, NATIVE_MESSAGE_TYPES.ATTACHMENT_READ, {
+        jobId: context.jobId,
+        claimToken: context.claimToken,
+        handleId,
+        offset,
+        maxBytes,
+      })
+      const chunk = validateAttachmentChunk(readMessage, handleId, offset, descriptor.size, maxBytes)
+      if (chunk.nextOffset > offset) {
+        const received = await sendToProviderTab(tabId, provider, request, {
+          type: CONTENT_ATTACHMENT_MESSAGE_TYPES.CHUNK,
+          request,
+          requestId: request.requestId,
+          attachmentId: descriptor.attachmentId,
+          offset,
+          dataBase64: chunk.dataBase64,
+        })
+        requireContentAttachmentStatus(received, 'chunk_received', descriptor)
+      }
+      offset = chunk.nextOffset
+      if (chunk.eof) break
+    }
+
+    const closedMessage = await persistentNativeRequest(context.port, NATIVE_MESSAGE_TYPES.ATTACHMENT_CLOSE, {
+      jobId: context.jobId,
+      claimToken: context.claimToken,
+      handleId,
+    })
+    validateClosedAttachment(closedMessage, handleId)
+    handleId = undefined
+
+  } catch (error) {
+    if (handleId) {
+      await persistentNativeRequest(context.port, NATIVE_MESSAGE_TYPES.ATTACHMENT_CLOSE, {
+        jobId: context.jobId,
+        claimToken: context.claimToken,
+        handleId,
+      }).catch(() => undefined)
+    }
+    throw error
+  }
+}
+
+function requireContentAttachmentStatus(
+  response: ExtensionRecord,
+  expectedStatus: string,
+  descriptor: NativeAttachmentDescriptor
+) {
+  if (response?.status === expectedStatus) return
+  if (response?.status === 'blocked') {
+    throw bridgeError(
+      stringOrUndefined(response.stopReason) ?? 'attachment_upload_blocked',
+      stringOrUndefined(response.message) ?? `Visible attachment ${descriptor.name} was blocked by the provider page.`,
+      Boolean(response.retryable)
+    )
+  }
+  throw bridgeError(
+    'attachment_content_protocol_mismatch',
+    `Provider page did not acknowledge ${descriptor.name} with ${expectedStatus}.`,
+    false
+  )
+}
+
+function validateOpenedAttachment(message: NativeMessage, descriptor: NativeAttachmentDescriptor) {
+  const result = objectRecord(message.result)
+  const handleId = stringOrUndefined(result.handleId)
+  const maxChunkBytes = result.maxChunkBytes
+  if (
+    !handleId ||
+    !SAFE_NATIVE_IDENTIFIER.test(handleId) ||
+    result.protocol !== VISIBLE_ATTACHMENT_PROTOCOL_VERSION ||
+    result.bundleId !== descriptor.bundleId ||
+    result.attachmentId !== descriptor.attachmentId ||
+    result.name !== descriptor.name ||
+    result.type !== descriptor.type ||
+    result.size !== descriptor.size ||
+    result.sha256 !== descriptor.sha256 ||
+    typeof maxChunkBytes !== 'number' ||
+    !Number.isSafeInteger(maxChunkBytes) ||
+    maxChunkBytes < 1 ||
+    maxChunkBytes > MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES
+  ) {
+    throw bridgeError(
+      'attachment_native_protocol_mismatch',
+      'Native host returned an invalid or mismatched visible attachment handle.',
+      false
+    )
+  }
+  return { handleId, maxChunkBytes }
+}
+
+function validateAttachmentChunk(
+  message: NativeMessage,
+  handleId: string,
+  expectedOffset: number,
+  expectedSize: number,
+  maxBytes: number
+) {
+  const result = objectRecord(message.result)
+  const dataBase64 = typeof result.dataBase64 === 'string' ? result.dataBase64 : ''
+  const byteLength = strictBase64ByteLength(dataBase64)
+  const nextOffset = result.nextOffset
+  const eof = result.eof
+  if (
+    result.handleId !== handleId ||
+    result.offset !== expectedOffset ||
+    byteLength === null ||
+    byteLength > maxBytes ||
+    typeof nextOffset !== 'number' ||
+    !Number.isSafeInteger(nextOffset) ||
+    nextOffset !== expectedOffset + byteLength ||
+    nextOffset > expectedSize ||
+    typeof eof !== 'boolean' ||
+    (eof ? nextOffset !== expectedSize : byteLength === 0 || nextOffset >= expectedSize)
+  ) {
+    throw bridgeError(
+      'attachment_native_protocol_mismatch',
+      'Native host returned a malformed or non-sequential visible attachment chunk.',
+      false
+    )
+  }
+  return { dataBase64, nextOffset, eof }
+}
+
+function validateClosedAttachment(message: NativeMessage, handleId: string) {
+  const result = objectRecord(message.result)
+  if (result.handleId !== handleId || result.status !== 'closed') {
+    throw bridgeError(
+      'attachment_native_protocol_mismatch',
+      'Native host did not confirm the verified visible attachment handle was closed.',
+      false
+    )
+  }
+}
+
+function strictBase64ByteLength(value: string) {
+  if (value === '') return 0
+  if (value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    return null
+  }
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  return (value.length / 4) * 3 - padding
+}
+
 function postSubmitReadRequest(
   provider: ProviderConfig,
   request: BridgeRequest,
@@ -229,6 +514,7 @@ function postSubmitReadRequest(
       targetUrl: canonicalProviderUrl(effectiveTargetUrl),
       sourceKind: transitionSource.kind,
       customGptId: transitionSource.customGptId,
+      projectId: transitionSource.projectId,
       answerBaseline: submit.answerBaseline,
       nonce: internalTransitionNonce(),
     }
@@ -342,6 +628,7 @@ function boundedViewportCoordinate(value: unknown, viewport: unknown) {
 }
 
 function handleDaemonBridgeMessage(port: chrome.runtime.Port, message: ExtensionRecord) {
+  if (settlePersistentNativeRequest(port, message)) return
   if (!isNativeMessage(message) || message.type !== NATIVE_MESSAGE_TYPES.DAEMON_JOB || !message.ok) return
   const job = objectRecord(message.result).job
   const identity = daemonJobIdentity(job)
@@ -349,25 +636,100 @@ function handleDaemonBridgeMessage(port: chrome.runtime.Port, message: Extension
   handledDaemonJobs.add(identity.key)
   daemonJobQueue = daemonJobQueue
     .catch(() => undefined)
-    .then(() => runClaimedDaemonJob(job))
+    .then(() => runClaimedDaemonJob(job, port))
     .then(
-      () => postDaemonBridgeReady(port, identity),
-      () => postDaemonBridgeReady(port, identity)
+      () => recordHandledDaemonJob(identity),
+      () => {
+        handledDaemonJobs.delete(identity.key)
+      }
     )
 }
 
-function postDaemonBridgeReady(
+function persistentNativeRequest(
   port: chrome.runtime.Port,
-  identity: { key: string; jobId: string; claimToken: string }
-) {
-  const posted = daemonBridge.postIfConnected(port, createNativeMessage(NATIVE_MESSAGE_TYPES.DAEMON_READY, {
-    jobId: identity.jobId,
-    claimToken: identity.claimToken,
-  }))
-  if (!posted) {
-    handledDaemonJobs.delete(identity.key)
-    return
+  type: string,
+  payload: ExtensionRecord
+): Promise<NativeMessage> {
+  return new Promise((resolve, reject) => {
+    const requestId = persistentNativeRequestId()
+    const timeout = setTimeout(() => {
+      const pending = pendingNativeBridgeRequests.get(requestId)
+      if (!pending) return
+      pendingNativeBridgeRequests.delete(requestId)
+      reject(bridgeError('native_host_timeout', `Native host did not respond to ${type}.`, true))
+    }, NATIVE_REQUEST_TIMEOUT_MS)
+    pendingNativeBridgeRequests.set(requestId, {
+      port,
+      expectedType: type,
+      timeout,
+      resolve,
+      reject,
+    })
+    const posted = daemonBridge.postIfConnected(port, createNativeMessage(type, {
+      ...stripUndefined(payload),
+      requestId,
+    }))
+    if (!posted) {
+      clearTimeout(timeout)
+      pendingNativeBridgeRequests.delete(requestId)
+      reject(bridgeError(
+        'native_bridge_disconnected',
+        `Persistent native bridge disconnected before ${type} could be sent.`,
+        true
+      ))
+    }
+  })
+}
+
+function settlePersistentNativeRequest(port: chrome.runtime.Port, message: ExtensionRecord) {
+  if (!isNativeMessage(message) || typeof message.requestId !== 'string') return false
+  const pending = pendingNativeBridgeRequests.get(message.requestId)
+  if (!pending) return false
+  pendingNativeBridgeRequests.delete(message.requestId)
+  clearTimeout(pending.timeout)
+  if (pending.port !== port || pending.expectedType !== message.type) {
+    pending.reject(bridgeError(
+      'native_protocol_mismatch',
+      `Persistent native response did not match ${pending.expectedType}.`,
+      false
+    ))
+    return true
   }
+  if (message.ok !== true) {
+    const nativeError = objectRecord(message.error)
+    pending.reject(bridgeError(
+      stringOrUndefined(nativeError.code) ?? 'native_host_error',
+      stringOrUndefined(nativeError.message) ?? `Native host rejected ${pending.expectedType}.`,
+      Boolean(nativeError.retryable)
+    ))
+    return true
+  }
+  pending.resolve(message)
+  return true
+}
+
+function rejectPersistentNativeRequests(port: chrome.runtime.Port) {
+  for (const [requestId, pending] of pendingNativeBridgeRequests) {
+    if (pending.port !== port) continue
+    pendingNativeBridgeRequests.delete(requestId)
+    clearTimeout(pending.timeout)
+    pending.reject(bridgeError(
+      'native_bridge_disconnected',
+      'Persistent native bridge disconnected during visible attachment transfer.',
+      true
+    ))
+  }
+}
+
+function persistentNativeRequestId() {
+  let requestId = ''
+  do {
+    requestId = `native-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
+  } while (pendingNativeBridgeRequests.has(requestId))
+  return requestId
+}
+
+function recordHandledDaemonJob(identity: { key: string }) {
   handledDaemonJobOrder.push(identity.key)
   while (handledDaemonJobOrder.length > MAX_HANDLED_DAEMON_JOBS) {
     const oldest = handledDaemonJobOrder.shift()
@@ -383,7 +745,7 @@ function daemonJobIdentity(job: unknown) {
   return { key: `${jobId}\u0000${claimToken}`, jobId, claimToken }
 }
 
-async function runClaimedDaemonJob(job: unknown) {
+async function runClaimedDaemonJob(job: unknown, port: chrome.runtime.Port) {
   const claimedJob = objectRecord(job)
   const jobId = stringOrUndefined(claimedJob.job_id)
   const claimToken = stringOrUndefined(claimedJob.claim_token)
@@ -399,49 +761,120 @@ async function runClaimedDaemonJob(job: unknown) {
     })
   }
 
+  let normalized: ReturnType<typeof normalizeBridgeResponse>
   try {
     const bridgeRequest = daemonJobToBridgeRequest(claimedJob)
     const validation = validateBridgeRequest(bridgeRequest)
     if (validation.ok === false) {
       throw bridgeError(validation.error.code, validation.error.message, validation.error.retryable)
     }
-    const bridgeResponse = await runBridgeRequest(validation.request)
-    const normalized = normalizeBridgeResponse(bridgeResponse)
-    const completion = await completeDaemonJob({
-      jobId,
-      claimToken,
-      result: normalized.ok ? normalized.result : undefined,
-      error: normalized.ok ? undefined : normalized.error,
-    })
-
-    if (!completion?.ok) {
-      return daemonRunResponse({
-        ok: false,
-        job: claimedJob,
-        bridge: normalized,
-        error: normalizeRuntimeError(completion?.error, 'daemon_completion_failed', 'Daemon job completion failed.'),
-      })
-    }
-
-    return daemonRunResponse({
-      ok: normalized.ok,
-      job: completion.result,
-      bridge: normalized,
-      result: normalized.result,
-      error: normalized.error,
-    })
+    const bridgeResponse = await runBridgeRequest(validation.request, { port, jobId, claimToken })
+    normalized = normalizeBridgeResponse(bridgeResponse)
   } catch (error) {
     const serialized = normalizeRuntimeError(error, 'daemon_run_failed', 'Daemon job run failed.')
-    const completion = await completeDaemonJob({
+    const completion = await completeClaimedDaemonJob({
+      port,
       jobId,
       claimToken,
       error: serialized,
-    }).catch(() => undefined)
+    })
     return daemonRunResponse({
       ok: false,
-      job: completion?.ok ? completion.result : claimedJob,
+      job: completion?.result ?? claimedJob,
       error: serialized,
     })
+  }
+
+  const completion = await completeClaimedDaemonJob({
+    port,
+    jobId,
+    claimToken,
+    result: normalized.ok ? normalized.result : undefined,
+    error: normalized.ok ? undefined : normalized.error,
+  })
+  return daemonRunResponse({
+    ok: normalized.ok,
+    job: completion.result ?? claimedJob,
+    bridge: normalized,
+    result: normalized.result,
+    error: normalized.error,
+  })
+}
+
+async function completeClaimedDaemonJob({
+  port,
+  jobId,
+  claimToken,
+  result,
+  error,
+}: {
+  port: chrome.runtime.Port
+  jobId: string
+  claimToken: string
+  result?: unknown
+  error?: unknown
+}) {
+  let retryDelayMs = 100
+  while (daemonBridge.isConnectedPort(port)) {
+    let completion: ExtensionRecord | undefined
+    let completionError: unknown
+    try {
+      completion = await completeDaemonJob({ jobId, claimToken, result, error })
+      if (completion?.ok === true) {
+        await confirmDaemonBridgeReady(port, jobId, claimToken)
+        return completion
+      }
+      completionError = completion?.error
+    } catch (caught) {
+      completionError = caught
+    }
+
+    // The short-lived completion host may have committed the terminal state
+    // before its response was lost. A correlated READY probe is safe because
+    // the persistent native host releases the claim only after it verifies the
+    // daemon job is terminal.
+    try {
+      await confirmDaemonBridgeReady(port, jobId, claimToken)
+      return { ok: true, result: undefined, reconciled: true }
+    } catch {
+      if (!daemonBridge.isConnectedPort(port)) break
+    }
+
+    const normalizedError = normalizeRuntimeError(
+      completionError,
+      'daemon_completion_failed',
+      'Daemon job completion failed.'
+    )
+    if (normalizedError.retryable === false) {
+      daemonBridge.reconnectIfCurrent(port)
+      throw bridgeError(normalizedError.code, normalizedError.message, false)
+    }
+    await delay(retryDelayMs)
+    retryDelayMs = Math.min(5000, retryDelayMs * 2)
+  }
+  throw bridgeError(
+    'native_bridge_disconnected',
+    'Persistent native bridge disconnected before daemon completion was confirmed.',
+    true
+  )
+}
+
+async function confirmDaemonBridgeReady(
+  port: chrome.runtime.Port,
+  jobId: string,
+  claimToken: string
+) {
+  const message = await persistentNativeRequest(port, NATIVE_MESSAGE_TYPES.DAEMON_READY, {
+    jobId,
+    claimToken,
+  })
+  const result = objectRecord(message.result)
+  if (result.status !== 'ready' || result.jobId !== jobId) {
+    throw bridgeError(
+      'native_protocol_mismatch',
+      'Native host did not confirm the completed daemon claim was released.',
+      false
+    )
   }
 }
 
@@ -464,6 +897,7 @@ function daemonJobToBridgeRequest(job: ExtensionRecord): BridgeRequest {
     model: requestJson.model,
     modelFallbacks: requestJson.modelFallbacks,
     effort: requestJson.effort,
+    attachments: requestJson.attachments,
     metadata: requestJson.metadata,
   })
 }
@@ -626,8 +1060,13 @@ function stripUndefined(value: ExtensionRecord) {
   return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined))
 }
 
-async function getOrCreateProviderTab(provider: ProviderConfig, targetUrl: unknown) {
+async function getOrCreateProviderTab(
+  provider: ProviderConfig,
+  targetUrl: unknown,
+  options: { forceNew?: boolean } = {}
+) {
   const requestedUrl = safeProviderUrl(provider, targetUrl)
+  if (options.forceNew) return chrome.tabs.create({ url: requestedUrl, active: true })
   const candidates: chrome.tabs.Tab[] = []
   for (const host of provider.hosts) {
     candidates.push(...await chrome.tabs.query({ url: `https://${host}/*` }))
@@ -654,6 +1093,10 @@ async function getOrCreateProviderTab(provider: ProviderConfig, targetUrl: unkno
     return visibleCandidate
   }
   return chrome.tabs.create({ url: requestedUrl, active: true })
+}
+
+function hasVisibleAttachments(request: BridgeRequest) {
+  return Array.isArray(request.attachments) && request.attachments.length > 0
 }
 
 async function focusTab(tab: chrome.tabs.Tab) {
@@ -767,6 +1210,7 @@ function hasPostSubmitTargetTransitionProof(provider: ProviderConfig, request: B
     proof.targetUrl === canonicalProviderUrl(request.targetUrl) &&
     proof.sourceKind === transitionSource?.kind &&
     proof.customGptId === transitionSource?.customGptId &&
+    proof.projectId === transitionSource?.projectId &&
     typeof proof.nonce === 'string' &&
     proof.nonce.length >= 16 &&
     Number.isInteger(proofBaseline.count) &&

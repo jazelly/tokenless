@@ -25,6 +25,8 @@ pub const MAX_NATIVE_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const NATIVE_INPUT_QUEUE_CAPACITY: usize = 4;
 pub const VISIBLE_ATTACHMENT_PROTOCOL: &str = "tokenless.visible-attachment.v1";
 pub const MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES: usize = 512 * 1024;
+const MAX_VISIBLE_ATTACHMENTS: usize = 100;
+const MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES: u64 = 512 * 1024 * 1024;
 
 const BRIDGE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BRIDGE_ERROR_INTERVAL: Duration = Duration::from_secs(1);
@@ -144,6 +146,7 @@ struct AttachmentHandle {
     file: File,
     next_offset: u64,
     digest: Sha256,
+    integrity_verified: bool,
 }
 
 #[derive(Debug)]
@@ -170,10 +173,14 @@ pub struct NativeHost {
 
 impl NativeHost {
     pub fn new(store: JobStore) -> Self {
-        let _ = cleanup_orphaned_visible_attachment_bundles(
-            store.home_dir(),
-            VISIBLE_ATTACHMENT_ORPHAN_TTL,
-        );
+        let _ = store.active_request_jsons().and_then(|requests| {
+            let active_bundle_ids = visible_attachment_bundle_ids(&requests)?;
+            cleanup_orphaned_visible_attachment_bundles(
+                store.home_dir(),
+                VISIBLE_ATTACHMENT_ORPHAN_TTL,
+                &active_bundle_ids,
+            )
+        });
         Self {
             config_store: ConfigStore::new(store.home_dir()),
             marker_path: store.home_dir().join(BRIDGE_MARKER_FILE_NAME),
@@ -384,6 +391,15 @@ impl NativeHost {
         {
             return Err(DaemonError::ClaimRejected(job_id.to_owned()));
         }
+        let completed = self.store.get_job(job_id)?;
+        if !matches!(
+            completed.status,
+            JobStatus::Succeeded | JobStatus::Failed | JobStatus::Canceled | JobStatus::TimedOut
+        ) {
+            return Err(DaemonError::InvalidInput(
+                "daemon bridge cannot release a claim before the job is terminal".to_owned(),
+            ));
+        }
         self.close_attachment_handles_for_job(job_id);
         let _ = cleanup_visible_attachment_bundles_for_request(
             self.store.home_dir(),
@@ -413,13 +429,12 @@ impl NativeHost {
             .current_claim
             .clone()
             .ok_or_else(|| {
-                DaemonError::InvalidInput("visible attachment bridge has no active claim".to_owned())
+                DaemonError::InvalidInput(
+                    "visible attachment bridge has no active claim".to_owned(),
+                )
             })?;
         if active.job_id != job_id
-            || !crate::constant_time_eq(
-                active.claim_token.as_bytes(),
-                claim_token.as_bytes(),
-            )
+            || !crate::constant_time_eq(active.claim_token.as_bytes(), claim_token.as_bytes())
         {
             return Err(DaemonError::ClaimRejected(job_id));
         }
@@ -441,8 +456,7 @@ impl NativeHost {
         let descriptor = visible_attachment_descriptors(&active.request_json)?
             .into_iter()
             .find(|descriptor| {
-                descriptor.bundle_id == bundle_id
-                    && descriptor.attachment_id == attachment_id
+                descriptor.bundle_id == bundle_id && descriptor.attachment_id == attachment_id
             })
             .ok_or_else(|| {
                 DaemonError::InvalidInput(
@@ -474,6 +488,7 @@ impl NativeHost {
                 file,
                 next_offset: 0,
                 digest: Sha256::new(),
+                integrity_verified: false,
             },
         );
         Ok(json!({
@@ -504,12 +519,9 @@ impl NativeHost {
                 "visible attachment maxBytes must be between 1 and {MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES}"
             )));
         }
-        let handle = self
-            .attachment_handles
-            .get_mut(&handle_id)
-            .ok_or_else(|| {
-                DaemonError::InvalidInput("visible attachment handle does not exist".to_owned())
-            })?;
+        let handle = self.attachment_handles.get_mut(&handle_id).ok_or_else(|| {
+            DaemonError::InvalidInput("visible attachment handle does not exist".to_owned())
+        })?;
         if handle.job_id != active.job_id
             || !crate::constant_time_eq(
                 handle.claim_token.as_bytes(),
@@ -571,6 +583,9 @@ impl NativeHost {
                 "visible attachment chunk exceeded the native output frame".to_owned(),
             ));
         }
+        if eof {
+            handle.integrity_verified = true;
+        }
         Ok(result)
     }
 
@@ -587,6 +602,12 @@ impl NativeHost {
             )
         {
             return Err(DaemonError::ClaimRejected(active.job_id));
+        }
+        if handle.next_offset != handle.descriptor.size || !handle.integrity_verified {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment cannot close before a complete, integrity-verified read"
+                    .to_owned(),
+            ));
         }
         self.attachment_handles.remove(&handle_id);
         Ok(json!({ "handleId": handle_id, "status": "closed" }))
@@ -948,39 +969,62 @@ fn visible_attachment_descriptors(request: &Value) -> Result<Vec<VisibleAttachme
     let values = attachments.as_array().ok_or_else(|| {
         DaemonError::InvalidInput("visible attachment descriptors must be an array".to_owned())
     })?;
+    if values.is_empty() || values.len() > MAX_VISIBLE_ATTACHMENTS {
+        return Err(DaemonError::InvalidInput(format!(
+            "visible attachment requests must contain between 1 and {MAX_VISIBLE_ATTACHMENTS} files"
+        )));
+    }
     let mut descriptors = Vec::with_capacity(values.len());
-    let mut identities = HashSet::new();
+    let mut attachment_ids = HashSet::new();
+    let mut bundle_id: Option<String> = None;
+    let mut total_bytes = 0_u64;
     for value in values {
         let descriptor: VisibleAttachmentDescriptor = serde_json::from_value(value.clone())
             .map_err(|_| {
                 DaemonError::InvalidInput(
                     "visible attachment descriptor has invalid or unknown fields".to_owned(),
                 )
-            })?;
+        })?;
         validate_visible_attachment_descriptor(&descriptor)?;
-        if !identities.insert((
-            descriptor.bundle_id.clone(),
-            descriptor.attachment_id.clone(),
-        )) {
+        if bundle_id
+            .as_ref()
+            .is_some_and(|expected| expected != &descriptor.bundle_id)
+        {
+            return Err(DaemonError::InvalidInput(
+                "visible attachments in one request must share one bundle identifier".to_owned(),
+            ));
+        }
+        bundle_id.get_or_insert_with(|| descriptor.bundle_id.clone());
+        if !attachment_ids.insert(descriptor.attachment_id.clone()) {
             return Err(DaemonError::InvalidInput(
                 "visible attachment descriptor identity is duplicated".to_owned(),
             ));
+        }
+        if descriptor.size > MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES {
+            return Err(DaemonError::InvalidInput(format!(
+                "visible attachment size exceeds {MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES} bytes"
+            )));
+        }
+        total_bytes = total_bytes.checked_add(descriptor.size).ok_or_else(|| {
+            DaemonError::InvalidInput("visible attachment aggregate size overflowed".to_owned())
+        })?;
+        if total_bytes > MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES {
+            return Err(DaemonError::InvalidInput(format!(
+                "visible attachment aggregate size exceeds {MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES} bytes"
+            )));
         }
         descriptors.push(descriptor);
     }
     Ok(descriptors)
 }
 
-fn validate_visible_attachment_descriptor(
-    descriptor: &VisibleAttachmentDescriptor,
-) -> Result<()> {
+fn validate_visible_attachment_descriptor(descriptor: &VisibleAttachmentDescriptor) -> Result<()> {
     if descriptor.protocol != VISIBLE_ATTACHMENT_PROTOCOL {
         return Err(DaemonError::InvalidInput(format!(
             "visible attachment protocol must be {VISIBLE_ATTACHMENT_PROTOCOL}"
         )));
     }
-    if !safe_attachment_id(&descriptor.bundle_id)
-        || !safe_attachment_id(&descriptor.attachment_id)
+    if !safe_attachment_id(&descriptor.bundle_id) || !safe_attachment_id(&descriptor.attachment_id)
     {
         return Err(DaemonError::InvalidInput(
             "visible attachment descriptor contains an unsafe identifier".to_owned(),
@@ -1033,9 +1077,10 @@ fn safe_media_type(value: &str) -> bool {
     if parts.next().is_some() || primary.is_empty() || subtype.is_empty() {
         return false;
     }
-    primary.bytes().chain(subtype.bytes()).all(|byte| {
-        byte.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&byte)
-    })
+    primary
+        .bytes()
+        .chain(subtype.bytes())
+        .all(|byte| byte.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&byte))
 }
 
 fn safe_attachment_id(value: &str) -> bool {
@@ -1045,10 +1090,7 @@ fn safe_attachment_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
-fn required_safe_attachment_id(
-    object: &Map<String, Value>,
-    field: &'static str,
-) -> Result<String> {
+fn required_safe_attachment_id(object: &Map<String, Value>, field: &'static str) -> Result<String> {
     let value = required_string(object, field)?;
     if !safe_attachment_id(&value) {
         return Err(DaemonError::InvalidInput(format!(
@@ -1173,7 +1215,7 @@ fn same_opened_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool 
         && left.created().ok() == right.created().ok()
 }
 
-fn cleanup_visible_attachment_bundles_for_request(
+pub(crate) fn cleanup_visible_attachment_bundles_for_request(
     home_dir: &Path,
     request: &Value,
 ) -> Result<usize> {
@@ -1190,9 +1232,22 @@ fn cleanup_visible_attachment_bundles_for_request(
     Ok(removed)
 }
 
+fn visible_attachment_bundle_ids(requests: &[Value]) -> Result<HashSet<String>> {
+    let mut bundle_ids = HashSet::new();
+    for request in requests {
+        bundle_ids.extend(
+            visible_attachment_descriptors(request)?
+                .into_iter()
+                .map(|descriptor| descriptor.bundle_id),
+        );
+    }
+    Ok(bundle_ids)
+}
+
 fn cleanup_orphaned_visible_attachment_bundles(
     home_dir: &Path,
     ttl: Duration,
+    active_bundle_ids: &HashSet<String>,
 ) -> Result<usize> {
     let expected_root = home_dir.join(VISIBLE_ATTACHMENT_DIRECTORY);
     let root_metadata = match fs::symlink_metadata(&expected_root) {
@@ -1219,7 +1274,7 @@ fn cleanup_orphaned_visible_attachment_bundles(
         let Some(bundle_id) = name.to_str() else {
             continue;
         };
-        if !safe_attachment_id(bundle_id) {
+        if !safe_attachment_id(bundle_id) || active_bundle_ids.contains(bundle_id) {
             continue;
         }
         let metadata = fs::symlink_metadata(entry.path())?;
@@ -1506,8 +1561,470 @@ fn sync_parent(_parent: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CreateJob;
+    use crate::{CompleteJob, CreateJob};
     use std::io::Cursor;
+
+    const TEST_ATTACHMENT_BUNDLE_ID: &str = "bundle-one";
+    const TEST_ATTACHMENT_ID: &str = "attachment-one";
+
+    struct ActiveAttachmentTest {
+        _tempdir: tempfile::TempDir,
+        store: JobStore,
+        host: NativeHost,
+        job_id: String,
+        claim_token: String,
+        bundle_path: PathBuf,
+    }
+
+    impl ActiveAttachmentTest {
+        fn open(&mut self) -> Value {
+            let job_id = self.job_id.clone();
+            let claim_token = self.claim_token.clone();
+            self.host.handle_message(json!({
+                "protocol": NATIVE_PROTOCOL,
+                "type": "tokenless.native.attachment_open",
+                "jobId": job_id,
+                "claimToken": claim_token,
+                "bundleId": TEST_ATTACHMENT_BUNDLE_ID,
+                "attachmentId": TEST_ATTACHMENT_ID,
+            }))
+        }
+
+        fn read(&mut self, handle_id: &str, offset: u64, max_bytes: u64) -> Value {
+            let job_id = self.job_id.clone();
+            let claim_token = self.claim_token.clone();
+            self.host.handle_message(json!({
+                "protocol": NATIVE_PROTOCOL,
+                "type": "tokenless.native.attachment_read",
+                "jobId": job_id,
+                "claimToken": claim_token,
+                "handleId": handle_id,
+                "offset": offset,
+                "maxBytes": max_bytes,
+            }))
+        }
+
+        fn close(&mut self, handle_id: &str) -> Value {
+            let job_id = self.job_id.clone();
+            let claim_token = self.claim_token.clone();
+            self.host.handle_message(json!({
+                "protocol": NATIVE_PROTOCOL,
+                "type": "tokenless.native.attachment_close",
+                "jobId": job_id,
+                "claimToken": claim_token,
+                "handleId": handle_id,
+            }))
+        }
+
+        fn complete(&mut self, completion: CompleteJob) -> Value {
+            let job_id = self.job_id.clone();
+            let claim_token = self.claim_token.clone();
+            let mut message = json!({
+                "protocol": NATIVE_PROTOCOL,
+                "type": "tokenless.native.daemon_complete_job",
+                "jobId": job_id,
+                "claimToken": claim_token,
+            });
+            let object = message.as_object_mut().unwrap();
+            match completion {
+                CompleteJob::Succeeded { result_json } => {
+                    object.insert("result".to_owned(), result_json);
+                }
+                CompleteJob::Failed { error_json } => {
+                    object.insert("error".to_owned(), error_json);
+                }
+            }
+            self.host.handle_message(message)
+        }
+    }
+
+    fn active_attachment_test(bytes: &[u8], declared_sha256: Option<&str>) -> ActiveAttachmentTest {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let bundle_path = store
+            .home_dir()
+            .join(VISIBLE_ATTACHMENT_DIRECTORY)
+            .join(TEST_ATTACHMENT_BUNDLE_ID);
+        fs::create_dir_all(&bundle_path).unwrap();
+        fs::write(bundle_path.join(format!("{TEST_ATTACHMENT_ID}.bin")), bytes).unwrap();
+        let sha256 = declared_sha256
+            .map(str::to_owned)
+            .unwrap_or_else(|| hex_lower(&Sha256::digest(bytes)));
+        let job = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({
+                    "prompt": "attach this",
+                    "attachments": [{
+                        "protocol": VISIBLE_ATTACHMENT_PROTOCOL,
+                        "bundleId": TEST_ATTACHMENT_BUNDLE_ID,
+                        "attachmentId": TEST_ATTACHMENT_ID,
+                        "name": "evidence.txt",
+                        "type": "text/plain",
+                        "size": bytes.len(),
+                        "sha256": sha256,
+                    }],
+                }),
+            ))
+            .unwrap();
+        let mut host = NativeHost::new(store.clone());
+        host.connect_bridge(None, None).unwrap();
+        let push = host.poll_bridge_now().unwrap().unwrap();
+        assert_eq!(push["result"]["job"]["job_id"], job.job_id);
+        let claim_token = push["result"]["job"]["claim_token"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        ActiveAttachmentTest {
+            _tempdir: tempdir,
+            store,
+            host,
+            job_id: job.job_id,
+            claim_token,
+            bundle_path,
+        }
+    }
+
+    fn assert_native_error_contains(response: &Value, code: &str, message: &str) {
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], code);
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(message),
+            "unexpected native error: {response}"
+        );
+    }
+
+    fn test_attachment_descriptor(bundle_id: &str, attachment_id: &str, size: u64) -> Value {
+        json!({
+            "protocol": VISIBLE_ATTACHMENT_PROTOCOL,
+            "bundleId": bundle_id,
+            "attachmentId": attachment_id,
+            "name": format!("{attachment_id}.txt"),
+            "type": "text/plain",
+            "size": size,
+            "sha256": "0".repeat(64),
+        })
+    }
+
+    #[test]
+    fn visible_attachment_request_limits_are_revalidated_by_native_host() {
+        let empty = visible_attachment_descriptors(&json!({ "attachments": [] })).unwrap_err();
+        assert!(empty.to_string().contains("between 1 and 100"));
+
+        let mixed_bundles = visible_attachment_descriptors(&json!({
+            "attachments": [
+                test_attachment_descriptor("bundle-one", "first", 1),
+                test_attachment_descriptor("bundle-two", "second", 1),
+            ],
+        }))
+        .unwrap_err();
+        assert!(mixed_bundles.to_string().contains("share one bundle"));
+
+        let duplicate = visible_attachment_descriptors(&json!({
+            "attachments": [
+                test_attachment_descriptor("bundle-one", "duplicate", 1),
+                test_attachment_descriptor("bundle-one", "duplicate", 1),
+            ],
+        }))
+        .unwrap_err();
+        assert!(duplicate.to_string().contains("duplicated"));
+
+        let oversized = visible_attachment_descriptors(&json!({
+            "attachments": [
+                test_attachment_descriptor("bundle-one", "first", 300 * 1024 * 1024),
+                test_attachment_descriptor("bundle-one", "second", 300 * 1024 * 1024),
+            ],
+        }))
+        .unwrap_err();
+        assert!(oversized.to_string().contains("aggregate size"));
+
+        let too_many = (0..=MAX_VISIBLE_ATTACHMENTS)
+            .map(|index| {
+                test_attachment_descriptor("bundle-one", &format!("attachment-{index}"), 0)
+            })
+            .collect::<Vec<_>>();
+        let too_many = visible_attachment_descriptors(&json!({ "attachments": too_many }))
+            .unwrap_err();
+        assert!(too_many.to_string().contains("between 1 and 100"));
+    }
+
+    #[test]
+    fn visible_attachment_multi_read_must_verify_integrity_before_close() {
+        let bytes = b"visible attachment split across several reads";
+        let mut fixture = active_attachment_test(bytes, None);
+        let opened = fixture.open();
+        assert_eq!(opened["ok"], true);
+        let handle_id = opened["result"]["handleId"].as_str().unwrap().to_owned();
+
+        let premature = fixture.close(&handle_id);
+        assert_native_error_contains(
+            &premature,
+            "invalid_native_message",
+            "complete, integrity-verified read",
+        );
+        assert!(fixture.host.attachment_handles.contains_key(&handle_id));
+
+        let first = fixture.read(&handle_id, 0, 5);
+        assert_eq!(first["ok"], true);
+        assert_eq!(first["result"]["nextOffset"], 5);
+        assert_eq!(first["result"]["eof"], false);
+        let after_first = fixture.close(&handle_id);
+        assert_native_error_contains(
+            &after_first,
+            "invalid_native_message",
+            "complete, integrity-verified read",
+        );
+
+        let second = fixture.read(&handle_id, 5, 7);
+        assert_eq!(second["ok"], true);
+        assert_eq!(second["result"]["nextOffset"], 12);
+        assert_eq!(second["result"]["eof"], false);
+        let final_chunk = fixture.read(&handle_id, 12, MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES as u64);
+        assert_eq!(final_chunk["ok"], true);
+        assert_eq!(final_chunk["result"]["nextOffset"], bytes.len());
+        assert_eq!(final_chunk["result"]["eof"], true);
+
+        let mut reconstructed = STANDARD
+            .decode(first["result"]["dataBase64"].as_str().unwrap())
+            .unwrap();
+        reconstructed.extend(
+            STANDARD
+                .decode(second["result"]["dataBase64"].as_str().unwrap())
+                .unwrap(),
+        );
+        reconstructed.extend(
+            STANDARD
+                .decode(final_chunk["result"]["dataBase64"].as_str().unwrap())
+                .unwrap(),
+        );
+        assert_eq!(reconstructed, bytes);
+        assert!(
+            fixture.host.attachment_handles[&handle_id].integrity_verified,
+            "EOF must record a successful size and SHA-256 verification"
+        );
+
+        let closed = fixture.close(&handle_id);
+        assert_eq!(closed["ok"], true);
+        assert_eq!(closed["result"]["status"], "closed");
+        assert!(!fixture.host.attachment_handles.contains_key(&handle_id));
+        assert!(fixture.bundle_path.exists());
+
+        let early_ready = fixture.host.handle_message(json!({
+            "protocol": NATIVE_PROTOCOL,
+            "type": "tokenless.native.daemon_ready",
+            "requestId": "ready-before-terminal",
+            "jobId": fixture.job_id,
+            "claimToken": fixture.claim_token,
+        }));
+        assert_native_error_contains(
+            &early_ready,
+            "invalid_native_message",
+            "before the job is terminal",
+        );
+        assert!(fixture.bundle_path.exists());
+        assert!(fixture
+            .host
+            .bridge
+            .as_ref()
+            .unwrap()
+            .current_claim
+            .is_some());
+
+        let completed = fixture.complete(CompleteJob::Succeeded {
+            result_json: json!({ "status": "submitted" }),
+        });
+        assert_eq!(completed["ok"], true);
+        assert_eq!(completed["result"]["status"], "succeeded");
+        assert_eq!(
+            fixture.store.get_job(&fixture.job_id).unwrap().status,
+            JobStatus::Succeeded
+        );
+        assert!(!fixture.bundle_path.exists());
+        let ready = fixture.host.handle_message(json!({
+            "protocol": NATIVE_PROTOCOL,
+            "type": "tokenless.native.daemon_ready",
+            "requestId": "ready-after-terminal",
+            "jobId": fixture.job_id,
+            "claimToken": fixture.claim_token,
+        }));
+        assert_eq!(ready["ok"], true);
+        assert_eq!(ready["requestId"], "ready-after-terminal");
+    }
+
+    #[test]
+    fn visible_attachment_rejects_wrong_claim_and_undeclared_descriptor() {
+        let bytes = b"claim-bound bytes";
+        let mut fixture = active_attachment_test(bytes, None);
+        let job_id = fixture.job_id.clone();
+        let claim_token = fixture.claim_token.clone();
+
+        let undeclared = fixture.host.handle_message(json!({
+            "protocol": NATIVE_PROTOCOL,
+            "type": "tokenless.native.attachment_open",
+            "jobId": job_id,
+            "claimToken": claim_token,
+            "bundleId": TEST_ATTACHMENT_BUNDLE_ID,
+            "attachmentId": "not-declared",
+        }));
+        assert_native_error_contains(
+            &undeclared,
+            "invalid_native_message",
+            "not declared by the active job",
+        );
+
+        let wrong_claim = fixture.host.handle_message(json!({
+            "protocol": NATIVE_PROTOCOL,
+            "type": "tokenless.native.attachment_open",
+            "jobId": fixture.job_id,
+            "claimToken": "wrong-claim-token",
+            "bundleId": TEST_ATTACHMENT_BUNDLE_ID,
+            "attachmentId": TEST_ATTACHMENT_ID,
+        }));
+        assert_native_error_contains(&wrong_claim, "claim_rejected", "claim rejected");
+        assert!(fixture.host.attachment_handles.is_empty());
+
+        let opened = fixture.open();
+        assert_eq!(opened["ok"], true);
+        let handle_id = opened["result"]["handleId"].as_str().unwrap().to_owned();
+        let wrong_read_claim = fixture.host.handle_message(json!({
+            "protocol": NATIVE_PROTOCOL,
+            "type": "tokenless.native.attachment_read",
+            "jobId": fixture.job_id,
+            "claimToken": "wrong-claim-token",
+            "handleId": handle_id,
+            "offset": 0,
+            "maxBytes": bytes.len(),
+        }));
+        assert_native_error_contains(&wrong_read_claim, "claim_rejected", "claim rejected");
+        assert_eq!(fixture.host.attachment_handles[&handle_id].next_offset, 0);
+
+        let read = fixture.read(&handle_id, 0, bytes.len() as u64);
+        assert_eq!(read["ok"], true);
+        assert_eq!(read["result"]["eof"], true);
+        assert_eq!(fixture.close(&handle_id)["ok"], true);
+        assert_eq!(
+            fixture.complete(CompleteJob::Succeeded {
+                result_json: json!({ "status": "submitted" }),
+            })["ok"],
+            true
+        );
+    }
+
+    #[test]
+    fn visible_attachment_wrong_offset_does_not_advance_or_poison_handle() {
+        let bytes = b"strictly sequential bytes";
+        let mut fixture = active_attachment_test(bytes, None);
+        let opened = fixture.open();
+        let handle_id = opened["result"]["handleId"].as_str().unwrap().to_owned();
+
+        let wrong_offset = fixture.read(&handle_id, 1, bytes.len() as u64);
+        assert_native_error_contains(&wrong_offset, "invalid_native_message", "expected offset 0");
+        let handle = &fixture.host.attachment_handles[&handle_id];
+        assert_eq!(handle.next_offset, 0);
+        assert!(!handle.integrity_verified);
+
+        let read = fixture.read(&handle_id, 0, bytes.len() as u64);
+        assert_eq!(read["ok"], true);
+        assert_eq!(read["result"]["eof"], true);
+        assert_eq!(fixture.close(&handle_id)["ok"], true);
+        assert_eq!(
+            fixture.complete(CompleteJob::Succeeded {
+                result_json: json!({ "status": "submitted" }),
+            })["ok"],
+            true
+        );
+    }
+
+    #[test]
+    fn visible_attachment_corrupt_hash_cannot_close_and_terminal_failure_cleans_up() {
+        let bytes = b"these bytes do not match the declared digest";
+        let mut fixture = active_attachment_test(bytes, Some(&"0".repeat(64)));
+        let opened = fixture.open();
+        assert_eq!(opened["ok"], true);
+        let handle_id = opened["result"]["handleId"].as_str().unwrap().to_owned();
+
+        let corrupt = fixture.read(&handle_id, 0, bytes.len() as u64);
+        assert_native_error_contains(
+            &corrupt,
+            "invalid_native_message",
+            "SHA-256 integrity check failed",
+        );
+        let handle = &fixture.host.attachment_handles[&handle_id];
+        assert_eq!(handle.next_offset, bytes.len() as u64);
+        assert!(!handle.integrity_verified);
+
+        let close = fixture.close(&handle_id);
+        assert_native_error_contains(
+            &close,
+            "invalid_native_message",
+            "complete, integrity-verified read",
+        );
+        assert!(fixture.host.attachment_handles.contains_key(&handle_id));
+
+        let failed = fixture.complete(CompleteJob::Failed {
+            error_json: json!({
+                "code": "attachment_integrity_failed",
+                "message": "The staged attachment failed verification.",
+            }),
+        });
+        assert_eq!(failed["ok"], true);
+        assert_eq!(failed["result"]["status"], "failed");
+        assert!(fixture.host.attachment_handles.is_empty());
+        assert_eq!(
+            fixture.store.get_job(&fixture.job_id).unwrap().status,
+            JobStatus::Failed
+        );
+        assert!(!fixture.bundle_path.exists());
+    }
+
+    #[test]
+    fn orphan_cleanup_preserves_expired_bundle_for_active_queued_job() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let attachment_root = store.home_dir().join(VISIBLE_ATTACHMENT_DIRECTORY);
+        let active_bundle = attachment_root.join("active-bundle");
+        let orphan_bundle = attachment_root.join("orphan-bundle");
+        fs::create_dir_all(&active_bundle).unwrap();
+        fs::create_dir_all(&orphan_bundle).unwrap();
+        fs::write(active_bundle.join("active-attachment.bin"), b"active").unwrap();
+        fs::write(orphan_bundle.join("orphan-attachment.bin"), b"orphan").unwrap();
+        store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({
+                    "prompt": "keep active upload",
+                    "attachments": [{
+                        "protocol": VISIBLE_ATTACHMENT_PROTOCOL,
+                        "bundleId": "active-bundle",
+                        "attachmentId": "active-attachment",
+                        "name": "active.txt",
+                        "type": "text/plain",
+                        "size": 6,
+                        "sha256": "0".repeat(64),
+                    }],
+                }),
+            ))
+            .unwrap();
+        let active_bundle_ids =
+            visible_attachment_bundle_ids(&store.active_request_jsons().unwrap()).unwrap();
+
+        let removed = cleanup_orphaned_visible_attachment_bundles(
+            store.home_dir(),
+            Duration::ZERO,
+            &active_bundle_ids,
+        )
+        .unwrap();
+
+        assert_eq!(removed, 1);
+        assert!(active_bundle.exists());
+        assert!(!orphan_bundle.exists());
+    }
 
     #[test]
     fn framing_round_trip_versions_request_and_response() {
@@ -1636,6 +2153,16 @@ mod tests {
             JobStatus::Queued
         );
 
+        store
+            .complete_job(
+                &first.job_id,
+                &first_claim_token,
+                CompleteJob::Succeeded {
+                    result_json: json!({ "status": "submitted" }),
+                },
+            )
+            .unwrap();
+
         let ready = host.handle_message(json!({
             "protocol": NATIVE_PROTOCOL,
             "type": "tokenless.native.daemon_ready",
@@ -1706,6 +2233,16 @@ mod tests {
                 .job_id,
             first.job_id
         );
+
+        store
+            .complete_job(
+                &first.job_id,
+                &first_token,
+                CompleteJob::Succeeded {
+                    result_json: json!({ "status": "submitted" }),
+                },
+            )
+            .unwrap();
 
         let accepted = host.handle_message(json!({
             "protocol": NATIVE_PROTOCOL,

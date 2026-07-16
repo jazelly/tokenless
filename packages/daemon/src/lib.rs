@@ -845,7 +845,12 @@ impl JobStore {
             params![JobStatus::Canceled.as_str(), error_json, now, job_id],
         )?;
         if affected == 1 {
-            return get_job_with_conn(&conn, job_id);
+            let job = get_job_with_conn(&conn, job_id)?;
+            let _ = native_host::cleanup_visible_attachment_bundles_for_request(
+                self.home_dir(),
+                &job.request_json,
+            );
+            return Ok(job);
         }
         let job = get_job_with_conn(&conn, job_id)?;
         Err(DaemonError::InvalidJobState {
@@ -853,6 +858,23 @@ impl JobStore {
             expected: "queued, claimed, or running",
             actual: job.status,
         })
+    }
+
+    pub(crate) fn active_request_jsons(&self) -> Result<Vec<Value>> {
+        let conn = self.connection()?;
+        let mut statement = conn.prepare(
+            "SELECT request_json
+             FROM jobs
+             WHERE status IN ('queued', 'claimed', 'running')",
+        )?;
+        let requests = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .map(|request| {
+                let request = request?;
+                serde_json::from_str(&request).map_err(to_sql_error)
+            })
+            .collect::<std::result::Result<Vec<Value>, _>>()?;
+        Ok(requests)
     }
 
     fn initialize(&self) -> Result<()> {
@@ -2230,6 +2252,40 @@ mod tests {
             store.get_job(&created.job_id).unwrap().status,
             JobStatus::Succeeded | JobStatus::Canceled
         ));
+    }
+
+    #[test]
+    fn canceling_queued_job_cleans_staged_visible_attachment_bundle() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let bundle_path = store.home_dir().join("attachments").join("cancel-bundle");
+        fs::create_dir_all(&bundle_path).unwrap();
+        fs::write(bundle_path.join("cancel-attachment.bin"), b"cancel me").unwrap();
+        let job = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({
+                    "prompt": "cancel this upload",
+                    "attachments": [{
+                        "protocol": native_host::VISIBLE_ATTACHMENT_PROTOCOL,
+                        "bundleId": "cancel-bundle",
+                        "attachmentId": "cancel-attachment",
+                        "name": "cancel.txt",
+                        "type": "text/plain",
+                        "size": 9,
+                        "sha256": "0".repeat(64),
+                    }],
+                }),
+            ))
+            .unwrap();
+
+        let canceled = store
+            .cancel_job(&job.job_id, Some(json!({ "source": "test" })))
+            .unwrap();
+
+        assert_eq!(canceled.status, JobStatus::Canceled);
+        assert!(!bundle_path.exists());
     }
 
     #[tokio::test]
