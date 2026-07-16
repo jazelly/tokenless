@@ -1,6 +1,9 @@
 # Chrome Web Store release checklist
 
 This checklist is for the release owner. It is not part of ordinary user setup.
+The exact package, listing, privacy, distribution, and reviewer copy lives in
+[the Chrome Web Store submission source of truth](chrome-web-store/submission.md).
+Update that document before changing the Dashboard.
 
 ## One-time identity binding
 
@@ -19,9 +22,17 @@ The native-host manifest authorizes exactly this extension ID. Do not change the
 1. Run `npm test` and `npm run test:e2e`.
 2. Run `npm run pack:extension --workspace tokenless-browser-session-bridge`.
 3. Verify the zip contains the Manifest V3 production files and icons, but no source maps or declaration files.
-4. Upload the zip, complete the Store privacy-practices form using [PRIVACY.md](../PRIVACY.md), and provide the policy URL from the published repository.
-5. Review permission disclosures: `debugger`, `nativeMessaging`, `scripting`, `tabs`, `sidePanel`, and the explicit provider host permissions. Confirm the packaged service worker uses debugger only for validated `Input.dispatchMouseEvent` clicks and always detaches.
-6. Run `npm run verify:extension-release` and publish only after it succeeds.
+4. Upload the zip, complete every Dashboard field from
+   [the submission source of truth](chrome-web-store/submission.md), and verify
+   the live dedicated privacy-policy URL.
+5. Review permission disclosures for `debugger`, `nativeMessaging`, `scripting`,
+   `sidePanel`, and the explicit provider host permissions. Confirm the named
+   `tabs` permission is absent and the packaged service worker uses debugger
+   only for validated `Input.dispatchMouseEvent` clicks and always detaches.
+6. Run `npm run verify:extension-release` and submit only after it succeeds.
+7. Confirm the released `tokenless` CLI uses the Store item ID by default and
+   that the reviewer command also passes the ID explicitly.
+8. Use deferred publishing and wait for explicit publication approval.
 
 ## User-facing promise
 

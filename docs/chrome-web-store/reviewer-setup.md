@@ -3,6 +3,10 @@
 Use this document to prepare and verify the exact reviewer instructions for the
 single Tokenless extension.
 
+The exact Dashboard copy and release gate are maintained in
+[the Chrome Web Store submission source of truth](submission.md). If this
+walkthrough and that document differ, update this walkthrough before review.
+
 ## Release inputs
 
 Fill these values only after the primary Chrome Web Store draft creates its
@@ -10,10 +14,10 @@ package key and permanent extension ID:
 
 | Value | Final value |
 | --- | --- |
-| Chrome Web Store extension ID | `{{CHROME_WEB_STORE_EXTENSION_ID}}` |
+| Chrome Web Store extension ID | `cgiocagnojoiblhlkmdjacklcmpbbimf` |
 | Released npm CLI version | `{{TOKENLESS_NPM_VERSION}}` |
 | Privacy policy URL | `https://vertile.ai/products/tokenless/privacy` |
-| Support email | `info@vertile.ai` |
+| Support email | `hello@vertile.ai` |
 
 ## Reviewer prerequisites
 
@@ -30,7 +34,10 @@ fresh local Tokenless home:
 
 ```bash
 export TOKENLESS_HOME="$(mktemp -d)"
-npx tokenless@{{TOKENLESS_NPM_VERSION}} setup --provider chatgpt --json
+npx tokenless@{{TOKENLESS_NPM_VERSION}} setup \
+  --provider chatgpt \
+  --extension-id cgiocagnojoiblhlkmdjacklcmpbbimf \
+  --json
 npx tokenless@{{TOKENLESS_NPM_VERSION}} doctor --json
 ```
 
@@ -41,6 +48,9 @@ Expected setup result:
 - setup opens only the selected provider's HTTPS page when no bridge is live;
 - setup reports a live extension bridge;
 - no provider sign-in, CAPTCHA, or rate limit is bypassed.
+
+The explicit extension ID is deliberate. Keep it in reviewer instructions even
+after the released CLI default has been corrected.
 
 After normal provider sign-in, run:
 
@@ -86,7 +96,9 @@ The reviewer may inspect the primary extension manifest and package. Confirm:
   control click at a time. The extension sends a pressed and released
   `Input.dispatchMouseEvent`, then detaches; it never uses Network, Storage,
   Fetch, Runtime, DOM, or Page CDP commands.
-- No `cookies`, `history`, `webRequest`, or `webRequestBlocking` permission.
+- No `tabs`, `cookies`, `history`, `webRequest`, or `webRequestBlocking`
+  permission. The four provider host permissions provide URL access only for
+  matching provider tabs.
 - No remote executable code.
 - No extension page is opened automatically to act as a task runner.
 - Native Messaging is local and explicitly set up by the user.
@@ -99,7 +111,8 @@ Prepare these assets in the Store dashboard, without user data:
    local history.
 2. 1280×800 screenshot: Settings panel showing provider order, language
    controls, and local-only wording.
-3. A copy of `submission-copy.md`, with final release values substituted.
+3. A copy of [the submission source of truth](submission.md), with the final
+   npm version substituted in the Dashboard test instructions.
 4. Verification evidence: `npm test`, clean-profile setup, and the sample
    visible-session run.
 
