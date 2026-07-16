@@ -7,3 +7,6 @@ packages/*/dist/
 .DS_Store
 
 .env
+
+.workbuddy-ai/
+docs/
