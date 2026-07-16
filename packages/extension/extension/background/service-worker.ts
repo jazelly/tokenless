@@ -114,27 +114,40 @@ async function runBridgeRequest(request: BridgeRequest) {
     const landedTab = await waitForProviderTabLoaded(tab.id, provider, request.targetUrl)
     const preSubmitUrl = landedTab.pendingUrl || landedTab.url || provider.homeUrl
 
-    if (request.action === BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS) {
+    if (
+      request.action === BRIDGE_ACTIONS.INSPECT_CONTROLS ||
+      request.action === BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS
+    ) {
       await validateProviderLanding(landedTab.id, provider, request)
       const result = await sendToProviderTab(landedTab.id, provider, request, {
-        type: 'tokenless.bridge.inspect_chatgpt_controls',
+        type: request.action === BRIDGE_ACTIONS.INSPECT_CONTROLS
+          ? 'tokenless.bridge.inspect_controls'
+          : 'tokenless.bridge.inspect_chatgpt_controls',
         request,
       })
       return createBridgeResponse(request, { ok: true, result })
     }
 
-    if (request.action === BRIDGE_ACTIONS.CONFIGURE_CHATGPT) {
+    if (
+      request.action === BRIDGE_ACTIONS.CONFIGURE_CONTROLS ||
+      request.action === BRIDGE_ACTIONS.CONFIGURE_CHATGPT
+    ) {
       await validateProviderLanding(landedTab.id, provider, request)
       const result = await sendToProviderTab(landedTab.id, provider, request, {
-        type: 'tokenless.bridge.configure_chatgpt',
+        type: request.action === BRIDGE_ACTIONS.CONFIGURE_CONTROLS
+          ? 'tokenless.bridge.configure_controls'
+          : 'tokenless.bridge.configure_chatgpt',
         request,
       })
       if (result?.status === 'blocked') {
+        const legacyChatGptAction = request.action === BRIDGE_ACTIONS.CONFIGURE_CHATGPT
         return createBridgeResponse(request, {
           ok: false,
           error: {
-            code: result.stopReason || 'chatgpt_controls_unavailable',
-            message: result.message || 'ChatGPT controls could not be configured.',
+            code: result.stopReason || (legacyChatGptAction ? 'chatgpt_controls_unavailable' : 'provider_controls_unavailable'),
+            message: result.message || (legacyChatGptAction
+              ? 'ChatGPT controls could not be configured.'
+              : `${provider.label} controls could not be configured.`),
             retryable: Boolean(result.retryable),
           },
         })
@@ -145,6 +158,7 @@ async function runBridgeRequest(request: BridgeRequest) {
     if (request.action === BRIDGE_ACTIONS.SUBMIT) {
       await validateProviderLanding(landedTab.id, provider, request)
       const result = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.submit', request })
+      if (isModelControlBlock(result)) return modelControlBlockResponse(request, result)
       return createBridgeResponse(request, { ok: true, result: publicSubmitResult(result) })
     }
 
@@ -162,6 +176,7 @@ async function runBridgeRequest(request: BridgeRequest) {
     if (request.action === BRIDGE_ACTIONS.SUBMIT_AND_READ) {
       await validateProviderLanding(landedTab.id, provider, request)
       const submit = await sendToProviderTab(landedTab.id, provider, request, { type: 'tokenless.bridge.submit', request })
+      if (isModelControlBlock(submit)) return modelControlBlockResponse(request, submit)
       const readDelayMs = Math.min(Number(request.readDelayMs ?? 2500), 30000)
       await delay(readDelayMs)
       const readRequest = postSubmitReadRequest(provider, request, submit, preSubmitUrl)
@@ -233,6 +248,21 @@ function internalTransitionNonce() {
 
 function startDaemonBridge() {
   daemonBridge.start()
+}
+
+function isModelControlBlock(result: ExtensionRecord) {
+  return result?.status === 'blocked' && result?.stopReason === 'model_control_unavailable'
+}
+
+function modelControlBlockResponse(request: BridgeRequest, result: ExtensionRecord) {
+  return createBridgeResponse(request, {
+    ok: false,
+    error: {
+      code: 'model_control_unavailable',
+      message: result.message || 'The requested visible model is unavailable.',
+      retryable: false,
+    },
+  })
 }
 
 function isProviderContentReadyMessage(message: unknown) {

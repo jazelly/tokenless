@@ -1,17 +1,20 @@
 use crate::config::{write_json_atomic_secure, ConfigStore, ConfigUpdate};
 use crate::{ClaimNextJob, CompleteJob, DaemonError, Job, JobStatus, JobStore, JobSummary, Result};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{SecondsFormat, Utc};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use uuid::Uuid;
 
 pub const NATIVE_PROTOCOL: &str = "tokenless.native.v1";
@@ -20,6 +23,8 @@ pub const BRIDGE_MARKER_FILE_NAME: &str = "extension-bridge.json";
 pub const MAX_NATIVE_INPUT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_NATIVE_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const NATIVE_INPUT_QUEUE_CAPACITY: usize = 4;
+pub const VISIBLE_ATTACHMENT_PROTOCOL: &str = "tokenless.visible-attachment.v1";
+pub const MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES: usize = 512 * 1024;
 
 const BRIDGE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BRIDGE_ERROR_INTERVAL: Duration = Duration::from_secs(1);
@@ -28,6 +33,9 @@ const CLAIM_RENEW_INTERVAL: Duration = Duration::from_secs(10);
 const EVENT_LOOP_INTERVAL: Duration = Duration::from_millis(50);
 const HISTORY_LIMIT: usize = 60;
 const BRIDGE_MARKER_LOCK_FILE_NAME: &str = ".extension-bridge.lock";
+const VISIBLE_ATTACHMENT_DIRECTORY: &str = "attachments";
+const VISIBLE_ATTACHMENT_ORPHAN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+const MAX_OPEN_ATTACHMENT_HANDLES: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +120,30 @@ struct ActiveClaim {
     job_id: String,
     claim_token: String,
     renewal_failed: bool,
+    request_json: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VisibleAttachmentDescriptor {
+    protocol: String,
+    bundle_id: String,
+    attachment_id: String,
+    name: String,
+    #[serde(rename = "type")]
+    media_type: String,
+    size: u64,
+    sha256: String,
+}
+
+#[derive(Debug)]
+struct AttachmentHandle {
+    job_id: String,
+    claim_token: String,
+    descriptor: VisibleAttachmentDescriptor,
+    file: File,
+    next_offset: u64,
+    digest: Sha256,
 }
 
 #[derive(Debug)]
@@ -133,10 +165,15 @@ pub struct NativeHost {
     session_id: String,
     connected_at: String,
     bridge: Option<BridgeState>,
+    attachment_handles: HashMap<String, AttachmentHandle>,
 }
 
 impl NativeHost {
     pub fn new(store: JobStore) -> Self {
+        let _ = cleanup_orphaned_visible_attachment_bundles(
+            store.home_dir(),
+            VISIBLE_ATTACHMENT_ORPHAN_TTL,
+        );
         Self {
             config_store: ConfigStore::new(store.home_dir()),
             marker_path: store.home_dir().join(BRIDGE_MARKER_FILE_NAME),
@@ -144,6 +181,7 @@ impl NativeHost {
             session_id: Uuid::new_v4().to_string(),
             connected_at: timestamp(),
             bridge: None,
+            attachment_handles: HashMap::new(),
         }
     }
 
@@ -225,10 +263,63 @@ impl NativeHost {
                     }
                 };
                 let job = self.store.complete_job(&job_id, &claim_token, completion)?;
+                self.close_attachment_handles_for_job(&job_id);
+                let _ = cleanup_visible_attachment_bundles_for_request(
+                    self.store.home_dir(),
+                    &job.request_json,
+                );
                 Ok((
                     request_type.to_owned(),
                     serde_json::to_value(CompactJobSummary::from_job(&job))?,
                 ))
+            }
+            "tokenless.native.attachment_open" => {
+                ensure_only_fields(
+                    object,
+                    &[
+                        "protocol",
+                        "type",
+                        "requestId",
+                        "jobId",
+                        "claimToken",
+                        "bundleId",
+                        "attachmentId",
+                    ],
+                )?;
+                self.open_visible_attachment(object)
+                    .map(|result| (request_type.to_owned(), result))
+            }
+            "tokenless.native.attachment_read" => {
+                ensure_only_fields(
+                    object,
+                    &[
+                        "protocol",
+                        "type",
+                        "requestId",
+                        "jobId",
+                        "claimToken",
+                        "handleId",
+                        "offset",
+                        "maxBytes",
+                    ],
+                )?;
+                self.read_visible_attachment(object)
+                    .map(|result| (request_type.to_owned(), result))
+            }
+            "tokenless.native.attachment_close" => {
+                ensure_only_fields(
+                    object,
+                    &[
+                        "protocol",
+                        "type",
+                        "requestId",
+                        "jobId",
+                        "claimToken",
+                        "handleId",
+                    ],
+                )?;
+                self.close_visible_attachment(object)
+                    .map(|result| (request_type.to_owned(), result))
             }
             "tokenless.native.read_config" => Ok((
                 request_type.to_owned(),
@@ -282,10 +373,10 @@ impl NativeHost {
     }
 
     fn mark_bridge_ready(&mut self, job_id: &str, claim_token: &str) -> Result<()> {
-        let bridge = self.bridge.as_mut().ok_or_else(|| {
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
             DaemonError::InvalidInput("daemon bridge is not connected".to_owned())
         })?;
-        let active = bridge.current_claim.as_ref().ok_or_else(|| {
+        let active = bridge.current_claim.clone().ok_or_else(|| {
             DaemonError::InvalidInput("daemon bridge has no active claim".to_owned())
         })?;
         if active.job_id != job_id
@@ -293,10 +384,217 @@ impl NativeHost {
         {
             return Err(DaemonError::ClaimRejected(job_id.to_owned()));
         }
+        self.close_attachment_handles_for_job(job_id);
+        let _ = cleanup_visible_attachment_bundles_for_request(
+            self.store.home_dir(),
+            &active.request_json,
+        );
+        let bridge = self.bridge.as_mut().ok_or_else(|| {
+            DaemonError::InvalidInput("daemon bridge is not connected".to_owned())
+        })?;
         bridge.current_claim = None;
         bridge.has_capacity = true;
         bridge.next_poll = Instant::now();
         Ok(())
+    }
+
+    fn require_active_attachment_claim(
+        &mut self,
+        object: &Map<String, Value>,
+    ) -> Result<ActiveClaim> {
+        let job_id = required_string(object, "jobId")?;
+        let claim_token = required_string(object, "claimToken")?;
+        let active = self
+            .bridge
+            .as_ref()
+            .ok_or_else(|| {
+                DaemonError::InvalidInput("visible attachment bridge is not connected".to_owned())
+            })?
+            .current_claim
+            .clone()
+            .ok_or_else(|| {
+                DaemonError::InvalidInput("visible attachment bridge has no active claim".to_owned())
+            })?;
+        if active.job_id != job_id
+            || !crate::constant_time_eq(
+                active.claim_token.as_bytes(),
+                claim_token.as_bytes(),
+            )
+        {
+            return Err(DaemonError::ClaimRejected(job_id));
+        }
+        if active.renewal_failed {
+            return Err(DaemonError::ClaimExpired(active.job_id));
+        }
+        self.store
+            .renew_claim(&active.job_id, &active.claim_token)?;
+        if let Some(bridge) = self.bridge.as_mut() {
+            bridge.next_renewal = Instant::now() + CLAIM_RENEW_INTERVAL;
+        }
+        Ok(active)
+    }
+
+    fn open_visible_attachment(&mut self, object: &Map<String, Value>) -> Result<Value> {
+        let active = self.require_active_attachment_claim(object)?;
+        let bundle_id = required_safe_attachment_id(object, "bundleId")?;
+        let attachment_id = required_safe_attachment_id(object, "attachmentId")?;
+        let descriptor = visible_attachment_descriptors(&active.request_json)?
+            .into_iter()
+            .find(|descriptor| {
+                descriptor.bundle_id == bundle_id
+                    && descriptor.attachment_id == attachment_id
+            })
+            .ok_or_else(|| {
+                DaemonError::InvalidInput(
+                    "visible attachment is not declared by the active job".to_owned(),
+                )
+            })?;
+        if self.attachment_handles.len() >= MAX_OPEN_ATTACHMENT_HANDLES {
+            return Err(DaemonError::InvalidInput(format!(
+                "visible attachment handle limit is {MAX_OPEN_ATTACHMENT_HANDLES}"
+            )));
+        }
+        if self.attachment_handles.values().any(|handle| {
+            handle.job_id == active.job_id
+                && handle.descriptor.bundle_id == descriptor.bundle_id
+                && handle.descriptor.attachment_id == descriptor.attachment_id
+        }) {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment is already open for the active job".to_owned(),
+            ));
+        }
+        let file = open_staged_visible_attachment(self.store.home_dir(), &descriptor)?;
+        let handle_id = Uuid::new_v4().to_string();
+        self.attachment_handles.insert(
+            handle_id.clone(),
+            AttachmentHandle {
+                job_id: active.job_id,
+                claim_token: active.claim_token,
+                descriptor: descriptor.clone(),
+                file,
+                next_offset: 0,
+                digest: Sha256::new(),
+            },
+        );
+        Ok(json!({
+            "handleId": handle_id,
+            "protocol": VISIBLE_ATTACHMENT_PROTOCOL,
+            "bundleId": descriptor.bundle_id,
+            "attachmentId": descriptor.attachment_id,
+            "name": descriptor.name,
+            "type": descriptor.media_type,
+            "size": descriptor.size,
+            "sha256": descriptor.sha256,
+            "maxChunkBytes": MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES,
+        }))
+    }
+
+    fn read_visible_attachment(&mut self, object: &Map<String, Value>) -> Result<Value> {
+        let active = self.require_active_attachment_claim(object)?;
+        let handle_id = required_string(object, "handleId")?;
+        if !safe_attachment_id(&handle_id) {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment handleId is invalid".to_owned(),
+            ));
+        }
+        let offset = required_u64(object, "offset")?;
+        let max_bytes = required_u64(object, "maxBytes")?;
+        if max_bytes == 0 || max_bytes > MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES as u64 {
+            return Err(DaemonError::InvalidInput(format!(
+                "visible attachment maxBytes must be between 1 and {MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES}"
+            )));
+        }
+        let handle = self
+            .attachment_handles
+            .get_mut(&handle_id)
+            .ok_or_else(|| {
+                DaemonError::InvalidInput("visible attachment handle does not exist".to_owned())
+            })?;
+        if handle.job_id != active.job_id
+            || !crate::constant_time_eq(
+                handle.claim_token.as_bytes(),
+                active.claim_token.as_bytes(),
+            )
+        {
+            return Err(DaemonError::ClaimRejected(active.job_id));
+        }
+        if offset != handle.next_offset {
+            return Err(DaemonError::InvalidInput(format!(
+                "visible attachment reads must be sequential; expected offset {}",
+                handle.next_offset
+            )));
+        }
+        if handle.file.metadata()?.len() != handle.descriptor.size {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment size changed after opening".to_owned(),
+            ));
+        }
+        let remaining = handle.descriptor.size.saturating_sub(handle.next_offset);
+        let read_bytes = remaining.min(max_bytes) as usize;
+        let mut bytes = vec![0_u8; read_bytes];
+        if read_bytes > 0 {
+            handle.file.read_exact(&mut bytes)?;
+            handle.digest.update(&bytes);
+            handle.next_offset = handle
+                .next_offset
+                .checked_add(read_bytes as u64)
+                .ok_or_else(|| {
+                    DaemonError::InvalidInput("visible attachment offset overflowed".to_owned())
+                })?;
+        }
+        let eof = handle.next_offset == handle.descriptor.size;
+        if eof {
+            let actual_sha256 = hex_lower(&handle.digest.clone().finalize());
+            if !crate::constant_time_eq(
+                actual_sha256.as_bytes(),
+                handle.descriptor.sha256.as_bytes(),
+            ) {
+                return Err(DaemonError::InvalidInput(
+                    "visible attachment SHA-256 integrity check failed".to_owned(),
+                ));
+            }
+        }
+        let result = json!({
+            "handleId": handle_id,
+            "offset": offset,
+            "nextOffset": handle.next_offset,
+            "eof": eof,
+            "dataBase64": STANDARD.encode(bytes),
+        });
+        if encoded_message_size(&success_response(
+            "tokenless.native.attachment_read",
+            result.clone(),
+            None,
+        ))? > MAX_NATIVE_OUTPUT_BYTES
+        {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment chunk exceeded the native output frame".to_owned(),
+            ));
+        }
+        Ok(result)
+    }
+
+    fn close_visible_attachment(&mut self, object: &Map<String, Value>) -> Result<Value> {
+        let active = self.require_active_attachment_claim(object)?;
+        let handle_id = required_string(object, "handleId")?;
+        let handle = self.attachment_handles.get(&handle_id).ok_or_else(|| {
+            DaemonError::InvalidInput("visible attachment handle does not exist".to_owned())
+        })?;
+        if handle.job_id != active.job_id
+            || !crate::constant_time_eq(
+                handle.claim_token.as_bytes(),
+                active.claim_token.as_bytes(),
+            )
+        {
+            return Err(DaemonError::ClaimRejected(active.job_id));
+        }
+        self.attachment_handles.remove(&handle_id);
+        Ok(json!({ "handleId": handle_id, "status": "closed" }))
+    }
+
+    fn close_attachment_handles_for_job(&mut self, job_id: &str) {
+        self.attachment_handles
+            .retain(|_, handle| handle.job_id != job_id);
     }
 
     fn tick(&mut self) -> Result<Vec<Value>> {
@@ -424,6 +722,7 @@ impl NativeHost {
                 job_id: running.job_id.clone(),
                 claim_token: running.claim_token.clone(),
                 renewal_failed: false,
+                request_json: running.request_json.clone(),
             });
             bridge.next_renewal = Instant::now() + CLAIM_RENEW_INTERVAL;
         }
@@ -640,6 +939,381 @@ pub fn resolve_native_host_home(
 
 pub fn resolve_native_host_home_from_environment() -> Result<PathBuf> {
     resolve_native_host_home(env::var_os("TOKENLESS_HOME"), &env::current_exe()?)
+}
+
+fn visible_attachment_descriptors(request: &Value) -> Result<Vec<VisibleAttachmentDescriptor>> {
+    let Some(attachments) = request.get("attachments") else {
+        return Ok(Vec::new());
+    };
+    let values = attachments.as_array().ok_or_else(|| {
+        DaemonError::InvalidInput("visible attachment descriptors must be an array".to_owned())
+    })?;
+    let mut descriptors = Vec::with_capacity(values.len());
+    let mut identities = HashSet::new();
+    for value in values {
+        let descriptor: VisibleAttachmentDescriptor = serde_json::from_value(value.clone())
+            .map_err(|_| {
+                DaemonError::InvalidInput(
+                    "visible attachment descriptor has invalid or unknown fields".to_owned(),
+                )
+            })?;
+        validate_visible_attachment_descriptor(&descriptor)?;
+        if !identities.insert((
+            descriptor.bundle_id.clone(),
+            descriptor.attachment_id.clone(),
+        )) {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment descriptor identity is duplicated".to_owned(),
+            ));
+        }
+        descriptors.push(descriptor);
+    }
+    Ok(descriptors)
+}
+
+fn validate_visible_attachment_descriptor(
+    descriptor: &VisibleAttachmentDescriptor,
+) -> Result<()> {
+    if descriptor.protocol != VISIBLE_ATTACHMENT_PROTOCOL {
+        return Err(DaemonError::InvalidInput(format!(
+            "visible attachment protocol must be {VISIBLE_ATTACHMENT_PROTOCOL}"
+        )));
+    }
+    if !safe_attachment_id(&descriptor.bundle_id)
+        || !safe_attachment_id(&descriptor.attachment_id)
+    {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment descriptor contains an unsafe identifier".to_owned(),
+        ));
+    }
+    if descriptor.name.is_empty()
+        || descriptor.name.as_bytes().len() > 512
+        || descriptor.name.contains('\0')
+        || descriptor.name.contains('/')
+        || descriptor.name.contains('\\')
+    {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment descriptor contains an unsafe name".to_owned(),
+        ));
+    }
+    if !safe_media_type(&descriptor.media_type) {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment descriptor contains an invalid media type".to_owned(),
+        ));
+    }
+    if descriptor.size > 9_007_199_254_740_991 {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment descriptor size exceeds a safe integer".to_owned(),
+        ));
+    }
+    if descriptor.sha256.len() != 64
+        || !descriptor
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment descriptor contains an invalid SHA-256".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn safe_media_type(value: &str) -> bool {
+    if value.is_empty() || value.len() > 255 || !value.is_ascii() {
+        return false;
+    }
+    let mut parts = value.split('/');
+    let Some(primary) = parts.next() else {
+        return false;
+    };
+    let Some(subtype) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() || primary.is_empty() || subtype.is_empty() {
+        return false;
+    }
+    primary.bytes().chain(subtype.bytes()).all(|byte| {
+        byte.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&byte)
+    })
+}
+
+fn safe_attachment_id(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn required_safe_attachment_id(
+    object: &Map<String, Value>,
+    field: &'static str,
+) -> Result<String> {
+    let value = required_string(object, field)?;
+    if !safe_attachment_id(&value) {
+        return Err(DaemonError::InvalidInput(format!(
+            "visible attachment {field} contains unsafe characters"
+        )));
+    }
+    Ok(value)
+}
+
+fn required_u64(object: &Map<String, Value>, field: &'static str) -> Result<u64> {
+    object.get(field).and_then(Value::as_u64).ok_or_else(|| {
+        DaemonError::InvalidInput(format!(
+            "visible attachment {field} must be a nonnegative integer"
+        ))
+    })
+}
+
+fn ensure_only_fields(object: &Map<String, Value>, allowed: &[&str]) -> Result<()> {
+    for field in object.keys() {
+        if !allowed.contains(&field.as_str()) {
+            return Err(DaemonError::InvalidInput(format!(
+                "unsupported native message field: {field}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn open_staged_visible_attachment(
+    home_dir: &Path,
+    descriptor: &VisibleAttachmentDescriptor,
+) -> Result<File> {
+    validate_visible_attachment_descriptor(descriptor)?;
+    let expected_root = home_dir.join(VISIBLE_ATTACHMENT_DIRECTORY);
+    require_regular_non_symlink_directory(&expected_root, "visible attachment root")?;
+    let root = fs::canonicalize(&expected_root)?;
+    if root != expected_root || !root.starts_with(home_dir) {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment root escaped Tokenless home".to_owned(),
+        ));
+    }
+    let expected_bundle = root.join(&descriptor.bundle_id);
+    require_regular_non_symlink_directory(&expected_bundle, "visible attachment bundle")?;
+    let bundle = fs::canonicalize(&expected_bundle)?;
+    if bundle != expected_bundle || !bundle.starts_with(&root) {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment bundle escaped its staging root".to_owned(),
+        ));
+    }
+    let expected_file = bundle.join(format!("{}.bin", descriptor.attachment_id));
+    let before = fs::symlink_metadata(&expected_file)?;
+    if before.file_type().is_symlink() || !before.is_file() {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment staging entry must be a regular non-symlink file".to_owned(),
+        ));
+    }
+    let canonical_file = fs::canonicalize(&expected_file)?;
+    if canonical_file != expected_file || !canonical_file.starts_with(&bundle) {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment staging entry escaped its bundle".to_owned(),
+        ));
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    open_attachment_file_without_following(&mut options);
+    let file = options.open(&canonical_file)?;
+    let opened = file.metadata()?;
+    let after = fs::symlink_metadata(&expected_file)?;
+    if after.file_type().is_symlink()
+        || !after.is_file()
+        || opened.len() != descriptor.size
+        || after.len() != descriptor.size
+        || !same_opened_file_identity(&opened, &before)
+        || !same_opened_file_identity(&opened, &after)
+    {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment staging entry changed while opening".to_owned(),
+        ));
+    }
+    Ok(file)
+}
+
+fn require_regular_non_symlink_directory(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(DaemonError::InvalidInput(format!(
+            "{label} must be a regular non-symlink directory"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn open_attachment_file_without_following(options: &mut OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    options.custom_flags(libc::O_NOFOLLOW);
+}
+
+#[cfg(windows)]
+fn open_attachment_file_without_following(options: &mut OpenOptions) {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_attachment_file_without_following(_options: &mut OpenOptions) {}
+
+#[cfg(unix)]
+fn same_opened_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn same_opened_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.len() == right.len()
+        && left.modified().ok() == right.modified().ok()
+        && left.created().ok() == right.created().ok()
+}
+
+fn cleanup_visible_attachment_bundles_for_request(
+    home_dir: &Path,
+    request: &Value,
+) -> Result<usize> {
+    let bundles = visible_attachment_descriptors(request)?
+        .into_iter()
+        .map(|descriptor| descriptor.bundle_id)
+        .collect::<HashSet<_>>();
+    let mut removed = 0;
+    for bundle_id in bundles {
+        if remove_visible_attachment_bundle(home_dir, &bundle_id)? {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+fn cleanup_orphaned_visible_attachment_bundles(
+    home_dir: &Path,
+    ttl: Duration,
+) -> Result<usize> {
+    let expected_root = home_dir.join(VISIBLE_ATTACHMENT_DIRECTORY);
+    let root_metadata = match fs::symlink_metadata(&expected_root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment root must be a regular non-symlink directory".to_owned(),
+        ));
+    }
+    let root = fs::canonicalize(&expected_root)?;
+    if root != expected_root || !root.starts_with(home_dir) {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment root escaped Tokenless home".to_owned(),
+        ));
+    }
+    let now = SystemTime::now();
+    let mut removed = 0;
+    for entry in fs::read_dir(&root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(bundle_id) = name.to_str() else {
+            continue;
+        };
+        if !safe_attachment_id(bundle_id) {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(entry.path())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            continue;
+        }
+        let expired = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= ttl);
+        if expired && remove_visible_attachment_bundle(home_dir, bundle_id)? {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+fn remove_visible_attachment_bundle(home_dir: &Path, bundle_id: &str) -> Result<bool> {
+    if !safe_attachment_id(bundle_id) {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment bundle identifier is unsafe".to_owned(),
+        ));
+    }
+    let expected_root = home_dir.join(VISIBLE_ATTACHMENT_DIRECTORY);
+    let root = match fs::canonicalize(&expected_root) {
+        Ok(root) => root,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if root != expected_root || !root.starts_with(home_dir) {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment root escaped Tokenless home".to_owned(),
+        ));
+    }
+    let expected_bundle = root.join(bundle_id);
+    let metadata = match fs::symlink_metadata(&expected_bundle) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(DaemonError::InvalidInput(
+            "refusing to remove an unsafe visible attachment bundle".to_owned(),
+        ));
+    }
+    let bundle = fs::canonicalize(&expected_bundle)?;
+    if bundle != expected_bundle || !bundle.starts_with(&root) {
+        return Err(DaemonError::InvalidInput(
+            "visible attachment bundle escaped its staging root".to_owned(),
+        ));
+    }
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&bundle)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment bundle contains an invalid entry".to_owned(),
+            ));
+        };
+        let Some(attachment_id) = name.strip_suffix(".bin") else {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment bundle contains an unexpected entry".to_owned(),
+            ));
+        };
+        if !safe_attachment_id(attachment_id) {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment bundle contains an unsafe entry".to_owned(),
+            ));
+        }
+        let entry_metadata = fs::symlink_metadata(entry.path())?;
+        if entry_metadata.is_dir() {
+            return Err(DaemonError::InvalidInput(
+                "visible attachment bundle contains a nested directory".to_owned(),
+            ));
+        }
+        entries.push(entry.path());
+    }
+    for entry in entries {
+        fs::remove_file(entry)?;
+    }
+    fs::remove_dir(bundle)?;
+    Ok(true)
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut result = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        result.push(HEX[(byte >> 4) as usize] as char);
+        result.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    result
 }
 
 fn config_update(object: &Map<String, Value>) -> Result<ConfigUpdate> {

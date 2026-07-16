@@ -81,6 +81,28 @@ export {
 
 export type { ResolveNativePlatformPackageOptions } from './platform-package.js'
 
+export {
+  DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES,
+  DEFAULT_VISIBLE_ATTACHMENT_ORPHAN_TTL_MS,
+  VISIBLE_ATTACHMENT_DIRECTORY,
+  VISIBLE_ATTACHMENT_PROTOCOL,
+  cleanupOrphanedVisibleAttachmentBundles,
+  createVisibleAttachmentId,
+  removeStagedVisibleAttachmentBundle,
+  stageVisibleAttachment,
+  stageVisibleAttachments,
+  validateVisibleAttachmentDescriptor,
+  visibleAttachmentBundlePath,
+  visibleAttachmentPath,
+  visibleAttachmentRoot,
+} from './visible-attachments.js'
+
+export type {
+  StageVisibleAttachmentOptions,
+  StageVisibleAttachmentsOptions,
+  VisibleAttachmentDescriptor,
+} from './visible-attachments.js'
+
 export type {
   BridgeMarker,
   ChromiumBrowser,
