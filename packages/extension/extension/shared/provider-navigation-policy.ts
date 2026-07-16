@@ -1,4 +1,4 @@
-import type { ProviderConfig } from './provider-config.js'
+import type { ProviderConfig, ProviderId } from './provider-config.js'
 
 export type ProviderTransitionSource =
   | { kind: 'root'; customGptId: undefined }
@@ -7,6 +7,20 @@ export type ProviderTransitionSource =
 export type ProviderConversationRoute =
   | { kind: 'standard'; customGptId: undefined }
   | { kind: 'custom_gpt'; customGptId: string }
+
+export type ProviderTargetScope = Readonly<{
+  kind: 'landing' | 'conversation' | 'custom_gpt' | 'project' | 'path'
+  key: string
+  id?: string
+}>
+
+export type CanonicalProviderTarget = Readonly<{
+  providerId: ProviderId
+  href: string
+  origin: string
+  pathname: string
+  scope: ProviderTargetScope
+}>
 
 const RESERVED_PROVIDER_PATH_PREFIXES = [
   'about', 'account', 'accounts', 'admin', 'administrator', 'api', 'auth',
@@ -17,22 +31,37 @@ const RESERVED_PROVIDER_PATH_PREFIXES = [
   'support', 'terms', 'upgrade',
 ]
 
+// Provider route identifiers never require these bytes. Rejecting them before URL
+// parsing prevents browser normalization from turning a different raw target into
+// an allowlisted path. Encoded percent is rejected to prevent a second decode from
+// revealing one of the other forbidden bytes.
+const FORBIDDEN_RAW_URL = /[\\\u0000-\u001f\u007f\s]|%(?:00|0[1-9a-f]|1[0-9a-f]|20|23|25|2f|3f|5c|7f)/i
+const MALFORMED_PERCENT_ESCAPE = /%(?![0-9a-f]{2})/i
+
 export function safeProviderTargetUrl(provider: ProviderConfig, targetUrl: unknown) {
-  if (targetUrl === undefined) return provider.homeUrl
-  try {
-    const parsed = new URL(String(targetUrl))
-    return hasSafeProviderAuthority(provider, parsed) ? parsed.href : null
-  } catch {
-    return null
-  }
+  const parsed = parseProviderTarget(provider, targetUrl === undefined ? provider.homeUrl : targetUrl)
+  return parsed ? parsed.href : null
+}
+
+export function canonicalProviderTarget(
+  provider: ProviderConfig,
+  targetUrl: unknown
+): CanonicalProviderTarget | null {
+  const parsed = parseProviderTarget(provider, targetUrl === undefined ? provider.homeUrl : targetUrl)
+  if (!parsed) return null
+  const pathname = canonicalPathname(parsed.pathname)
+  return Object.freeze({
+    providerId: provider.id,
+    href: `${parsed.origin}${pathname}`,
+    origin: parsed.origin,
+    pathname,
+    scope: providerTargetScope(provider, pathname),
+  })
 }
 
 export function isSafeProviderAuthority(provider: ProviderConfig, value: string) {
-  try {
-    return hasSafeProviderAuthority(provider, new URL(value))
-  } catch {
-    return false
-  }
+  const parsed = parseStrictHttpsUrl(value, { allowQuery: true, allowFragment: true })
+  return Boolean(parsed && hasSafeProviderAuthority(provider, parsed))
 }
 
 export function hasSafeProviderAuthority(provider: ProviderConfig, parsed: URL) {
@@ -46,26 +75,19 @@ export function hasSafeProviderAuthority(provider: ProviderConfig, parsed: URL) 
 }
 
 export function canonicalProviderUrl(value: unknown) {
-  try {
-    const parsed = new URL(String(value))
-    return `${parsed.origin}${canonicalPathname(parsed.pathname)}`
-  } catch {
-    return ''
-  }
+  const parsed = parseStrictHttpsUrl(value, { allowQuery: true, allowFragment: true })
+  if (!parsed) return ''
+  return `${parsed.origin}${canonicalPathname(parsed.pathname)}`
 }
 
 export function isCanonicalProviderLandingTarget(provider: ProviderConfig, targetUrl: unknown) {
-  if (typeof targetUrl !== 'string') return false
-  try {
-    const target = new URL(targetUrl)
-    const home = new URL(provider.homeUrl)
-    return (
-      hasSafeProviderAuthority(provider, target) &&
-      canonicalPathname(target.pathname) === canonicalPathname(home.pathname)
-    )
-  } catch {
-    return false
-  }
+  const target = parseProviderRoute(provider, targetUrl)
+  const home = parseProviderTarget(provider, provider.homeUrl)
+  return Boolean(
+    target &&
+    home &&
+    canonicalPathname(target.pathname) === canonicalPathname(home.pathname)
+  )
 }
 
 export function providerTransitionSource(
@@ -75,17 +97,13 @@ export function providerTransitionSource(
   if (isCanonicalProviderLandingTarget(provider, value)) {
     return { kind: 'root', customGptId: undefined }
   }
-  if (provider.id !== 'chatgpt' || typeof value !== 'string') return null
-  try {
-    const parsed = new URL(value)
-    if (!hasSafeProviderAuthority(provider, parsed)) return null
-    const segments = canonicalPathname(parsed.pathname).split('/').filter(Boolean)
-    const customGptId = segments.length === 2 && segments[0] === 'g' ? segments[1] : undefined
-    if (!isCustomGptId(customGptId)) return null
-    return { kind: 'custom_gpt', customGptId: customGptId as string }
-  } catch {
-    return null
-  }
+  if (provider.id !== 'chatgpt') return null
+  const parsed = parseProviderRoute(provider, value)
+  if (!parsed) return null
+  const segments = canonicalPathSegments(parsed.pathname)
+  const customGptId = segments.length === 2 && segments[0] === 'g' ? segments[1] : undefined
+  if (!isCustomGptId(customGptId)) return null
+  return { kind: 'custom_gpt', customGptId: customGptId as string }
 }
 
 export function areProviderTransitionSourcesEquivalent(
@@ -125,44 +143,140 @@ export function providerConversationRoute(
   provider: ProviderConfig,
   value: unknown
 ): ProviderConversationRoute | null {
-  if (typeof value !== 'string') return null
+  const parsed = parseProviderRoute(provider, value)
+  if (!parsed) return null
+  const segments = canonicalPathSegments(parsed.pathname)
+  if (provider.id === 'chatgpt') {
+    if (segments.length === 2 && segments[0] === 'c') {
+      return isOpaqueProviderId(segments[1]) ? { kind: 'standard', customGptId: undefined } : null
+    }
+    return (
+      segments.length === 4 &&
+      segments[0] === 'g' &&
+      segments[2] === 'c' &&
+      isCustomGptId(segments[1]) &&
+      isOpaqueProviderId(segments[3])
+    )
+      ? { kind: 'custom_gpt', customGptId: segments[1] as string }
+      : null
+  }
+  if (provider.id === 'claude') {
+    return segments.length === 2 && segments[0] === 'chat' && isOpaqueProviderId(segments[1])
+      ? { kind: 'standard', customGptId: undefined }
+      : null
+  }
+  if (provider.id === 'gemini') {
+    return segments.length === 2 && segments[0] === 'app' && isOpaqueProviderId(segments[1])
+      ? { kind: 'standard', customGptId: undefined }
+      : null
+  }
+  if (provider.id === 'grok') {
+    return segments.length === 2 && segments[0] === 'c' && isOpaqueProviderId(segments[1])
+      ? { kind: 'standard', customGptId: undefined }
+      : null
+  }
+  return null
+}
+
+function parseProviderTarget(provider: ProviderConfig, value: unknown) {
+  const parsed = parseStrictHttpsUrl(value)
+  return parsed && hasSafeProviderAuthority(provider, parsed) ? parsed : null
+}
+
+// Browser pages may add their own query or fragment after a safe target is opened.
+// Route recognition ignores those values, while safeProviderTargetUrl remains the
+// sole fail-closed validator for caller-supplied targets.
+function parseProviderRoute(provider: ProviderConfig, value: unknown) {
+  const parsed = parseStrictHttpsUrl(value, { allowQuery: true, allowFragment: true })
+  return parsed && hasSafeProviderAuthority(provider, parsed) ? parsed : null
+}
+
+function parseStrictHttpsUrl(
+  value: unknown,
+  {
+    allowQuery = false,
+    allowFragment = false,
+  }: { allowQuery?: boolean; allowFragment?: boolean } = {}
+) {
+  if (typeof value !== 'string' || value === '' || value.trim() !== value) return null
+  if ((!allowQuery && value.includes('?')) || (!allowFragment && value.includes('#'))) return null
+  const routeEnd = value.search(/[?#]/)
+  const routeInput = routeEnd < 0 ? value : value.slice(0, routeEnd)
+  if (FORBIDDEN_RAW_URL.test(routeInput) || MALFORMED_PERCENT_ESCAPE.test(routeInput)) return null
+  let parsed: URL
   try {
-    const parsed = new URL(value)
-    if (!hasSafeProviderAuthority(provider, parsed)) return null
-    const segments = canonicalPathname(parsed.pathname).split('/').filter(Boolean)
-    if (provider.id === 'chatgpt') {
-      if (segments.length === 2 && segments[0] === 'c') {
-        return isOpaqueProviderId(segments[1]) ? { kind: 'standard', customGptId: undefined } : null
-      }
-      return (
-        segments.length === 4 &&
-        segments[0] === 'g' &&
-        segments[2] === 'c' &&
-        isCustomGptId(segments[1]) &&
-        isOpaqueProviderId(segments[3])
-      )
-        ? { kind: 'custom_gpt', customGptId: segments[1] as string }
-        : null
-    }
-    if (provider.id === 'claude') {
-      return segments.length === 2 && segments[0] === 'chat' && isOpaqueProviderId(segments[1])
-        ? { kind: 'standard', customGptId: undefined }
-        : null
-    }
-    if (provider.id === 'gemini') {
-      return segments.length === 2 && segments[0] === 'app' && isOpaqueProviderId(segments[1])
-        ? { kind: 'standard', customGptId: undefined }
-        : null
-    }
-    if (provider.id === 'grok') {
-      return segments.length === 2 && segments[0] === 'c' && isOpaqueProviderId(segments[1])
-        ? { kind: 'standard', customGptId: undefined }
-        : null
-    }
-    return null
+    parsed = new URL(value)
   } catch {
     return null
   }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== '' ||
+    (!allowQuery && parsed.search !== '') ||
+    (!allowFragment && parsed.hash !== '')
+  ) {
+    return null
+  }
+  const rawAuthority = rawUrlAuthority(value)
+  if (!rawAuthority || rawAuthority.toLowerCase() !== parsed.hostname.toLowerCase()) return null
+  return parsed
+}
+
+function rawUrlAuthority(value: string) {
+  const scheme = value.indexOf('://')
+  if (scheme < 0 || value.slice(0, scheme).toLowerCase() !== 'https') return ''
+  const start = scheme + 3
+  const relativeEnd = value.slice(start).search(/[/?#]/)
+  return relativeEnd < 0 ? value.slice(start) : value.slice(start, start + relativeEnd)
+}
+
+function providerTargetScope(provider: ProviderConfig, pathname: string): ProviderTargetScope {
+  const segments = canonicalPathSegments(pathname)
+  const key = (kind: ProviderTargetScope['kind'], id?: string) => (
+    id === undefined ? `${provider.id}:${kind}` : `${provider.id}:${kind}:${id}`
+  )
+
+  const home = parseProviderTarget(provider, provider.homeUrl)
+  if (home && pathname === canonicalPathname(home.pathname)) {
+    return Object.freeze({ kind: 'landing', key: key('landing') })
+  }
+
+  if (provider.id === 'chatgpt' && segments[0] === 'g' && isCustomGptId(segments[1])) {
+    const id = segments[1] as string
+    const kind = id.startsWith('g-p-') ? 'project' : 'custom_gpt'
+    return Object.freeze({ kind, key: key(kind, id), id })
+  }
+
+  if (
+    provider.id === 'claude' &&
+    segments[0] === 'project' &&
+    isOpaqueProviderId(segments[1])
+  ) {
+    const id = segments[1] as string
+    return Object.freeze({ kind: 'project', key: key('project', id), id })
+  }
+
+  const conversationId = providerConversationId(provider, segments)
+  if (conversationId) {
+    return Object.freeze({
+      kind: 'conversation',
+      key: key('conversation', conversationId),
+      id: conversationId,
+    })
+  }
+
+  return Object.freeze({ kind: 'path', key: key('path', pathname), id: pathname })
+}
+
+function providerConversationId(provider: ProviderConfig, segments: string[]) {
+  let candidate: string | undefined
+  if (provider.id === 'chatgpt' && segments.length === 2 && segments[0] === 'c') candidate = segments[1]
+  if (provider.id === 'claude' && segments.length === 2 && segments[0] === 'chat') candidate = segments[1]
+  if (provider.id === 'gemini' && segments.length === 2 && segments[0] === 'app') candidate = segments[1]
+  if (provider.id === 'grok' && segments.length === 2 && segments[0] === 'c') candidate = segments[1]
+  return isOpaqueProviderId(candidate) ? candidate : undefined
 }
 
 function isCustomGptId(value: string | undefined) {
@@ -183,6 +297,14 @@ function isOpaqueProviderId(value: string | undefined) {
   return !RESERVED_PROVIDER_PATH_PREFIXES.some((prefix) => compact.startsWith(prefix))
 }
 
+function canonicalPathSegments(pathname: string) {
+  return canonicalPathname(pathname).split('/').filter(Boolean)
+}
+
 function canonicalPathname(pathname: string) {
-  return pathname.replace(/\/+$/, '') || '/'
+  const normalizedEscapes = pathname.replace(/%([0-9a-f]{2})/gi, (_match, byte: string) => {
+    const character = String.fromCharCode(Number.parseInt(byte, 16))
+    return /^[A-Za-z0-9._~-]$/.test(character) ? character : `%${byte.toUpperCase()}`
+  })
+  return normalizedEscapes.replace(/\/+$/, '') || '/'
 }

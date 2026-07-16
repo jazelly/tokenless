@@ -1886,7 +1886,7 @@ test('provider reads return only visible external citations from the final assis
   }
 })
 
-test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade without blocking submission', { timeout: 30000 }, async () => {
+test('provider controls preserve ChatGPT aliases, use exact labels, and fail closed before submission', { timeout: 30000 }, async () => {
   const { chromium } = await import('playwright')
   const browser = await chromium.launch({ headless: true })
   const chatgpt = await openProviderFixture(browser, 'https://chatgpt.com/', `
@@ -1978,16 +1978,21 @@ test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade 
   `)
   try {
     const inspect = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
-      type: 'tokenless.bridge.inspect_chatgpt_controls',
+      type: 'tokenless.bridge.inspect_controls',
       request: { provider: 'chatgpt', requestId: 'controls-inspect' },
     }))
     assert.equal(inspect.status, 'inspected')
     assert.deepEqual(inspect.controls.efforts.map((item) => item.id), ['instant', 'medium', 'high', 'extra_high', 'pro'])
     assert.deepEqual(inspect.controls.efforts.map((item) => item.available), [true, true, true, false, false])
     assert.deepEqual(inspect.controls.models.map((item) => item.label), ['GPT-5.6 Sol', 'GPT-5.5', 'o3'])
+    const legacyInspect = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.inspect_chatgpt_controls',
+      request: { provider: 'chatgpt', requestId: 'controls-legacy-inspect' },
+    }))
+    assert.deepEqual(legacyInspect.controls.models.map((item) => item.label), ['GPT-5.6 Sol', 'GPT-5.5', 'o3'])
 
     const configure = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
-      type: 'tokenless.bridge.configure_chatgpt',
+      type: 'tokenless.bridge.configure_controls',
       request: {
         provider: 'chatgpt',
         requestId: 'controls-configure',
@@ -2018,22 +2023,65 @@ test('ChatGPT controls use language-neutral DOM roles, select Chat, and degrade 
       request: {
         provider: 'chatgpt',
         requestId: 'controls-submit',
-        prompt: 'Submit even when requested controls are unavailable.',
+        prompt: 'This prompt must not be submitted with an unavailable model.',
         chatSurface: 'chat',
-        model: 'missing-model',
-        modelFallbacks: ['also-missing'],
+        model: 'GPT-5',
         effort: 'pro',
         composerTimeoutMs: 100,
         submitTimeoutMs: 100,
       },
     }))
-    assert.equal(submit.status, 'submitted')
-    assert.equal(submit.configuration.model.status, 'preserved_current')
-    assert.equal(submit.configuration.effort.applied, 'high')
-    assert.match(await chatgpt.page.locator('#prompt-textarea').textContent(), /Submit even when requested controls are unavailable/)
+    assert.equal(submit.status, 'blocked')
+    assert.equal(submit.stopReason, 'model_control_unavailable')
+    assert.equal(submit.model.status, 'unavailable')
+    assert.equal(await chatgpt.page.locator('#prompt-textarea').textContent(), '')
+    assert.match(await chatgpt.page.locator('#intelligence').innerText(), /5\.5/)
     assert.deepEqual(chatgpt.pageErrors, [])
   } finally {
     await chatgpt.context.close()
+    await browser.close()
+  }
+})
+
+test('generic controls report unavailable and block model selection when a provider adapter has no model DOM contract', { timeout: 30000 }, async () => {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch({ headless: true })
+  const gemini = await openProviderFixture(browser, 'https://gemini.google.com/app', `
+    <!doctype html><html><body>
+      <rich-textarea><div class="ql-editor" data-gramm="false" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Enter a prompt for Gemini"></div></rich-textarea>
+      <button aria-label="Send message">Send</button>
+    </body></html>
+  `)
+  try {
+    const inspect = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.inspect_controls',
+      request: { provider: 'gemini', requestId: 'gemini-controls-inspect' },
+    }))
+    assert.equal(inspect.status, 'inspected')
+    assert.equal(inspect.controls.available, false)
+
+    const configure = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.configure_controls',
+      request: { provider: 'gemini', requestId: 'gemini-controls-configure', model: 'Flash' },
+    }))
+    assert.equal(configure.status, 'blocked')
+    assert.equal(configure.stopReason, 'model_control_unavailable')
+
+    const submit = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.submit',
+      request: {
+        provider: 'gemini',
+        requestId: 'gemini-controls-submit',
+        model: 'Flash',
+        prompt: 'Must remain out of the composer.',
+      },
+    }))
+    assert.equal(submit.status, 'blocked')
+    assert.equal(submit.stopReason, 'model_control_unavailable')
+    assert.equal(await gemini.page.locator('[role="textbox"]').textContent(), '')
+    assert.deepEqual(gemini.pageErrors, [])
+  } finally {
+    await gemini.context.close()
     await browser.close()
   }
 })
@@ -2177,6 +2225,20 @@ test('background enables the Settings side panel and jobs create only approved p
             provider: 'chatgpt',
             text: 'Visible DOM answer',
             url: 'https://chatgpt.com/',
+          }
+        }
+        if (message.type === 'tokenless.bridge.inspect_controls') {
+          return {
+            status: 'inspected',
+            provider: message.request.provider,
+            controls: { available: false, efforts: [], models: [] },
+          }
+        }
+        if (message.type === 'tokenless.bridge.configure_controls') {
+          return {
+            status: 'configured',
+            provider: message.request.provider,
+            model: { status: 'selected', requested: message.request.model, applied: message.request.model },
           }
         }
         throw new Error(`Unexpected provider message: ${message.type}`)
@@ -2476,6 +2538,38 @@ test('background enables the Settings side panel and jobs create only approved p
       )
     }
 
+    for (const job of [
+      { jobId: 'job-generic-controls-inspect', action: 'inspect_controls', requestJson: {} },
+      { jobId: 'job-generic-controls-configure', action: 'configure_controls', requestJson: { model: 'Flash' } },
+    ]) {
+      await daemonPort.onMessage.emit({
+        protocol: 'tokenless.native.v1',
+        type: 'tokenless.native.daemon_job',
+        ok: true,
+        result: {
+          job: {
+            job_id: job.jobId,
+            claim_token: `${job.jobId}-private-marker`,
+            provider: 'gemini',
+            action: job.action,
+            status: 'claimed',
+            request_json: job.requestJson,
+          },
+        },
+      })
+    }
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 11)
+    for (const [jobId, expectedType] of [
+      ['job-generic-controls-inspect', 'tokenless.bridge.inspect_controls'],
+      ['job-generic-controls-configure', 'tokenless.bridge.configure_controls'],
+    ]) {
+      const routed = providerMessages.filter(({ message }) => message.request?.requestId === jobId)
+      assert.deepEqual(routed.map(({ message }) => message.type), [
+        'tokenless.bridge.validate_landing',
+        expectedType,
+      ])
+    }
+
     const allNativeMessages = ports.flatMap((port) => port.posted)
     assert.ok(allNativeMessages.length >= 5)
     assert.ok(allNativeMessages.every((message) => message.protocol === 'tokenless.native.v1'))
@@ -2529,6 +2623,8 @@ test('background enables the Settings side panel and jobs create only approved p
         { jobId: 'job-custom-gpt-transition', claimToken: 'custom-positive-private-marker' },
         { jobId: 'job-custom-gpt-mismatch', claimToken: 'custom-mismatch-private-marker' },
         { jobId: 'job-root-custom-mismatch', claimToken: 'root-custom-private-marker' },
+        { jobId: 'job-generic-controls-inspect', claimToken: 'job-generic-controls-inspect-private-marker' },
+        { jobId: 'job-generic-controls-configure', claimToken: 'job-generic-controls-configure-private-marker' },
       ]
     )
   } finally {
@@ -2740,6 +2836,10 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
 
   assert.equal(BRIDGE_ACTIONS.SNAPSHOT_DOM, 'snapshot_dom')
   assert.ok(capabilitiesPayload().actions.includes('snapshot_dom'))
+  assert.equal(BRIDGE_ACTIONS.INSPECT_CONTROLS, 'inspect_controls')
+  assert.equal(BRIDGE_ACTIONS.CONFIGURE_CONTROLS, 'configure_controls')
+  assert.ok(capabilitiesPayload().actions.includes('inspect_controls'))
+  assert.ok(capabilitiesPayload().actions.includes('configure_controls'))
   assert.equal(BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS, 'inspect_chatgpt_controls')
   assert.equal(BRIDGE_ACTIONS.CONFIGURE_CHATGPT, 'configure_chatgpt')
   assert.ok(capabilitiesPayload().actions.includes('inspect_chatgpt_controls'))
@@ -2761,6 +2861,21 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
   })
   assert.equal(chatGptControls.ok, true)
   assert.equal(chatGptControls.request.effort, 'extra_high')
+  const providerControls = validateBridgeRequest({
+    ...baseRequest,
+    provider: 'gemini',
+    action: 'configure_controls',
+    model: '  Flash  ',
+    modelFallbacks: ['  Pro  '],
+  })
+  assert.equal(providerControls.ok, true)
+  assert.equal(providerControls.request.model, 'Flash')
+  assert.deepEqual(providerControls.request.modelFallbacks, ['Pro'])
+  assert.equal(validateBridgeRequest({
+    ...baseRequest,
+    provider: 'grok',
+    action: 'inspect_controls',
+  }).ok, true)
   for (const malformedControls of [
     { ...baseRequest, chatSurface: 'work' },
     { ...baseRequest, effort: 'maximum' },
@@ -2768,6 +2883,9 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     { ...baseRequest, modelFallbacks: 'GPT-5.5' },
     { ...baseRequest, modelFallbacks: Array.from({ length: 9 }, () => 'GPT-5.5') },
     { ...baseRequest, provider: 'gemini', effort: 'high' },
+    { ...baseRequest, provider: 'gemini', action: 'read', model: 'Flash' },
+    { ...baseRequest, provider: 'gemini', action: 'configure_controls', modelFallbacks: ['Pro'] },
+    { ...baseRequest, provider: 'grok', action: 'configure_controls', model: 'Fast\nExpert' },
     { ...baseRequest, provider: 'gemini', action: 'inspect_chatgpt_controls' },
   ]) {
     const validation = validateBridgeRequest(malformedControls)

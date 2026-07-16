@@ -93,6 +93,10 @@ try {
     await runCommand(args)
   } else if (command === 'serve') {
     await serveCommand(args)
+  } else if (command === 'provider-controls' || command === 'inspect-provider-controls') {
+    await providerControlsCommand(args)
+  } else if (command === 'provider-configure') {
+    await providerConfigureCommand(args)
   } else if (command === 'chatgpt-controls' || command === 'inspect-chatgpt-controls') {
     await chatGptControlsCommand(args)
   } else if (command === 'chatgpt-configure') {
@@ -599,13 +603,17 @@ async function chatGptControlsCommand(args: CliArgs) {
   })
 }
 
+async function providerControlsCommand(args: CliArgs) {
+  await executeDaemonJob({ args, action: 'inspect_controls' })
+}
+
+async function providerConfigureCommand(args: CliArgs) {
+  assertProviderConfigureArguments(args, 'provider-configure')
+  await executeDaemonJob({ args, action: 'configure_controls' })
+}
+
 async function chatGptConfigureCommand(args: CliArgs) {
-  if (args.model === undefined && args.effort === undefined && args.thinkingEffort === undefined && args.chatSurface === undefined) {
-    throw usageError(
-      'missing_chatgpt_control',
-      'chatgpt-configure requires --model, --effort, or --chat-surface chat.'
-    )
-  }
+  assertProviderConfigureArguments(args, 'chatgpt-configure')
   await executeDaemonJob({
     args: { ...args, provider: requiredChatGptProvider(args) },
     action: 'configure_chatgpt',
@@ -634,7 +642,7 @@ async function executeDaemonJob({
   const provider = normalizeProvider(
     args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || 'chatgpt'
   )
-  const chatGptControls = resolveChatGptControls({ args, provider, action })
+  const providerControls = resolveProviderControls({ args, provider, action })
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
   const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
   const taskId = deriveTaskId({
@@ -687,7 +695,7 @@ async function executeDaemonJob({
       maxTextChars: action === 'snapshot_dom' && args.maxTextChars !== undefined
         ? Number(args.maxTextChars)
         : undefined,
-      ...chatGptControls,
+      ...providerControls,
       metadata: {
         source: 'tokenless-cli',
         browser: bridge.browser ?? normalizeBrowserId(selectedBrowser),
@@ -1748,7 +1756,24 @@ function requiredChatGptProvider(args: CliArgs) {
   return 'chatgpt'
 }
 
-function resolveChatGptControls({
+function assertProviderConfigureArguments(args: CliArgs, command: string) {
+  if (
+    args.model === undefined &&
+    args.modelFallbacks === undefined &&
+    args.effort === undefined &&
+    args.thinkingEffort === undefined &&
+    args.chatSurface === undefined
+  ) {
+    throw usageError(
+      command === 'chatgpt-configure' ? 'missing_chatgpt_control' : 'missing_provider_control',
+      `${command} requires --model${command === 'chatgpt-configure'
+        ? ', --effort, or --chat-surface chat'
+        : ' or a ChatGPT-only --effort/--chat-surface control'}.`
+    )
+  }
+}
+
+function resolveProviderControls({
   args,
   provider,
   action,
@@ -1757,20 +1782,41 @@ function resolveChatGptControls({
   provider: string
   action: string
 }) {
-  const hasRequestedControl = (
-    args.model !== undefined ||
-    args.modelFallbacks !== undefined ||
+  const hasRequestedModelControl = args.model !== undefined || args.modelFallbacks !== undefined
+  const hasRequestedChatGptControl = (
     args.effort !== undefined ||
     args.thinkingEffort !== undefined ||
     args.chatSurface !== undefined
   )
-  if (provider !== 'chatgpt') {
-    if (hasRequestedControl) {
-      throw usageError('chatgpt_controls_unsupported', '--model, --model-fallback, --effort, and --chat-surface are available only for ChatGPT.')
-    }
-    return {}
+  const inspectionAction = action === 'inspect_controls' || action === 'inspect_chatgpt_controls'
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedChatGptControl)) {
+    throw usageError(
+      'controls_unsupported_for_action',
+      'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
+    )
   }
-  if (action === 'inspect_chatgpt_controls') return {}
+  if (provider !== 'chatgpt' && hasRequestedChatGptControl) {
+    throw usageError(
+      'chatgpt_controls_unsupported',
+      '--effort, --thinking-effort, and --chat-surface are available only for ChatGPT.'
+    )
+  }
+  if (inspectionAction) return {}
+
+  const model = args.model === undefined
+    ? undefined
+    : normalizeVisibleModelLabel(args.model, '--model')
+  const modelFallbacks = args.modelFallbacks === undefined
+    ? undefined
+    : normalizeVisibleModelFallbacks(args.modelFallbacks)
+  if (modelFallbacks !== undefined && model === undefined) {
+    throw usageError('model_fallback_requires_model', '--model-fallback requires --model.')
+  }
+
+  if (provider !== 'chatgpt') {
+    return { model, modelFallbacks }
+  }
+
   const chatSurface = args.chatSurface === undefined ? 'chat' : String(args.chatSurface).trim().toLowerCase()
   if (chatSurface !== 'chat') {
     throw usageError('invalid_chat_surface', 'ChatGPT runs support only --chat-surface chat; Work is intentionally not used by Tokenless.')
@@ -1779,10 +1825,26 @@ function resolveChatGptControls({
   const effort = effortValue === undefined ? undefined : normalizeChatGptEffort(effortValue)
   return {
     chatSurface,
-    model: args.model === undefined ? undefined : String(args.model).trim(),
-    modelFallbacks: args.modelFallbacks === undefined ? undefined : parseList(args.modelFallbacks),
+    model,
+    modelFallbacks,
     effort,
   }
+}
+
+function normalizeVisibleModelLabel(value: unknown, flag: string) {
+  const normalized = String(value).trim()
+  if (normalized.length === 0 || normalized.length > 120 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
+    throw usageError('invalid_model', `${flag} must be a nonempty visible UI label up to 120 characters without control characters.`)
+  }
+  return normalized
+}
+
+function normalizeVisibleModelFallbacks(value: unknown) {
+  const labels = parseList(value).map((label) => normalizeVisibleModelLabel(label, '--model-fallback'))
+  if (labels.length === 0 || labels.length > 8) {
+    throw usageError('invalid_model_fallbacks', '--model-fallback must contain between one and eight visible UI labels.')
+  }
+  return labels
 }
 
 function normalizeChatGptEffort(value: unknown) {
@@ -1893,8 +1955,11 @@ function usage() {
     '  tokenless projects resolve|unpin --project <id> --provider <provider> --json',
     '  tokenless projects list [--project <id>] [--provider <provider>] --json',
     '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
-    '  tokenless run --provider chatgpt --model <visible-model> --model-fallback <model,...> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
+    '  tokenless run --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> [--model-fallback <model,...>] --prompt <text> --json',
+    '  tokenless run --provider chatgpt --model <visible-model> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
     '  tokenless run --long-running --provider chatgpt --prompt <text> --json',
+    '  tokenless provider-controls --provider <chatgpt|claude|gemini|grok> --json',
+    '  tokenless provider-configure --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> --json',
     '  tokenless chatgpt-controls --json',
     '  tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
     '  tokenless state --task-id <task-id> --json',

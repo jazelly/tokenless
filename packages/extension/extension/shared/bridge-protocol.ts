@@ -1,4 +1,5 @@
 import { getProviderById, listProviders } from './provider-config.js'
+import { safeProviderTargetUrl } from './provider-navigation-policy.js'
 
 export const BRIDGE_PROTOCOL_VERSION = 'tokenless.browser-session-bridge.v1'
 
@@ -9,6 +10,8 @@ export const BRIDGE_ACTIONS = Object.freeze({
   READ: 'read',
   SNAPSHOT_DOM: 'snapshot_dom',
   SUBMIT_AND_READ: 'submit_and_read',
+  INSPECT_CONTROLS: 'inspect_controls',
+  CONFIGURE_CONTROLS: 'configure_controls',
   INSPECT_CHATGPT_CONTROLS: 'inspect_chatgpt_controls',
   CONFIGURE_CHATGPT: 'configure_chatgpt',
 })
@@ -94,26 +97,25 @@ export function validateBridgeRequest(payload: unknown): BridgeValidation {
   if (!provider) {
     return invalid('unsupported_provider', 'Bridge provider is not supported.')
   }
-  const chatGptControls = validateChatGptControls(request, provider.id)
-  if (chatGptControls) return chatGptControls
+  const providerControls = validateProviderControls(request, provider.id)
+  if (providerControls) return providerControls
   if (request.targetUrl !== undefined) {
     if (typeof request.targetUrl !== 'string' || request.targetUrl.trim() === '') {
       return invalid('invalid_target_url', 'Bridge targetUrl must be a nonempty absolute URL when provided.')
     }
-    let target: URL
     try {
-      target = new URL(request.targetUrl)
+      // Syntax parsing classifies the public error only. The original raw string
+      // still goes through the strict provider policy below, so URL normalization
+      // cannot turn an unsafe requested target into an allowlisted one.
+      new URL(request.targetUrl)
     } catch {
       return invalid('invalid_target_url', 'Bridge targetUrl must be a nonempty absolute URL when provided.')
     }
-    if (
-      target.protocol !== 'https:' ||
-      target.username !== '' ||
-      target.password !== '' ||
-      target.port !== '' ||
-      !provider.hosts.includes(target.hostname.toLowerCase())
-    ) {
-      return invalid('target_url_provider_mismatch', 'Bridge targetUrl must belong to the selected provider.')
+    if (!safeProviderTargetUrl(provider, request.targetUrl)) {
+      return invalid(
+        'target_url_provider_mismatch',
+        'Bridge targetUrl must be a strict HTTPS URL belonging to the selected provider.'
+      )
     }
   }
   if (
@@ -177,39 +179,61 @@ function normalizeRequest(payload: Record<string, any>): BridgeRequest {
     includeText: includeText.ok ? includeText.value : undefined,
     maxTextChars: payload.maxTextChars === undefined ? undefined : Number(payload.maxTextChars),
     chatSurface: payload.chatSurface,
-    model: payload.model,
-    modelFallbacks: payload.modelFallbacks,
+    model: typeof payload.model === 'string' ? payload.model.trim() : payload.model,
+    modelFallbacks: Array.isArray(payload.modelFallbacks)
+      ? payload.modelFallbacks.map((model: unknown) => typeof model === 'string' ? model.trim() : model)
+      : payload.modelFallbacks,
     effort: payload.effort,
     metadata: payload.metadata,
   }
 }
 
-function validateChatGptControls(
+function validateProviderControls(
   payload: Record<string, any>,
   providerId: string
 ): BridgeValidation | null {
-  const hasControls = (
+  const hasModelControls = payload.model !== undefined || payload.modelFallbacks !== undefined
+  const hasChatGptOnlyControls = (
     payload.chatSurface !== undefined ||
-    payload.model !== undefined ||
-    payload.modelFallbacks !== undefined ||
     payload.effort !== undefined
   )
-  const requiresChatGpt = (
+  const legacyChatGptAction = (
     payload.action === BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS ||
     payload.action === BRIDGE_ACTIONS.CONFIGURE_CHATGPT
   )
-  if ((hasControls || requiresChatGpt) && providerId !== 'chatgpt') {
-    return invalid('chatgpt_controls_unsupported', 'Model and Intelligence controls are available only for ChatGPT.')
+  if (legacyChatGptAction && providerId !== 'chatgpt') {
+    return invalid('chatgpt_controls_unsupported', 'Legacy ChatGPT control actions require the ChatGPT provider.')
+  }
+  const controlConfigurationAction = (
+    payload.action === BRIDGE_ACTIONS.SUBMIT ||
+    payload.action === BRIDGE_ACTIONS.SUBMIT_AND_READ ||
+    payload.action === BRIDGE_ACTIONS.CONFIGURE_CONTROLS ||
+    payload.action === BRIDGE_ACTIONS.CONFIGURE_CHATGPT
+  )
+  if (hasModelControls && !controlConfigurationAction) {
+    return invalid(
+      'controls_unsupported_for_action',
+      'Visible provider controls are accepted only by submit or configure actions.'
+    )
+  }
+  if (hasChatGptOnlyControls && providerId !== 'chatgpt') {
+    return invalid(
+      'chatgpt_controls_unsupported',
+      'Effort and Chat surface controls are available only for ChatGPT.'
+    )
   }
   if (payload.chatSurface !== undefined && payload.chatSurface !== 'chat') {
     return invalid('invalid_chat_surface', 'ChatGPT chatSurface must be "chat" when provided.')
   }
   if (payload.model !== undefined && !isControlLabel(payload.model)) {
-    return invalid('invalid_model', 'ChatGPT model must be a nonempty UI model label up to 120 characters.')
+    return invalid('invalid_model', 'Model must be a nonempty visible UI label up to 120 characters.')
   }
   if (payload.modelFallbacks !== undefined) {
     if (!Array.isArray(payload.modelFallbacks) || payload.modelFallbacks.length > 8 || !payload.modelFallbacks.every(isControlLabel)) {
-      return invalid('invalid_model_fallbacks', 'ChatGPT modelFallbacks must contain at most eight nonempty UI model labels.')
+      return invalid('invalid_model_fallbacks', 'modelFallbacks must contain at most eight nonempty visible UI labels.')
+    }
+    if (payload.model === undefined) {
+      return invalid('model_fallback_requires_model', 'modelFallbacks require a primary visible UI model label.')
     }
   }
   if (payload.effort !== undefined && (!isControlLabel(payload.effort) || !CHATGPT_EFFORTS.has(payload.effort))) {
@@ -219,7 +243,12 @@ function validateChatGptControls(
 }
 
 function isControlLabel(value: unknown) {
-  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 120
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value.trim().length <= 120 &&
+    !/[\u0000-\u001f\u007f]/u.test(value)
+  )
 }
 
 function resolveIncludeText(payload: Record<string, any>):

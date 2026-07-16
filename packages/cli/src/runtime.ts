@@ -393,14 +393,12 @@ export function providerWakeUrl(provider: unknown, targetUrl?: unknown) {
     gemini: 'https://gemini.google.com/app',
     grok: 'https://grok.com/',
   }
-  if (targetUrl === undefined || targetUrl === null || String(targetUrl).trim() === '') {
+  if (targetUrl === undefined || targetUrl === '') {
     return homeUrls[providerId] as string
   }
 
-  let parsed: URL
-  try {
-    parsed = new URL(String(targetUrl))
-  } catch {
+  const parsed = parseProviderWakeTarget(targetUrl)
+  if (!parsed) {
     throw runtimeError('invalid_provider_url', 'Provider target URL must be a valid HTTPS URL.', false)
   }
   const allowedHosts: Record<string, Set<string>> = {
@@ -410,9 +408,6 @@ export function providerWakeUrl(provider: unknown, targetUrl?: unknown) {
     grok: new Set(['grok.com']),
   }
   if (
-    parsed.protocol !== 'https:' ||
-    parsed.username !== '' ||
-    parsed.password !== '' ||
     !allowedHosts[providerId]?.has(parsed.hostname.toLowerCase())
   ) {
     throw runtimeError(
@@ -422,6 +417,50 @@ export function providerWakeUrl(provider: unknown, targetUrl?: unknown) {
     )
   }
   return parsed.href
+}
+
+const FORBIDDEN_PROVIDER_URL_INPUT = /[\\\u0000-\u001f\u007f\s]|%(?:00|0[1-9a-f]|1[0-9a-f]|20|23|25|2f|3f|5c|7f)/i
+const MALFORMED_PROVIDER_URL_ESCAPE = /%(?![0-9a-f]{2})/i
+
+function parseProviderWakeTarget(value: unknown) {
+  if (
+    typeof value !== 'string' ||
+    value === '' ||
+    value.trim() !== value ||
+    value.includes('?') ||
+    value.includes('#') ||
+    FORBIDDEN_PROVIDER_URL_INPUT.test(value) ||
+    MALFORMED_PROVIDER_URL_ESCAPE.test(value)
+  ) {
+    return null
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return null
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== '' ||
+    parsed.search !== '' ||
+    parsed.hash !== ''
+  ) {
+    return null
+  }
+  const rawAuthority = providerUrlAuthority(value)
+  if (!rawAuthority || rawAuthority.toLowerCase() !== parsed.hostname.toLowerCase()) return null
+  return parsed
+}
+
+function providerUrlAuthority(value: string) {
+  const scheme = value.indexOf('://')
+  if (scheme < 0 || value.slice(0, scheme).toLowerCase() !== 'https') return ''
+  const start = scheme + 3
+  const relativeEnd = value.slice(start).search(/[/?#]/)
+  return relativeEnd < 0 ? value.slice(start) : value.slice(start, start + relativeEnd)
 }
 
 export async function resolveChromiumBrowser(requested?: unknown): Promise<ChromiumBrowser> {

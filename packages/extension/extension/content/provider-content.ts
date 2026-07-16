@@ -127,11 +127,17 @@ async function handleMessage(message: ContentRecord) {
   if (message?.type === 'tokenless.bridge.snapshot_dom') {
     return snapshotDom(provider, message.request)
   }
-  if (message?.type === 'tokenless.bridge.inspect_chatgpt_controls') {
-    return inspectChatGptControls(provider, message.request)
+  if (
+    message?.type === 'tokenless.bridge.inspect_controls' ||
+    message?.type === 'tokenless.bridge.inspect_chatgpt_controls'
+  ) {
+    return inspectProviderControls(provider, message.request)
   }
-  if (message?.type === 'tokenless.bridge.configure_chatgpt') {
-    return configureChatGptControls(provider, message.request)
+  if (
+    message?.type === 'tokenless.bridge.configure_controls' ||
+    message?.type === 'tokenless.bridge.configure_chatgpt'
+  ) {
+    return configureProviderControls(provider, message.request)
   }
   if (message?.type === 'tokenless.bridge.validate_landing') {
     return validateLanding(provider, message.request, message.type)
@@ -244,8 +250,8 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
     return blocker
   }
 
-  const configuration = provider.id === 'chatgpt'
-    ? await configureChatGptControls(provider, request)
+  const configuration = provider.id === 'chatgpt' || hasRequestedModelControl(request)
+    ? await configureProviderControls(provider, request)
     : undefined
   if (configuration?.status === 'blocked') {
     return configuration
@@ -306,6 +312,32 @@ const CHATGPT_EFFORT_ORDER = ['instant', 'medium', 'high', 'extra_high', 'pro'] 
 const MAX_VISIBLE_RESPONSE_WAIT_MS = 2 * 60 * 60 * 1000
 
 type ChatGptEffort = typeof CHATGPT_EFFORT_ORDER[number]
+
+function hasRequestedModelControl(request: ContentRecord = {}) {
+  return request.model !== undefined || request.modelFallbacks !== undefined
+}
+
+async function inspectProviderControls(provider: ContentProvider, request: ContentRecord = {}) {
+  if (provider.id === 'chatgpt') return inspectChatGptControls(provider, request)
+  return {
+    status: 'inspected',
+    provider: provider.id,
+    visible: true,
+    controls: { available: false, efforts: [], models: [] },
+    url: publicPageUrl(location.href),
+  }
+}
+
+async function configureProviderControls(provider: ContentProvider, request: ContentRecord = {}) {
+  if (provider.id === 'chatgpt') return configureChatGptControls(provider, request)
+  return {
+    status: 'blocked',
+    stopReason: 'model_control_unavailable',
+    message: `${provider.label} model controls are unavailable on the current visible page.`,
+    provider: provider.id,
+    requested: typeof request.model === 'string' ? request.model : null,
+  }
+}
 
 async function inspectChatGptControls(provider: ContentProvider, request: ContentRecord = {}) {
   if (provider.id !== 'chatgpt') {
@@ -379,6 +411,15 @@ async function configureChatGptControls(provider: ContentProvider, request: Cont
   const model = request.model === undefined
     ? { status: 'preserved' }
     : await selectChatGptModel(request.model, request.modelFallbacks, request)
+  if (model.status === 'unavailable') {
+    return {
+      status: 'blocked',
+      stopReason: 'model_control_unavailable',
+      message: 'The requested model is not an available exact label in the visible ChatGPT model menu.',
+      provider: provider.id,
+      model,
+    }
+  }
   const effort = request.effort === undefined
     ? { status: 'preserved' }
     : await selectChatGptEffort(request.effort, request)
@@ -462,11 +503,10 @@ async function selectChatGptModel(requested: unknown, fallbacks: unknown, reques
         fallback: fallbackIndex === 0 ? null : label,
       }
     }
-    const current = choices.find((item) => item.getAttribute('aria-checked') === 'true')
     return {
-      status: 'preserved_current',
+      status: 'unavailable',
       requested: requestedLabels[0] ?? null,
-      applied: current ? visibleControlLabel(current) : null,
+      applied: null,
     }
   } finally {
     dismissChatGptMenus()
@@ -627,10 +667,7 @@ function visibleControlLabel(node: HTMLElement) {
 }
 
 function modelLabelMatches(available: string, requested: string) {
-  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '')
-  const candidate = normalize(available)
-  const wanted = normalize(requested)
-  return candidate === wanted || candidate.startsWith(wanted)
+  return normalizeText(available).toLocaleLowerCase('en-US') === normalizeText(requested).toLocaleLowerCase('en-US')
 }
 
 function dismissChatGptMenus() {
