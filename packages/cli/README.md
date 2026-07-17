@@ -1,10 +1,12 @@
 # Tokenless CLI
 
-`tokenless` is an agent-facing CLI with two isolated transports: recommended visible ChatGPT, Claude, Gemini, or Grok browser sessions, and an experimental opt-in direct mode through provider-owned clients or documented public APIs.
+`tokenless` exposes provider-neutral CLI and local API access to visible ChatGPT, Claude, Gemini, and Grok sessions. The recommended web path uses a local `tokenless-daemon`, a Playwright worker, and persistent managed Google Chrome profiles.
+
+> **Status:** The visible runtime is being migrated from the retired extension architecture to Playwright. Four-provider parity, file upload, and the local API are under active development. No browser extension is installed or used by the new architecture.
 
 ## Install
 
-For visible mode, first install and enable the Tokenless extension in the Chromium browser that will hold your provider session. Direct-only use does not require the extension or a browser.
+Requires Node.js 24.15+ and Google Chrome.
 
 ### npm (recommended)
 
@@ -14,56 +16,83 @@ tokenless setup --json
 tokenless doctor --json
 ```
 
-`setup` installs the local runtime, registers the Native Messaging host for one detected browser, opens the selected provider page when needed, and succeeds only after the extension bridge is live. Sign in to the provider in that visible page if prompted. `tokenless install` remains available when you only want to provision the local runtime without activating the browser bridge.
+`setup` provisions the local runtime and a persistent `default` Chrome profile, then opens the preferred provider when visible sign-in is needed. `doctor` verifies the CLI, daemon, Playwright worker, managed profile, Chrome, and visible provider state.
 
-### npx (no global install)
+### npx
 
 ```bash
 npx tokenless@latest setup --json
 npx tokenless@latest doctor --json
 ```
 
-### Raw GitHub installer
+### System-wide installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
 ```
 
-Because this command executes with `sudo`, [review the installer source](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh) before running it. The script installs the CLI system-wide. It intentionally does not configure the browser as root; return to your normal desktop account and run `tokenless setup --json` followed by `tokenless doctor --json`.
+Because this executes with `sudo`, [review the installer source](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh) first. Run `tokenless setup --json` and `tokenless doctor --json` afterward as the normal desktop user.
 
-The universal package contains JavaScript only and declares exact-version optional native packages for darwin/linux on arm64/x64 and win32 on arm64/x64. npm installs only the matching package, which contains `tokenless-daemon` and `tokenless-native-host`; publisher-side prepack verification requires each executable to report the exact role, package version, and normalized target tuple before packing. No install hook or normal command downloads or verifies an executable, and users do not need Rust. The published extension id is bundled; pass `--extension-id <id>` only for an unpacked or alternate extension build.
+## Web Automation
 
-Configure defaults:
-
-```bash
-tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json
-```
-
-## Agent Workflow
+Web mode is the default; `--mode visible` is optional.
 
 ```bash
-npx tokenless run \
+tokenless run \
+  --profile default \
+  --provider chatgpt \
   --project-name "Website redesign" \
   --chat-name "Navbar review" \
   --project-root /path/to/project \
-  --prompt-file /tmp/request.md \
+  --attach-file ./brief.pdf \
+  --prompt "Review the navigation against this brief." \
   --json
 ```
 
-`run` requires no extension id after setup. It starts the Rust daemon when needed. If the extension bridge is live, the CLI does not pre-open a wake tab; otherwise it opens only the selected provider's validated HTTPS UI in the configured Chromium browser. The extension reuses an approved provider tab when possible or opens one provider tab when necessary. ChatGPT is the provider default. Tokenless never opens a task page, extension page, local file, runner, settings, or history page.
+The Playwright action contract is shared across all four providers and includes:
 
-## Experimental Direct/API Mode
+- visible authentication and blocker checks;
+- exact-label model and effort inspection and selection;
+- integrity-checked file upload through the visible page control;
+- prompt input, submission, correlated response reading, and visible citations;
+- fail-closed navigation checks and sanitized structural snapshots.
 
-Direct mode is under active development. Prefer visible extension mode unless direct client or API integration is required. It never initializes or falls back to the daemon, extension, or browser path. ChatGPT defaults to the provider-owned Codex executable on macOS and Linux. Public API execution supports ChatGPT, Claude, Gemini, Grok, and explicit Antigravity-compatible gateways; credentials are read only from environment variables.
+Provider parity and end-to-end upload acceptance are still being completed. Unsupported or unverified actions fail explicitly instead of guessing or changing execution paths.
+
+## Managed Profiles
+
+A profile is one persistent local Chrome identity. One profile can hold sessions for all supported providers; use separate profiles for multiple accounts of the same provider.
 
 ```bash
+tokenless profiles add --profile work --label "Work" --set-default
+tokenless profiles list
+tokenless profiles open --profile work --provider claude
+tokenless profiles status --profile work --provider claude
+tokenless profiles set-default --profile work
+tokenless profiles remove --profile work --confirm-delete
+```
+
+Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Interactive setup may offer to copy a closed local Chrome profile after explicit consent; noninteractive setup creates a clean profile unless import and consent flags are both supplied.
+
+Imported authentication state remains local and opaque. Tokenless does not parse, print, log, export, or transmit cookie, storage, password, or authentication values.
+
+## Local API
+
+The local API will expose the same daemon jobs and provider-neutral action contract as the CLI. This lets agents and applications use provider websites without embedding provider selectors or Playwright logic. Authentication, request schemas, and compatibility guarantees are part of the active cutover and are not yet stable.
+
+## Experimental Direct Mode
+
+Direct mode is isolated from Playwright. It uses provider-owned clients, documented public APIs, or explicitly configured compatible gateways and never falls back to the browser.
+
+```bash
+codex login
 tokenless run --mode direct --provider chatgpt --prompt "Summarize this." --json
 
 TOKENLESS_DIRECT_GEMINI_API_KEY=... \
 tokenless run --mode direct --provider gemini --model <api-model> --prompt "Summarize this." --json
 ```
 
-Start an authenticated loopback API broker for compatible local clients:
+Start the authenticated loopback direct broker for compatible local clients:
 
 ```bash
 TOKENLESS_DIRECT_SERVER_KEY=... \
@@ -71,179 +100,25 @@ TOKENLESS_DIRECT_CHATGPT_API_KEY=... \
 tokenless serve --mode direct --host 127.0.0.1 --port 8788 --json
 ```
 
-Every broker request, including `/health` and `/capabilities`, requires `Authorization: Bearer <TOKENLESS_DIRECT_SERVER_KEY>`. The broker strips inbound credentials and cookies, injects the selected environment credential, preserves streaming bytes, and exposes only its reviewed public inference allowlist. An exact `x-tokenless-project` can select a durable public API account binding or the bounded stateless ChatGPT `POST /v1/responses` adapter backed by an isolated official Codex profile. It never exposes private provider web routes or gateway administration/account routes. Public API traffic may be billed separately from a web subscription.
+Every broker route requires `Authorization: Bearer <TOKENLESS_DIRECT_SERVER_KEY>`. Credentials come only from the broker environment; inbound credentials and cookies are stripped. Public API traffic may be billed separately from web subscriptions.
 
-See [Project-Affine Multi-Account Routing](../../docs/multi-account-routing.md) for multi-account onboarding, project pinning, routing domains, and failover rules.
+See [Direct mode](../../docs/direct-mode.md) and [multi-account routing](../../docs/multi-account-routing.md) for route allowlists, account binding, failover, and security details.
 
-Use a randomly generated server key of at least 32 visible non-whitespace characters; for example, `openssl rand -hex 32` produces a suitable value.
+## Browser Boundary
 
-## Visible provider controls
+- Playwright uses installed Google Chrome with visible, persistent, non-default user-data directories.
+- Web automation operates only through visible provider DOM and visible postconditions.
+- It does not export browser credentials, intercept hidden authorization headers, call private provider APIs, or expose a remote debugging endpoint.
+- CAPTCHA, sign-in, rate limits, upgrade prompts, and confirmations remain visible and under user control.
+- Selected regular files are staged privately and sent through Playwright `setInputFiles`; raw caller paths do not enter daemon job JSON.
+- Web and direct modes remain isolated, with no paid or browser fallback between them.
 
-Inspect the current page's visible sign-in state without returning account
-identity:
+## Roadmap
 
-```bash
-npx tokenless provider-status --provider claude --json
-```
+- Complete Playwright parity for ChatGPT, Claude, Gemini, and Grok.
+- Finish seamless files, models, effort controls, citations, and long-running work.
+- Add provider projects, workspaces, files, plugins, connectors, and tools.
+- Add image and broader multimodal workflows.
+- Stabilize the local API as a public compatibility surface.
 
-`provider-auth-status` is a compatibility alias. A recognized visible plan may
-be returned from an allowlist, but ambiguous or contradictory UI returns an
-unknown state. The command does not inspect cookies or browser storage.
-
-Use the generic visible control inventory to discover the exact model and
-effort labels that the current provider page exposes:
-
-```bash
-npx tokenless provider-controls --provider gemini --json
-```
-
-Configure a visible model without submitting a prompt, or attach the same
-selection to `run`:
-
-```bash
-npx tokenless provider-configure \
-  --provider grok \
-  --model "<exact-visible-model>" \
-  --model-fallback "<exact-visible-fallback>" \
-  --json
-
-npx tokenless run \
-  --provider gemini \
-  --model "<exact-visible-model>" \
-  --model-fallback "<exact-visible-fallback>" \
-  --effort "<exact-visible-effort>" \
-  --prompt "Review this design." \
-  --json
-```
-
-Model matching uses the complete visible label after case and whitespace
-normalization; it is not substring or fuzzy matching.
-
-Tokenless tries the requested label and then each `--model-fallback` in order,
-verifies the visible selected state, and blocks before prompt submission if none
-is available.
-
-Authenticated, redacted DOM fixtures preserve model-menu contracts for ChatGPT,
-Claude, Gemini, and Grok. Observation does not enable an action by itself: the
-runtime capability manifest exposes only actions with accepted implementation
-evidence.
-
-`--effort` accepts one exact nonempty visible label for any provider; it is not
-a fixed Tokenless enum. ChatGPT and Claude expose account/model-dependent rows,
-Gemini exposes Extended thinking, and Grok currently couples thinking depth to
-model profiles rather than an independent effort control. A missing or
-unavailable requested model or effort fails closed instead of guessing.
-
-ChatGPT-specific `chatgpt-controls` and `chatgpt-configure` remain compatibility
-aliases. The `Chat`/`Work` surface control and trusted debugger click path remain
-ChatGPT-only.
-
-## Visible file attachments
-
-Repeat `--attach-file` to add local files through the provider's visible file
-input before the prompt is submitted:
-
-```bash
-npx tokenless run \
-  --provider claude \
-  --attach-file ./brief.pdf \
-  --attach-file ./notes.md \
-  --prompt "Compare these files." \
-  --json
-```
-
-This option is visible-mode only and is accepted only for `submit` and
-`submit_and_read`. Tokenless accepts at most 100 files and 512 MiB total per
-request.
-
-The provider's visible `accept` attribute and account limits may be stricter and
-always win.
-
-ChatGPT, Claude, Gemini, and Grok have authenticated exact file-input evidence.
-Gemini creates its exact input only after the visible local-upload menu item is
-opened, so the content adapter prepares that UI before resolving the input.
-Fixture observation is not a live provider upload proof; every request still
-requires the current input and visible filename confirmation.
-
-The CLI stages each regular, non-symlink file in a private Tokenless bundle and
-computes its size and SHA-256. Only path-free descriptors cross the daemon and
-extension protocols.
-
-The native host streams bytes for the claimed job. The content script verifies
-the hash before constructing a browser `File`.
-
-The exact provider input must accept the file, and a new visible filename must
-appear near the composer. Otherwise the file is cleared and the prompt is not
-submitted.
-
-The pipeline never reads browser cookies, storage, hidden auth headers, or
-private provider APIs.
-
-## Provider-native Project isolation
-
-Use `--target-url` with an exact existing ChatGPT or Claude Project URL when the
-provider conversation must stay inside that Project:
-
-```bash
-npx tokenless run \
-  --provider chatgpt \
-  --target-url "https://chatgpt.com/g/<g-p-project-id>/project" \
-  --prompt "Review the project context." \
-  --json
-
-npx tokenless run \
-  --provider claude \
-  --target-url "https://claude.ai/project/<project-id>" \
-  --prompt "Review the project knowledge." \
-  --json
-```
-
-Tokenless validates the strict provider HTTPS origin and exact Project route.
-
-After submission, ChatGPT may navigate only to
-`/g/<same-g-p-project-id>/c/<conversation-id>`, and Claude only to
-`/project/<same-project-id>/chat/<conversation-id>`.
-
-Cross-Project and ordinary chat transitions fail closed before response text is
-read.
-
-This does not discover, create, or click a provider Project. Copy the existing
-Project URL from the visible signed-in browser session.
-
-Gemini and Grok have no verified Project route, so `--target-url` is not a
-Project-isolation guarantee for those providers.
-
-`--project-name` remains Tokenless task metadata used to derive task ids. It does
-not select a provider-native Project and may be used alongside `--target-url`.
-
-For a visible provider task expected to take longer than three minutes, add `--long-running`. It extends the visible-response wait to 35 minutes and the daemon job wait to 36 minutes. Progress heartbeats are written to stderr so `--json` keeps stdout machine-readable. Do not use `--no-wait` for this mode.
-
-## Research citations
-
-When a provider visibly renders citations in the final assistant response, `run --json` returns them at `result.read.sources`. Each source contains a direct external HTTPS URL, its visible title when available, and its domain. Normal `run` output prints the same sources after the answer. Tokenless deduplicates source URLs, removes common tracking parameters, and excludes provider-internal links. Citation collection is limited to visible response DOM; it does not inspect browser history, storage, or provider APIs.
-
-Use returned task ids to inspect daemon-backed state:
-
-```bash
-npx tokenless state --task-id "project:Website redesign:chat:Navbar review" --json
-```
-
-Cancel a job only through daemon-confirmed cancellation:
-
-```bash
-npx tokenless cancel --job-id "<job-id>" --json
-```
-
-If explicit cancellation or SIGINT/SIGTERM cannot be confirmed before the bounded cancel-request deadline, the CLI exits nonzero with `job_cancel_failed` and warns that the job may continue. `--cancel-timeout-ms` can shorten that deadline for automation.
-
-Capture a sanitized visible-page DOM snapshot through the same path:
-
-```bash
-npx tokenless snapshot-dom --provider chatgpt --json
-```
-
-`--no-open` requires an already-live bridge and fails before queueing otherwise. `--no-daemon` and local task-page fallback do not exist.
-
-## Boundary
-
-Visible mode uses only visible provider DOM after user-granted extension permission. Direct mode uses provider-owned clients or documented public APIs with environment-only credentials. Neither mode reads provider cookies, localStorage/sessionStorage tokens, hidden auth headers, or private backend APIs, and there is no cross-mode fallback. Daemon access is loopback-only. Before every bearer-authenticated visible job call, the CLI verifies a fresh challenge-bound `/ready` HMAC proof covering both protocols and canonical home; an unproved listener never receives the token. `doctor` refreshes installed binaries before reading config or running checks and exits nonzero when any reported check fails.
+See the [Playwright architecture handoff](../../docs/handoff-visible-provider-web-automation.md) for the implementation and acceptance plan.

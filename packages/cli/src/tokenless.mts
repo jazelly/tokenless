@@ -4,6 +4,25 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
+  MANAGED_PLAYWRIGHT_JOB_ACTION,
+  PLAYWRIGHT_EXECUTION_BACKEND,
+  VISIBLE_ACTIONS,
+  ManagedProfileRegistry,
+  createManagedPlaywrightJobRequest,
+  discoverChromeProfiles,
+  importChromeProfile,
+  providerHomeUrl,
+  runnerSupervisorStatus,
+  startRunnerSupervisor,
+  stopRunnerSupervisor,
+  submitManagedPlaywrightJob,
+  validateChromeProfileDirectoryKey,
+  type ManagedProfileRecord,
+  type ProviderId,
+  type VisibleAction,
+} from '@tokenless/playwright'
+
+import {
   DEFAULT_DAEMON_URL,
   DEFAULT_DIRECT_BROKER_HOST,
   DEFAULT_DIRECT_BROKER_PORT,
@@ -72,7 +91,6 @@ type StatusReporter = {
 const DEFAULT_RUN_TIMEOUT_MS = 180_000
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000
 const LONG_RUNNING_JOB_TIMEOUT_MS = 2_160_000
-const VISIBLE_PROVIDER_ACTION_PROTOCOL_VERSION = 'tokenless.visible-provider-action.v1'
 const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'auth.status',
   'model.inspect',
@@ -80,8 +98,13 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'effort.inspect',
   'effort.select',
   'file.upload',
+  'prompt.clear',
   'prompt.input',
   'prompt.submit',
+  'response.read',
+  'snapshot.sanitized',
+  'navigation.check',
+  'blocker.check',
 ])
 const PROJECT_API_ROUTING_DOMAIN_ENVIRONMENT = Object.freeze<Record<DirectProvider, string>>({
   chatgpt: 'TOKENLESS_DIRECT_CHATGPT_ROUTING_DOMAIN',
@@ -96,13 +119,15 @@ let args: CliArgs = { attachFiles: [], files: [], json: process.argv.includes('-
 try {
   const argv = process.argv.slice(2)
   const command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
-  const subcommand = command === 'accounts' || command === 'projects' ? argv.shift() : undefined
+  const subcommand = command === 'accounts' || command === 'projects' || command === 'profiles' ? argv.shift() : undefined
   args = parseArgs(argv)
   assertCommandRoutingArguments(command, args)
   if (command === 'accounts') {
     await accountsCommand(subcommand, args)
   } else if (command === 'projects') {
     await projectsCommand(subcommand, args)
+  } else if (command === 'profiles') {
+    await profilesCommand(subcommand, args)
   } else if (command === 'run') {
     await runCommand(args)
   } else if (command === 'serve') {
@@ -428,6 +453,183 @@ function publicProjectBinding(binding: any) {
   }
 }
 
+async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
+  assertProfilesCommandArguments(subcommand, args)
+  const homeDir = tokenlessHome(args.home)
+  const registry = new ManagedProfileRegistry(homeDir)
+
+  if (subcommand === 'add') {
+    const slug = requiredAdminValue(args.profile, '--profile')
+    const importKey = args.importChromeProfile === undefined
+      ? undefined
+      : validateChromeProfileDirectoryKey(String(args.importChromeProfile))
+    if (importKey && args.consentLocalProfileCopy !== true) {
+      throw usageError(
+        'profile_import_consent_required',
+        'Importing a local Chrome profile requires --consent-local-profile-copy.'
+      )
+    }
+    const lifecycle = importKey ? 'importing' : 'ready'
+    let record = await registry.addProfile({
+      slug,
+      ...(args.label === undefined ? {} : { label: String(args.label) }),
+      setDefault: args.setDefault === true,
+      lifecycle,
+    })
+    let imported: Record<string, any> | null = null
+    try {
+      if (importKey) {
+        const sourceUserDataDir = await resolveChromeUserDataDirForImport(args.chromeUserDataDir, importKey)
+        imported = await importChromeProfile({
+          sourceUserDataDir,
+          profileDirectoryKey: importKey,
+          destinationDir: record.directory,
+          tokenlessHome: homeDir,
+        })
+        record = await registry.markImported(record.slug, {
+          source: sourceUserDataDir,
+          profileDirectoryKey: importKey,
+        })
+      }
+    } catch (error) {
+      await registry.removeProfile(record.slug, { confirmDelete: true }).catch(async () => {
+        await registry.updateLifecycle(record.slug, 'failed').catch(() => undefined)
+      })
+      throw error
+    }
+    printPayload({
+      ok: true,
+      profile: publicManagedProfile(record, await defaultProfileSlug(registry)),
+      ...(imported ? { import: imported } : {}),
+    }, args)
+    return
+  }
+
+  if (subcommand === 'list') {
+    const defaultSlug = await defaultProfileSlug(registry)
+    const profiles = (await registry.listProfiles()).map((profile) => publicManagedProfile(profile, defaultSlug))
+    printPayload({ ok: true, profiles }, args)
+    return
+  }
+
+  if (subcommand === 'set-default') {
+    const record = await registry.setDefault(requiredAdminValue(args.profile, '--profile'))
+    printPayload({ ok: true, profile: publicManagedProfile(record, record.slug) }, args)
+    return
+  }
+
+  if (subcommand === 'remove') {
+    const slug = requiredAdminValue(args.profile, '--profile')
+    if (args.confirmDelete !== true) {
+      throw usageError('profile_delete_confirmation_required', 'Profile removal requires --confirm-delete.')
+    }
+    await registry.resolveProfile(slug)
+    const runner = await stopRunnerSupervisor({ homeDir })
+    const record = await registry.removeProfile(slug, { confirmDelete: true })
+    printPayload({
+      ok: true,
+      profile: publicManagedProfile(record, null),
+      runner,
+    }, args)
+    return
+  }
+
+  if (subcommand === 'status' || subcommand === 'open') {
+    const provider = normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER || 'chatgpt')
+    const visibleAction = subcommand === 'status' ? VISIBLE_ACTIONS.AUTH_STATUS : VISIBLE_ACTIONS.NAVIGATION_CHECK
+    const result = await executeManagedPlaywrightJob({
+      args,
+      provider,
+      request: createManagedPlaywrightJobRequest({
+        provider,
+        target: { kind: 'provider_home', url: managedProviderTargetUrl(provider, args.targetUrl) },
+        actions: [{ action: visibleAction, payload: {} }],
+      }),
+      taskId: args.taskId || `profile:${subcommand}:${randomUUID()}`,
+      statusEventAction: `profiles.${subcommand}`,
+      noWait: false,
+    })
+    const observedAuth = subcommand === 'status'
+      ? authStateFromManagedResult(result.waitResult?.result)
+      : null
+    const profile = observedAuth
+      ? await registry.updateProviderStatus(result.profile.slug, {
+          provider,
+          auth: observedAuth,
+          checkedAt: new Date().toISOString(),
+        })
+      : result.profile
+    printPayload({
+      ok: true,
+      command: `profiles.${subcommand}`,
+      transport: 'daemon',
+      backend: PLAYWRIGHT_EXECUTION_BACKEND,
+      profile: publicManagedProfile(profile, await defaultProfileSlug(registry)),
+      provider,
+      runner: result.runner,
+      jobId: result.job.job_id,
+      result: publicDaemonResult(result.waitResult),
+      compactOutput: result.waitResult?.compactOutput,
+      status: result.waitResult?.status,
+      statusLog: result.statusLog,
+    }, args)
+    return
+  }
+
+  throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, list, status, open, set-default, or remove.')
+}
+
+function authStateFromManagedResult(value: unknown): 'authenticated' | 'unauthenticated' | 'unknown' | null {
+  if (!value || typeof value !== 'object') return null
+  const responses = (value as { responses?: unknown }).responses
+  if (!Array.isArray(responses)) return null
+  const auth = responses.find((response) => (
+    response &&
+    typeof response === 'object' &&
+    (response as { action?: unknown }).action === VISIBLE_ACTIONS.AUTH_STATUS &&
+    (response as { ok?: unknown }).ok === true
+  ))
+  const state = auth && typeof auth === 'object'
+    ? ((auth as { result?: { state?: unknown } }).result?.state)
+    : null
+  return state === 'authenticated' || state === 'unauthenticated' || state === 'unknown' ? state : null
+}
+
+async function resolveChromeUserDataDirForImport(value: unknown, profileDirectoryKey: string) {
+  if (value !== undefined) return path.resolve(String(value))
+  const roots = await discoverChromeProfiles()
+  const matches = roots.filter((root) => root.profiles.some((profile) => profile.directoryKey === profileDirectoryKey))
+  if (matches.length === 1) return matches[0]!.userDataDir
+  if (matches.length === 0) {
+    throw usageError(
+      'chrome_profile_not_found',
+      `No Chrome profile directory key '${profileDirectoryKey}' was discovered. Pass --chrome-user-data-dir for the exact Chrome user data directory.`
+    )
+  }
+  throw usageError(
+    'chrome_profile_ambiguous',
+    `Chrome profile directory key '${profileDirectoryKey}' exists in multiple user data directories; pass --chrome-user-data-dir.`
+  )
+}
+
+async function defaultProfileSlug(registry: ManagedProfileRegistry) {
+  return (await registry.read()).defaultProfile
+}
+
+function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string | null) {
+  return {
+    slug: profile.slug,
+    id: profile.id,
+    label: profile.label,
+    lifecycle: profile.lifecycle,
+    isDefault: profile.slug === defaultSlug,
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+    import: profile.import,
+    lastObservedAuth: profile.lastObservedAuth,
+  }
+}
+
 async function serveCommand(args: CliArgs) {
   assertDirectServeArguments(args)
   const serverKey = process.env.TOKENLESS_DIRECT_SERVER_KEY
@@ -643,11 +845,23 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (!PRIORITY_VISIBLE_PROVIDER_ACTIONS.has(action)) {
     throw usageError(
       'invalid_visible_provider_action',
-      'provider-action --action must be one of: auth.status, model.inspect, model.select, effort.inspect, effort.select, file.upload, prompt.input, prompt.submit.'
+      'provider-action --action must be one of: auth.status, model.inspect, model.select, effort.inspect, effort.select, file.upload, prompt.clear, prompt.input, prompt.submit, response.read, snapshot.sanitized, navigation.check, blocker.check.'
     )
   }
 
   if (action === 'auth.status' || action === 'model.inspect' || action === 'effort.inspect') {
+    assertProviderActionPayloadOptions(args, new Set())
+    return { action, payload: {} }
+  }
+
+  if (
+    action === 'prompt.clear' ||
+    action === 'prompt.submit' ||
+    action === 'response.read' ||
+    action === 'snapshot.sanitized' ||
+    action === 'navigation.check' ||
+    action === 'blocker.check'
+  ) {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
   }
@@ -663,11 +877,10 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     const fallbacks = args.modelFallbacks === undefined
       ? undefined
       : normalizeVisibleModelFallbacks(args.modelFallbacks)
-    const labels = [label, ...(fallbacks ?? [])]
-    if (new Set(labels).size !== labels.length) {
-      throw usageError('invalid_model_fallbacks', '--model and --model-fallback labels must be unique.')
+    if (fallbacks !== undefined) {
+      throw usageError('model_fallback_unsupported', 'provider-action model.select accepts one exact --model label; --model-fallback is not supported.')
     }
-    return { action, payload: { label, ...(fallbacks ? { fallbacks } : {}) } }
+    return { action, payload: { label } }
   }
 
   if (action === 'effort.select') {
@@ -696,6 +909,13 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     return { action, payload: {} }
   }
 
+  if (action !== 'prompt.input') {
+    throw usageError(
+      'invalid_visible_provider_action',
+      'provider-action --action must be one of: auth.status, model.inspect, model.select, effort.inspect, effort.select, file.upload, prompt.clear, prompt.input, prompt.submit, response.read, snapshot.sanitized, navigation.check, blocker.check.'
+    )
+  }
+
   assertProviderActionPayloadOptions(args, new Set(['prompt', 'promptFile']))
   if (args.prompt !== undefined && args.promptFile !== undefined) {
     throw usageError('duplicate_prompt', 'Use either --prompt or --prompt-file, not both.')
@@ -706,7 +926,7 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (typeof text !== 'string' || text.trim() === '') {
     throw usageError('missing_prompt', `${action} requires --prompt <text> or --prompt-file <path>.`)
   }
-  return { action, payload: { text, mode: 'replace' } }
+  return { action, payload: { text } }
 }
 
 function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>) {
@@ -769,7 +989,6 @@ async function executeDaemonJob({
   }
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   const provider = normalizeProvider(
     args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || 'chatgpt'
   )
@@ -781,45 +1000,16 @@ async function executeDaemonJob({
     chatName,
     idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
   })
-  const requestId = visibleAction ? (taskId ?? randomUUID()) : taskId
-  const statusReporter = createCliStatusReporter(args)
+  const requestId = visibleRequestId(visibleAction ? (taskId ?? randomUUID()) : (taskId ?? randomUUID()))
+  const managedJobId = managedPlaywrightJobId()
   let stagedAttachmentBundleId: string | undefined
   let daemonJobSubmissionStarted = false
 
   try {
-    const daemon = await ensureDaemonReady({
-      homeDir,
-      daemonUrl: configuredDaemonUrl,
-      timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-    })
-    statusReporter.report({
-      event: daemon.started ? 'daemon_started' : 'daemon_ready',
-      status: 'ready',
-      daemonUrl: configuredDaemonUrl,
-      daemonPid: daemon.pid,
-    })
-    await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
-
-    const targetUrl = args.targetUrl
-      ? providerWakeUrl(provider, args.targetUrl)
-      : await mappedDaemonTarget({ homeDir, daemonUrl: configuredDaemonUrl, provider, taskId }) ?? providerWakeUrl(provider)
-    const selectedBrowser = args.browser ?? config.browser ?? undefined
-    const bridge = await prepareExtensionBridge({
-      args,
-      homeDir,
-      provider,
-      targetUrl,
-      selectedBrowser,
-      statusReporter,
-    })
-
-    const readDelayMs = args.readDelayMs === undefined ? 1000 : Number(args.readDelayMs)
-    const readTimeoutMs = args.readTimeoutMs === undefined
-      ? (args.longRunning ? LONG_RUNNING_READ_TIMEOUT_MS : 120_000)
-      : Number(args.readTimeoutMs)
     const attachments = args.attachFiles.length > 0
       ? await stageVisibleAttachments({
           homeDir,
+          bundleId: managedJobId,
           files: args.attachFiles.map((sourcePath) => ({
             sourcePath,
             type: visibleAttachmentMediaType(sourcePath),
@@ -830,85 +1020,43 @@ async function executeDaemonJob({
     if (attachments && attachments.some((attachment) => attachment.bundleId !== stagedAttachmentBundleId)) {
       throw usageError('attachment_bundle_invalid', 'Visible attachments must be staged into one private bundle.')
     }
-    const visibleActionRequest = visibleAction
-      ? {
-          protocol: VISIBLE_PROVIDER_ACTION_PROTOCOL_VERSION,
-          requestId,
-          provider,
-          action: visibleAction.action,
-          payload: visibleAction.action === 'file.upload'
-            ? { attachments }
-            : visibleAction.payload,
-        }
-      : undefined
-    const requestJson = {
-      requestId,
-      taskId,
-      prompt,
-      targetUrl,
-      idempotencyKey: visibleAction ? requestId : taskId,
-      readDelayMs: visibleAction ? undefined : readDelayMs,
-      readTimeoutMs: visibleAction ? undefined : readTimeoutMs,
-      includeText: action === 'snapshot_dom' ? Boolean(args.includeText) : undefined,
-      maxTextChars: action === 'snapshot_dom' && args.maxTextChars !== undefined
-        ? Number(args.maxTextChars)
-        : undefined,
-      attachments,
-      visibleAction: visibleActionRequest,
-      ...providerControls,
-      metadata: {
-        source: 'tokenless-cli',
-        browser: bridge.browser ?? normalizeBrowserId(selectedBrowser),
-        projectName,
-        chatName,
-        taskId,
-        idempotencyKey: taskId,
-        visibleSessionOnly: true,
-      },
-    }
-    assertNativeRequestSize({ provider, action, request_json: requestJson })
+    const request = createManagedPlaywrightJobRequest({
+      provider,
+      target: { kind: 'provider_home', url: managedProviderTargetUrl(provider, args.targetUrl) },
+      actions: managedVisibleActions({
+        action,
+        provider,
+        requestId,
+        prompt,
+        attachments,
+        providerControls,
+        visibleAction,
+      }),
+    })
 
     // From this point onward a transport error can be ambiguous: the daemon
     // may have durably created the job before the response was lost. Leave the
     // bundle for job-aware orphan cleanup instead of deleting bytes that a
     // queued job may still reference.
     daemonJobSubmissionStarted = true
-    const job = await createDaemonJob({
-      daemonUrl: configuredDaemonUrl,
-      homeDir,
+    const submitted = await executeManagedPlaywrightJob({
+      args,
       provider,
-      action,
-      requestJson,
-    })
-    statusReporter.report({
-      event: 'daemon_created',
-      status: job.status,
-      jobId: job.job_id,
+      request,
       taskId,
-      provider,
-      action,
+      jobId: managedJobId,
+      statusEventAction: MANAGED_PLAYWRIGHT_JOB_ACTION,
+      noWait: args.noWait === true,
+      timeoutMs: args.timeoutMs === undefined
+        ? (action === 'snapshot_dom' ? 60_000 : (args.longRunning ? LONG_RUNNING_JOB_TIMEOUT_MS : DEFAULT_RUN_TIMEOUT_MS))
+        : Number(args.timeoutMs),
     })
-
-    const result = args.noWait
-      ? (statusReporter.report({
-          event: 'detached',
-          status: 'no_wait',
-          jobId: job.job_id,
-          taskId,
-          provider,
-          action,
-        }), null)
-      : await waitForJobWithInterruptCancellation({
-          homeDir,
-          daemonUrl: configuredDaemonUrl,
-          jobId: job.job_id,
-          timeoutMs: args.timeoutMs === undefined
-            ? (action === 'snapshot_dom' ? 60_000 : (args.longRunning ? LONG_RUNNING_JOB_TIMEOUT_MS : DEFAULT_RUN_TIMEOUT_MS))
-            : Number(args.timeoutMs),
-          cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
-          statusReporter,
-        })
-    assertDaemonJobSucceeded(result, statusReporter)
+    const { job, waitResult: result, statusLog } = submitted
+    assertDaemonJobSucceeded(result, {
+      events: statusLog,
+      report() {},
+      lastStatus: () => statusLog.at(-1)?.status,
+    })
 
     if (action === 'snapshot_dom' && result) {
       const snapshot = await persistDaemonSnapshot({
@@ -923,10 +1071,12 @@ async function executeDaemonJob({
         jobId: job.job_id,
         taskId,
         provider,
+        backend: PLAYWRIGHT_EXECUTION_BACKEND,
+        profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
         snapshot,
         compactOutput: snapshot.metadataPath,
         status: result.status,
-        statusLog: statusReporter.events,
+        statusLog,
       }, args)
       return
     }
@@ -934,16 +1084,18 @@ async function executeDaemonJob({
     printPayload({
       ok: true,
       transport: 'daemon',
+      backend: PLAYWRIGHT_EXECUTION_BACKEND,
       jobId: job.job_id,
       taskId,
       provider,
+      profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
       projectName,
       chatName,
       idempotencyKey: taskId,
       result: publicDaemonResult(result),
       compactOutput: result?.compactOutput,
-      status: result?.status ?? statusReporter.lastStatus(),
-      statusLog: statusReporter.events,
+      status: result?.status ?? statusLog.at(-1)?.status,
+      statusLog,
     }, args)
   } catch (error) {
     if (stagedAttachmentBundleId && !daemonJobSubmissionStarted) {
@@ -952,8 +1104,104 @@ async function executeDaemonJob({
         bundleId: stagedAttachmentBundleId,
       }).catch(() => undefined)
     }
-    attachStatusLog(error as CliError, statusReporter)
     throw error
+  }
+}
+
+async function executeManagedPlaywrightJob({
+  args,
+  provider,
+  request,
+  taskId,
+  statusEventAction,
+  noWait,
+  timeoutMs,
+  jobId,
+}: {
+  args: CliArgs
+  provider: string
+  request: ReturnType<typeof createManagedPlaywrightJobRequest>
+  taskId?: string | undefined
+  statusEventAction: string
+  noWait: boolean
+  timeoutMs?: number | undefined
+  jobId?: string | undefined
+}) {
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const statusReporter = createCliStatusReporter(args)
+  const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+  const daemon = await ensureDaemonReady({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+  })
+  statusReporter.report({
+    event: daemon.started ? 'daemon_started' : 'daemon_ready',
+    status: 'ready',
+    daemonUrl: configuredDaemonUrl,
+    daemonPid: daemon.pid,
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
+  })
+  await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
+  const runner = await startRunnerSupervisor({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    ...(process.env.TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY === undefined
+      ? {}
+      : { entryPath: process.env.TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY }),
+    ...(args.runnerHeartbeatTimeoutMs === undefined
+      ? {}
+      : { heartbeatTimeoutMs: Number(args.runnerHeartbeatTimeoutMs) }),
+  })
+  statusReporter.report({
+    event: runner.started ? 'playwright_runner_started' : 'playwright_runner_ready',
+    status: runner.state,
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
+    provider,
+    action: statusEventAction,
+  })
+  const job = await submitManagedPlaywrightJob({
+    daemonUrl: configuredDaemonUrl,
+    homeDir,
+    profileId: profile.id,
+    request,
+    ...(jobId === undefined ? {} : { jobId }),
+  })
+  statusReporter.report({
+    event: 'daemon_created',
+    status: job.status,
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
+    jobId: job.job_id,
+    taskId,
+    provider,
+    action: job.action,
+  })
+  const waitResult = noWait
+    ? (statusReporter.report({
+        event: 'detached',
+        status: 'no_wait',
+        backend: PLAYWRIGHT_EXECUTION_BACKEND,
+        jobId: job.job_id,
+        taskId,
+        provider,
+        action: job.action,
+      }), null)
+    : await waitForJobWithInterruptCancellation({
+        homeDir,
+        daemonUrl: configuredDaemonUrl,
+        jobId: job.job_id,
+        timeoutMs: timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+        cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
+        statusReporter,
+      })
+  return {
+    profile,
+    runner,
+    job,
+    waitResult,
+    statusLog: statusReporter.events,
   }
 }
 
@@ -974,6 +1222,105 @@ function visibleAttachmentMediaType(sourcePath: string) {
     '.webp': 'image/webp',
     '.xml': 'application/xml',
   } as Record<string, string>)[extension] ?? 'application/octet-stream'
+}
+
+function managedVisibleActions({
+  action,
+  provider,
+  requestId,
+  prompt,
+  attachments,
+  providerControls,
+  visibleAction,
+}: {
+  action: string
+  provider: string
+  requestId: string
+  prompt?: string | undefined
+  attachments?: readonly Record<string, unknown>[] | undefined
+  providerControls: Record<string, any>
+  visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
+}) {
+  if (visibleAction) {
+    return [{
+      requestId,
+      action: visibleAction.action as VisibleAction,
+      payload: visibleAction.action === VISIBLE_ACTIONS.FILE_UPLOAD
+        ? { attachments }
+        : visibleAction.payload,
+    }]
+  }
+
+  if (providerControls.modelFallbacks !== undefined) {
+    throw usageError('model_fallback_unsupported', '--model-fallback is not supported by managed Playwright visible jobs; pass one exact --model label.')
+  }
+
+  const actions: Array<{ requestId: string; action: VisibleAction; payload: Record<string, unknown> }> = []
+  if (action === 'inspect_auth') {
+    actions.push({ requestId, action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} })
+    return actions
+  }
+  if (action === 'inspect_controls' || action === 'inspect_chatgpt_controls') {
+    actions.push(
+      { requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_INSPECT, payload: {} },
+      { requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_INSPECT, payload: {} },
+    )
+    return actions
+  }
+  if (action === 'configure_controls' || action === 'configure_chatgpt') {
+    if (providerControls.model !== undefined) {
+      actions.push({ requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: providerControls.model } })
+    }
+    if (providerControls.effort !== undefined) {
+      actions.push({ requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_SELECT, payload: { label: providerControls.effort } })
+    }
+    return actions
+  }
+  if (action === 'snapshot_dom') {
+    actions.push({ requestId, action: VISIBLE_ACTIONS.SNAPSHOT_SANITIZED, payload: {} })
+    return actions
+  }
+  if (providerControls.model !== undefined) {
+    actions.push({ requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: providerControls.model } })
+  }
+  if (providerControls.effort !== undefined) {
+    actions.push({ requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_SELECT, payload: { label: providerControls.effort } })
+  }
+  if (attachments !== undefined && attachments.length > 0) {
+    actions.push({ requestId: `${requestId}:files`, action: VISIBLE_ACTIONS.FILE_UPLOAD, payload: { attachments } })
+  }
+  if (typeof prompt === 'string') {
+    actions.push({ requestId: `${requestId}:prompt`, action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: prompt } })
+  }
+  if (action === 'submit' || action === 'submit_and_read') {
+    actions.push({ requestId: `${requestId}:submit`, action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} })
+  }
+  if (action === 'submit_and_read' || action === 'response.read') {
+    actions.push({ requestId: `${requestId}:read`, action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} })
+  }
+  if (actions.length === 0) {
+    throw usageError('unsupported_visible_action', `Visible action '${action}' is not supported by managed Playwright jobs.`)
+  }
+  return actions
+}
+
+function managedProviderTargetUrl(provider: string, targetUrl: unknown) {
+  if (targetUrl === undefined) return providerHomeUrl(provider as any)
+  const candidate = providerWakeUrl(provider, targetUrl)
+  const parsed = new URL(candidate)
+  parsed.search = ''
+  parsed.hash = ''
+  return parsed.toString()
+}
+
+function managedPlaywrightJobId() {
+  return `tlp_${randomUUID()}`
+}
+
+function visibleRequestId(value: string) {
+  const trimmed = value.trim()
+  if (/^[A-Za-z0-9._:-]{1,80}$/.test(trimmed)) return trimmed
+  return randomUUID()
 }
 
 async function prepareExtensionBridge({
@@ -1041,24 +1388,35 @@ async function stateCommand(args: CliArgs) {
     chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
   })
   if (!requestedTaskId && !args.jobId) {
-    throw usageError('missing_task_id', 'Usage: tokenless state requires --task-id or --job-id.')
+    if (args.profile === undefined) {
+      throw usageError('missing_task_id', 'Usage: tokenless state requires --task-id, --job-id, or --profile.')
+    }
   }
   const providerValue = args.provider || process.env.TOKENLESS_PROVIDER || (args.jobId ? undefined : config.preferredProviders[0] || 'chatgpt')
   const provider = providerValue ? normalizeProvider(providerValue) : undefined
+  const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
   const daemonJobs = args.jobId
     ? [await getDaemonJob({ daemonUrl: configuredDaemonUrl, homeDir, jobId: args.jobId })]
     : await listDaemonJobs({
         daemonUrl: configuredDaemonUrl,
         homeDir,
-        taskId: requestedTaskId,
+        taskId: profile ? undefined : requestedTaskId,
         provider,
+        executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
+        profileId: profile.id,
         limit: Math.max(1, Number(args.limit) || 10),
       })
   const jobs = daemonJobs
     .map(publicDaemonJobState)
+    .map((job) => ({
+      ...job,
+      backend: PLAYWRIGHT_EXECUTION_BACKEND,
+      profile: { id: profile.id },
+    }))
     .filter((job) => {
       if (requestedTaskId && job.taskId !== requestedTaskId) return false
       if (provider && job.provider !== provider) return false
+      if (job.profile?.id !== profile.id) return false
       return true
     })
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
@@ -1073,8 +1431,10 @@ async function stateCommand(args: CliArgs) {
     ok: true,
     protocol: 'tokenless.daemon-task-state.v1',
     transport: 'daemon',
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
     taskId: requestedTaskId ?? latest.taskId,
     provider: provider ?? latest.provider,
+    profile: publicManagedProfile(profile, profile.slug),
     latest,
     jobs: jobs.slice(0, Math.max(1, Number(args.limit) || 10)),
   }, args)
@@ -1142,57 +1502,97 @@ async function installCommand(args: CliArgs) {
 }
 
 async function setupCommand(args: CliArgs) {
-  const provisioned = await provisionRuntime(args)
-  const provider = normalizeProvider(
-    args.provider || process.env.TOKENLESS_PROVIDER || provisioned.config.preferredProviders[0] || 'chatgpt'
-  )
-  const targetUrl = providerWakeUrl(provider, args.targetUrl)
-  let marker = await readLiveBridgeMarker({ homeDir: provisioned.homeDir })
-  let opened = false
-
-  if (!marker) {
-    await openProviderUrl(targetUrl, provisioned.browser)
-    opened = true
-    try {
-      marker = await waitForExtensionBridge({
-        homeDir: provisioned.homeDir,
-        timeoutMs: args.bridgeTimeoutMs === undefined ? undefined : Number(args.bridgeTimeoutMs),
-      })
-    } catch (error) {
-      throw setupBridgeUnavailable({
-        browser: provisioned.browser.displayName,
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const provider = normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || 'chatgpt')
+  const profile = await ensureSetupManagedProfile({ args, homeDir })
+  const result = await executeManagedPlaywrightJob({
+    args: { ...args, profile: profile.slug },
+    provider,
+    request: createManagedPlaywrightJobRequest({
+      provider,
+      target: { kind: 'provider_home', url: managedProviderTargetUrl(provider, args.targetUrl) },
+      actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+    }),
+    taskId: `setup:${provider}:${randomUUID()}`,
+    statusEventAction: 'setup',
+    noWait: false,
+    timeoutMs: args.timeoutMs === undefined ? 90_000 : Number(args.timeoutMs),
+  })
+  const observedAuth = authStateFromManagedResult(result.waitResult?.result)
+  const registry = new ManagedProfileRegistry(homeDir)
+  const updatedProfile = observedAuth
+    ? await registry.updateProviderStatus(profile.slug, {
         provider,
-        targetUrl,
-        cause: error,
+        auth: observedAuth,
+        checkedAt: new Date().toISOString(),
       })
-    }
-  }
-
+    : profile
   printPayload({
     ok: true,
     status: 'ready',
     runtime: 'rust',
+    transport: 'daemon',
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
     provider,
-    providerUrl: targetUrl,
-    providerOpened: opened,
-    browser: {
-      id: provisioned.browser.browser,
-      displayName: provisioned.browser.displayName,
-    },
+    providerUrl: managedProviderTargetUrl(provider, args.targetUrl),
+    profile: publicManagedProfile(updatedProfile, await defaultProfileSlug(registry)),
+    runner: result.runner,
     daemon: {
       ready: true,
-      started: provisioned.daemon.started,
-      url: provisioned.daemonUrl,
-      pid: provisioned.daemon.pid,
+      url: configuredDaemonUrl,
     },
-    extensionBridge: {
-      ready: true,
-      sessionId: marker.sessionId,
-      heartbeatAgeMs: marker.heartbeatAgeMs,
-    },
-    nextStep: `Sign in to ${provider} in the opened browser page if needed, then run "tokenless ${provider === 'chatgpt' ? 'chatgpt-controls' : 'run'}".`,
-    compactOutput: `Tokenless is ready in ${provisioned.browser.displayName}. ${opened ? 'The provider page is open; sign in if needed, then run your first Tokenless command.' : 'The extension bridge is already connected.'}`,
+    auth: observedAuth,
+    jobId: result.job.job_id,
+    result: publicDaemonResult(result.waitResult),
+    statusLog: result.statusLog,
+    compactOutput: `Tokenless managed Playwright setup is ready for ${provider} with profile ${updatedProfile.slug}.`,
   }, args)
+}
+
+async function ensureSetupManagedProfile({ args, homeDir }: { args: CliArgs; homeDir: string }) {
+  const registry = new ManagedProfileRegistry(homeDir)
+  const slug = String(args.profile || 'default')
+  const importKey = args.importChromeProfile === undefined
+    ? undefined
+    : validateChromeProfileDirectoryKey(String(args.importChromeProfile))
+  if (importKey && args.consentLocalProfileCopy !== true) {
+    throw usageError(
+      'profile_import_consent_required',
+      'Importing a local Chrome profile requires --consent-local-profile-copy.'
+    )
+  }
+  try {
+    return await registry.resolveProfile(slug)
+  } catch (error) {
+    if ((error as CliError).code !== 'profile_not_found' && (error as CliError).code !== 'profile_not_configured') throw error
+  }
+  let record = await registry.addProfile({
+    slug,
+    label: args.label === undefined ? 'default' : String(args.label),
+    setDefault: true,
+    lifecycle: importKey ? 'importing' : 'ready',
+  })
+  try {
+    if (importKey) {
+      const sourceUserDataDir = await resolveChromeUserDataDirForImport(args.chromeUserDataDir, importKey)
+      await importChromeProfile({
+        sourceUserDataDir,
+        profileDirectoryKey: importKey,
+        destinationDir: record.directory,
+        tokenlessHome: homeDir,
+      })
+      record = await registry.markImported(record.slug, {
+        source: sourceUserDataDir,
+        profileDirectoryKey: importKey,
+      })
+    }
+    return record
+  } catch (error) {
+    await registry.removeProfile(record.slug, { confirmDelete: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 async function provisionRuntime(args: CliArgs) {
@@ -1400,6 +1800,10 @@ function publicDaemonJobState(job: Record<string, any>) {
   return {
     jobId: job.job_id,
     taskId: daemonTaskId(job),
+    backend: job.execution_backend ?? 'legacy_extension',
+    profile: job.profile_id === undefined || job.profile_id === null
+      ? null
+      : { id: job.profile_id },
     provider: job.provider,
     action: job.action,
     projectName: metadata.projectName,
@@ -1425,7 +1829,20 @@ function daemonTaskId(job: Record<string, any>) {
   const request = objectRecord(job.request_json)
   const metadata = objectRecord(request.metadata)
   const value = request.taskId ?? request.idempotencyKey ?? request.requestId ?? metadata.taskId ?? metadata.idempotencyKey
-  return typeof value === 'string' ? value : undefined
+  if (typeof value === 'string') return value
+  const fromJobId = taskIdFromManagedPlaywrightJobId(job.job_id)
+  return fromJobId ?? undefined
+}
+
+function taskIdFromManagedPlaywrightJobId(jobId: unknown) {
+  if (typeof jobId !== 'string' || !jobId.startsWith('tlp_')) return null
+  const lastSeparator = jobId.lastIndexOf('_')
+  if (lastSeparator <= 4) return null
+  try {
+    return Buffer.from(jobId.slice(4, lastSeparator), 'base64url').toString('utf8') || null
+  } catch {
+    return null
+  }
 }
 
 function safeStateTarget(provider: string, value: unknown) {
@@ -1562,8 +1979,11 @@ function parseArgs(argv: string[]): CliArgs {
     '--turn-context-file': 'turnContextFile',
     '--output': 'output',
     '--provider': 'provider',
+    '--profile': 'profile',
     '--account': 'account',
     '--label': 'label',
+    '--import-chrome-profile': 'importChromeProfile',
+    '--chrome-user-data-dir': 'chromeUserDataDir',
     '--driver': 'driver',
     '--routing-domain': 'routingDomain',
     '--after-sequence': 'afterSequence',
@@ -1594,6 +2014,7 @@ function parseArgs(argv: string[]): CliArgs {
     '--daemon-start-timeout-ms': 'daemonStartTimeoutMs',
     '--cancel-timeout-ms': 'cancelTimeoutMs',
     '--bridge-timeout-ms': 'bridgeTimeoutMs',
+    '--runner-heartbeat-timeout-ms': 'runnerHeartbeatTimeoutMs',
     '--read-delay-ms': 'readDelayMs',
     '--read-timeout-ms': 'readTimeoutMs',
     '--max-text-chars': 'maxTextChars',
@@ -1613,6 +2034,9 @@ function parseArgs(argv: string[]): CliArgs {
     '--no-wait': 'noWait',
     '--long-running': 'longRunning',
     '--device-auth': 'deviceAuth',
+    '--set-default': 'setDefault',
+    '--confirm-delete': 'confirmDelete',
+    '--consent-local-profile-copy': 'consentLocalProfileCopy',
     '--disabled': 'disabled',
     '--isolated': 'isolated',
   }
@@ -1696,12 +2120,12 @@ function normalizeCliBrowser(browser: unknown) {
   return browserId
 }
 
-function normalizeProvider(provider: unknown) {
+function normalizeProvider(provider: unknown): ProviderId {
   const normalized = String(provider).trim().toLowerCase()
   if (!['chatgpt', 'claude', 'gemini', 'grok'].includes(normalized)) {
     throw usageError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini, grok.')
   }
-  return normalized
+  return normalized as ProviderId
 }
 
 function assertAccountCommandArguments(subcommand: string | undefined, args: CliArgs) {
@@ -1739,6 +2163,22 @@ function assertProjectCommandArguments(subcommand: string | undefined, args: Cli
     throw usageError('project_command_invalid', 'Projects subcommand must be pin, resolve, list, or unpin.')
   }
   assertOnlyArguments(args, new Set(byCommand[subcommand]), `projects ${subcommand}`)
+}
+
+function assertProfilesCommandArguments(subcommand: string | undefined, args: CliArgs) {
+  const common = ['files', 'home', 'json', 'profile']
+  const byCommand: Record<string, string[]> = {
+    add: [...common, 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'setDefault'],
+    list: ['files', 'home', 'json'],
+    status: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
+    open: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
+    'set-default': common,
+    remove: [...common, 'confirmDelete'],
+  }
+  if (subcommand === undefined || byCommand[subcommand] === undefined) {
+    throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, list, status, open, set-default, or remove.')
+  }
+  assertOnlyArguments(args, new Set(byCommand[subcommand]), `profiles ${subcommand}`)
 }
 
 function assertOnlyArguments(args: CliArgs, allowed: Set<string>, command: string) {
@@ -1807,7 +2247,7 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
     ['isolated', '--isolated'],
     ['afterSequence', '--after-sequence'],
   ] as const
-  if (command !== 'accounts' && command !== 'projects') {
+  if (command !== 'accounts' && command !== 'projects' && command !== 'profiles' && command !== 'setup') {
     const selected = administrationOnly
       .filter(([key]) => args[key] !== undefined)
       .map(([, flag]) => flag)
@@ -1829,9 +2269,23 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
       `${selectedServeOnly.join(', ')} is accepted only by the serve command.`,
     )
   }
+  const profilesOnly = [
+    ['importChromeProfile', '--import-chrome-profile'],
+    ['chromeUserDataDir', '--chrome-user-data-dir'],
+    ['setDefault', '--set-default'],
+    ['confirmDelete', '--confirm-delete'],
+    ['consentLocalProfileCopy', '--consent-local-profile-copy'],
+  ] as const
+  const selectedProfilesOnly = profilesOnly.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag)
+  if (command !== 'profiles' && command !== 'setup' && selectedProfilesOnly.length > 0) {
+    throw usageError(
+      'profiles_options_require_profiles_command',
+      `${selectedProfilesOnly.join(', ')} is accepted only by the profiles command.`,
+    )
+  }
   if (command === 'run') return
   if (command === 'serve') return
-  if (command === 'accounts' || command === 'projects') return
+  if (command === 'accounts' || command === 'projects' || command === 'profiles') return
   const directOnly = [
     ['mode', '--mode'],
     ['directBackend', '--direct-backend'],
@@ -1895,6 +2349,7 @@ function normalizeDirectBackend(value: unknown, provider: DirectProvider): Direc
 function directVisibleOnlyArguments() {
   return [
     ['action', '--action'],
+    ['profile', '--profile'],
     ['preferredProviders', '--preferred-providers'],
     ['targetUrl', '--target-url'],
     ['jobId', '--job-id'],
@@ -1908,6 +2363,7 @@ function directVisibleOnlyArguments() {
     ['daemonStartTimeoutMs', '--daemon-start-timeout-ms'],
     ['cancelTimeoutMs', '--cancel-timeout-ms'],
     ['bridgeTimeoutMs', '--bridge-timeout-ms'],
+    ['runnerHeartbeatTimeoutMs', '--runner-heartbeat-timeout-ms'],
     ['readDelayMs', '--read-delay-ms'],
     ['readTimeoutMs', '--read-timeout-ms'],
     ['maxTextChars', '--max-text-chars'],
@@ -2151,6 +2607,12 @@ function usage() {
     '  tokenless run --mode direct --provider chatgpt [--model <codex-model>] --prompt <text> --json',
     '  TOKENLESS_DIRECT_CHATGPT_API_KEY=... tokenless run --mode direct --direct-backend api --provider chatgpt --model <api-model> [--direct-base-url <url>] [--max-output-tokens <count>] [--temperature <0..2>] --prompt <text> --json',
     '  TOKENLESS_DIRECT_SERVER_KEY=... tokenless serve --mode direct [--home <path>] [--host 127.0.0.1] [--port 8788] --json',
+    '  tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
+    '  tokenless profiles add --profile <slug> --import-chrome-profile <Default|Profile 1> [--chrome-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
+    '  tokenless profiles list --json',
+    '  tokenless profiles status|open [--profile <slug>] [--provider <provider>] --json',
+    '  tokenless profiles set-default --profile <slug> --json',
+    '  tokenless profiles remove --profile <slug> --confirm-delete --json',
     '  tokenless accounts add --provider chatgpt --account personal-one [--label Primary] --json',
     '  tokenless accounts login --provider chatgpt --account personal-one [--device-auth] --json',
     '  tokenless accounts add --provider claude --driver api --account work --routing-domain personal --json',
@@ -2162,22 +2624,22 @@ function usage() {
     '  tokenless projects pin --project <id> --provider <provider> --account <id> [--failover-policy availability-first|strict] --json',
     '  tokenless projects resolve|unpin --project <id> --provider <provider> --json',
     '  tokenless projects list [--project <id>] [--provider <provider>] --json',
-    '  tokenless run --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
-    '  tokenless run --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> [--model-fallback <model,...>] --prompt <text> --json',
+    '  tokenless run --profile <slug> --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
+    '  tokenless run --profile <slug> --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> --prompt <text> --json',
     '  tokenless run --provider chatgpt --model <visible-model> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
     '  tokenless run --provider <chatgpt|claude|gemini|grok> --attach-file <path> [--attach-file <path>] --prompt <text> --json',
     '  tokenless run --long-running --provider chatgpt --prompt <text> --json',
-    '  tokenless provider-action --provider <chatgpt|claude|gemini|grok> --action <auth.status|model.inspect|model.select|effort.inspect|effort.select|file.upload|prompt.input|prompt.submit> [action options] --json',
-    '  tokenless provider-status --provider <chatgpt|claude|gemini|grok> --json',
-    '  tokenless provider-controls --provider <chatgpt|claude|gemini|grok> --json',
-    '  tokenless provider-configure --provider <chatgpt|claude|gemini|grok> [--model <exact-visible-model>] [--effort <exact-visible-effort>] --json',
+    '  tokenless provider-action --profile <slug> --provider <chatgpt|claude|gemini|grok> --action <auth.status|model.inspect|model.select|effort.inspect|effort.select|file.upload|prompt.clear|prompt.input|prompt.submit|response.read|snapshot.sanitized|navigation.check|blocker.check> [action options] --json',
+    '  tokenless provider-status --profile <slug> --provider <chatgpt|claude|gemini|grok> --json',
+    '  tokenless provider-controls --profile <slug> --provider <chatgpt|claude|gemini|grok> --json',
+    '  tokenless provider-configure --profile <slug> --provider <chatgpt|claude|gemini|grok> [--model <exact-visible-model>] [--effort <exact-visible-effort>] --json',
     '  tokenless chatgpt-controls --json',
     '  tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
-    '  tokenless state --task-id <task-id> --json',
+    '  tokenless state --task-id <task-id> [--profile <slug>] --json',
     '  tokenless cancel --job-id <job-id> --json',
     '  tokenless snapshot-dom --provider chatgpt --json',
     '  tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json',
-    '  tokenless setup [--provider chatgpt] [--extension-id <chrome-extension-id>] --json',
+    '  tokenless setup [--profile default] [--provider chatgpt] [--import-chrome-profile <key> --consent-local-profile-copy] --json',
     '  tokenless install [--extension-id <chrome-extension-id>] --json',
     '  tokenless doctor --json',
   ].join('\n'))

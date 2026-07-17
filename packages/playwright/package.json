@@ -1,0 +1,33 @@
+{
+  "name": "@tokenless/playwright",
+  "version": "0.1.0",
+  "description": "Managed Playwright profiles and visible provider automation core for Tokenless.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "bin": {
+    "tokenless-playwright-runner": "./dist/src/runner-entry.mjs"
+  },
+  "files": [
+    "dist/src",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "playwright-core": "^1.53.0"
+  },
+  "engines": {
+    "node": ">=24.15.0"
+  }
+}

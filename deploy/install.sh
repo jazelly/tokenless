@@ -23,11 +23,13 @@ if [[ "$(id -u)" -eq 0 ]]; then
 
 Tokenless CLI is installed system-wide.
 
-For security and correct browser-profile binding, do not run setup as root. Return to
-your normal desktop account, install and enable the Tokenless browser extension, then run:
+For security and correct managed Chrome profile ownership, do not run setup as root.
+Return to your normal desktop account, then run:
 
   tokenless setup --json
   tokenless doctor --json
+
+Tokenless uses a local Playwright-managed Chrome profile. No browser extension is required.
 
 EOF
   exit 0
@@ -44,9 +46,9 @@ cat <<'EOF'
 
 Tokenless CLI is installed.
 
-Install and enable the Tokenless browser extension before continuing. This script will
-now open the provider page and verify the browser bridge; complete any visible sign-in
-or permission prompt yourself.
+No browser extension is required. This script will now provision the local Playwright
+runtime and managed Chrome profile, open the provider page when needed, and verify the
+installation. Complete any visible sign-in, CAPTCHA, consent, or confirmation yourself.
 
 EOF
 

@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
+const playwrightDir = path.join(root, 'packages/playwright')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const executableSuffix = process.platform === 'win32' ? '.exe' : ''
 const nativeTuples = [
@@ -174,12 +175,16 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
   const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-pack-runtime-'))
   const manifestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-pack-manifest-'))
   let universalTarball
+  let playwrightTarball
   let nativeTarball
   try {
+    const playwrightPack = npmPack(playwrightDir, packDir)
     const universalPack = npmPack(cliDir, packDir)
     const nativePack = npmPack(nativePackageDir, packDir)
+    playwrightTarball = path.join(packDir, playwrightPack.filename)
     universalTarball = path.join(packDir, universalPack.filename)
     nativeTarball = path.join(packDir, nativePack.filename)
+    assert.ok(playwrightPack.files.some((file) => file.path === 'dist/src/index.js'))
     const nativePaths = nativePack.files.map((file) => file.path)
     assert.ok(nativePaths.includes(`bin/tokenless-daemon${executableSuffix}`))
     assert.ok(nativePaths.includes(`bin/tokenless-native-host${executableSuffix}`))
@@ -187,6 +192,7 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
 
     execFileSync('npm', [
       'install',
+      playwrightTarball,
       universalTarball,
       nativeTarball,
       '--prefix',
@@ -198,8 +204,10 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
     ], { encoding: 'utf8' })
 
     const installedCli = path.join(installDir, 'node_modules', 'tokenless')
+    const installedPlaywright = path.join(installDir, 'node_modules', '@tokenless', 'playwright')
     const installedNative = path.join(installDir, 'node_modules', packageName)
     assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'bin')), false)
+    assert.equal(fs.existsSync(path.join(installedPlaywright, 'dist', 'src', 'index.js')), true)
     assert.equal(fs.existsSync(path.join(installedNative, 'bin', `tokenless-daemon${executableSuffix}`)), true)
     if (process.platform !== 'win32') {
       const installedBin = path.join(installDir, 'node_modules', '.bin', 'tokenless')
@@ -222,6 +230,7 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
     assert.equal(fs.existsSync(installed.nativeHostExecutable), true)
   } finally {
     if (universalTarball) fs.rmSync(universalTarball, { force: true })
+    if (playwrightTarball) fs.rmSync(playwrightTarball, { force: true })
     if (nativeTarball) fs.rmSync(nativeTarball, { force: true })
     fs.rmSync(packDir, { recursive: true, force: true })
     fs.rmSync(installDir, { recursive: true, force: true })
@@ -509,46 +518,58 @@ test('CLI rejects removed local fallback and oversized native messages before ne
   )
 })
 
-test('agent skill is a daemon-only npx workflow with provider-only automatic navigation', () => {
+test('agent skills use the managed Playwright workflow and forbid extension fallback', () => {
   const skill = fs.readFileSync(path.join(root, 'skills/tokenless/SKILL.md'), 'utf8')
+  const installSkill = fs.readFileSync(path.join(root, 'skills/tokenless-install/SKILL.md'), 'utf8')
   assert.match(skill, /npx tokenless run/)
   assert.match(skill, /npx tokenless state/)
   assert.match(skill, /Rust daemon/)
-  assert.match(skill, /only page Tokenless may open automatically is the selected provider's HTTPS UI/)
-  assert.match(skill, /do not improvise a repair or request normal-run extension IDs/i)
+  assert.match(skill, /Playwright worker/)
+  assert.match(skill, /persistent managed Google Chrome profile/)
+  assert.match(skill, /tokenless-install/)
   assert.match(skill, /--long-running/)
   assert.match(skill, /Do not use `--no-wait`/)
   assert.match(skill, /daemon_waiting/)
   assert.match(skill, /state.*Rust daemon/s)
   assert.doesNotMatch(skill, /packages\/cli/)
   assert.doesNotMatch(skill, /--no-daemon/)
-  assert.doesNotMatch(skill, /--extension-id "<chrome-extension-id>" \\\n+  --json/)
+  assert.doesNotMatch(skill, /tokenless-native-host|extension id|chrome:\/\/extensions/i)
+
+  assert.match(installSkill, /user's preferred language/)
+  assert.match(installSkill, /npx tokenless@latest setup --json/)
+  assert.match(installSkill, /npx tokenless@latest doctor --json/)
+  assert.match(installSkill, /Playwright worker/)
+  assert.match(installSkill, /managed Chrome profile/)
+  assert.match(installSkill, /Completed locally/)
+  assert.match(installSkill, /Action needed/)
+  assert.match(installSkill, /Next verification/)
+  assert.doesNotMatch(installSkill, /extensionBridge|extension_setup_incomplete|chrome:\/\/extensions/i)
 })
 
-test('README and architecture describe isolated visible-session and direct boundaries', () => {
+test('public READMEs describe the Playwright web runtime and isolated direct boundary', () => {
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
   const chinese = fs.readFileSync(path.join(root, 'README.zh-CN.md'), 'utf8')
-  const architecture = fs.readFileSync(path.join(root, 'docs/architecture.md'), 'utf8')
   const cliReadme = fs.readFileSync(path.join(root, 'packages/cli/README.md'), 'utf8')
-  for (const text of [readme, architecture, cliReadme]) {
+  const installer = fs.readFileSync(path.join(root, 'deploy/install.sh'), 'utf8')
+  for (const text of [readme, cliReadme]) {
     assert.match(text, /tokenless-daemon/)
-    assert.match(text, /tokenless-native-host/)
-    assert.match(text, /no local JSON|local task-page fallback.*do not exist/i)
+    assert.match(text, /Playwright/)
     assert.match(text, /visible/)
     assert.match(text, /direct/)
+    assert.doesNotMatch(text, /tokenless-native-host/)
     assert.doesNotMatch(text, /\/Users\/jazelly/)
   }
   assert.match(readme, /npx tokenless@latest setup/)
   assert.match(readme, /Noop|standalone/i)
-  assert.match(chinese, /Rust daemon/)
-  assert.match(chinese, /不会调用隐藏的 provider 后端接口/)
-  assert.match(architecture, /tokenless\.daemon\.v1/)
-  assert.match(architecture, /tokenless\.direct\.v1/)
-  assert.match(architecture, /direct broker/i)
-  assert.match(architecture, /extension-bridge\.json/)
-  assert.match(architecture, /900 KiB/)
+  assert.match(chinese, /Playwright/)
+  assert.match(chinese, /tokenless-daemon/)
+  assert.match(chinese, /tokenless profiles/)
+  assert.match(chinese, /--mode direct/)
+  assert.doesNotMatch(chinese, /tokenless-native-host/)
   assert.match(readme, /docs\/direct-mode\.md/)
   assert.match(cliReadme, /tokenless serve --mode direct/)
+  assert.match(installer, /Playwright-managed Chrome profile/)
+  assert.doesNotMatch(installer, /install and enable the Tokenless browser extension/i)
 })
 
 function readJson(relativePath) {

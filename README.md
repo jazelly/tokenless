@@ -2,29 +2,35 @@
 
 # Tokenless
 
-Tokenless lets agents use AI through either the provider website you already use or an explicit direct connection. The default and recommended path is the browser extension: it operates the visible web UI, keeps browser credentials in the browser, and avoids an extra paid model API call.
+Tokenless gives agents one local CLI and API for operating AI websites through Playwright. It reuses the web sessions you already pay for and hides provider-specific browser details behind one contract.
 
-## Modes
-
-| Mode | Transport | Authentication | Status |
-| --- | --- | --- | --- |
-| Extension (`visible`, default) | Visible ChatGPT, Claude, Gemini, or Grok web UI | Your browser session | **Recommended** |
-| Direct/API (`direct`) | Official Codex client, documented public APIs, or an explicit compatible gateway | Provider client login or environment API key | **Experimental; active development** |
-
-The modes are isolated. Tokenless never falls back from the extension to a paid API, or from a direct request to the browser.
-
-Tokenless is standalone from Noop. In visible mode, the packaged `tokenless-daemon` and `tokenless-native-host` connect the CLI to the browser extension; there is no local JSON or local task-page fallback.
+> **Status:** Tokenless is migrating its web runtime to Playwright. The browser-extension architecture is being removed, ChatGPT, Claude, Gemini, and Grok are being unified, and file upload plus richer web workflows are under active development. The new architecture requires no browser extension.
 
 ## Why Tokenless
 
-- **Save tokens first.** Reuse a web subscription for research, drafting, review, explanation, and transformations instead of spending another model API request.
-- **Browser-native safety.** Extension mode uses normal, visible DOM interactions. It does not read cookies, passwords, browser-storage tokens, hidden authorization headers, or private provider APIs.
-- **Free, MIT-licensed, and local.** Tokenless has no hosted relay for your browser session. Only the prompt, explicitly shared context, and intentionally selected files reach the chosen provider.
-- **Built to expand.** Visible adapters support ChatGPT, Claude, Gemini, and Grok today and can extend to other providers with compatible web interfaces.
+- **Save tokens first.** Use an existing web subscription for research, drafting, review, explanation, and transformations instead of paying for another model API call.
+- **Operate the visible web safely.** Tokenless uses Playwright against normal provider pages. It does not extract cookies or browser-storage credentials, intercept hidden authorization headers, or call private provider APIs.
+- **Free, MIT-licensed, and local.** There is no hosted Tokenless relay. Browser profiles and sessions stay on your machine; only prompts and selected files go to the provider you choose.
+- **One interface across providers.** Agents use the same actions for ChatGPT, Claude, Gemini, and Grok while Tokenless handles their different pages, controls, and workflows.
+
+## How It Works
+
+`Agent → CLI or local API → tokenless-daemon → Playwright worker → managed Chrome profile → visible provider website`
+
+`tokenless setup` creates a persistent local Chrome profile and opens the provider when sign-in is needed. Later runs reuse that profile. The user-facing flow stays the same even when provider DOM and file-upload controls differ.
+
+| Mode | Execution path | Authentication | Status |
+| --- | --- | --- | --- |
+| Web (`visible`, default) | Playwright operating the visible website | Managed local Chrome profile | **Recommended; migration in progress** |
+| Direct (`direct`) | Official client, public API, or explicit compatible gateway | Client login or environment API key | **Experimental** |
+
+The modes are isolated: web automation never silently falls back to a paid API, and direct requests never silently open a browser. Tokenless is standalone from Noop.
+
+The **local API** is another interface to the same Playwright web jobs. **Direct mode** bypasses Playwright and calls an official client or public provider API instead.
 
 ## Install
 
-Requires Node.js 24.15+. Extension mode also requires the Tokenless extension in Chrome, Brave, Edge, Arc, or Chromium.
+Requires Node.js 24.15+ and Google Chrome. No extension is required.
 
 ### npm (recommended)
 
@@ -33,8 +39,6 @@ npm install --global tokenless@latest
 tokenless setup --json
 tokenless doctor --json
 ```
-
-Complete any visible provider login or permission prompt opened by `setup`. `doctor` succeeds only when the local runtime and extension bridge are ready.
 
 Without a global install:
 
@@ -49,9 +53,11 @@ System-wide installer:
 curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
 ```
 
-This executes with `sudo`; [review the script first](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh). It installs the CLI only. Run `tokenless setup --json` and `tokenless doctor --json` afterward as your normal desktop user.
+This executes with `sudo`; [review the script first](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh). Run `tokenless setup --json` and `tokenless doctor --json` afterward as your normal desktop user.
 
-### Agent skills (required for agent use)
+### Agent skill (required for agent use)
+
+If an agent will use Tokenless, install this maintenance skill so it can set up, upgrade, repair, and verify the runtime for you:
 
 ```bash
 npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless-install --yes
@@ -60,131 +66,64 @@ npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless-i
 Then tell your agent:
 
 ```text
-Use $tokenless-install to install Tokenless, install its main skill, and verify that it is ready.
+Use $tokenless-install to install or upgrade Tokenless, install its main skill, and run doctor.
 ```
 
-The install skill handles installation, upgrades, repair, `doctor`, and any browser action that still requires you.
-
-## Recommended: Extension Mode
-
-Extension mode is the default; `--mode visible` is optional.
+## Use Tokenless
 
 ```bash
 tokenless run \
+  --profile default \
   --provider chatgpt \
-  --project-name "Website redesign" \
-  --chat-name "Navbar review" \
-  --project-root /path/to/project \
-  --prompt "Review the navigation." \
-  --json
-```
-
-- ChatGPT is the default provider; Claude, Gemini, and Grok are also supported.
-- Reuse the returned `taskId` with `--task-id` for later turns.
-- Add `--long-running` for visible work that may exceed three minutes.
-- Research results include visible citations in `result.read.sources` when the provider renders them.
-
-The extension uses only user-visible controls after host permission is granted. Login, CAPTCHA, rate limits, and confirmations remain under your control. It never navigates automatically to a task page, local-file page, or `chrome-extension://` workflow.
-
-Time-sensitive free-plan facts, DOM provenance, and adapter acceptance boundaries are recorded in [Visible provider evidence](docs/visible-provider-evidence.md).
-
-### Visible models, files, and Projects
-
-Inspect visible authentication state and the exact model/effort labels available
-in the current provider UI, then use those labels in a run:
-
-```bash
-tokenless provider-status --provider chatgpt --json
-tokenless provider-controls --provider chatgpt --json
-tokenless run \
-  --provider chatgpt \
-  --model "<exact-visible-model>" \
-  --model-fallback "<exact-visible-fallback>" \
-  --effort "<exact-visible-effort>" \
   --attach-file ./brief.pdf \
-  --prompt "Review this brief." \
+  --prompt "Review this brief and return the key risks." \
   --json
 ```
 
-Authenticated, redacted DOM fixtures now preserve sign-in signals, model menus,
-effort controls, exact file inputs, and composers for ChatGPT, Claude, Gemini,
-and Grok. Fixture observation is not the same as implementation or acceptance:
-the runtime capability manifest exposes only `verified` actions and fails closed
-for `pending_evidence` or `unsupported` actions.
+The unified Playwright action contract covers visible authentication, exact model and effort controls, file upload, prompt input and submission, response reading, citations, blocker detection, and sanitized page snapshots. Four-provider parity and end-to-end file upload are still being completed.
 
-Model selection uses exact visible labels, ordered fallbacks, entitlement
-evidence, and selected-state verification. `--effort` also takes an exact
-visible label. Grok exposes thinking depth through model profiles rather than a
-separate effort control, so an independent Grok effort request fails closed.
+Managed profiles keep provider sessions separate and reusable:
 
-The attachment transport has exact input implementations for all four
-providers. Local paths never cross the daemon/extension protocol, and submission
-still blocks unless the current page exposes exactly one enabled input and then
-shows the new filename. The authenticated fixture capture did not upload a real
-file.
+```bash
+tokenless profiles add --profile work --set-default
+tokenless profiles open --profile work --provider claude
+tokenless profiles status --profile work --provider claude
+```
 
-For an existing ChatGPT or Claude Project, pass its exact signed-in web URL with
-`--target-url`. Tokenless then permits only a same-Project conversation route
-after submission.
+The CLI is the primary interface. A local API will expose the same provider-neutral jobs and actions so other agents and applications do not need browser-specific logic. That API is part of the active Playwright work and is not yet a stable compatibility contract.
 
-Tokenless does not yet create or select Projects through the unified action API,
-and Gemini/Grok Project routes are not verified. See the
-[CLI reference](packages/cli/README.md) for accepted route shapes and safety
-details.
+## Browser and Privacy Boundary
 
-## Experimental: Direct/API Mode
+- Playwright runs locally with visible, persistent Google Chrome profiles.
+- Importing an existing Chrome profile requires explicit consent; a clean profile is always available instead.
+- Tokenless may copy authentication state locally but never parses, prints, logs, exports, or transmits credential values.
+- Automation uses visible DOM controls and verifies visible outcomes. CAPTCHA, login, plan limits, and confirmations remain under user control.
+- Selected files are staged locally, integrity-checked, uploaded through the visible file control, and never exposed as raw local paths in job results.
 
-Direct mode is under active development. Use extension mode unless you specifically need an official provider client, public API, compatible gateway, local API broker, or multi-account project routing.
+## Experimental Direct Mode
 
-ChatGPT defaults to the provider-owned Codex executable on macOS and Linux:
+Direct mode remains separate from Playwright and may incur provider API charges:
 
 ```bash
 codex login
 tokenless run --mode direct --provider chatgpt --prompt "Review this design." --json
 ```
 
-Public API backends require an explicit model and an environment-only credential:
-
-```bash
-TOKENLESS_DIRECT_CLAUDE_API_KEY=... \
-tokenless run \
-  --mode direct \
-  --provider claude \
-  --model <api-model> \
-  --prompt "Review this design." \
-  --json
-```
-
-Direct mode supports ChatGPT, Claude, Gemini, Grok, and explicit Antigravity-compatible gateways. Public API traffic may be billed separately from web subscriptions. API keys are never accepted as CLI arguments or stored in Tokenless state. See [Direct mode](docs/direct-mode.md) for providers, the local broker, account routing, route allowlists, and security details.
+Public API backends require an explicit model and an environment-only credential. Tokenless does not accept API keys as CLI arguments or store them in its state. See [Direct mode](docs/direct-mode.md) for supported providers, the authenticated local broker, account routing, and security boundaries.
 
 ## Roadmap
 
-The extension roadmap is to finish the remaining provider-native web contracts
-through the same visible, permissioned UI path:
+- Complete one Playwright action contract across ChatGPT, Claude, Gemini, and Grok.
+- Make file upload, model selection, effort controls, citations, and long-running responses seamless across providers.
+- Expose projects, workspaces, provider files, plugins, connectors, and tools.
+- Support image generation, image input, and broader multimodal workflows.
+- Stabilize the local API so agents can use the web as a programmable execution surface.
 
-- authenticated Claude model selection and Gemini file upload;
-- an authenticated Grok active-generation busy-state contract;
-- native Project discovery and verified Gemini/Grok isolation;
-- plugins, connectors, and tools;
-- image and multimodal workflows.
-
-The goal is for an agent to use the provider website as fully as a person can, without relying on private web APIs. Roadmap items are not yet a compatibility guarantee.
-
-## Useful Commands
-
-```bash
-tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json
-tokenless provider-controls --provider gemini --json
-tokenless state --task-id "<task-id>" --json
-tokenless cancel --job-id "<job-id>" --json
-tokenless snapshot-dom --provider chatgpt --json
-```
-
-For an unpacked extension, pass its real ID once to `tokenless setup --extension-id <id> --json`. See the [CLI reference](packages/cli/README.md), [architecture](docs/architecture.md), and [privacy policy](PRIVACY.md) for details.
+Roadmap items are not yet compatibility guarantees. See the [Playwright architecture handoff](docs/handoff-visible-provider-web-automation.md) for the implementation boundary and acceptance plan.
 
 ## Development
 
-Requires Node.js 24.15+, npm, and Rust.
+Requires Node.js 24.15+, npm, Rust, and Google Chrome.
 
 ```bash
 npm run build
@@ -193,7 +132,7 @@ npm test
 npm run test:e2e
 ```
 
-The extension build is written to `packages/extension/dist/extension`. Load that directory from `chrome://extensions` in developer mode. Release procedures live in [npm publishing](docs/npm-publishing.md) and [Chrome Web Store release](docs/chrome-web-store-release.md); nothing is published by the commands above.
+Nothing is published by these commands. Release procedures live in [npm publishing](docs/npm-publishing.md).
 
 ## License
 
