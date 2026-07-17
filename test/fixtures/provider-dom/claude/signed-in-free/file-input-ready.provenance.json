@@ -1,0 +1,23 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "claude",
+  "accountState": "signed-in-free",
+  "observedPlan": { "status": "observed", "label": "Free" },
+  "scenario": "file-input-ready",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://claude.ai/new",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "7590709809a1e4058a0c3a94e7ba154d7ee30cede8b478921aec19f096cbb283",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "div[data-testid=\"chat-input\"][contenteditable=\"true\"][role=\"textbox\"]", "expectedCount": 1 },
+    { "capability": "file.upload", "selector": "input#chat-input-file-upload-onpage[data-testid=\"file-upload\"][type=\"file\"][multiple]", "expectedCount": 1 },
+    { "capability": "skill.upload", "selector": "[role=\"menuitem\"][aria-haspopup=\"menu\"]", "expectedCount": 2 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "skill names", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["The menu visibly exposes Skills and Add connector entries; no submenu contents are inferred."]
+}

@@ -1,0 +1,21 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "composer-idle",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://gemini.google.com/app",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "7b1ee1d8283670d557237eabdfe12c095837e7297b5932c003f8bbc067227107",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "rich-textarea div.ql-editor[data-gramm=\"false\"][contenteditable=\"true\"][role=\"textbox\"][aria-multiline=\"true\"][aria-label=\"Enter a prompt for Gemini\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account name", "email", "account URL parameters", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["No prompt was submitted while collecting this evidence."]
+}

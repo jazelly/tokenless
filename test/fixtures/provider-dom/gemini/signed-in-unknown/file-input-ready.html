@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Gemini file input evidence</title></head>
+  <body><section>
+    <rich-textarea><div class="ql-editor" data-gramm="false" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Enter a prompt for Gemini"><p><br></p></div></rich-textarea>
+    <button type="button" aria-label="Upload and tools" aria-haspopup="menu" aria-expanded="true">Upload and tools</button>
+    <div role="menu">
+      <button role="menuitem" data-test-id="local-images-files-uploader-button" type="button" aria-label="Upload files. Documents, data, code files" aria-disabled="false">Upload files</button>
+      <button role="menuitem" data-test-id="uploader-drive-button" type="button" aria-label="Add from Drive. Sheets, Docs, Slides" aria-disabled="false">Add from Drive</button>
+    </div>
+    <!-- The page created this input after the local upload item opened a chooser; no file was selected. -->
+    <input type="file" name="Filedata" multiple hidden>
+  </section></body>
+</html>

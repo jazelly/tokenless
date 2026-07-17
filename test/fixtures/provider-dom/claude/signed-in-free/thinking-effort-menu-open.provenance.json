@@ -1,0 +1,25 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "claude",
+  "accountState": "signed-in-free",
+  "observedPlan": { "status": "observed", "label": "Free" },
+  "scenario": "thinking-effort-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://claude.ai/new",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "1369799d48bb10b563bb96129831499a553670de8194b20bc234b0bb016cc55e",
+  "modelContext": "Sonnet 5",
+  "evidenceSelectors": [
+    { "capability": "model.inspect", "selector": "div[role=\"menu\"]:not(div[role=\"menu\"] + div[role=\"menu\"]) [role=\"menuitemradio\"]", "expectedCount": 1 },
+    { "capability": "effort.inspect", "selector": "div[role=\"menu\"] + div[role=\"menu\"] [role=\"menuitemradio\"]", "expectedCount": 5 },
+    { "capability": "effort.select", "selector": "div[role=\"menu\"] + div[role=\"menu\"] [role=\"menuitemradio\"][aria-checked=\"true\"]", "expectedCount": 1 },
+    { "capability": "thinking.toggle", "selector": "button[role=\"switch\"][aria-label=\"Thinking\"][aria-checked=\"true\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Effort options are model-dependent; this transient Sonnet state was restored to Haiku after observation."]
+}

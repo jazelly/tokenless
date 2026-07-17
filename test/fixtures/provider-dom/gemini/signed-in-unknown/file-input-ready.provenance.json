@@ -1,0 +1,24 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "file-input-ready",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://gemini.google.com/app",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "2f075e9bfbc78db07d8eada2b7b9fdc09d6ee61cb6d11db28b5f7bf1cce4db9b",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "rich-textarea div.ql-editor[data-gramm=\"false\"][contenteditable=\"true\"][role=\"textbox\"][aria-multiline=\"true\"]", "expectedCount": 1 },
+    { "capability": "file.upload-trigger", "selector": "button[data-test-id=\"local-images-files-uploader-button\"][aria-disabled=\"false\"]", "expectedCount": 1 },
+    { "capability": "file.upload", "selector": "input[type=\"file\"][name=\"Filedata\"][multiple]", "expectedCount": 1 },
+    { "capability": "connector.inspect", "selector": "button[data-test-id=\"uploader-drive-button\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account name", "email", "account URL parameters", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["The multi-file input was observed only after opening the local upload chooser; no file was selected."]
+}

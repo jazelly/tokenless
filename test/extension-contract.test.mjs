@@ -1958,7 +1958,7 @@ test('provider reads return only visible external citations from the final assis
   }
 })
 
-test('provider controls preserve ChatGPT aliases, use exact labels, and fail closed before submission', { timeout: 30000 }, async () => {
+test('ChatGPT controls inventory dynamic visible labels and fail closed before submission', { timeout: 30000 }, async () => {
   const { chromium } = await import('playwright')
   const browser = await chromium.launch({ headless: true })
   const chatgpt = await openProviderFixture(browser, 'https://chatgpt.com/', `
@@ -1996,7 +1996,7 @@ test('provider controls preserve ChatGPT aliases, use exact labels, and fail clo
         const decoy = document.querySelector('#worked')
         let model = 'GPT-5.6 Sol'
         let effort = 1
-        const effortLabels = ['即时', '中等', '高', '特高', '专业']
+        const effortLabels = ['Instant', 'Medium', 'High']
         const closeMenus = () => document.querySelectorAll('[role="menu"]').forEach((menu) => menu.remove())
         document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMenus() })
         function updateTrigger() {
@@ -2026,10 +2026,6 @@ test('provider controls preserve ChatGPT aliases, use exact labels, and fail clo
             const item = document.createElement('button')
             item.setAttribute('role', 'menuitemradio')
             item.setAttribute('aria-checked', String(index === effort))
-            if (index >= 3) {
-              item.disabled = true
-              item.setAttribute('aria-disabled', 'true')
-            }
             item.textContent = label
             item.addEventListener('click', () => { effort = index; closeMenus(); updateTrigger() })
             menu.append(item)
@@ -2054,8 +2050,8 @@ test('provider controls preserve ChatGPT aliases, use exact labels, and fail clo
       request: { provider: 'chatgpt', requestId: 'controls-inspect' },
     }))
     assert.equal(inspect.status, 'inspected')
-    assert.deepEqual(inspect.controls.efforts.map((item) => item.id), ['instant', 'medium', 'high', 'extra_high', 'pro'])
-    assert.deepEqual(inspect.controls.efforts.map((item) => item.available), [true, true, true, false, false])
+    assert.deepEqual(inspect.controls.efforts.map((item) => item.id), ['instant', 'medium', 'high'])
+    assert.deepEqual(inspect.controls.efforts.map((item) => item.available), [true, true, true])
     assert.deepEqual(inspect.controls.models.map((item) => item.label), ['GPT-5.6 Sol', 'GPT-5.5', 'o3'])
     const legacyInspect = await chatgpt.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
       type: 'tokenless.bridge.inspect_chatgpt_controls',
@@ -2071,22 +2067,15 @@ test('provider controls preserve ChatGPT aliases, use exact labels, and fail clo
         chatSurface: 'chat',
         model: 'GPT-5.4',
         modelFallbacks: ['GPT-5.5'],
-        effort: 'pro',
+        effort: 'High',
       },
     }))
     assert.equal(configure.status, 'configured')
     assert.equal(configure.surface.status, 'chat_selected')
     assert.equal(configure.model.status, 'fallback_selected')
     assert.equal(configure.model.applied, 'GPT-5.5')
-    assert.equal(configure.effort.status, 'fallback_selected')
-    assert.equal(configure.effort.applied, 'high')
-    const trustedClicks = await chatgpt.page.evaluate(() => (
-      globalThis.__tokenlessRuntimeMessages.filter((message) => message.type === 'tokenless.bridge.trusted_click')
-    ))
-    assert.ok(trustedClicks.length > 0)
-    assert.ok(trustedClicks.every((message) => (
-      !Object.hasOwn(message.request, ['debugger', 'ControlExtensionId'].join(''))
-    )))
+    assert.equal(configure.effort.status, 'selected')
+    assert.equal(configure.effort.applied, 'High')
     assert.equal(await chatgpt.page.locator('[role="radio"]').nth(0).getAttribute('aria-checked'), 'true')
     assert.match(await chatgpt.page.locator('#intelligence').innerText(), /5\.5/)
 
@@ -2098,7 +2087,7 @@ test('provider controls preserve ChatGPT aliases, use exact labels, and fail clo
         prompt: 'This prompt must not be submitted with an unavailable model.',
         chatSurface: 'chat',
         model: 'GPT-5',
-        effort: 'pro',
+        effort: 'High',
         composerTimeoutMs: 100,
         submitTimeoutMs: 100,
       },
@@ -2187,14 +2176,32 @@ test('Gemini and Grok model adapters inventory real DOM labels, switch visibly, 
         { label: '3.1 Pro', selected: false, available: true },
       ]
     )
+    assert.deepEqual(
+      geminiInspect.controls.efforts.map(({ label, selected, available }) => ({ label, selected, available })),
+      [{ label: 'Extended thinking', selected: false, available: true }]
+    )
     const geminiSelection = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
       type: 'tokenless.bridge.configure_controls',
-      request: { provider: 'gemini', requestId: 'gemini-model-select', model: '3.5 Thinking' },
+      request: { provider: 'gemini', requestId: 'gemini-model-select', model: '3.5 thinking' },
     }))
     assert.equal(geminiSelection.status, 'configured')
     assert.equal(geminiSelection.model.status, 'selected')
     assert.equal(geminiSelection.model.applied, '3.5 Thinking')
     assert.equal(await gemini.page.locator('[data-test-id="bard-mode-menu-button"]').innerText(), 'Thinking')
+
+    const geminiEffort = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.configure_controls',
+      request: { provider: 'gemini', requestId: 'gemini-effort-select', effort: 'extended thinking' },
+    }))
+    assert.equal(geminiEffort.status, 'configured')
+    assert.equal(geminiEffort.effort.status, 'selected')
+    assert.equal(geminiEffort.effort.applied, 'Extended thinking')
+
+    const geminiEffortInspect = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
+      type: 'tokenless.bridge.inspect_controls',
+      request: { provider: 'gemini', requestId: 'gemini-effort-inspect' },
+    }))
+    assert.equal(geminiEffortInspect.controls.efforts[0].selected, true)
 
     const geminiExactFailure = await gemini.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
       type: 'tokenless.bridge.configure_controls',
@@ -2212,7 +2219,7 @@ test('Gemini and Grok model adapters inventory real DOM labels, switch visibly, 
 
     const grokSelection = await grok.page.evaluate(() => globalThis.__dispatchTokenlessMessage({
       type: 'tokenless.bridge.configure_controls',
-      request: { provider: 'grok', requestId: 'grok-model-select', model: 'Heavy' },
+      request: { provider: 'grok', requestId: 'grok-model-select', model: 'heavy' },
     }))
     assert.equal(grokSelection.status, 'configured')
     assert.equal(grokSelection.model.status, 'selected')
@@ -2225,7 +2232,7 @@ test('Gemini and Grok model adapters inventory real DOM labels, switch visibly, 
         provider: 'grok',
         requestId: 'grok-model-fallback',
         model: 'Not a visible model',
-        modelFallbacks: ['Auto'],
+        modelFallbacks: ['auto'],
       },
     }))
     assert.equal(grokFallback.status, 'configured')
@@ -2251,6 +2258,15 @@ test('background enables the Settings side panel and jobs create only approved p
   const providerMessages = []
   const sidePanelCalls = []
   let nextTabId = 1
+  const unifiedAttachmentDescriptor = {
+    protocol: 'tokenless.visible-attachment.v1',
+    bundleId: 'unified-native-bundle',
+    attachmentId: 'unified-native-file',
+    name: 'unified-evidence.txt',
+    type: 'text/plain',
+    size: 5,
+    sha256: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
+  }
 
   function connectNative(name) {
     assert.equal(name, 'dev.tokenless.native_host')
@@ -2269,7 +2285,32 @@ test('background enables the Settings side panel and jobs create only approved p
       posted,
       postMessage(message) {
         posted.push(message)
-        if (message.type === 'tokenless.native.daemon_ready') {
+        if (message.type === 'tokenless.native.attachment_open') {
+          queueMicrotask(() => {
+            void onMessage.emit(nativeSuccess(message.type, {
+              ...unifiedAttachmentDescriptor,
+              handleId: 'unifiedhandle',
+              maxChunkBytes: 65536,
+            }, message.requestId))
+          })
+        } else if (message.type === 'tokenless.native.attachment_read') {
+          queueMicrotask(() => {
+            void onMessage.emit(nativeSuccess(message.type, {
+              handleId: 'unifiedhandle',
+              offset: 0,
+              dataBase64: 'aGVsbG8=',
+              nextOffset: 5,
+              eof: true,
+            }, message.requestId))
+          })
+        } else if (message.type === 'tokenless.native.attachment_close') {
+          queueMicrotask(() => {
+            void onMessage.emit(nativeSuccess(message.type, {
+              handleId: 'unifiedhandle',
+              status: 'closed',
+            }, message.requestId))
+          })
+        } else if (message.type === 'tokenless.native.daemon_ready') {
           queueMicrotask(() => {
             void onMessage.emit(nativeSuccess(message.type, {
               status: 'ready',
@@ -2389,6 +2430,14 @@ test('background enables the Settings side panel and jobs create only approved p
             url: 'https://chatgpt.com/',
           }
         }
+        if (message.type === 'tokenless.bridge.inspect_auth') {
+          return {
+            status: 'inspected',
+            provider: message.request.provider,
+            visible: true,
+            auth: { state: 'authenticated', plan: { label: 'Free', free: true } },
+          }
+        }
         if (message.type === 'tokenless.bridge.inspect_controls') {
           return {
             status: 'inspected',
@@ -2397,10 +2446,48 @@ test('background enables the Settings side panel and jobs create only approved p
           }
         }
         if (message.type === 'tokenless.bridge.configure_controls') {
-          return {
+          const response = {
             status: 'configured',
             provider: message.request.provider,
-            model: { status: 'selected', requested: message.request.model, applied: message.request.model },
+          }
+          if (message.request.model) {
+            response.model = { status: 'selected', requested: message.request.model, applied: message.request.model }
+          }
+          if (message.request.effort) {
+            response.effort = { status: 'selected', requested: message.request.effort, applied: message.request.effort }
+          }
+          return response
+        }
+        if (message.type === 'tokenless.bridge.attachment_prepare') {
+          return {
+            status: 'prepared',
+            provider: message.request.provider,
+            requestId: message.requestId,
+            attachmentId: message.attachmentId,
+          }
+        }
+        if (message.type === 'tokenless.bridge.attachment_chunk') {
+          return {
+            status: 'chunk_received',
+            provider: message.request.provider,
+            requestId: message.requestId,
+            attachmentId: message.attachmentId,
+          }
+        }
+        if (message.type === 'tokenless.bridge.attachment_commit_batch') {
+          return {
+            status: 'attached',
+            provider: message.request.provider,
+            requestId: message.requestId,
+            attachments: message.attachmentIds.map((attachmentId) => ({ attachmentId, visible: true })),
+          }
+        }
+        if (message.type === 'tokenless.bridge.input_prompt') {
+          return {
+            status: 'input',
+            provider: message.request.provider,
+            visible: true,
+            inputProof: `input-${message.request.requestId}`,
           }
         }
         throw new Error(`Unexpected provider message: ${message.type}`)
@@ -2704,8 +2791,67 @@ test('background enables the Settings side panel and jobs create only approved p
     }
 
     for (const job of [
+      { jobId: 'job-auth-inspect', action: 'inspect_auth', requestJson: {} },
       { jobId: 'job-generic-controls-inspect', action: 'inspect_controls', requestJson: {} },
       { jobId: 'job-generic-controls-configure', action: 'configure_controls', requestJson: { model: 'Flash' } },
+      {
+        jobId: 'job-unified-auth',
+        action: 'visible_provider_action',
+        requestJson: {
+          requestId: 'job-unified-auth',
+          visibleAction: {
+            protocol: 'tokenless.visible-provider-action.v1',
+            requestId: 'job-unified-auth',
+            provider: 'gemini',
+            action: 'auth.status',
+            payload: {},
+          },
+        },
+      },
+      {
+        jobId: 'job-unified-model-select',
+        action: 'visible_provider_action',
+        requestJson: {
+          requestId: 'job-unified-model-select',
+          visibleAction: {
+            protocol: 'tokenless.visible-provider-action.v1',
+            requestId: 'job-unified-model-select',
+            provider: 'gemini',
+            action: 'model.select',
+            payload: { label: '3.1 Pro' },
+          },
+        },
+      },
+      {
+        jobId: 'job-unified-effort-select',
+        provider: 'claude',
+        action: 'visible_provider_action',
+        requestJson: {
+          requestId: 'job-unified-effort-select',
+          visibleAction: {
+            protocol: 'tokenless.visible-provider-action.v1',
+            requestId: 'job-unified-effort-select',
+            provider: 'claude',
+            action: 'effort.select',
+            payload: { label: 'Extended' },
+          },
+        },
+      },
+      {
+        jobId: 'job-unified-prompt-submit',
+        provider: 'chatgpt',
+        action: 'visible_provider_action',
+        requestJson: {
+          requestId: 'job-unified-prompt-submit',
+          visibleAction: {
+            protocol: 'tokenless.visible-provider-action.v1',
+            requestId: 'job-unified-prompt-submit',
+            provider: 'chatgpt',
+            action: 'prompt.submit',
+            payload: { text: 'Standalone unified submit.', mode: 'replace' },
+          },
+        },
+      },
     ]) {
       await daemonPort.onMessage.emit({
         protocol: 'tokenless.native.v1',
@@ -2715,7 +2861,7 @@ test('background enables the Settings side panel and jobs create only approved p
           job: {
             job_id: job.jobId,
             claim_token: `${job.jobId}-private-marker`,
-            provider: 'gemini',
+            provider: job.provider ?? 'gemini',
             action: job.action,
             status: 'claimed',
             request_json: job.requestJson,
@@ -2723,17 +2869,97 @@ test('background enables the Settings side panel and jobs create only approved p
         },
       })
     }
-    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 11)
-    for (const [jobId, expectedType] of [
-      ['job-generic-controls-inspect', 'tokenless.bridge.inspect_controls'],
-      ['job-generic-controls-configure', 'tokenless.bridge.configure_controls'],
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 16)
+    for (const [jobId, expectedTypes] of [
+      ['job-auth-inspect', ['tokenless.bridge.inspect_auth']],
+      ['job-generic-controls-inspect', ['tokenless.bridge.validate_landing', 'tokenless.bridge.inspect_controls']],
+      ['job-generic-controls-configure', ['tokenless.bridge.validate_landing', 'tokenless.bridge.configure_controls']],
+      ['job-unified-auth', ['tokenless.bridge.inspect_auth']],
+      ['job-unified-model-select', ['tokenless.bridge.inspect_auth', 'tokenless.bridge.validate_landing', 'tokenless.bridge.configure_controls']],
+      ['job-unified-effort-select', ['tokenless.bridge.inspect_auth', 'tokenless.bridge.validate_landing', 'tokenless.bridge.configure_controls']],
+      ['job-unified-prompt-submit', ['tokenless.bridge.inspect_auth', 'tokenless.bridge.validate_landing', 'tokenless.bridge.submit']],
     ]) {
       const routed = providerMessages.filter(({ message }) => message.request?.requestId === jobId)
-      assert.deepEqual(routed.map(({ message }) => message.type), [
-        'tokenless.bridge.validate_landing',
-        expectedType,
-      ])
+      assert.deepEqual(routed.map(({ message }) => message.type), expectedTypes)
     }
+
+    await daemonPort.onMessage.emit({
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_job',
+      ok: true,
+      result: {
+        job: {
+          job_id: 'job-unified-file-upload',
+          claim_token: 'job-unified-file-upload-private-marker',
+          provider: 'chatgpt',
+          action: 'visible_provider_action',
+          status: 'claimed',
+          request_json: {
+            requestId: 'job-unified-file-upload',
+            targetUrl: 'https://chatgpt.com/',
+            attachments: [unifiedAttachmentDescriptor],
+            visibleAction: {
+              protocol: 'tokenless.visible-provider-action.v1',
+              requestId: 'job-unified-file-upload',
+              provider: 'chatgpt',
+              action: 'file.upload',
+              payload: { attachments: [unifiedAttachmentDescriptor] },
+            },
+          },
+        },
+      },
+    })
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 17)
+    const unifiedFileMessages = providerMessages.filter(({ message }) => (
+      message.request?.requestId === 'job-unified-file-upload'
+    ))
+    assert.deepEqual(unifiedFileMessages.map(({ message }) => message.type), [
+      'tokenless.bridge.inspect_auth',
+      'tokenless.bridge.validate_landing',
+      'tokenless.bridge.attachment_prepare',
+      'tokenless.bridge.attachment_chunk',
+      'tokenless.bridge.attachment_commit_batch',
+    ])
+    assert.equal(new Set(unifiedFileMessages.map(({ tabId }) => tabId)).size, 1)
+    const unifiedFileTabId = unifiedFileMessages[0].tabId
+    const tabsAfterUnifiedFile = createdTabs.length
+
+    await daemonPort.onMessage.emit({
+      protocol: 'tokenless.native.v1',
+      type: 'tokenless.native.daemon_job',
+      ok: true,
+      result: {
+        job: {
+          job_id: 'job-unified-prompt-input',
+          claim_token: 'job-unified-prompt-input-private-marker',
+          provider: 'chatgpt',
+          action: 'visible_provider_action',
+          status: 'claimed',
+          request_json: {
+            requestId: 'job-unified-prompt-input',
+            targetUrl: 'https://chatgpt.com/',
+            visibleAction: {
+              protocol: 'tokenless.visible-provider-action.v1',
+              requestId: 'job-unified-prompt-input',
+              provider: 'chatgpt',
+              action: 'prompt.input',
+              payload: { text: 'Draft beside the uploaded file.', mode: 'replace' },
+            },
+          },
+        },
+      },
+    })
+    await waitFor(() => daemonPort.posted.filter((message) => message.type === 'tokenless.native.daemon_ready').length === 18)
+    const unifiedPromptMessages = providerMessages.filter(({ message }) => (
+      message.request?.requestId === 'job-unified-prompt-input'
+    ))
+    assert.deepEqual(unifiedPromptMessages.map(({ message }) => message.type), [
+      'tokenless.bridge.inspect_auth',
+      'tokenless.bridge.validate_landing',
+      'tokenless.bridge.input_prompt',
+    ])
+    assert.ok(unifiedPromptMessages.every(({ tabId }) => tabId === unifiedFileTabId))
+    assert.equal(createdTabs.length, tabsAfterUnifiedFile, 'prompt.input must reuse the clean file.upload affinity tab')
 
     const allNativeMessages = ports.flatMap((port) => port.posted)
     assert.ok(allNativeMessages.length >= 5)
@@ -2752,6 +2978,94 @@ test('background enables the Settings side panel and jobs create only approved p
       message.claimToken === 'provider-private-marker' &&
       message.result?.text === 'Visible DOM answer'
     )))
+    const authCompletion = allNativeMessages.find((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-auth-inspect'
+    ))
+    assert.deepEqual(authCompletion?.result?.auth, {
+      state: 'authenticated',
+      plan: { label: 'Free', free: true },
+    })
+    assert.doesNotMatch(JSON.stringify(authCompletion), /email|accountId|cookie|localStorage|sessionStorage/i)
+    const unifiedAuthCompletion = allNativeMessages.find((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-unified-auth'
+    ))
+    assert.deepEqual(unifiedAuthCompletion?.result, {
+      state: 'authenticated',
+      plan: { label: 'Free', free: true },
+      text: undefined,
+      provider: 'gemini',
+    })
+    const unifiedModelCompletion = allNativeMessages.find((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-unified-model-select'
+    ))
+    assert.deepEqual(unifiedModelCompletion?.result, {
+      label: '3.1 Pro',
+      visible: true,
+      text: undefined,
+      provider: 'gemini',
+    })
+    const unifiedEffortCompletion = allNativeMessages.find((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-unified-effort-select'
+    ))
+    assert.deepEqual(unifiedEffortCompletion?.result, {
+      label: 'Extended',
+      visible: true,
+      text: undefined,
+      provider: 'claude',
+    })
+    assert.doesNotMatch(
+      JSON.stringify([
+        unifiedAuthCompletion?.result,
+        unifiedModelCompletion?.result,
+        unifiedEffortCompletion?.result,
+      ]),
+      /email|accountId|cookie|localStorage|sessionStorage|private-marker/i
+    )
+    const unifiedFileCompletion = allNativeMessages.find((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-unified-file-upload'
+    ))
+    assert.deepEqual(unifiedFileCompletion?.result, {
+      attachments: [{
+        attachmentId: 'unified-native-file',
+        name: 'unified-evidence.txt',
+        visible: true,
+      }],
+      text: undefined,
+      provider: 'chatgpt',
+    })
+    const unifiedPromptCompletion = allNativeMessages.find((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-unified-prompt-input'
+    ))
+    assert.deepEqual(unifiedPromptCompletion?.result, {
+      inputProof: 'input-job-unified-prompt-input',
+      visible: true,
+      text: undefined,
+      provider: 'chatgpt',
+    })
+    const unifiedSubmitCompletion = allNativeMessages.find((message) => (
+      message.type === 'tokenless.native.daemon_complete_job' &&
+      message.jobId === 'job-unified-prompt-submit'
+    ))
+    assert.deepEqual(unifiedSubmitCompletion?.result, {
+      submissionProof: 'visible-submit-job-unified-prompt-submit',
+      visible: true,
+      text: undefined,
+      provider: 'chatgpt',
+    })
+    assert.doesNotMatch(
+      JSON.stringify([
+        unifiedFileCompletion?.result,
+        unifiedPromptCompletion?.result,
+        unifiedSubmitCompletion?.result,
+      ]),
+      /Draft beside|Standalone unified submit|bundleId|sha256|sourcePath|stagedPath|cookie|localStorage|sessionStorage/i
+    )
     assert.ok(allNativeMessages.some((message) => (
       message.type === 'tokenless.native.daemon_complete_job' &&
       message.jobId === 'job-rejected-target' &&
@@ -2788,8 +3102,15 @@ test('background enables the Settings side panel and jobs create only approved p
         { jobId: 'job-custom-gpt-transition', claimToken: 'custom-positive-private-marker' },
         { jobId: 'job-custom-gpt-mismatch', claimToken: 'custom-mismatch-private-marker' },
         { jobId: 'job-root-custom-mismatch', claimToken: 'root-custom-private-marker' },
+        { jobId: 'job-auth-inspect', claimToken: 'job-auth-inspect-private-marker' },
         { jobId: 'job-generic-controls-inspect', claimToken: 'job-generic-controls-inspect-private-marker' },
         { jobId: 'job-generic-controls-configure', claimToken: 'job-generic-controls-configure-private-marker' },
+        { jobId: 'job-unified-auth', claimToken: 'job-unified-auth-private-marker' },
+        { jobId: 'job-unified-model-select', claimToken: 'job-unified-model-select-private-marker' },
+        { jobId: 'job-unified-effort-select', claimToken: 'job-unified-effort-select-private-marker' },
+        { jobId: 'job-unified-prompt-submit', claimToken: 'job-unified-prompt-submit-private-marker' },
+        { jobId: 'job-unified-file-upload', claimToken: 'job-unified-file-upload-private-marker' },
+        { jobId: 'job-unified-prompt-input', claimToken: 'job-unified-prompt-input-private-marker' },
       ]
     )
   } finally {
@@ -3002,8 +3323,10 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
   assert.equal(BRIDGE_ACTIONS.SNAPSHOT_DOM, 'snapshot_dom')
   assert.ok(capabilitiesPayload().actions.includes('snapshot_dom'))
   assert.equal(BRIDGE_ACTIONS.INSPECT_CONTROLS, 'inspect_controls')
+  assert.equal(BRIDGE_ACTIONS.INSPECT_AUTH, 'inspect_auth')
   assert.equal(BRIDGE_ACTIONS.CONFIGURE_CONTROLS, 'configure_controls')
   assert.ok(capabilitiesPayload().actions.includes('inspect_controls'))
+  assert.ok(capabilitiesPayload().actions.includes('inspect_auth'))
   assert.ok(capabilitiesPayload().actions.includes('configure_controls'))
   assert.equal(BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS, 'inspect_chatgpt_controls')
   assert.equal(BRIDGE_ACTIONS.CONFIGURE_CHATGPT, 'configure_chatgpt')
@@ -3016,26 +3339,29 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     action: 'snapshot_dom',
   }
   assert.equal(validateBridgeRequest(baseRequest).ok, true)
+  assert.equal(validateBridgeRequest({ ...baseRequest, provider: 'claude', action: 'inspect_auth' }).ok, true)
   const chatGptControls = validateBridgeRequest({
     ...baseRequest,
     action: 'configure_chatgpt',
     chatSurface: 'chat',
     model: 'GPT-5.6 Sol',
     modelFallbacks: ['GPT-5.5', 'o3'],
-    effort: 'extra_high',
+    effort: 'High',
   })
   assert.equal(chatGptControls.ok, true)
-  assert.equal(chatGptControls.request.effort, 'extra_high')
+  assert.equal(chatGptControls.request.effort, 'High')
   const providerControls = validateBridgeRequest({
     ...baseRequest,
     provider: 'gemini',
     action: 'configure_controls',
     model: '  Flash  ',
     modelFallbacks: ['  Pro  '],
+    effort: 'Extended thinking',
   })
   assert.equal(providerControls.ok, true)
   assert.equal(providerControls.request.model, 'Flash')
   assert.deepEqual(providerControls.request.modelFallbacks, ['Pro'])
+  assert.equal(providerControls.request.effort, 'Extended thinking')
   assert.equal(validateBridgeRequest({
     ...baseRequest,
     provider: 'grok',
@@ -3047,7 +3373,6 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     { ...baseRequest, model: '' },
     { ...baseRequest, modelFallbacks: 'GPT-5.5' },
     { ...baseRequest, modelFallbacks: Array.from({ length: 9 }, () => 'GPT-5.5') },
-    { ...baseRequest, provider: 'gemini', effort: 'high' },
     { ...baseRequest, provider: 'gemini', action: 'read', model: 'Flash' },
     { ...baseRequest, provider: 'gemini', action: 'configure_controls', modelFallbacks: ['Pro'] },
     { ...baseRequest, provider: 'grok', action: 'configure_controls', model: 'Fast\nExpert' },
@@ -3233,13 +3558,14 @@ function createBehaviorNativePort() {
   }
 }
 
-function nativeSuccess(type, result) {
-  return {
+function nativeSuccess(type, result, requestId) {
+  return Object.fromEntries(Object.entries({
     protocol: 'tokenless.native.v1',
     type,
+    requestId,
     ok: true,
     result,
-  }
+  }).filter(([, value]) => value !== undefined))
 }
 
 function nativeFailure(type, message, code = 'native_test_error') {

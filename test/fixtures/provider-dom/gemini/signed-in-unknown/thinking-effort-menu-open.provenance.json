@@ -1,0 +1,22 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "thinking-effort-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://gemini.google.com/app",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "69c7eda2b6ea4866377dd58421730bc5e44015afc62a4f748cb84c6621999fd0",
+  "evidenceSelectors": [
+    { "capability": "effort.inspect", "selector": "button[data-test-id=\"bard-mode-menu-button\"][aria-label$=\"Extended\"]", "expectedCount": 1 },
+    { "capability": "effort.select", "selector": "gem-menu-item:not([data-mode-id])[aria-disabled=\"false\"] gem-menu-item-content.selected .label", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account name", "email", "account URL parameters", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Extended thinking is an independent toggle-like menu item; this selected state was restored off after observation."]
+}

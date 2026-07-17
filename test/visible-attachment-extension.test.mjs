@@ -49,7 +49,7 @@ test('bridge validation bounds and normalizes staged visible attachment descript
   assert.notEqual(valid.request.attachments[0], descriptor, 'normalization copies the descriptor')
   assert.deepEqual(capabilitiesPayload().attachments, {
     protocol: 'tokenless.visible-attachment.v1',
-    actions: ['submit', 'submit_and_read'],
+    actions: ['submit', 'submit_and_read', 'visible_provider_action'],
     maxFiles: 100,
     maxRequestBytes: 512 * 1024 * 1024,
   })

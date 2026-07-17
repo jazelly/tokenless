@@ -1,0 +1,24 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "session-status",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://gemini.google.com/app",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "bf17992477df7648dbce25c8f381c4ffc6b8acca52faf58d48a88365f7207268",
+  "evidenceSelectors": [
+    { "capability": "auth.status", "selector": "a[href^=\"https://accounts.google.com/SignOutOptions\"]", "expectedCount": 1 },
+    { "capability": "history.inspect", "selector": "a[href=\"/search\"][aria-label=\"Search chats\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "signed-out-control", "selector": "a[href*=\"ServiceLogin\"], a[href*=\"signin\"]", "expectedCount": 0 }
+  ],
+  "redactions": ["account name", "email", "account URL parameters", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["The account is signed in, but no plan tier was established from the observed visible UI."]
+}

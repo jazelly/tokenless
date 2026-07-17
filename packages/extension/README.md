@@ -62,6 +62,38 @@ completion remains gated until a real busy-state DOM contract is observed.
 - Attachment transfer fails closed on path, identity, size, offset, hash, exact
   input, accepted-type, or visible-filename verification failure.
 
+## Visible-provider runtime envelope
+
+Extension-owned pages may call the capability-gated v1 action route directly:
+
+```js
+import {
+  VISIBLE_PROVIDER_ACTIONS,
+  createVisibleProviderActionRequest,
+  createVisibleProviderRuntimeEnvelope,
+} from 'tokenless-browser-session-bridge/protocol'
+
+const response = await chrome.runtime.sendMessage(
+  createVisibleProviderRuntimeEnvelope(createVisibleProviderActionRequest({
+    provider: 'gemini',
+    action: VISIBLE_PROVIDER_ACTIONS.MODEL_INSPECT,
+    payload: {},
+  }))
+)
+```
+
+The service worker accepts this envelope only from an extension-owned page;
+provider content scripts and foreign extension origins are rejected. It checks
+the advertised provider capability before opening a tab, obtains auth state
+only through the visible content action, blocks auth-required actions when that
+state is not positively authenticated, and returns the action-specific
+privacy-safe response schema.
+
+This direct route does not replace the daemon attachment transport. File and
+skill upload actions remain unavailable through it until they can be bound to
+an active native-host claim; existing daemon submit attachments continue to use
+the correlated native byte stream.
+
 ## Local Development
 
 ```bash

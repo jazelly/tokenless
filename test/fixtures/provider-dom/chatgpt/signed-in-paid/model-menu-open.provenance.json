@@ -1,0 +1,25 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "chatgpt",
+  "accountState": "signed-in-paid",
+  "observedPlan": { "status": "observed", "label": "Plus" },
+  "scenario": "model-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://chatgpt.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "400a14b1af4917906f5d110f7f0c8d1669f6577e14c3630861a788ffec2dd3f2",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "main div#prompt-textarea[contenteditable=\"true\"]", "expectedCount": 1 },
+    { "capability": "model.trigger", "selector": "main button.__composer-pill[aria-haspopup=\"menu\"][aria-expanded=\"true\"]", "expectedCount": 1 },
+    { "capability": "model.submenu", "selector": "[role=\"menuitem\"][aria-haspopup=\"menu\"]", "expectedCount": 1 },
+    { "capability": "model.inspect", "selector": "div[role=\"menu\"] + div[role=\"menu\"] [role=\"menuitemradio\"]", "expectedCount": 5 },
+    { "capability": "model.select", "selector": "div[role=\"menu\"] + div[role=\"menu\"] [role=\"menuitemradio\"][aria-checked=\"true\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Primary model labels and secondary lifecycle text remain separate child nodes."]
+}

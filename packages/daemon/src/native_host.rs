@@ -984,7 +984,7 @@ fn visible_attachment_descriptors(request: &Value) -> Result<Vec<VisibleAttachme
                 DaemonError::InvalidInput(
                     "visible attachment descriptor has invalid or unknown fields".to_owned(),
                 )
-        })?;
+            })?;
         validate_visible_attachment_descriptor(&descriptor)?;
         if bundle_id
             .as_ref()
@@ -1748,8 +1748,8 @@ mod tests {
                 test_attachment_descriptor("bundle-one", &format!("attachment-{index}"), 0)
             })
             .collect::<Vec<_>>();
-        let too_many = visible_attachment_descriptors(&json!({ "attachments": too_many }))
-            .unwrap_err();
+        let too_many =
+            visible_attachment_descriptors(&json!({ "attachments": too_many })).unwrap_err();
         assert!(too_many.to_string().contains("between 1 and 100"));
     }
 

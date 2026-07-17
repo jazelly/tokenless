@@ -1,0 +1,22 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "chatgpt",
+  "accountState": "signed-in-paid",
+  "observedPlan": { "status": "observed", "label": "Plus" },
+  "scenario": "composer-idle",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://chatgpt.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "855cef3b0f8a3d5928d07eb5993bf141a07a6584cb29059d1d5a46b18a9ec9fb",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "div#prompt-textarea[contenteditable=\"true\"][role=\"textbox\"][aria-label=\"Chat with ChatGPT\"]", "expectedCount": 1 },
+    { "capability": "prompt.input-fallback", "selector": "textarea[name=\"prompt-textarea\"][aria-label=\"Chat with ChatGPT\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Both the editable composer and its textarea fallback were observed."]
+}

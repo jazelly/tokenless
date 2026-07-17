@@ -79,8 +79,19 @@ Use a randomly generated server key of at least 32 visible non-whitespace charac
 
 ## Visible provider controls
 
-Use the generic visible control inventory to discover the exact models that the
-current provider page exposes:
+Inspect the current page's visible sign-in state without returning account
+identity:
+
+```bash
+npx tokenless provider-status --provider claude --json
+```
+
+`provider-auth-status` is a compatibility alias. A recognized visible plan may
+be returned from an allowlist, but ambiguous or contradictory UI returns an
+unknown state. The command does not inspect cookies or browser storage.
+
+Use the generic visible control inventory to discover the exact model and
+effort labels that the current provider page exposes:
 
 ```bash
 npx tokenless provider-controls --provider gemini --json
@@ -92,14 +103,15 @@ selection to `run`:
 ```bash
 npx tokenless provider-configure \
   --provider grok \
-  --model "Expert" \
-  --model-fallback "Auto,Fast" \
+  --model "<exact-visible-model>" \
+  --model-fallback "<exact-visible-fallback>" \
   --json
 
 npx tokenless run \
   --provider gemini \
-  --model "3.5 Thinking" \
-  --model-fallback "3.5 Flash" \
+  --model "<exact-visible-model>" \
+  --model-fallback "<exact-visible-fallback>" \
+  --effort "<exact-visible-effort>" \
   --prompt "Review this design." \
   --json
 ```
@@ -111,21 +123,20 @@ Tokenless tries the requested label and then each `--model-fallback` in order,
 verifies the visible selected state, and blocks before prompt submission if none
 is available.
 
-ChatGPT, Gemini, and Grok currently expose captured model-menu contracts. Claude
-control inventory reports no available models, and any Claude model request
-fails closed until an authenticated real-DOM model selector is captured.
+Authenticated, redacted DOM fixtures preserve model-menu contracts for ChatGPT,
+Claude, Gemini, and Grok. Observation does not enable an action by itself: the
+runtime capability manifest exposes only actions with accepted implementation
+evidence.
+
+`--effort` accepts one exact nonempty visible label for any provider; it is not
+a fixed Tokenless enum. ChatGPT and Claude expose account/model-dependent rows,
+Gemini exposes Extended thinking, and Grok currently couples thinking depth to
+model profiles rather than an independent effort control. A missing or
+unavailable requested model or effort fails closed instead of guessing.
 
 ChatGPT-specific `chatgpt-controls` and `chatgpt-configure` remain compatibility
-aliases. ChatGPT runs enforce the visible `Chat` surface.
-
-`--effort` accepts `instant`, `medium`, `high`, `extra_high`, or `pro` and is not
-accepted for the other providers.
-
-When a complete five-level ChatGPT Intelligence menu is visible, Tokenless
-selects the strongest available level at or below the requested effort.
-
-Incomplete or unlabelled effort menus preserve the current effort rather than
-guessing. A missing requested model never silently preserves another model.
+aliases. The `Chat`/`Work` surface control and trusted debugger click path remain
+ChatGPT-only.
 
 ## Visible file attachments
 
@@ -148,8 +159,11 @@ request.
 The provider's visible `accept` attribute and account limits may be stricter and
 always win.
 
-ChatGPT, Claude, and Grok have exact captured file-input selectors. Gemini
-upload fails closed until an authenticated exact input is captured.
+ChatGPT, Claude, Gemini, and Grok have authenticated exact file-input evidence.
+Gemini creates its exact input only after the visible local-upload menu item is
+opened, so the content adapter prepares that UI before resolving the input.
+Fixture observation is not a live provider upload proof; every request still
+requires the current input and visible filename confirmation.
 
 The CLI stages each regular, non-symlink file in a private Tokenless bundle and
 computes its size and SHA-256. Only path-free descriptors cross the daemon and

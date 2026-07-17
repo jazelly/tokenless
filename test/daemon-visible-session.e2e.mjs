@@ -231,7 +231,7 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     assert.equal(completed.result_json.submit.configuration.model.status, 'selected')
     assert.equal(completed.result_json.submit.configuration.model.applied, 'GPT-5.5')
     assert.equal(completed.result_json.submit.configuration.effort.status, 'selected')
-    assert.equal(completed.result_json.submit.configuration.effort.applied, 'high')
+    assert.equal(completed.result_json.submit.configuration.effort.applied, 'High')
 
     const providerPage = context.pages().find((page) => page.url().startsWith('https://chatgpt.com/'))
     assert.ok(providerPage, `extension did not open the visible ChatGPT page: ${JSON.stringify(context.pages().map((page) => page.url()))}`)
@@ -633,6 +633,146 @@ test('visible attachment bytes traverse CLI, daemon, native host, extension, and
     assert.equal(await pathExists(stagedBundlePath), false, 'terminal completion must remove the staged bundle')
     assert.equal(await pathExists(sourcePath), true, 'terminal cleanup must not remove the source file')
 
+    const pagesBeforeUnifiedFile = new Set(context.pages())
+    const unifiedFileRun = await runProcess(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'provider-action',
+      '--action',
+      'file.upload',
+      '--provider',
+      'chatgpt',
+      '--attach-file',
+      sourcePath,
+      '--task-id',
+      'unified-file-upload-e2e-57419',
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      'https://chatgpt.com/',
+      '--no-open',
+      '--json',
+    ], { cwd: root })
+    assert.equal(unifiedFileRun.status, 0, `${unifiedFileRun.stderr}\n${unifiedFileRun.stdout}`)
+    const unifiedFilePayload = JSON.parse(unifiedFileRun.stdout)
+    const unifiedFileJob = await waitForDaemonJobStatus({
+      daemonUrl,
+      homeDir: tokenlessHome,
+      jobId: unifiedFilePayload.jobId,
+      statuses: ['succeeded', 'failed'],
+      daemon,
+      getDaemonJob,
+    })
+    assert.equal(unifiedFileJob.status, 'succeeded', JSON.stringify(unifiedFileJob.error_json, null, 2))
+    assert.equal(unifiedFileJob.action, 'visible_provider_action')
+    assert.deepEqual(unifiedFileJob.request_json.visibleAction, {
+      protocol: 'tokenless.visible-provider-action.v1',
+      requestId: 'unified-file-upload-e2e-57419',
+      provider: 'chatgpt',
+      action: 'file.upload',
+      payload: { attachments: unifiedFileJob.request_json.attachments },
+    })
+    assert.deepEqual(unifiedFileJob.result_json.attachments, [{
+      attachmentId: unifiedFileJob.request_json.attachments[0].attachmentId,
+      name: path.basename(sourcePath),
+      visible: true,
+    }])
+    const unifiedFilePages = context.pages().filter((page) => !pagesBeforeUnifiedFile.has(page))
+    assert.equal(unifiedFilePages.length, 1, 'standalone file.upload must create exactly one clean provider page')
+    const unifiedProviderPage = unifiedFilePages[0]
+    assert.ok(unifiedProviderPage.url().startsWith('https://chatgpt.com/'))
+    const unifiedFileEvidence = await unifiedProviderPage.evaluate(async () => {
+      const file = document.querySelector('input#upload-files[type="file"][multiple]')?.files?.[0]
+      if (!file) return null
+      return {
+        bytes: [...new Uint8Array(await file.arrayBuffer())],
+        chipText: document.querySelector('#attachment-evidence .attachment-chip')?.textContent ?? '',
+        events: [...globalThis.__attachmentFixture.events],
+        file: { name: file.name, size: file.size, type: file.type },
+        submissions: [...globalThis.__attachmentFixture.submissions],
+      }
+    })
+    assert.ok(unifiedFileEvidence, 'standalone file.upload must retain the exact FileList bytes')
+    assert.deepEqual(unifiedFileEvidence.file, {
+      name: path.basename(sourcePath),
+      size: attachmentBytes.byteLength,
+      type: 'text/plain',
+    })
+    assert.deepEqual(unifiedFileEvidence.bytes, [...attachmentBytes])
+    assert.equal(unifiedFileEvidence.chipText, path.basename(sourcePath))
+    assert.deepEqual(unifiedFileEvidence.submissions, [], 'file.upload must not implicitly submit a prompt')
+
+    const pagesBeforeUnifiedInput = context.pages().length
+    const unifiedInputRun = await runProcess(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'provider-action',
+      '--action',
+      'prompt.input',
+      '--provider',
+      'chatgpt',
+      '--prompt',
+      'Draft beside the unified E2E attachment.',
+      '--task-id',
+      'unified-prompt-input-e2e-57419',
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      'https://chatgpt.com/',
+      '--no-open',
+      '--json',
+    ], { cwd: root })
+    assert.equal(unifiedInputRun.status, 0, `${unifiedInputRun.stderr}\n${unifiedInputRun.stdout}`)
+    assert.equal(context.pages().length, pagesBeforeUnifiedInput, 'prompt.input must reuse the file.upload affinity page')
+    assert.equal(
+      await unifiedProviderPage.locator('#prompt-textarea').innerText(),
+      'Draft beside the unified E2E attachment.'
+    )
+
+    const unifiedSubmitRun = await runProcess(process.execPath, [
+      path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+      'provider-action',
+      '--action',
+      'prompt.submit',
+      '--provider',
+      'chatgpt',
+      '--prompt',
+      'Submit the unified E2E attachment 57419.',
+      '--task-id',
+      'unified-prompt-submit-e2e-57419',
+      '--home',
+      tokenlessHome,
+      '--daemon-url',
+      daemonUrl,
+      '--target-url',
+      'https://chatgpt.com/',
+      '--no-open',
+      '--json',
+    ], { cwd: root })
+    assert.equal(unifiedSubmitRun.status, 0, `${unifiedSubmitRun.stderr}\n${unifiedSubmitRun.stdout}`)
+    assert.equal(context.pages().length, pagesBeforeUnifiedInput, 'prompt.submit must reuse the file.upload affinity page')
+    const unifiedSubmitPayload = JSON.parse(unifiedSubmitRun.stdout)
+    assert.deepEqual(unifiedSubmitPayload.result?.result, {
+      submissionProof: 'visible-submit-unified-prompt-submit-e2e-57419',
+      visible: true,
+      provider: 'chatgpt',
+    })
+    const unifiedSubmissionEvidence = await unifiedProviderPage.evaluate(() => ({
+      events: [...globalThis.__attachmentFixture.events],
+      submissions: [...globalThis.__attachmentFixture.submissions],
+      userText: document.querySelector('[data-message-author-role="user"]')?.textContent ?? '',
+    }))
+    assert.equal(unifiedSubmissionEvidence.submissions.length, 1)
+    assert.equal(unifiedSubmissionEvidence.submissions[0].fileName, path.basename(sourcePath))
+    assert.equal(unifiedSubmissionEvidence.submissions[0].submittedAfterVisibleAttachment, true)
+    assert.match(unifiedSubmissionEvidence.userText, /Submit the unified E2E attachment 57419/)
+    assert.ok(
+      unifiedSubmissionEvidence.events.indexOf('submit') > unifiedSubmissionEvidence.events.indexOf('chip-visible'),
+      JSON.stringify(unifiedSubmissionEvidence.events)
+    )
+
     const externallyVisible = JSON.stringify({
       cliPayload,
       cliStderr: cliRun.stderr,
@@ -641,6 +781,10 @@ test('visible attachment bytes traverse CLI, daemon, native host, extension, and
       fixture: visibleEvidence,
       request: completed.request_json,
       result: completed.result_json,
+      unifiedFilePayload,
+      unifiedFileResult: unifiedFileJob.result_json,
+      unifiedInputPayload: JSON.parse(unifiedInputRun.stdout),
+      unifiedSubmitPayload,
     })
     assertNoPrivateAttachmentPaths(externallyVisible, [sourceDir, sourcePath, stagedBundlePath, stagedFilePath])
     assert.doesNotMatch(externallyVisible, /sourcePath|stagedPath|private-source-path-must-not-cross-57419/)

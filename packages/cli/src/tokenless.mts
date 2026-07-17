@@ -72,6 +72,17 @@ type StatusReporter = {
 const DEFAULT_RUN_TIMEOUT_MS = 180_000
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000
 const LONG_RUNNING_JOB_TIMEOUT_MS = 2_160_000
+const VISIBLE_PROVIDER_ACTION_PROTOCOL_VERSION = 'tokenless.visible-provider-action.v1'
+const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
+  'auth.status',
+  'model.inspect',
+  'model.select',
+  'effort.inspect',
+  'effort.select',
+  'file.upload',
+  'prompt.input',
+  'prompt.submit',
+])
 const PROJECT_API_ROUTING_DOMAIN_ENVIRONMENT = Object.freeze<Record<DirectProvider, string>>({
   chatgpt: 'TOKENLESS_DIRECT_CHATGPT_ROUTING_DOMAIN',
   claude: 'TOKENLESS_DIRECT_CLAUDE_ROUTING_DOMAIN',
@@ -96,6 +107,10 @@ try {
     await runCommand(args)
   } else if (command === 'serve') {
     await serveCommand(args)
+  } else if (command === 'provider-status' || command === 'provider-auth-status') {
+    await providerStatusCommand(args)
+  } else if (command === 'provider-action') {
+    await providerActionCommand(args)
   } else if (command === 'provider-controls' || command === 'inspect-provider-controls') {
     await providerControlsCommand(args)
   } else if (command === 'provider-configure') {
@@ -610,6 +625,118 @@ async function providerControlsCommand(args: CliArgs) {
   await executeDaemonJob({ args, action: 'inspect_controls' })
 }
 
+async function providerStatusCommand(args: CliArgs) {
+  await executeDaemonJob({ args, action: 'inspect_auth' })
+}
+
+async function providerActionCommand(args: CliArgs) {
+  const visibleAction = await visibleProviderActionFromArgs(args)
+  await executeDaemonJob({
+    args,
+    action: 'visible_provider_action',
+    visibleAction,
+  })
+}
+
+async function visibleProviderActionFromArgs(args: CliArgs) {
+  const action = typeof args.action === 'string' ? args.action.trim() : ''
+  if (!PRIORITY_VISIBLE_PROVIDER_ACTIONS.has(action)) {
+    throw usageError(
+      'invalid_visible_provider_action',
+      'provider-action --action must be one of: auth.status, model.inspect, model.select, effort.inspect, effort.select, file.upload, prompt.input, prompt.submit.'
+    )
+  }
+
+  if (action === 'auth.status' || action === 'model.inspect' || action === 'effort.inspect') {
+    assertProviderActionPayloadOptions(args, new Set())
+    return { action, payload: {} }
+  }
+
+  if (action === 'model.select') {
+    assertProviderActionPayloadOptions(args, new Set(['model', 'modelFallbacks']))
+    const label = args.model === undefined
+      ? undefined
+      : normalizeVisibleModelLabel(args.model, '--model')
+    if (!label) {
+      throw usageError('missing_visible_action_model', 'model.select requires --model <exact-visible-model>.')
+    }
+    const fallbacks = args.modelFallbacks === undefined
+      ? undefined
+      : normalizeVisibleModelFallbacks(args.modelFallbacks)
+    const labels = [label, ...(fallbacks ?? [])]
+    if (new Set(labels).size !== labels.length) {
+      throw usageError('invalid_model_fallbacks', '--model and --model-fallback labels must be unique.')
+    }
+    return { action, payload: { label, ...(fallbacks ? { fallbacks } : {}) } }
+  }
+
+  if (action === 'effort.select') {
+    assertProviderActionPayloadOptions(args, new Set(['effort', 'thinkingEffort']))
+    if (args.effort !== undefined && args.thinkingEffort !== undefined) {
+      throw usageError('duplicate_effort', 'Use either --effort or --thinking-effort, not both.')
+    }
+    const value = args.effort ?? args.thinkingEffort
+    if (value === undefined) {
+      throw usageError('missing_visible_action_effort', 'effort.select requires --effort <exact-visible-effort>.')
+    }
+    return {
+      action,
+      payload: { label: normalizeVisibleModelLabel(value, '--effort', 'invalid_effort') },
+    }
+  }
+
+  if (action === 'file.upload') {
+    assertProviderActionPayloadOptions(args, new Set(['attachFiles']))
+    if (args.attachFiles.length < 1) {
+      throw usageError('missing_visible_action_file', 'file.upload requires at least one --attach-file <path>.')
+    }
+    if (args.attachFiles.length > 100) {
+      throw usageError('too_many_attachments', '--attach-file accepts at most 100 files per visible request.')
+    }
+    return { action, payload: {} }
+  }
+
+  assertProviderActionPayloadOptions(args, new Set(['prompt', 'promptFile']))
+  if (args.prompt !== undefined && args.promptFile !== undefined) {
+    throw usageError('duplicate_prompt', 'Use either --prompt or --prompt-file, not both.')
+  }
+  const text = args.promptFile === undefined
+    ? args.prompt
+    : await fs.readFile(args.promptFile, 'utf8')
+  if (typeof text !== 'string' || text.trim() === '') {
+    throw usageError('missing_prompt', `${action} requires --prompt <text> or --prompt-file <path>.`)
+  }
+  return { action, payload: { text, mode: 'replace' } }
+}
+
+function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>) {
+  const payloadOptions = [
+    ['prompt', '--prompt'],
+    ['promptFile', '--prompt-file'],
+    ['projectRoot', '--project-root'],
+    ['context', '--context'],
+    ['contextFile', '--context-file'],
+    ['turnContextFile', '--turn-context-file'],
+    ['model', '--model'],
+    ['modelFallbacks', '--model-fallback'],
+    ['effort', '--effort'],
+    ['thinkingEffort', '--thinking-effort'],
+    ['chatSurface', '--chat-surface'],
+    ['debuggerControlExtensionId', '--debugger-control-extension-id'],
+  ] as const
+  const unsupported: string[] = payloadOptions
+    .filter(([key]) => args[key] !== undefined && !allowed.has(key))
+    .map(([, flag]) => flag)
+  if (args.files.length > 0 && !allowed.has('files')) unsupported.push('--file')
+  if (args.attachFiles.length > 0 && !allowed.has('attachFiles')) unsupported.push('--attach-file')
+  if (unsupported.length > 0) {
+    throw usageError(
+      'visible_action_payload_option',
+      `${String(args.action)} does not accept payload option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`
+    )
+  }
+}
+
 async function providerConfigureCommand(args: CliArgs) {
   assertProviderConfigureArguments(args, 'provider-configure')
   await executeDaemonJob({ args, action: 'configure_controls' })
@@ -631,10 +758,12 @@ async function executeDaemonJob({
   args,
   action,
   prompt,
+  visibleAction,
 }: {
   args: CliArgs
   action: string
   prompt?: string | undefined
+  visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
 }) {
   if (args.longRunning && args.noWait) {
     throw usageError('long_running_requires_wait', '--long-running keeps the web job attached and cannot be combined with --no-wait.')
@@ -645,7 +774,7 @@ async function executeDaemonJob({
   const provider = normalizeProvider(
     args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || 'chatgpt'
   )
-  const providerControls = resolveProviderControls({ args, provider, action })
+  const providerControls = visibleAction ? {} : resolveProviderControls({ args, provider, action })
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
   const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
   const taskId = deriveTaskId({
@@ -653,6 +782,7 @@ async function executeDaemonJob({
     chatName,
     idempotencyKey: args.taskId || args.idempotencyKey || process.env.TOKENLESS_TASK_ID || process.env.TOKENLESS_IDEMPOTENCY_KEY,
   })
+  const requestId = visibleAction ? (taskId ?? randomUUID()) : taskId
   const statusReporter = createCliStatusReporter(args)
   let stagedAttachmentBundleId: string | undefined
   let daemonJobSubmissionStarted = false
@@ -701,19 +831,31 @@ async function executeDaemonJob({
     if (attachments && attachments.some((attachment) => attachment.bundleId !== stagedAttachmentBundleId)) {
       throw usageError('attachment_bundle_invalid', 'Visible attachments must be staged into one private bundle.')
     }
+    const visibleActionRequest = visibleAction
+      ? {
+          protocol: VISIBLE_PROVIDER_ACTION_PROTOCOL_VERSION,
+          requestId,
+          provider,
+          action: visibleAction.action,
+          payload: visibleAction.action === 'file.upload'
+            ? { attachments }
+            : visibleAction.payload,
+        }
+      : undefined
     const requestJson = {
-      requestId: taskId,
+      requestId,
       taskId,
       prompt,
       targetUrl,
-      idempotencyKey: taskId,
-      readDelayMs,
-      readTimeoutMs,
+      idempotencyKey: visibleAction ? requestId : taskId,
+      readDelayMs: visibleAction ? undefined : readDelayMs,
+      readTimeoutMs: visibleAction ? undefined : readTimeoutMs,
       includeText: action === 'snapshot_dom' ? Boolean(args.includeText) : undefined,
       maxTextChars: action === 'snapshot_dom' && args.maxTextChars !== undefined
         ? Number(args.maxTextChars)
         : undefined,
       attachments,
+      visibleAction: visibleActionRequest,
       ...providerControls,
       metadata: {
         source: 'tokenless-cli',
@@ -1645,8 +1787,11 @@ function requiredAdminValue(value: unknown, flag: string): string {
 }
 
 function assertCommandRoutingArguments(command: string, args: CliArgs) {
-  if (command !== 'run' && args.attachFiles.length > 0) {
-    throw usageError('attachment_requires_visible_run', '--attach-file is accepted only by tokenless run in visible mode.')
+  if (command !== 'run' && command !== 'provider-action' && args.attachFiles.length > 0) {
+    throw usageError(
+      'attachment_requires_visible_action',
+      '--attach-file is accepted only by tokenless run or provider-action --action file.upload.'
+    )
   }
   const administrationOnly = [
     ['account', '--account'],
@@ -1834,7 +1979,7 @@ function assertProviderConfigureArguments(args: CliArgs, command: string) {
       command === 'chatgpt-configure' ? 'missing_chatgpt_control' : 'missing_provider_control',
       `${command} requires --model${command === 'chatgpt-configure'
         ? ', --effort, or --chat-surface chat'
-        : ' or a ChatGPT-only --effort/--chat-surface control'}.`
+        : ' or --effort'}.`
     )
   }
 }
@@ -1849,13 +1994,16 @@ function resolveProviderControls({
   action: string
 }) {
   const hasRequestedModelControl = args.model !== undefined || args.modelFallbacks !== undefined
+  const hasRequestedEffortControl = args.effort !== undefined || args.thinkingEffort !== undefined
   const hasRequestedChatGptControl = (
-    args.effort !== undefined ||
-    args.thinkingEffort !== undefined ||
     args.chatSurface !== undefined
   )
-  const inspectionAction = action === 'inspect_controls' || action === 'inspect_chatgpt_controls'
-  if (inspectionAction && (hasRequestedModelControl || hasRequestedChatGptControl)) {
+  const inspectionAction = (
+    action === 'inspect_auth' ||
+    action === 'inspect_controls' ||
+    action === 'inspect_chatgpt_controls'
+  )
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedChatGptControl)) {
     throw usageError(
       'controls_unsupported_for_action',
       'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
@@ -1864,7 +2012,7 @@ function resolveProviderControls({
   if (provider !== 'chatgpt' && hasRequestedChatGptControl) {
     throw usageError(
       'chatgpt_controls_unsupported',
-      '--effort, --thinking-effort, and --chat-surface are available only for ChatGPT.'
+      '--chat-surface is available only for ChatGPT.'
     )
   }
   if (inspectionAction) return {}
@@ -1879,16 +2027,19 @@ function resolveProviderControls({
     throw usageError('model_fallback_requires_model', '--model-fallback requires --model.')
   }
 
+  const effortValue = args.effort ?? args.thinkingEffort
+  const effort = effortValue === undefined
+    ? undefined
+    : normalizeVisibleModelLabel(effortValue, '--effort', 'invalid_effort')
+
   if (provider !== 'chatgpt') {
-    return { model, modelFallbacks }
+    return { model, modelFallbacks, effort }
   }
 
   const chatSurface = args.chatSurface === undefined ? 'chat' : String(args.chatSurface).trim().toLowerCase()
   if (chatSurface !== 'chat') {
     throw usageError('invalid_chat_surface', 'ChatGPT runs support only --chat-surface chat; Work is intentionally not used by Tokenless.')
   }
-  const effortValue = args.effort ?? args.thinkingEffort
-  const effort = effortValue === undefined ? undefined : normalizeChatGptEffort(effortValue)
   return {
     chatSurface,
     model,
@@ -1897,10 +2048,10 @@ function resolveProviderControls({
   }
 }
 
-function normalizeVisibleModelLabel(value: unknown, flag: string) {
+function normalizeVisibleModelLabel(value: unknown, flag: string, errorCode = 'invalid_model') {
   const normalized = String(value).trim()
   if (normalized.length === 0 || normalized.length > 120 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
-    throw usageError('invalid_model', `${flag} must be a nonempty visible UI label up to 120 characters without control characters.`)
+    throw usageError(errorCode, `${flag} must be a nonempty visible UI label up to 120 characters without control characters.`)
   }
   return normalized
 }
@@ -1911,14 +2062,6 @@ function normalizeVisibleModelFallbacks(value: unknown) {
     throw usageError('invalid_model_fallbacks', '--model-fallback must contain between one and eight visible UI labels.')
   }
   return labels
-}
-
-function normalizeChatGptEffort(value: unknown) {
-  const normalized = String(value).trim().toLowerCase().replace(/[\s-]+/g, '_')
-  if (!['instant', 'medium', 'high', 'extra_high', 'pro'].includes(normalized)) {
-    throw usageError('invalid_effort', '--effort must be one of: instant, medium, high, extra_high, pro.')
-  }
-  return normalized
 }
 
 function parseProviderList(value: unknown) {
@@ -2025,8 +2168,10 @@ function usage() {
     '  tokenless run --provider chatgpt --model <visible-model> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
     '  tokenless run --provider <chatgpt|claude|gemini|grok> --attach-file <path> [--attach-file <path>] --prompt <text> --json',
     '  tokenless run --long-running --provider chatgpt --prompt <text> --json',
+    '  tokenless provider-action --provider <chatgpt|claude|gemini|grok> --action <auth.status|model.inspect|model.select|effort.inspect|effort.select|file.upload|prompt.input|prompt.submit> [action options] --json',
+    '  tokenless provider-status --provider <chatgpt|claude|gemini|grok> --json',
     '  tokenless provider-controls --provider <chatgpt|claude|gemini|grok> --json',
-    '  tokenless provider-configure --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> --json',
+    '  tokenless provider-configure --provider <chatgpt|claude|gemini|grok> [--model <exact-visible-model>] [--effort <exact-visible-effort>] --json',
     '  tokenless chatgpt-controls --json',
     '  tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
     '  tokenless state --task-id <task-id> --json',

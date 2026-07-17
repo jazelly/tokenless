@@ -1,0 +1,25 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "thinking-effort-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://grok.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "a55c4fdb5233ae0cd50a6474048e7e130f4abe8e2bfb7d53a3369d10a960b81d",
+  "effortMode": "coupled-to-model",
+  "evidenceSelectors": [
+    { "capability": "effort.inspect-via-model", "selector": "[role=\"menuitem\"][data-radix-collection-item] span.font-semibold", "expectedCount": 2 },
+    { "capability": "model.entitlement", "selector": "[role=\"menuitem\"] button", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "no-independent-effort-control-observed", "selector": "[role=\"switch\"], [aria-label*=\"effort\" i]", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Expert and Heavy are upsold model profiles on this observed account; this fixture does not claim an independent thinking-effort action or a Free plan."]
+}

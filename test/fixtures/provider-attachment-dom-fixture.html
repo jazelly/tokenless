@@ -70,6 +70,7 @@
 
       if (host === 'chatgpt.com') {
         root.innerHTML = `
+          <button data-testid="accounts-profile-button" role="button" aria-label="Account menu">Account</button>
           <div data-testid="conversation-panel"></div>
           <form class="composer-shell" data-testid="composer" aria-label="Message composer">
             <button id="intelligence-control" type="button" aria-expanded="false" aria-haspopup="menu">Medium</button>
@@ -103,15 +104,47 @@
             <input data-decoy-file-input type="file" multiple hidden>
             <div id="attachment-evidence"></div>
             <rich-textarea><div class="ql-editor" data-gramm="false" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Enter a prompt for Gemini"></div></rich-textarea>
+            <button aria-label="Upload and tools" type="button">Upload and tools</button>
             <button aria-label="Send message" type="button">Send</button>
           </section>`
       }
 
-      const exactInput = root.querySelector([
+      let exactInput = root.querySelector([
         '#upload-files',
         '#chat-input-file-upload-onpage',
+        'input[name="Filedata"]',
         'input[name="files"]',
       ].join(','))
+
+      const geminiUploadTrigger = root.querySelector('button[aria-label="Upload and tools"]')
+      if (geminiUploadTrigger) {
+        geminiUploadTrigger.addEventListener('click', () => {
+          document.querySelector('[data-fixture="gemini-upload-menu"]')?.remove()
+          const menu = document.createElement('div')
+          menu.dataset.fixture = 'gemini-upload-menu'
+          menu.setAttribute('role', 'menu')
+          const localUpload = document.createElement('button')
+          localUpload.type = 'button'
+          localUpload.setAttribute('role', 'menuitem')
+          localUpload.setAttribute('data-test-id', 'local-images-files-uploader-button')
+          localUpload.setAttribute('aria-label', 'Upload files. Documents, data, code files')
+          localUpload.textContent = 'Upload files'
+          localUpload.addEventListener('click', () => {
+            if (!exactInput) {
+              exactInput = document.createElement('input')
+              exactInput.type = 'file'
+              exactInput.name = 'Filedata'
+              exactInput.multiple = true
+              exactInput.hidden = true
+              root.querySelector('.composer-shell').append(exactInput)
+              registerExactInput(exactInput)
+            }
+            menu.remove()
+          })
+          menu.append(localUpload)
+          root.querySelector('.composer-shell').append(menu)
+        })
+      }
 
       const intelligence = root.querySelector('#intelligence-control')
       if (intelligence) {
@@ -162,11 +195,11 @@
         })
       }
 
-      if (exactInput) {
-        exactInput.addEventListener('input', () => events.push('input'))
-        exactInput.addEventListener('change', async () => {
+      function registerExactInput(input) {
+        input.addEventListener('input', () => events.push('input'))
+        input.addEventListener('change', async () => {
           events.push('change')
-          const files = [...(exactInput.files || [])]
+          const files = [...(input.files || [])]
           if (!files.length) return
           for (const file of files) {
             const bytes = [...new Uint8Array(await file.arrayBuffer())]
@@ -180,6 +213,7 @@
           updateChatGptSendState()
         })
       }
+      if (exactInput) registerExactInput(exactInput)
 
       const chatGptComposer = root.querySelector('#prompt-textarea')
       const chatGptForm = root.querySelector('form[data-testid="composer"]')

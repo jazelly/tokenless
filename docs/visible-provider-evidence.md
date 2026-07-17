@@ -1,316 +1,302 @@
 # Visible provider evidence
 
-Tokenless visible-session adapters are based on provider UI that a user can see
-and authorize in the browser. They do not use provider cookies, browser storage,
-hidden authentication headers, or private provider APIs.
+Tokenless visible-session adapters operate only through provider UI that a user
+can see and authorize in the browser. They do not read provider cookies,
+`localStorage` or `sessionStorage` credentials, hidden authorization headers,
+or private provider APIs.
 
-This document records the time-sensitive product facts and DOM evidence used by
-the adapters. Product limits can change. Runtime code must treat the visible UI
-as authoritative and fail closed when a required control cannot be verified.
+Provider products and DOM can change. Runtime code treats the current visible
+UI as authoritative and fails closed when a required control or state cannot be
+verified.
 
-## Shared enrichment contract
+## Evidence states
 
-`provider-controls` inventories model labels, availability, and selected state
-from the visible provider menu. `provider-configure` and `run --model` use the
-same DOM path. The older ChatGPT-specific commands remain compatibility aliases.
+Three states must not be conflated:
 
-Model labels are compared as complete visible labels after whitespace and case
-normalization. Tokenless never uses substring or guessed model matching.
+- **Observed DOM** means a control was visible in a user-authorized browser
+  session and its adapter-relevant markup was reduced into a redacted fixture.
+  Observation alone does not enable an action.
+- **Implemented** means an extension content path can inspect or operate that
+  control. Implementation alone does not prove the provider accepted the
+  resulting action.
+- **Accepted** means the named implementation boundary has a focused automated
+  proof. A reduced-DOM selector test, a full extension/native-host fixture E2E,
+  and a live provider mutation are different acceptance boundaries and are
+  described separately.
 
-It tries `--model` first, then each `--model-fallback` in order, and verifies the
-visible selected state. If none is available, submission fails closed.
+The unified visible-provider capability manifest is the runtime source of
+truth. An action is exposed only when its manifest state is `verified`;
+`pending_evidence` and `unsupported` actions fail closed. Adding an observed
+fixture never changes that state by itself.
 
-Repeated `run --attach-file <path>` arguments use a separate visible-attachment
-protocol. The CLI copies regular, non-symlink files into a private local bundle,
-records size and SHA-256, and creates path-free descriptors.
+## Published Free access baseline
 
-Only those descriptors reach the daemon and extension. The native host streams
-bounded chunks from the claimed job.
+Provider documentation confirms that all four products have a Free web entry
+point, but published availability is not proof of the current browser account,
+its remaining quota, or a particular visible control:
 
-The content script reconstructs a browser `File`, assigns it only to one exact
-provider file input, and dispatches the visible input/change events.
+| Provider | Current official Free-web baseline | Tokenless interpretation |
+| --- | --- | --- |
+| ChatGPT | The [Free Tier FAQ](https://help.openai.com/en/articles/9275245-using-chatgpt-s-free-tier) lists model access, web tools, and file/image uploads with tighter limits; [Projects](https://help.openai.com/en/articles/10169521-projects-in-chatgpt) are also available with Free-specific file limits. | Free sessions can be useful, but the captured authenticated session was Plus and the current visible menu/limit always wins. |
+| Claude | Anthropic lists a [$0 Free plan](https://support.anthropic.com/en/articles/11049762-choosing-a-claude-ai-plan), and its [file-upload documentation](https://support.anthropic.com/en/articles/8241126-what-kinds-of-documents-can-i-upload-to-claude-ai) covers visible chat attachments. | The captured authenticated session visibly reported Free; model and effort availability is still read from that session's DOM. |
+| Gemini | Google's [Gemini Apps limits](https://support.google.com/gemini/answer/16275805?hl=en-AG) document no-AI-plan access to multiple modes and Extended thinking; [file uploads](https://support.google.com/gemini/answer/14903178?hl=en-SG) require sign-in and apply stricter limits without Pro or Ultra. | The captured session was signed in but had no reliable plan label, so Tokenless reports its plan as unknown. |
+| Grok | xAI lists a limited [$0 Free plan](https://x.ai/pricing), while the [Grok overview](https://docs.x.ai/grok/overview) documents visible file use and higher paid limits. | The captured session's plan remains unknown; visible Upgrade evidence makes unavailable model profiles fail closed. |
 
-It requires a new visible filename near the composer before submission. Hash,
-offset, input, file-type, or visible-confirmation drift blocks the request.
+These sources answer whether a Free route exists. They do not authorize
+Tokenless to infer authentication, plan, quota, model entitlement, or upload
+acceptance without current visible DOM evidence.
 
-Attachment descriptors never contain a source path. The pipeline does not read
-provider cookies, browser storage, hidden authorization headers, or private web
-APIs.
+## Authenticated fixture corpus
 
-Provider-specific file limits and the exact visible input remain authoritative.
-Tokenless also enforces a 100-file, 512 MiB request cap.
+On 2026-07-17, four new, blank provider tabs were inspected through the user's
+signed-in Chrome profile. No account name, email, chat title, message content,
+or private route was retained. No prompt was submitted and no file was
+uploaded. Temporary model or thinking selections used to inspect visible state
+were restored.
 
-Project-isolated runs do not automate a provider Project picker. A caller may
-pass an exact existing ChatGPT or Claude Project URL with `--target-url`.
+The fixtures live under:
 
-Tokenless then accepts only the corresponding same-Project conversation route.
-A cross-Project or ordinary-chat transition fails closed.
+```text
+test/fixtures/provider-dom/<provider>/<account-state>/<scenario>.html
+```
+
+Each HTML file has a same-basename `.provenance.json` sidecar containing the
+provider, account state, observed plan or `unknown`, scenario, sanitized public
+route, evidence selectors, redaction notes, and a SHA-256 of the HTML. The
+authenticated fixtures are static reduced DOM: they contain no provider
+JavaScript and no synthetic behavior.
+
+Five priority scenarios are retained for every provider:
+
+- `session-status`
+- `model-menu-open`
+- `thinking-effort-menu-open`
+- `file-input-ready`
+- `composer-idle`
+
+The account and plan observations are deliberately narrow:
+
+| Provider | Fixture account state | Visible plan evidence | What may be inferred |
+| --- | --- | --- | --- |
+| ChatGPT | `signed-in-paid` | Plus | These controls were visible on one Plus account. This is not authenticated Free-plan proof. |
+| Claude | `signed-in-free` | Free plan | The retained auth, model, effort, file-input, and composer controls were visible on one Free account. Limits remain provider-controlled. |
+| Gemini | `signed-in-unknown` | None | The account was signed in. A current model label does not establish the account's plan. |
+| Grok | `signed-in-unknown` | None | The account was signed in. Published Free availability and visible upsells do not identify this account's plan. |
+
+Existing unauthenticated, public-share, and deterministic harness fixtures are
+preserved separately. Their provider DOM and their synthetic test transitions
+must not be cited as authenticated provider acceptance.
+
+## Unified visible action contract
+
+The versioned action vocabulary covers:
+
+- `auth.status`
+- `model.inspect` and `model.select`
+- `effort.inspect` and `effort.select`
+- `file.upload` and `skill.upload`
+- connector inspection and selection
+- `prompt.input` and `prompt.submit`
+- project inspection and opening
+- history inspection and opening
+
+The first implementation priority is authentication status, model selection,
+thinking effort, file upload, and prompt input.
+
+`tokenless provider-status` and its `provider-auth-status` alias inspect only
+visible sign-in signals. The response may expose an allowlisted plan label such
+as Free or Plus, but never account identity. Ambiguous or contradictory visible
+signals return `unknown`.
+
+Model and effort requests use complete visible labels after whitespace and case
+normalization. `--effort` is an exact provider-visible label for every provider;
+ChatGPT's chat-surface and trusted-debugger controls remain ChatGPT-specific.
+Ordered model fallbacks are tried only when their exact rows are visibly
+available, and the selected state must be verified after interaction.
+
+Repeated `run --attach-file <path>` arguments use the existing visible
+attachment transport. The CLI stages regular non-symlink files into a private
+bundle and sends path-free size/SHA-256 descriptors. The native host streams
+bounded bytes for the claimed job, and the content script reconstructs browser
+`File` objects for one exact provider input. Submission requires new visible
+filename evidence. The standalone unified `file.upload` action remains
+capability-gated because a direct action request does not itself provide that
+daemon/native byte context.
+
+Project-isolated submission currently accepts an exact existing ChatGPT or
+Claude Project URL and permits only the corresponding same-Project
+conversation transition. Project discovery, creation, and picker automation
+are separate actions and remain capability-gated.
 
 ## ChatGPT
 
-Evidence reviewed on 2026-07-16:
+The [ChatGPT Free Tier FAQ](https://help.openai.com/en/articles/9275245-using-chatgpt-s-free-tier-faq)
+documents a Free offering, while the authenticated account inspected here
+visibly reported Plus. Published Free availability is product documentation,
+not evidence that the authenticated fixture came from a Free account.
 
-- The [ChatGPT Free Tier FAQ](https://help.openai.com/en/articles/9275245-using-chatgpt-s-free-tier-faq)
-  documents free access with provider-controlled model and tool limits.
-  Tokenless inventories the visible menu instead of assuming an entitlement.
-- The [File Uploads FAQ](https://help.openai.com/en/articles/8555545-file-uploads-faq)
-  documents visible ChatGPT uploads and quota behavior. The current input's
-  accepted types and account UI remain authoritative.
-- [Projects in ChatGPT](https://help.openai.com/en/articles/10169521-projects-in-chatgpt)
-  says Projects are available to free and paid accounts and currently allows
-  five files per Project for Free accounts.
+### Observed DOM
 
-### DOM provenance
+The authenticated fixtures retain:
 
-The public ChatGPT shell re-inspected on 2026-07-16 exposed these exact controls:
+- `[data-testid="accounts-profile-button"][role="button"]` as the positive
+  signed-in signal, with account identity redacted and only Plus retained;
+- `div#prompt-textarea[contenteditable="true"][role="textbox"]` and its
+  textarea fallback;
+- `button[data-testid="composer-plus-btn"][aria-label="Add files and more"]`;
+- `input#upload-files[type="file"][multiple]` as the generic file input;
+- the composer Intelligence pill, `menuitemradio` effort rows, model submenu,
+  and `aria-checked` selected state.
 
-- `button[data-testid="model-switcher-dropdown-button"][aria-label="Model selector"][aria-haspopup="menu"]`
-- `button[data-testid="composer-plus-btn"][aria-label="Add files and more"]`
-- `input#upload-files[type="file"][multiple]`
+This account showed three current effort labels: Instant, Medium, and High.
+That observation replaces any fixed five-level assumption but does not define
+a provider-wide count or order. Model primary labels remain separate from
+secondary lifecycle text.
 
-The unauthenticated model menu contained only sign-in/up-sell actions, so it is
-not treated as model availability.
+### Implementation and acceptance
 
-The signed-in reduced fixture preserves the existing model/effort menu roles
-and selected state used by the accepted ChatGPT adapter. Its labels are test
-data, not hard-coded account entitlement.
+Authentication, exact model inspection/selection, exact effort
+inspection/selection, and prompt input are implemented in the content adapter.
+The ChatGPT/Claude focused control suite and extension build are green for the
+captured dynamic menu structure. Unified action exposure still follows the
+capability manifest and its bridge-level tests.
 
-### Current acceptance boundary
-
-ChatGPT control inventory and configuration use visible menu roles, exact model
-labels, selected state, and the Chat-only surface. Attachments use only the
-exact captured file input and require visible filename confirmation.
+The existing attachment pipeline uses only `#upload-files` and requires visible
+filename confirmation. Image-only inputs are not generic attachment fallbacks.
+No real file was uploaded during the authenticated DOM observation.
 
 An exact target such as
 `https://chatgpt.com/g/<g-p-project-id>/project` may transition only to
-`/g/<same-g-p-project-id>/c/<conversation-id>`. Tokenless does not create a
-Project or automate the Project picker.
+`/g/<same-g-p-project-id>/c/<conversation-id>`. Tokenless does not yet create or
+select a Project through the unified action API.
 
 ## Claude
 
-Evidence reviewed on 2026-07-15:
+[Claude pricing](https://claude.com/pricing) documents a Free web plan, and the
+authenticated session inspected here also visibly displayed `Free plan`. This
+is direct evidence that the retained controls were present on that Free
+account; it is not a promise of fixed quotas or universal model availability.
 
-- [Claude pricing](https://claude.com/pricing) confirms a free web plan.
-- [Getting started with Claude](https://support.claude.com/en/articles/8114491-get-started-with-claude)
-  describes a dynamic session limit that resets every five hours. The number of
-  messages varies with prompt and attachment size, conversation length, model,
-  features, and current capacity; Tokenless therefore does not hard-code a
-  message count.
-- [Claude Sonnet 5](https://www.anthropic.com/news/claude-sonnet-5) identifies
-  Sonnet 5 as the default free model. The
-  [model and effort guide](https://support.claude.com/en/articles/8664678-change-the-model-effort-and-thinking-settings)
-  documents the visible model selector. Tokenless must inventory that menu at
-  runtime instead of assuming that every free account has the same alternatives.
-- [File uploads](https://support.claude.com/en/articles/8241126-upload-files-to-claude)
-  documents up to 20 files per chat and a current 500 MB per-file limit, with a
-  30 MB per-file limit for Project knowledge. Upload limits remain subject to
-  the account and visible UI.
-- [Creating and managing Projects](https://support.claude.com/en/articles/9519177-how-can-i-create-and-manage-projects)
-  confirms that free accounts can create up to five Projects. Each Project has
-  its own chats, knowledge, and instructions.
+### Observed DOM
 
-### DOM provenance
+The authenticated fixtures retain:
 
-The reduced fixture at `test/fixtures/claude-real-dom-fixture.html` preserves
-adapter-relevant structure from the public `https://claude.ai/new` SSR shell
-observed on 2026-07-15.
+- `button[data-testid="user-menu-button"]` plus a separate visible Free-plan
+  label;
+- `button[data-testid="model-selector-dropdown"][aria-label^="Model: "]`;
+- visible `menuitemradio` model rows, with `aria-checked` selection;
+- `div[data-testid="chat-input"][contenteditable="true"][role="textbox"]`;
+- `input#chat-input-file-upload-onpage[data-testid="file-upload"][aria-label="Upload files"][type="file"][multiple]`;
+- exact Chats, Projects, and Customize navigation links.
 
-It includes these provider-owned DOM contracts:
+Fable 5 and Opus 4.8 carried visible Upgrade evidence, while Sonnet 5 and Haiku
+4.5 were enabled on the observed account. Availability therefore fails closed
+on the visible Upgrade descendant rather than relying only on `aria-disabled`.
 
-- `div[data-testid="chat-input"][contenteditable="true"][role="textbox"]`
-- `button[data-cds="Button"][aria-label="Send message"]`
-- `input#chat-input-file-upload-onpage[data-testid="file-upload"][aria-label="Upload files"][type="file"][multiple]`
-- `a[href="/projects"][aria-label="Projects"]`
-- `[data-testid="virtual-message-list"]`
-- `.font-claude-response-body`
+Effort is model-dependent. Haiku exposed an Extended switch. In a temporary
+Sonnet state, the UI exposed Low, Medium, High, Extra, and Max effort rows plus
+a Thinking switch. The session was restored to Haiku after inspection.
 
-The fixture is intentionally reduced and redacted. Its inline behavior is a
-deterministic test shim, not copied provider JavaScript.
+The Add menu also visibly contained Skills and Add connector entries, but menu
+presence is only observed DOM; skill upload and connector actions are not
+accepted by that observation.
 
-It reproduces only the user-visible test transitions: composer input, send
-enablement, a new conversation URL, streaming state, and a stable answer.
+### Implementation and acceptance
 
-It also preserves the exact file input used by the attachment receiver.
+Claude authentication, exact model selection, model-dependent effort, and
+prompt input are implemented. Focused authenticated-fixture control tests and
+the extension build are green. The older full-chain fixture separately accepts
+prompt submission, conversation navigation, streaming completion, stable-answer
+selection, blocker detection, and selector-drift failure.
 
-An authenticated model-menu capture remains required before Claude model
-inventory or switching can be enabled. Native Project discovery, creation, and
-picker automation also remain disabled; exact Project URLs are caller supplied.
+The attachment receiver is implemented for the exact input and accepted by
+local extension/native-host fixture coverage, with visible filename evidence
+required before submission. No provider-owned file upload was performed during
+the authenticated capture.
 
-### Current acceptance boundary
-
-The Claude base adapter is accepted only when focused browser tests prove prompt
-submission, `/new` to `/chat/<opaque-id>` navigation, streaming completion,
-stable-answer selection, blocker detection, and selector drift failure.
-
-A separate fixture E2E exercises the complete CLI, daemon, native host,
-extension service worker, and content-script chain without opening an internal
-task or runner page.
-
-Visible attachments are accepted only through the exact captured file input and
-only after the filename appears near the composer.
-
-An exact target such as `https://claude.ai/project/<project-id>` may transition
-only to
-`/project/<same-project-id>/chat/<conversation-id>`.
+An exact `https://claude.ai/project/<project-id>` target may transition only to
+`/project/<same-project-id>/chat/<conversation-id>`. Native project discovery,
+creation, and picker actions remain capability-gated.
 
 ## Gemini
 
-Evidence reviewed on 2026-07-15:
+[Gemini Apps availability](https://support.google.com/gemini/answer/13278668?hl=en)
+documents that some web features can be used without signing in. The new
+authenticated fixture proves a signed-in session through its visible Google
+account SignOutOptions link, but no reliable plan label was present. The account
+state is therefore `signed-in-unknown`, not Free or paid.
 
-- [Gemini Apps availability and account requirements](https://support.google.com/gemini/answer/13278668?hl=en)
-  confirms that some Gemini web-app features can be used without signing in.
-  A persistent Sign in link therefore is not an authentication blocker while
-  the anonymous composer remains usable.
-- [Gemini Apps limits and upgrades](https://support.google.com/gemini/answer/16275805?hl=en)
-  documents dynamic limits for accounts without a Google AI subscription. Its
-  current table lists a 32K context window for standard access, quota windows of
-  roughly five hours, and weekly caps for some advanced access. Limits depend on
-  the model, prompt size, file size, conversation length, and capacity, and may
-  change. Tokenless must read the visible account UI and never hard-code these
-  numbers as runtime entitlement.
-- [Uploading and analyzing files](https://support.google.com/gemini/answer/14903178?hl=en)
-  currently documents up to 10 files in one prompt and a 100 MB limit for most
-  supported files. Video files can be up to 2 GB; the current free-access limits
-  list five minutes of video and 10 minutes of audio. The visible upload control
-  remains authoritative for a particular account and model.
-- The limits table lists Gems as available without a paid Google AI plan.
-  [Using Gems](https://support.google.com/gemini/answer/15146780?hl=en) still
-  requires signing in, and eligibility varies for personal, work, and school
-  accounts. Anonymous composer availability therefore does not imply Gem,
-  upload, or saved-chat eligibility.
+### Observed DOM
 
-### DOM provenance
+The authenticated fixtures retain:
 
-Gemini evidence combines two distinct user-visible surfaces inspected on
-2026-07-15, with the model menu re-inspected on 2026-07-16. The unauthenticated
-`https://gemini.google.com/app` shell supplied the composer and static controls:
+- `rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"][aria-label="Enter a prompt for Gemini"]`;
+- `button[data-test-id="bard-mode-menu-button"][aria-haspopup]`;
+- `gem-menu-item[role="menuitem"][data-mode-id]` and each primary `.label`;
+- `gem-menu-item-content.selected` as committed model state;
+- the independent Extended thinking row;
+- `button[aria-label="Upload and tools"]` and the exact local uploader item;
+- the dynamically created `input[type="file"][name="Filedata"][multiple]`.
 
-- `rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"][aria-label="Enter a prompt for Gemini"]`
-- `button[aria-label="Send message"]`, which appears after the composer becomes
-  non-empty
-- `button[data-test-id="bard-mode-menu-button"][aria-label^="Open mode picker, currently "]`
-- `gem-menu-item[role="menuitem"][data-mode-id]`, with its primary label in
-  `.label`, selected state in `data-active="true"`, and availability in
-  `aria-disabled`
-- `button[aria-label="Upload & tools"][aria-haspopup="menu"]`
-- `button[data-test-id="local-images-files-uploader-button"][role="menuitem"][aria-label="Upload files. Documents, data, code files"]`
+`data-active="true"` is keyboard highlight, not committed selection. Adapters
+must use the nested `.selected` state. The exact file input appeared only after
+the local upload item opened a file chooser; the chooser was intercepted and no
+file was selected.
 
-A public, read-only `/share/<opaque-id>` conversation supplied the provider-owned
-answer hierarchy, without copying its conversation text:
+### Implementation and acceptance
 
-- `response-container message-content`
-- `response-container structured-content-container.message-content`
+Gemini prompt input, model inventory/selection, Extended thinking handling, and
+dynamic file-input preparation have content-adapter implementations. Runtime
+exposure remains action-specific: an authenticated selector fixture does not
+substitute for a provider-owned upload or generation-completion proof.
 
-No live prompt was submitted while collecting this evidence, so the transient
-busy control was not present in the static shell capture.
-
-The adapter uses Google's current `Stop response` label as the exact
-`button[aria-label="Stop response"]` busy-state contract. The local fixture
-reproduces that state; a new capture is required if the control drifts.
-
-The reduced and redacted fixture at
-`test/fixtures/gemini-real-dom-fixture.html` merges only those structural
-contracts. Its inline script is a deterministic test shim, not Gemini
-JavaScript.
-
-It reproduces model-menu inventory, exact selection, and unavailable items
-without assuming that every account exposes the same models.
-
-The capture helper also probes the static `/gems/view` sidebar route without
-relying on volatile element IDs.
-
-Authenticated sidebar and file-input evidence is still required before Gems,
-saved isolation, or uploads become an automation contract.
-
-### Current acceptance boundary
-
-The Gemini adapter covers anonymous prompt submission, stable response
-selection, model inventory, and exact available-model selection through visible
-DOM. A requested unavailable label and exhausted fallback list block submission.
-
-File upload remains disabled because no authenticated exact file input has been
-captured. Gems and saved conversation isolation also remain pending.
-
-They must not be enabled until a user-granted authenticated capture verifies
-the controls and focused extension tests reproduce their visible state changes.
+The current authenticated sidebar exposed chat search but did not establish a
+safe Project or Gem isolation workflow. Those actions remain capability-gated.
 
 ## Grok
 
-Evidence reviewed on 2026-07-15:
+[Grok pricing](https://x.ai/pricing) and the
+[Grok overview](https://docs.x.ai/grok/overview) document a Free offering. The
+authenticated account inspected here had no reliable visible plan label, so
+its fixture remains `signed-in-unknown`. Tokenless does not infer this account's
+plan from published pricing, a composer, or an upsell.
 
-- [Grok pricing](https://x.ai/pricing) lists a Free plan at $0 per month with
-  "generous limits," but does not publish a fixed message count. Tokenless must
-  therefore treat the account's visible limit state as authoritative.
-- [Welcome to Grok](https://docs.x.ai/grok/overview) says Grok is free to start
-  and that paid SuperGrok plans raise limits. The
-  [Grok website FAQ](https://docs.x.ai/grok/faq) further distinguishes paid
-  weekly usage from separate free-tier Chat and Voice limits; those free limits
-  reset on their own provider-controlled schedule.
-- The same FAQ documents visible web uploads of up to approximately 100 files at
-  once and up to 150 MB for most individual files. Supported formats and limits
-  can vary by platform or subscription, so the live upload UI remains the
-  runtime authority.
-- The FAQ identifies `grok.com` as the supported web host and mentions Projects,
-  but does not establish a personal Free-plan Project entitlement. The
-  [Grok.com workspace guide](https://docs.x.ai/grok/user-guide) documents
-  licensed Business personal/team workspaces and their isolation. Tokenless does
-  not infer that a Free account has equivalent workspace controls.
+### Observed DOM
 
-### DOM provenance
+The authenticated fixtures retain:
 
-The anonymous `https://grok.com/` web app and a public read-only `/share/<id>`
-conversation were inspected through their visible DOM on 2026-07-15, with the
-model menu and attachment controls re-inspected on 2026-07-16.
+- `a[href="/skills-and-connectors"]` as a positive signed-in signal;
+- `div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"][aria-multiline="true"]`;
+- `button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]`;
+- model rows as `[role="menuitem"][data-radix-collection-item]` with primary
+  `span.font-semibold` labels;
+- `button[data-testid="attach-button"][aria-label="Attach"][aria-haspopup="menu"]`;
+- `input[type="file"][name="files"][multiple]`;
+- visible Projects, History, Search, Skills, and connector entry points.
 
-Repeated home-page loads exposed two provider-owned composer variants:
+Fast was the selected executable model on this account. Auto, Expert, and Heavy
+were visible rows and reported `aria-disabled="false"`, but the same menu showed
+an Upgrade action and those rows led to the upsell. The adapter therefore treats
+only the selected Fast row as available while that Upgrade prompt is visible.
+This is account-specific entitlement evidence, not proof of a Free plan.
 
-- `div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"][aria-multiline="true"]`
-- `textarea[aria-label="Ask Grok anything"][placeholder="What do you want to know?"]`
+Expert and Heavy describe thinking depth as model profiles. No independent
+effort control was observed, so a separate Grok effort request fails closed as
+coupled to model selection.
 
-The same visible surfaces supplied these exact contracts:
+### Implementation and acceptance
 
-- `button[data-testid="chat-submit"][aria-label="Submit"][type="submit"]`
-- `div[data-testid="assistant-message"]` for assistant answers and
-  `div[data-testid="user-message"]` for user messages
-- `button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]`
-- `[role="menuitem"][data-radix-collection-item] span.font-semibold` for each
-  model's primary visible label
-- `button[data-testid="attach-button"][aria-label="Attach"][aria-haspopup="menu"]`
-- `input[type="file"][name="files"][multiple]`
-- `div[data-testid="anon-paywall-sign-up-card"]`
+Grok authentication, prompt input, exact model inventory/selection, model-coupled
+effort rejection, and the exact attachment input have content-adapter paths.
+Availability uses the visible Upgrade evidence rather than trusting
+`aria-disabled="false"` alone.
 
-A benign anonymous prompt was entered and submitted solely to observe the
-visible state transition. Grok rendered the user message and then replaced the
-composer with the exact anonymous paywall above.
+The signed-out harness still proves that an interactive anonymous composer may
+end at the visible signup paywall. Authenticated generation completion remains
+separate from the new static DOM evidence because no authenticated prompt was
+submitted during capture.
 
-This proves that an account is required to receive a response even though the
-initial anonymous composer is interactive. Persistent Sign in and Sign up links
-are not treated as blockers before that transition.
-
-The reduced and redacted fixture at `test/fixtures/grok-real-dom-fixture.html`
-combines the home-page controls with the public-share answer node without
-retaining public conversation text.
-
-Its inline script is a deterministic local test shim, not Grok JavaScript. It
-reproduces exact model selection and the captured file input.
-
-No active authenticated response was generated during this capture, so the
-adapter deliberately does not invent a busy selector. An authenticated
-visible-session capture is required before adding a busy-state contract.
-
-### Current acceptance boundary
-
-The Grok base adapter is accepted only when focused browser tests prove both
-observed composer variants, exact submit and answer selection, stale-answer
-exclusion, and `/` to `/c/<opaque-id>` navigation.
-
-The same tests cover anonymous-paywall failure and selector-drift failure.
-
-Focused fixtures also prove model inventory, exact model selection/fallback,
-and attachment delivery to the captured file input.
-
-Authenticated generation completion is still gated on a real busy-state DOM
-capture.
-
-Project/workspace isolation also remains unsupported because public evidence
-does not establish a safe personal Project route or free-plan entitlement.
+Project creation UI and history controls were observed, including a New Project
+dialog, but no project was created. Project, history, skill, and connector
+actions remain capability-gated until their implementations and focused visible
+state transitions are accepted.
