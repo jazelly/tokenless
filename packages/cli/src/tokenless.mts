@@ -722,7 +722,6 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['effort', '--effort'],
     ['thinkingEffort', '--thinking-effort'],
     ['chatSurface', '--chat-surface'],
-    ['debuggerControlExtensionId', '--debugger-control-extension-id'],
   ] as const
   const unsupported: string[] = payloadOptions
     .filter(([key]) => args[key] !== undefined && !allowed.has(key))
