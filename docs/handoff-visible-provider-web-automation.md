@@ -1,11 +1,270 @@
 # Visible Provider Web Automation Initiative Handoff
 
-**Status:** Working-tree handoff; not a release declaration  
+**Status:** P0 architecture handoff; must precede further visible-provider work
 **Last updated:** 2026-07-17  
 **Working branch at the checkpoint:** `codex/claude-visible-adapter`  
-**Scope:** Extension-mode provider web automation for ChatGPT, Claude, Gemini, and Grok
+**Scope:** Managed Playwright profiles and visible-provider automation for ChatGPT, Claude, Gemini, and Grok
+
+## P0 decision: managed Playwright profiles
+
+This is the current implementation direction and supersedes the extension-mode
+runtime described later in this handoff. The extension material remains as a
+record of the adapters, evidence, and behavior that must be migrated; it is not
+the target architecture.
+
+Visible mode will replace the Native Messaging host and browser extension with
+a daemon-backed Playwright worker. The worker will control visible, persistent
+Google Chrome profiles below `~/.tokenless/browser/profiles/`. A named profile
+represents one browser identity such as `personal` or `work` and may hold one
+session for every supported provider. Multiple accounts for the same provider
+use different named profiles.
+
+This work is **P0**. Do not deepen the extension transport, add new
+extension-only features, or treat the current extension checkpoint as the
+release path before this migration is complete.
+
+### Target architecture
+
+```mermaid
+flowchart LR
+    A["CLI or local client"] --> B["Tokenless daemon"]
+    B --> C["Local Playwright worker"]
+    C --> D["Named persistent Chrome profile"]
+    D --> E["Provider Playwright adapter"]
+    E --> F["Visible provider DOM"]
+
+    G["Consented local Chrome profile copy"] --> D
+    H["Authorized live Chrome acceptance"] --> I["Redacted evidence and fixtures"]
+    I --> E
+```
+
+The Rust daemon remains the durable local control plane for jobs, history,
+leases, state, and cancellation. Direct mode remains isolated and unchanged.
+The Playwright worker replaces only the extension/native transport and owns the
+visible browser processes.
+
+### Profile and CLI contract
+
+Add the following profile administration commands:
+
+```text
+tokenless profiles add --profile <slug> [--label <text>] [--set-default]
+tokenless profiles list
+tokenless profiles status --profile <slug> [--provider <id>]
+tokenless profiles open --profile <slug> [--provider <id>]
+tokenless profiles set-default --profile <slug>
+tokenless profiles remove --profile <slug> --confirm-delete
+```
+
+Every visible command, including `run`, provider actions, provider controls,
+provider status, and `snapshot-dom`, accepts `--profile <slug>`. Selection uses
+the explicit profile first and then the configured default. It fails before job
+creation when neither resolves to a registered profile.
+
+`tokenless setup` creates and selects profile `default` when no profile exists,
+starts the worker, opens the preferred provider pages, and reports visible
+authentication state. Interactive setup discovers installed Chrome profiles
+and offers a local import. JSON or noninteractive setup creates a clean profile
+unless both `--import-chrome-profile <directory-key>` and
+`--consent-local-profile-copy` are supplied.
+
+Store bounded profile metadata in `~/.tokenless/browser/profiles.json`, guarded
+by the existing cross-process SQLite lock. Public profile slugs never become
+filesystem targets: each profile directory is derived from an internal UUID.
+Registry records contain identifiers, labels, lifecycle/import state,
+timestamps, and bounded last-observed visible authentication status, but no
+cookie or storage values.
+
+Profile routing in this P0 is explicit or default. Stable profile identifiers
+and daemon job fields must make later project-affinity routing additive rather
+than requiring another storage migration.
+
+### Consented profile import
+
+The first managed-profile setup attempts to reuse the user's existing signed-in
+Chrome state only after explicit consent. The consent UI names the exact source
+and destination, explains that authentication state may be copied, and states
+that the copy remains entirely local and is never sent to Tokenless or another
+remote service.
+
+The implementation must:
+
+- use installed Google Chrome through `playwright-core`, `channel: "chrome"`,
+  `headless: false`, and a non-default persistent user-data directory;
+- discover the source root and profile directory from platform-standard Chrome
+  locations and `Local State`, using an exact directory key such as `Default`
+  or `Profile 1` rather than an ambiguous display name;
+- require Google Chrome to be fully closed before copying and fall back to a
+  clean managed profile when source quiescence cannot be established;
+- copy into a private staging directory, reject links and path escapes, never
+  mutate the source, and atomically promote a complete result;
+- copy root encryption metadata and opaque authentication-relevant profile
+  state without parsing credential databases;
+- exclude caches, crash data, downloads, browsing history, bookmarks, saved
+  passwords, autofill/payment databases, and installed extensions;
+- disable Chrome sync in the managed clone so it cannot change the user's
+  ordinary synced profile; and
+- delete incomplete staging data on every failure.
+
+After import, Tokenless verifies only visible provider DOM. If at least one
+requested provider remains authenticated, it keeps the partial success and
+opens visible sign-in pages only for providers that remain logged out. If the
+copy fails or no requested session survives, it deletes the clone and creates a
+clean persistent profile. Reauthentication in that profile is the supported
+fallback and persists across future runs.
+
+Profile data remains until explicit removal. Removal first stops the exact
+managed browser, resolves and verifies its registered UUID directory beneath
+Tokenless home, and requires `--confirm-delete` before deleting it.
+
+The revised credential boundary is:
+
+- an explicitly consented, opaque, local authentication-state copy is allowed;
+- Tokenless never parses, prints, logs, exports, diagnoses, or transmits copied
+  cookie, browser-storage, password, or authentication values;
+- Playwright adapters continue to operate through visible provider DOM and do
+  not use cookie/storage export APIs, hidden request interception, private
+  provider APIs, or a remote debugging TCP endpoint; and
+- raw authenticated captures remain ephemeral and only reviewed, reduced,
+  redacted evidence may enter the repository.
+
+### Daemon and worker behavior
+
+Add `profile_id` to visible daemon jobs and expose exact profile filtering in
+job state. Add authenticated worker operations for claim-by-profile,
+mark-running, lease renewal, completion, and cancellation observation. Preserve
+historical jobs; any queued pre-cutover visible job fails explicitly with
+`legacy_visible_transport_removed` rather than being silently replayed.
+
+Run one detached `tokenless-playwright-runner` per Tokenless home. It maintains
+a private PID/session/heartbeat marker and log, lazily launches one persistent
+Chrome context per active profile, and keeps its windows open. If the user
+closes a browser, the active job fails retryably and the next action relaunches
+that profile.
+
+Execution is single-flight inside each profile. Different profiles may run in
+parallel, with a fixed initial limit of four active profile browsers; additional
+jobs remain queued in the daemon. The worker renews claims while waiting on a
+provider, observes daemon cancellation, aborts the corresponding page work, and
+cleans staged attachments deterministically.
+
+Move provider configuration, navigation policy, action vocabulary, selectors,
+and visible postconditions out of the extension into Playwright adapter
+modules. Preserve exact-label model/effort behavior, fail-closed navigation,
+CAPTCHA/rate-limit/upgrade handling, response correlation, visible citations,
+and sanitized snapshots.
+
+Attachments remain staged as private, regular, non-symlink files with bounded
+size and SHA-256 descriptors. The worker resolves the bundle by job id and uses
+Playwright `setInputFiles`; raw caller paths remain absent from daemon job JSON.
+
+### Test strategy and P0 acceptance
+
+#### Deterministic coverage
+
+Add unit and integration coverage for:
+
+- Chrome discovery, source-profile enumeration, explicit consent, canonical
+  path validation, copy inclusion/exclusion rules, atomic promotion, interrupted
+  cleanup, and proof that the source is not modified;
+- Chrome-running, unreadable-source, inconsistent-copy, unusable-encryption,
+  and zero-authenticated-provider fallbacks;
+- clean profiles, partial imports, explicit/default selection, unknown profiles,
+  profile deletion, browser closure, worker restart, and relaunch;
+- same-profile serialization, cross-profile parallelism, the four-profile cap,
+  daemon lease renewal, cancellation, stale completion, and legacy queued jobs;
+- every existing ChatGPT, Claude, Gemini, and Grok action driven through the
+  real Playwright adapters against retained authenticated DOM fixtures;
+- full-chain CLI -> daemon -> worker -> real browser-page flows for prompt
+  input, controls, upload, submission, response reading, snapshots, navigation
+  drift, cancellation, and cleanup; and
+- static contract checks rejecting Playwright cookie/storage export, credential
+  logging, private provider routes, source-profile writes, unsanitized traces,
+  and remote CDP endpoints.
+
+#### Authorized local Chrome-profile acceptance
+
+Add this separately gated command:
+
+```text
+npm run test:e2e:live-managed-playwright
+```
+
+It never runs in ordinary CI and requires every explicit gate below:
+
+```text
+TOKENLESS_LIVE_MANAGED_PLAYWRIGHT=1
+TOKENLESS_LIVE_PROFILE_COPY_CONSENT=1
+TOKENLESS_LIVE_PROVIDER_MUTATIONS=1
+TOKENLESS_LIVE_CHROME_PROFILE=<exact-directory-key>
+TOKENLESS_LIVE_CHROME_USER_DATA_DIR=<optional-nonstandard-root>
+```
+
+The suite refuses to start while Chrome is running or when the source resolves
+inside Tokenless home. It records SHA-256 and sizes for the copied source files
+before import, repeats that check after the run, and fails if the source changed.
+It clones the real selected, locally signed-in Chrome profile into a disposable
+Tokenless home and requires authenticated imported sessions for **ChatGPT,
+Claude, Gemini, and Grok**. Missing authentication for any provider fails the
+P0 acceptance run rather than silently reducing coverage.
+
+For every provider, the live suite must:
+
+1. confirm authenticated state through visible DOM;
+2. inspect the exact model inventory and selected state;
+3. exercise a reversible available model selection and restore the original in
+   `finally` (reselect the current choice if no alternate is safely available);
+4. inspect and exercise effort where supported, restoring the original, and
+   require a truthful unsupported result where effort is provider-coupled;
+5. input and clear a visible draft;
+6. upload a generated, non-sensitive marker text file through the visible file
+   control;
+7. submit one unique marker prompt with the attachment and require a visible,
+   correlated answer; and
+8. verify allowed provider navigation and the absence of login, CAPTCHA,
+   upgrade, rate-limit, and selector-drift blockers.
+
+The suite uses bounded timeouts and generated marker data only. It must not use
+private user files, existing chats, Projects, history, connectors, or skills.
+In `finally`, it restores reversible controls, stops the worker and browsers,
+deletes the imported clone, and verifies the source hashes again. Provider-side
+smoke conversations may remain and must carry a unique recognizable test marker.
+
+Retain only sanitized evidence under
+`test-results/live-managed-playwright/<timestamp>/`: step results, timings,
+Chrome/OS/Playwright versions, a provider/action matrix, cropped screenshots of
+the operated control/uploaded filename/marker response, and redacted selector
+diagnostics. Do not retain full-page text, account identity, cookies, storage,
+private conversation history, or opaque private route identifiers.
+
+Reviewed adapter-relevant DOM from a live run may be promoted into deterministic
+fixtures with provenance and hashes. Raw captures are never promoted
+automatically. P0 is not complete until the deterministic suite is green and
+one successful all-four-provider local acceptance run is recorded in this
+handoff.
+
+### Cutover and cleanup
+
+Visible mode becomes Playwright-only immediately; there is no legacy extension
+flag. Remove the extension and control-extension packages, native-host binary
+and protocol, Chrome Web Store paths, extension ids, bridge marker, manifests,
+and extension-specific tests after their reusable adapter behavior has moved.
+
+Keep the platform native packages for the Rust daemon but package only
+`tokenless-daemon`. During setup or upgrade, remove only native-host files and
+registry values whose resolved targets belong to the active Tokenless home, and
+tell users to uninstall the obsolete browser extension manually.
+
+Migrate configuration to preferred providers, daemon URL, and default managed
+profile. Update architecture, README, privacy policy, install skill, package
+contracts, and release verification to describe the new boundary. Do not
+publish any package, extension, or release as part of this implementation.
 
 ## Executive summary
+
+The remainder of this document describes the extension implementation at the
+2026-07-17 checkpoint. It is migration input and historical evidence beneath
+the P0 decision above.
 
 Tokenless is intended to become a local, provider-neutral execution layer over
 the AI website sessions that a user already has open in their browser.
@@ -68,7 +327,7 @@ and return a bounded, privacy-safe result.
 - Preserve an honest distinction between a provider feature being documented,
   visible, implemented, locally accepted, and live-provider accepted.
 
-### Product invariants
+### Product invariants at the extension checkpoint
 
 - Operate only through user-visible browser UI.
 - Never extract provider cookies, passwords, browser-storage tokens, hidden
