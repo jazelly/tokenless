@@ -1,0 +1,25 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "session-status",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://grok.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "aefdc93f212e7fb07a6320c860947215d06c3dfcbe4c1f97911ca5e0f596f591",
+  "evidenceSelectors": [
+    { "capability": "auth.status", "selector": "a[href=\"/skills-and-connectors\"]", "expectedCount": 1 },
+    { "capability": "project.inspect", "selector": "button[aria-label=\"New Project\"]", "expectedCount": 1 },
+    { "capability": "history.inspect", "selector": "button[aria-label=\"History\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "signed-out-control", "selector": "a[href*=\"login\"], button[aria-label=\"Sign in\"]", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Signed-in status uses compound authenticated-only navigation evidence; no plan tier was established."]
+}

@@ -1,0 +1,25 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "chatgpt",
+  "accountState": "signed-in-paid",
+  "observedPlan": { "status": "observed", "label": "Plus" },
+  "scenario": "file-input-ready",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://chatgpt.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "ca5356e3fefcbd328c48f7ed5f77dace1d1f8e14d801ff9726eee814682c3e6e",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "form[data-testid=\"composer\"] div#prompt-textarea[contenteditable=\"true\"]", "expectedCount": 1 },
+    { "capability": "file.upload", "selector": "input#upload-files[type=\"file\"][multiple]", "expectedCount": 1 },
+    { "capability": "connector.inspect", "selector": ".__menu-item[tabindex=\"0\"]", "expectedCount": 3 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "generic-upload-must-not-use-image-only-inputs", "selector": "input#upload-photos, input#upload-camera", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["The generic multi-file input is distinct from image-only inputs."]
+}

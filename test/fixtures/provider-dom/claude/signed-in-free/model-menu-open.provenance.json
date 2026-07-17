@@ -1,0 +1,23 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "claude",
+  "accountState": "signed-in-free",
+  "observedPlan": { "status": "observed", "label": "Free" },
+  "scenario": "model-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://claude.ai/new",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "e7b417e1fcb48f4e1ac93cfdc8e768eeeaaddc68d335ec5256fae30ae085d49f",
+  "evidenceSelectors": [
+    { "capability": "model.inspect", "selector": "button[data-testid=\"model-selector-dropdown\"][aria-label^=\"Model: \"]", "expectedCount": 1 },
+    { "capability": "model.select", "selector": "[role=\"menu\"] [role=\"menuitemradio\"]", "expectedCount": 4 },
+    { "capability": "model.selected", "selector": "[role=\"menuitemradio\"][aria-checked=\"true\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Upgrade text, not aria-disabled, distinguishes plan-gated entries; primary labels remain separate child nodes."]
+}

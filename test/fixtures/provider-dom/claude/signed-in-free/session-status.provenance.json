@@ -1,0 +1,25 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "claude",
+  "accountState": "signed-in-free",
+  "observedPlan": { "status": "observed", "label": "Free" },
+  "scenario": "session-status",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://claude.ai/new",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "fae1195d721fb42bddc717687b5ef28a45ac7881b340515a5d99667aa58ee25b",
+  "evidenceSelectors": [
+    { "capability": "auth.status", "selector": "button[data-testid=\"user-menu-button\"]", "expectedCount": 1 },
+    { "capability": "project.inspect", "selector": "a[href=\"/projects\"][aria-label=\"Projects\"]", "expectedCount": 1 },
+    { "capability": "history.inspect", "selector": "a[href=\"/recents\"][aria-label=\"Chats\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "signed-out-control", "selector": "a[href*=\"login\"], button[aria-label=\"Log in\"]", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["The visible Free plan label is direct evidence for this observed account."]
+}

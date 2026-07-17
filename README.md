@@ -90,38 +90,47 @@ Time-sensitive free-plan facts, DOM provenance, and adapter acceptance boundarie
 
 ### Visible models, files, and Projects
 
-Inspect the exact model labels available in the current provider UI, then use
-one of those labels in a run:
+Inspect visible authentication state and the exact model/effort labels available
+in the current provider UI, then use those labels in a run:
 
 ```bash
+tokenless provider-status --provider chatgpt --json
 tokenless provider-controls --provider chatgpt --json
 tokenless run \
   --provider chatgpt \
   --model "<exact-visible-model>" \
   --model-fallback "<exact-visible-fallback>" \
+  --effort "<exact-visible-effort>" \
   --attach-file ./brief.pdf \
   --prompt "Review this brief." \
   --json
 ```
 
-Model selection is captured for ChatGPT, Gemini, and Grok. It uses exact visible
-labels, ordered fallbacks, and selected-state verification. Claude model
-selection remains disabled until its authenticated menu is captured.
+Authenticated, redacted DOM fixtures now preserve sign-in signals, model menus,
+effort controls, exact file inputs, and composers for ChatGPT, Claude, Gemini,
+and Grok. Fixture observation is not the same as implementation or acceptance:
+the runtime capability manifest exposes only `verified` actions and fails closed
+for `pending_evidence` or `unsupported` actions.
 
-Visible file attachment is captured for ChatGPT, Claude, and Grok. Local paths
-never cross the daemon/extension protocol, and submission waits for the provider
-to show the filename.
+Model selection uses exact visible labels, ordered fallbacks, entitlement
+evidence, and selected-state verification. `--effort` also takes an exact
+visible label. Grok exposes thinking depth through model profiles rather than a
+separate effort control, so an independent Grok effort request fails closed.
 
-Gemini upload remains disabled until its authenticated exact file input is
-captured.
+The attachment transport has exact input implementations for all four
+providers. Local paths never cross the daemon/extension protocol, and submission
+still blocks unless the current page exposes exactly one enabled input and then
+shows the new filename. The authenticated fixture capture did not upload a real
+file.
 
 For an existing ChatGPT or Claude Project, pass its exact signed-in web URL with
 `--target-url`. Tokenless then permits only a same-Project conversation route
 after submission.
 
-Tokenless does not create or select Projects, and Gemini/Grok Project routes are
-not yet verified. See the [CLI reference](packages/cli/README.md) for accepted
-route shapes and safety details.
+Tokenless does not yet create or select Projects through the unified action API,
+and Gemini/Grok Project routes are not verified. See the
+[CLI reference](packages/cli/README.md) for accepted route shapes and safety
+details.
 
 ## Experimental: Direct/API Mode
 

@@ -274,6 +274,7 @@
         { id: '9d8ca3786ebdfbea', label: '3.1 Pro', shortLabel: 'Pro', sublabel: 'Advanced math and code' },
       ]
       let selectedGeminiModel = '3.5 Flash'
+      let extendedThinking = false
 
       input.addEventListener('input', updateSendButton)
       input.addEventListener('keydown', (event) => {
@@ -313,17 +314,20 @@
           item.setAttribute('role', 'menuitem')
           item.setAttribute('data-mode-id', model.id)
           item.setAttribute('data-test-id', 'bard-mode-option-' + model.id)
-          item.setAttribute('data-active', String(selected))
+          // Gemini's live data-active marks keyboard focus, not selection.
+          item.setAttribute('data-active', String(model.label === '3.5 Flash'))
           item.setAttribute('aria-haspopup', 'false')
           item.setAttribute('aria-disabled', String(!enabled.has(model.label)))
-          if (selected) item.classList.add('selected')
+          const content = document.createElement('gem-menu-item-content')
+          if (selected) content.classList.add('selected')
           const label = document.createElement('span')
           label.className = 'label'
           label.textContent = model.label
           const sublabel = document.createElement('div')
           sublabel.className = 'sublabel'
           sublabel.textContent = model.sublabel
-          item.append(label, sublabel)
+          content.append(label, sublabel)
+          item.append(content)
           item.addEventListener('click', () => {
             if (item.getAttribute('aria-disabled') === 'true') return
             selectedGeminiModel = model.label
@@ -333,6 +337,21 @@
           })
           menu.append(item)
         }
+        const thinkingItem = document.createElement('gem-menu-item')
+        thinkingItem.setAttribute('role', 'menuitem')
+        thinkingItem.setAttribute('aria-disabled', 'false')
+        const thinkingContent = document.createElement('gem-menu-item-content')
+        if (extendedThinking) thinkingContent.classList.add('selected')
+        const thinkingLabel = document.createElement('span')
+        thinkingLabel.className = 'label'
+        thinkingLabel.textContent = 'Extended thinking'
+        thinkingContent.append(thinkingLabel)
+        thinkingItem.append(thinkingContent)
+        thinkingItem.addEventListener('click', () => {
+          extendedThinking = !extendedThinking
+          dismissGeminiModelMenu()
+        })
+        menu.append(thinkingItem)
         document.body.append(menu)
       }
 

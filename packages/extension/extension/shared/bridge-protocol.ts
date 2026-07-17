@@ -7,6 +7,12 @@ import {
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from './native-protocol.js'
 import type { NativeAttachmentDescriptor } from './native-protocol.js'
+import { visibleProviderActionCapabilitiesPayload } from './visible-provider-capabilities.js'
+import {
+  VISIBLE_PROVIDER_ACTIONS,
+  validateVisibleProviderActionRequest,
+} from './visible-provider-actions.js'
+import type { VisibleProviderActionRequest } from './visible-provider-actions.js'
 
 export const BRIDGE_PROTOCOL_VERSION = 'tokenless.browser-session-bridge.v1'
 
@@ -19,17 +25,19 @@ export const BRIDGE_ACTIONS = Object.freeze({
   SUBMIT_AND_READ: 'submit_and_read',
   INSPECT_CONTROLS: 'inspect_controls',
   CONFIGURE_CONTROLS: 'configure_controls',
+  INSPECT_AUTH: 'inspect_auth',
+  VISIBLE_PROVIDER_ACTION: 'visible_provider_action',
   INSPECT_CHATGPT_CONTROLS: 'inspect_chatgpt_controls',
   CONFIGURE_CHATGPT: 'configure_chatgpt',
 })
 
 const ACTIONS = new Set(Object.values(BRIDGE_ACTIONS))
-const CHATGPT_EFFORTS = new Set(['instant', 'medium', 'high', 'extra_high', 'pro'])
 
 export type BridgeRequest = Record<string, any> & {
   protocol: typeof BRIDGE_PROTOCOL_VERSION
   requestId: string
   action: string
+  visibleAction?: VisibleProviderActionRequest
 }
 
 type BridgeError = {
@@ -40,6 +48,10 @@ type BridgeError = {
 
 type BridgeValidation =
   | { ok: true; request: BridgeRequest }
+  | { ok: false; error: BridgeError }
+
+type VisibleProviderBridgeValidation =
+  | { ok: true; request: VisibleProviderActionRequest }
   | { ok: false; error: BridgeError }
 
 type BridgeResult =
@@ -66,6 +78,7 @@ export function createBridgeRequest(input: Record<string, any> = {}): BridgeRequ
     modelFallbacks: input.modelFallbacks,
     effort: input.effort,
     attachments: input.attachments,
+    visibleAction: input.visibleAction,
     metadata: input.metadata,
   }
 }
@@ -98,6 +111,10 @@ export function validateBridgeRequest(payload: unknown): BridgeValidation {
   if (!ACTIONS.has(request.action)) {
     return invalid('unsupported_action', 'Bridge action is not supported.')
   }
+  const visibleActionValidation = request.action === BRIDGE_ACTIONS.VISIBLE_PROVIDER_ACTION
+    ? validateVisibleProviderBridgeAction(request)
+    : null
+  if (visibleActionValidation?.ok === false) return visibleActionValidation
   const attachmentError = validateAttachments(request)
   if (attachmentError) return attachmentError
   if (request.action === BRIDGE_ACTIONS.CAPABILITIES) {
@@ -150,7 +167,9 @@ export function validateBridgeRequest(payload: unknown): BridgeValidation {
   if (includeText.ok === false) {
     return invalid('invalid_include_text', 'Bridge includeText must be a boolean when provided.')
   }
-  return valid(normalizeRequest(request))
+  const normalized = normalizeRequest(request)
+  if (visibleActionValidation?.ok === true) normalized.visibleAction = visibleActionValidation.request
+  return valid(normalized)
 }
 
 export function capabilitiesPayload() {
@@ -165,10 +184,11 @@ export function capabilitiesPayload() {
     actions: [...ACTIONS],
     attachments: {
       protocol: VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
-      actions: [BRIDGE_ACTIONS.SUBMIT, BRIDGE_ACTIONS.SUBMIT_AND_READ],
+      actions: [BRIDGE_ACTIONS.SUBMIT, BRIDGE_ACTIONS.SUBMIT_AND_READ, BRIDGE_ACTIONS.VISIBLE_PROVIDER_ACTION],
       maxFiles: MAX_VISIBLE_ATTACHMENTS,
       maxRequestBytes: MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES,
     },
+    visibleProviderActions: visibleProviderActionCapabilitiesPayload(),
     safety: {
       visibleOnly: true,
       exportsCookies: false,
@@ -199,19 +219,80 @@ function normalizeRequest(payload: Record<string, any>): BridgeRequest {
     modelFallbacks: Array.isArray(payload.modelFallbacks)
       ? payload.modelFallbacks.map((model: unknown) => typeof model === 'string' ? model.trim() : model)
       : payload.modelFallbacks,
-    effort: payload.effort,
+    effort: typeof payload.effort === 'string' ? payload.effort.trim() : payload.effort,
     attachments: Array.isArray(payload.attachments)
       ? payload.attachments.map(normalizeAttachmentDescriptor)
       : payload.attachments,
+    visibleAction: payload.visibleAction,
     metadata: payload.metadata,
   }
+}
+
+function validateVisibleProviderBridgeAction(payload: Record<string, any>): VisibleProviderBridgeValidation {
+  const allowedFields = new Set([
+    'protocol',
+    'requestId',
+    'provider',
+    'action',
+    'targetUrl',
+    'idempotencyKey',
+    'attachments',
+    'visibleAction',
+    'metadata',
+  ])
+  const unsupportedFields = Object.keys(payload).filter((key) => (
+    payload[key] !== undefined && !allowedFields.has(key)
+  ))
+  if (unsupportedFields.length > 0) {
+    return invalid(
+      'invalid_visible_action_bridge_shape',
+      'Unified visible provider bridge requests contain unsupported wrapper fields.'
+    )
+  }
+
+  const validation = validateVisibleProviderActionRequest(payload.visibleAction)
+  if (validation.ok === false) {
+    return invalid(validation.error.code, validation.error.message)
+  }
+  if (
+    validation.request.requestId !== payload.requestId ||
+    validation.request.provider !== payload.provider
+  ) {
+    return invalid(
+      'visible_action_bridge_mismatch',
+      'Unified visible provider action requestId and provider must match the bridge wrapper.'
+    )
+  }
+
+  const nestedAttachments = validation.request.action === VISIBLE_PROVIDER_ACTIONS.FILE_UPLOAD
+    ? validation.request.payload.attachments
+    : undefined
+  if (nestedAttachments !== undefined) {
+    if (
+      !Array.isArray(payload.attachments) ||
+      !Array.isArray(nestedAttachments) ||
+      !sameAttachmentDescriptors(payload.attachments, nestedAttachments)
+    ) {
+      return invalid(
+        'visible_action_attachment_mismatch',
+        'Standalone visible file upload descriptors must match the native bridge descriptors exactly.'
+      )
+    }
+  } else if (payload.attachments !== undefined) {
+    return invalid(
+      'attachments_unsupported_for_action',
+      'Native visible attachment transport is available only to file.upload in the unified action bridge.'
+    )
+  }
+  return { ok: true, request: validation.request }
 }
 
 function validateAttachments(payload: Record<string, any>): BridgeValidation | null {
   if (payload.attachments === undefined) return null
   if (
     payload.action !== BRIDGE_ACTIONS.SUBMIT &&
-    payload.action !== BRIDGE_ACTIONS.SUBMIT_AND_READ
+    payload.action !== BRIDGE_ACTIONS.SUBMIT_AND_READ &&
+    payload.action !== BRIDGE_ACTIONS.VISIBLE_PROVIDER_ACTION
   ) {
     return invalid(
       'attachments_unsupported_for_action',
@@ -260,6 +341,18 @@ function validateAttachments(payload: Record<string, any>): BridgeValidation | n
   return null
 }
 
+function sameAttachmentDescriptors(left: unknown[], right: unknown[]) {
+  if (left.length !== right.length) return false
+  const fields = ['protocol', 'bundleId', 'attachmentId', 'name', 'type', 'size', 'sha256'] as const
+  return left.every((candidate, index) => {
+    const expected = right[index]
+    if (!candidate || typeof candidate !== 'object' || !expected || typeof expected !== 'object') return false
+    const leftRecord = candidate as Record<string, unknown>
+    const rightRecord = expected as Record<string, unknown>
+    return fields.every((field) => leftRecord[field] === rightRecord[field])
+  })
+}
+
 function normalizeAttachmentDescriptor(value: NativeAttachmentDescriptor): NativeAttachmentDescriptor {
   return {
     protocol: value.protocol,
@@ -277,9 +370,9 @@ function validateProviderControls(
   providerId: string
 ): BridgeValidation | null {
   const hasModelControls = payload.model !== undefined || payload.modelFallbacks !== undefined
+  const hasEffortControl = payload.effort !== undefined
   const hasChatGptOnlyControls = (
-    payload.chatSurface !== undefined ||
-    payload.effort !== undefined
+    payload.chatSurface !== undefined
   )
   const legacyChatGptAction = (
     payload.action === BRIDGE_ACTIONS.INSPECT_CHATGPT_CONTROLS ||
@@ -294,7 +387,7 @@ function validateProviderControls(
     payload.action === BRIDGE_ACTIONS.CONFIGURE_CONTROLS ||
     payload.action === BRIDGE_ACTIONS.CONFIGURE_CHATGPT
   )
-  if (hasModelControls && !controlConfigurationAction) {
+  if ((hasModelControls || hasEffortControl) && !controlConfigurationAction) {
     return invalid(
       'controls_unsupported_for_action',
       'Visible provider controls are accepted only by submit or configure actions.'
@@ -303,7 +396,7 @@ function validateProviderControls(
   if (hasChatGptOnlyControls && providerId !== 'chatgpt') {
     return invalid(
       'chatgpt_controls_unsupported',
-      'Effort and Chat surface controls are available only for ChatGPT.'
+      'Chat surface controls are available only for ChatGPT.'
     )
   }
   if (payload.chatSurface !== undefined && payload.chatSurface !== 'chat') {
@@ -320,8 +413,8 @@ function validateProviderControls(
       return invalid('model_fallback_requires_model', 'modelFallbacks require a primary visible UI model label.')
     }
   }
-  if (payload.effort !== undefined && (!isControlLabel(payload.effort) || !CHATGPT_EFFORTS.has(payload.effort))) {
-    return invalid('invalid_effort', 'ChatGPT effort must be one of: instant, medium, high, extra_high, pro.')
+  if (payload.effort !== undefined && !isControlLabel(payload.effort)) {
+    return invalid('invalid_effort', 'Effort must be an exact nonempty visible UI label up to 120 characters.')
   }
   return null
 }
@@ -360,7 +453,7 @@ function valid(request: BridgeRequest): BridgeValidation {
   return { ok: true, request }
 }
 
-function invalid(code: string, message: string): BridgeValidation {
+function invalid(code: string, message: string): { ok: false; error: BridgeError } {
   return { ok: false, error: { code, message, retryable: false } }
 }
 

@@ -1,0 +1,21 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "composer-idle",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://grok.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "aa3f6f14736b56ec3350fdda7ae6deedad014df2d29792ccb51e359677a3c48b",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "div.tiptap.ProseMirror[contenteditable=\"true\"][role=\"textbox\"][aria-label=\"Ask Grok anything\"][aria-multiline=\"true\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["No prompt was submitted while collecting this evidence."]
+}

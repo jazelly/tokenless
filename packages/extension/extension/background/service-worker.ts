@@ -25,6 +25,19 @@ import {
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from '../shared/native-protocol.js'
 import { NativeDaemonBridge } from './native-daemon-bridge.js'
+import {
+  VISIBLE_PROVIDER_ACTIONS,
+  createVisibleProviderActionRequest,
+  createVisibleProviderActionResponse,
+  createVisibleProviderRuntimeEnvelope,
+} from '../shared/visible-provider-actions.js'
+import {
+  failedVisibleProviderRuntimeResponse,
+  isTrustedVisibleProviderRuntimeSender,
+  isVisibleProviderRuntimeMessage,
+  rejectedVisibleProviderRuntimeResponse,
+  runVisibleProviderRuntimeEnvelope,
+} from './visible-provider-action-runtime.js'
 import type { BridgeRequest } from '../shared/bridge-protocol.js'
 import type { NativeAttachmentDescriptor, NativeMessage } from '../shared/native-protocol.js'
 import type { ProviderConfig } from '../shared/provider-config.js'
@@ -63,6 +76,8 @@ let daemonJobQueue: Promise<void> = Promise.resolve()
 const handledDaemonJobs = new Set<string>()
 const handledDaemonJobOrder: string[] = []
 const MAX_HANDLED_DAEMON_JOBS = 1024
+const MAX_VISIBLE_PROVIDER_RUNTIME_AFFINITIES = 4
+const visibleProviderRuntimeTabAffinity = new Map<string, number>()
 const pendingNativeBridgeRequests = new Map<string, {
   port: chrome.runtime.Port
   expectedType: string
@@ -95,6 +110,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true })
     return false
   }
+  if (isVisibleProviderRuntimeMessage(message)) {
+    if (!isTrustedVisibleProviderRuntimeSender(sender, chrome.runtime.id)) {
+      sendResponse(rejectedVisibleProviderRuntimeResponse(message))
+      return false
+    }
+    runVisibleProviderRuntimeEnvelope(message, {
+      acquireProviderTab: acquireVisibleProviderRuntimeTab,
+      async validateProviderLanding(tabId, provider, request) {
+        await validateProviderLanding(tabId, provider, request)
+      },
+      sendToProviderTab,
+      async uploadVisibleAttachments() {
+        throw bridgeError(
+          'attachment_transport_unavailable',
+          'Visible file upload requires an active daemon-native bridge claim.',
+          false
+        )
+      },
+    }).then(sendResponse).catch(() => {
+      sendResponse(failedVisibleProviderRuntimeResponse(message))
+    })
+    return true
+  }
   if (objectRecord(message).type !== TRUSTED_CLICK_REQUEST_TYPE) return false
 
   dispatchTrustedChatGptClick(objectRecord(message).request, sender)
@@ -102,6 +140,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch(() => sendResponse({ ok: false, code: 'debugger_control_unavailable' }))
   return true
 })
+
+async function acquireVisibleProviderRuntimeTab(
+  provider: ProviderConfig,
+  options: { forceNew: boolean },
+  targetUrl?: string
+) {
+  let tab = options.forceNew
+    ? undefined
+    : await visibleProviderRuntimeAffinityTab(provider, targetUrl)
+  tab ??= await getOrCreateProviderTab(provider, targetUrl, { forceNew: options.forceNew })
+  await focusTab(tab)
+  let landed: chrome.tabs.Tab
+  try {
+    landed = await waitForProviderTabLoaded(tab.id, provider, targetUrl)
+  } catch (error) {
+    clearVisibleProviderRuntimeAffinity(provider.id, tab.id)
+    throw error
+  }
+  if (landed.id === undefined) {
+    throw bridgeError('tab_unavailable', 'Provider tab is not available.', true)
+  }
+  rememberVisibleProviderRuntimeAffinity(provider.id, landed.id)
+  return landed.id
+}
+
+async function visibleProviderRuntimeAffinityTab(provider: ProviderConfig, targetUrl?: string) {
+  const tabId = visibleProviderRuntimeTabAffinity.get(provider.id)
+  if (tabId === undefined) return undefined
+  try {
+    const tab = assertProviderTabContext(await chrome.tabs.get(tabId), provider, targetUrl)
+    if (tab.id === undefined) throw new Error('affinity tab has no id')
+    return tab
+  } catch {
+    clearVisibleProviderRuntimeAffinity(provider.id, tabId)
+    return undefined
+  }
+}
+
+function rememberVisibleProviderRuntimeAffinity(providerId: string, tabId: number) {
+  visibleProviderRuntimeTabAffinity.delete(providerId)
+  visibleProviderRuntimeTabAffinity.set(providerId, tabId)
+  while (visibleProviderRuntimeTabAffinity.size > MAX_VISIBLE_PROVIDER_RUNTIME_AFFINITIES) {
+    const oldest = visibleProviderRuntimeTabAffinity.keys().next().value
+    if (typeof oldest !== 'string') break
+    visibleProviderRuntimeTabAffinity.delete(oldest)
+  }
+}
+
+function clearVisibleProviderRuntimeAffinity(providerId: string, tabId?: number) {
+  if (tabId !== undefined && visibleProviderRuntimeTabAffinity.get(providerId) !== tabId) return
+  visibleProviderRuntimeTabAffinity.delete(providerId)
+}
+
+function visibleActionContextRequest(contextRequest: BridgeRequest, bridgeRequest: BridgeRequest): BridgeRequest {
+  return {
+    ...contextRequest,
+    targetUrl: bridgeRequest.targetUrl,
+    idempotencyKey: bridgeRequest.idempotencyKey,
+    metadata: bridgeRequest.metadata,
+  }
+}
 
 startDaemonBridge()
 enableSidePanelAction()
@@ -127,6 +226,53 @@ async function runBridgeRequest(
       })
     }
 
+    if (request.action === BRIDGE_ACTIONS.VISIBLE_PROVIDER_ACTION) {
+      const visibleAction = request.visibleAction
+      if (!visibleAction) {
+        return createBridgeResponse(request, {
+          ok: false,
+          error: {
+            code: 'invalid_visible_action_request',
+            message: 'Unified visible provider action request is missing.',
+            retryable: false,
+          },
+        })
+      }
+      const runtimeResponse = await runVisibleProviderRuntimeEnvelope(createVisibleProviderRuntimeEnvelope(visibleAction), {
+        acquireProviderTab: (runtimeProvider, options) => (
+          acquireVisibleProviderRuntimeTab(runtimeProvider, options, request.targetUrl)
+        ),
+        async validateProviderLanding(tabId, runtimeProvider, contextRequest) {
+          await validateProviderLanding(
+            tabId,
+            runtimeProvider,
+            visibleActionContextRequest(contextRequest, request)
+          )
+        },
+        async sendToProviderTab(tabId, runtimeProvider, contextRequest, message) {
+          const visibleContext = visibleActionContextRequest(contextRequest, request)
+          return sendToProviderTab(tabId, runtimeProvider, visibleContext, {
+            ...message,
+            request: visibleContext,
+          })
+        },
+        async uploadVisibleAttachments(tabId, runtimeProvider, contextRequest, attachments) {
+          const visibleContext = visibleActionContextRequest(contextRequest, request)
+          visibleContext.attachments = [...attachments]
+          await deliverVisibleAttachments(
+            tabId,
+            runtimeProvider,
+            visibleContext,
+            attachmentContext
+          )
+        },
+      })
+      if (!runtimeResponse.ok && visibleAction.action === VISIBLE_PROVIDER_ACTIONS.FILE_UPLOAD) {
+        clearVisibleProviderRuntimeAffinity(provider.id)
+      }
+      return runtimeResponse
+    }
+
     if (request.action === BRIDGE_ACTIONS.OPEN) {
       const tab = await getOrCreateProviderTab(provider, request.targetUrl)
       const landedTab = await waitForProviderTabLoaded(tab.id, provider, request.targetUrl)
@@ -142,6 +288,17 @@ async function runBridgeRequest(
     await focusTab(tab)
     const landedTab = await waitForProviderTabLoaded(tab.id, provider, request.targetUrl)
     const preSubmitUrl = landedTab.pendingUrl || landedTab.url || provider.homeUrl
+
+    if (request.action === BRIDGE_ACTIONS.INSPECT_AUTH) {
+      const result = await sendToProviderTab(landedTab.id, provider, request, {
+        type: 'tokenless.bridge.inspect_auth',
+        request,
+      })
+      return createBridgeResponse(request, {
+        ok: true,
+        result: normalizeVisibleAuthInspection(request, provider, result),
+      })
+    }
 
     if (
       request.action === BRIDGE_ACTIONS.INSPECT_CONTROLS ||
@@ -231,6 +388,47 @@ async function runBridgeRequest(
         retryable: Boolean(bridgeRuntimeError.retryable),
       },
     })
+  }
+}
+
+function normalizeVisibleAuthInspection(
+  bridgeRequest: BridgeRequest,
+  provider: ProviderConfig,
+  result: ExtensionRecord
+) {
+  if (
+    result?.status !== 'inspected' ||
+    result?.provider !== provider.id ||
+    result?.visible !== true
+  ) {
+    throw bridgeError(
+      'visible_auth_status_unavailable',
+      'Provider content did not return a verified visible auth status.',
+      false
+    )
+  }
+  const actionRequest = createVisibleProviderActionRequest({
+    requestId: bridgeRequest.requestId,
+    provider: provider.id,
+    action: VISIBLE_PROVIDER_ACTIONS.AUTH_STATUS,
+    payload: {},
+  })
+  const normalized = createVisibleProviderActionResponse(actionRequest, {
+    ok: true,
+    result: result.auth,
+  })
+  if (!normalized.ok) {
+    throw bridgeError(
+      'invalid_visible_auth_status',
+      'Provider content returned an invalid visible auth status.',
+      false
+    )
+  }
+  return {
+    status: 'inspected',
+    provider: provider.id,
+    visible: true,
+    auth: normalized.result,
   }
 }
 
@@ -898,6 +1096,7 @@ function daemonJobToBridgeRequest(job: ExtensionRecord): BridgeRequest {
     modelFallbacks: requestJson.modelFallbacks,
     effort: requestJson.effort,
     attachments: requestJson.attachments,
+    visibleAction: requestJson.visibleAction,
     metadata: requestJson.metadata,
   })
 }

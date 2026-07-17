@@ -1,0 +1,24 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "chatgpt",
+  "accountState": "signed-in-paid",
+  "observedPlan": { "status": "observed", "label": "Plus" },
+  "scenario": "thinking-effort-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://chatgpt.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "63414567c8c9f106bdf3f483cc92ee75b6393878081afa414babfaf77bd61714",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "main div#prompt-textarea[contenteditable=\"true\"]", "expectedCount": 1 },
+    { "capability": "effort.trigger", "selector": "main button.__composer-pill[aria-haspopup=\"menu\"][aria-expanded=\"true\"]", "expectedCount": 1 },
+    { "capability": "effort.inspect", "selector": "[role=\"menu\"] [role=\"menuitemradio\"]", "expectedCount": 3 },
+    { "capability": "effort.select", "selector": "[role=\"menu\"] [role=\"menuitemradio\"][aria-checked=\"true\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Exactly three effort labels were visible on this account; no fixed provider-wide count is inferred."]
+}

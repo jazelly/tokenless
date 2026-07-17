@@ -1,0 +1,23 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "chatgpt",
+  "accountState": "signed-in-paid",
+  "observedPlan": { "status": "observed", "label": "Plus" },
+  "scenario": "session-status",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://chatgpt.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "997f335f965811e1f9693562814cb84f8b1de956d50dff5f829b9c88cc305363",
+  "evidenceSelectors": [
+    { "capability": "auth.status", "selector": "[data-testid=\"accounts-profile-button\"][role=\"button\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "signed-out-control", "selector": "button[aria-label=\"Log in\"], a[href*=\"login\"]", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Plus is visible plan evidence for this observed account only; it is not a free-tier claim."]
+}

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Gemini model menu evidence</title></head>
+  <body>
+    <button data-test-id="bard-mode-menu-button" type="button" aria-label="Open mode picker, currently Pro" aria-haspopup="menu" aria-expanded="true">Pro</button>
+    <div role="menu">
+      <!-- data-active is keyboard highlight; the nested .selected element is selection state. -->
+      <gem-menu-item role="menuitem" data-mode-id="flash-lite" data-test-id="bard-mode-option-flash-lite" data-active="true" aria-disabled="false">
+        <gem-menu-item-content><span class="label">3.1 Flash-Lite</span></gem-menu-item-content>
+      </gem-menu-item>
+      <gem-menu-item role="menuitem" data-mode-id="flash" data-test-id="bard-mode-option-flash" data-active="false" aria-disabled="false">
+        <gem-menu-item-content><span class="label">3.5 Flash</span></gem-menu-item-content>
+      </gem-menu-item>
+      <gem-menu-item role="menuitem" data-mode-id="pro" data-test-id="bard-mode-option-pro" data-active="false" aria-disabled="false">
+        <gem-menu-item-content class="selected"><span class="label">3.1 Pro</span><span>Selected</span></gem-menu-item-content>
+      </gem-menu-item>
+    </div>
+  </body>
+</html>

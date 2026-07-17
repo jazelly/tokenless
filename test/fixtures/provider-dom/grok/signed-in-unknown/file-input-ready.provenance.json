@@ -1,0 +1,23 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "file-input-ready",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://grok.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "512c735b2b3328d0f6ed633724fa222da26e4939eb3d92029490dd3625bab4ce",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "div.tiptap.ProseMirror[contenteditable=\"true\"][role=\"textbox\"][aria-label=\"Ask Grok anything\"][aria-multiline=\"true\"]", "expectedCount": 1 },
+    { "capability": "file.upload", "selector": "input[type=\"file\"][name=\"files\"][multiple]", "expectedCount": 1 },
+    { "capability": "skill.upload", "selector": "[role=\"menu\"] [role=\"menuitem\"]", "expectedCount": 5 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["The visible menu contains Upload a file, Skills, Add connector, and Work folder entries."]
+}

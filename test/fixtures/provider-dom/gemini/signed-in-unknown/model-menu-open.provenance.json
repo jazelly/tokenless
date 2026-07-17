@@ -1,0 +1,24 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "model-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://gemini.google.com/app",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "110922e97f970f4d3e34fee67b3278e7702818b695d43fcb9f06325f85b286ff",
+  "evidenceSelectors": [
+    { "capability": "model.inspect", "selector": "gem-menu-item[role=\"menuitem\"][data-mode-id]", "expectedCount": 3 },
+    { "capability": "model.label", "selector": "gem-menu-item[role=\"menuitem\"][data-mode-id][aria-disabled=\"false\"] .label", "expectedCount": 3 },
+    { "capability": "model.selected", "selector": "gem-menu-item-content.selected", "expectedCount": 1 },
+    { "capability": "model.keyboard-highlight", "selector": "gem-menu-item[data-active=\"true\"]:not(:has(gem-menu-item-content.selected))", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account name", "email", "account URL parameters", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["data-active is keyboard highlight; nested gem-menu-item-content.selected is the observed selection state."]
+}

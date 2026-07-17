@@ -1,0 +1,25 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "model-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://grok.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "936b3b7ec47e485247eb99f6c49a585b3b3262ff78329d9084aef996949ef87d",
+  "evidenceSelectors": [
+    { "capability": "model.inspect", "selector": "button#model-select-trigger[aria-label=\"Model select\"]", "expectedCount": 1 },
+    { "capability": "model.select", "selector": "[role=\"menuitem\"][data-radix-collection-item][aria-disabled=\"false\"] span.font-semibold", "expectedCount": 4 },
+    { "capability": "model.entitlement", "selector": "[role=\"menuitem\"] button", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "menu-does-not-expose-selected-aria", "selector": "[role=\"menuitem\"][aria-checked], [role=\"menuitem\"][aria-selected]", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "chat titles", "message content", "upsell copy", "private route identifiers", "scripts", "styles"],
+  "notes": ["Current selection is verified through the trigger primary label, not menu-item aria state.", "All model rows exposed aria-disabled=false, but the visible Upgrade action made only the selected Fast row executable on this account; the account plan remains unknown."]
+}

@@ -15,6 +15,7 @@ const fixture = fs.readFileSync(
 const providers = [
   { id: 'chatgpt', input: '#upload-files', url: 'https://chatgpt.com/' },
   { id: 'claude', input: '#chat-input-file-upload-onpage', url: 'https://claude.ai/new' },
+  { id: 'gemini', input: 'input[name="Filedata"]', url: 'https://gemini.google.com/app' },
   { id: 'grok', input: 'input[name="files"]', url: 'https://grok.com/' },
 ]
 
@@ -302,7 +303,7 @@ test('model configuration is prepared before an attachment mutates the provider 
   }
 })
 
-test('visible attachment receiver fails closed for hash drift, aborts, and uncaptured Gemini input', async (t) => {
+test('visible attachment receiver fails closed for hash drift, aborts, and missing Gemini upload DOM', async (t) => {
   const { chromium } = await import('playwright')
   const browser = await chromium.launch({ headless: true })
   t.after(() => browser.close())
@@ -388,6 +389,7 @@ test('visible attachment receiver fails closed for hash drift, aborts, and uncap
 
   const gemini = await openAttachmentFixture(browser, 'https://gemini.google.com/app')
   try {
+    await gemini.page.locator('button[aria-label="Upload and tools"]').evaluate((node) => node.remove())
     const requestId = 'attachment-gemini-uncaptured'
     const blocked = await dispatch(gemini.page, {
       type: 'tokenless.bridge.attachment_prepare',

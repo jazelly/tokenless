@@ -197,8 +197,14 @@ async function handleMessage(message: ContentRecord) {
   if (message?.type === 'tokenless.bridge.read') {
     return readLatestAnswer(provider, message.request)
   }
+  if (message?.type === 'tokenless.bridge.input_prompt') {
+    return inputVisiblePrompt(provider, message.request)
+  }
   if (message?.type === 'tokenless.bridge.snapshot_dom') {
     return snapshotDom(provider, message.request)
+  }
+  if (message?.type === 'tokenless.bridge.inspect_auth') {
+    return inspectVisibleAuthStatus(provider, message.request)
   }
   if (
     message?.type === 'tokenless.bridge.inspect_controls' ||
@@ -263,7 +269,7 @@ async function prepareVisibleAttachment(provider: ContentProvider, message: Cont
   if (!metadata) {
     return attachmentBlocked(provider, 'invalid_attachment_metadata', 'Attachment name, MIME type, size, or SHA-256 metadata is invalid.')
   }
-  const surface = resolveProviderAttachmentSurface(provider, metadata.name, metadata.mimeType)
+  const surface = await resolveProviderAttachmentSurface(provider, metadata.name, metadata.mimeType)
   if (surface.status === 'blocked') return surface
 
   const transferKey = attachmentTransferKey(identity.requestId, identity.attachmentId)
@@ -421,7 +427,7 @@ async function commitVisibleAttachmentIds(
   const evidenceBaselines: Array<{ name: string; baseline: Set<HTMLElement> }> = []
   try {
     for (const transfer of transfers) {
-      const surface = resolveProviderAttachmentSurface(provider, transfer.name, transfer.mimeType)
+      const surface = await resolveProviderAttachmentSurface(provider, transfer.name, transfer.mimeType)
       if (surface.status === 'blocked') {
         releaseAttachmentTransfers(transfers)
         return surface
@@ -662,13 +668,14 @@ function releaseAttachmentTransfers(transfers: AttachmentTransfer[]) {
   for (const transfer of transfers) releaseAttachmentTransfer(transfer, true)
 }
 
-function resolveProviderAttachmentSurface(provider: ContentProvider, name: string, mimeType: string):
+async function resolveProviderAttachmentSurface(provider: ContentProvider, name: string, mimeType: string): Promise<
   | { input: HTMLInputElement; root: HTMLElement; status: 'ready' }
-  | ContentRecord {
+  | ContentRecord> {
   const selector = providerAttachmentInputSelector(provider)
   if (!selector) {
     return attachmentBlocked(provider, 'attachment_input_unavailable', `${provider.label} has no authenticated exact file input selector captured yet.`)
   }
+  if (provider.id === 'gemini') await prepareGeminiAttachmentInput(selector)
   const matches = [...document.querySelectorAll(selector)]
     .filter((element): element is HTMLInputElement => element instanceof HTMLInputElement && element.isConnected)
   const input = matches[0]
@@ -679,7 +686,11 @@ function resolveProviderAttachmentSurface(provider: ContentProvider, name: strin
     return attachmentBlocked(provider, 'attachment_type_unavailable', 'The provider file input does not visibly accept this attachment type.')
   }
   const composer = findFirstVisible(provider.composerSelectors)
-  const root = composer ? nearestAttachmentSurfaceRoot(input, composer) : null
+  const root = composer
+    ? nearestAttachmentSurfaceRoot(input, composer) ?? (
+      provider.id === 'gemini' ? nearestGeminiAttachmentSurfaceRoot(composer) : null
+    )
+    : null
   if (!composer || !root) {
     return attachmentBlocked(provider, 'attachment_surface_unavailable', 'The exact provider file input was not found near a visible composer.')
   }
@@ -691,7 +702,56 @@ function providerAttachmentInputSelector(provider: ContentProvider) {
   if (provider.id === 'claude') {
     return 'input#chat-input-file-upload-onpage[data-testid="file-upload"][aria-label="Upload files"][type="file"][multiple]'
   }
+  if (provider.id === 'gemini') return 'input[type="file"][name="Filedata"][multiple]'
   if (provider.id === 'grok') return 'input[type="file"][name="files"][multiple]'
+  return null
+}
+
+async function prepareGeminiAttachmentInput(selector: string) {
+  if (document.querySelector(selector)) return
+  const trigger = findFirstVisible([
+    'button[aria-label="Upload and tools"]',
+  ])
+  if (!trigger || !isEnabledVisible(trigger)) return
+  trigger.click()
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (document.querySelector(selector)) return
+    const localUpload = findFirstVisible([
+      'button[role="menuitem"][data-test-id="local-images-files-uploader-button"][aria-label^="Upload files"]',
+    ])
+    if (localUpload && isEnabledVisible(localUpload)) {
+      localUpload.click()
+      break
+    }
+    await delay(100)
+  }
+  for (let attempt = 0; attempt < 20 && !document.querySelector(selector); attempt += 1) {
+    await delay(100)
+  }
+}
+
+function nearestGeminiAttachmentSurfaceRoot(composer: HTMLElement) {
+  const trigger = findFirstVisible(['button[aria-label="Upload and tools"]'])
+  if (!trigger) return null
+  const triggerAncestors = new Set<Element>()
+  let triggerAncestor: Element | null = trigger
+  for (let distance = 0; triggerAncestor && distance <= 8; distance += 1) {
+    triggerAncestors.add(triggerAncestor)
+    triggerAncestor = triggerAncestor.parentElement
+  }
+  let composerAncestor: Element | null = composer
+  for (let distance = 0; composerAncestor && distance <= 8; distance += 1) {
+    if (
+      triggerAncestors.has(composerAncestor) &&
+      composerAncestor !== document.body &&
+      composerAncestor !== document.documentElement &&
+      composerAncestor instanceof HTMLElement &&
+      isVisible(composerAncestor)
+    ) {
+      return composerAncestor
+    }
+    composerAncestor = composerAncestor.parentElement
+  }
   return null
 }
 
@@ -1120,17 +1180,170 @@ async function submitPrompt(provider: ContentProvider, request: ContentRecord) {
   }
 }
 
-const CHATGPT_EFFORT_ORDER = ['instant', 'medium', 'high', 'extra_high', 'pro'] as const
+async function inputVisiblePrompt(provider: ContentProvider, request: ContentRecord = {}) {
+  await dismissProviderInterruptions(provider)
+  const blocker = detectBlocker(provider)
+  if (blocker) return blocker
+  if (typeof request.prompt !== 'string' || request.prompt.trim().length === 0 || request.mode !== 'replace') {
+    return {
+      status: 'blocked',
+      stopReason: 'invalid_prompt_input',
+      message: 'Prompt input requires nonempty exact text and replace mode.',
+      provider: provider.id,
+    }
+  }
+  const composer = await waitForComposer(provider, request)
+  if (!composer || !isVisibleConnected(composer)) return selectorDrift('composer')
+  focusComposer(composer)
+  setComposerText(composer, request.prompt)
+  await delay(150)
+  const visibleText = normalizeText(
+    (composer as HTMLTextAreaElement).value ?? composer.innerText ?? composer.textContent ?? ''
+  )
+  if (visibleText !== normalizeText(request.prompt)) {
+    return {
+      status: 'blocked',
+      stopReason: 'prompt_input_unconfirmed',
+      message: 'The visible composer did not retain the exact requested prompt text.',
+      provider: provider.id,
+    }
+  }
+  return {
+    status: 'input',
+    provider: provider.id,
+    visible: true,
+    inputProof: boundedAttachmentIdentifier(request.requestId) ?? 'visible-prompt-input',
+  }
+}
+
+function inspectVisibleAuthStatus(provider: ContentProvider, request: ContentRecord = {}) {
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+
+  const authenticatedSignal = visibleAuthenticatedSignal(provider)
+  const unauthenticatedSignal = visibleUnauthenticatedSignal(provider)
+  const state = authenticatedSignal && !unauthenticatedSignal
+    ? 'authenticated'
+    : unauthenticatedSignal && !authenticatedSignal
+      ? 'unauthenticated'
+      : 'unknown'
+  const plan = state === 'authenticated' && authenticatedSignal
+    ? visibleProviderPlan(provider, authenticatedSignal)
+    : null
+
+  return {
+    status: 'inspected',
+    provider: provider.id,
+    visible: true,
+    auth: {
+      state,
+      ...(plan ? { plan } : {}),
+    },
+    url: publicPageUrl(location.href),
+  }
+}
+
+function visibleAuthenticatedSignal(provider: ContentProvider) {
+  const selectors = provider.id === 'chatgpt'
+    ? ['[data-testid="accounts-profile-button"][role="button"]']
+    : provider.id === 'claude'
+      ? ['button[data-testid="user-menu-button"]']
+      : provider.id === 'gemini'
+        ? ['a[href*="accounts.google.com/SignOutOptions"]']
+        : provider.id === 'grok'
+          ? ['a[href="/skills-and-connectors"]']
+          : []
+  return findFirstVisible(selectors)
+}
+
+function visibleUnauthenticatedSignal(provider: ContentProvider) {
+  const selectors = provider.id === 'chatgpt'
+    ? [
+        'a[href^="/auth/login"]',
+        'a[href^="/auth/signup"]',
+        'button[data-testid="login-button"]',
+        'button[data-testid="signup-button"]',
+      ]
+    : provider.id === 'claude'
+      ? [
+          'button[data-testid="login-with-google"]',
+          'form input[placeholder="Enter your email"]',
+          'a[href^="/login"]',
+        ]
+      : provider.id === 'gemini'
+        ? [
+            'a[href*="accounts.google.com/ServiceLogin"][aria-label^="Sign in"]',
+            'a[href*="accounts.google.com/ServiceLogin"]',
+          ]
+        : provider.id === 'grok'
+          ? ['a[href^="/login"]', 'button[data-testid="login-button"]']
+          : []
+  return findFirstVisible(selectors) ?? (
+    provider.id === 'grok' ? findFirstVisibleControlByExactLabels(['Sign in', 'Sign up']) : null
+  )
+}
+
+function findFirstVisibleControlByExactLabels(labels: string[]) {
+  const expected = new Set(labels.map((label) => normalizeText(label).toLocaleLowerCase('en-US')))
+  return ([...document.querySelectorAll('a,button,[role="button"]')] as HTMLElement[])
+    .find((node) => (
+      isVisible(node) &&
+      expected.has(normalizeText(node.innerText || node.textContent || '').toLocaleLowerCase('en-US'))
+    )) ?? null
+}
+
+function visibleProviderPlan(provider: ContentProvider, authenticatedSignal: HTMLElement) {
+  // Only extract a plan when the provider has an observed, provider-specific
+  // visible plan signal. Gemini and Grok account controls can sit beside model
+  // rows named "Pro" or "Free"; treating those nearby labels as account plans
+  // would turn ordinary UI into false subscription evidence.
+  if (provider.id !== 'chatgpt' && provider.id !== 'claude') return null
+
+  const candidates = [
+    authenticatedSignal.getAttribute('aria-label') ?? '',
+    authenticatedSignal.getAttribute('title') ?? '',
+    authenticatedSignal.innerText || authenticatedSignal.textContent || '',
+  ]
+  const nearbyNodes = [
+    authenticatedSignal.previousElementSibling,
+    authenticatedSignal.nextElementSibling,
+    ...authenticatedSignal.querySelectorAll('span, p, div'),
+  ]
+  const parent = authenticatedSignal.parentElement
+  if (parent && parent !== document.body && parent !== document.documentElement) {
+    nearbyNodes.push(...parent.querySelectorAll('span, p, div, button'))
+  }
+  for (const node of nearbyNodes) {
+    if (!(node instanceof HTMLElement) || !isVisible(node)) continue
+    const label = visibleControlLabel(node)
+    if (label.length <= 32 && /^(?:Free|Plus|Pro|Team|Business|Enterprise|Edu)(?: plan)?$/i.test(label)) {
+      candidates.push(label)
+    }
+  }
+
+  const names = provider.id === 'claude'
+    ? ['Free', 'Pro', 'Team', 'Enterprise']
+    : ['Free', 'Plus', 'Pro', 'Team', 'Business', 'Enterprise', 'Edu']
+  const allowedNames = names.join('|')
+  const terminalPlan = new RegExp(`(?:^|[,;|()]\\s*)(${allowedNames})(?:\\s+plan)?\\s*$`, 'i')
+  const exactPlan = new RegExp(`^(${allowedNames})(?:\\s+plan)?$`, 'i')
+  for (const candidate of candidates) {
+    const match = normalizeText(candidate).match(terminalPlan) ?? normalizeText(candidate).match(exactPlan)
+    const name = names.find((allowed) => allowed.toLocaleLowerCase('en-US') === match?.[1]?.toLocaleLowerCase('en-US'))
+    if (name) return { label: name, free: name === 'Free' }
+  }
+  return null
+}
+
 const MAX_VISIBLE_RESPONSE_WAIT_MS = 2 * 60 * 60 * 1000
 
-type ChatGptEffort = typeof CHATGPT_EFFORT_ORDER[number]
-
 function hasRequestedModelControl(request: ContentRecord = {}) {
-  return request.model !== undefined || request.modelFallbacks !== undefined
+  return request.model !== undefined || request.modelFallbacks !== undefined || request.effort !== undefined
 }
 
 async function inspectProviderControls(provider: ContentProvider, request: ContentRecord = {}) {
   if (provider.id === 'chatgpt') return inspectChatGptControls(provider, request)
+  if (provider.id === 'claude') return inspectClaudeControls(provider, request)
   if (provider.id === 'gemini') return inspectGeminiControls(provider, request)
   if (provider.id === 'grok') return inspectGrokControls(provider, request)
   const contextBlocker = validateExecutionContext(provider, request)
@@ -1146,6 +1359,7 @@ async function inspectProviderControls(provider: ContentProvider, request: Conte
 
 async function configureProviderControls(provider: ContentProvider, request: ContentRecord = {}) {
   if (provider.id === 'chatgpt') return configureChatGptControls(provider, request)
+  if (provider.id === 'claude') return configureClaudeControls(provider, request)
   if (provider.id === 'gemini') return configureGeminiControls(provider, request)
   if (provider.id === 'grok') return configureGrokControls(provider, request)
   const contextBlocker = validateExecutionContext(provider, request)
@@ -1166,6 +1380,250 @@ type VisibleModelChoice = {
   available: boolean
 }
 
+type VisibleEffortChoice = VisibleModelChoice
+
+type ClaudeEffortChoice = VisibleEffortChoice & {
+  kind: 'radio' | 'switch'
+}
+
+async function inspectClaudeControls(provider: ContentProvider, request: ContentRecord = {}) {
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+  const opened = await openClaudeModelMenu()
+  if (!opened) return unavailableModelInspection(provider)
+  try {
+    const models = claudeModelChoices(opened.menu)
+    const efforts = await claudeEffortChoices(opened.menu)
+    return {
+      status: 'inspected',
+      provider: provider.id,
+      visible: true,
+      controls: {
+        available: models.length > 0 || efforts.length > 0,
+        models: models.map(({ label, selected, available }) => ({ label, selected, available })),
+        efforts: efforts.map(({ label, selected, available }) => ({
+          id: visibleChoiceId(label),
+          label,
+          selected,
+          available,
+        })),
+      },
+      url: publicPageUrl(location.href),
+    }
+  } finally {
+    dismissClaudeMenus()
+  }
+}
+
+async function configureClaudeControls(provider: ContentProvider, request: ContentRecord = {}) {
+  const contextBlocker = validateExecutionContext(provider, request)
+  if (contextBlocker) return contextBlocker
+  const model = request.model === undefined
+    ? { status: 'preserved' }
+    : await selectClaudeModel(request.model, request.modelFallbacks)
+  if (model.status === 'unavailable') {
+    return {
+      status: 'blocked',
+      stopReason: 'model_control_unavailable',
+      message: 'The requested model is not an enabled exact label in the visible Claude model menu.',
+      provider: provider.id,
+      model,
+    }
+  }
+  const effort = request.effort === undefined
+    ? { status: 'preserved' }
+    : await selectClaudeEffort(request.effort)
+  if (effort.status === 'unavailable') {
+    return {
+      status: 'blocked',
+      stopReason: 'effort_control_unavailable',
+      message: 'The requested thinking or effort option is not an enabled exact label for the visible Claude model.',
+      provider: provider.id,
+      model,
+      effort,
+    }
+  }
+  return {
+    status: 'configured',
+    provider: provider.id,
+    visible: true,
+    model,
+    effort,
+    url: publicPageUrl(location.href),
+  }
+}
+
+async function selectClaudeModel(requested: unknown, fallbacks: unknown) {
+  const requestedLabels = requestedModelLabels(requested, fallbacks)
+  for (let fallbackIndex = 0; fallbackIndex < requestedLabels.length; fallbackIndex += 1) {
+    const label = requestedLabels[fallbackIndex]
+    if (!label) continue
+    const opened = await openClaudeModelMenu()
+    if (!opened) break
+    const choice = claudeModelChoices(opened.menu)
+      .find((candidate) => candidate.available && modelLabelMatches(candidate.label, label))
+    if (!choice) {
+      dismissClaudeMenus()
+      continue
+    }
+    if (!choice.selected) choice.element.click()
+    const verified = await waitForClaudeModelSelection(choice.label)
+    dismissClaudeMenus()
+    if (!verified) continue
+    return selectedModelResult(requestedLabels, choice.label, fallbackIndex)
+  }
+  dismissClaudeMenus()
+  return unavailableModelResult(requestedLabels)
+}
+
+async function waitForClaudeModelSelection(label: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const opened = await openClaudeModelMenu()
+    const selected = opened
+      ? claudeModelChoices(opened.menu).some((choice) => (
+          choice.selected && modelLabelMatches(choice.label, label)
+        ))
+      : false
+    if (selected) return true
+    dismissClaudeMenus()
+    await delay(100)
+  }
+  return false
+}
+
+async function selectClaudeEffort(requested: unknown) {
+  const wanted = typeof requested === 'string' ? normalizeText(requested) : ''
+  if (!wanted) return { status: 'unavailable', requested: null, applied: null }
+  const opened = await openClaudeModelMenu()
+  if (!opened) return { status: 'unavailable', requested: wanted, applied: null }
+  try {
+    const choices = await claudeEffortChoices(opened.menu)
+    const choice = choices.find((candidate) => (
+      candidate.available && modelLabelMatches(candidate.label, wanted)
+    ))
+    if (!choice) return { status: 'unavailable', requested: wanted, applied: null }
+    if (!choice.selected) choice.element.click()
+    const verified = await waitForClaudeEffortSelection(choice.label, choice.kind)
+    return verified
+      ? { status: 'selected', requested: wanted, applied: choice.label }
+      : { status: 'unavailable', requested: wanted, applied: null }
+  } finally {
+    dismissClaudeMenus()
+  }
+}
+
+async function waitForClaudeEffortSelection(label: string, kind: ClaudeEffortChoice['kind']) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const opened = await openClaudeModelMenu()
+    const choices = opened ? await claudeEffortChoices(opened.menu) : []
+    if (choices.some((choice) => (
+      choice.kind === kind && choice.selected && modelLabelMatches(choice.label, label)
+    ))) return true
+    dismissClaudeMenus()
+    await delay(100)
+  }
+  return false
+}
+
+async function openClaudeModelMenu() {
+  const trigger = findFirstVisible([
+    'button[data-testid="model-selector-dropdown"][aria-label^="Model: "]',
+  ])
+  if (!trigger || !isEnabledVisible(trigger)) return null
+  if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const menu = ([...document.querySelectorAll('[role="menu"]')] as HTMLElement[])
+      .find((candidate) => isVisible(candidate) && isClaudeModelMenu(candidate))
+    if (menu) return { trigger, menu }
+    await delay(100)
+  }
+  return null
+}
+
+function isClaudeModelMenu(menu: HTMLElement) {
+  return claudeModelChoices(menu).some((choice) => /\d/u.test(choice.label))
+}
+
+function claudeModelChoices(menu: HTMLElement): VisibleModelChoice[] {
+  return ([...menu.querySelectorAll('[role="menuitemradio"]')] as HTMLElement[])
+    .filter((item) => isVisible(item))
+    .map((element) => ({
+      element,
+      label: primaryVisibleControlLabel(element),
+      selected: element.getAttribute('aria-checked') === 'true',
+      available: isEnabledVisible(element) && !hasExactVisibleDescendantLabel(element, 'Upgrade'),
+    }))
+    .filter((choice) => choice.label.length > 0 && /\d/u.test(choice.label))
+}
+
+async function claudeEffortChoices(modelMenu: HTMLElement): Promise<ClaudeEffortChoice[]> {
+  const choices = claudeSwitchChoices(modelMenu)
+  const trigger = findClaudeEffortSubmenuTrigger(modelMenu)
+  const effortMenu = trigger ? await openClaudeEffortMenu(trigger, modelMenu) : null
+  if (effortMenu) choices.unshift(...menuRadioItems(effortMenu).map((element) => ({
+    element,
+    label: primaryVisibleControlLabel(element),
+    selected: element.getAttribute('aria-checked') === 'true',
+    available: isEnabledVisible(element),
+    kind: 'radio' as const,
+  })))
+  return choices.filter((choice) => choice.label.length > 0)
+}
+
+function claudeSwitchChoices(menu: HTMLElement): ClaudeEffortChoice[] {
+  return ([...menu.querySelectorAll('[role="switch"]')] as HTMLElement[])
+    .filter((element) => isVisible(element))
+    .map((element) => {
+      const menuItem = element.closest('[role="menuitem"]')
+      return {
+        element,
+        label: normalizeText(
+          element.getAttribute('aria-label') ||
+          (menuItem instanceof HTMLElement ? primaryVisibleControlLabel(menuItem) : '')
+        ),
+        selected: element.getAttribute('aria-checked') === 'true',
+        available: isEnabledVisible(element),
+        kind: 'switch' as const,
+      }
+    })
+}
+
+function findClaudeEffortSubmenuTrigger(menu: HTMLElement) {
+  return ([...menu.querySelectorAll('[role="menuitem"][aria-haspopup="menu"]')] as HTMLElement[])
+    .find((item) => {
+      const primary = primaryVisibleControlLabel(item)
+      const accessible = normalizeText(item.getAttribute('aria-label') || visibleControlLabel(item))
+      return modelLabelMatches(primary, 'Effort') || /^Effort(?:\s|$)/iu.test(accessible)
+    })
+}
+
+async function openClaudeEffortMenu(trigger: HTMLElement, modelMenu: HTMLElement) {
+  const existing = visibleClaudeEffortMenu(modelMenu)
+  if (existing) return existing
+  trigger.click()
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const menu = visibleClaudeEffortMenu(modelMenu)
+    if (menu) return menu
+    await delay(100)
+  }
+  return null
+}
+
+function visibleClaudeEffortMenu(modelMenu: HTMLElement) {
+  return ([...document.querySelectorAll('[role="menu"]')] as HTMLElement[])
+    .find((candidate) => (
+      candidate !== modelMenu &&
+      isVisible(candidate) &&
+      menuRadioItems(candidate).length > 0 &&
+      !isClaudeModelMenu(candidate)
+    )) ?? null
+}
+
+function dismissClaudeMenus() {
+  dismissProviderMenus()
+  dismissProviderMenus()
+}
+
 async function inspectGeminiControls(provider: ContentProvider, request: ContentRecord = {}) {
   const contextBlocker = validateExecutionContext(provider, request)
   if (contextBlocker) return contextBlocker
@@ -1173,7 +1631,8 @@ async function inspectGeminiControls(provider: ContentProvider, request: Content
   if (!opened) return unavailableModelInspection(provider)
   try {
     const models = geminiModelChoices(opened.menu)
-    return inspectedModelControls(provider, models)
+    const efforts = geminiEffortChoices(opened.menu)
+    return inspectedModelControls(provider, models, efforts)
   } finally {
     dismissProviderMenus()
   }
@@ -1182,9 +1641,32 @@ async function inspectGeminiControls(provider: ContentProvider, request: Content
 async function configureGeminiControls(provider: ContentProvider, request: ContentRecord = {}) {
   const contextBlocker = validateExecutionContext(provider, request)
   if (contextBlocker) return contextBlocker
-  if (request.model === undefined) return configuredPreservingModel(provider)
-  const selection = await selectGeminiModel(request.model, request.modelFallbacks)
-  return configuredOrBlockedModel(provider, selection)
+  if (request.model === undefined && request.effort === undefined) return configuredPreservingModel(provider)
+  const model = request.model === undefined
+    ? { status: 'preserved' }
+    : await selectGeminiModel(request.model, request.modelFallbacks)
+  if (model.status === 'unavailable') return configuredOrBlockedModel(provider, model)
+  const effort = request.effort === undefined
+    ? { status: 'preserved' }
+    : await selectGeminiEffort(request.effort)
+  if (effort.status === 'unavailable') {
+    return {
+      status: 'blocked',
+      stopReason: 'effort_control_unavailable',
+      message: 'The requested effort is not an available exact label in the visible Gemini mode menu.',
+      provider: provider.id,
+      model,
+      effort,
+    }
+  }
+  return {
+    status: 'configured',
+    provider: provider.id,
+    visible: true,
+    model,
+    effort,
+    url: publicPageUrl(location.href),
+  }
 }
 
 async function selectGeminiModel(requested: unknown, fallbacks: unknown) {
@@ -1201,10 +1683,10 @@ async function selectGeminiModel(requested: unknown, fallbacks: unknown) {
       continue
     }
     if (!choice.selected) choice.element.click()
-    const verified = await waitForGeminiModelSelection(label)
+    const verified = await waitForGeminiModelSelection(choice.label)
     dismissProviderMenus()
     if (!verified) continue
-    return selectedModelResult(requestedLabels, label, fallbackIndex)
+    return selectedModelResult(requestedLabels, choice.label, fallbackIndex)
   }
   dismissProviderMenus()
   return unavailableModelResult(requestedLabels)
@@ -1246,11 +1728,60 @@ function geminiModelChoices(menu: HTMLElement): VisibleModelChoice[] {
     .filter((item) => isVisible(item))
     .map((element) => ({
       element,
-      label: normalizeText(element.querySelector('.label')?.textContent || ''),
-      selected: element.getAttribute('data-active') === 'true' || element.classList.contains('selected'),
+      label: normalizeText(element.querySelector('.label')?.textContent || primaryVisibleControlLabel(element)),
+      // data-active is only the keyboard-highlighted row. Gemini exposes the
+      // committed selection on its nested menu-item content instead.
+      selected: (
+        element.querySelector('gem-menu-item-content.selected, .selected') !== null ||
+        element.getAttribute('aria-checked') === 'true'
+      ),
       available: isEnabledVisible(element),
     }))
     .filter((choice) => choice.label.length > 0)
+}
+
+function geminiEffortChoices(menu: HTMLElement): VisibleEffortChoice[] {
+  return ([...menu.querySelectorAll('gem-menu-item[role="menuitem"]:not([data-mode-id])')] as HTMLElement[])
+    .filter((item) => isVisible(item))
+    .map((element) => ({
+      element,
+      label: normalizeText(element.querySelector('.label')?.textContent || primaryVisibleControlLabel(element)),
+      selected: (
+        element.querySelector('gem-menu-item-content.selected, .selected') !== null ||
+        element.getAttribute('aria-checked') === 'true'
+      ),
+      available: isEnabledVisible(element),
+    }))
+    .filter((choice) => modelLabelMatches(choice.label, 'Extended thinking'))
+}
+
+async function selectGeminiEffort(requested: unknown) {
+  const label = typeof requested === 'string' ? normalizeText(requested) : ''
+  if (!label) return { status: 'unavailable', requested: null, applied: null }
+  const opened = await openGeminiModelMenu()
+  if (!opened) return { status: 'unavailable', requested: label, applied: null }
+  let appliedLabel: string | null = null
+  try {
+    const choice = geminiEffortChoices(opened.menu)
+      .find((candidate) => candidate.available && modelLabelMatches(candidate.label, label))
+    if (!choice) return { status: 'unavailable', requested: label, applied: null }
+    appliedLabel = choice.label
+    if (!choice.selected) choice.element.click()
+  } finally {
+    dismissProviderMenus()
+  }
+  if (!appliedLabel) return { status: 'unavailable', requested: label, applied: null }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const verification = await openGeminiModelMenu()
+    const selected = verification
+      ? geminiEffortChoices(verification.menu)
+        .some((choice) => choice.selected && modelLabelMatches(choice.label, appliedLabel))
+      : false
+    dismissProviderMenus()
+    if (selected) return { status: 'selected', requested: label, applied: appliedLabel }
+    await delay(100)
+  }
+  return { status: 'unavailable', requested: label, applied: null }
 }
 
 async function inspectGrokControls(provider: ContentProvider, request: ContentRecord = {}) {
@@ -1268,6 +1799,15 @@ async function inspectGrokControls(provider: ContentProvider, request: ContentRe
 async function configureGrokControls(provider: ContentProvider, request: ContentRecord = {}) {
   const contextBlocker = validateExecutionContext(provider, request)
   if (contextBlocker) return contextBlocker
+  if (request.effort !== undefined) {
+    return {
+      status: 'blocked',
+      stopReason: 'effort_coupled_to_model',
+      message: 'Grok exposes thinking depth through exact model profiles such as Expert or Heavy, not a separate effort control.',
+      provider: provider.id,
+      requested: typeof request.effort === 'string' ? request.effort : null,
+    }
+  }
   if (request.model === undefined) return configuredPreservingModel(provider)
   const selection = await selectGrokModel(request.model, request.modelFallbacks)
   return configuredOrBlockedModel(provider, selection)
@@ -1287,10 +1827,10 @@ async function selectGrokModel(requested: unknown, fallbacks: unknown) {
       continue
     }
     if (!choice.selected) choice.element.click()
-    const verified = await waitForGrokModelSelection(opened.trigger, label)
+    const verified = await waitForGrokModelSelection(opened.trigger, choice.label)
     dismissProviderMenus()
     if (!verified) continue
-    return selectedModelResult(requestedLabels, label, fallbackIndex)
+    return selectedModelResult(requestedLabels, choice.label, fallbackIndex)
   }
   dismissProviderMenus()
   return unavailableModelResult(requestedLabels)
@@ -1324,14 +1864,26 @@ async function openGrokModelMenu() {
 
 function grokModelChoices(menu: HTMLElement, trigger: HTMLElement): VisibleModelChoice[] {
   const selectedLabel = visibleControlLabel(trigger)
+  const upgradePromptVisible = ([...menu.querySelectorAll('[role="menuitem"]')] as HTMLElement[])
+    .some((item) => {
+      if (!isVisible(item) || item.querySelector('span.font-semibold')) return false
+      const text = normalizeText(item.innerText || item.textContent || '').toLocaleLowerCase('en-US')
+      return Boolean(item.querySelector('button')) && /(?:upgrade|unlock|try for|claim offer)/u.test(text)
+    })
   return ([...menu.querySelectorAll('[role="menuitem"][data-radix-collection-item]')] as HTMLElement[])
     .filter((item) => isVisible(item))
-    .map((element) => ({
-      element,
-      label: normalizeText(element.querySelector('span.font-semibold')?.textContent || ''),
-      selected: modelLabelMatches(selectedLabel, normalizeText(element.querySelector('span.font-semibold')?.textContent || '')),
-      available: isEnabledVisible(element),
-    }))
+    .map((element) => {
+      const label = normalizeText(element.querySelector('span.font-semibold')?.textContent || '')
+      const selected = modelLabelMatches(selectedLabel, label)
+      return {
+        element,
+        label,
+        selected,
+        // On Grok Free the paid rows are not aria-disabled. The same menu shows
+        // an upgrade prompt and clicking those rows opens the upgrade dialog.
+        available: isEnabledVisible(element) && (!upgradePromptVisible || selected),
+      }
+    })
     .filter((choice) => choice.label.length > 0)
 }
 
@@ -1354,14 +1906,23 @@ function unavailableModelResult(requestedLabels: string[]) {
   return { status: 'unavailable', requested: requestedLabels[0] ?? null, applied: null }
 }
 
-function inspectedModelControls(provider: ContentProvider, models: VisibleModelChoice[]) {
+function inspectedModelControls(
+  provider: ContentProvider,
+  models: VisibleModelChoice[],
+  efforts: VisibleEffortChoice[] = []
+) {
   return {
     status: 'inspected',
     provider: provider.id,
     visible: true,
     controls: {
       available: models.length > 0,
-      efforts: [],
+      efforts: efforts.map(({ label, selected, available }) => ({
+        id: label,
+        label,
+        selected,
+        available,
+      })),
       models: models.map(({ label, selected, available }) => ({ label, selected, available })),
     },
     url: publicPageUrl(location.href),
@@ -1445,14 +2006,14 @@ async function inspectChatGptControls(provider: ContentProvider, request: Conten
       controls: {
         available: true,
         efforts: effortItems.map((item) => ({
-          id: item.effort,
-          label: visibleControlLabel(item.choice),
+          id: visibleChoiceId(item.label),
+          label: item.label,
           selected: item.choice.getAttribute('aria-checked') === 'true',
           available: isEnabledVisible(item.choice),
         })),
         models: modelMenu
           ? menuRadioItems(modelMenu).map((item) => ({
-              label: visibleControlLabel(item),
+              label: primaryVisibleControlLabel(item),
               selected: item.getAttribute('aria-checked') === 'true',
               available: isEnabledVisible(item),
             }))
@@ -1494,6 +2055,16 @@ async function configureChatGptControls(provider: ContentProvider, request: Cont
   const effort = request.effort === undefined
     ? { status: 'preserved' }
     : await selectChatGptEffort(request.effort, request)
+  if (effort.status === 'unavailable') {
+    return {
+      status: 'blocked',
+      stopReason: 'effort_control_unavailable',
+      message: 'The requested effort is not an enabled exact label in the visible ChatGPT Intelligence menu.',
+      provider: provider.id,
+      model,
+      effort,
+    }
+  }
   return {
     status: 'configured',
     provider: provider.id,
@@ -1551,8 +2122,7 @@ function visibleChatGptSurfaceRadios() {
 }
 
 async function selectChatGptModel(requested: unknown, fallbacks: unknown, request: ContentRecord = {}) {
-  const requestedLabels = [requested, ...(Array.isArray(fallbacks) ? fallbacks : [])]
-    .filter((label): label is string => typeof label === 'string' && label.trim().length > 0)
+  const requestedLabels = requestedModelLabels(requested, fallbacks)
   const opened = await openChatGptIntelligenceMenu(request)
   if (!opened) return { status: 'unavailable', requested: requestedLabels[0] ?? null, applied: null }
   try {
@@ -1563,10 +2133,15 @@ async function selectChatGptModel(requested: unknown, fallbacks: unknown, reques
     for (let fallbackIndex = 0; fallbackIndex < requestedLabels.length; fallbackIndex += 1) {
       const label = requestedLabels[fallbackIndex]
       if (!label) continue
-      const choice = choices.find((item) => isEnabledVisible(item) && modelLabelMatches(visibleControlLabel(item), label))
+      const choice = choices.find((item) => (
+        isEnabledVisible(item) && modelLabelMatches(primaryVisibleControlLabel(item), label)
+      ))
       if (!choice) continue
-      const applied = visibleControlLabel(choice)
-      if (choice.getAttribute('aria-checked') !== 'true') await activateChatGptControl(choice, request)
+      const applied = primaryVisibleControlLabel(choice)
+      if (choice.getAttribute('aria-checked') !== 'true') {
+        await activateChatGptControl(choice, request)
+        if (!await waitForChatGptModelSelection(applied, request)) continue
+      }
       return {
         status: fallbackIndex === 0 ? 'selected' : 'fallback_selected',
         requested: requestedLabels[0],
@@ -1584,41 +2159,65 @@ async function selectChatGptModel(requested: unknown, fallbacks: unknown, reques
   }
 }
 
+async function waitForChatGptModelSelection(label: string, request: ContentRecord) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const opened = await openChatGptIntelligenceMenu(request)
+    const trigger = opened ? findVisibleMenuSubmenuTrigger(opened.menu) : undefined
+    const modelMenu = opened && trigger
+      ? await openChatGptModelMenu(trigger, opened.menu, request)
+      : null
+    const selected = modelMenu
+      ? menuRadioItems(modelMenu).some((item) => (
+          item.getAttribute('aria-checked') === 'true' &&
+          modelLabelMatches(primaryVisibleControlLabel(item), label)
+        ))
+      : false
+    if (selected) return true
+    dismissChatGptMenus()
+    await delay(100)
+  }
+  return false
+}
+
 async function selectChatGptEffort(requested: unknown, request: ContentRecord = {}) {
-  const wanted = typeof requested === 'string' ? requested as ChatGptEffort : undefined
-  const wantedIndex = wanted ? CHATGPT_EFFORT_ORDER.indexOf(wanted) : -1
+  const wanted = typeof requested === 'string' ? normalizeText(requested) : ''
   const opened = await openChatGptIntelligenceMenu(request)
-  if (wantedIndex < 0 || !opened) return { status: 'unavailable', requested: wanted ?? null, applied: null }
+  if (!wanted || !opened) return { status: 'unavailable', requested: wanted || null, applied: null }
   try {
     const choices = chatGptEffortChoices(opened.menu)
-    const enabled = choices
-      .filter(({ choice, effort }) => isEnabledVisible(choice) && effort !== null)
-    const selection = enabled
-      .filter(({ effort }) => CHATGPT_EFFORT_ORDER.indexOf(effort as ChatGptEffort) <= wantedIndex)
-      .sort((left, right) => (
-        CHATGPT_EFFORT_ORDER.indexOf(right.effort as ChatGptEffort) -
-        CHATGPT_EFFORT_ORDER.indexOf(left.effort as ChatGptEffort)
-      ))[0]
-      ?? enabled.find(({ choice }) => choice.getAttribute('aria-checked') === 'true')
-      ?? enabled[0]
-    if (!selection || !selection.effort) {
-      const current = choices.find(({ choice }) => choice.getAttribute('aria-checked') === 'true')
-      return {
-        status: 'preserved_current',
-        requested: wanted,
-        applied: current?.effort ?? null,
-        reason: 'unmapped_partial_effort_menu',
+    const selection = choices.find(({ choice, label }) => (
+      isEnabledVisible(choice) && modelLabelMatches(label, wanted)
+    ))
+    if (!selection) return { status: 'unavailable', requested: wanted, applied: null }
+    if (selection.choice.getAttribute('aria-checked') !== 'true') {
+      await activateChatGptControl(selection.choice, request)
+      if (!await waitForChatGptEffortSelection(selection.label, request)) {
+        return { status: 'unavailable', requested: wanted, applied: null }
       }
     }
-    if (selection.choice.getAttribute('aria-checked') !== 'true') await activateChatGptControl(selection.choice, request)
     return {
-      status: selection.effort === wanted ? 'selected' : 'fallback_selected',
+      status: 'selected',
       requested: wanted,
-      applied: selection.effort,
+      applied: selection.label,
     }
   } finally {
     dismissChatGptMenus()
   }
+}
+
+async function waitForChatGptEffortSelection(label: string, request: ContentRecord) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const opened = await openChatGptIntelligenceMenu(request)
+    const selected = opened
+      ? chatGptEffortChoices(opened.menu).some(({ choice, label: candidate }) => (
+          choice.getAttribute('aria-checked') === 'true' && modelLabelMatches(candidate, label)
+        ))
+      : false
+    if (selected) return true
+    dismissChatGptMenus()
+    await delay(100)
+  }
+  return false
 }
 
 async function openChatGptIntelligenceMenu(request: ContentRecord = {}) {
@@ -1633,7 +2232,9 @@ async function openChatGptIntelligenceMenu(request: ContentRecord = {}) {
     const menus = [...document.querySelectorAll('[role="menu"]')]
       .filter((candidate) => isVisible(candidate)) as HTMLElement[]
     const menu = menus.find((candidate) => candidate.getAttribute('aria-labelledby') === trigger.id)
-      ?? menus.find((candidate) => chatGptEffortChoices(candidate).length === CHATGPT_EFFORT_ORDER.length)
+      ?? menus.find((candidate) => (
+        chatGptEffortChoices(candidate).length > 0 && findVisibleMenuSubmenuTrigger(candidate) !== undefined
+      ))
     if (menu) return { trigger, menu }
     await delay(100)
   }
@@ -1657,7 +2258,9 @@ function nearestChatGptMenuTrigger(main: Element, composer: HTMLElement) {
   const composerRect = composer.getBoundingClientRect()
   const candidates = [...main.querySelectorAll('button[aria-expanded][aria-haspopup="menu"]')]
     .filter((node) => isEnabledVisible(node as HTMLElement)) as HTMLElement[]
-  return candidates.sort((left, right) => (
+  const composerPills = candidates.filter((candidate) => candidate.className.includes('__composer-pill'))
+  const ranked = composerPills.length > 0 ? composerPills : candidates
+  return ranked.sort((left, right) => (
     distanceToRect(left.getBoundingClientRect(), composerRect) - distanceToRect(right.getBoundingClientRect(), composerRect)
   ))[0]
 }
@@ -1717,15 +2320,9 @@ function menuRadioItems(menu: HTMLElement) {
 }
 
 function chatGptEffortChoices(menu: HTMLElement) {
-  const choices = menuRadioItems(menu)
-  const isCompleteFiveLevelMenu = choices.length === CHATGPT_EFFORT_ORDER.length
-  return choices.map((choice, index) => ({
+  return menuRadioItems(menu).map((choice) => ({
     choice,
-    // Current ChatGPT exposes the five Intelligence radios in semantic order but
-    // does not expose a locale-independent value. Only rely on that order when
-    // the complete sequence is present; partial entitlement menus must preserve
-    // the current setting rather than guess a translated label or wrong rank.
-    effort: isCompleteFiveLevelMenu ? CHATGPT_EFFORT_ORDER[index] ?? null : null,
+    label: primaryVisibleControlLabel(choice),
   }))
 }
 
@@ -1737,17 +2334,43 @@ function visibleControlLabel(node: HTMLElement) {
   return normalizeText(node.innerText || node.textContent || '')
 }
 
+function firstVisibleLine(node: HTMLElement) {
+  return (node.innerText || node.textContent || '')
+    .split(/\r?\n/u)
+    .map((line) => normalizeText(line))
+    .find(Boolean) ?? ''
+}
+
+function primaryVisibleControlLabel(node: HTMLElement) {
+  const descendantLabels = [...node.querySelectorAll('span, p')]
+    .filter((candidate): candidate is HTMLElement => candidate instanceof HTMLElement && isVisible(candidate))
+    .filter((candidate) => ![...candidate.querySelectorAll('span, p')].some((descendant) => (
+      descendant !== candidate && normalizeText(descendant.textContent || '').length > 0
+    )))
+    .map((candidate) => normalizeText(candidate.innerText || candidate.textContent || ''))
+    .filter(Boolean)
+  return descendantLabels[0] ?? firstVisibleLine(node)
+}
+
+function visibleChoiceId(label: string) {
+  return normalizeText(label).toLocaleLowerCase('en-US').replace(/\s+/gu, '_')
+}
+
+function hasExactVisibleDescendantLabel(node: HTMLElement, label: string) {
+  return [...node.querySelectorAll('*')].some((candidate) => (
+    candidate instanceof HTMLElement &&
+    isVisible(candidate) &&
+    modelLabelMatches(candidate.innerText || candidate.textContent || '', label)
+  ))
+}
+
 function modelLabelMatches(available: string, requested: string) {
   return normalizeText(available).toLocaleLowerCase('en-US') === normalizeText(requested).toLocaleLowerCase('en-US')
 }
 
 function dismissChatGptMenus() {
-  document.dispatchEvent(new KeyboardEvent('keydown', {
-    key: 'Escape',
-    code: 'Escape',
-    bubbles: true,
-    cancelable: true,
-  }))
+  dismissProviderMenus()
+  dismissProviderMenus()
 }
 
 async function readLatestAnswer(provider: ContentProvider, request: ContentRecord = {}) {

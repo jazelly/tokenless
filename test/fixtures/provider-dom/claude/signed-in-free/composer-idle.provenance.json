@@ -1,0 +1,21 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "claude",
+  "accountState": "signed-in-free",
+  "observedPlan": { "status": "observed", "label": "Free" },
+  "scenario": "composer-idle",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-17",
+  "sanitizedUrl": "https://claude.ai/new",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "16ed77d5bc10b5fadffda3a3797d6cfa85b0004338101fe75cc644b1e8c5ad98",
+  "evidenceSelectors": [
+    { "capability": "prompt.input", "selector": "div[data-testid=\"chat-input\"][contenteditable=\"true\"][role=\"textbox\"][aria-label=\"Write your prompt to Claude\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["No prompt was submitted while collecting this evidence."]
+}
