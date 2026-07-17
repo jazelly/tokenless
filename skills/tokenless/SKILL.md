@@ -1,29 +1,30 @@
 ---
 name: tokenless
-description: Route shareable Q&A, analysis, review, research, writing, and other non-project-writing work through a user's visible ChatGPT, Claude, Gemini, or Grok browser session to save API tokens.
+description: Route shareable Q&A, analysis, review, research, writing, and file-based tasks through a user's visible ChatGPT, Claude, Gemini, or Grok website using Tokenless Playwright automation to save API tokens.
 ---
 
 # Tokenless agent workflow
 
-Use `npx tokenless` as the entrypoint when this skill applies. Do not reproduce the visible-session workflow yourself.
+Use `npx tokenless` as the entrypoint. Do not reproduce provider-specific Playwright or DOM work yourself.
 
-Tokenless is daemon-only. Its packaged Rust daemon and Rust Native Messaging host connect the CLI to the browser extension. It never uses a local JSON task queue, a local file URL, a `chrome-extension://` task page, provider cookies, browser storage tokens, hidden auth headers, or private provider APIs.
+Tokenless sends visible jobs through its authenticated local Rust daemon and Playwright worker into a persistent managed Google Chrome profile. It does not require a browser extension, extract provider credentials, intercept hidden authorization headers, or call private provider APIs.
 
 ## Installation prerequisite
 
-Require the `tokenless-install` skill to complete installation, upgrades, repairs, and `doctor` verification before this skill runs provider work. If setup is incomplete or a command reports a missing binary, native host, manifest, or extension bridge, use `tokenless-install`; do not improvise a repair or request normal-run extension IDs.
+Require the `tokenless-install` skill to finish setup, upgrades, repairs, and `doctor` verification before provider work. If the CLI, daemon, Playwright worker, Chrome, managed profile, or visible provider session is not ready, use `tokenless-install`; do not improvise installation or weaken a failed check.
 
-## Read provider preferences
+## Resolve provider and profile
 
 ```bash
 npx tokenless config --json
+npx tokenless profiles list --json
 ```
 
-Use the first configured `preferredProviders` entry unless the user explicitly chooses `chatgpt`, `claude`, `gemini`, or `grok`. When none is configured, Tokenless defaults to ChatGPT.
+Use an explicitly requested provider and profile first, then configured defaults. ChatGPT is the provider default. Fail before submitting work if no managed profile resolves; use `tokenless-install` to repair it.
 
 ## Build only shareable context
 
-You may build a prompt file before the run:
+Create a prompt file when the request needs structured context:
 
 ```bash
 npx tokenless \
@@ -31,28 +32,17 @@ npx tokenless \
   --project-name "<agent project name>" \
   --chat-name "<agent task name>" \
   --prompt "<user request>" \
-  --file <relative-file> \
+  --file <relative-shareable-file> \
   --output /tmp/tokenless-prompt.md
 ```
 
-Include only the user's request, explicit shareable turn context, and intentionally selected files. Never include hidden reasoning, credentials, cookies, browser storage, private headers, or secrets.
+Include only the request, explicit shareable context, and intentionally selected files. Never include hidden reasoning, credentials, cookies, browser storage, private headers, unrelated private files, or secrets.
 
-## Run through the visible provider UI
-
-```bash
-npx tokenless run \
-  --project-name "<agent project name>" \
-  --chat-name "<agent task name>" \
-  --project-root "/absolute/path/to/project" \
-  --prompt-file /tmp/tokenless-prompt.md \
-  --json
-```
-
-For a provider task expected to take longer than three minutes, keep the daemon job attached and use `--long-running`:
+## Run through the visible provider website
 
 ```bash
 npx tokenless run \
-  --long-running \
+  --profile "<managed-profile>" \
   --provider chatgpt \
   --project-name "<agent project name>" \
   --chat-name "<agent task name>" \
@@ -61,37 +51,41 @@ npx tokenless run \
   --json
 ```
 
-`--long-running` allows up to 35 minutes for a visible provider response and 36 minutes for the daemon job. Keep the command attached; its progress heartbeats arrive on stderr while stdout remains machine-readable JSON. Do not use `--no-wait`, do not replace the web task with a local agent run, and do not claim a result until the daemon reports `succeeded`.
+Repeat `--attach-file <path>` only for files the user intends to share. Tokenless stages regular files privately, verifies integrity, uploads through the visible page control, and keeps raw local paths out of daemon job results.
 
-Add `--provider chatgpt`, `--provider claude`, `--provider gemini`, or `--provider grok` only when provider selection is intentional. Retain the returned `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task.
+Use `provider-controls` to discover exact visible labels before requesting a model or effort setting:
 
-For ChatGPT, Tokenless selects the visible Chat surface before sending. Never request Work. Use `npx tokenless chatgpt-controls --json` to inspect the signed-in account's currently visible models and Intelligence levels. Add `--model "<visible model>"`, optional `--model-fallback "<model,...>"`, and `--effort instant|medium|high|extra_high|pro` to `run` when the user asks for them. A missing model tries the supplied fallback list then preserves the visible current model; unavailable or structurally ambiguous Intelligence levels preserve the current level. These control fallbacks must not prevent the prompt from being submitted.
+```bash
+npx tokenless provider-controls --profile "<managed-profile>" --provider chatgpt --json
+```
 
-The only page Tokenless may open automatically is the selected provider's HTTPS UI (ChatGPT by default). It does not automatically open extension settings, task, runner, history, or local-file pages. If a live extension bridge exists, the CLI does not pre-open a wake tab; the extension reuses an approved provider tab when available or opens one provider tab otherwise. Do not add `--no-open` unless you know a live bridge exists: otherwise Tokenless fails clearly before creating a job.
+Pass only an exact returned label with `--model`, ordered `--model-fallback`, or `--effort`. If a requested control or action is unsupported or unverified, surface the failure; do not guess or silently change providers or modes.
 
-Respect CLI state. Continue waiting while a normal or long-running run reports `queued`, `claimed`, `running`, or `daemon_waiting`. Fail fast on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch`, and surface any visible login, CAPTCHA, permission, or confirmation action the user must handle.
+For work expected to exceed three minutes, keep the daemon job attached and add `--long-running`. Do not use `--no-wait`, do not replace the web task with a local agent run, and do not claim a result before the daemon reports `succeeded`.
+
+Retain the returned `taskId` and pass `--task-id "<taskId>"` on later turns for the same task. Continue waiting while a run reports `queued`, `claimed`, `running`, or `daemon_waiting`. Stop on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch` and report the exact visible blocker.
+
+If sign-in, CAPTCHA, plan limits, consent, or confirmation requires the user, state the completed work, exact visible action, and next verification in the user's preferred language. Never request credentials or browser state.
 
 ## Query daemon-backed state
 
 ```bash
-npx tokenless state \
-  --task-id "<returned taskId>" \
-  --json
+npx tokenless state --task-id "<returned taskId>" --json
 ```
 
-`state` uses exact provider/task filtering against the authenticated Rust daemon, not legacy local JSON files. Use `latest.status`, `latest.state`, `latest.result`, `latest.error`, and `jobs` as the source of truth. CLI state preserves actionable daemon error detail; do not confuse it with the extension Settings history, which is intentionally scalar-only.
+Use `latest.status`, `latest.state`, `latest.result`, `latest.error`, and `jobs` as the source of truth. State comes from the authenticated Rust daemon, not a local task-page or JSON fallback.
 
-To cancel a detached job, use its returned job id:
+Cancel only through daemon-confirmed cancellation:
 
 ```bash
 npx tokenless cancel --job-id "<jobId>" --json
 ```
 
-Treat cancellation as successful only when the CLI returns `ok: true` and `status: canceled`. On `job_cancel_failed`, tell the user the job may still be running or may already have completed; query `state` instead of claiming cancellation succeeded.
+Treat cancellation as complete only when the CLI returns `ok: true` and `status: canceled`. On `job_cancel_failed`, say that the job may still be running or may already have completed, then query `state`.
 
 ## Provider guidance
 
-- `chatgpt`: general coding, debugging, transformations, multimodal or browser-product reasoning, and fast iteration.
-- `claude`: long-form writing, critique, architecture tradeoffs, broad code review, and synthesis-heavy work.
-- `gemini`: large-context reading, research-style summarization, Google ecosystem context, and document comparison.
-- `grok`: current-event synthesis, concise exploration, and work that benefits from Grok's visible web experience.
+- `chatgpt`: coding, debugging, transformations, multimodal work, and fast iteration.
+- `claude`: long-form writing, critique, architecture tradeoffs, code review, and synthesis.
+- `gemini`: large-context reading, research summaries, Google ecosystem context, and document comparison.
+- `grok`: current-event synthesis, concise exploration, and Grok-native web workflows.

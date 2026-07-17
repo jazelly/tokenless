@@ -1,58 +1,60 @@
 ---
 name: tokenless-install
-description: Install, upgrade, repair, and verify Tokenless for an agent. Use when a user asks to set up Tokenless, install or update its main skill, resolve setup or extension-bridge failures, or run an integrity check with `tokenless doctor`.
+description: Install, upgrade, repair, and verify Tokenless and its main agent skill. Use for initial setup, Playwright or managed-Chrome-profile readiness, browser sign-in handoff, upgrades, failed doctor checks, or installation integrity checks.
 ---
 
 # Tokenless installation and maintenance
 
-Complete this workflow before using the `tokenless` skill. Keep the user-facing path short: perform commands yourself, report only required manual actions, and finish with a verified result. Write every user-facing status, instruction, and completion message in the user's preferred language; infer it from the current conversation, defaulting to the language of the user's latest message.
+Complete this workflow before using the `tokenless` skill. Execute commands yourself, keep user-facing updates short, and report every status, manual action, and result in the user's preferred language. Infer that language from the conversation and default to the latest user message.
 
 ## Install
 
-1. Check that Node.js is version 24.15 or newer:
+1. Require Node.js 24.15 or newer:
 
    ```bash
    node --version
    ```
 
-   Stop and ask the user to install or upgrade Node.js if it is older than 24.15.
+   If it is missing or older, report the exact requirement and stop until the user installs it.
 
-2. Install the main Tokenless skill in the same skill scope as this installation skill:
+2. Install the main Tokenless skill in the same skill scope:
 
    ```bash
    npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless --yes
    ```
 
-3. Provision the current CLI and verify the visible browser bridge:
+3. Provision the current CLI, daemon, Playwright worker, and managed Chrome profile:
 
    ```bash
    npx tokenless@latest setup --json
    ```
 
-   Do not bypass login, CAPTCHA, permission prompts, or provider confirmations. Follow the user-handoff procedure below whenever browser action is required.
-
-4. Verify the finished installation:
+4. Verify the complete installation:
 
    ```bash
    npx tokenless@latest doctor --json
    ```
 
-   Report success only when the command returns `ok: true`. Summarize the selected browser and provider. On failure, identify the failed check and give the smallest next action; rerun `setup` after the user completes a required browser action.
+Report success only when `doctor` exits successfully and returns `ok: true`. Summarize the resolved profile, Chrome readiness, daemon and worker readiness, and visible provider status without exposing account identity or credential data.
 
 ## User handoff for browser actions
 
-Run the CLI steps first. If `setup` reports `extension_setup_incomplete`, or `doctor` reports `extensionBridge.ok: false`, do not claim installation is complete. Tell the user, in their preferred language:
+Run the CLI step first. Pause only when Tokenless reports a user-only action, such as:
 
-1. What completed locally: the main skill and local runtime are installed, but the browser bridge is not connected.
-2. The exact user action: open `chrome://extensions` in the selected Chromium browser; install the Tokenless extension if it is absent, enable it, then reload the selected provider page.
-3. The next confirmation: ask the user to reply once that is done. Do not ask them for cookies, storage contents, passwords, extension IDs, or other secrets. Ask for an extension ID only when they explicitly say they are using an unpacked development extension.
-4. What happens next: after their reply, rerun `npx tokenless@latest setup --json`, then `npx tokenless@latest doctor --json`; only then report success.
+- closing ordinary Chrome before an explicitly consented local profile copy;
+- approving the exact local Chrome profile copy described by interactive setup;
+- signing in inside the visible Tokenless-managed Chrome window;
+- completing CAPTCHA, plan, permission, or provider confirmation UI.
 
-Use a short status format: **completed locally**, **action needed in browser**, and **what I will verify next**. Translate these labels and all explanatory prose to the user's preferred language. For login, CAPTCHA, permission, or provider-confirmation screens, use the same handoff format and say that the user must complete the visible prompt themselves.
+Report the handoff in the user's preferred language with exactly three short parts:
+
+1. **Completed locally:** state which installation steps succeeded.
+2. **Action needed:** give the exact visible user action and name the affected managed profile and provider when known.
+3. **Next verification:** ask the user to reply when finished, then rerun `setup` if requested and always rerun `doctor`.
+
+Never install or request a browser extension. Never ask for an extension id, cookie, browser-storage value, password, hidden header, or other secret. Do not bypass login, CAPTCHA, copy consent, or provider confirmation.
 
 ## Upgrade
-
-Use this procedure when the user asks to update Tokenless, its skills, or its local runtime:
 
 ```bash
 npx skills update tokenless tokenless-install --yes
@@ -60,20 +62,18 @@ npx tokenless@latest setup --json
 npx tokenless@latest doctor --json
 ```
 
-`setup` refreshes the local runtime from the current CLI package; `doctor` refreshes installed binaries again before checking them. Do not download, curl, or substitute binaries manually.
+`setup` refreshes the packaged runtime while preserving registered managed profiles. Do not download or substitute binaries manually. Report completion only after the refreshed `doctor` result is healthy.
 
-## Repair
+## Doctor and repair
 
-Run this first:
+Run `npx tokenless@latest doctor --json` first and use its exact failed check as the repair boundary:
 
-```bash
-npx tokenless@latest doctor --json
-```
+- Node.js failure: require Node.js 24.15 or newer.
+- CLI, daemon, or Playwright worker failure: rerun `npx tokenless@latest setup --json`, then rerun `doctor`.
+- Chrome failure: require installed Google Chrome; do not substitute an unverified browser channel.
+- Missing or invalid default profile: rerun setup to create or select one. Never delete a profile unless the user explicitly requests removal and confirms it.
+- Profile import blocked by running Chrome: use the user handoff, wait for confirmation that Chrome is closed, then retry the consented import.
+- Provider unauthenticated or visibly blocked: open it with `npx tokenless@latest profiles open --profile <slug> --provider <id>`, use the user handoff, then rerun `doctor`.
+- Unknown or contradictory output: report the exact failed check and stop instead of guessing, weakening validation, or switching to direct mode.
 
-- If `node.ok` is false, require Node.js 24.15 or newer.
-- If the browser check fails, ask the user to install a supported Chromium browser or choose one with `--browser` during `setup`.
-- If native binaries or manifests fail, rerun `npx tokenless@latest setup --json`.
-- If `extensionBridge.ok` is false, use the user-handoff procedure, then rerun setup after the user confirms the browser action is complete.
-- If the user has an unpacked extension, rerun setup with the explicit `--extension-id` obtained from `chrome://extensions`.
-
-Keep credentials private. Never inspect or request browser cookies, storage tokens, hidden authorization headers, or private provider APIs.
+Keep all authentication state private. Tokenless may preserve it opaquely in a managed local Chrome profile, but neither this skill nor the agent may inspect, print, log, export, or transmit it.

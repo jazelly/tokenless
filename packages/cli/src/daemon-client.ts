@@ -17,6 +17,8 @@ export type DaemonClientOptions = {
 
 export type DaemonJob = {
   job_id: string
+  execution_backend?: 'legacy_extension' | 'playwright'
+  profile_id?: string | null
   provider: string
   action: string
   status: string
@@ -35,6 +37,8 @@ export type CreateDaemonJobOptions = DaemonClientOptions & {
   provider: string
   action: string
   requestJson?: unknown
+  executionBackend?: 'legacy_extension' | 'playwright' | undefined
+  profileId?: string | undefined
   jobId?: string | undefined
   claimToken?: string | undefined
 }
@@ -42,6 +46,8 @@ export type CreateDaemonJobOptions = DaemonClientOptions & {
 export type ClaimNextDaemonJobOptions = DaemonClientOptions & {
   provider?: string | undefined
   action?: string | undefined
+  executionBackend?: 'legacy_extension' | 'playwright' | undefined
+  profileId?: string | undefined
 }
 
 export type GetDaemonJobOptions = DaemonClientOptions & {
@@ -50,6 +56,8 @@ export type GetDaemonJobOptions = DaemonClientOptions & {
 
 export type ListDaemonJobsOptions = DaemonClientOptions & {
   status?: string | undefined
+  executionBackend?: 'legacy_extension' | 'playwright' | undefined
+  profileId?: string | undefined
   provider?: string | undefined
   taskId?: string | undefined
   limit?: number | undefined
@@ -112,6 +120,8 @@ export async function createDaemonJob({
   provider,
   action,
   requestJson = {},
+  executionBackend,
+  profileId,
   jobId,
   claimToken,
 }: CreateDaemonJobOptions) {
@@ -124,6 +134,8 @@ export async function createDaemonJob({
       provider,
       action,
       request_json: requestJson,
+      execution_backend: executionBackend,
+      profile_id: profileId,
       job_id: jobId,
       claim_token: claimToken,
     },
@@ -139,6 +151,8 @@ export async function listDaemonJobs({
   requestTimeoutMs,
   signal,
   status,
+  executionBackend,
+  profileId,
   provider,
   taskId,
   limit = 100,
@@ -146,6 +160,8 @@ export async function listDaemonJobs({
   const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   const query = new URLSearchParams()
   if (status) query.set('status', status)
+  if (executionBackend) query.set('execution_backend', executionBackend)
+  if (profileId) query.set('profile_id', profileId)
   if (provider) query.set('provider', provider)
   if (taskId) query.set('task_id', taskId)
   query.set('limit', String(Math.max(1, Math.min(1000, Number(limit) || 100))))
@@ -184,9 +200,13 @@ export async function claimNextDaemonJob({
   signal,
   provider,
   action,
+  executionBackend,
+  profileId,
 }: ClaimNextDaemonJobOptions = {}) {
   const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   const query = new URLSearchParams()
+  if (executionBackend) query.set('execution_backend', executionBackend)
+  if (profileId) query.set('profile_id', profileId)
   if (provider) query.set('provider', provider)
   if (action) query.set('action', action)
   const suffix = query.size > 0 ? `?${query.toString()}` : ''
@@ -477,11 +497,45 @@ function assertNativeMessageSize(value: unknown) {
 function compactDaemonOutput(value: unknown) {
   if (!value || typeof value !== 'object') return undefined
   const result = value as { text?: unknown; read?: unknown; sources?: unknown }
+  const playwrightText = compactPlaywrightResponseText(result)
+  if (playwrightText) return playwrightText
   const text = result.text
   if (typeof text !== 'string' || !text.trim()) return undefined
   const sources = compactSources(result.read) ?? compactSources(result)
   if (sources.length === 0) return text
   return `${text.trimEnd()}\n\nSources:\n${sources.map((source) => (
+    `- ${source.title ? `${source.title}: ` : ''}${source.url}`
+  )).join('\n')}`
+}
+
+function compactPlaywrightResponseText(value: Record<string, unknown>) {
+  const responses = value.responses
+  if (!Array.isArray(responses)) return undefined
+  const readResponse = [...responses].reverse().find((response) => (
+    response &&
+    typeof response === 'object' &&
+    (response as { action?: unknown }).action === 'response.read' &&
+    (response as { ok?: unknown }).ok === true
+  )) as { result?: unknown } | undefined
+  const read = readResponse && typeof readResponse.result === 'object' && readResponse.result
+    ? readResponse.result as { text?: unknown; citations?: unknown }
+    : null
+  if (typeof read?.text !== 'string' || !read.text.trim()) return undefined
+  const citations = Array.isArray(read.citations) ? read.citations : []
+  const sources = citations
+    .map((citation) => {
+      if (!citation || typeof citation !== 'object') return null
+      const url = (citation as { href?: unknown }).href
+      if (typeof url !== 'string' || !isPublicHttpsUrl(url)) return null
+      const title = (citation as { label?: unknown }).label
+      return {
+        url,
+        ...(typeof title === 'string' && title.trim() ? { title: terminalText(title).slice(0, 240) } : {}),
+      }
+    })
+    .filter((source): source is { url: string; title?: string } => source !== null)
+  if (sources.length === 0) return read.text
+  return `${read.text.trimEnd()}\n\nSources:\n${sources.map((source) => (
     `- ${source.title ? `${source.title}: ` : ''}${source.url}`
   )).join('\n')}`
 }

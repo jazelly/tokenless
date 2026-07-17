@@ -29,6 +29,9 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build:js"
   },
+  "dependencies": {
+    "@tokenless/playwright": "0.1.0"
+  },
   "optionalDependencies": {
     "tokenless-native-darwin-arm64": "0.1.2",
     "tokenless-native-darwin-x64": "0.1.2",

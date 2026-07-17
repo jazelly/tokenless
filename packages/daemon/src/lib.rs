@@ -36,6 +36,7 @@ const DATABASE_FILE_NAME: &str = "tokenless.sqlite3";
 const CONTROL_TOKEN_FILE_NAME: &str = "daemon.token";
 const SECRET_TOKEN_BYTES: usize = 32;
 const SUMMARY_SCALAR_CHARS: usize = 256;
+const PROFILE_ID_CHARS: usize = 128;
 pub const DAEMON_PROTOCOL: &str = "tokenless.daemon.v1";
 pub const DAEMON_READY_PROOF_PROTOCOL: &str = "tokenless.daemon-ready-proof.v1";
 pub const NATIVE_BINARY_BUILD_INFO_PROTOCOL: &str = "tokenless.native-binary-build-info.v1";
@@ -198,10 +199,38 @@ impl JobStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionBackend {
+    LegacyExtension,
+    Playwright,
+}
+
+impl ExecutionBackend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LegacyExtension => "legacy_extension",
+            Self::Playwright => "playwright",
+        }
+    }
+
+    fn from_db(value: String) -> Result<Self> {
+        match value.as_str() {
+            "legacy_extension" => Ok(Self::LegacyExtension),
+            "playwright" => Ok(Self::Playwright),
+            _ => Err(DaemonError::InvalidInput(format!(
+                "invalid execution_backend: {value}"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Job {
     pub job_id: String,
     pub claim_token: String,
+    pub execution_backend: ExecutionBackend,
+    pub profile_id: Option<String>,
     pub provider: String,
     pub action: String,
     pub status: JobStatus,
@@ -217,6 +246,8 @@ impl Job {
     pub fn public_view(&self) -> JobView {
         JobView {
             job_id: self.job_id.clone(),
+            execution_backend: self.execution_backend,
+            profile_id: self.profile_id.clone(),
             provider: self.provider.clone(),
             action: self.action.clone(),
             status: self.status,
@@ -232,6 +263,8 @@ impl Job {
         JobWithClaimToken {
             job_id: self.job_id.clone(),
             claim_token: self.claim_token.clone(),
+            execution_backend: self.execution_backend,
+            profile_id: self.profile_id.clone(),
             provider: self.provider.clone(),
             action: self.action.clone(),
             status: self.status,
@@ -247,6 +280,8 @@ impl Job {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobView {
     pub job_id: String,
+    pub execution_backend: ExecutionBackend,
+    pub profile_id: Option<String>,
     pub provider: String,
     pub action: String,
     pub status: JobStatus,
@@ -261,6 +296,8 @@ pub struct JobView {
 pub struct JobWithClaimToken {
     pub job_id: String,
     pub claim_token: String,
+    pub execution_backend: ExecutionBackend,
+    pub profile_id: Option<String>,
     pub provider: String,
     pub action: String,
     pub status: JobStatus,
@@ -276,6 +313,8 @@ pub struct CreateJob {
     pub provider: String,
     pub action: String,
     pub request_json: Value,
+    pub execution_backend: ExecutionBackend,
+    pub profile_id: Option<String>,
     pub job_id: Option<String>,
     pub claim_token: Option<String>,
 }
@@ -290,6 +329,8 @@ impl CreateJob {
             provider: provider.into(),
             action: action.into(),
             request_json,
+            execution_backend: ExecutionBackend::LegacyExtension,
+            profile_id: None,
             job_id: None,
             claim_token: None,
         }
@@ -305,6 +346,8 @@ pub enum CompleteJob {
 #[derive(Debug, Clone, Default)]
 pub struct ListJobs {
     pub status: Option<JobStatus>,
+    pub execution_backend: Option<ExecutionBackend>,
+    pub profile_id: Option<String>,
     pub provider: Option<String>,
     pub task_id: Option<String>,
     pub limit: Option<usize>,
@@ -313,6 +356,8 @@ pub struct ListJobs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobSummary {
     pub job_id: String,
+    pub execution_backend: ExecutionBackend,
+    pub profile_id: Option<String>,
     pub provider: String,
     pub action: String,
     pub status: JobStatus,
@@ -448,6 +493,8 @@ impl JobStore {
     pub fn create_job(&self, input: CreateJob) -> Result<Job> {
         let provider = normalize_nonempty(input.provider, "provider")?;
         let action = normalize_nonempty(input.action, "action")?;
+        let (execution_backend, profile_id) =
+            validate_job_backend_profile(input.execution_backend, input.profile_id)?;
         let job_id = input
             .job_id
             .map(|value| normalize_nonempty(value, "job_id"))
@@ -465,17 +512,20 @@ impl JobStore {
 
         transaction.execute(
             "INSERT INTO jobs (
-                job_id, claim_token, provider, action, status, request_json,
+                job_id, claim_token, execution_backend, profile_id,
+                provider, action, status, request_json,
                 result_json, error_json, created_at, updated_at,
                 summary_task_id, summary_project_name, summary_chat_name,
                 summary_idempotency_key
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, ?7,
-                ?8, ?9, ?10, ?11
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9, ?9,
+                ?10, ?11, ?12, ?13
             )",
             params![
                 job_id,
                 claim_token,
+                execution_backend.as_str(),
+                profile_id,
                 provider,
                 action,
                 JobStatus::Queued.as_str(),
@@ -500,6 +550,12 @@ impl JobStore {
 
     pub fn list_jobs(&self, query: ListJobs) -> Result<Vec<Job>> {
         self.requeue_expired_claims()?;
+        let execution_backend = query.execution_backend;
+        let profile_id = query
+            .profile_id
+            .map(|value| normalize_profile_id(value, "profile_id"))
+            .transpose()?;
+        validate_filter_backend_profile(execution_backend, profile_id.as_deref())?;
         let provider = query
             .provider
             .map(|value| normalize_nonempty(value, "provider"))
@@ -512,9 +568,9 @@ impl JobStore {
         let limit = query.limit.unwrap_or(100).clamp(1, 1000) as i64;
         let mut sql = String::from(
             "SELECT
-                jobs.job_id, jobs.claim_token, jobs.provider, jobs.action, jobs.status,
-                jobs.request_json, jobs.result_json, jobs.error_json, jobs.created_at,
-                jobs.updated_at, jobs.claim_expires_at
+                jobs.job_id, jobs.claim_token, jobs.execution_backend, jobs.profile_id,
+                jobs.provider, jobs.action, jobs.status, jobs.request_json, jobs.result_json,
+                jobs.error_json, jobs.created_at, jobs.updated_at, jobs.claim_expires_at
              FROM jobs",
         );
         let mut parameters = Vec::new();
@@ -530,6 +586,14 @@ impl JobStore {
         if let Some(status) = query.status {
             sql.push_str(" AND jobs.status = ?");
             parameters.push(SqlValue::Text(status.as_str().to_owned()));
+        }
+        if let Some(execution_backend) = execution_backend {
+            sql.push_str(" AND jobs.execution_backend = ?");
+            parameters.push(SqlValue::Text(execution_backend.as_str().to_owned()));
+        }
+        if let Some(profile_id) = profile_id {
+            sql.push_str(" AND jobs.profile_id = ?");
+            parameters.push(SqlValue::Text(profile_id));
         }
         if let Some(provider) = provider {
             sql.push_str(" AND jobs.provider = ?");
@@ -549,6 +613,8 @@ impl JobStore {
         let mut stmt = conn.prepare(
             "SELECT
                 substr(job_id, 1, 256),
+                execution_backend,
+                substr(profile_id, 1, 128),
                 substr(provider, 1, 64),
                 substr(action, 1, 128),
                 status,
@@ -609,6 +675,29 @@ impl JobStore {
     }
 
     fn claim_next_job_at(&self, query: ClaimNextJob, now_ms: i64) -> Result<Option<Job>> {
+        self.claim_next_job_with_scope_at(query, ExecutionBackend::LegacyExtension, None, now_ms)
+    }
+
+    pub fn claim_next_job_with_scope(
+        &self,
+        query: ClaimNextJob,
+        execution_backend: ExecutionBackend,
+        profile_id: Option<String>,
+    ) -> Result<Option<Job>> {
+        self.claim_next_job_with_scope_at(query, execution_backend, profile_id, now_unix_millis())
+    }
+
+    fn claim_next_job_with_scope_at(
+        &self,
+        query: ClaimNextJob,
+        execution_backend: ExecutionBackend,
+        profile_id: Option<String>,
+        now_ms: i64,
+    ) -> Result<Option<Job>> {
+        let profile_id = profile_id
+            .map(|value| normalize_profile_id(value, "profile_id"))
+            .transpose()?;
+        validate_claim_backend_profile(execution_backend, profile_id.as_deref())?;
         let provider = query
             .provider
             .map(|value| normalize_nonempty(value, "provider"))
@@ -629,14 +718,17 @@ impl JobStore {
                 SELECT job_id
                 FROM jobs
                 WHERE status = ?5
-                  AND (?6 IS NULL OR provider = ?6)
-                  AND (?7 IS NULL OR action = ?7)
+                  AND execution_backend = ?6
+                  AND ((?7 IS NULL AND profile_id IS NULL) OR profile_id = ?7)
+                  AND (?8 IS NULL OR provider = ?8)
+                  AND (?9 IS NULL OR action = ?9)
                 ORDER BY created_at ASC, job_id ASC
                 LIMIT 1
              )
              RETURNING
-                job_id, claim_token, provider, action, status, request_json,
-                result_json, error_json, created_at, updated_at, claim_expires_at",
+                job_id, claim_token, execution_backend, profile_id,
+                provider, action, status, request_json, result_json, error_json,
+                created_at, updated_at, claim_expires_at",
         )?;
 
         stmt.query_row(
@@ -646,6 +738,8 @@ impl JobStore {
                 expires_at,
                 next_claim_token,
                 JobStatus::Queued.as_str(),
+                execution_backend.as_str(),
+                profile_id.as_deref(),
                 provider.as_deref(),
                 action.as_deref(),
             ],
@@ -886,6 +980,12 @@ impl JobStore {
              CREATE TABLE IF NOT EXISTS jobs (
                 job_id TEXT PRIMARY KEY NOT NULL,
                 claim_token TEXT NOT NULL,
+                execution_backend TEXT NOT NULL DEFAULT 'legacy_extension' CHECK (
+                    execution_backend IN ('legacy_extension', 'playwright')
+                ),
+                profile_id TEXT CHECK (
+                    profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 128
+                ),
                 provider TEXT NOT NULL,
                 action TEXT NOT NULL,
                 status TEXT NOT NULL CHECK (
@@ -986,6 +1086,35 @@ impl JobStore {
             backfill_summary_metadata(&transaction)?;
             transaction.commit()?;
         }
+        let needs_backend_migration = !sqlite_column_exists(&conn, "jobs", "execution_backend")?
+            || !sqlite_column_exists(&conn, "jobs", "profile_id")?;
+        if needs_backend_migration {
+            let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if !sqlite_column_exists(&transaction, "jobs", "execution_backend")? {
+                transaction.execute(
+                    "ALTER TABLE jobs ADD COLUMN execution_backend TEXT NOT NULL
+                        DEFAULT 'legacy_extension'
+                        CHECK (execution_backend IN ('legacy_extension', 'playwright'))",
+                    [],
+                )?;
+            }
+            if !sqlite_column_exists(&transaction, "jobs", "profile_id")? {
+                transaction.execute(
+                    "ALTER TABLE jobs ADD COLUMN profile_id TEXT
+                        CHECK (profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 128)",
+                    [],
+                )?;
+            }
+            transaction.execute(
+                "UPDATE jobs
+                 SET execution_backend = 'legacy_extension', profile_id = NULL
+                 WHERE execution_backend IS NULL
+                    OR execution_backend = ''
+                    OR execution_backend = 'legacy_extension'",
+                [],
+            )?;
+            transaction.commit()?;
+        }
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS jobs_status_created_at_idx
                 ON jobs(status, created_at);
@@ -993,6 +1122,8 @@ impl JobStore {
                 ON jobs(provider, action);
              CREATE INDEX IF NOT EXISTS jobs_claim_expires_at_idx
                 ON jobs(claim_expires_at);
+             CREATE INDEX IF NOT EXISTS jobs_backend_profile_status_fifo_idx
+                ON jobs(execution_backend, profile_id, status, created_at, job_id);
              CREATE INDEX IF NOT EXISTS job_task_keys_task_id_idx
                 ON job_task_keys(task_id, job_id);",
         )?;
@@ -1043,12 +1174,19 @@ struct CreateJobRequest {
     provider: String,
     action: String,
     request_json: Value,
+    execution_backend: Option<ExecutionBackend>,
+    profile_id: Option<String>,
     job_id: Option<String>,
     claim_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ClaimJobRequest {
+    claim_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaimLifecycleRequest {
     claim_token: String,
 }
 
@@ -1067,6 +1205,8 @@ struct CancelJobRequest {
 #[derive(Debug, Deserialize)]
 struct ListJobsQuery {
     status: Option<JobStatus>,
+    execution_backend: Option<ExecutionBackend>,
+    profile_id: Option<String>,
     provider: Option<String>,
     task_id: Option<String>,
     limit: Option<usize>,
@@ -1074,6 +1214,8 @@ struct ListJobsQuery {
 
 #[derive(Debug, Deserialize)]
 struct ClaimNextQuery {
+    execution_backend: Option<ExecutionBackend>,
+    profile_id: Option<String>,
     provider: Option<String>,
     action: Option<String>,
 }
@@ -1133,6 +1275,8 @@ pub fn http_router(store: JobStore) -> Router {
         .route("/jobs/:job_id/claim", post(claim_job_handler))
         .route("/jobs/:job_id/complete", post(complete_job_handler))
         .route("/control/jobs/claim-next", post(claim_next_job_handler))
+        .route("/control/jobs/:job_id/running", post(mark_running_handler))
+        .route("/control/jobs/:job_id/renew", post(renew_claim_handler))
         .route("/control/jobs/:job_id/cancel", post(cancel_job_handler))
         .with_state(HttpState { store })
 }
@@ -1196,6 +1340,10 @@ async fn create_job_handler(
     require_control_auth(&state.store, &headers)?;
     let Json(payload) = payload.map_err(json_rejection_to_api_error)?;
     let mut input = CreateJob::new(payload.provider, payload.action, payload.request_json);
+    if let Some(execution_backend) = payload.execution_backend {
+        input.execution_backend = execution_backend;
+    }
+    input.profile_id = payload.profile_id;
     input.job_id = payload.job_id;
     input.claim_token = payload.claim_token;
     let job = state.store.create_job(input)?;
@@ -1211,6 +1359,8 @@ async fn list_jobs_handler(
     let Query(query) = query.map_err(query_rejection_to_api_error)?;
     let jobs = state.store.list_jobs(ListJobs {
         status: query.status,
+        execution_backend: query.execution_backend,
+        profile_id: query.profile_id,
         provider: query.provider,
         task_id: query.task_id,
         limit: query.limit,
@@ -1273,12 +1423,50 @@ async fn claim_next_job_handler(
     let Query(query) = query.map_err(query_rejection_to_api_error)?;
     let job = state
         .store
-        .claim_next_job(ClaimNextJob {
-            provider: query.provider,
-            action: query.action,
-        })?
+        .claim_next_job_with_scope(
+            ClaimNextJob {
+                provider: query.provider,
+                action: query.action,
+            },
+            query
+                .execution_backend
+                .unwrap_or(ExecutionBackend::LegacyExtension),
+            query.profile_id,
+        )?
         .map(|job| job.with_claim_token());
     Ok(Json(ClaimNextResponse { job }))
+}
+
+async fn mark_running_handler(
+    State(state): State<HttpState>,
+    AxumPath(job_id): AxumPath<String>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<ClaimLifecycleRequest>, JsonRejection>,
+) -> ApiResult<JobView> {
+    require_control_auth(&state.store, &headers)?;
+    let Json(payload) = payload.map_err(json_rejection_to_api_error)?;
+    Ok(Json(
+        state
+            .store
+            .mark_running(&job_id, &payload.claim_token)?
+            .public_view(),
+    ))
+}
+
+async fn renew_claim_handler(
+    State(state): State<HttpState>,
+    AxumPath(job_id): AxumPath<String>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<ClaimLifecycleRequest>, JsonRejection>,
+) -> ApiResult<JobView> {
+    require_control_auth(&state.store, &headers)?;
+    let Json(payload) = payload.map_err(json_rejection_to_api_error)?;
+    Ok(Json(
+        state
+            .store
+            .renew_claim(&job_id, &payload.claim_token)?
+            .public_view(),
+    ))
 }
 
 async fn cancel_job_handler(
@@ -1492,6 +1680,66 @@ fn normalize_summary_filter(value: String, field: &'static str) -> Result<String
     Ok(normalized)
 }
 
+fn normalize_profile_id(value: String, field: &'static str) -> Result<String> {
+    let normalized = normalize_nonempty(value, field)?;
+    if normalized.chars().count() > PROFILE_ID_CHARS {
+        return Err(DaemonError::InvalidInput(format!(
+            "{field} must be at most {PROFILE_ID_CHARS} characters"
+        )));
+    }
+    Ok(normalized)
+}
+
+fn validate_job_backend_profile(
+    execution_backend: ExecutionBackend,
+    profile_id: Option<String>,
+) -> Result<(ExecutionBackend, Option<String>)> {
+    let profile_id = profile_id
+        .map(|value| normalize_profile_id(value, "profile_id"))
+        .transpose()?;
+    match (execution_backend, profile_id) {
+        (ExecutionBackend::LegacyExtension, None) => Ok((execution_backend, None)),
+        (ExecutionBackend::LegacyExtension, Some(_)) => Err(DaemonError::InvalidInput(
+            "legacy_extension jobs must not set profile_id".to_owned(),
+        )),
+        (ExecutionBackend::Playwright, Some(profile_id)) => {
+            Ok((execution_backend, Some(profile_id)))
+        }
+        (ExecutionBackend::Playwright, None) => Err(DaemonError::InvalidInput(
+            "playwright jobs require profile_id".to_owned(),
+        )),
+    }
+}
+
+fn validate_filter_backend_profile(
+    execution_backend: Option<ExecutionBackend>,
+    profile_id: Option<&str>,
+) -> Result<()> {
+    if matches!(execution_backend, Some(ExecutionBackend::LegacyExtension)) && profile_id.is_some()
+    {
+        return Err(DaemonError::InvalidInput(
+            "legacy_extension filters must not set profile_id".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_claim_backend_profile(
+    execution_backend: ExecutionBackend,
+    profile_id: Option<&str>,
+) -> Result<()> {
+    match (execution_backend, profile_id) {
+        (ExecutionBackend::LegacyExtension, None) => Ok(()),
+        (ExecutionBackend::LegacyExtension, Some(_)) => Err(DaemonError::InvalidInput(
+            "legacy_extension claims must not set profile_id".to_owned(),
+        )),
+        (ExecutionBackend::Playwright, Some(_)) => Ok(()),
+        (ExecutionBackend::Playwright, None) => Err(DaemonError::InvalidInput(
+            "playwright claims require profile_id".to_owned(),
+        )),
+    }
+}
+
 fn bounded_nonempty_summary_value(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1501,38 +1749,44 @@ fn bounded_nonempty_summary_value(value: &str) -> Option<String> {
 }
 
 fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
-    let status: String = row.get(4)?;
-    let request_json: String = row.get(5)?;
-    let result_json: Option<String> = row.get(6)?;
-    let error_json: Option<String> = row.get(7)?;
+    let execution_backend: String = row.get(2)?;
+    let status: String = row.get(6)?;
+    let request_json: String = row.get(7)?;
+    let result_json: Option<String> = row.get(8)?;
+    let error_json: Option<String> = row.get(9)?;
     Ok(Job {
         job_id: row.get(0)?,
         claim_token: row.get(1)?,
-        provider: row.get(2)?,
-        action: row.get(3)?,
+        execution_backend: ExecutionBackend::from_db(execution_backend).map_err(to_sql_error)?,
+        profile_id: row.get(3)?,
+        provider: row.get(4)?,
+        action: row.get(5)?,
         status: JobStatus::from_db(status).map_err(to_sql_error)?,
         request_json: serde_json::from_str(&request_json).map_err(to_sql_error)?,
         result_json: parse_optional_json(result_json).map_err(to_sql_error)?,
         error_json: parse_optional_json(error_json).map_err(to_sql_error)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
-        claim_expires_at_ms: row.get(10)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+        claim_expires_at_ms: row.get(12)?,
     })
 }
 
 fn row_to_job_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobSummary> {
-    let status: String = row.get(3)?;
+    let execution_backend: String = row.get(1)?;
+    let status: String = row.get(5)?;
     Ok(JobSummary {
         job_id: row.get(0)?,
-        provider: row.get(1)?,
-        action: row.get(2)?,
+        execution_backend: ExecutionBackend::from_db(execution_backend).map_err(to_sql_error)?,
+        profile_id: row.get(2)?,
+        provider: row.get(3)?,
+        action: row.get(4)?,
         status: JobStatus::from_db(status).map_err(to_sql_error)?,
-        created_at: row.get(4)?,
-        updated_at: row.get(5)?,
-        task_id: row.get(6)?,
-        project_name: row.get(7)?,
-        chat_name: row.get(8)?,
-        idempotency_key: row.get(9)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+        task_id: row.get(8)?,
+        project_name: row.get(9)?,
+        chat_name: row.get(10)?,
+        idempotency_key: row.get(11)?,
     })
 }
 
@@ -1547,8 +1801,9 @@ where
 fn get_job_with_conn(conn: &Connection, job_id: &str) -> Result<Job> {
     let mut stmt = conn.prepare(
         "SELECT
-            job_id, claim_token, provider, action, status, request_json,
-            result_json, error_json, created_at, updated_at, claim_expires_at
+            job_id, claim_token, execution_backend, profile_id,
+            provider, action, status, request_json, result_json, error_json,
+            created_at, updated_at, claim_expires_at
          FROM jobs
          WHERE job_id = ?1",
     )?;
@@ -1730,6 +1985,8 @@ mod tests {
         );
         assert!(store.database_path().exists());
         assert_eq!(job.status, JobStatus::Queued);
+        assert_eq!(job.execution_backend, ExecutionBackend::LegacyExtension);
+        assert_eq!(job.profile_id, None);
         assert_eq!(job.provider, "chatgpt");
         assert_eq!(job.action, "submit_and_read");
         assert_eq!(job.request_json, json!({ "prompt": "hello" }));
@@ -1918,6 +2175,118 @@ mod tests {
 
         assert!(view_json.get("claim_token").is_none());
         assert_eq!(claim_json["claim_token"], job.claim_token);
+        assert_eq!(view_json["execution_backend"], "legacy_extension");
+        assert_eq!(view_json["profile_id"], Value::Null);
+        assert_eq!(claim_json["execution_backend"], "legacy_extension");
+        assert_eq!(claim_json["profile_id"], Value::Null);
+    }
+
+    #[test]
+    fn validates_create_backend_profile_combinations() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+
+        let legacy = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({ "prompt": "legacy" }),
+            ))
+            .unwrap();
+        assert_eq!(legacy.execution_backend, ExecutionBackend::LegacyExtension);
+        assert_eq!(legacy.profile_id, None);
+
+        let mut playwright_input =
+            CreateJob::new("chatgpt", "submit", json!({ "prompt": "managed" }));
+        playwright_input.execution_backend = ExecutionBackend::Playwright;
+        playwright_input.profile_id = Some("work".to_owned());
+        let playwright = store.create_job(playwright_input).unwrap();
+        assert_eq!(playwright.execution_backend, ExecutionBackend::Playwright);
+        assert_eq!(playwright.profile_id.as_deref(), Some("work"));
+
+        let mut missing_profile =
+            CreateJob::new("chatgpt", "submit", json!({ "prompt": "invalid" }));
+        missing_profile.execution_backend = ExecutionBackend::Playwright;
+        let error = store.create_job(missing_profile).unwrap_err();
+        assert!(
+            matches!(error, DaemonError::InvalidInput(message) if message.contains("require profile_id"))
+        );
+
+        let mut legacy_with_profile =
+            CreateJob::new("chatgpt", "submit", json!({ "prompt": "invalid" }));
+        legacy_with_profile.profile_id = Some("work".to_owned());
+        let error = store.create_job(legacy_with_profile).unwrap_err();
+        assert!(
+            matches!(error, DaemonError::InvalidInput(message) if message.contains("must not set profile_id"))
+        );
+
+        let mut oversized_profile =
+            CreateJob::new("chatgpt", "submit", json!({ "prompt": "invalid" }));
+        oversized_profile.execution_backend = ExecutionBackend::Playwright;
+        oversized_profile.profile_id = Some("p".repeat(PROFILE_ID_CHARS + 1));
+        let error = store.create_job(oversized_profile).unwrap_err();
+        assert!(matches!(error, DaemonError::InvalidInput(message) if message.contains("at most")));
+    }
+
+    #[test]
+    fn exact_backend_and_profile_filters_isolate_list_results() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let legacy = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({ "prompt": "legacy" }),
+            ))
+            .unwrap();
+        let work = create_playwright_job(&store, "work", "work");
+        let personal = create_playwright_job(&store, "personal", "personal");
+
+        let legacy_matches = store
+            .list_jobs(ListJobs {
+                execution_backend: Some(ExecutionBackend::LegacyExtension),
+                ..ListJobs::default()
+            })
+            .unwrap();
+        assert_eq!(legacy_matches.len(), 1);
+        assert_eq!(legacy_matches[0].job_id, legacy.job_id);
+
+        let playwright_matches = store
+            .list_jobs(ListJobs {
+                execution_backend: Some(ExecutionBackend::Playwright),
+                ..ListJobs::default()
+            })
+            .unwrap();
+        assert_eq!(playwright_matches.len(), 2);
+        assert!(playwright_matches
+            .iter()
+            .all(|job| job.execution_backend == ExecutionBackend::Playwright));
+
+        let work_matches = store
+            .list_jobs(ListJobs {
+                profile_id: Some("work".to_owned()),
+                ..ListJobs::default()
+            })
+            .unwrap();
+        assert_eq!(work_matches.len(), 1);
+        assert_eq!(work_matches[0].job_id, work.job_id);
+
+        let personal_matches = store
+            .list_jobs(ListJobs {
+                execution_backend: Some(ExecutionBackend::Playwright),
+                profile_id: Some("personal".to_owned()),
+                ..ListJobs::default()
+            })
+            .unwrap();
+        assert_eq!(personal_matches.len(), 1);
+        assert_eq!(personal_matches[0].job_id, personal.job_id);
+
+        let invalid = store.list_jobs(ListJobs {
+            execution_backend: Some(ExecutionBackend::LegacyExtension),
+            profile_id: Some("work".to_owned()),
+            ..ListJobs::default()
+        });
+        assert!(matches!(invalid, Err(DaemonError::InvalidInput(_))));
     }
 
     #[test]
@@ -2018,6 +2387,91 @@ mod tests {
     }
 
     #[test]
+    fn claim_next_isolates_legacy_and_playwright_backends() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let legacy = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({ "prompt": "legacy" }),
+            ))
+            .unwrap();
+        let playwright = create_playwright_job(&store, "work", "managed");
+
+        let legacy_claim = store
+            .claim_next_job(ClaimNextJob::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(legacy_claim.job_id, legacy.job_id);
+        assert_eq!(
+            legacy_claim.execution_backend,
+            ExecutionBackend::LegacyExtension
+        );
+        assert_eq!(
+            store.get_job(&playwright.job_id).unwrap().status,
+            JobStatus::Queued
+        );
+
+        let playwright_claim = store
+            .claim_next_job_with_scope(
+                ClaimNextJob::default(),
+                ExecutionBackend::Playwright,
+                Some("work".to_owned()),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(playwright_claim.job_id, playwright.job_id);
+        assert_eq!(
+            playwright_claim.execution_backend,
+            ExecutionBackend::Playwright
+        );
+        assert_eq!(playwright_claim.profile_id.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn claim_next_requires_exact_playwright_profile() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let work = create_playwright_job(&store, "work", "work");
+        let personal = create_playwright_job(&store, "personal", "personal");
+
+        let missing_profile = store.claim_next_job_with_scope(
+            ClaimNextJob::default(),
+            ExecutionBackend::Playwright,
+            None,
+        );
+        assert!(matches!(
+            missing_profile,
+            Err(DaemonError::InvalidInput(message)) if message.contains("require profile_id")
+        ));
+
+        let wrong_profile = store
+            .claim_next_job_with_scope(
+                ClaimNextJob::default(),
+                ExecutionBackend::Playwright,
+                Some("other".to_owned()),
+            )
+            .unwrap();
+        assert!(wrong_profile.is_none());
+
+        let personal_claim = store
+            .claim_next_job_with_scope(
+                ClaimNextJob::default(),
+                ExecutionBackend::Playwright,
+                Some("personal".to_owned()),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(personal_claim.job_id, personal.job_id);
+        assert_eq!(personal_claim.profile_id.as_deref(), Some("personal"));
+        assert_eq!(
+            store.get_job(&work.job_id).unwrap().status,
+            JobStatus::Queued
+        );
+    }
+
+    #[test]
     fn claim_next_returns_none_when_no_queued_job_exists() {
         let tempdir = tempfile::tempdir().unwrap();
         let store = JobStore::open(tempdir.path()).unwrap();
@@ -2049,6 +2503,43 @@ mod tests {
                 barrier.wait();
                 store
                     .claim_next_job(ClaimNextJob::default())
+                    .unwrap()
+                    .map(|job| job.job_id)
+            }));
+        }
+
+        let claimed_job_ids = handles
+            .into_iter()
+            .filter_map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(claimed_job_ids, vec![job.job_id.clone()]);
+        assert_eq!(
+            store.get_job(&job.job_id).unwrap().status,
+            JobStatus::Claimed
+        );
+    }
+
+    #[test]
+    fn concurrent_profile_scoped_claim_next_allows_only_one_winner() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let job = create_playwright_job(&store, "work", "race");
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+
+        for _ in 0..2 {
+            let home = tempdir.path().to_path_buf();
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let store = JobStore::open(home).unwrap();
+                barrier.wait();
+                store
+                    .claim_next_job_with_scope(
+                        ClaimNextJob::default(),
+                        ExecutionBackend::Playwright,
+                        Some("work".to_owned()),
+                    )
                     .unwrap()
                     .map(|job| job.job_id)
             }));
@@ -2176,12 +2667,28 @@ mod tests {
         let store = JobStore::open(tempdir.path()).unwrap();
         let migrated = store.get_job("legacy-job").unwrap();
         assert_eq!(migrated.status, JobStatus::Queued);
+        assert_eq!(
+            migrated.execution_backend,
+            ExecutionBackend::LegacyExtension
+        );
+        assert_eq!(migrated.profile_id, None);
         assert_ne!(migrated.claim_token, "legacy-token");
         assert_eq!(migrated.claim_expires_at_ms, None);
         let conn = Connection::open(store.database_path()).unwrap();
         assert!(sqlite_column_exists(&conn, "jobs", "claim_expires_at").unwrap());
+        assert!(sqlite_column_exists(&conn, "jobs", "execution_backend").unwrap());
+        assert!(sqlite_column_exists(&conn, "jobs", "profile_id").unwrap());
         assert!(sqlite_column_exists(&conn, "jobs", "summary_task_id").unwrap());
         assert!(sqlite_table_exists(&conn, "job_task_keys").unwrap());
+        let (execution_backend, profile_id): (String, Option<String>) = conn
+            .query_row(
+                "SELECT execution_backend, profile_id FROM jobs WHERE job_id = 'legacy-job'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(execution_backend, "legacy_extension");
+        assert_eq!(profile_id, None);
         let filtered = store
             .list_jobs(ListJobs {
                 provider: Some("chatgpt".to_owned()),
@@ -2488,6 +2995,8 @@ mod tests {
         let job_id = created["job_id"].as_str().unwrap().to_owned();
         let claim_token = created["claim_token"].as_str().unwrap().to_owned();
         assert_eq!(created["status"], "queued");
+        assert_eq!(created["execution_backend"], "legacy_extension");
+        assert_eq!(created["profile_id"], Value::Null);
 
         let listed: Value = client
             .get(format!("{base_url}/jobs"))
@@ -2582,6 +3091,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_create_validation_and_exact_backend_profile_filters() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let control_token = store.control_token().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            serve_http_listener(store, listener).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+
+        let missing_profile = client
+            .post(format!("{base_url}/jobs"))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "provider": "chatgpt",
+                "action": "submit",
+                "execution_backend": "playwright",
+                "request_json": { "prompt": "missing profile" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(missing_profile.status(), StatusCode::BAD_REQUEST);
+
+        let legacy_with_profile = client
+            .post(format!("{base_url}/jobs"))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "provider": "chatgpt",
+                "action": "submit",
+                "profile_id": "work",
+                "request_json": { "prompt": "bad legacy profile" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(legacy_with_profile.status(), StatusCode::BAD_REQUEST);
+
+        let unknown_backend = client
+            .post(format!("{base_url}/jobs"))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "provider": "chatgpt",
+                "action": "submit",
+                "execution_backend": "selenium",
+                "request_json": { "prompt": "unknown backend" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unknown_backend.status(), StatusCode::BAD_REQUEST);
+
+        let created: Value = client
+            .post(format!("{base_url}/jobs"))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "provider": "chatgpt",
+                "action": "submit",
+                "execution_backend": "playwright",
+                "profile_id": "work",
+                "request_json": { "prompt": "managed profile" }
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(created["execution_backend"], "playwright");
+        assert_eq!(created["profile_id"], "work");
+
+        let filtered: Value = client
+            .get(format!(
+                "{base_url}/jobs?execution_backend=playwright&profile_id=work"
+            ))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(filtered.as_array().unwrap().len(), 1);
+        assert_eq!(filtered[0]["job_id"], created["job_id"]);
+        assert_eq!(filtered[0]["profile_id"], "work");
+
+        let invalid_filter = client
+            .get(format!(
+                "{base_url}/jobs?execution_backend=legacy_extension&profile_id=work"
+            ))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid_filter.status(), StatusCode::BAD_REQUEST);
+
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn every_job_http_endpoint_requires_bearer_auth() {
         let tempdir = tempfile::tempdir().unwrap();
         let store = JobStore::open(tempdir.path()).unwrap();
@@ -2645,6 +3259,20 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(complete.status(), StatusCode::UNAUTHORIZED);
+        let running = client
+            .post(format!("{base_url}/control/jobs/{}/running", job.job_id))
+            .json(&json!({ "claim_token": job.claim_token }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(running.status(), StatusCode::UNAUTHORIZED);
+        let renew = client
+            .post(format!("{base_url}/control/jobs/{}/renew", job.job_id))
+            .json(&json!({ "claim_token": job.claim_token }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(renew.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
             store.get_job(&job.job_id).unwrap().status,
             JobStatus::Queued
@@ -2803,6 +3431,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_control_claim_next_mark_running_and_renew_are_profile_scoped() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_secs(60))
+                .unwrap();
+        let control_token = store.control_token().unwrap();
+        let work = create_playwright_job(&store, "work", "work");
+        let personal = create_playwright_job(&store, "personal", "personal");
+        let server_store = store.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            serve_http_listener(server_store, listener).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+
+        let missing_profile = client
+            .post(format!(
+                "{base_url}/control/jobs/claim-next?execution_backend=playwright"
+            ))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(missing_profile.status(), StatusCode::BAD_REQUEST);
+
+        let claimed: Value = client
+            .post(format!(
+                "{base_url}/control/jobs/claim-next?execution_backend=playwright&profile_id=personal"
+            ))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(claimed["job"]["job_id"], personal.job_id);
+        assert_eq!(claimed["job"]["execution_backend"], "playwright");
+        assert_eq!(claimed["job"]["profile_id"], "personal");
+        let claim_token = claimed["job"]["claim_token"].as_str().unwrap();
+        assert_eq!(
+            store.get_job(&work.job_id).unwrap().status,
+            JobStatus::Queued
+        );
+
+        let running: Value = client
+            .post(format!(
+                "{base_url}/control/jobs/{}/running",
+                personal.job_id
+            ))
+            .bearer_auth(&control_token)
+            .json(&json!({ "claim_token": claim_token }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(running["status"], "running");
+        assert_eq!(running["profile_id"], "personal");
+
+        let renewed: Value = client
+            .post(format!("{base_url}/control/jobs/{}/renew", personal.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({ "claim_token": claim_token }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(renewed["status"], "running");
+
+        let wrong_token = client
+            .post(format!("{base_url}/control/jobs/{}/renew", personal.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({ "claim_token": "wrong-token" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong_token.status(), StatusCode::FORBIDDEN);
+
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn http_control_claim_next_returns_null_job_when_queue_is_empty() {
         let tempdir = tempfile::tempdir().unwrap();
         let store = JobStore::open(tempdir.path()).unwrap();
@@ -2939,6 +3660,13 @@ mod tests {
         assert!(message.contains("query parameters are invalid"));
 
         server.abort();
+    }
+
+    fn create_playwright_job(store: &JobStore, profile_id: &str, prompt: &str) -> Job {
+        let mut input = CreateJob::new("chatgpt", "submit", json!({ "prompt": prompt }));
+        input.execution_backend = ExecutionBackend::Playwright;
+        input.profile_id = Some(profile_id.to_owned());
+        store.create_job(input).unwrap()
     }
 
     fn assert_json_content_type(response: &reqwest::Response) {

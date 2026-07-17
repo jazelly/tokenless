@@ -92,6 +92,10 @@ test('provider-action maps only the strict priority payload for each action', as
         args: ['provider-action', '--provider', 'gemini', '--action', 'model.select', '--model', 'Flash\nPro'],
         code: 'invalid_model',
       },
+      {
+        args: ['provider-action', '--provider', 'gemini', '--action', 'model.select', '--model', 'Flash', '--model-fallback', 'Pro'],
+        code: 'model_fallback_unsupported',
+      },
     ]) {
       const completed = await runCli([...fixture.args, '--home', home, '--json'])
       assert.equal(completed.exitCode, 1, `${completed.stderr}\n${completed.stdout}`)
