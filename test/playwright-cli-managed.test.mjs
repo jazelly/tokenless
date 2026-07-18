@@ -10,6 +10,60 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 
+test('CLI discovers Chrome profile directory keys without creating a managed profile registry', () => {
+  const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-discover-')))
+  const chromeRoot = path.join(tempRoot, 'chrome-root')
+  const poisonHome = path.join(tempRoot, 'tokenless-home-must-not-exist')
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.mkdirSync(path.join(chromeRoot, 'Profile 2'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: {
+          name: 'Personal',
+          is_using_default_name: true,
+        },
+        'Profile 2': {
+          name: 'Research',
+          is_using_default_name: false,
+        },
+      },
+    },
+  }), 'utf8')
+
+  try {
+    const discovered = runCli([
+      'profiles',
+      'discover',
+      '--chrome-user-data-dir',
+      chromeRoot,
+      '--json',
+    ], { TOKENLESS_HOME: poisonHome, TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: path.join(tempRoot, 'runner-must-not-start.mjs') })
+    assert.equal(discovered.status, 0, discovered.stderr || discovered.stdout)
+    assert.equal(fs.existsSync(poisonHome), false)
+    assert.doesNotMatch(discovered.stdout, /profileDir|sourcePath|destinationDir/)
+    const payload = JSON.parse(discovered.stdout)
+    assert.equal(payload.ok, true)
+    assert.deepEqual(payload.roots, [{
+      userDataDir: chromeRoot,
+      profiles: [
+        {
+          directoryKey: 'Default',
+          name: 'Personal',
+          isDefault: true,
+        },
+        {
+          directoryKey: 'Profile 2',
+          name: 'Research',
+          isDefault: false,
+        },
+      ],
+    }])
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
 test('CLI submits managed Playwright jobs through real daemon with profile-filtered state', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-playwright-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`

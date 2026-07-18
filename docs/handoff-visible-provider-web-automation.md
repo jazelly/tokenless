@@ -49,6 +49,7 @@ Add the following profile administration commands:
 
 ```text
 tokenless profiles add --profile <slug> [--label <text>] [--set-default]
+tokenless profiles discover [--chrome-user-data-dir <dir>] --json
 tokenless profiles list
 tokenless profiles status --profile <slug> [--provider <id>]
 tokenless profiles open --profile <slug> [--provider <id>]
@@ -61,11 +62,13 @@ provider status, and `snapshot-dom`, accepts `--profile <slug>`. Selection uses
 the explicit profile first and then the configured default. It fails before job
 creation when neither resolves to a registered profile.
 
-`tokenless setup` creates and selects profile `default` when no profile exists,
-starts the worker, opens the preferred provider pages, and reports visible
-authentication state. Interactive setup discovers installed Chrome profiles
-and offers a local import. JSON or noninteractive setup creates a clean profile
-unless both `--import-chrome-profile <directory-key>` and
+`tokenless profiles discover --json` is read-only and lists local Chrome roots
+with exact profile directory keys; it does not create a Tokenless profile,
+copy profile data, or touch the managed-profile registry. `tokenless setup`
+creates and selects profile `default` when no profile exists, starts the
+worker, opens the preferred provider pages, and reports visible authentication
+state. JSON or noninteractive setup creates a clean profile unless both
+`--import-chrome-profile <directory-key>` and
 `--consent-local-profile-copy` are supplied.
 
 Store bounded profile metadata in `~/.tokenless/browser/profiles.json`, guarded
@@ -81,11 +84,12 @@ than requiring another storage migration.
 
 ### Consented profile import
 
-The first managed-profile setup attempts to reuse the user's existing signed-in
-Chrome state only after explicit consent. The consent UI names the exact source
-and destination, explains that authentication state may be copied, and states
-that the copy remains entirely local and is never sent to Tokenless or another
-remote service.
+Importing a Chrome profile is an explicit, one-time user setup operation. The
+consent UI names the exact source and destination, explains that authentication
+state may be copied, and states that the copy remains entirely local and is
+never sent to Tokenless or another remote service. Jobs and live tests reuse the
+already-imported managed profile indefinitely; they must not re-import, refresh,
+copy from Chrome, or remove that managed profile.
 
 The implementation must:
 
@@ -194,19 +198,18 @@ It never runs in ordinary CI and requires every explicit gate below:
 
 ```text
 TOKENLESS_LIVE_MANAGED_PLAYWRIGHT=1
-TOKENLESS_LIVE_PROFILE_COPY_CONSENT=1
 TOKENLESS_LIVE_PROVIDER_MUTATIONS=1
-TOKENLESS_LIVE_CHROME_PROFILE=<exact-directory-key>
-TOKENLESS_LIVE_CHROME_USER_DATA_DIR=<optional-nonstandard-root>
+TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME=<existing-tokenless-home>
+TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE=<managed-profile-slug>
 ```
 
-The suite refuses to start while Chrome is running or when the source resolves
-inside Tokenless home. It records SHA-256 and sizes for the copied source files
-before import, repeats that check after the run, and fails if the source changed.
-It clones the real selected, locally signed-in Chrome profile into a disposable
-Tokenless home and requires authenticated imported sessions for **ChatGPT,
-Claude, Gemini, and Grok**. Missing authentication for any provider fails the
-P0 acceptance run rather than silently reducing coverage.
+The suite resolves the configured user-imported managed profile with `tokenless profiles list`
+before provider actions. Expired authentication is reported by normal visible
+auth checks. The suite must not call `profiles add`, `profiles remove`, Chrome
+profile discovery, or any import/copy path.
+It requires authenticated managed sessions for **ChatGPT, Claude, Gemini, and
+Grok**. Missing or expired authentication for any provider fails the P0
+acceptance run rather than silently reducing coverage.
 
 For every provider, the live suite must:
 
@@ -226,9 +229,11 @@ For every provider, the live suite must:
 
 The suite uses bounded timeouts and generated marker data only. It must not use
 private user files, existing chats, Projects, history, connectors, or skills.
-In `finally`, it restores reversible controls, stops the worker and browsers,
-deletes the imported clone, and verifies the source hashes again. Provider-side
-smoke conversations may remain and must carry a unique recognizable test marker.
+In `finally`, it writes partial sanitized evidence when needed and leaves the
+managed profile intact. It must not delete the managed profile, refresh it from
+Chrome, or verify Chrome source hashes because live execution no longer reads a
+Chrome source profile. Provider-side smoke conversations may remain and must
+carry a unique recognizable test marker.
 
 Retain only sanitized evidence under
 `test-results/live-managed-playwright/<timestamp>/`: step results, timings,
