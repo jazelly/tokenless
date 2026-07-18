@@ -70,6 +70,13 @@ import {
   inspectTokenlessSkills,
   installTokenlessSkills,
 } from './setup-workflow.js'
+import {
+  SETUP_MANAGED_PROFILE_DISCLOSURE,
+  SETUP_READINESS_DISCLOSURE,
+  createSetupPresenter,
+  resolveSetupTerminalCapabilities,
+  type SetupPresenter,
+} from './setup-presenter.js'
 import { DEFAULT_EXTENSION_ID } from './default-extension-id.js'
 import {
   ManagedCodexExecutorFailure,
@@ -1568,29 +1575,65 @@ async function installCommand(args: CliArgs) {
 
 async function setupCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  const config = await readTokenlessConfig(homeDir)
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  const interactive = args.json !== true && process.stdin.isTTY === true && process.stdout.isTTY === true
-  const prompt = interactive ? createSetupPrompt() : null
+  const setupTerminal = resolveSetupTerminalCapabilities({
+    json: args.json === true,
+    stdin: process.stdin,
+    stdout: process.stdout,
+    stderr: process.stderr,
+  })
+  const presenter = createSetupPresenter({
+    enabled: setupTerminal.canPresent,
+    stream: process.stderr,
+    env: process.env,
+  })
+  const prompt = setupTerminal.canPrompt ? createSetupPrompt() : null
   try {
-    const skills = await ensureSetupSkills({ args, prompt })
-    const installedBrowsers = await discoverSetupBrowsers()
-    const browser = await selectSetupBrowser({ args, config, installedBrowsers, prompt })
-    const providers = await selectSetupProviders({ args, config, prompt })
-    if (config.browser && config.browser !== browser.browser) {
-      await stopRunnerSupervisor({ homeDir })
-    }
-    await writeTokenlessConfig({
-      homeDir,
-      browser: browser.browser,
-      preferredProviders: providers,
-      daemonUrl: configuredDaemonUrl,
+    presenter.welcome()
+    presenter.explain({
+      title: 'Configuration read',
+      lines: [
+        'Tokenless will read its local config to find previous browser, provider, and daemon choices.',
+        'This is read-only; setup writes config later only after the selected preferences are known.',
+      ],
+    })
+    const config = await presenter.withProgress('Reading Tokenless configuration', () => readTokenlessConfig(homeDir))
+    const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+    const skills = await ensureSetupSkills({ args, prompt, presenter })
+    presenter.explain({
+      title: 'Browser discovery',
+      lines: [
+        'Tokenless will read local browser installation paths for supported Chromium browsers.',
+        'This step does not copy profile data or change browser settings.',
+      ],
+    })
+    const installedBrowsers = await presenter.withProgress('Detecting supported browsers', discoverSetupBrowsers)
+    const browser = await selectSetupBrowser({ args, config, installedBrowsers, prompt, presenter })
+    const providers = await selectSetupProviders({ args, config, prompt, presenter })
+    presenter.explain({
+      title: 'Configuration write',
+      lines: [
+        `Tokenless will save browser=${browser.browser}, providers=${providers.join(', ')}, and daemonUrl=${configuredDaemonUrl}.`,
+        'This changes only Tokenless local configuration under the selected Tokenless home.',
+        'If the selected browser changed, Tokenless stops the current local runner so the next managed session uses the new browser.',
+      ],
+    })
+    await presenter.withProgress('Saving Tokenless setup preferences', async () => {
+      if (config.browser && config.browser !== browser.browser) {
+        await stopRunnerSupervisor({ homeDir })
+      }
+      await writeTokenlessConfig({
+        homeDir,
+        browser: browser.browser,
+        preferredProviders: providers,
+        daemonUrl: configuredDaemonUrl,
+      })
     })
     const profile = await ensureSetupManagedProfile({
       args,
       homeDir,
       browser: browser.browser,
       prompt,
+      presenter,
     })
     const registry = new ManagedProfileRegistry(homeDir)
     const readiness: Record<string, any> = {}
@@ -1598,30 +1641,51 @@ async function setupCommand(args: CliArgs) {
     let waitingForUser = false
 
     for (const provider of providers) {
-      let result = await runSetupAuthCheck({ args, homeDir, profile, provider })
+      presenter.explain({
+        title: `Provider readiness: ${provider}`,
+        lines: SETUP_READINESS_DISCLOSURE,
+      })
+      let result = await presenter.withProgress(
+        `Opening managed browser and checking visible ${provider} login state`,
+        () => runSetupAuthCheck({ args, homeDir, profile, provider, quietStatus: setupTerminal.canPresent }),
+      )
       runner = result.runner
       let observedAuth = authStateFromManagedResult(result.waitResult?.result)
       let providerNeedsUser = false
       if (result.waitResult?.status === 'waiting_for_user') {
         providerNeedsUser = true
         if (prompt) {
+          presenter.handover(
+            provider,
+            `The provider requested visible verification or sign-in for job ${result.job.job_id}.`,
+          )
           await prompt.pause(
             `Complete the visible ${provider} verification or sign-in in the already-open browser to resume the same job.`
           )
-          const resumed = await waitForSetupJobAfterUser({
-            homeDir,
-            daemonUrl: configuredDaemonUrl,
-            jobId: result.job.job_id,
-            timeoutMs: args.timeoutMs === undefined ? 600_000 : Number(args.timeoutMs),
-          })
+          const resumed = await presenter.withProgress(
+            `Waiting for ${provider} to finish the same visible job`,
+            () => waitForSetupJobAfterUser({
+              homeDir,
+              daemonUrl: configuredDaemonUrl,
+              jobId: result.job.job_id,
+              timeoutMs: args.timeoutMs === undefined ? 600_000 : Number(args.timeoutMs),
+            }),
+          )
           result = { ...result, waitResult: resumed }
           observedAuth = authStateFromManagedResult('result' in resumed ? resumed.result : null)
           providerNeedsUser = resumed.status === 'waiting_for_user'
         }
       }
       if (observedAuth === 'unauthenticated' && prompt) {
+        presenter.handover(
+          provider,
+          `Tokenless saw a visible signed-out state for ${provider}.`,
+        )
         await prompt.pause(`Sign in to ${provider} in the already-open managed browser.`)
-        result = await runSetupAuthCheck({ args, homeDir, profile, provider })
+        result = await presenter.withProgress(
+          `Re-checking visible ${provider} login state`,
+          () => runSetupAuthCheck({ args, homeDir, profile, provider, quietStatus: setupTerminal.canPresent }),
+        )
         runner = result.runner
         observedAuth = authStateFromManagedResult(result.waitResult?.result)
       }
@@ -1641,10 +1705,16 @@ async function setupCommand(args: CliArgs) {
         jobId: result.job.job_id,
         ...(result.waitResult?.blocker ? { blocker: result.waitResult.blocker } : {}),
       }
+      presenter.success(`${provider} readiness is ${observedAuth ?? status ?? 'unknown'}.`)
     }
 
     const updatedProfile = await registry.resolveProfile(profile.slug)
     const status = waitingForUser ? 'waiting_for_user' : 'ready'
+    presenter.summary(
+      waitingForUser
+        ? `Setup is waiting for visible user action in profile ${updatedProfile.slug}.`
+        : `Setup is ready for ${providers.join(', ')} with profile ${updatedProfile.slug}.`,
+    )
     printPayload({
       ok: true,
       completed: !waitingForUser,
@@ -1677,12 +1747,18 @@ async function ensureSetupManagedProfile({
   homeDir,
   browser,
   prompt,
+  presenter,
 }: {
   args: CliArgs
   homeDir: string
   browser: string
   prompt: ReturnType<typeof createSetupPrompt> | null
+  presenter: SetupPresenter
 }) {
+  presenter.explain({
+    title: 'Managed browser profile',
+    lines: SETUP_MANAGED_PROFILE_DISCLOSURE,
+  })
   const registry = new ManagedProfileRegistry(homeDir)
   const existing = await registry.listProfiles()
   const configuredDefaultProfile = (await registry.read()).defaultProfile
@@ -1729,20 +1805,21 @@ async function ensureSetupManagedProfile({
       }
       const source = await selectSetupSourceProfile({ args, browser, prompt })
       await requireSetupCopyConsent({ args, prompt, source, destination: selected.directory })
-      if (prompt) console.error(`Re-importing ${source.name} into managed profile ${selected.slug}...`)
-      await stopRunnerSupervisor({ homeDir })
-      await registry.updateLifecycle(selected.slug, 'importing')
       try {
-        await importChromeProfile({
-          sourceUserDataDir: source.userDataDir,
-          profileDirectoryKey: source.directoryKey,
-          destinationDir: selected.directory,
-          tokenlessHome: homeDir,
-        })
-        return await registry.markImported(selected.slug, {
-          source: source.userDataDir,
-          profileDirectoryKey: source.directoryKey,
-          browser,
+        return await presenter.withProgress(`Re-importing ${source.name} into managed profile ${selected.slug}`, async () => {
+          await stopRunnerSupervisor({ homeDir })
+          await registry.updateLifecycle(selected.slug, 'importing')
+          await importChromeProfile({
+            sourceUserDataDir: source.userDataDir,
+            profileDirectoryKey: source.directoryKey,
+            destinationDir: selected.directory,
+            tokenlessHome: homeDir,
+          })
+          return await registry.markImported(selected.slug, {
+            source: source.userDataDir,
+            profileDirectoryKey: source.directoryKey,
+            browser,
+          })
         })
       } catch (error) {
         await registry.updateLifecycle(selected.slug, 'failed').catch(() => undefined)
@@ -1755,7 +1832,9 @@ async function ensureSetupManagedProfile({
         `Managed profile '${selected.slug}' is ${selected.lifecycle}; explicitly re-import it or choose another ready profile.`
       )
     }
-    if (args.setDefault === true || prompt) await registry.setDefault(selected.slug)
+    if (args.setDefault === true || prompt) {
+      await presenter.withProgress(`Setting managed profile ${selected.slug} as default`, () => registry.setDefault(selected.slug))
+    }
     return selected
   }
 
@@ -1779,25 +1858,29 @@ async function ensureSetupManagedProfile({
     )
   }
   if (source) await requireSetupCopyConsent({ args, prompt, source, destination: slug })
-  let record = await registry.addProfile({
-    slug,
-    label: args.label === undefined ? slug : String(args.label),
-    setDefault: true,
-    lifecycle: source ? 'importing' : 'ready',
-  })
+  let record = await presenter.withProgress(
+    source ? `Creating managed profile ${slug} for import` : `Creating clean managed profile ${slug}`,
+    () => registry.addProfile({
+      slug,
+      label: args.label === undefined ? slug : String(args.label),
+      setDefault: true,
+      lifecycle: source ? 'importing' : 'ready',
+    }),
+  )
   try {
     if (source) {
-      if (prompt) console.error(`Importing ${source.name} into managed profile ${slug}...`)
-      await importChromeProfile({
-        sourceUserDataDir: source.userDataDir,
-        profileDirectoryKey: source.directoryKey,
-        destinationDir: record.directory,
-        tokenlessHome: homeDir,
-      })
-      record = await registry.markImported(record.slug, {
-        source: source.userDataDir,
-        profileDirectoryKey: source.directoryKey,
-        browser,
+      record = await presenter.withProgress(`Importing ${source.name} into managed profile ${slug}`, async () => {
+        await importChromeProfile({
+          sourceUserDataDir: source.userDataDir,
+          profileDirectoryKey: source.directoryKey,
+          destinationDir: record.directory,
+          tokenlessHome: homeDir,
+        })
+        return await registry.markImported(record.slug, {
+          source: source.userDataDir,
+          profileDirectoryKey: source.directoryKey,
+          browser,
+        })
       })
     }
     return record
@@ -1847,12 +1930,22 @@ function createSetupPrompt() {
 async function ensureSetupSkills({
   args,
   prompt,
+  presenter,
 }: {
   args: CliArgs
   prompt: ReturnType<typeof createSetupPrompt> | null
+  presenter: SetupPresenter
 }) {
   const skillHome = process.env.TOKENLESS_SETUP_SKILL_HOME
-  let check = await inspectTokenlessSkills(skillHome)
+  presenter.explain({
+    title: 'Agent skills',
+    lines: [
+      'Tokenless will read local skill manifests and the skill lock file under the agent skills home.',
+      'If installation or refresh is needed, setup will run the skills CLI against github.com/jazelly/tokenless.',
+      'The install step changes only local agent skill files and disables telemetry for that command.',
+    ],
+  })
+  let check = await presenter.withProgress('Checking Tokenless agent skills', () => inspectTokenlessSkills(skillHome))
   let installed = false
   const refresh = args.refreshSkills === true || (!check.ok && args.skipSkillInstall !== true)
   if (refresh) {
@@ -1867,11 +1960,12 @@ async function ensureSetupSkills({
     if (!approved) {
       throw usageError('tokenless_skill_install_required', 'Tokenless setup requires the tokenless and tokenless-install skills.')
     }
-    if (prompt) console.error('Installing and verifying Tokenless agent skills from GitHub...')
-    const result = await installTokenlessSkills({ ...(skillHome ? { home: skillHome } : {}) })
+    const result = await presenter.withProgress(
+      'Installing and verifying Tokenless agent skills from GitHub',
+      () => installTokenlessSkills({ ...(skillHome ? { home: skillHome } : {}) }),
+    )
     check = result.check
     installed = true
-    if (prompt) console.error('Tokenless agent skills are ready.')
   }
   if (!check.ok) {
     throw usageError(
@@ -1914,39 +2008,62 @@ async function selectSetupBrowser({
   config,
   installedBrowsers,
   prompt,
+  presenter,
 }: {
   args: CliArgs
   config: Record<string, any>
   installedBrowsers: Awaited<ReturnType<typeof discoverSetupBrowsers>>
   prompt: ReturnType<typeof createSetupPrompt> | null
+  presenter: SetupPresenter
 }) {
   const explicit = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
   const configured = explicit ?? (typeof config.browser === 'string' ? config.browser : null)
   if (configured) {
     const installed = installedBrowsers.find((browser) => browser.browser === configured)
-    if (installed && (!prompt || explicit)) return installed
+    if (installed && (!prompt || explicit)) {
+      presenter.success(`Using ${installed.displayName}.`)
+      return installed
+    }
   }
   if (!prompt) return installedBrowsers[0]!
+  presenter.note('Choose which installed browser Tokenless should launch for managed visible sessions.')
   const selected = await prompt.select(
     'Choose the browser Tokenless should manage',
     installedBrowsers.map((browser) => ({ label: browser.displayName, value: browser.browser })),
     Math.max(0, installedBrowsers.findIndex((browser) => browser.browser === configured))
   )
-  return installedBrowsers.find((browser) => browser.browser === selected)!
+  const browser = installedBrowsers.find((candidate) => candidate.browser === selected)!
+  presenter.success(`Using ${browser.displayName}.`)
+  return browser
 }
 
 async function selectSetupProviders({
   args,
   config,
   prompt,
+  presenter,
 }: {
   args: CliArgs
   config: Record<string, any>
   prompt: ReturnType<typeof createSetupPrompt> | null
+  presenter: SetupPresenter
 }): Promise<ProviderId[]> {
-  if (args.preferredProviders !== undefined) return requireSetupProviders(parseProviderList(args.preferredProviders) as ProviderId[])
+  presenter.explain({
+    title: 'Provider preferences',
+    lines: [
+      'Tokenless will read existing preferred providers and ask which provider pages to prepare.',
+      'The selected list is saved to Tokenless local config before readiness checks run.',
+    ],
+  })
+  if (args.preferredProviders !== undefined) {
+    const providers = requireSetupProviders(parseProviderList(args.preferredProviders) as ProviderId[])
+    presenter.success(`Using providers: ${providers.join(', ')}.`)
+    return providers
+  }
   if (args.provider !== undefined || process.env.TOKENLESS_PROVIDER) {
-    return [normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER)]
+    const providers = [normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER)]
+    presenter.success(`Using providers: ${providers.join(', ')}.`)
+    return providers
   }
   const configured = Array.isArray(config.preferredProviders) && config.preferredProviders.length > 0
     ? config.preferredProviders.map(normalizeProvider)
@@ -1956,7 +2073,9 @@ async function selectSetupProviders({
     'Providers to configure (comma-separated: chatgpt, claude, gemini, grok)',
     configured.join(',')
   )
-  return requireSetupProviders(parseProviderList(answer) as ProviderId[])
+  const providers = requireSetupProviders(parseProviderList(answer) as ProviderId[])
+  presenter.success(`Using providers: ${providers.join(', ')}.`)
+  return providers
 }
 
 function requireSetupProviders(providers: ProviderId[]) {
@@ -2032,7 +2151,7 @@ async function requireSetupCopyConsent({
   if (args.consentLocalProfileCopy === true) return
   const approved = prompt
     ? await prompt.confirm(
-        `Copy ${path.join(source.userDataDir, source.directoryKey)} into managed profile ${destination}? The copy stays local and is used until you explicitly re-import it.`,
+        `Copy ${path.join(source.userDataDir, source.directoryKey)} into managed profile ${destination}? The filtered opaque copy may include cookies and local storage to retain visible sign-in; it stays local, is not parsed/extracted/logged/uploaded by Tokenless, and excludes history, bookmarks, saved passwords/Login Data, autofill/payment data, extensions, caches, crash/download artifacts, and sync data.`,
         false
       )
     : false
@@ -2046,14 +2165,16 @@ async function runSetupAuthCheck({
   homeDir,
   profile,
   provider,
+  quietStatus = false,
 }: {
   args: CliArgs
   homeDir: string
   profile: ManagedProfileRecord
   provider: ProviderId
+  quietStatus?: boolean
 }) {
   return await executeManagedPlaywrightJob({
-    args: { ...args, home: homeDir, profile: profile.slug },
+    args: { ...args, home: homeDir, profile: profile.slug, quiet: args.quiet === true || quietStatus },
     provider,
     request: createManagedPlaywrightJobRequest({
       provider,
