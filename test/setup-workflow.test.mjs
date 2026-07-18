@@ -12,6 +12,7 @@ import {
 } from '../packages/cli/dist/src/setup-workflow.js'
 import {
   SETUP_MANAGED_PROFILE_DISCLOSURE,
+  SETUP_PROFILE_COPY_CONSENT_DEFAULT,
   SETUP_READINESS_DISCLOSURE,
   createSetupPresenter,
   resolveSetupTerminalCapabilities,
@@ -119,6 +120,7 @@ test('setup prompt capability stays independent from stderr presentation capabil
 })
 
 test('setup disclosures state import and readiness boundaries explicitly', () => {
+  assert.equal(SETUP_PROFILE_COPY_CONSENT_DEFAULT, true)
   assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Keeps provider sign-ins between jobs/)
   assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /copy cookies and site storage locally/)
   assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /never extracts or uploads/)

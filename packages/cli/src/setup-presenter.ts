@@ -35,6 +35,8 @@ type ExplainOptions = {
 
 const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 
+export const SETUP_PROFILE_COPY_CONSENT_DEFAULT = true
+
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
   'Keeps provider sign-ins between jobs. Name it default, work, or similar; later use --profile <name>.',
   'Import may copy cookies and site storage locally; Tokenless never extracts or uploads them.',
