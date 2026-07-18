@@ -154,6 +154,214 @@ test('runner waits for a new visible response after submit before reading', asyn
   assert.notEqual(read.result.text, 'old answer')
 })
 
+test('runner parks on visible user-resolvable blocker and resumes unfinished action in same page', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeHandoverPage()
+  const daemon = new FakeDaemon([
+    fakeJob('job-handover', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [
+        { action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'after handover' } },
+        { action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} },
+      ],
+    })),
+  ])
+  const adapterEvents = []
+  daemon.onWaiting = () => {
+    assert.equal(adapterEvents.length, 0, 'runner must not execute page actions while waiting for user')
+    setTimeout(() => {
+      page.rawBlockers = []
+      page.composerVisible = true
+    }, 25)
+  }
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    adapterRegistry: fakeAdapterRegistry(async (actionPage, request) => {
+      adapterEvents.push({ page: actionPage, action: request.action })
+      return successResponse(request, request.action === VISIBLE_ACTIONS.PROMPT_SUBMIT
+        ? { visible: true, submissionProof: 'submitted' }
+        : { visible: true, inputProof: 'prompt-text-visible' })
+    }),
+    renewIntervalMs: 5,
+    userHandoverTimeoutMs: 500,
+    userHandoverPollMs: 5,
+    cancelPollMs: 1000,
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-handover', status: 'succeeded' })
+  assert.equal(daemon.waiting.length, 1)
+  assert.equal(daemon.waiting[0].blocker.blocker.code, 'visible_recaptcha')
+  assert.deepEqual(daemon.running, ['job-handover', 'job-handover'])
+  assert.equal(daemon.renewals.length > 0, true)
+  assert.deepEqual(adapterEvents.map((event) => event.action), [VISIBLE_ACTIONS.PROMPT_INPUT, VISIBLE_ACTIONS.PROMPT_SUBMIT])
+  assert.equal(adapterEvents.every((event) => event.page === page), true)
+})
+
+test('runner waits through response-read challenge longer than response timeout without replaying submit', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeHandoverPage()
+  page.rawBlockers = []
+  page.composerVisible = true
+  const daemon = new FakeDaemon([
+    fakeJob('job-response-handover', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [
+        { action: VISIBLE_ACTIONS.PROMPT_SUBMIT, payload: {} },
+        { action: VISIBLE_ACTIONS.RESPONSE_READ, payload: {} },
+      ],
+    })),
+  ])
+  const adapterEvents = []
+  daemon.onWaiting = () => {
+    setTimeout(() => {
+      page.rawBlockers = []
+      page.composerVisible = true
+      page.answers.push('resumed answer')
+    }, 80)
+  }
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    responseWaitTimeoutMs: 30,
+    responseWaitPollMs: 5,
+    userHandoverTimeoutMs: 300,
+    userHandoverPollMs: 5,
+    renewIntervalMs: 5,
+    cancelPollMs: 1000,
+    adapterRegistry: fakeAdapterRegistry(async (_actionPage, request) => {
+      adapterEvents.push(request.action)
+      if (request.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+        page.rawBlockers = [{
+          kind: 'challenge',
+          code: 'visible_recaptcha',
+          family: 'recaptcha',
+          message: 'Visible reCAPTCHA verification is blocking the provider page.',
+          proof: 'visible-recaptcha-frame',
+        }]
+        page.composerVisible = false
+        return successResponse(request, { visible: true, submissionProof: 'submitted' })
+      }
+      if (request.action === VISIBLE_ACTIONS.RESPONSE_READ) {
+        return successResponse(request, { text: page.answers.at(-1), citations: [], visibleProof: 'latest' })
+      }
+      return successResponse(request, { visibleProof: 'ok', state: 'authenticated' })
+    }),
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-response-handover', status: 'succeeded' })
+  assert.deepEqual(adapterEvents, [VISIBLE_ACTIONS.PROMPT_SUBMIT, VISIBLE_ACTIONS.RESPONSE_READ])
+  assert.equal(daemon.waiting.length, 1)
+  assert.equal(daemon.completed[0].result.responses.at(-1).result.text, 'resumed answer')
+  assert.equal(daemon.renewals.length > 0, true)
+})
+
+test('runner classifies off-provider sign-in navigation without DOM inspection and stores origin-only blocker URL', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeOffProviderSignInPage()
+  const daemon = new FakeDaemon([
+    fakeJob('job-off-provider', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'after login' } }],
+    })),
+  ])
+  const adapterEvents = []
+  daemon.onWaiting = () => {
+    setTimeout(() => {
+      page.currentUrl = 'https://chatgpt.com/'
+      page.composerVisible = true
+    }, 25)
+  }
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    userHandoverTimeoutMs: 300,
+    userHandoverPollMs: 5,
+    cancelPollMs: 1000,
+    adapterRegistry: fakeAdapterRegistry(async (_actionPage, request) => {
+      adapterEvents.push(request.action)
+      return successResponse(request, { visible: true, inputProof: 'prompt-text-visible' })
+    }),
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-off-provider', status: 'succeeded' })
+  assert.equal(page.offProviderEvaluateCalls, 0)
+  assert.equal(daemon.waiting[0].blocker.blocker.code, 'provider_sign_in_navigation')
+  assert.equal(daemon.waiting[0].blocker.blocker.url, 'https://accounts.google.com')
+  assert.deepEqual(adapterEvents, [VISIBLE_ACTIONS.PROMPT_INPUT])
+})
+
+test('runner cancellation while waiting stops without running further adapter actions', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeHandoverPage()
+  const daemon = new FakeDaemon([
+    fakeJob('job-cancel-waiting', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'must not run' } }],
+    })),
+  ])
+  daemon.cancelAfterWaiting = true
+  let actionCalls = 0
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    adapterRegistry: fakeAdapterRegistry(async (_actionPage, request) => {
+      actionCalls += 1
+      return successResponse(request, { visible: true, inputProof: 'prompt-text-visible' })
+    }),
+    userHandoverTimeoutMs: 500,
+    userHandoverPollMs: 5,
+    cancelPollMs: 5,
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-cancel-waiting', status: 'canceled' })
+  assert.equal(actionCalls, 0)
+  assert.equal(daemon.completed.length, 0)
+})
+
+test('runner times out user handover without running the blocked action', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeHandoverPage()
+  const daemon = new FakeDaemon([
+    fakeJob('job-timeout', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'never' } }],
+    })),
+  ])
+  let actionCalls = 0
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    adapterRegistry: fakeAdapterRegistry(async (actionPage, request) => {
+      actionCalls += 1
+      return successResponse(request, { visible: true, inputProof: 'prompt-text-visible' })
+    }),
+    userHandoverTimeoutMs: 30,
+    userHandoverPollMs: 5,
+    cancelPollMs: 1000,
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-timeout', status: 'failed' })
+  assert.equal(actionCalls, 0)
+  assert.equal(daemon.completed[0].error.code, 'playwright_user_handover_timeout')
+  assert.equal(daemon.completed[0].error.retryable, true)
+})
+
 test('runUntilStopped scheduler overlaps distinct profiles while keeping same-profile jobs single-flight', async () => {
   const profiles = fakeProfiles(['profile-a', 'profile-b'])
   const request = createManagedPlaywrightJobRequest({
@@ -372,7 +580,9 @@ class FakeDaemon {
     this.running = []
     this.renewals = []
     this.completed = []
+    this.waiting = []
     this.cancelAfterRunning = false
+    this.cancelAfterWaiting = false
     this.failRenewal = false
     this.onComplete = undefined
   }
@@ -383,6 +593,7 @@ class FakeDaemon {
   async getJob({ jobId }) {
     const job = this.jobs.get(jobId)
     if (this.cancelAfterRunning && job?.status === 'running') job.status = 'canceled'
+    if (this.cancelAfterWaiting && job?.status === 'waiting_for_user') job.status = 'canceled'
     return job
   }
 
@@ -403,6 +614,15 @@ class FakeDaemon {
     const job = this.jobs.get(jobId)
     job.status = 'running'
     this.running.push(jobId)
+    return job
+  }
+
+  async markJobWaitingForUser({ jobId, blocker }) {
+    const job = this.jobs.get(jobId)
+    job.status = 'waiting_for_user'
+    job.blocker_json = blocker
+    this.waiting.push({ jobId, blocker })
+    this.onWaiting?.()
     return job
   }
 
@@ -468,6 +688,72 @@ class FakeResponsePage {
   }
 }
 
+class FakeHandoverPage {
+  constructor() {
+    this.answers = ['old answer']
+    this.rawBlockers = [{
+      kind: 'challenge',
+      code: 'visible_recaptcha',
+      family: 'recaptcha',
+      message: 'Visible reCAPTCHA verification is blocking the provider page.',
+      proof: 'visible-recaptcha-frame',
+    }]
+    this.composerVisible = false
+  }
+
+  async goto() {}
+
+  url() {
+    return 'https://chatgpt.com/'
+  }
+
+  async evaluate() {
+    return this.rawBlockers
+  }
+
+  locator(selector) {
+    if (selector === '[data-message-author-role="assistant"]') {
+      return new FakeLocator(() => this.answers.map(() => true))
+    }
+    if (selector === 'button[data-testid="stop-button"]') {
+      return new FakeLocator(() => [])
+    }
+    if (selector === 'div#prompt-textarea[contenteditable="true"]' || selector === '#prompt-textarea[contenteditable="true"]') {
+      return new FakeSingleLocator(() => this.composerVisible)
+    }
+    return new FakeSingleLocator(() => false)
+  }
+}
+
+class FakeOffProviderSignInPage {
+  constructor() {
+    this.currentUrl = 'https://accounts.google.com/signin/v2/identifier?continue=https%3A%2F%2Fchatgpt.com%2Fsecret#private'
+    this.composerVisible = false
+    this.offProviderEvaluateCalls = 0
+  }
+
+  async goto() {}
+
+  url() {
+    return this.currentUrl
+  }
+
+  async evaluate() {
+    if (this.currentUrl.startsWith('https://accounts.google.com/')) {
+      this.offProviderEvaluateCalls += 1
+      throw new Error('off-provider DOM must not be inspected')
+    }
+    return []
+  }
+
+  locator(selector) {
+    if (selector === 'div#prompt-textarea[contenteditable="true"]' || selector === '#prompt-textarea[contenteditable="true"]') {
+      return new FakeSingleLocator(() => this.composerVisible)
+    }
+    return new FakeSingleLocator(() => false)
+  }
+}
+
 class FakeLocator {
   constructor(values) {
     this.values = values
@@ -481,6 +767,32 @@ class FakeLocator {
     return {
       isVisible: async () => Boolean(this.values()[index]),
     }
+  }
+}
+
+class FakeSingleLocator {
+  constructor(visible) {
+    this.visible = visible
+  }
+
+  first() {
+    return this
+  }
+
+  filter() {
+    return this
+  }
+
+  async isVisible() {
+    return Boolean(this.visible())
+  }
+
+  async count() {
+    return this.visible() ? 1 : 0
+  }
+
+  nth() {
+    return this
   }
 }
 
@@ -508,6 +820,7 @@ function fakeJob(jobId, profile, request) {
     request_json: request,
     result_json: null,
     error_json: null,
+    blocker_json: null,
     created_at: '2026-07-17T00:00:00Z',
     updated_at: '2026-07-17T00:00:00Z',
   }

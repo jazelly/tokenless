@@ -6,7 +6,7 @@ import { tokenlessError } from './errors.js'
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331' as const
 const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 5_000
 
-export type DaemonJobStatus = 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
+export type DaemonJobStatus = 'queued' | 'claimed' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
 export type DaemonExecutionBackend = 'legacy_extension' | 'playwright'
 
 export type DaemonJob = {
@@ -19,6 +19,7 @@ export type DaemonJob = {
   request_json: unknown
   result_json: unknown | null
   error_json: unknown | null
+  blocker_json: unknown | null
   created_at: string
   updated_at: string
 }
@@ -70,6 +71,10 @@ export type ClaimLifecycleDaemonJobOptions = GetDaemonJobOptions & {
   claimToken: string
 }
 
+export type WaitingForUserDaemonJobOptions = ClaimLifecycleDaemonJobOptions & {
+  blocker: unknown
+}
+
 export type CompleteDaemonJobOptions = ClaimLifecycleDaemonJobOptions & {
   result?: unknown
   error?: unknown
@@ -85,6 +90,7 @@ export type ManagedDaemonClient = {
   getJob(options: GetDaemonJobOptions): Promise<DaemonJob>
   claimNextJob(options: ClaimNextDaemonJobOptions): Promise<{ job: DaemonClaimedJob | null }>
   markJobRunning(options: ClaimLifecycleDaemonJobOptions): Promise<DaemonJob>
+  markJobWaitingForUser(options: WaitingForUserDaemonJobOptions): Promise<DaemonJob>
   renewJobClaim(options: ClaimLifecycleDaemonJobOptions): Promise<DaemonJob>
   completeJob(options: CompleteDaemonJobOptions): Promise<DaemonJob>
   cancelJob(options: CancelDaemonJobOptions): Promise<DaemonJob>
@@ -119,6 +125,7 @@ export function createDaemonClient(defaults: DaemonClientOptions = {}): ManagedD
     getJob: (options) => getDaemonJob({ ...defaults, ...options }),
     claimNextJob: (options) => claimNextDaemonJob({ ...defaults, ...options }),
     markJobRunning: (options) => markDaemonJobRunning({ ...defaults, ...options }),
+    markJobWaitingForUser: (options) => markDaemonJobWaitingForUser({ ...defaults, ...options }),
     renewJobClaim: (options) => renewDaemonJobClaim({ ...defaults, ...options }),
     completeJob: (options) => completeDaemonJob({ ...defaults, ...options }),
     cancelJob: (options) => cancelDaemonJob({ ...defaults, ...options }),
@@ -204,6 +211,14 @@ export async function markDaemonJobRunning({ jobId, claimToken, ...options }: Cl
     ...options,
     path: `/control/jobs/${encodeURIComponent(jobId)}/running`,
     body: { claim_token: claimToken },
+  })
+}
+
+export async function markDaemonJobWaitingForUser({ jobId, claimToken, blocker, ...options }: WaitingForUserDaemonJobOptions) {
+  return daemonRequest<DaemonJob>({
+    ...options,
+    path: `/control/jobs/${encodeURIComponent(jobId)}/waiting-for-user`,
+    body: { claim_token: claimToken, blocker_json: blocker },
   })
 }
 

@@ -10,6 +10,7 @@ import {
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
 import { VISIBLE_ACTIONS } from './actions.js'
+import { inspectVisibleBlockers } from './adapters/provider-dom-adapter.js'
 import { createDaemonClient } from './daemon-client.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
 import { getProviderById } from './providers.js'
@@ -18,6 +19,7 @@ import type { ManagedBrowserProfile, PersistentContextManager as PersistentConte
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
 import type { VisibleActionResponse } from './actions.js'
+import type { VisibleBlocker } from './actions.js'
 import type { Page } from 'playwright-core'
 
 export type ManagedPlaywrightRunnerServiceOptions = {
@@ -31,6 +33,8 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   cancelPollMs?: number | undefined
   responseWaitTimeoutMs?: number | undefined
   responseWaitPollMs?: number | undefined
+  userHandoverTimeoutMs?: number | undefined
+  userHandoverPollMs?: number | undefined
   attachmentRootForJob?: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
   cleanupAttachmentRoot?: boolean | undefined
   now?: (() => Date) | undefined
@@ -55,7 +59,20 @@ const DEFAULT_CANCEL_POLL_MS = 500
 const DEFAULT_POLL_IDLE_MS = 1_000
 const DEFAULT_RESPONSE_WAIT_TIMEOUT_MS = 120_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
+const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
+const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const GATED_ACTIONS = new Set<string>([
+  VISIBLE_ACTIONS.MODEL_INSPECT,
+  VISIBLE_ACTIONS.MODEL_SELECT,
+  VISIBLE_ACTIONS.EFFORT_INSPECT,
+  VISIBLE_ACTIONS.EFFORT_SELECT,
+  VISIBLE_ACTIONS.FILE_UPLOAD,
+  VISIBLE_ACTIONS.PROMPT_INPUT,
+  VISIBLE_ACTIONS.PROMPT_CLEAR,
+  VISIBLE_ACTIONS.PROMPT_SUBMIT,
+  VISIBLE_ACTIONS.RESPONSE_READ,
+])
 
 export class ManagedPlaywrightRunnerService {
   private readonly profileRegistry: ManagedProfileSource
@@ -67,6 +84,8 @@ export class ManagedPlaywrightRunnerService {
   private readonly cancelPollMs: number
   private readonly responseWaitTimeoutMs: number
   private readonly responseWaitPollMs: number
+  private readonly userHandoverTimeoutMs: number
+  private readonly userHandoverPollMs: number
   private readonly attachmentRootForJob: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
   private readonly cleanupAttachmentRoot: boolean
   private readonly now: () => Date
@@ -84,6 +103,8 @@ export class ManagedPlaywrightRunnerService {
     this.cancelPollMs = normalizedPositiveInteger(options.cancelPollMs, DEFAULT_CANCEL_POLL_MS)
     this.responseWaitTimeoutMs = normalizedPositiveInteger(options.responseWaitTimeoutMs, DEFAULT_RESPONSE_WAIT_TIMEOUT_MS)
     this.responseWaitPollMs = normalizedPositiveInteger(options.responseWaitPollMs, DEFAULT_RESPONSE_WAIT_POLL_MS)
+    this.userHandoverTimeoutMs = normalizedPositiveInteger(options.userHandoverTimeoutMs, DEFAULT_USER_HANDOVER_TIMEOUT_MS)
+    this.userHandoverPollMs = normalizedPositiveInteger(options.userHandoverPollMs, DEFAULT_USER_HANDOVER_POLL_MS)
     const defaultAttachmentHomeDir = options.homeDir
     this.attachmentRootForJob = options.attachmentRootForJob ?? (
       defaultAttachmentHomeDir ? (job) => defaultAttachmentRootForJob(defaultAttachmentHomeDir, job) : undefined
@@ -307,19 +328,28 @@ export class ManagedPlaywrightRunnerService {
       for (const action of request.actions) {
         throwIfStopped(signal, isCanceled, renewalError)
         if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+          await this.waitForUserResolvableBlockerToClear(page, provider, job, signal, isCanceled, renewalError)
           responseBaseline = await countVisibleAnswers(page, provider.answerSelectors)
         }
         if (action.action === VISIBLE_ACTIONS.RESPONSE_READ && responseBaseline !== null) {
           await waitForNewResponseReady(page, {
             answerSelectors: provider.answerSelectors,
             busySelectors: provider.busySelectors,
+            provider,
+            daemonClient: this.daemonClient,
+            job,
             baseline: responseBaseline,
             timeoutMs: this.responseWaitTimeoutMs,
             pollMs: this.responseWaitPollMs,
+            userHandoverTimeoutMs: this.userHandoverTimeoutMs,
+            userHandoverPollMs: this.userHandoverPollMs,
             signal,
             isCanceled,
             renewalError,
           })
+        }
+        if (GATED_ACTIONS.has(action.action) && action.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+          await this.waitForUserResolvableBlockerToClear(page, provider, job, signal, isCanceled, renewalError)
         }
         const adapterContext = {
           profileId: profile.id,
@@ -342,6 +372,26 @@ export class ManagedPlaywrightRunnerService {
       provider: request.provider,
       responses,
     }
+  }
+
+  private async waitForUserResolvableBlockerToClear(
+    page: Page,
+    provider: NonNullable<ReturnType<typeof getProviderById>>,
+    job: DaemonClaimedJob,
+    signal: AbortSignal,
+    isCanceled: () => boolean,
+    renewalError: () => unknown
+  ) {
+    await waitForUserResolvableBlockerToClear(page, {
+      provider,
+      daemonClient: this.daemonClient,
+      job,
+      timeoutMs: this.userHandoverTimeoutMs,
+      pollMs: this.userHandoverPollMs,
+      signal,
+      isCanceled,
+      renewalError,
+    })
   }
 }
 
@@ -406,7 +456,47 @@ async function waitForNewResponseReady(
   options: {
     answerSelectors: readonly string[]
     busySelectors: readonly string[]
+    provider: NonNullable<ReturnType<typeof getProviderById>>
+    daemonClient: ManagedDaemonClient
+    job: DaemonClaimedJob
     baseline: number
+    timeoutMs: number
+    pollMs: number
+    userHandoverTimeoutMs: number
+    userHandoverPollMs: number
+    signal: AbortSignal
+    isCanceled: () => boolean
+    renewalError: () => unknown
+  }
+) {
+  let deadline = Date.now() + options.timeoutMs
+  while (Date.now() <= deadline) {
+    throwIfStopped(options.signal, options.isCanceled, options.renewalError)
+    const handover = await waitForUserResolvableBlockerToClear(page, {
+      provider: options.provider,
+      daemonClient: options.daemonClient,
+      job: options.job,
+      timeoutMs: options.userHandoverTimeoutMs,
+      pollMs: options.userHandoverPollMs,
+      signal: options.signal,
+      isCanceled: options.isCanceled,
+      renewalError: options.renewalError,
+    })
+    deadline += handover.waitedMs
+    const answerCount = await countVisibleAnswers(page, options.answerSelectors)
+    const busy = await hasVisibleBusyIndicator(page, options.busySelectors)
+    if (answerCount > options.baseline && !busy) return
+    await delay(Math.min(options.pollMs, Math.max(1, deadline - Date.now())), options.signal)
+  }
+  throw tokenlessError('playwright_response_timeout', 'Timed out waiting for a new visible provider response.', { retryable: true })
+}
+
+async function waitForUserResolvableBlockerToClear(
+  page: Page,
+  options: {
+    provider: NonNullable<ReturnType<typeof getProviderById>>
+    daemonClient: ManagedDaemonClient
+    job: DaemonClaimedJob
     timeoutMs: number
     pollMs: number
     signal: AbortSignal
@@ -414,15 +504,181 @@ async function waitForNewResponseReady(
     renewalError: () => unknown
   }
 ) {
+  throwIfStopped(options.signal, options.isCanceled, options.renewalError)
+  const initial = await visibleBlockerState(page, options.provider)
+  if (!initial.blocked) return { waitedMs: 0 }
+  if (initial.terminal) {
+    throw tokenlessError(initial.primary.code, initial.primary.message, { retryable: initial.primary.retryable })
+  }
+  const startedAt = Date.now()
+  await options.daemonClient.markJobWaitingForUser({
+    jobId: options.job.job_id,
+    claimToken: options.job.claim_token,
+    blocker: blockerPayload(options.job, initial.blockers),
+  })
   const deadline = Date.now() + options.timeoutMs
   while (Date.now() <= deadline) {
     throwIfStopped(options.signal, options.isCanceled, options.renewalError)
-    const answerCount = await countVisibleAnswers(page, options.answerSelectors)
-    const busy = await hasVisibleBusyIndicator(page, options.busySelectors)
-    if (answerCount > options.baseline && !busy) return
     await delay(Math.min(options.pollMs, Math.max(1, deadline - Date.now())), options.signal)
+    const latest = await visibleBlockerState(page, options.provider)
+    if (latest.terminal) {
+      throw tokenlessError(latest.primary.code, latest.primary.message, { retryable: latest.primary.retryable })
+    }
+    if (!latest.blocked && await hasStableComposer(page, options.provider, options.pollMs, options.signal, options.isCanceled, options.renewalError)) {
+      await options.daemonClient.markJobRunning({
+        jobId: options.job.job_id,
+        claimToken: options.job.claim_token,
+      })
+      return { waitedMs: Date.now() - startedAt }
+    }
   }
-  throw tokenlessError('playwright_response_timeout', 'Timed out waiting for a new visible provider response.', { retryable: true })
+  throw tokenlessError(
+    'playwright_user_handover_timeout',
+    'Timed out waiting for the user to complete visible provider verification or sign-in in Chrome.',
+    { retryable: true }
+  )
+}
+
+async function visibleBlockerState(page: Page, provider: NonNullable<ReturnType<typeof getProviderById>>) {
+  const pageUrl = currentPageUrl(page)
+  const parsedUrl = safeUrl(pageUrl)
+  const navigationBlocker = blockerFromNavigationUrl(parsedUrl, provider)
+  if (navigationBlocker) {
+    return {
+      blocked: true,
+      terminal: false,
+      primary: navigationBlocker,
+      blockers: [navigationBlocker],
+    }
+  }
+  if (!parsedUrl || !isProviderApprovedUrl(parsedUrl, provider) || typeof (page as { evaluate?: unknown }).evaluate !== 'function') {
+    return {
+      blocked: false,
+      terminal: false,
+      primary: fallbackBlocker(page, provider),
+      blockers: [],
+    }
+  }
+  const result = await inspectVisibleBlockers(page, provider)
+  const terminal = result.blockers.find((blocker) => blocker.kind === 'terminal')
+  const userResolvable = result.blockers.find((blocker) => blocker.userResolvable)
+  return {
+    blocked: Boolean(userResolvable || terminal),
+    terminal: Boolean(terminal),
+    primary: terminal ?? userResolvable ?? result.blockers[0] ?? fallbackBlocker(page, provider),
+    blockers: result.blockers,
+  }
+}
+
+async function hasStableComposer(
+  page: Page,
+  provider: NonNullable<ReturnType<typeof getProviderById>>,
+  pollMs: number,
+  signal: AbortSignal,
+  isCanceled: () => boolean,
+  renewalError: () => unknown
+) {
+  if (!await anyVisibleComposer(page, provider)) return false
+  await delay(Math.min(Math.max(pollMs, 50), 500), signal)
+  throwIfStopped(signal, isCanceled, renewalError)
+  return await anyVisibleComposer(page, provider)
+}
+
+async function anyVisibleComposer(page: Page, provider: NonNullable<ReturnType<typeof getProviderById>>) {
+  for (const selector of provider.composerSelectors) {
+    if (await page.locator(selector).first().isVisible({ timeout: 100 }).catch(() => false)) return true
+  }
+  return false
+}
+
+function blockerPayload(job: DaemonClaimedJob, blockers: readonly VisibleBlocker[]) {
+  const primary = blockers.find((blocker) => blocker.userResolvable) ?? blockers[0] ?? null
+  return {
+    protocol: 'tokenless.playwright.user-handover.v1',
+    jobId: job.job_id,
+    taskId: taskIdFromRequest(job.request_json),
+    provider: job.provider,
+    profileId: job.profile_id,
+    blocker: primary,
+    blockers,
+    userAction: {
+      message: 'Visible Chrome is open. Manually complete the provider verification or sign-in there; Tokenless will resume the same unfinished action after the composer is stable.',
+    },
+  }
+}
+
+function taskIdFromRequest(value: unknown) {
+  if (!value || typeof value !== 'object') return null
+  const record = value as { taskId?: unknown }
+  return typeof record.taskId === 'string' ? record.taskId : null
+}
+
+function fallbackBlocker(page: Page, provider: NonNullable<ReturnType<typeof getProviderById>>): VisibleBlocker {
+  const pageUrl = currentPageUrl(page)
+  return {
+    kind: 'auth',
+    code: 'provider_user_handover_required',
+    message: 'Provider page requires user handover.',
+    userResolvable: true,
+    retryable: true,
+    visibleProof: 'visible-page-state',
+    provider: provider.id,
+    url: sanitizeBlockerOrigin(pageUrl),
+  }
+}
+
+function blockerFromNavigationUrl(url: URL | null, provider: NonNullable<ReturnType<typeof getProviderById>>): VisibleBlocker | null {
+  if (!url || isProviderApprovedUrl(url, provider)) return null
+  const host = url.hostname.toLowerCase()
+  const path = url.pathname.toLowerCase()
+  const signInNavigation = host === 'accounts.google.com' ||
+    host === 'auth.openai.com' ||
+    host === 'auth0.openai.com' ||
+    host === 'login.openai.com' ||
+    path.includes('/auth/login') ||
+    path.includes('/login') ||
+    path.includes('/signin') ||
+    path.includes('/sign-in')
+  if (!signInNavigation) return null
+  return {
+    kind: 'auth',
+    code: 'provider_sign_in_navigation',
+    message: 'Provider sign-in navigation is visible and requires the user.',
+    userResolvable: true,
+    retryable: true,
+    visibleProof: 'visible-provider-sign-in-navigation',
+    provider: provider.id,
+    url: url.origin,
+    family: 'provider_sign_in',
+  }
+}
+
+function isProviderApprovedUrl(url: URL, provider: NonNullable<ReturnType<typeof getProviderById>>) {
+  const host = url.hostname.toLowerCase()
+  return provider.hosts.some((allowedHost) => host === allowedHost)
+}
+
+function currentPageUrl(page: Page) {
+  try {
+    return typeof (page as { url?: unknown }).url === 'function'
+      ? (page as { url: () => string }).url()
+      : ''
+  } catch {
+    return ''
+  }
+}
+
+function safeUrl(value: string) {
+  try {
+    return new URL(value)
+  } catch {
+    return null
+  }
+}
+
+function sanitizeBlockerOrigin(value: string) {
+  const url = safeUrl(value)
+  return url?.origin ?? ''
 }
 
 async function countVisibleAnswers(page: Page, selectors: readonly string[]) {
