@@ -89,12 +89,13 @@ Roadmap items are not yet compatibility guarantees.
 A managed profile is one reusable local browser identity. Use one profile for sessions across several providers, or separate profiles for multiple accounts.
 
 ```bash
-tokenless profiles add --profile work --set-default
+tokenless profiles discover --json
+tokenless profiles add --profile work --import-chrome-profile "Profile 1" --consent-local-profile-copy --set-default
 tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude
 ```
 
-Importing an existing Chrome profile requires explicit consent. A clean managed profile is always available.
+`profiles discover` is read-only: it lists local Chrome roots and exact profile directory keys without copying data or creating Tokenless profiles. Importing an existing Chrome profile is a one-time user setup operation that requires explicit consent; use `tokenless profiles add --profile work --set-default` for a clean managed profile. Jobs and live tests reuse the already-managed profile until you explicitly remove it.
 
 ### Interfaces and modes
 

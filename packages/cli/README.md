@@ -62,6 +62,7 @@ Provider parity and end-to-end upload acceptance are still being completed. Unsu
 A profile is one persistent local Chrome identity. One profile can hold sessions for all supported providers; use separate profiles for multiple accounts of the same provider.
 
 ```bash
+tokenless profiles discover --json
 tokenless profiles add --profile work --label "Work" --set-default
 tokenless profiles list
 tokenless profiles open --profile work --provider claude
@@ -70,7 +71,9 @@ tokenless profiles set-default --profile work
 tokenless profiles remove --profile work --confirm-delete
 ```
 
-Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Interactive setup may offer a best-effort copy of a local Chrome profile after explicit consent, including while Chrome is running; noninteractive setup creates a clean profile unless import and consent flags are both supplied.
+`profiles discover` is a read-only helper for one-time setup. It reports local Chrome roots and exact profile directory keys without copying data or creating a managed profile. Import with `profiles add --import-chrome-profile <directory-key> --consent-local-profile-copy` only when the user explicitly chooses that setup path.
+
+Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Jobs reuse the managed profile already registered in Tokenless; they do not refresh it from Chrome. Noninteractive setup creates a clean profile unless import and consent flags are both supplied.
 
 Imported authentication state remains local and opaque. Tokenless does not parse, print, log, export, or transmit cookie, storage, password, or authentication values.
 

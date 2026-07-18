@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -13,24 +12,24 @@ const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const providers = ['chatgpt', 'claude', 'gemini', 'grok']
 const gates = [
   'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT',
-  'TOKENLESS_LIVE_PROFILE_COPY_CONSENT',
   'TOKENLESS_LIVE_PROVIDER_MUTATIONS',
-  'TOKENLESS_LIVE_CHROME_PROFILE',
+  'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME',
+  'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE',
 ]
 const liveEnabled = gates.every((key) => (
-  key === 'TOKENLESS_LIVE_CHROME_PROFILE' ? Boolean(process.env[key]) : process.env[key] === '1'
+  key === 'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT' || key === 'TOKENLESS_LIVE_PROVIDER_MUTATIONS'
+    ? process.env[key] === '1'
+    : Boolean(process.env[key])
 ))
 
-test('live managed Playwright provider matrix uses cloned Chrome profile and real DOM', {
+test('live managed Playwright provider matrix reuses existing managed profile and real DOM', {
   skip: liveEnabled ? false : `set ${gates.join(', ')} to run live managed Playwright E2E`,
   timeout: 1_200_000,
 }, async () => {
-  const profileKey = requiredEnv('TOKENLESS_LIVE_CHROME_PROFILE')
-  const sourceUserDataDir = process.env.TOKENLESS_LIVE_CHROME_USER_DATA_DIR ||
-    path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
+  const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
+  const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
+  const managedProfile = resolveManagedProfile({ homeDir, profileSlug })
 
-  const tempRoot = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'tokenless-live-managed-playwright-'))
-  const homeDir = path.join(tempRoot, 'home')
   const artifactDir = await createArtifactDir()
   const evidence = {
     protocol: 'tokenless.live-managed-playwright.evidence.v1',
@@ -38,139 +37,154 @@ test('live managed Playwright provider matrix uses cloned Chrome profile and rea
     node: process.version,
     platform: process.platform,
     versions: await runtimeVersions(),
+    managedProfile,
     providers: {},
   }
-  let daemonPid
   let evidenceWritten = false
   try {
-    const added = runCli([
-      'profiles', 'add',
-      '--profile', 'live',
-      '--import-chrome-profile', profileKey,
-      '--chrome-user-data-dir', sourceUserDataDir,
-      '--consent-local-profile-copy',
-      '--set-default',
-      '--home', homeDir,
-      '--json',
-    ])
-    assert.equal(added.status, 0, summarizeProcess(added))
-    const addPayload = JSON.parse(added.stdout)
-    evidence.sourceProfile = {
-      profileKey,
-      importMode: 'best-effort-hot-copy',
-      copiedFiles: addPayload.import?.copiedFiles ?? null,
-    }
-
     for (const provider of providers) {
-      evidence.providers[provider] = await exerciseProvider({ provider, homeDir })
+      try {
+        evidence.providers[provider] = await exerciseProvider({ provider, homeDir, profileSlug })
+      } catch (error) {
+        if (error?.providerEvidence) evidence.providers[provider] = error.providerEvidence
+        throw error
+      }
     }
 
     evidence.completedAt = new Date().toISOString()
     await writeArtifact(artifactDir, 'matrix.json', evidence)
     evidenceWritten = true
 
-    if (fsSync.existsSync(path.join(homeDir, 'daemon.pid.json'))) {
-      daemonPid = JSON.parse(await fs.readFile(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    }
   } finally {
     if (!evidenceWritten) {
       await writeArtifact(artifactDir, 'matrix.partial.json', evidence).catch(() => undefined)
     }
-    if (!daemonPid && fsSync.existsSync(path.join(homeDir, 'daemon.pid.json'))) {
-      daemonPid = JSON.parse(await fs.readFile(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    }
-    await runCli(['profiles', 'remove', '--profile', 'live', '--confirm-delete', '--home', homeDir, '--json'])
-    if (daemonPid) await stopPid(daemonPid)
-    await fs.rm(tempRoot, { recursive: true, force: true })
   }
 })
 
-async function exerciseProvider({ provider, homeDir }) {
+async function exerciseProvider({ provider, homeDir, profileSlug }) {
   const started = Date.now()
   const entry = { actions: {}, startedAt: new Date().toISOString() }
-  const auth = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'auth.status', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-  const authState = findResponseResult(auth, 'auth.status')?.state
-  assert.equal(authState, 'authenticated', `${provider} must be authenticated`)
-  entry.actions.auth = { state: authState, ms: Date.now() - started }
+  let draftInputConfirmed = false
+  let draftCleared = false
+  try {
+    const auth = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'auth.status', '--home', homeDir, '--timeout-ms', '90000', '--json'])
+    const authState = findResponseResult(auth, 'auth.status')?.state
+    assert.equal(authState, 'authenticated', `${provider} must be authenticated`)
+    entry.actions.auth = { state: authState, ms: Date.now() - started }
 
-  const controls = runJson(['provider-controls', '--profile', 'live', '--provider', provider, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-  const modelInspect = findResponseResult(controls, 'model.inspect')
-  const effortInspect = findResponseResult(controls, 'effort.inspect')
-  assert.equal(modelInspect?.supported, true, `${provider} model inspect must be supported`)
-  assert.ok(selectedChoice(modelInspect), `${provider} model inspect must expose selected model`)
-  entry.actions.modelInspect = inspectSummary(modelInspect)
-  entry.actions.effortInspect = inspectSummary(effortInspect)
+    const controls = runJson(['provider-controls', '--profile', profileSlug, '--provider', provider, '--home', homeDir, '--timeout-ms', '90000', '--json'])
+    const modelInspect = findResponseResult(controls, 'model.inspect')
+    const effortInspect = findResponseResult(controls, 'effort.inspect')
+    assert.equal(modelInspect?.supported, true, `${provider} model inspect must be supported`)
+    assert.ok(selectedChoice(modelInspect), `${provider} model inspect must expose selected model`)
+    entry.actions.modelInspect = inspectSummary(modelInspect)
+    entry.actions.effortInspect = inspectSummary(effortInspect)
 
-  const modelRestore = selectedChoice(modelInspect)
-  const modelAlternate = alternateChoice(modelInspect) ?? modelRestore
-  if (modelAlternate) {
+    const modelRestore = selectedChoice(modelInspect)
+    const modelAlternate = alternateChoice(modelInspect) ?? modelRestore
+    if (modelAlternate) {
+      try {
+        const selected = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'model.select', '--model', modelAlternate.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
+        const selectedResult = findResponseResult(selected, 'model.select')
+        assert.equal(selectedResult?.selectedLabel, modelAlternate.label, `${provider} model select must apply exact label`)
+        entry.actions.modelSelect = { requested: modelAlternate.label, selectedLabel: selectedResult.selectedLabel }
+      } finally {
+        if (modelRestore) {
+          const restored = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'model.select', '--model', modelRestore.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
+          assert.equal(findResponseResult(restored, 'model.select')?.selectedLabel, modelRestore.label, `${provider} model restore must apply exact label`)
+        }
+      }
+    }
+
+    const effortRestore = selectedChoice(effortInspect)
+    const effortAlternate = alternateChoice(effortInspect) ?? effortRestore
+    if (effortInspect?.supported === false) {
+      entry.actions.effortSelect = { supported: false, reason: effortInspect.reason }
+    } else if (effortAlternate) {
+      try {
+        const selected = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'effort.select', '--effort', effortAlternate.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
+        const selectedResult = findResponseResult(selected, 'effort.select')
+        assert.equal(selectedResult?.selectedLabel, effortAlternate.label, `${provider} effort select must apply exact label`)
+        entry.actions.effortSelect = { requested: effortAlternate.label, selectedLabel: selectedResult.selectedLabel }
+      } finally {
+        if (effortRestore) {
+          const restored = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'effort.select', '--effort', effortRestore.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
+          assert.equal(findResponseResult(restored, 'effort.select')?.selectedLabel, effortRestore.label, `${provider} effort restore must apply exact label`)
+        }
+      }
+    }
+
+    const draft = `TOKENLESS_DRAFT_CLEAR_${provider}_${Date.now()}`
+    const input = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'prompt.input', '--prompt', draft, '--home', homeDir, '--timeout-ms', '90000', '--json'])
+    const inputResult = findResponseResult(input, 'prompt.input')
+    assert.deepEqual(inputResult, { visible: true, inputProof: 'prompt-text-visible' }, `${provider} prompt.input must succeed`)
+    draftInputConfirmed = true
+    const clear = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'prompt.clear', '--home', homeDir, '--timeout-ms', '90000', '--json'])
+    const clearResult = findResponseResult(clear, 'prompt.clear')
+    assert.deepEqual(clearResult, { visible: true, inputProof: 'empty' }, `${provider} prompt.clear must succeed`)
+    draftCleared = true
+    entry.actions.draftClear = { visible: clearResult.visible, inputProof: clearResult.inputProof }
+
+    const marker = `TOKENLESS_LIVE_${provider}_${Date.now()}`
+    const upload = await markerUploadFile(provider, marker)
+    let uploadUsesError = null
     try {
-      const selected = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'model.select', '--model', modelAlternate.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-      const selectedResult = findResponseResult(selected, 'model.select')
-      assert.equal(selectedResult?.selectedLabel, modelAlternate.label, `${provider} model select must apply exact label`)
-      entry.actions.modelSelect = { requested: modelAlternate.label, selectedLabel: selectedResult.selectedLabel }
+      const uploadResult = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'file.upload', '--attach-file', upload, '--home', homeDir, '--timeout-ms', '120000', '--json'])
+      entry.actions.fileUpload = {
+        ok: Boolean(findResponseResult(uploadResult, 'file.upload')),
+        markerSha256: sha256String(marker),
+      }
+
+      const run = runJson(['run', '--profile', profileSlug, '--provider', provider, '--task-id', `live-${provider}-${Date.now()}`, '--attach-file', upload, '--prompt', `Reply with marker ${marker} and include any visible citation/source controls if available.`, '--home', homeDir, '--timeout-ms', '240000', '--json'])
+      const responseRead = findResponseResult(run, 'response.read')
+      const runUpload = findResponseResult(run, 'file.upload')
+      assert.match(responseRead?.text ?? '', new RegExp(marker), `${provider} response must correlate marker`)
+      assert.equal(Array.isArray(responseRead?.citations), true, `${provider} response.read must return citations array`)
+      assert.ok(runUpload, `${provider} run must include marker file upload in the same job`)
+      entry.actions.response = {
+        markerMatched: true,
+        textChars: String(responseRead.text).length,
+        citationCount: Array.isArray(responseRead.citations) ? responseRead.citations.length : 0,
+      }
+    } catch (error) {
+      uploadUsesError = error
+      throw error
     } finally {
-      if (modelRestore) {
-        const restored = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'model.select', '--model', modelRestore.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-        assert.equal(findResponseResult(restored, 'model.select')?.selectedLabel, modelRestore.label, `${provider} model restore must apply exact label`)
+      const cleanup = await removeGeneratedUploadFile(upload)
+      entry.cleanup = {
+        ...entry.cleanup,
+        markerUploadFile: cleanup,
+      }
+      if (!cleanup.succeeded && !uploadUsesError) {
+        throw new Error(`${provider} generated marker upload file cleanup failed: ${cleanup.error?.code ?? 'unknown_error'}`)
+      }
+    }
+
+    const navigation = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'navigation.check', '--home', homeDir, '--timeout-ms', '90000', '--json'])
+    entry.actions.navigation = boundedResult(findResponseResult(navigation, 'navigation.check'))
+    assert.equal(entry.actions.navigation.allowed, true, `${provider} navigation must be allowed`)
+
+    const blocker = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'blocker.check', '--home', homeDir, '--timeout-ms', '90000', '--json'])
+    entry.actions.blocker = boundedResult(findResponseResult(blocker, 'blocker.check'))
+    assert.equal(entry.actions.blocker.blocked, false, `${provider} must not be visibly blocked`)
+
+    entry.completedAt = new Date().toISOString()
+    entry.elapsedMs = Date.now() - started
+    return entry
+  } catch (error) {
+    entry.failedAt = new Date().toISOString()
+    entry.elapsedMs = Date.now() - started
+    attachProviderEvidence(error, entry)
+    throw error
+  } finally {
+    if (draftInputConfirmed && !draftCleared) {
+      entry.cleanup = {
+        ...entry.cleanup,
+        promptClear: attemptPromptClearCleanup({ provider, homeDir, profileSlug }),
       }
     }
   }
-
-  const effortRestore = selectedChoice(effortInspect)
-  const effortAlternate = alternateChoice(effortInspect) ?? effortRestore
-  if (effortInspect?.supported === false) {
-    entry.actions.effortSelect = { supported: false, reason: effortInspect.reason }
-  } else if (effortAlternate) {
-    try {
-      const selected = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'effort.select', '--effort', effortAlternate.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-      const selectedResult = findResponseResult(selected, 'effort.select')
-      assert.equal(selectedResult?.selectedLabel, effortAlternate.label, `${provider} effort select must apply exact label`)
-      entry.actions.effortSelect = { requested: effortAlternate.label, selectedLabel: selectedResult.selectedLabel }
-    } finally {
-      if (effortRestore) {
-        const restored = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'effort.select', '--effort', effortRestore.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-        assert.equal(findResponseResult(restored, 'effort.select')?.selectedLabel, effortRestore.label, `${provider} effort restore must apply exact label`)
-      }
-    }
-  }
-
-  const draft = `TOKENLESS_DRAFT_CLEAR_${provider}_${Date.now()}`
-  runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'prompt.input', '--prompt', draft, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-  runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'prompt.clear', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-  entry.actions.draftClear = { ok: true }
-
-  const marker = `TOKENLESS_LIVE_${provider}_${Date.now()}`
-  const upload = await markerUploadFile(homeDir, provider, marker)
-  const uploadResult = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'file.upload', '--attach-file', upload, '--home', homeDir, '--timeout-ms', '120000', '--json'])
-  entry.actions.fileUpload = {
-    ok: Boolean(findResponseResult(uploadResult, 'file.upload')),
-    markerSha256: sha256String(marker),
-  }
-
-  const run = runJson(['run', '--profile', 'live', '--provider', provider, '--task-id', `live-${provider}-${Date.now()}`, '--attach-file', upload, '--prompt', `Reply with marker ${marker} and include any visible citation/source controls if available.`, '--home', homeDir, '--timeout-ms', '240000', '--json'])
-  const responseRead = findResponseResult(run, 'response.read')
-  const runUpload = findResponseResult(run, 'file.upload')
-  assert.match(responseRead?.text ?? '', new RegExp(marker), `${provider} response must correlate marker`)
-  assert.equal(Array.isArray(responseRead?.citations), true, `${provider} response.read must return citations array`)
-  assert.ok(runUpload, `${provider} run must include marker file upload in the same job`)
-  entry.actions.response = {
-    markerMatched: true,
-    textChars: String(responseRead.text).length,
-    citationCount: Array.isArray(responseRead.citations) ? responseRead.citations.length : 0,
-  }
-
-  const navigation = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'navigation.check', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-  entry.actions.navigation = boundedResult(findResponseResult(navigation, 'navigation.check'))
-  assert.equal(entry.actions.navigation.allowed, true, `${provider} navigation must be allowed`)
-
-  const blocker = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'blocker.check', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-  entry.actions.blocker = boundedResult(findResponseResult(blocker, 'blocker.check'))
-  assert.equal(entry.actions.blocker.blocked, false, `${provider} must not be visibly blocked`)
-
-  entry.completedAt = new Date().toISOString()
-  entry.elapsedMs = Date.now() - started
-  return entry
 }
 
 function runJson(args) {
@@ -225,12 +239,73 @@ function boundedResult(result) {
   }))
 }
 
-async function markerUploadFile(homeDir, provider, marker) {
-  const inputDir = path.join(homeDir, 'live-inputs')
+function resolveManagedProfile({ homeDir, profileSlug }) {
+  assert.equal(fsSync.existsSync(homeDir), true, `${homeDir} must already exist`)
+  const payload = runJson(['profiles', 'list', '--home', homeDir, '--json'])
+  const profile = payload.profiles?.find((candidate) => candidate.slug === profileSlug)
+  assert.ok(profile, `${profileSlug} must be registered in ${homeDir}`)
+  assert.equal(profile.lifecycle, 'ready', `${profileSlug} must be ready before the live suite starts`)
+  assert.equal(Boolean(profile.import?.profileDirectoryKey), true, `${profileSlug} must be a user-imported managed profile`)
+  return {
+    slug: profile.slug,
+    id: profile.id,
+    lifecycle: profile.lifecycle,
+    isDefault: profile.isDefault,
+    imported: Boolean(profile.import?.profileDirectoryKey),
+  }
+}
+
+async function markerUploadFile(provider, marker) {
+  const inputDir = path.join(root, 'test-results', 'live-managed-playwright-inputs')
   await fs.mkdir(inputDir, { recursive: true, mode: 0o700 })
-  const file = path.join(inputDir, `${provider}-marker.txt`)
+  const file = path.join(inputDir, `${provider}-${Date.now()}-marker.txt`)
   await fs.writeFile(file, `${marker}\n`, { mode: 0o600 })
   return file
+}
+
+function attemptPromptClearCleanup({ provider, homeDir, profileSlug }) {
+  const cleanup = {
+    attempted: true,
+    succeeded: false,
+  }
+  try {
+    const result = runCli([
+      'provider-action',
+      '--profile', profileSlug,
+      '--provider', provider,
+      '--action', 'prompt.clear',
+      '--home', homeDir,
+      '--timeout-ms', '90000',
+      '--json',
+    ])
+    cleanup.status = result.status
+    cleanup.stdoutBytes = Buffer.byteLength(result.stdout ?? '', 'utf8')
+    cleanup.stderrBytes = Buffer.byteLength(result.stderr ?? '', 'utf8')
+    if (result.status !== 0) return cleanup
+    const clearResult = findResponseResult(JSON.parse(result.stdout), 'prompt.clear')
+    cleanup.succeeded = clearResult?.visible === true && clearResult?.inputProof === 'empty'
+    cleanup.result = clearResult
+      ? { visible: clearResult.visible, inputProof: clearResult.inputProof }
+      : { visible: false, inputProof: 'missing' }
+    return cleanup
+  } catch (error) {
+    cleanup.error = boundedError(error)
+    return cleanup
+  }
+}
+
+async function removeGeneratedUploadFile(file) {
+  const cleanup = {
+    attempted: true,
+    succeeded: false,
+  }
+  try {
+    await fs.unlink(file)
+    cleanup.succeeded = true
+  } catch (error) {
+    cleanup.error = boundedError(error)
+  }
+  return cleanup
 }
 
 function sha256String(value) {
@@ -259,6 +334,19 @@ function truncate(value) {
   return typeof value === 'string' && value.length > 2000 ? `${value.slice(0, 2000)}...[truncated]` : value
 }
 
+function boundedError(error) {
+  return {
+    name: error?.name ?? 'Error',
+    code: typeof error?.code === 'string' ? error.code.slice(0, 64) : 'unknown_error',
+  }
+}
+
+function attachProviderEvidence(error, entry) {
+  if (error && (typeof error === 'object' || typeof error === 'function')) {
+    error.providerEvidence = entry
+  }
+}
+
 async function runtimeVersions() {
   const versions = {
     chrome: null,
@@ -276,20 +364,4 @@ function requiredEnv(name) {
   const value = process.env[name]
   if (!value) throw new Error(`${name} is required`)
   return value
-}
-
-async function stopPid(pid) {
-  try {
-    process.kill(pid, 'SIGTERM')
-  } catch {
-    return
-  }
-  for (let index = 0; index < 60; index += 1) {
-    try {
-      process.kill(pid, 0)
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    } catch {
-      return
-    }
-  }
 }

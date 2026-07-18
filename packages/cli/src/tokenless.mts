@@ -455,6 +455,25 @@ function publicProjectBinding(binding: any) {
 
 async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   assertProfilesCommandArguments(subcommand, args)
+
+  if (subcommand === 'discover') {
+    const roots = await discoverChromeProfiles({
+      ...(args.chromeUserDataDir === undefined ? {} : { userDataDirs: [String(args.chromeUserDataDir)] }),
+    })
+    printPayload({
+      ok: true,
+      roots: roots.map((root) => ({
+        userDataDir: root.userDataDir,
+        profiles: root.profiles.map((profile) => ({
+          directoryKey: profile.directoryKey,
+          name: profile.name,
+          isDefault: profile.isDefault,
+        })),
+      })),
+    }, args)
+    return
+  }
+
   const homeDir = tokenlessHome(args.home)
   const registry = new ManagedProfileRegistry(homeDir)
 
@@ -576,7 +595,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     return
   }
 
-  throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, list, status, open, set-default, or remove.')
+  throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, discover, list, status, open, set-default, or remove.')
 }
 
 function authStateFromManagedResult(value: unknown): 'authenticated' | 'unauthenticated' | 'unknown' | null {
@@ -2168,6 +2187,7 @@ function assertProfilesCommandArguments(subcommand: string | undefined, args: Cl
   const common = ['files', 'home', 'json', 'profile']
   const byCommand: Record<string, string[]> = {
     add: [...common, 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'setDefault'],
+    discover: ['files', 'chromeUserDataDir', 'json'],
     list: ['files', 'home', 'json'],
     status: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
     open: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
@@ -2175,7 +2195,7 @@ function assertProfilesCommandArguments(subcommand: string | undefined, args: Cl
     remove: [...common, 'confirmDelete'],
   }
   if (subcommand === undefined || byCommand[subcommand] === undefined) {
-    throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, list, status, open, set-default, or remove.')
+    throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, discover, list, status, open, set-default, or remove.')
   }
   assertOnlyArguments(args, new Set(byCommand[subcommand]), `profiles ${subcommand}`)
 }
@@ -2608,6 +2628,7 @@ function usage() {
     '  TOKENLESS_DIRECT_SERVER_KEY=... tokenless serve --mode direct [--home <path>] [--host 127.0.0.1] [--port 8788] --json',
     '  tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
     '  tokenless profiles add --profile <slug> --import-chrome-profile <Default|Profile 1> [--chrome-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
+    '  tokenless profiles discover [--chrome-user-data-dir <dir>] --json',
     '  tokenless profiles list --json',
     '  tokenless profiles status|open [--profile <slug>] [--provider <provider>] --json',
     '  tokenless profiles set-default --profile <slug> --json',

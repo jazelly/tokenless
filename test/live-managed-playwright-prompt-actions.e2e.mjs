@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -13,58 +12,41 @@ const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const providers = ['chatgpt', 'claude', 'gemini', 'grok']
 const gates = [
   'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_M1',
-  'TOKENLESS_LIVE_PROFILE_COPY_CONSENT',
-  'TOKENLESS_LIVE_CHROME_PROFILE',
+  'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME',
+  'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE',
 ]
 const liveEnabled = gates.every((key) => (
-  key === 'TOKENLESS_LIVE_CHROME_PROFILE' ? Boolean(process.env[key]) : process.env[key] === '1'
+  key === 'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_M1' ? process.env[key] === '1' : Boolean(process.env[key])
 ))
 
 test('live managed Playwright milestone 1 authenticates then inputs and clears provider drafts only', {
-  skip: liveEnabled ? false : 'set TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_M1=1, TOKENLESS_LIVE_PROFILE_COPY_CONSENT=1, and TOKENLESS_LIVE_CHROME_PROFILE=<profile-key> to run live managed Playwright prompt-action E2E',
+  skip: liveEnabled ? false : `set ${gates.join(', ')} to run live managed Playwright prompt-action E2E`,
   timeout: 900000,
 }, async () => {
-  const chromeProfileKey = requiredEnv('TOKENLESS_LIVE_CHROME_PROFILE')
-  const sourceUserDataDir = process.env.TOKENLESS_LIVE_CHROME_USER_DATA_DIR ||
-    path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
+  const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
+  const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
+  const managedProfile = resolveManagedProfile({ homeDir, profileSlug })
 
-  const tempRoot = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'tokenless-live-managed-playwright-m1-'))
-  const homeDir = path.join(tempRoot, 'home')
   const artifactDir = await createArtifactDir()
   const evidence = {
     protocol: 'tokenless.live-managed-playwright.prompt-actions.evidence.v1',
     startedAt: new Date().toISOString(),
     node: process.version,
     platform: process.platform,
-    chromeProfileImport: {
-      profileKey: chromeProfileKey,
-      sourceUserDataDirHash: sha256String(sourceUserDataDir),
-    },
+    managedProfile,
     providers: {},
   }
-  let daemonPid
   let evidenceWritten = false
 
   try {
-    const added = runCli([
-      'profiles', 'add',
-      '--profile', 'milestone-1',
-      '--import-chrome-profile', chromeProfileKey,
-      '--chrome-user-data-dir', sourceUserDataDir,
-      '--consent-local-profile-copy',
-      '--set-default',
-      '--home', homeDir,
-      '--json',
-    ])
-    assert.equal(added.status, 0, summarizeProcess(added))
-    const addPayload = JSON.parse(added.stdout)
-    evidence.chromeProfileImport.copiedFiles = addPayload.import?.copiedFiles ?? null
-    evidence.chromeProfileImport.syncDisabled = addPayload.import?.syncDisabled === true
-    await installCurrentWorkspaceDaemon(homeDir)
-
     assert.deepEqual(providers, ['chatgpt', 'claude', 'gemini', 'grok'])
     for (const provider of providers) {
-      evidence.providers[provider] = exerciseProvider({ provider, homeDir })
+      try {
+        evidence.providers[provider] = exerciseProvider({ provider, homeDir, profileSlug })
+      } catch (error) {
+        if (error?.providerEvidence) evidence.providers[provider] = error.providerEvidence
+        throw error
+      }
     }
 
     evidence.completedAt = new Date().toISOString()
@@ -74,14 +56,10 @@ test('live managed Playwright milestone 1 authenticates then inputs and clears p
     if (!evidenceWritten) {
       await writeArtifact(artifactDir, 'prompt-actions.partial.json', evidence).catch(() => undefined)
     }
-    daemonPid = await readDaemonPid(homeDir)
-    await runCli(['profiles', 'remove', '--profile', 'milestone-1', '--confirm-delete', '--home', homeDir, '--json'])
-    if (daemonPid) await stopPid(daemonPid)
-    await fs.rm(tempRoot, { recursive: true, force: true })
   }
 })
 
-function exerciseProvider({ provider, homeDir }) {
+function exerciseProvider({ provider, homeDir, profileSlug }) {
   const started = Date.now()
   const marker = `TOKENLESS_M1_DRAFT_${provider}_${randomUUID()}`
   const entry = {
@@ -90,50 +68,99 @@ function exerciseProvider({ provider, homeDir }) {
     markerBytes: Buffer.byteLength(marker, 'utf8'),
     actions: {},
   }
+  let promptInputConfirmed = false
+  let promptCleared = false
 
-  const auth = runJson([
-    'provider-action',
-    '--profile', 'milestone-1',
-    '--provider', provider,
-    '--action', 'auth.status',
-    '--home', homeDir,
-    '--timeout-ms', '90000',
-    '--json',
-  ])
-  const authResult = findResponseResult(auth, 'auth.status')
-  assert.equal(authResult?.state, 'authenticated', `${provider} must be authenticated before prompt mutation`)
-  entry.actions.auth = { state: authResult.state, visibleProof: authResult.visibleProof }
+  try {
+    const auth = runJson([
+      'provider-action',
+      '--profile', profileSlug,
+      '--provider', provider,
+      '--action', 'auth.status',
+      '--home', homeDir,
+      '--timeout-ms', '90000',
+      '--json',
+    ])
+    const authResult = findResponseResult(auth, 'auth.status')
+    assert.equal(authResult?.state, 'authenticated', `${provider} must be authenticated before prompt mutation`)
+    entry.actions.auth = { state: authResult.state, visibleProof: authResult.visibleProof }
 
-  const input = runJson([
-    'provider-action',
-    '--profile', 'milestone-1',
-    '--provider', provider,
-    '--action', 'prompt.input',
-    '--prompt', marker,
-    '--home', homeDir,
-    '--timeout-ms', '90000',
-    '--json',
-  ])
-  const inputResult = findResponseResult(input, 'prompt.input')
-  assert.deepEqual(inputResult, { visible: true, inputProof: 'prompt-text-visible' }, `${provider} prompt.input must succeed`)
-  entry.actions.input = { visible: inputResult.visible, inputProof: inputResult.inputProof }
+    const input = runJson([
+      'provider-action',
+      '--profile', profileSlug,
+      '--provider', provider,
+      '--action', 'prompt.input',
+      '--prompt', marker,
+      '--home', homeDir,
+      '--timeout-ms', '90000',
+      '--json',
+    ])
+    const inputResult = findResponseResult(input, 'prompt.input')
+    assert.deepEqual(inputResult, { visible: true, inputProof: 'prompt-text-visible' }, `${provider} prompt.input must succeed`)
+    promptInputConfirmed = true
+    entry.actions.input = { visible: inputResult.visible, inputProof: inputResult.inputProof }
 
-  const clear = runJson([
-    'provider-action',
-    '--profile', 'milestone-1',
-    '--provider', provider,
-    '--action', 'prompt.clear',
-    '--home', homeDir,
-    '--timeout-ms', '90000',
-    '--json',
-  ])
-  const clearResult = findResponseResult(clear, 'prompt.clear')
-  assert.deepEqual(clearResult, { visible: true, inputProof: 'empty' }, `${provider} prompt.clear must succeed`)
-  entry.actions.clear = { visible: clearResult.visible, inputProof: clearResult.inputProof }
+    const clear = runJson([
+      'provider-action',
+      '--profile', profileSlug,
+      '--provider', provider,
+      '--action', 'prompt.clear',
+      '--home', homeDir,
+      '--timeout-ms', '90000',
+      '--json',
+    ])
+    const clearResult = findResponseResult(clear, 'prompt.clear')
+    assert.deepEqual(clearResult, { visible: true, inputProof: 'empty' }, `${provider} prompt.clear must succeed`)
+    promptCleared = true
+    entry.actions.clear = { visible: clearResult.visible, inputProof: clearResult.inputProof }
 
-  entry.completedAt = new Date().toISOString()
-  entry.elapsedMs = Date.now() - started
-  return entry
+    entry.completedAt = new Date().toISOString()
+    entry.elapsedMs = Date.now() - started
+    return entry
+  } catch (error) {
+    entry.failedAt = new Date().toISOString()
+    entry.elapsedMs = Date.now() - started
+    attachProviderEvidence(error, entry)
+    throw error
+  } finally {
+    if (promptInputConfirmed && !promptCleared) {
+      entry.cleanup = {
+        ...entry.cleanup,
+        promptClear: attemptPromptClearCleanup({ provider, homeDir, profileSlug }),
+      }
+    }
+  }
+}
+
+function attemptPromptClearCleanup({ provider, homeDir, profileSlug }) {
+  const cleanup = {
+    attempted: true,
+    succeeded: false,
+  }
+  try {
+    const result = runCli([
+      'provider-action',
+      '--profile', profileSlug,
+      '--provider', provider,
+      '--action', 'prompt.clear',
+      '--home', homeDir,
+      '--timeout-ms', '90000',
+      '--json',
+    ])
+    cleanup.status = result.status
+    cleanup.stdoutBytes = Buffer.byteLength(result.stdout ?? '', 'utf8')
+    cleanup.stderrBytes = Buffer.byteLength(result.stderr ?? '', 'utf8')
+    if (result.status !== 0) return cleanup
+    const clearResult = findResponseResult(JSON.parse(result.stdout), 'prompt.clear')
+    cleanup.succeeded = clearResult?.visible === true && clearResult?.inputProof === 'empty'
+    cleanup.result = clearResult
+      ? { visible: clearResult.visible, inputProof: clearResult.inputProof }
+      : { visible: false, inputProof: 'missing' }
+    return cleanup
+  } catch (error) {
+    cleanup.error = boundedError(error)
+    return cleanup
+  }
 }
 
 function runJson(args) {
@@ -157,6 +184,22 @@ function findResponseResult(payload, action) {
   return [...responses].reverse().find((response) => response?.ok === true && response.action === action)?.result ?? null
 }
 
+function resolveManagedProfile({ homeDir, profileSlug }) {
+  assert.equal(fsSync.existsSync(homeDir), true, `${homeDir} must already exist`)
+  const payload = runJson(['profiles', 'list', '--home', homeDir, '--json'])
+  const profile = payload.profiles?.find((candidate) => candidate.slug === profileSlug)
+  assert.ok(profile, `${profileSlug} must be registered in ${homeDir}`)
+  assert.equal(profile.lifecycle, 'ready', `${profileSlug} must be ready before the live suite starts`)
+  assert.equal(Boolean(profile.import?.profileDirectoryKey), true, `${profileSlug} must be a user-imported managed profile`)
+  return {
+    slug: profile.slug,
+    id: profile.id,
+    lifecycle: profile.lifecycle,
+    isDefault: profile.isDefault,
+    imported: Boolean(profile.import?.profileDirectoryKey),
+  }
+}
+
 async function createArtifactDir() {
   const dir = path.join(root, 'test-results', 'live-managed-playwright-m1', new Date().toISOString().replace(/[:.]/g, '-'))
   await fs.mkdir(dir, { recursive: true, mode: 0o700 })
@@ -165,26 +208,6 @@ async function createArtifactDir() {
 
 async function writeArtifact(dir, name, value) {
   await fs.writeFile(path.join(dir, name), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
-}
-
-async function installCurrentWorkspaceDaemon(homeDir) {
-  const executable = process.platform === 'win32' ? 'tokenless-daemon.exe' : 'tokenless-daemon'
-  const packageName = `tokenless-native-${process.platform}-${process.arch}`
-  const source = path.join(root, 'packages', 'cli', 'npm', packageName, 'bin', executable)
-  const destination = path.join(homeDir, 'bin', executable)
-  await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
-  await fs.copyFile(source, destination)
-  if (process.platform !== 'win32') await fs.chmod(destination, 0o755)
-}
-
-async function readDaemonPid(homeDir) {
-  const marker = path.join(homeDir, 'daemon.pid.json')
-  if (!fsSync.existsSync(marker)) return null
-  try {
-    return JSON.parse(await fs.readFile(marker, 'utf8')).pid ?? null
-  } catch {
-    return null
-  }
 }
 
 function summarizeProcess(result) {
@@ -199,6 +222,19 @@ function truncate(value) {
   return typeof value === 'string' && value.length > 2000 ? `${value.slice(0, 2000)}...[truncated]` : value
 }
 
+function boundedError(error) {
+  return {
+    name: error?.name ?? 'Error',
+    code: typeof error?.code === 'string' ? error.code.slice(0, 64) : 'unknown_error',
+  }
+}
+
+function attachProviderEvidence(error, entry) {
+  if (error && (typeof error === 'object' || typeof error === 'function')) {
+    error.providerEvidence = entry
+  }
+}
+
 function sha256String(value) {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -207,20 +243,4 @@ function requiredEnv(name) {
   const value = process.env[name]
   if (!value) throw new Error(`${name} is required`)
   return value
-}
-
-async function stopPid(pid) {
-  try {
-    process.kill(pid, 'SIGTERM')
-  } catch {
-    return
-  }
-  for (let index = 0; index < 60; index += 1) {
-    try {
-      process.kill(pid, 0)
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    } catch {
-      return
-    }
-  }
 }
