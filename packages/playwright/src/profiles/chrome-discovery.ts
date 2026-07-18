@@ -17,6 +17,12 @@ export type ChromeUserDataRoot = {
   profiles: readonly ChromeProfileCandidate[]
 }
 
+export type ManagedChromiumBrowserId = 'chrome' | 'brave'
+
+export type ChromiumUserDataRoot = ChromeUserDataRoot & {
+  browser: ManagedChromiumBrowserId
+}
+
 export function standardChromeUserDataDirs(osPlatform = platform(), home = homedir(), env = process.env): string[] {
   if (osPlatform === 'darwin') return [join(home, 'Library', 'Application Support', 'Google', 'Chrome')]
   if (osPlatform === 'win32') {
@@ -29,8 +35,39 @@ export function standardChromeUserDataDirs(osPlatform = platform(), home = homed
   ]
 }
 
+export function standardChromiumUserDataDirs(
+  browser: ManagedChromiumBrowserId,
+  osPlatform = platform(),
+  home = homedir(),
+  env = process.env
+): string[] {
+  if (browser === 'chrome') return standardChromeUserDataDirs(osPlatform, home, env)
+  if (osPlatform === 'darwin') {
+    return [join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser')]
+  }
+  if (osPlatform === 'win32') {
+    const localAppData = env.LOCALAPPDATA
+    return localAppData ? [join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data')] : []
+  }
+  return [
+    join(home, '.config', 'BraveSoftware', 'Brave-Browser'),
+    join(home, '.config', 'brave'),
+  ]
+}
+
 export async function discoverChromeProfiles(options: { userDataDirs?: readonly string[] } = {}): Promise<ChromeUserDataRoot[]> {
-  const roots = options.userDataDirs ?? standardChromeUserDataDirs()
+  const roots = await discoverChromiumProfiles({
+    browser: 'chrome',
+    ...(options.userDataDirs ? { userDataDirs: options.userDataDirs } : {}),
+  })
+  return roots.map(({ userDataDir, profiles }) => ({ userDataDir, profiles }))
+}
+
+export async function discoverChromiumProfiles(options: {
+  browser: ManagedChromiumBrowserId
+  userDataDirs?: readonly string[]
+}): Promise<ChromiumUserDataRoot[]> {
+  const roots = options.userDataDirs ?? standardChromiumUserDataDirs(options.browser)
   const discovered: ChromeUserDataRoot[] = []
   for (const root of roots) {
     const userDataDir = resolve(root)
@@ -53,7 +90,7 @@ export async function discoverChromeProfiles(options: { userDataDirs?: readonly 
       throw error
     }
   }
-  return discovered
+  return discovered.map((root) => ({ ...root, browser: options.browser }))
 }
 
 export async function resolveChromeProfile(userDataDir: string, directoryKey: string): Promise<ChromeProfileCandidate> {

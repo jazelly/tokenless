@@ -7,32 +7,24 @@ Use the AI web subscriptions you already have from any agent through one local C
 ## Why Tokenless
 
 - **Save tokens first.** Reuse web subscriptions for research, drafting, review, explanation, and transformations instead of paying for another model API call.
-- **Safe, visible browser automation.** Playwright operates the normal provider website, keeps sign-in state inside a managed local Chrome profile, and verifies visible outcomes.
+- **Safe, visible browser automation.** Playwright operates the normal provider website, keeps sign-in state inside a managed local Chromium profile, and verifies visible outcomes.
 - **Free, MIT-licensed, and local.** Tokenless runs on your machine. Browser profiles and sessions remain local; only prompts and files you select go to the chosen provider.
 - **One interface across providers.** Agents use the same actions for ChatGPT, Claude, Gemini, and Grok while Tokenless handles their different pages and controls.
 - **Built for complete workflows.** The unified contract covers models, effort controls, files, prompts, responses, citations, projects, tools, and multimodal work.
 
 ## Install
 
-Requires Node.js 24.15+ and Google Chrome.
+Requires Node.js 24.15+ and a supported Chromium browser such as Google Chrome or Brave.
 
 ### npm (recommended)
 
 ```bash
 npm install --global tokenless@latest
-tokenless setup --json
+tokenless setup
 tokenless doctor --json
 ```
 
-### Agent skill (required for agent use)
-
-Install the maintenance skill so your agent can set up, upgrade, repair, and verify Tokenless:
-
-```bash
-npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless-install --yes
-```
-
-Then tell your agent:
+`tokenless setup` installs and verifies both Tokenless agent skills directly from the canonical GitHub repository. Then tell your agent:
 
 ```text
 Use $tokenless-install to install or upgrade Tokenless, install its main skill, and run doctor.
@@ -43,7 +35,7 @@ Use $tokenless-install to install or upgrade Tokenless, install its main skill, 
 Without a global install:
 
 ```bash
-npx tokenless@latest setup --json
+npx tokenless@latest setup
 npx tokenless@latest doctor --json
 ```
 
@@ -53,7 +45,7 @@ System-wide installer:
 curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
 ```
 
-This executes with `sudo`; [review the script first](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh). Run `tokenless setup --json` and `tokenless doctor --json` afterward as your normal desktop user.
+This executes with `sudo`; [review the script first](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh). Run `tokenless setup` and `tokenless doctor --json` afterward as your normal desktop user.
 
 ## Quick Start
 
@@ -80,22 +72,23 @@ Roadmap items are not yet compatibility guarantees.
 
 ## How Tokenless Works
 
-`Agent → CLI or local API → tokenless-daemon → Playwright worker → managed Chrome profile → visible provider website`
+`Agent → CLI or local API → tokenless-daemon → Playwright worker → managed browser profile → visible provider website`
 
-`tokenless setup` creates a persistent local Chrome profile and opens a provider when sign-in is needed. Later runs reuse that profile. Tokenless translates provider-neutral actions into the correct visible controls and returns a consistent result.
+`tokenless setup` is the canonical interactive onboarding flow. It installs and verifies the agent skills, detects installed supported browsers, lets the user select or explicitly re-import a managed profile, records preferred providers, starts the daemon and Playwright worker, opens provider sign-in pages, and reports visible readiness. Later runs and live tests reuse that managed profile without importing it again.
 
 ### Managed profiles
 
 A managed profile is one reusable local browser identity. Use one profile for sessions across several providers, or separate profiles for multiple accounts.
 
 ```bash
-tokenless profiles discover --json
-tokenless profiles add --profile work --import-chrome-profile "Profile 1" --consent-local-profile-copy --set-default
+tokenless profiles discover --browser chrome --json
+tokenless profiles discover --browser brave --json
+tokenless profiles add --profile work --browser chrome --import-browser-profile "Profile 1" --consent-local-profile-copy --set-default
 tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude
 ```
 
-`profiles discover` is read-only: it lists local Chrome roots and exact profile directory keys without copying data or creating Tokenless profiles. Importing an existing Chrome profile is a one-time user setup operation that requires explicit consent; use `tokenless profiles add --profile work --set-default` for a clean managed profile. Jobs and live tests reuse the already-managed profile until you explicitly remove it.
+`profiles discover` is read-only: it lists local Chrome or Brave roots and exact profile directory keys without copying data or creating Tokenless profiles. Importing an existing browser profile is an explicit user configuration operation; setup never refreshes it automatically. Jobs and live tests reuse the already-managed profile until the user explicitly re-imports or removes it.
 
 ### Interfaces and modes
 
@@ -109,7 +102,7 @@ The CLI and local API are two interfaces to the same Playwright automation. Dire
 
 ## Privacy and Safety
 
-- Playwright runs locally with visible, persistent Google Chrome profiles.
+- Playwright runs locally with visible, persistent managed Chromium profiles.
 - Authentication state remains opaque inside the selected managed profile.
 - Automation uses visible page controls and checks the visible result of each action.
 - CAPTCHA, sign-in, plan limits, consent, and confirmations remain under user control.

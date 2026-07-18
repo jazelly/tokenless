@@ -5,6 +5,7 @@ import {
   PersistentContextManager,
   TokenlessPlaywrightError,
   chromeLaunchOptions,
+  managedBrowserLaunchOptions,
 } from '../packages/playwright/dist/src/index.js'
 
 test('persistent context manager serializes same-profile work and launches Chrome persistently', async () => {
@@ -129,6 +130,15 @@ test('Chrome launch options preserve imported OS credential state without exposi
     '--password-store=basic',
     '--use-mock-keychain',
   ])
+  assert.equal(options.args.some((arg) => /remote-debugging/i.test(arg)), false)
+})
+
+test('managed Brave launch uses the selected executable with the same visible persistent safety options', () => {
+  const options = managedBrowserLaunchOptions({ id: 'brave', executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser' })
+  assert.equal(options.channel, undefined)
+  assert.equal(options.executablePath, '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser')
+  assert.equal(options.headless, false)
+  assert.ok(options.args.includes('--disable-sync'))
   assert.equal(options.args.some((arg) => /remote-debugging/i.test(arg)), false)
 })
 

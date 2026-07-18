@@ -10,7 +10,7 @@ test('tokenless skill stops on waiting_for_user and preserves the same daemon jo
   const skill = await fs.readFile(path.join(root, 'skills/tokenless/SKILL.md'), 'utf8')
 
   assert.match(skill, /waiting_for_user/)
-  assert.match(skill, /already-open Chrome/)
+  assert.match(skill, /already-open managed browser/)
   assert.match(skill, /same `jobId`\/`taskId`/)
   assert.match(skill, /never retry, reimport, resubmit, or create a replacement job/)
   assert.match(skill, /Do not claim completion until the daemon reports `succeeded`/)
@@ -22,5 +22,5 @@ test('CLI state contract exposes daemon blocker_json instead of hiding waiting s
   assert.match(cli, /blocker:\s*job\.blocker_json/)
   assert.match(cli, /state:\s*{[\s\S]*blocker:\s*job\.blocker_json/)
   assert.match(cli, /waiting_for_user/)
-  assert.match(cli, /Visible Chrome is open/)
+  assert.match(cli, /visible managed browser is open/i)
 })

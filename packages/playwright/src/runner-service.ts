@@ -3,6 +3,7 @@ import path from 'node:path'
 import { errorResponse, tokenlessError } from './errors.js'
 import { createProviderAdapterRegistry } from './adapters/index.js'
 import { PersistentContextManager } from './browser/context-manager.js'
+import type { ManagedBrowserLaunchTarget } from './browser/context-manager.js'
 import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
@@ -27,6 +28,7 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   profileRegistry?: ManagedProfileSource | undefined
   daemonClient?: ManagedDaemonClient | undefined
   contextManager?: PersistentContextManagerType | undefined
+  browser?: ManagedBrowserLaunchTarget | undefined
   adapterRegistry?: ProviderAdapterRegistry | undefined
   pollIdleMs?: number | undefined
   renewIntervalMs?: number | undefined
@@ -96,7 +98,9 @@ export class ManagedPlaywrightRunnerService {
   constructor(options: ManagedPlaywrightRunnerServiceOptions) {
     this.profileRegistry = options.profileRegistry ?? new ManagedProfileRegistry(options.homeDir)
     this.daemonClient = options.daemonClient ?? createDaemonClient()
-    this.contextManager = options.contextManager ?? new PersistentContextManager()
+    this.contextManager = options.contextManager ?? new PersistentContextManager({
+      ...(options.browser ? { browser: options.browser } : {}),
+    })
     this.adapterRegistry = options.adapterRegistry ?? createProviderAdapterRegistry()
     this.pollIdleMs = normalizedPositiveInteger(options.pollIdleMs, DEFAULT_POLL_IDLE_MS)
     this.renewIntervalMs = normalizedPositiveInteger(options.renewIntervalMs, DEFAULT_RENEW_INTERVAL_MS)
@@ -602,7 +606,7 @@ function blockerPayload(job: DaemonClaimedJob, blockers: readonly VisibleBlocker
     blocker: primary,
     blockers,
     userAction: {
-      message: 'Visible Chrome is open. Manually complete the provider verification or sign-in there; Tokenless will resume the same unfinished action after the composer is stable.',
+      message: 'The visible managed browser is open. Manually complete the provider verification or sign-in there; Tokenless will resume the same unfinished action after the composer is stable.',
     },
   }
 }

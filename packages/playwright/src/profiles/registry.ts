@@ -27,6 +27,7 @@ export type ManagedProfileRecord = {
     source: string
     profileDirectoryKey: string
     importedAt: string
+    browser?: string | undefined
   }
   lastObservedAuth: Partial<Record<ProviderId, ProviderStatus>>
 }
@@ -187,7 +188,7 @@ export class ManagedProfileRegistry {
     })
   }
 
-  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; importedAt?: string }): Promise<ManagedProfileRecord> {
+  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; importedAt?: string; browser?: string }): Promise<ManagedProfileRecord> {
     return await this.withWriteLock(async () => {
       const data = await this.readUnlocked()
       const record = data.profiles[normalizeSlug(slug)]
@@ -201,6 +202,7 @@ export class ManagedProfileRegistry {
           source: imported.source.slice(0, 512),
           profileDirectoryKey: imported.profileDirectoryKey.slice(0, 128),
           importedAt: imported.importedAt === undefined ? now : parseIso(imported.importedAt),
+          ...(imported.browser ? { browser: normalizeImportedBrowser(imported.browser) } : {}),
         },
       }
       data.profiles[updated.slug] = updated
@@ -354,6 +356,7 @@ function parseImportMetadata(value: unknown): Pick<ManagedProfileRecord, 'import
       source: value.source.slice(0, 512),
       profileDirectoryKey: value.profileDirectoryKey.slice(0, 128),
       importedAt: parseIso(value.importedAt),
+      ...(typeof value.browser === 'string' ? { browser: normalizeImportedBrowser(value.browser) } : {}),
     },
   }
 }
@@ -365,6 +368,14 @@ function normalizeLabel(label: string | undefined, fallback: string) {
     throw tokenlessError('invalid_profile_label', 'Managed profile label is invalid.')
   }
   return normalized
+}
+
+function normalizeImportedBrowser(value: string) {
+  const browser = value.trim().toLowerCase()
+  if (!['chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing'].includes(browser)) {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile import browser is invalid.')
+  }
+  return browser
 }
 
 function emptyRegistry(): ManagedProfileRegistryData {

@@ -8,9 +8,11 @@ import {
   TokenlessPlaywrightError,
   assertSourceUnchanged,
   discoverChromeProfiles,
+  discoverChromiumProfiles,
   importChromeProfile,
   resolveChromeProfile,
   shouldCopyChromeEntry,
+  standardChromiumUserDataDirs,
 } from '../packages/playwright/dist/src/index.js'
 
 test('Chrome discovery enumerates exact directory keys from Local State', async () => {
@@ -22,6 +24,17 @@ test('Chrome discovery enumerates exact directory keys from Local State', async 
   const profile = await resolveChromeProfile(root, 'Profile 1')
   assert.equal(profile.name, 'Work')
   await assert.rejects(() => resolveChromeProfile(root, '../Default'), matchCode('invalid_chrome_profile_key'))
+})
+
+test('Brave discovery uses its platform root and the same exact profile-directory contract', async () => {
+  assert.deepEqual(
+    standardChromiumUserDataDirs('brave', 'darwin', '/Users/example', {}),
+    ['/Users/example/Library/Application Support/BraveSoftware/Brave-Browser']
+  )
+  const root = await fakeChromeRoot()
+  const discovered = await discoverChromiumProfiles({ browser: 'brave', userDataDirs: [root] })
+  assert.equal(discovered[0].browser, 'brave')
+  assert.deepEqual(discovered[0].profiles.map((profile) => profile.directoryKey), ['Default', 'Profile 1'])
 })
 
 test('Chrome import copies opaque auth state, excludes private browsing data, disables sync, and leaves source unchanged', async () => {

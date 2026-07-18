@@ -14,7 +14,7 @@ the target architecture.
 
 Visible mode will replace the Native Messaging host and browser extension with
 a daemon-backed Playwright worker. The worker will control visible, persistent
-Google Chrome profiles below `~/.tokenless/browser/profiles/`. A named profile
+managed Chromium profiles below `~/.tokenless/browser/profiles/`. A named profile
 represents one browser identity such as `personal` or `work` and may hold one
 session for every supported provider. Multiple accounts for the same provider
 use different named profiles.
@@ -29,12 +29,12 @@ release path before this migration is complete.
 flowchart LR
     A["CLI or local client"] --> B["Tokenless daemon"]
     B --> C["Local Playwright worker"]
-    C --> D["Named persistent Chrome profile"]
+    C --> D["Named persistent browser profile"]
     D --> E["Provider Playwright adapter"]
     E --> F["Visible provider DOM"]
 
-    G["Consented local Chrome profile copy"] --> D
-    H["Authorized live Chrome acceptance"] --> I["Redacted evidence and fixtures"]
+    G["Consented local browser profile copy"] --> D
+    H["Authorized live browser acceptance"] --> I["Redacted evidence and fixtures"]
     I --> E
 ```
 
@@ -49,7 +49,7 @@ Add the following profile administration commands:
 
 ```text
 tokenless profiles add --profile <slug> [--label <text>] [--set-default]
-tokenless profiles discover [--chrome-user-data-dir <dir>] --json
+tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json
 tokenless profiles list
 tokenless profiles status --profile <slug> [--provider <id>]
 tokenless profiles open --profile <slug> [--provider <id>]
@@ -62,14 +62,16 @@ provider status, and `snapshot-dom`, accepts `--profile <slug>`. Selection uses
 the explicit profile first and then the configured default. It fails before job
 creation when neither resolves to a registered profile.
 
-`tokenless profiles discover --json` is read-only and lists local Chrome roots
+`tokenless profiles discover --json` is read-only and lists local Chrome or Brave roots
 with exact profile directory keys; it does not create a Tokenless profile,
-copy profile data, or touch the managed-profile registry. `tokenless setup`
-creates and selects profile `default` when no profile exists, starts the
-worker, opens the preferred provider pages, and reports visible authentication
-state. JSON or noninteractive setup creates a clean profile unless both
-`--import-chrome-profile <directory-key>` and
-`--consent-local-profile-copy` are supplied.
+copy profile data, or touch the managed-profile registry. `tokenless setup` is
+the canonical interactive onboarding entry: it installs and checks the two
+GitHub-backed Tokenless skills, detects installed browsers, asks the user to
+select or explicitly re-import a managed profile, records preferred providers,
+starts the daemon and worker, opens provider pages, and reports visible
+authentication readiness. Noninteractive initial setup must explicitly choose
+either `--clean-profile` or both `--import-browser-profile <directory-key>` and
+`--consent-local-profile-copy`.
 
 Store bounded profile metadata in `~/.tokenless/browser/profiles.json`, guarded
 by the existing cross-process SQLite lock. Public profile slugs never become
@@ -84,38 +86,41 @@ than requiring another storage migration.
 
 ### Consented profile import
 
-Importing a Chrome profile is an explicit, one-time user setup operation. The
+Importing a browser profile is an explicit user setup operation. The
 consent UI names the exact source and destination, explains that authentication
 state may be copied, and states that the copy remains entirely local and is
 never sent to Tokenless or another remote service. Jobs and live tests reuse the
 already-imported managed profile indefinitely; they must not re-import, refresh,
-copy from Chrome, or remove that managed profile.
+copy from the source browser, or remove that managed profile. A later re-import
+occurs only when the user explicitly selects it in setup or passes the explicit
+re-import flags.
 
 The implementation must:
 
-- use installed Google Chrome through `playwright-core`, `channel: "chrome"`,
-  `headless: false`, and a non-default persistent user-data directory;
-- discover the source root and profile directory from platform-standard Chrome
+- use installed Chrome through `playwright-core`, `channel: "chrome"`, or the
+  selected Brave executable, always with `headless: false` and a non-default
+  persistent user-data directory;
+- discover the source root and profile directory from platform-standard browser
   locations and `Local State`, using an exact directory key such as `Default`
   or `Profile 1` rather than an ambiguous display name;
-- require Google Chrome to be fully closed before copying and fall back to a
-  clean managed profile when source quiescence cannot be established;
+- permit a best-effort read-only copy while the source browser is open; setup
+  does not claim source quiescence or snapshot consistency, and an unusable copy
+  is reported for explicit user recovery;
 - copy into a private staging directory, reject links and path escapes, never
   mutate the source, and atomically promote a complete result;
 - copy root encryption metadata and opaque authentication-relevant profile
   state without parsing credential databases;
 - exclude caches, crash data, downloads, browsing history, bookmarks, saved
   passwords, autofill/payment databases, and installed extensions;
-- disable Chrome sync in the managed clone so it cannot change the user's
+- disable browser sync in the managed clone so it cannot change the user's
   ordinary synced profile; and
 - delete incomplete staging data on every failure.
 
-After import, Tokenless verifies only visible provider DOM. If at least one
-requested provider remains authenticated, it keeps the partial success and
-opens visible sign-in pages only for providers that remain logged out. If the
-copy fails or no requested session survives, it deletes the clone and creates a
-clean persistent profile. Reauthentication in that profile is the supported
-fallback and persists across future runs.
+After import, Tokenless verifies only visible provider DOM. It keeps the managed
+profile and opens visible sign-in pages for providers that remain logged out.
+Copy failure is reported rather than silently switching execution paths or
+creating a replacement profile. Reauthentication in the selected managed
+profile persists across future runs.
 
 Profile data remains until explicit removal. Removal first stops the exact
 managed browser, resolves and verifies its registered UUID directory beneath
