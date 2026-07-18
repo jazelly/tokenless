@@ -53,6 +53,42 @@ test('runner polls all registered profiles with exact Playwright/profile scoping
   assert.equal(adapterCalls[0].context.operationId, 'job-b')
 })
 
+test('runner brings the provider target page to the foreground for navigation checks only', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeForegroundPage()
+  const daemon = new FakeDaemon([
+    fakeJob('job-foreground', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: VISIBLE_ACTIONS.NAVIGATION_CHECK, payload: {} }],
+    })),
+    fakeJob('job-background-auth', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+    })),
+  ])
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    adapterRegistry: fakeAdapterRegistry(),
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-foreground', status: 'succeeded' })
+  assert.deepEqual(page.events, [
+    ['goto', 'https://chatgpt.com/', { waitUntil: 'domcontentloaded' }],
+    ['bringToFront'],
+  ])
+
+  page.events = []
+  const authResult = await service.runOnce()
+  assert.deepEqual(authResult, { claimed: true, jobId: 'job-background-auth', status: 'succeeded' })
+  assert.deepEqual(page.events, [
+    ['goto', 'https://chatgpt.com/', { waitUntil: 'domcontentloaded' }],
+  ])
+})
+
 test('runner leaves additional profile jobs queued when four persistent contexts are already active', async () => {
   const profiles = fakeProfiles(['profile-0', 'profile-1', 'profile-2', 'profile-3', 'profile-4'])
   const manager = fakeContextManager()
@@ -199,6 +235,83 @@ test('runner parks on visible user-resolvable blocker and resumes unfinished act
   assert.equal(daemon.renewals.length > 0, true)
   assert.deepEqual(adapterEvents.map((event) => event.action), [VISIBLE_ACTIONS.PROMPT_INPUT, VISIBLE_ACTIONS.PROMPT_SUBMIT])
   assert.equal(adapterEvents.every((event) => event.page === page), true)
+})
+
+test('runner preserves auth status as an immediate check without user handover gating', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeHandoverPage()
+  const daemon = new FakeDaemon([
+    fakeJob('job-auth-handover', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+    })),
+  ])
+  const adapterEvents = []
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    adapterRegistry: fakeAdapterRegistry(async (_actionPage, request) => {
+      adapterEvents.push(request.action)
+      return successResponse(request, { state: 'authenticated', visibleProof: 'authenticated-control-visible' })
+    }),
+    renewIntervalMs: 5,
+    userHandoverTimeoutMs: 500,
+    userHandoverPollMs: 5,
+    cancelPollMs: 1000,
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-auth-handover', status: 'succeeded' })
+  assert.equal(daemon.waiting.length, 0)
+  assert.deepEqual(daemon.running, ['job-auth-handover'])
+  assert.deepEqual(adapterEvents, [VISIBLE_ACTIONS.AUTH_STATUS])
+})
+
+test('runner gates setup readiness navigation checks and resumes auth in the same job', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeHandoverPage()
+  const daemon = new FakeDaemon([
+    fakeJob('job-setup-readiness', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [
+        { action: VISIBLE_ACTIONS.NAVIGATION_CHECK, payload: {} },
+        { action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} },
+      ],
+    })),
+  ])
+  const adapterEvents = []
+  daemon.onWaiting = () => {
+    assert.equal(adapterEvents.length, 0, 'runner must not inspect readiness while waiting for user')
+    setTimeout(() => {
+      page.rawBlockers = []
+      page.composerVisible = true
+    }, 25)
+  }
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    adapterRegistry: fakeAdapterRegistry(async (_actionPage, request) => {
+      adapterEvents.push(request.action)
+      return successResponse(request, request.action === VISIBLE_ACTIONS.AUTH_STATUS
+        ? { state: 'authenticated', visibleProof: 'authenticated-control-visible' }
+        : { allowed: true, provider: 'chatgpt', reason: null })
+    }),
+    renewIntervalMs: 5,
+    userHandoverTimeoutMs: 500,
+    userHandoverPollMs: 5,
+    cancelPollMs: 1000,
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-setup-readiness', status: 'succeeded' })
+  assert.equal(daemon.waiting.length, 1)
+  assert.equal(daemon.waiting[0].blocker.blocker.code, 'visible_recaptcha')
+  assert.deepEqual(daemon.running, ['job-setup-readiness', 'job-setup-readiness'])
+  assert.deepEqual(adapterEvents, [VISIBLE_ACTIONS.NAVIGATION_CHECK, VISIBLE_ACTIONS.AUTH_STATUS])
 })
 
 test('runner waits through response-read challenge longer than response timeout without replaying submit', async () => {
@@ -684,6 +797,30 @@ class FakeResponsePage {
     if (selector === 'button[data-testid="stop-button"]') {
       return new FakeLocator(() => this.busy ? [true] : [])
     }
+    return new FakeLocator(() => [])
+  }
+}
+
+class FakeForegroundPage {
+  constructor() {
+    this.events = []
+    this.currentUrl = ''
+  }
+
+  async goto(url, options) {
+    this.currentUrl = url
+    this.events.push(['goto', url, options])
+  }
+
+  async bringToFront() {
+    this.events.push(['bringToFront'])
+  }
+
+  url() {
+    return this.currentUrl
+  }
+
+  locator() {
     return new FakeLocator(() => [])
   }
 }

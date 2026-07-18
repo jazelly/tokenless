@@ -112,12 +112,12 @@ export class SetupPresenter {
     this.write(`  ${this.paint('green', 'OK')} ${message}\n`)
   }
 
-  handover(provider: string, detail: string) {
+  handover(provider: string, detail: string, nextStep = 'Finish in the already-open Tokenless-managed Chrome window/tab, then press Enter here. The same job will resume.') {
     if (!this.enabled) return
     this.write([
       this.paint('yellow', `Visible ${provider} handoff`),
       `  ${this.paint('dim', '-')} ${detail}`,
-      `  ${this.paint('dim', '-')} Finish in the open browser, then press Enter here. The same job will resume.`,
+      `  ${this.paint('dim', '-')} ${nextStep}`,
     ].join('\n') + '\n')
   }
 
