@@ -121,10 +121,14 @@ test('persistent context manager reports browser closure as retryable and relaun
   await manager.shutdown()
 })
 
-test('Chrome launch options never enable headless mode or remote debugging endpoints', () => {
+test('Chrome launch options preserve imported OS credential state without exposing remote debugging', () => {
   const options = chromeLaunchOptions()
   assert.equal(options.channel, 'chrome')
   assert.equal(options.headless, false)
+  assert.deepEqual(options.ignoreDefaultArgs, [
+    '--password-store=basic',
+    '--use-mock-keychain',
+  ])
   assert.equal(options.args.some((arg) => /remote-debugging/i.test(arg)), false)
 })
 

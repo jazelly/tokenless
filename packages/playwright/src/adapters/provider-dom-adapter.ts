@@ -22,7 +22,7 @@ export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdap
       if (!navigation.ok && request.action !== VISIBLE_ACTIONS.NAVIGATION_CHECK) {
         return failure(request, 'unsupported_provider_navigation', 'The visible page is outside the approved provider origin.', false)
       }
-      if (request.action === VISIBLE_ACTIONS.AUTH_STATUS) return success(request, await inspectAuth(page, provider))
+      if (request.action === VISIBLE_ACTIONS.AUTH_STATUS) return success(request, await inspectAuth(page, provider, context.signal))
       if (request.action === VISIBLE_ACTIONS.NAVIGATION_CHECK) return success(request, inspectNavigation(page, provider))
       if (request.action === VISIBLE_ACTIONS.BLOCKER_CHECK) return success(request, await inspectBlockers(page, provider))
       if (request.action === VISIBLE_ACTIONS.MODEL_INSPECT) return success(request, await inspectChoices(page, provider, 'model'))
@@ -40,18 +40,28 @@ export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdap
   }
 }
 
-async function inspectAuth(page: Page, provider: ProviderConfig) {
-  const loginVisible = await anyVisible(page, provider.loginIndicators)
-  if (loginVisible) {
-    return {
-      state: 'unauthenticated' as const,
-      visibleProof: 'login-indicator-visible',
+async function inspectAuth(page: Page, provider: ProviderConfig, signal: AbortSignal | undefined) {
+  for (let attempt = 0; attempt <= 50; attempt += 1) {
+    assertNotAborted(signal)
+    const loginVisible = await anyVisible(page, provider.loginIndicators)
+    if (loginVisible) {
+      return {
+        state: 'unauthenticated' as const,
+        visibleProof: 'login-indicator-visible',
+      }
     }
+    const authVisible = await anyVisible(page, provider.authIndicators)
+    if (authVisible) {
+      return {
+        state: 'authenticated' as const,
+        visibleProof: 'authenticated-control-visible',
+      }
+    }
+    if (attempt < 50) await page.waitForTimeout(100)
   }
-  const authVisible = await anyVisible(page, provider.authIndicators)
   return {
-    state: authVisible ? 'authenticated' as const : 'unknown' as const,
-    visibleProof: authVisible ? 'authenticated-control-visible' : 'no-auth-proof-visible',
+    state: 'unknown' as const,
+    visibleProof: 'no-auth-proof-visible',
   }
 }
 

@@ -149,6 +149,10 @@ export function chromeLaunchOptions(): PersistentChromeLaunchOptions {
   return {
     channel: 'chrome',
     headless: false,
+    ignoreDefaultArgs: [
+      '--password-store=basic',
+      '--use-mock-keychain',
+    ],
     args: [
       '--disable-sync',
       '--no-first-run',
