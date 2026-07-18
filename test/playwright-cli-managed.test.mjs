@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 
-test('canonical noninteractive setup checks skills, selects browser/profile/providers, and proves visible readiness', async () => {
+test('canonical default setup noninteractively selects browser/profile/providers and proves visible readiness', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-')))
   const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-skills-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -21,9 +21,7 @@ test('canonical noninteractive setup checks skills, selects browser/profile/prov
   try {
     const setup = spawnCli([
       'setup',
-      '--profile', 'default',
-      '--clean-profile',
-      '--provider', 'chatgpt',
+      '--defaults',
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',

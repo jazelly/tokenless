@@ -536,7 +536,8 @@ test('agent skills use the managed Playwright workflow and forbid extension fall
   assert.doesNotMatch(skill, /tokenless-native-host|extension id|chrome:\/\/extensions/i)
 
   assert.match(installSkill, /user's preferred language/)
-  assert.match(installSkill, /npx tokenless@latest setup\b/)
+  assert.match(installSkill, /npx tokenless@latest setup --clean-profile --json/)
+  assert.match(installSkill, /never imports or re-imports a local browser profile implicitly/i)
   assert.match(installSkill, /installs and verifies both Tokenless skills/)
   assert.match(installSkill, /detects supported browsers/)
   assert.match(installSkill, /npx tokenless@latest doctor --json/)
