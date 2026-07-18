@@ -286,7 +286,10 @@ export async function ensureDaemonReady({
     }
     assertNoDaemonIdentityConflict(afterLock)
 
-    if (!binaryPath) await refreshInstalledRustBinaries({ homeDir, packageRoot: bundledRoot }).catch(() => undefined)
+    const installedDaemon = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME)
+    if (!binaryPath && !(await isExecutable(installedDaemon))) {
+      await refreshInstalledRustBinaries({ homeDir, packageRoot: bundledRoot }).catch(() => undefined)
+    }
     const executable = await resolveDaemonBinary({ homeDir, binaryPath, bundledRoot })
     const parsedUrl = new URL(normalizeDaemonUrl(daemonUrl))
     const host = daemonBindHost(parsedUrl.hostname)

@@ -1,8 +1,6 @@
 # Tokenless CLI
 
-`tokenless` exposes provider-neutral CLI and local API access to visible ChatGPT, Claude, Gemini, and Grok sessions. The recommended web path uses a local `tokenless-daemon`, a Playwright worker, and persistent managed Google Chrome profiles.
-
-> **Status:** The visible runtime is being migrated from the retired extension architecture to Playwright. Four-provider parity, file upload, and the local API are under active development. No browser extension is installed or used by the new architecture.
+`tokenless` exposes provider-neutral CLI and local API access to visible ChatGPT, Claude, Gemini, and Grok sessions. It uses a local `tokenless-daemon`, a Playwright worker, and persistent managed Google Chrome profiles.
 
 ## Install
 
@@ -72,7 +70,7 @@ tokenless profiles set-default --profile work
 tokenless profiles remove --profile work --confirm-delete
 ```
 
-Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Interactive setup may offer to copy a closed local Chrome profile after explicit consent; noninteractive setup creates a clean profile unless import and consent flags are both supplied.
+Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Interactive setup may offer a best-effort copy of a local Chrome profile after explicit consent, including while Chrome is running; noninteractive setup creates a clean profile unless import and consent flags are both supplied.
 
 Imported authentication state remains local and opaque. Tokenless does not parse, print, log, export, or transmit cookie, storage, password, or authentication values.
 
@@ -82,7 +80,7 @@ The local API will expose the same daemon jobs and provider-neutral action contr
 
 ## Experimental Direct Mode
 
-Direct mode is isolated from Playwright. It uses provider-owned clients, documented public APIs, or explicitly configured compatible gateways and never falls back to the browser.
+Direct mode uses provider-owned clients, documented public APIs, or explicitly configured compatible gateways. Each request follows the mode selected by the caller.
 
 ```bash
 codex login
@@ -108,10 +106,10 @@ See [Direct mode](../../docs/direct-mode.md) and [multi-account routing](../../d
 
 - Playwright uses installed Google Chrome with visible, persistent, non-default user-data directories.
 - Web automation operates only through visible provider DOM and visible postconditions.
-- It does not export browser credentials, intercept hidden authorization headers, call private provider APIs, or expose a remote debugging endpoint.
+- Authentication state stays opaque inside the selected managed profile, and automation uses visible provider controls.
 - CAPTCHA, sign-in, rate limits, upgrade prompts, and confirmations remain visible and under user control.
 - Selected regular files are staged privately and sent through Playwright `setInputFiles`; raw caller paths do not enter daemon job JSON.
-- Web and direct modes remain isolated, with no paid or browser fallback between them.
+- Web and direct requests follow only the mode explicitly selected by the caller.
 
 ## Roadmap
 

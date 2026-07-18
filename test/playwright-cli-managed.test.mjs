@@ -92,7 +92,10 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
     daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
     const daemonJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(payload.jobId)}`, homeDir)
     assert.equal(daemonJob.action, 'visible_provider_actions')
+    assert.equal(daemonJob.execution_backend, 'playwright', JSON.stringify(daemonJob))
+    assert.equal(daemonJob.profile_id, added.profile.id)
     assert.equal(daemonJob.request_json.protocol, 'tokenless.playwright.job.v1')
+    assert.equal(daemonJob.request_json.taskId, 'cli-managed-task')
     assert.deepEqual(daemonJob.request_json.actions.map((action) => action.action), [
       'model.select',
       'effort.select',
@@ -133,6 +136,24 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
     assert.equal(statePayload.latest.status, 'succeeded')
     assert.match(JSON.stringify(statePayload.latest.result), /fake managed response for cli-managed-task/)
 
+    const taskState = runCli([
+      'state',
+      '--profile',
+      'default',
+      '--task-id',
+      'cli-managed-task',
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(taskState.status, 0, taskState.stderr || taskState.stdout)
+    const taskStatePayload = JSON.parse(taskState.stdout)
+    assert.equal(taskStatePayload.taskId, 'cli-managed-task')
+    assert.equal(taskStatePayload.latest.jobId, payload.jobId)
+    assert.equal(taskStatePayload.latest.profile.id, added.profile.id)
+
     const missingAfterDaemon = runCli([
       'provider-status',
       '--profile',
@@ -150,6 +171,10 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
     const jobs = await fetchJson(`${daemonUrl}/jobs?execution_backend=playwright&profile_id=${encodeURIComponent(added.profile.id)}`, homeDir)
     assert.equal(jobs.length, 1)
   } finally {
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
     if (daemonPid) await stopPid(daemonPid)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }

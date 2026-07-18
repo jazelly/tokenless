@@ -10,6 +10,7 @@ import test from 'node:test'
 import { chromium } from 'playwright'
 import {
   captureProviderDom,
+  disconnectFromCdp,
   PROVIDER_DEFINITIONS,
 } from './capture-provider-dom-cdp.mjs'
 
@@ -32,9 +33,11 @@ const GROK_SELECTOR_INDEXES = Object.freeze({
   modelPickers: [0],
   fileInputs: [0, 1],
 })
+const captureCdpE2eEnabled = process.env.TOKENLESS_CAPTURE_CDP_E2E === '1'
 
 test('capture sanitizer preserves provider selectors without retaining arbitrary attribute values', {
-  timeout: 30000,
+  skip: captureCdpE2eEnabled ? false : 'set TOKENLESS_CAPTURE_CDP_E2E=1 to run the external-CDP helper test',
+  timeout: 120000,
 }, async () => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-capture-sanitizer-'))
   const port = await availablePort()
@@ -65,7 +68,7 @@ test('capture sanitizer preserves provider selectors without retaining arbitrary
     }))
     const providerPage = context.pages()[0] ?? await context.newPage()
     await providerPage.goto('https://claude.ai/new')
-    await browser.close()
+    disconnectFromCdp(browser)
     browser = undefined
 
     const savedArgv = process.argv
@@ -202,7 +205,7 @@ test('capture sanitizer preserves provider selectors without retaining arbitrary
     await geminiProviderPage.evaluate((privateMarker) => {
       history.replaceState(null, '', `/app/${privateMarker}`)
     }, PRIVATE_MARKER)
-    await browser.close()
+    disconnectFromCdp(browser)
     browser = undefined
 
     process.argv = [
@@ -317,7 +320,7 @@ test('capture sanitizer preserves provider selectors without retaining arbitrary
     await grokProviderPage.evaluate((privateMarker) => {
       history.replaceState(null, '', `/c/${privateMarker}`)
     }, PRIVATE_MARKER)
-    await browser.close()
+    disconnectFromCdp(browser)
     browser = undefined
 
     process.argv = [
@@ -395,7 +398,7 @@ test('capture sanitizer preserves provider selectors without retaining arbitrary
     assert.equal(await grokAnswer.getAttribute('data-private'), null)
     await grokValidationPage.close()
   } finally {
-    await browser?.close().catch(() => undefined)
+    disconnectFromCdp(browser)
     await stopControlledChrome(endpoint, chrome)
     const resolvedTempRoot = path.resolve(tempRoot)
     assert.equal(
@@ -437,15 +440,23 @@ async function waitForCdp(endpoint, chrome) {
 }
 
 async function stopControlledChrome(endpoint, chrome) {
+  let cleanupBrowser
   try {
-    const cleanupBrowser = await chromium.connectOverCDP(endpoint)
+    cleanupBrowser = await chromium.connectOverCDP(endpoint, { timeout: 2000 })
     const session = await cleanupBrowser.newBrowserCDPSession()
-    await session.send('Browser.close').catch(() => undefined)
+    await Promise.race([
+      session.send('Browser.close').catch(() => undefined),
+      delay(2000),
+    ])
   } catch {
     // The controlled process may already be gone after a failed assertion.
+  } finally {
+    disconnectFromCdp(cleanupBrowser)
   }
   if (chrome.exitCode === null) await Promise.race([once(chrome, 'exit'), delay(3000)])
-  if (chrome.exitCode === null) chrome.kill()
+  if (chrome.exitCode === null) chrome.kill('SIGTERM')
+  if (chrome.exitCode === null) await Promise.race([once(chrome, 'exit'), delay(3000)])
+  if (chrome.exitCode === null) chrome.kill('SIGKILL')
   if (chrome.exitCode === null) await Promise.race([once(chrome, 'exit'), delay(3000)])
 }
 

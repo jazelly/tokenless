@@ -560,7 +560,9 @@ test('public READMEs describe the Playwright web runtime and isolated direct bou
     assert.doesNotMatch(text, /\/Users\/jazelly/)
   }
   assert.match(readme, /npx tokenless@latest setup/)
-  assert.match(readme, /Noop|standalone/i)
+  assert.match(readme, /Save tokens first/)
+  assert.ok(readme.indexOf('## Why Tokenless') < readme.indexOf('## How Tokenless Works'))
+  assert.doesNotMatch(readme, /extension|migration|retired|legacy|Noop/i)
   assert.match(chinese, /Playwright/)
   assert.match(chinese, /tokenless-daemon/)
   assert.match(chinese, /tokenless profiles/)

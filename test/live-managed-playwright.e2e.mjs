@@ -28,7 +28,6 @@ test('live managed Playwright provider matrix uses cloned Chrome profile and rea
   const profileKey = requiredEnv('TOKENLESS_LIVE_CHROME_PROFILE')
   const sourceUserDataDir = process.env.TOKENLESS_LIVE_CHROME_USER_DATA_DIR ||
     path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
-  await assertChromeNotRunning()
 
   const tempRoot = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'tokenless-live-managed-playwright-'))
   const homeDir = path.join(tempRoot, 'home')
@@ -42,9 +41,7 @@ test('live managed Playwright provider matrix uses cloned Chrome profile and rea
     providers: {},
   }
   let daemonPid
-  let copiedSourceBefore = []
-  let cloneDir = null
-  let sourceHashVerified = false
+  let evidenceWritten = false
   try {
     const added = runCli([
       'profiles', 'add',
@@ -58,40 +55,25 @@ test('live managed Playwright provider matrix uses cloned Chrome profile and rea
     ])
     assert.equal(added.status, 0, summarizeProcess(added))
     const addPayload = JSON.parse(added.stdout)
-    cloneDir = path.join(homeDir, 'browser', 'profiles', addPayload.profile.id)
-    copiedSourceBefore = await copiedSourceSnapshots({
-      sourceUserDataDir,
-      profileKey,
-      cloneDir,
-    })
-
-    for (const provider of providers) {
-      evidence.providers[provider] = await exerciseProvider({ provider, homeDir, artifactDir })
-    }
-
-    const copiedSourceAfter = await copiedSourceSnapshots({ sourceUserDataDir, profileKey, cloneDir })
-    assert.deepEqual(copiedSourceAfter, copiedSourceBefore, 'selected source profile files changed during live run')
-    sourceHashVerified = true
     evidence.sourceProfile = {
       profileKey,
-      files: copiedSourceBefore,
+      importMode: 'best-effort-hot-copy',
+      copiedFiles: addPayload.import?.copiedFiles ?? null,
     }
+
+    for (const provider of providers) {
+      evidence.providers[provider] = await exerciseProvider({ provider, homeDir })
+    }
+
     evidence.completedAt = new Date().toISOString()
     await writeArtifact(artifactDir, 'matrix.json', evidence)
+    evidenceWritten = true
 
     if (fsSync.existsSync(path.join(homeDir, 'daemon.pid.json'))) {
       daemonPid = JSON.parse(await fs.readFile(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
     }
   } finally {
-    if (copiedSourceBefore.length > 0 && cloneDir && !sourceHashVerified) {
-      const copiedSourceAfter = await copiedSourceSnapshots({ sourceUserDataDir, profileKey, cloneDir }).catch(() => null)
-      assert.notEqual(copiedSourceAfter, null, 'source profile snapshot must be readable after failure')
-      assert.deepEqual(copiedSourceAfter, copiedSourceBefore, 'selected source profile files changed before live failure')
-      evidence.sourceProfile = {
-        profileKey,
-        files: copiedSourceBefore,
-        verifiedAfterFailure: true,
-      }
+    if (!evidenceWritten) {
       await writeArtifact(artifactDir, 'matrix.partial.json', evidence).catch(() => undefined)
     }
     if (!daemonPid && fsSync.existsSync(path.join(homeDir, 'daemon.pid.json'))) {
@@ -103,7 +85,7 @@ test('live managed Playwright provider matrix uses cloned Chrome profile and rea
   }
 })
 
-async function exerciseProvider({ provider, homeDir, artifactDir }) {
+async function exerciseProvider({ provider, homeDir }) {
   const started = Date.now()
   const entry = { actions: {}, startedAt: new Date().toISOString() }
   const auth = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'auth.status', '--home', homeDir, '--timeout-ms', '90000', '--json'])
@@ -159,7 +141,7 @@ async function exerciseProvider({ provider, homeDir, artifactDir }) {
   entry.actions.draftClear = { ok: true }
 
   const marker = `TOKENLESS_LIVE_${provider}_${Date.now()}`
-  const upload = await markerUploadFile(artifactDir, provider, marker)
+  const upload = await markerUploadFile(homeDir, provider, marker)
   const uploadResult = runJson(['provider-action', '--profile', 'live', '--provider', provider, '--action', 'file.upload', '--attach-file', upload, '--home', homeDir, '--timeout-ms', '120000', '--json'])
   entry.actions.fileUpload = {
     ok: Boolean(findResponseResult(uploadResult, 'file.upload')),
@@ -243,62 +225,16 @@ function boundedResult(result) {
   }))
 }
 
-async function markerUploadFile(artifactDir, provider, marker) {
-  const file = path.join(artifactDir, `${provider}-marker.txt`)
+async function markerUploadFile(homeDir, provider, marker) {
+  const inputDir = path.join(homeDir, 'live-inputs')
+  await fs.mkdir(inputDir, { recursive: true, mode: 0o700 })
+  const file = path.join(inputDir, `${provider}-marker.txt`)
   await fs.writeFile(file, `${marker}\n`, { mode: 0o600 })
   return file
 }
 
-async function copiedSourceSnapshots({ sourceUserDataDir, profileKey, cloneDir }) {
-  const sourceRoot = path.resolve(sourceUserDataDir)
-  const cloneRoot = path.resolve(cloneDir)
-  const files = await listRegularFiles(cloneRoot)
-  const snapshots = []
-  for (const cloneFile of files) {
-    const relative = path.relative(cloneRoot, cloneFile)
-    const normalizedSource = path.join(sourceRoot, relative)
-    try {
-      const stat = await fs.stat(normalizedSource)
-      if (!stat.isFile()) continue
-      snapshots.push({
-        path: relative,
-        size: stat.size,
-        sha256: await sha256File(normalizedSource),
-      })
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error
-    }
-  }
-  return snapshots.sort((left, right) => left.path.localeCompare(right.path))
-}
-
-async function listRegularFiles(rootDir) {
-  const out = []
-  async function walk(dir) {
-    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-      const file = path.join(dir, entry.name)
-      if (entry.isDirectory()) await walk(file)
-      else if (entry.isFile()) out.push(file)
-    }
-  }
-  await walk(rootDir)
-  return out
-}
-
-async function sha256File(file) {
-  return createHash('sha256').update(await fs.readFile(file)).digest('hex')
-}
-
 function sha256String(value) {
   return createHash('sha256').update(value).digest('hex')
-}
-
-async function assertChromeNotRunning() {
-  if (process.platform === 'win32') return
-  const result = spawnSync('pgrep', ['-f', 'Google Chrome|Google Chrome Helper|chrome.exe'], { encoding: 'utf8' })
-  if (result.status === 0 && result.stdout.trim()) {
-    throw new Error('Google Chrome appears to be running; close Chrome before live profile import. Tokenless will not kill it.')
-  }
 }
 
 async function createArtifactDir() {

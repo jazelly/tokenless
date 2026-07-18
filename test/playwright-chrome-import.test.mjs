@@ -68,18 +68,20 @@ test('Chrome import copies opaque auth state, excludes private browsing data, di
   await assertSourceUnchanged(sourceProof)
 })
 
-test('Chrome import rejects symlinks, lock files, Tokenless-home sources, and cleans interrupted staging', async () => {
+test('Chrome hot import ignores root lock files while rejecting symlinks and Tokenless-home sources', async () => {
   const root = await fakeChromeRoot()
   const tokenlessHome = await mkdtemp(join(tmpdir(), 'tokenless-playwright-home-'))
   const destinationDir = join(tokenlessHome, 'browser', 'profiles', crypto.randomUUID())
 
   await writeFile(join(root, 'SingletonLock'), 'locked')
-  await assert.rejects(() => importChromeProfile({
+  const hotImport = await importChromeProfile({
     sourceUserDataDir: root,
     profileDirectoryKey: 'Default',
     destinationDir,
     tokenlessHome,
-  }), matchCode('chrome_profile_in_use'))
+  })
+  assert.ok(hotImport.copiedFiles > 0)
+  await assert.rejects(() => stat(join(destinationDir, 'SingletonLock')), { code: 'ENOENT' })
 
   await import('node:fs/promises').then((fs) => fs.rm(join(root, 'SingletonLock')))
   try {
@@ -109,13 +111,13 @@ test('Chrome import rejects symlinks, lock files, Tokenless-home sources, and cl
   }), matchCode('chrome_profile_inside_tokenless_home'))
 })
 
-test('Chrome import fails and removes staging when a selected source file mutates during copy', async () => {
+test('Chrome hot import accepts a source file mutation during best-effort copy', async () => {
   const root = await fakeChromeRoot()
   const tokenlessHome = await mkdtemp(join(tmpdir(), 'tokenless-playwright-home-'))
   const destinationDir = join(tokenlessHome, 'browser', 'profiles', crypto.randomUUID())
   let mutated = false
 
-  await assert.rejects(() => importChromeProfile({
+  const result = await importChromeProfile({
     sourceUserDataDir: root,
     profileDirectoryKey: 'Default',
     destinationDir,
@@ -127,13 +129,14 @@ test('Chrome import fails and removes staging when a selected source file mutate
         await writeFile(source, JSON.stringify({ sync: { requested: true }, mutated: true }))
       }
     },
-  }), matchCode('chrome_source_profile_changed'))
+  })
 
   assert.equal(mutated, true)
+  assert.ok(result.copiedFiles > 0)
   const profileParent = join(tokenlessHome, 'browser', 'profiles')
   const entries = await readdir(profileParent).catch(() => [])
   assert.equal(entries.some((entry) => entry.startsWith('.staging-')), false)
-  await assert.rejects(() => stat(destinationDir), { code: 'ENOENT' })
+  assert.equal((await stat(destinationDir)).isDirectory(), true)
   await rm(tokenlessHome, { recursive: true, force: true })
 })
 
@@ -155,13 +158,13 @@ test('Chrome import rejects destinations outside the managed UUID directory with
   await rm(tokenlessHome, { recursive: true, force: true })
 })
 
-test('Chrome import rejects a copied file that differs from its source snapshot', async () => {
+test('Chrome hot import promotes regular copied bytes without source snapshot verification', async () => {
   const root = await fakeChromeRoot()
   const tokenlessHome = await mkdtemp(join(tmpdir(), 'tokenless-playwright-home-'))
   const destinationDir = join(tokenlessHome, 'browser', 'profiles', crypto.randomUUID())
   let corrupted = false
 
-  await assert.rejects(() => importChromeProfile({
+  const result = await importChromeProfile({
     sourceUserDataDir: root,
     profileDirectoryKey: 'Default',
     destinationDir,
@@ -173,14 +176,16 @@ test('Chrome import rejects a copied file that differs from its source snapshot'
         await writeFile(destination, 'corrupt staged bytes')
       }
     },
-  }), matchCode('chrome_source_profile_changed'))
+  })
 
   assert.equal(corrupted, true)
+  assert.ok(result.copiedFiles > 0)
+  assert.equal(await readFile(join(destinationDir, 'Default', 'Preferences'), 'utf8'), 'corrupt staged bytes')
   assert.equal((await readFile(join(root, 'Default', 'Preferences'), 'utf8')).includes('requested'), true)
   const profileParent = join(tokenlessHome, 'browser', 'profiles')
   const entries = await readdir(profileParent).catch(() => [])
   assert.equal(entries.some((entry) => entry.startsWith('.staging-')), false)
-  await assert.rejects(() => stat(destinationDir), { code: 'ENOENT' })
+  assert.equal((await stat(destinationDir)).isDirectory(), true)
   await rm(tokenlessHome, { recursive: true, force: true })
 })
 
