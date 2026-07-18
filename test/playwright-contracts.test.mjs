@@ -103,6 +103,26 @@ test('sanitized snapshots expose only bounded structure and never page body or p
   assert.equal('text' in response.result, false)
 })
 
+test('auth status waits for provider UI hydration before reporting unknown', async () => {
+  const registry = createProviderAdapterRegistry()
+  const page = new FakeHydratingAuthPage()
+  const response = await registry.execute(page, createVisibleActionRequest({
+    provider: 'chatgpt',
+    action: VISIBLE_ACTIONS.AUTH_STATUS,
+    payload: {},
+  }), {
+    profileId: 'profile-a',
+    operationId: 'op-a',
+  })
+
+  assert.equal(response.ok, true)
+  assert.deepEqual(response.result, {
+    state: 'authenticated',
+    visibleProof: 'authenticated-control-visible',
+  })
+  assert.equal(page.waits > 0, true)
+})
+
 test('visible file uploads resolve path-free attachment descriptors inside attachmentRoot', async () => {
   const root = await mkdtemp(join(tmpdir(), 'tokenless-attachments-'))
   try {
@@ -318,6 +338,28 @@ class FakeSnapshotPage {
       globalThis.document = previousDocument
       globalThis.location = previousLocation
     }
+  }
+}
+
+class FakeHydratingAuthPage {
+  hydrated = false
+  waits = 0
+
+  url() {
+    return 'https://chatgpt.com/'
+  }
+
+  locator(selector) {
+    return {
+      first: () => ({
+        isVisible: async () => this.hydrated && selector === '#prompt-textarea',
+      }),
+    }
+  }
+
+  async waitForTimeout() {
+    this.waits += 1
+    this.hydrated = true
   }
 }
 
