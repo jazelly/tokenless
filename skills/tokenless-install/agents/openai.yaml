@@ -1,4 +1,4 @@
 interface:
   display_name: "Tokenless Install"
   short_description: "Install, upgrade, and verify Tokenless."
-  default_prompt: "Use $tokenless-install to install or update Tokenless and verify it is ready."
+  default_prompt: "Use $tokenless-install to run non-interactive default setup and verify Tokenless is ready."

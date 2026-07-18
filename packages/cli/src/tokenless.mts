@@ -1577,7 +1577,7 @@ async function installCommand(args: CliArgs) {
 async function setupCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const setupTerminal = resolveSetupTerminalCapabilities({
-    json: args.json === true,
+    json: args.json === true || args.setupDefaults === true,
     stdin: process.stdin,
     stdout: process.stdout,
     stderr: process.stderr,
@@ -1833,6 +1833,7 @@ async function ensureSetupManagedProfile({
   }
 
   if (!slug && prompt) slug = await prompt.text('Profile name', existing.length === 0 ? 'default' : 'primary')
+  if (!slug && args.setupDefaults === true) slug = 'default'
   slug ??= 'default'
   if (args.reimportProfile === true) {
     throw usageError('setup_reimport_profile_not_found', `Cannot re-import unregistered managed profile '${slug}'.`)
@@ -1845,10 +1846,10 @@ async function ensureSetupManagedProfile({
     if (discovered.length > 0 && await prompt.confirm(`Import an existing ${browser} profile into Tokenless?`, true)) {
       source = await selectSetupSourceProfile({ args, browser, prompt, discovered })
     }
-  } else if (args.cleanProfile !== true) {
+  } else if (args.cleanProfile !== true && args.setupDefaults !== true) {
     throw usageError(
       'setup_profile_choice_required',
-      'Initial noninteractive setup requires either --import-browser-profile with explicit copy consent or --clean-profile.'
+      'Initial noninteractive setup requires --defaults, --clean-profile, or --import-browser-profile with explicit copy consent.'
     )
   }
   if (source) await requireSetupCopyConsent({ args, prompt, source, destination: slug })
@@ -2733,6 +2734,7 @@ function parseArgs(argv: string[]): CliArgs {
     '--reimport-profile': 'reimportProfile',
     '--refresh-skills': 'refreshSkills',
     '--skip-skill-install': 'skipSkillInstall',
+    '--defaults': 'setupDefaults',
     '--disabled': 'disabled',
     '--isolated': 'isolated',
   }
@@ -2982,6 +2984,7 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
   }
   const setupOnly = [
     ['cleanProfile', '--clean-profile'],
+    ['setupDefaults', '--defaults'],
     ['reimportProfile', '--reimport-profile'],
     ['refreshSkills', '--refresh-skills'],
     ['skipSkillInstall', '--skip-skill-install'],
@@ -3357,6 +3360,7 @@ function usage() {
     '  tokenless snapshot-dom --provider chatgpt --json',
     '  tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json',
     '  tokenless setup',
+    '  tokenless setup --defaults --json',
     '  tokenless setup --profile <slug> --browser <browser> --preferred-providers <list> (--clean-profile|--import-browser-profile <key> --consent-local-profile-copy) --json',
     '  tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy [--refresh-skills]',
     '  tokenless install [--extension-id <chrome-extension-id>] --json',

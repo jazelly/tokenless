@@ -11,10 +11,13 @@ Requires Node.js 24.15+ and a supported Chromium browser such as Google Chrome o
 ```bash
 npm install --global tokenless@latest
 tokenless setup
+tokenless setup --defaults --json
 tokenless doctor --json
 ```
 
 `setup` is the canonical interactive onboarding command. It installs and checks the GitHub-backed agent skills, detects installed browsers, configures one persistent profile, asks which providers to use, starts the runtime, and keeps provider pages open for visible sign-in or challenge handoff. `doctor` verifies the resulting configuration.
+
+`setup --defaults --json` is the canonical non-interactive entrypoint for agents and installers. It reuses the existing managed default profile, or creates a clean `default` profile with the first supported browser and ChatGPT. It never imports or re-imports a local browser profile implicitly.
 
 ### npx
 
@@ -74,7 +77,7 @@ tokenless profiles remove --profile work --confirm-delete
 
 `profiles discover` is a read-only helper for setup. It reports local Chrome or Brave roots and exact profile directory keys without copying data or creating a managed profile. Import with `profiles add --browser <chrome|brave> --import-browser-profile <directory-key> --consent-local-profile-copy` only when the user explicitly chooses that setup path.
 
-Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Jobs and live tests reuse the managed profile already registered in Tokenless; they never refresh it from the source browser. Noninteractive initial setup requires either explicit import and consent flags or `--clean-profile`.
+Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Jobs and live tests reuse the managed profile already registered in Tokenless; they never refresh it from the source browser. Use `setup --defaults --json` for non-interactive onboarding, or pass explicit import and consent flags when a local profile copy is intended.
 
 Imported authentication state remains local and opaque. Tokenless does not parse, print, log, export, or transmit cookie, storage, password, or authentication values.
 
