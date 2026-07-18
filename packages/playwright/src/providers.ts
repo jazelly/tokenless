@@ -12,6 +12,7 @@ export type ProviderConfig = {
   readonly label: string
   readonly homeUrl: string
   readonly hosts: readonly string[]
+  readonly composerSettleMs: number
   readonly composerSelectors: readonly string[]
   readonly submitSelectors: readonly string[]
   readonly answerSelectors: readonly string[]
@@ -30,6 +31,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     label: 'ChatGPT',
     homeUrl: 'https://chatgpt.com/',
     hosts: Object.freeze(['chatgpt.com', 'chat.openai.com']),
+    composerSettleMs: 0,
     composerSelectors: Object.freeze([
       'div#prompt-textarea[contenteditable="true"]',
       '#prompt-textarea[contenteditable="true"]',
@@ -93,6 +95,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     label: 'Claude',
     homeUrl: 'https://claude.ai/new',
     hosts: Object.freeze(['claude.ai']),
+    composerSettleMs: 8_000,
     composerSelectors: Object.freeze([
       'div[data-testid="chat-input"][contenteditable="true"][role="textbox"]',
       'div[aria-label="Write your prompt to Claude"][contenteditable="true"][role="textbox"]',
@@ -145,6 +148,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     label: 'Gemini',
     homeUrl: 'https://gemini.google.com/app',
     hosts: Object.freeze(['gemini.google.com']),
+    composerSettleMs: 0,
     composerSelectors: Object.freeze([
       'rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"]',
       'div[contenteditable="true"][role="textbox"]',
@@ -187,6 +191,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     label: 'Grok',
     homeUrl: 'https://grok.com/',
     hosts: Object.freeze(['grok.com']),
+    composerSettleMs: 0,
     composerSelectors: Object.freeze([
       'div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"][aria-multiline="true"]',
       'textarea[aria-label="Ask Grok anything"][placeholder="What do you want to know?"]',
@@ -291,7 +296,7 @@ export function safeProviderTargetUrl(provider: ProviderConfig, targetUrl: unkno
 }
 
 export function assertProviderUrlAllowed(provider: ProviderConfig, targetUrl: unknown) {
-  const target = canonicalProviderTarget(provider, targetUrl)
+  const target = canonicalObservedProviderTarget(provider, targetUrl)
   if (!target) {
     return {
       ok: false as const,
@@ -301,6 +306,37 @@ export function assertProviderUrlAllowed(provider: ProviderConfig, targetUrl: un
   return {
     ok: true as const,
     target,
+  }
+}
+
+function canonicalObservedProviderTarget(provider: ProviderConfig, value: unknown): CanonicalProviderTarget | null {
+  if (typeof value !== 'string' || value.length > 2048) return null
+  const privateStateIndex = [value.indexOf('?'), value.indexOf('#')]
+    .filter((index) => index >= 0)
+    .reduce((earliest, index) => Math.min(earliest, index), value.length)
+  const rawLocation = value.slice(0, privateStateIndex)
+  if (FORBIDDEN_RAW_URL.test(rawLocation) || MALFORMED_PERCENT_ESCAPE.test(rawLocation)) return null
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return null
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== '' ||
+    !provider.hosts.includes(parsed.hostname.toLowerCase())
+  ) {
+    return null
+  }
+  const pathname = canonicalPathname(parsed.pathname)
+  return {
+    providerId: provider.id,
+    href: `${parsed.origin}${pathname}`,
+    origin: parsed.origin,
+    pathname,
   }
 }
 
