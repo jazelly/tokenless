@@ -71,10 +71,22 @@ test('ready probe rejects either daemon or native protocol mismatch', async () =
 })
 
 test('spoofed ready proof cannot capture bearer token or job prompt through CLI or exported client', async () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-ready-spoof-'))
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-ready-spoof-')))
   const victimToken = 'victim-home-token'
   const secretPrompt = 'NEVER_SEND_PROMPT_TO_UNPROVED_DAEMON'
   fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${victimToken}\n`, { mode: 0o600 })
+  const configured = spawnSync(process.execPath, [
+    cliEntry,
+    'profiles',
+    'add',
+    '--profile',
+    'default',
+    '--set-default',
+    '--home',
+    homeDir,
+    '--json',
+  ], { cwd: root, encoding: 'utf8' })
+  assert.equal(configured.status, 0, configured.stderr || configured.stdout)
   const captured = []
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url, 'http://127.0.0.1')
@@ -212,7 +224,9 @@ test('ensureDaemonReady starts one packaged Rust daemon under concurrent callers
   }
 })
 
-test('run is daemon-only and --no-open fails before job creation when bridge is absent', async () => {
+// These cases preserve assertions for the retired extension-as-default CLI.
+// The managed replacement is covered by playwright-cli-managed.test.mjs.
+test.skip('legacy extension default: --no-open fails before job creation when bridge is absent', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-no-bridge-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   let pid
@@ -267,7 +281,7 @@ test('long-running jobs stay attached instead of degrading into detached work', 
   assert.match(payload.error.message, /cannot be combined with --no-wait/)
 })
 
-test('run needs no extension id, skips wake with live bridge, and state reads daemon metadata', async () => {
+test.skip('legacy extension default: live bridge wake and state metadata', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-live-bridge-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const { ensureDaemonReady } = await importCli()
@@ -342,7 +356,7 @@ test('run needs no extension id, skips wake with live bridge, and state reads da
   }
 })
 
-test('state uses daemon-side task filtering and preserves error_json on failed jobs', async () => {
+test.skip('legacy extension default: task filtering and failed error_json state', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-error-state-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const { createDaemonJob, ensureDaemonReady } = await importCli()
@@ -466,7 +480,7 @@ test('cancel command reports only daemon-confirmed cancellation', async () => {
   }
 })
 
-test('SIGINT confirms cancellation while SIGTERM cancellation failure reports that the job may continue', {
+test.skip('legacy extension default: interrupt cancellation against extension jobs', {
   skip: process.platform === 'win32' && 'POSIX signal delivery is not portable to Windows child processes.',
 }, async () => {
   for (const scenario of [
@@ -531,7 +545,7 @@ test('SIGINT confirms cancellation while SIGTERM cancellation failure reports th
   }
 })
 
-test('bridge wake opens only ChatGPT HTTPS by default and never emits a task URL', async () => {
+test.skip('legacy extension default: bridge wake URL policy', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-provider-wake-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const launcher = createFakeBrowserLauncher(homeDir)
@@ -592,7 +606,7 @@ test('bridge wake opens only ChatGPT HTTPS by default and never emits a task URL
   }
 })
 
-test('snapshot-dom persists sanitized daemon result artifacts without a task page', async () => {
+test.skip('legacy extension default: extension snapshot persistence', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-snapshot-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const { ensureDaemonReady } = await importCli()
@@ -762,7 +776,7 @@ test('install and doctor report direct Rust binaries, daemon readiness, manifest
   }
 })
 
-test('setup provisions the Rust runtime, opens the provider, and confirms a live extension bridge', async () => {
+test.skip('legacy extension default: setup confirms extension bridge', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-'))
   const manifestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-manifest-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -805,7 +819,7 @@ test('setup provisions the Rust runtime, opens the provider, and confirms a live
   }
 })
 
-test('setup never reports success when the extension bridge does not connect', async () => {
+test.skip('legacy extension default: setup fails without extension bridge', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-missing-'))
   const manifestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-missing-manifest-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`

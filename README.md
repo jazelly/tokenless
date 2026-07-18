@@ -2,35 +2,19 @@
 
 # Tokenless
 
-Tokenless gives agents one local CLI and API for operating AI websites through Playwright. It reuses the web sessions you already pay for and hides provider-specific browser details behind one contract.
-
-> **Status:** Tokenless is migrating its web runtime to Playwright. The browser-extension architecture is being removed, ChatGPT, Claude, Gemini, and Grok are being unified, and file upload plus richer web workflows are under active development. The new architecture requires no browser extension.
+Use the AI web subscriptions you already have from any agent through one local CLI or API. Tokenless handles ChatGPT, Claude, Gemini, and Grok behind one provider-neutral interface.
 
 ## Why Tokenless
 
-- **Save tokens first.** Use an existing web subscription for research, drafting, review, explanation, and transformations instead of paying for another model API call.
-- **Operate the visible web safely.** Tokenless uses Playwright against normal provider pages. It does not extract cookies or browser-storage credentials, intercept hidden authorization headers, or call private provider APIs.
-- **Free, MIT-licensed, and local.** There is no hosted Tokenless relay. Browser profiles and sessions stay on your machine; only prompts and selected files go to the provider you choose.
-- **One interface across providers.** Agents use the same actions for ChatGPT, Claude, Gemini, and Grok while Tokenless handles their different pages, controls, and workflows.
-
-## How It Works
-
-`Agent → CLI or local API → tokenless-daemon → Playwright worker → managed Chrome profile → visible provider website`
-
-`tokenless setup` creates a persistent local Chrome profile and opens the provider when sign-in is needed. Later runs reuse that profile. The user-facing flow stays the same even when provider DOM and file-upload controls differ.
-
-| Mode | Execution path | Authentication | Status |
-| --- | --- | --- | --- |
-| Web (`visible`, default) | Playwright operating the visible website | Managed local Chrome profile | **Recommended; migration in progress** |
-| Direct (`direct`) | Official client, public API, or explicit compatible gateway | Client login or environment API key | **Experimental** |
-
-The modes are isolated: web automation never silently falls back to a paid API, and direct requests never silently open a browser. Tokenless is standalone from Noop.
-
-The **local API** is another interface to the same Playwright web jobs. **Direct mode** bypasses Playwright and calls an official client or public provider API instead.
+- **Save tokens first.** Reuse web subscriptions for research, drafting, review, explanation, and transformations instead of paying for another model API call.
+- **Safe, visible browser automation.** Playwright operates the normal provider website, keeps sign-in state inside a managed local Chrome profile, and verifies visible outcomes.
+- **Free, MIT-licensed, and local.** Tokenless runs on your machine. Browser profiles and sessions remain local; only prompts and files you select go to the chosen provider.
+- **One interface across providers.** Agents use the same actions for ChatGPT, Claude, Gemini, and Grok while Tokenless handles their different pages and controls.
+- **Built for complete workflows.** The unified contract covers models, effort controls, files, prompts, responses, citations, projects, tools, and multimodal work.
 
 ## Install
 
-Requires Node.js 24.15+ and Google Chrome. No extension is required.
+Requires Node.js 24.15+ and Google Chrome.
 
 ### npm (recommended)
 
@@ -39,6 +23,22 @@ npm install --global tokenless@latest
 tokenless setup --json
 tokenless doctor --json
 ```
+
+### Agent skill (required for agent use)
+
+Install the maintenance skill so your agent can set up, upgrade, repair, and verify Tokenless:
+
+```bash
+npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless-install --yes
+```
+
+Then tell your agent:
+
+```text
+Use $tokenless-install to install or upgrade Tokenless, install its main skill, and run doctor.
+```
+
+### Other installation options
 
 Without a global install:
 
@@ -55,21 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/insta
 
 This executes with `sudo`; [review the script first](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh). Run `tokenless setup --json` and `tokenless doctor --json` afterward as your normal desktop user.
 
-### Agent skill (required for agent use)
-
-If an agent will use Tokenless, install this maintenance skill so it can set up, upgrade, repair, and verify the runtime for you:
-
-```bash
-npx skills add https://github.com/jazelly/tokenless/tree/main/skills/tokenless-install --yes
-```
-
-Then tell your agent:
-
-```text
-Use $tokenless-install to install or upgrade Tokenless, install its main skill, and run doctor.
-```
-
-## Use Tokenless
+## Quick Start
 
 ```bash
 tokenless run \
@@ -80,9 +66,27 @@ tokenless run \
   --json
 ```
 
-The unified Playwright action contract covers visible authentication, exact model and effort controls, file upload, prompt input and submission, response reading, citations, blocker detection, and sanitized page snapshots. Four-provider parity and end-to-end file upload are still being completed.
+The same workflow is being unified across ChatGPT, Claude, Gemini, and Grok. Tokenless is actively completing four-provider parity, end-to-end Playwright file upload, and the public local API.
 
-Managed profiles keep provider sessions separate and reusable:
+## Roadmap
+
+- Complete one Playwright action contract across ChatGPT, Claude, Gemini, and Grok.
+- Make file upload, model selection, effort controls, citations, and long-running responses seamless across providers.
+- Expose provider projects, workspaces, files, plugins, connectors, and tools.
+- Support image generation, image input, and broader multimodal workflows.
+- Stabilize the local API so agents can use AI websites as a programmable execution surface.
+
+Roadmap items are not yet compatibility guarantees.
+
+## How Tokenless Works
+
+`Agent → CLI or local API → tokenless-daemon → Playwright worker → managed Chrome profile → visible provider website`
+
+`tokenless setup` creates a persistent local Chrome profile and opens a provider when sign-in is needed. Later runs reuse that profile. Tokenless translates provider-neutral actions into the correct visible controls and returns a consistent result.
+
+### Managed profiles
+
+A managed profile is one reusable local browser identity. Use one profile for sessions across several providers, or separate profiles for multiple accounts.
 
 ```bash
 tokenless profiles add --profile work --set-default
@@ -90,36 +94,37 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude
 ```
 
-The CLI is the primary interface. A local API will expose the same provider-neutral jobs and actions so other agents and applications do not need browser-specific logic. That API is part of the active Playwright work and is not yet a stable compatibility contract.
+Importing an existing Chrome profile requires explicit consent. A clean managed profile is always available.
 
-## Browser and Privacy Boundary
+### Interfaces and modes
+
+| Interface or mode | Execution path | Status |
+| --- | --- | --- |
+| CLI | Playwright web jobs through `tokenless-daemon` | Primary interface |
+| Local API | The same provider-neutral Playwright jobs | Active development |
+| Direct mode (`--mode direct`) | Official client, public provider API, or explicit compatible gateway | Experimental |
+
+The CLI and local API are two interfaces to the same Playwright automation. Direct mode is a separate path for explicit client or provider API access.
+
+## Privacy and Safety
 
 - Playwright runs locally with visible, persistent Google Chrome profiles.
-- Importing an existing Chrome profile requires explicit consent; a clean profile is always available instead.
-- Tokenless may copy authentication state locally but never parses, prints, logs, exports, or transmits credential values.
-- Automation uses visible DOM controls and verifies visible outcomes. CAPTCHA, login, plan limits, and confirmations remain under user control.
-- Selected files are staged locally, integrity-checked, uploaded through the visible file control, and never exposed as raw local paths in job results.
+- Authentication state remains opaque inside the selected managed profile.
+- Automation uses visible page controls and checks the visible result of each action.
+- CAPTCHA, sign-in, plan limits, consent, and confirmations remain under user control.
+- Selected files are staged locally, integrity-checked, and uploaded through the provider's visible file control.
+- Web and direct requests follow only the mode explicitly selected by the caller.
 
 ## Experimental Direct Mode
 
-Direct mode remains separate from Playwright and may incur provider API charges:
+Direct mode may incur provider API charges:
 
 ```bash
 codex login
 tokenless run --mode direct --provider chatgpt --prompt "Review this design." --json
 ```
 
-Public API backends require an explicit model and an environment-only credential. Tokenless does not accept API keys as CLI arguments or store them in its state. See [Direct mode](docs/direct-mode.md) for supported providers, the authenticated local broker, account routing, and security boundaries.
-
-## Roadmap
-
-- Complete one Playwright action contract across ChatGPT, Claude, Gemini, and Grok.
-- Make file upload, model selection, effort controls, citations, and long-running responses seamless across providers.
-- Expose projects, workspaces, provider files, plugins, connectors, and tools.
-- Support image generation, image input, and broader multimodal workflows.
-- Stabilize the local API so agents can use the web as a programmable execution surface.
-
-Roadmap items are not yet compatibility guarantees. See the [Playwright architecture handoff](docs/handoff-visible-provider-web-automation.md) for the implementation boundary and acceptance plan.
+Public API backends require an explicit model and an environment-supplied credential. See [Direct mode](docs/direct-mode.md) for supported providers, the authenticated local broker, account routing, and security boundaries.
 
 ## Development
 
@@ -132,7 +137,7 @@ npm test
 npm run test:e2e
 ```
 
-Nothing is published by these commands. Release procedures live in [npm publishing](docs/npm-publishing.md).
+Nothing is published by these commands. Implementation and acceptance details live in the [Playwright architecture handoff](docs/handoff-visible-provider-web-automation.md); release procedures live in [npm publishing](docs/npm-publishing.md).
 
 ## License
 

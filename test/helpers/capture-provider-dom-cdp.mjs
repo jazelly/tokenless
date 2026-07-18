@@ -700,8 +700,16 @@ export async function captureProviderDom({
     console.error(JSON.stringify(result, null, 2))
     return result
   } finally {
-    await browser?.close().catch(() => undefined)
+    disconnectFromCdp(browser)
   }
+}
+
+// connectOverCDP attaches to a browser that this helper does not own. Calling
+// Browser.close() can wait indefinitely on a remote connection and may request
+// shutdown of the user's browser; close only the Playwright transport instead.
+export function disconnectFromCdp(browser) {
+  const connection = browser?._connection
+  if (connection && typeof connection.close === 'function') connection.close()
 }
 
 async function findProviderPage(browser, provider, urlIncludes) {

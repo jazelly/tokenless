@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
-import { chmod, copyFile, lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { tokenlessError } from '../errors.js'
 import { resolveChromeProfile } from './chrome-discovery.js'
@@ -11,7 +11,6 @@ export type ChromeProfileImportOptions = {
   profileDirectoryKey: string
   destinationDir: string
   tokenlessHome: string
-  isChromeRunning?: (sourceUserDataDir: string) => Promise<boolean> | boolean
   copyFile?: (source: string, destination: string) => Promise<void>
 }
 
@@ -21,22 +20,6 @@ export type ChromeProfileImportResult = {
   skippedEntries: readonly string[]
   syncDisabled: true
 }
-
-type SourceFileSnapshot = {
-  path: string
-  size: number
-  mtimeMs: number
-  sha256: string
-  dev: number
-  ino: number
-}
-
-const SOURCE_LOCK_ENTRIES = Object.freeze([
-  'SingletonCookie',
-  'SingletonLock',
-  'SingletonSocket',
-  'lockfile',
-])
 
 const PROFILE_EXCLUDE_EXACT = new Set([
   'Archived History',
@@ -110,28 +93,25 @@ export async function importChromeProfile(options: ChromeProfileImportOptions): 
   if (isPathInside(tokenlessHome, sourceRoot)) {
     throw tokenlessError('chrome_profile_inside_tokenless_home', 'Refusing to import a Chrome profile from Tokenless home.')
   }
-  await requireChromeQuiescent(sourceRoot, options.isChromeRunning)
   const destinationParent = dirname(destinationDir)
   await mkdir(destinationParent, { recursive: true, mode: 0o700 })
   const staging = join(destinationParent, `.staging-${randomUUID()}`)
   const skippedEntries: string[] = []
-  const sourceSnapshots: SourceFileSnapshot[] = []
   const copyFileImpl = options.copyFile ?? ((sourcePath, destinationPath) => copyFile(sourcePath, destinationPath, fsConstants.COPYFILE_EXCL))
   let copiedFiles = 0
   try {
     await mkdir(staging, { mode: 0o700 })
     const sourceRootReal = await realpath(sourceRoot)
     const sourceProfileReal = await realpath(sourceProfile)
-    await copySelectedRootFiles(sourceRoot, sourceRootReal, staging, skippedEntries, sourceSnapshots, copyFileImpl, () => {
+    await copySelectedRootFiles(sourceRoot, sourceRootReal, staging, skippedEntries, copyFileImpl, () => {
       copiedFiles += 1
     })
     const stagingProfile = join(staging, source.directoryKey)
     await mkdir(stagingProfile, { recursive: true, mode: 0o700 })
-    await copyProfileTree(sourceProfile, sourceProfileReal, stagingProfile, skippedEntries, sourceSnapshots, copyFileImpl, () => {
+    await copyProfileTree(sourceProfile, sourceProfileReal, stagingProfile, skippedEntries, copyFileImpl, () => {
       copiedFiles += 1
     })
     await disableSyncInClone(staging, source.directoryKey)
-    await assertSourceUnchanged(sourceSnapshots)
     await rm(destinationDir, { recursive: true, force: true })
     await rename(staging, destinationDir)
     await chmod(destinationDir, 0o700)
@@ -144,24 +124,6 @@ export async function importChromeProfile(options: ChromeProfileImportOptions): 
   } catch (error) {
     await rm(staging, { recursive: true, force: true })
     throw error
-  }
-}
-
-export async function requireChromeQuiescent(
-  sourceUserDataDir: string,
-  isChromeRunning?: (sourceUserDataDir: string) => Promise<boolean> | boolean
-) {
-  const root = resolve(sourceUserDataDir)
-  if (isChromeRunning && await isChromeRunning(root)) {
-    throw tokenlessError('chrome_profile_in_use', 'Google Chrome must be fully closed before profile import.', { retryable: true })
-  }
-  for (const entry of SOURCE_LOCK_ENTRIES) {
-    try {
-      await lstat(join(root, entry))
-      throw tokenlessError('chrome_profile_in_use', 'Google Chrome profile lock is present; close Chrome before import.', { retryable: true })
-    } catch (error) {
-      if (!isMissingFile(error)) throw error
-    }
   }
 }
 
@@ -180,14 +142,13 @@ async function copySelectedRootFiles(
   sourceRootReal: string,
   staging: string,
   skippedEntries: string[],
-  sourceSnapshots: SourceFileSnapshot[],
   copyFileImpl: (source: string, destination: string) => Promise<void>,
   onFileCopied: () => void
 ) {
   for (const entry of ROOT_INCLUDE_EXACT) {
     const source = resolve(sourceRoot, entry)
     const destination = resolve(staging, entry)
-    await copySafeEntry(source, sourceRootReal, destination, 'root', skippedEntries, sourceSnapshots, copyFileImpl, onFileCopied)
+    await copySafeEntry(source, sourceRootReal, destination, 'root', skippedEntries, copyFileImpl, onFileCopied)
   }
 }
 
@@ -196,11 +157,10 @@ async function copyProfileTree(
   sourceProfileReal: string,
   stagingProfile: string,
   skippedEntries: string[],
-  sourceSnapshots: SourceFileSnapshot[],
   copyFileImpl: (source: string, destination: string) => Promise<void>,
   onFileCopied: () => void
 ) {
-  await copySafeEntry(sourceProfile, sourceProfileReal, stagingProfile, 'profile', skippedEntries, sourceSnapshots, copyFileImpl, onFileCopied)
+  await copySafeEntry(sourceProfile, sourceProfileReal, stagingProfile, 'profile', skippedEntries, copyFileImpl, onFileCopied)
 }
 
 async function copySafeEntry(
@@ -209,7 +169,6 @@ async function copySafeEntry(
   destination: string,
   scope: 'root' | 'profile',
   skippedEntries: string[],
-  sourceSnapshots: SourceFileSnapshot[],
   copyFileImpl: (source: string, destination: string) => Promise<void>,
   onFileCopied: () => void
 ) {
@@ -237,7 +196,7 @@ async function copySafeEntry(
     await mkdir(destination, { recursive: true, mode: 0o700 })
     const entries = await import('node:fs/promises').then((fs) => fs.readdir(source))
     for (const entry of entries) {
-      await copySafeEntry(join(source, entry), sourceRootReal, join(destination, entry), scope, skippedEntries, sourceSnapshots, copyFileImpl, onFileCopied)
+      await copySafeEntry(join(source, entry), sourceRootReal, join(destination, entry), scope, skippedEntries, copyFileImpl, onFileCopied)
     }
     return
   }
@@ -245,51 +204,14 @@ async function copySafeEntry(
     skippedEntries.push(scopedRelative)
     return
   }
-  const snapshot = await snapshotSourceFile(source)
-  sourceSnapshots.push(snapshot)
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
   await copyFileImpl(source, destination)
-  await assertCopiedFileMatchesSnapshot(destination, snapshot)
+  const copied = await lstat(destination)
+  if (!copied.isFile() || copied.isSymbolicLink()) {
+    throw tokenlessError('chrome_profile_copy_failed', 'Chrome profile copy did not produce a regular file.')
+  }
   await chmod(destination, 0o600)
   onFileCopied()
-}
-
-async function assertCopiedFileMatchesSnapshot(destination: string, snapshot: SourceFileSnapshot) {
-  const copied = await lstat(destination)
-  if (!copied.isFile() || copied.isSymbolicLink() || copied.size !== snapshot.size) {
-    throw tokenlessError('chrome_source_profile_changed', 'Chrome source profile changed during import.')
-  }
-  const digest = createHash('sha256').update(await readFile(destination)).digest('hex')
-  if (digest !== snapshot.sha256) {
-    throw tokenlessError('chrome_source_profile_changed', 'Chrome source profile changed during import.')
-  }
-}
-
-async function snapshotSourceFile(path: string): Promise<SourceFileSnapshot> {
-  const noFollow = fsConstants.O_NOFOLLOW ?? 0
-  let handle: Awaited<ReturnType<typeof open>> | undefined
-  try {
-    const linked = await lstat(path)
-    if (linked.isSymbolicLink() || !linked.isFile()) {
-      throw tokenlessError('chrome_source_profile_changed', 'Chrome source profile entry is not a regular file.')
-    }
-    handle = await open(path, fsConstants.O_RDONLY | noFollow)
-    const opened = await handle.stat()
-    if (!opened.isFile() || opened.dev !== linked.dev || opened.ino !== linked.ino) {
-      throw tokenlessError('chrome_source_profile_changed', 'Chrome source profile changed during import.')
-    }
-    const digest = createHash('sha256').update(await handle.readFile()).digest('hex')
-    return {
-      path,
-      size: opened.size,
-      mtimeMs: opened.mtimeMs,
-      sha256: digest,
-      dev: opened.dev,
-      ino: opened.ino,
-    }
-  } finally {
-    await handle?.close().catch(() => undefined)
-  }
 }
 
 async function disableSyncInClone(stagingRoot: string, profileDirectoryKey: string) {

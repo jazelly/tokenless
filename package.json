@@ -13,7 +13,7 @@
     "release:version": "node scripts/release/version.mjs",
     "verify:extension-release": "node scripts/verify-extension-release.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
-    "test": "npm run build && node --test --test-concurrency=1 test/**/*.test.mjs",
+    "test": "npm run build && node dist/scripts/test-all.mjs",
     "test:e2e": "npm run build && TOKENLESS_E2E=1 node --test test/**/*.e2e.mjs",
     "test:e2e:live-ambient-codex": "npm run build:js --workspace tokenless && TOKENLESS_LIVE_AMBIENT_CODEX=1 node --test --test-concurrency=1 test/live-ambient-codex.e2e.mjs",
     "test:e2e:live-direct": "npm run build:js --workspace tokenless && TOKENLESS_LIVE_DIRECT=1 node --test test/live-direct-api.e2e.mjs",

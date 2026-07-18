@@ -1023,6 +1023,7 @@ async function executeDaemonJob({
     const request = createManagedPlaywrightJobRequest({
       provider,
       target: { kind: 'provider_home', url: managedProviderTargetUrl(provider, args.targetUrl) },
+      taskId: taskId ?? null,
       actions: managedVisibleActions({
         action,
         provider,
@@ -1166,7 +1167,9 @@ async function executeManagedPlaywrightJob({
     daemonUrl: configuredDaemonUrl,
     homeDir,
     profileId: profile.id,
-    request,
+    request: request.taskId === (taskId ?? null)
+      ? request
+      : { ...request, taskId: taskId ?? null },
     ...(jobId === undefined ? {} : { jobId }),
   })
   statusReporter.report({
@@ -1383,10 +1386,10 @@ async function stateCommand(args: CliArgs) {
     daemonUrl: configuredDaemonUrl,
     timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
   })
-  const requestedTaskId = args.taskId || args.idempotencyKey || deriveTaskId({
+  const requestedTaskId = args.taskId || args.idempotencyKey || (args.jobId ? undefined : deriveTaskId({
     projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
     chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
-  })
+  }))
   if (!requestedTaskId && !args.jobId) {
     if (args.profile === undefined) {
       throw usageError('missing_task_id', 'Usage: tokenless state requires --task-id, --job-id, or --profile.')
@@ -1400,7 +1403,7 @@ async function stateCommand(args: CliArgs) {
     : await listDaemonJobs({
         daemonUrl: configuredDaemonUrl,
         homeDir,
-        taskId: profile ? undefined : requestedTaskId,
+        taskId: requestedTaskId,
         provider,
         executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
         profileId: profile.id,
@@ -1408,12 +1411,8 @@ async function stateCommand(args: CliArgs) {
       })
   const jobs = daemonJobs
     .map(publicDaemonJobState)
-    .map((job) => ({
-      ...job,
-      backend: PLAYWRIGHT_EXECUTION_BACKEND,
-      profile: { id: profile.id },
-    }))
     .filter((job) => {
+      if (job.backend !== PLAYWRIGHT_EXECUTION_BACKEND) return false
       if (requestedTaskId && job.taskId !== requestedTaskId) return false
       if (provider && job.provider !== provider) return false
       if (job.profile?.id !== profile.id) return false

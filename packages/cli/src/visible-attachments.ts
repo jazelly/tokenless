@@ -192,6 +192,7 @@ export async function stageVisibleAttachment({
     if (!staged) {
       await fs.rm(destination, { force: true }).catch(() => undefined)
       await fs.rmdir(bundle).catch(() => undefined)
+      await fs.rmdir(root).catch(() => undefined)
     }
   }
 }

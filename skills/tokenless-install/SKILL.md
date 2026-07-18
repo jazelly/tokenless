@@ -72,7 +72,7 @@ Run `npx tokenless@latest doctor --json` first and use its exact failed check as
 - CLI, daemon, or Playwright worker failure: rerun `npx tokenless@latest setup --json`, then rerun `doctor`.
 - Chrome failure: require installed Google Chrome; do not substitute an unverified browser channel.
 - Missing or invalid default profile: rerun setup to create or select one. Never delete a profile unless the user explicitly requests removal and confirms it.
-- Profile import blocked by running Chrome: use the user handoff, wait for confirmation that Chrome is closed, then retry the consented import.
+- Profile hot import failure: report the copy error and retry only with user consent. Chrome may remain open; a failed or unusable clone must never trigger extension fallback or mutation of the source profile.
 - Provider unauthenticated or visibly blocked: open it with `npx tokenless@latest profiles open --profile <slug> --provider <id>`, use the user handoff, then rerun `doctor`.
 - Unknown or contradictory output: report the exact failed check and stop instead of guessing, weakening validation, or switching to direct mode.
 
