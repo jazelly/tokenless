@@ -65,6 +65,7 @@ const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const GATED_ACTIONS = new Set<string>([
+  VISIBLE_ACTIONS.NAVIGATION_CHECK,
   VISIBLE_ACTIONS.MODEL_INSPECT,
   VISIBLE_ACTIONS.MODEL_SELECT,
   VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -324,7 +325,7 @@ export class ManagedPlaywrightRunnerService {
   ): Promise<ManagedPlaywrightJobResult> {
     const responses = await this.contextManager.runWithProfile(profile, async (managedContext) => {
       const page = await managedContext.page()
-      await navigateToTarget(page, request.target.url, signal)
+      await navigateToTarget(page, request.target.url, signal, request.actions.some((action) => action.action === VISIBLE_ACTIONS.NAVIGATION_CHECK))
       const visibleResponses: VisibleActionResponse[] = []
       const provider = getProviderById(request.provider)
       if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
@@ -408,11 +409,17 @@ export function serializeRunnerError(error: unknown) {
   }
 }
 
-async function navigateToTarget(page: unknown, url: string, signal: AbortSignal) {
+async function navigateToTarget(page: unknown, url: string, signal: AbortSignal, foreground: boolean) {
   throwIfStopped(signal, () => false)
-  const maybePage = page as { goto?: (url: string, options?: Record<string, unknown>) => Promise<unknown> }
+  const maybePage = page as {
+    goto?: (url: string, options?: Record<string, unknown>) => Promise<unknown>
+    bringToFront?: () => Promise<unknown>
+  }
   if (typeof maybePage.goto === 'function') {
     await maybePage.goto(url, { waitUntil: 'domcontentloaded' })
+  }
+  if (foreground && typeof maybePage.bringToFront === 'function') {
+    await maybePage.bringToFront()
   }
 }
 
