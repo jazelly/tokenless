@@ -10,6 +10,14 @@ import {
   inspectTokenlessSkills,
   installTokenlessSkills,
 } from '../packages/cli/dist/src/setup-workflow.js'
+import {
+  SETUP_MANAGED_PROFILE_DISCLOSURE,
+  SETUP_READINESS_DISCLOSURE,
+  createSetupPresenter,
+  resolveSetupTerminalCapabilities,
+  supportsAnsi,
+  supportsAnimation,
+} from '../packages/cli/dist/src/setup-presenter.js'
 
 test('setup skill check requires both manifests and canonical GitHub lock metadata', async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-setup-skills-'))
@@ -47,6 +55,149 @@ test('setup installs both skills from the canonical repository with telemetry di
   await fs.rm(home, { recursive: true, force: true })
 })
 
+test('setup presenter prints the roadmap and action explanations in plain output', () => {
+  const stream = captureStream()
+  const presenter = createSetupPresenter({
+    enabled: true,
+    stream,
+    env: { NO_COLOR: '1' },
+    animation: false,
+  })
+
+  presenter.welcome()
+  presenter.explain({
+    title: 'Agent skills',
+    lines: [
+      'Tokenless will read local skill manifests before changing anything.',
+      'Installation changes only local agent skill files.',
+    ],
+  })
+
+  const output = stream.output()
+  assert.match(output, /Tokenless setup/)
+  assert.match(output, /Roadmap/)
+  assertRoadmapOrder(output, [
+    'Configuration read: read existing Tokenless setup choices.',
+    'Agent skills: read local skill manifests and install only when approved.',
+    'Browser/provider choices: choose the managed browser and provider pages.',
+    'Configuration write: save browser, provider list, and daemon URL preferences.',
+    'Managed profile: create a clean profile or copy a local profile only with consent.',
+    'Provider readiness: open the managed browser/profile and inspect visible login state only.',
+  ])
+  assert.match(output, /Tokenless will read local skill manifests before changing anything/)
+  assert.doesNotMatch(output, /\u001b\[/)
+})
+
+test('setup prompt capability stays independent from stderr presentation capability', () => {
+  assert.deepEqual(resolveSetupTerminalCapabilities({
+    json: false,
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    stderr: { isTTY: false },
+  }), {
+    canPrompt: true,
+    canPresent: false,
+  })
+  assert.deepEqual(resolveSetupTerminalCapabilities({
+    json: true,
+    stdin: { isTTY: true },
+    stdout: { isTTY: true },
+    stderr: { isTTY: true },
+  }), {
+    canPrompt: false,
+    canPresent: false,
+  })
+  assert.deepEqual(resolveSetupTerminalCapabilities({
+    json: false,
+    stdin: { isTTY: true },
+    stdout: { isTTY: false },
+    stderr: { isTTY: true },
+  }), {
+    canPrompt: false,
+    canPresent: false,
+  })
+})
+
+test('setup disclosures state import and readiness boundaries explicitly', () => {
+  assert.match(
+    SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'),
+    /may include browser session artifacts such as cookies and local storage/
+  )
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /does not parse, extract, log, or upload/)
+  assert.match(
+    SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'),
+    /excludes history, bookmarks, saved passwords\/Login Data, autofill and payment data, extensions, caches, crash\/download artifacts, and sync data/
+  )
+  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /start the local daemon\/runner and create a readiness job/)
+  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /opens the visible managed browser\/profile/)
+  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /does not type or submit a prompt/)
+  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /does not read cookies, localStorage\/sessionStorage tokens, hidden auth headers, or private provider APIs/)
+})
+
+test('setup presenter cleans animated progress on success and failure', async () => {
+  const successStream = captureStream()
+  const successTimers = manualTimers()
+  const successPresenter = createSetupPresenter({
+    enabled: true,
+    stream: successStream,
+    env: { TERM: 'xterm-256color', TOKENLESS_FORCE_ANIMATION: '1' },
+    timers: successTimers,
+  })
+
+  const value = await successPresenter.withProgress('Checking visible login state', async () => {
+    successTimers.tick()
+    return 'ready'
+  })
+
+  assert.equal(value, 'ready')
+  assert.equal(successTimers.cleared(), 1)
+  assert.match(successStream.output(), /\r/)
+  assert.match(successStream.output(), /OK.*Checking visible login state/)
+  assert.equal(successStream.output().endsWith('\n'), true)
+
+  const failureStream = captureStream()
+  const failureTimers = manualTimers()
+  const failurePresenter = createSetupPresenter({
+    enabled: true,
+    stream: failureStream,
+    env: { TERM: 'xterm-256color', TOKENLESS_FORCE_ANIMATION: '1' },
+    timers: failureTimers,
+  })
+
+  await assert.rejects(
+    failurePresenter.withProgress('Installing skills', async () => {
+      failureTimers.tick()
+      throw new Error('install failed')
+    }),
+    /install failed/,
+  )
+
+  assert.equal(failureTimers.cleared(), 1)
+  assert.match(failureStream.output(), /\r/)
+  assert.match(failureStream.output(), /X.*Installing skills/)
+  assert.equal(failureStream.output().endsWith('\n'), true)
+})
+
+test('setup presenter is silent when disabled and respects reduced terminal environments', async () => {
+  const stream = captureStream()
+  const presenter = createSetupPresenter({
+    enabled: false,
+    stream,
+    env: { TERM: 'xterm-256color' },
+  })
+
+  presenter.welcome()
+  presenter.explain({ title: 'Silent', lines: ['No output should be written.'] })
+  const result = await presenter.withProgress('No-op progress', async () => 'done')
+
+  assert.equal(result, 'done')
+  assert.equal(stream.output(), '')
+  assert.equal(supportsAnsi({ NO_COLOR: '1' }), false)
+  assert.equal(supportsAnsi({ TERM: 'dumb' }), false)
+  assert.equal(supportsAnimation({ TERM: 'dumb' }), false)
+  assert.equal(supportsAnimation({ CI: '1' }), false)
+})
+
 async function writeInstalledSkills(home) {
   const root = path.join(home, '.agents')
   for (const name of TOKENLESS_SKILL_NAMES) {
@@ -65,4 +216,47 @@ async function writeInstalledSkills(home) {
       updatedAt: new Date().toISOString(),
     }])),
   }), 'utf8')
+}
+
+function captureStream() {
+  const chunks = []
+  return {
+    write(chunk) {
+      chunks.push(String(chunk))
+    },
+    output() {
+      return chunks.join('')
+    },
+  }
+}
+
+function manualTimers() {
+  let callback = null
+  let clearCount = 0
+  return {
+    setInterval(next) {
+      callback = next
+      return Symbol('timer')
+    },
+    clearInterval() {
+      clearCount += 1
+    },
+    tick() {
+      assert.equal(typeof callback, 'function')
+      callback()
+    },
+    cleared() {
+      return clearCount
+    },
+  }
+}
+
+function assertRoadmapOrder(output, steps) {
+  let previous = -1
+  for (const step of steps) {
+    const current = output.indexOf(step)
+    assert.notEqual(current, -1, `missing roadmap step: ${step}`)
+    assert.ok(current > previous, `roadmap step is out of order: ${step}`)
+    previous = current
+  }
 }
