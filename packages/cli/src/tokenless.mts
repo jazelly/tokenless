@@ -1591,33 +1591,26 @@ async function setupCommand(args: CliArgs) {
     presenter.welcome()
     presenter.explain({
       title: 'Configuration read',
-      lines: [
-        'Tokenless will read its local config to find previous browser, provider, and daemon choices.',
-        'This is read-only; setup writes config later only after the selected preferences are known.',
-      ],
+      lines: ['Read existing Tokenless choices. Nothing changes yet.'],
     })
-    const config = await presenter.withProgress('Reading Tokenless configuration', () => readTokenlessConfig(homeDir))
+    const config = await presenter.withProgress('Reading config', () => readTokenlessConfig(homeDir))
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
     const skills = await ensureSetupSkills({ args, prompt, presenter })
     presenter.explain({
       title: 'Browser discovery',
-      lines: [
-        'Tokenless will read local browser installation paths for supported Chromium browsers.',
-        'This step does not copy profile data or change browser settings.',
-      ],
+      lines: ['Find supported browsers. No browser data changes.'],
     })
-    const installedBrowsers = await presenter.withProgress('Detecting supported browsers', discoverSetupBrowsers)
+    const installedBrowsers = await presenter.withProgress('Finding browsers', discoverSetupBrowsers)
     const browser = await selectSetupBrowser({ args, config, installedBrowsers, prompt, presenter })
     const providers = await selectSetupProviders({ args, config, prompt, presenter })
     presenter.explain({
       title: 'Configuration write',
       lines: [
-        `Tokenless will save browser=${browser.browser}, providers=${providers.join(', ')}, and daemonUrl=${configuredDaemonUrl}.`,
-        'This changes only Tokenless local configuration under the selected Tokenless home.',
-        'If the selected browser changed, Tokenless stops the current local runner so the next managed session uses the new browser.',
+        `Save ${browser.browser} and ${providers.join(', ')} to Tokenless config.`,
+        'Changing browsers stops the current local runner.',
       ],
     })
-    await presenter.withProgress('Saving Tokenless setup preferences', async () => {
+    await presenter.withProgress('Saving preferences', async () => {
       if (config.browser && config.browser !== browser.browser) {
         await stopRunnerSupervisor({ homeDir })
       }
@@ -1646,7 +1639,7 @@ async function setupCommand(args: CliArgs) {
         lines: SETUP_READINESS_DISCLOSURE,
       })
       let result = await presenter.withProgress(
-        `Opening managed browser and checking visible ${provider} login state`,
+        `Checking ${provider} sign-in`,
         () => runSetupAuthCheck({ args, homeDir, profile, provider, quietStatus: setupTerminal.canPresent }),
       )
       runner = result.runner
@@ -1657,13 +1650,13 @@ async function setupCommand(args: CliArgs) {
         if (prompt) {
           presenter.handover(
             provider,
-            `The provider requested visible verification or sign-in for job ${result.job.job_id}.`,
+            `Job ${result.job.job_id} needs sign-in or verification.`,
           )
           await prompt.pause(
             `Complete the visible ${provider} verification or sign-in in the already-open browser to resume the same job.`
           )
           const resumed = await presenter.withProgress(
-            `Waiting for ${provider} to finish the same visible job`,
+            `Waiting for ${provider}`,
             () => waitForSetupJobAfterUser({
               homeDir,
               daemonUrl: configuredDaemonUrl,
@@ -1679,11 +1672,11 @@ async function setupCommand(args: CliArgs) {
       if (observedAuth === 'unauthenticated' && prompt) {
         presenter.handover(
           provider,
-          `Tokenless saw a visible signed-out state for ${provider}.`,
+          `${provider} is signed out.`,
         )
         await prompt.pause(`Sign in to ${provider} in the already-open managed browser.`)
         result = await presenter.withProgress(
-          `Re-checking visible ${provider} login state`,
+          `Re-checking ${provider} sign-in`,
           () => runSetupAuthCheck({ args, homeDir, profile, provider, quietStatus: setupTerminal.canPresent }),
         )
         runner = result.runner
@@ -1775,7 +1768,7 @@ async function ensureSetupManagedProfile({
       { label: 'Create a new managed profile', value: '__new__' },
     ]
     const chosen = await prompt.select(
-      'Choose the managed browser profile Tokenless should use',
+      'Choose a managed profile',
       choices,
       Math.max(0, existing.findIndex((profile) => profile.slug === configuredDefaultProfile))
     )
@@ -1838,7 +1831,7 @@ async function ensureSetupManagedProfile({
     return selected
   }
 
-  if (!slug && prompt) slug = await prompt.text('Managed profile slug', existing.length === 0 ? 'default' : 'primary')
+  if (!slug && prompt) slug = await prompt.text('Profile name', existing.length === 0 ? 'default' : 'primary')
   slug ??= 'default'
   if (args.reimportProfile === true) {
     throw usageError('setup_reimport_profile_not_found', `Cannot re-import unregistered managed profile '${slug}'.`)
@@ -1940,9 +1933,8 @@ async function ensureSetupSkills({
   presenter.explain({
     title: 'Agent skills',
     lines: [
-      'Tokenless will read local skill manifests and the skill lock file under the agent skills home.',
-      'If installation or refresh is needed, setup will run the skills CLI against github.com/jazelly/tokenless.',
-      'The install step changes only local agent skill files and disables telemetry for that command.',
+      'Check the Tokenless agent skills.',
+      'If missing, setup asks before installing them from GitHub.',
     ],
   })
   let check = await presenter.withProgress('Checking Tokenless agent skills', () => inspectTokenlessSkills(skillHome))
@@ -2026,9 +2018,9 @@ async function selectSetupBrowser({
     }
   }
   if (!prompt) return installedBrowsers[0]!
-  presenter.note('Choose which installed browser Tokenless should launch for managed visible sessions.')
+  presenter.note('Choose the browser Tokenless should use.')
   const selected = await prompt.select(
-    'Choose the browser Tokenless should manage',
+    'Choose a browser',
     installedBrowsers.map((browser) => ({ label: browser.displayName, value: browser.browser })),
     Math.max(0, installedBrowsers.findIndex((browser) => browser.browser === configured))
   )
@@ -2050,10 +2042,7 @@ async function selectSetupProviders({
 }): Promise<ProviderId[]> {
   presenter.explain({
     title: 'Provider preferences',
-    lines: [
-      'Tokenless will read existing preferred providers and ask which provider pages to prepare.',
-      'The selected list is saved to Tokenless local config before readiness checks run.',
-    ],
+    lines: ['Choose which providers Tokenless should prepare.'],
   })
   if (args.preferredProviders !== undefined) {
     const providers = requireSetupProviders(parseProviderList(args.preferredProviders) as ProviderId[])
@@ -2070,7 +2059,7 @@ async function selectSetupProviders({
     : ['chatgpt'] as ProviderId[]
   if (!prompt) return requireSetupProviders(configured)
   const answer = await prompt.text(
-    'Providers to configure (comma-separated: chatgpt, claude, gemini, grok)',
+    'Providers (comma-separated: chatgpt, claude, gemini, grok)',
     configured.join(',')
   )
   const providers = requireSetupProviders(parseProviderList(answer) as ProviderId[])

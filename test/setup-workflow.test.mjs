@@ -77,12 +77,12 @@ test('setup presenter prints the roadmap and action explanations in plain output
   assert.match(output, /Tokenless setup/)
   assert.match(output, /Roadmap/)
   assertRoadmapOrder(output, [
-    'Configuration read: read existing Tokenless setup choices.',
-    'Agent skills: read local skill manifests and install only when approved.',
-    'Browser/provider choices: choose the managed browser and provider pages.',
-    'Configuration write: save browser, provider list, and daemon URL preferences.',
-    'Managed profile: create a clean profile or copy a local profile only with consent.',
-    'Provider readiness: open the managed browser/profile and inspect visible login state only.',
+    'Check config',
+    'Check agent skills',
+    'Choose browser and providers',
+    'Save preferences',
+    'Choose a managed profile',
+    'Check provider sign-in',
   ])
   assert.match(output, /Tokenless will read local skill manifests before changing anything/)
   assert.doesNotMatch(output, /\u001b\[/)
@@ -119,19 +119,13 @@ test('setup prompt capability stays independent from stderr presentation capabil
 })
 
 test('setup disclosures state import and readiness boundaries explicitly', () => {
-  assert.match(
-    SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'),
-    /may include browser session artifacts such as cookies and local storage/
-  )
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /does not parse, extract, log, or upload/)
-  assert.match(
-    SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'),
-    /excludes history, bookmarks, saved passwords\/Login Data, autofill and payment data, extensions, caches, crash\/download artifacts, and sync data/
-  )
-  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /start the local daemon\/runner and create a readiness job/)
-  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /opens the visible managed browser\/profile/)
-  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /does not type or submit a prompt/)
-  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /does not read cookies, localStorage\/sessionStorage tokens, hidden auth headers, or private provider APIs/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Keeps provider sign-ins between jobs/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /copy cookies and site storage locally/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /never extracts or uploads/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Excludes passwords, history, bookmarks, payments, extensions, sync data, and caches/)
+  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /start its local runner/)
+  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /check the provider's visible sign-in state/)
+  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /does not extract tokens or type and submit a prompt/)
 })
 
 test('setup presenter cleans animated progress on success and failure', async () => {
