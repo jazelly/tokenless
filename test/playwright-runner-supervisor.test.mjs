@@ -56,6 +56,28 @@ test('home-scoped supervisor starts one runner, waits for heartbeat, and writes 
   assert.equal((await stat(markers.logFile)).mode & 0o777, 0o600)
 })
 
+test('supervisor refuses to reuse a running home with a different managed browser', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'tokenless-runner-browser-'))
+  const options = {
+    homeDir,
+    browser: 'chrome',
+    sessionId: 'session-browser',
+    heartbeatTimeoutMs: 1000,
+    isProcessAlive: (pid) => pid === 5151,
+    spawnDetached: async (_command, args) => {
+      const sessionId = args[args.indexOf('--session-id') + 1]
+      await writeRunnerHeartbeat({ homeDir, sessionId, pid: 5151, now: fixedNow })
+      return { pid: 5151 }
+    },
+    now: fixedNow,
+  }
+  await startRunnerSupervisor(options)
+  await assert.rejects(
+    () => startRunnerSupervisor({ ...options, browser: 'brave', browserExecutablePath: '/Applications/Brave Browser' }),
+    matchCode('playwright_runner_browser_mismatch')
+  )
+})
+
 test('supervisor validates heartbeat identity before stopping', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'tokenless-runner-supervisor-'))
   const killed = []

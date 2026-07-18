@@ -7,6 +7,8 @@ const args = parseArgs(process.argv.slice(2))
 const abortController = new AbortController()
 const homeDir = requiredArg(args, 'home-dir')
 const sessionId = requiredArg(args, 'session-id')
+const browserId = args.get('browser') ?? 'chrome'
+const browserExecutablePath = args.get('browser-executable')
 
 process.on('SIGINT', () => abortController.abort())
 process.on('SIGTERM', () => abortController.abort())
@@ -23,6 +25,10 @@ const service = new ManagedPlaywrightRunnerService({
     homeDir,
     daemonUrl: args.get('daemon-url'),
   }),
+  browser: {
+    id: browserId,
+    ...(browserExecutablePath ? { executablePath: browserExecutablePath } : {}),
+  },
 })
 
 try {

@@ -33,6 +33,8 @@ export type RunnerSupervisorOptions = {
   sessionId?: string | undefined
   heartbeatTimeoutMs?: number | undefined
   now?: (() => Date) | undefined
+  browser?: string | undefined
+  browserExecutablePath?: string | undefined
 }
 
 type SpawnDetached = (command: string, args: readonly string[], options: {
@@ -46,6 +48,8 @@ type SupervisorSession = {
   sessionId: string
   pid: number
   startedAt: string
+  browser?: string | undefined
+  browserExecutablePath?: string | undefined
 }
 
 type SupervisorHeartbeat = {
@@ -76,7 +80,20 @@ async function startRunnerSupervisorUnlocked(
   markers: Awaited<ReturnType<typeof ensureRunnerMarkersDir>>
 ): Promise<RunnerSupervisorStartResult> {
   const current = await runnerSupervisorStatusUnlocked(options, markers)
-  if (current.state === 'running') return { ...current, started: false }
+  if (current.state === 'running') {
+    const session = await readJson<SupervisorSession>(markers.sessionFile)
+    const requestedBrowser = options.browser ?? 'chrome'
+    const activeBrowser = session?.browser ?? 'chrome'
+    const requestedExecutable = options.browserExecutablePath ?? null
+    const activeExecutable = session?.browserExecutablePath ?? null
+    if (activeBrowser !== requestedBrowser || activeExecutable !== requestedExecutable) {
+      throw tokenlessError(
+        'playwright_runner_browser_mismatch',
+        `The managed Playwright runner is already using ${activeBrowser}; stop it before switching to ${requestedBrowser}.`
+      )
+    }
+    return { ...current, started: false }
+  }
   if (current.state === 'unsafe') {
     throw tokenlessError('playwright_runner_identity_unverified', 'A live managed Playwright runner marker is not verified; refusing to overwrite it.')
   }
@@ -89,6 +106,8 @@ async function startRunnerSupervisorUnlocked(
     entryPath,
     '--home-dir', markers.homeDir,
     '--session-id', sessionId,
+    '--browser', options.browser ?? 'chrome',
+    ...(options.browserExecutablePath ? ['--browser-executable', options.browserExecutablePath] : []),
     ...(options.daemonUrl ? ['--daemon-url', options.daemonUrl] : []),
   ]
   const spawned = await (options.spawnDetached ?? defaultSpawnDetached)(nodePath, args, {
@@ -102,6 +121,8 @@ async function startRunnerSupervisorUnlocked(
     sessionId,
     pid: spawned.pid,
     startedAt,
+    browser: options.browser ?? 'chrome',
+    ...(options.browserExecutablePath ? { browserExecutablePath: options.browserExecutablePath } : {}),
   }
   await writePrivateJson(markers.sessionFile, session)
   await writePrivateJson(markers.pidFile, session)

@@ -35,7 +35,7 @@ test('CLI daemon wait returns waiting_for_user promptly with blocker and does no
     assert.equal(result.ok, null)
     assert.equal(result.status, 'waiting_for_user')
     assert.equal(result.blocker.blocker.code, 'visible_recaptcha')
-    assert.match(result.userAction.message, /Visible Chrome is open/)
+    assert.match(result.userAction.message, /visible managed browser is open/i)
     assert.equal(requests.some((request) => request.method === 'POST' && request.url.includes('/cancel')), false)
   })
 })

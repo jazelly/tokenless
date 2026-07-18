@@ -374,7 +374,7 @@ export async function waitDaemonJobResult({
 
 function userHandoverAction(job: DaemonJob) {
   return {
-    message: 'Visible Chrome is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.',
+    message: 'The visible managed browser is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.',
     resumeCommand: jobIdResumeCommand(job),
     queryGuidance: 'Run tokenless state --job-id <jobId> --json or rerun the same task query after the user confirms completion.',
   }

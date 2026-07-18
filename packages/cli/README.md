@@ -1,25 +1,25 @@
 # Tokenless CLI
 
-`tokenless` exposes provider-neutral CLI and local API access to visible ChatGPT, Claude, Gemini, and Grok sessions. It uses a local `tokenless-daemon`, a Playwright worker, and persistent managed Google Chrome profiles.
+`tokenless` exposes provider-neutral CLI and local API access to visible ChatGPT, Claude, Gemini, and Grok sessions. It uses a local `tokenless-daemon`, a Playwright worker, and persistent managed Chromium profiles.
 
 ## Install
 
-Requires Node.js 24.15+ and Google Chrome.
+Requires Node.js 24.15+ and a supported Chromium browser such as Google Chrome or Brave.
 
 ### npm (recommended)
 
 ```bash
 npm install --global tokenless@latest
-tokenless setup --json
+tokenless setup
 tokenless doctor --json
 ```
 
-`setup` provisions the local runtime and a persistent `default` Chrome profile, then opens the preferred provider when visible sign-in is needed. `doctor` verifies the CLI, daemon, Playwright worker, managed profile, Chrome, and visible provider state.
+`setup` is the canonical interactive onboarding command. It installs and checks the GitHub-backed agent skills, detects installed browsers, configures one persistent profile, asks which providers to use, starts the runtime, and keeps provider pages open for visible sign-in or challenge handoff. `doctor` verifies the resulting configuration.
 
 ### npx
 
 ```bash
-npx tokenless@latest setup --json
+npx tokenless@latest setup
 npx tokenless@latest doctor --json
 ```
 
@@ -29,7 +29,7 @@ npx tokenless@latest doctor --json
 curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
 ```
 
-Because this executes with `sudo`, [review the installer source](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh) first. Run `tokenless setup --json` and `tokenless doctor --json` afterward as the normal desktop user.
+Because this executes with `sudo`, [review the installer source](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh) first. Run `tokenless setup` and `tokenless doctor --json` afterward as the normal desktop user.
 
 ## Web Automation
 
@@ -59,10 +59,11 @@ Provider parity and end-to-end upload acceptance are still being completed. Unsu
 
 ## Managed Profiles
 
-A profile is one persistent local Chrome identity. One profile can hold sessions for all supported providers; use separate profiles for multiple accounts of the same provider.
+A profile is one persistent local browser identity. One profile can hold sessions for all supported providers; use separate profiles for multiple accounts of the same provider.
 
 ```bash
-tokenless profiles discover --json
+tokenless profiles discover --browser chrome --json
+tokenless profiles discover --browser brave --json
 tokenless profiles add --profile work --label "Work" --set-default
 tokenless profiles list
 tokenless profiles open --profile work --provider claude
@@ -71,9 +72,9 @@ tokenless profiles set-default --profile work
 tokenless profiles remove --profile work --confirm-delete
 ```
 
-`profiles discover` is a read-only helper for one-time setup. It reports local Chrome roots and exact profile directory keys without copying data or creating a managed profile. Import with `profiles add --import-chrome-profile <directory-key> --consent-local-profile-copy` only when the user explicitly chooses that setup path.
+`profiles discover` is a read-only helper for setup. It reports local Chrome or Brave roots and exact profile directory keys without copying data or creating a managed profile. Import with `profiles add --browser <chrome|brave> --import-browser-profile <directory-key> --consent-local-profile-copy` only when the user explicitly chooses that setup path.
 
-Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Jobs reuse the managed profile already registered in Tokenless; they do not refresh it from Chrome. Noninteractive setup creates a clean profile unless import and consent flags are both supplied.
+Every visible command accepts `--profile <slug>` and otherwise uses the configured default. Jobs and live tests reuse the managed profile already registered in Tokenless; they never refresh it from the source browser. Noninteractive initial setup requires either explicit import and consent flags or `--clean-profile`.
 
 Imported authentication state remains local and opaque. Tokenless does not parse, print, log, export, or transmit cookie, storage, password, or authentication values.
 
@@ -107,7 +108,7 @@ See [Direct mode](../../docs/direct-mode.md) and [multi-account routing](../../d
 
 ## Browser Boundary
 
-- Playwright uses installed Google Chrome with visible, persistent, non-default user-data directories.
+- Playwright uses the configured supported Chromium browser with visible, persistent, non-default user-data directories.
 - Web automation operates only through visible provider DOM and visible postconditions.
 - Authentication state stays opaque inside the selected managed profile, and automation uses visible provider controls.
 - CAPTCHA, sign-in, rate limits, upgrade prompts, and confirmations remain visible and under user control.

@@ -663,7 +663,7 @@ test.skip('legacy extension default: extension snapshot persistence', async () =
   }
 })
 
-test('install and doctor report direct Rust binaries, daemon readiness, manifest, config, and bridge', async () => {
+test('legacy extension install remains available without defining managed Playwright readiness', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-'))
   const manifestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-manifest-'))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -698,77 +698,7 @@ test('install and doctor report direct Rust binaries, daemon readiness, manifest
     assert.equal(manifest.path, installed.nativeHost.executable)
     assert.deepEqual(manifest.allowed_origins, ['chrome-extension://abcdefghijklmnopabcdefghijklmnop/'])
 
-    const packagedNativeHost = fs.readFileSync(installed.nativeHost.executable)
-    const validConfig = fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')
-    fs.writeFileSync(installed.nativeHost.executable, 'stale native host')
-    if (process.platform !== 'win32') fs.chmodSync(installed.nativeHost.executable, 0o755)
-    writeLiveBridge(homeDir)
-    fs.writeFileSync(path.join(homeDir, 'config.json'), '{ invalid config json')
-    const malformedConfigDoctor = spawnSync(process.execPath, [
-      cliEntry,
-      'doctor',
-      '--browser',
-      'profile',
-      '--manifest-home',
-      manifestHome,
-      '--home',
-      homeDir,
-      '--daemon-url',
-      daemonUrl,
-      '--json',
-    ], { cwd: root, env, encoding: 'utf8' })
-    assert.equal(malformedConfigDoctor.status, 1, malformedConfigDoctor.stderr)
-    const malformedPayload = JSON.parse(malformedConfigDoctor.stdout)
-    assert.equal(malformedPayload.checks.runtimeRefresh.ok, true)
-    assert.equal(malformedPayload.checks.runtimeRefresh.refreshed.includes(installed.nativeHost.executable), true)
-    assert.equal(malformedPayload.checks.config.ok, false)
-    assert.equal(Buffer.compare(fs.readFileSync(installed.nativeHost.executable), packagedNativeHost), 0)
-    fs.writeFileSync(path.join(homeDir, 'config.json'), validConfig)
-
-    const doctor = spawnSync(process.execPath, [
-      cliEntry,
-      'doctor',
-      '--browser',
-      'profile',
-      '--manifest-home',
-      manifestHome,
-      '--home',
-      homeDir,
-      '--daemon-url',
-      daemonUrl,
-      '--json',
-    ], { cwd: root, env, encoding: 'utf8' })
-    assert.equal(doctor.status, 0, doctor.stderr)
-    const payload = JSON.parse(doctor.stdout)
-    assert.equal(payload.ok, true)
-    assert.equal(payload.runtime, 'rust')
-    assert.equal(payload.checks.runtimeRefresh.ok, true)
-    assert.equal(payload.checks.rustBinaries.ok, true)
-    assert.equal(payload.checks.daemon.ok, true)
-    assert.equal(payload.checks.daemon.daemonProtocol, 'tokenless.daemon.v1')
-    assert.equal(payload.checks.daemon.nativeProtocol, 'tokenless.native.v1')
-    assert.equal(payload.checks.nativeHostManifests.ok, true)
-    assert.equal(payload.checks.config.value.browser, 'profile')
-    assert.equal(payload.checks.extensionBridge.ok, true)
-
-    fs.rmSync(path.join(homeDir, 'extension-bridge.json'))
-    const failedDoctor = spawnSync(process.execPath, [
-      cliEntry,
-      'doctor',
-      '--browser',
-      'profile',
-      '--manifest-home',
-      manifestHome,
-      '--home',
-      homeDir,
-      '--daemon-url',
-      daemonUrl,
-      '--json',
-    ], { cwd: root, env, encoding: 'utf8' })
-    assert.equal(failedDoctor.status, 1, failedDoctor.stderr)
-    const failedPayload = JSON.parse(failedDoctor.stdout)
-    assert.equal(failedPayload.ok, false)
-    assert.equal(failedPayload.checks.extensionBridge.ok, false)
+    assert.equal(installed.nextStep.includes('tokenless setup'), true)
   } finally {
     await stopPid(pid)
     fs.rmSync(homeDir, { recursive: true, force: true })

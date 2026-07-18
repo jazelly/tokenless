@@ -54,6 +54,7 @@ export type ChromiumBrowser = {
   command: string
   argsPrefix: string[]
   displayName: string
+  playwrightExecutablePath?: string | undefined
 }
 
 export type EnsureDaemonOptions = {
@@ -486,7 +487,13 @@ export async function resolveChromiumBrowser(requested?: unknown): Promise<Chrom
         false
       )
     }
-    return { browser: 'profile', command: executable, argsPrefix: [], displayName: 'test browser profile' }
+    return {
+      browser: 'profile',
+      command: executable,
+      argsPrefix: [],
+      displayName: 'test browser profile',
+      playwrightExecutablePath: executable,
+    }
   }
 
   const order = requestedId
@@ -701,6 +708,28 @@ export async function inspectRustBinaries(homeDir = tokenlessHome()) {
   }
 }
 
+export async function inspectManagedRuntime(homeDir = tokenlessHome()) {
+  const daemon = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME)
+  const daemonOk = await isExecutable(daemon)
+  let bundledDaemon: string | null = null
+  let packageError: string | null = null
+  try {
+    bundledDaemon = bundledRustBinaryPath(DAEMON_BINARY_NAME)
+  } catch (error) {
+    packageError = error instanceof Error ? error.message : String(error)
+  }
+  const [daemonHash, bundledDaemonHash] = await Promise.all([
+    fileHash(daemon),
+    bundledDaemon ? fileHash(bundledDaemon) : null,
+  ])
+  const matchesBundled = Boolean(bundledDaemonHash) && daemonHash === bundledDaemonHash
+  return {
+    ok: !packageError && daemonOk && matchesBundled,
+    package: { ok: !packageError, error: packageError },
+    daemon: { ok: daemonOk, path: daemon, hash: daemonHash, bundledHash: bundledDaemonHash, matchesBundled },
+  }
+}
+
 export async function refreshInstalledRustBinaries({
   homeDir = tokenlessHome(),
   packageRoot,
@@ -725,6 +754,28 @@ export async function refreshInstalledRustBinaries({
     refreshed.push(destination)
   }
   return refreshed
+}
+
+export async function refreshInstalledManagedRuntime({
+  homeDir = tokenlessHome(),
+  packageRoot,
+}: {
+  homeDir?: string | undefined
+  packageRoot?: string | undefined
+} = {}) {
+  const source = bundledRustBinaryPath(DAEMON_BINARY_NAME, packageRoot)
+  const destination = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME)
+  const [sourceHash, destinationHash, destinationExecutable] = await Promise.all([
+    fileHash(source),
+    fileHash(destination),
+    isExecutable(destination),
+  ])
+  if (!sourceHash) {
+    throw runtimeError('rust_binary_missing', `Native runtime package is missing executable: ${source}`, false)
+  }
+  if (sourceHash === destinationHash && destinationExecutable) return []
+  await installExecutable(source, destination)
+  return [destination]
 }
 
 export async function persistDaemonSnapshot({
@@ -1054,13 +1105,24 @@ async function browserLaunch(browser: string): Promise<ChromiumBrowser | null> {
     }
     const appName = appNames[browser]
     if (!appName) return null
-    const appPaths = [path.join('/Applications', appName), path.join(os.homedir(), 'Applications', appName)]
-    if (!(await firstExistingFile(appPaths))) return null
+    const appPath = await firstExistingFile([path.join('/Applications', appName), path.join(os.homedir(), 'Applications', appName)])
+    if (!appPath) return null
+    const executableNames: Record<string, string> = {
+      chrome: 'Google Chrome',
+      'chrome-for-testing': 'Google Chrome for Testing',
+      brave: 'Brave Browser',
+      edge: 'Microsoft Edge',
+      arc: 'Arc',
+      chromium: 'Chromium',
+    }
+    const playwrightExecutablePath = path.join(appPath, 'Contents', 'MacOS', executableNames[browser] as string)
+    if (!(await isExecutable(playwrightExecutablePath))) return null
     return {
       browser,
       command: '/usr/bin/open',
       argsPrefix: ['-a', displayNames[browser] as string],
       displayName: displayNames[browser] as string,
+      playwrightExecutablePath,
     }
   }
 
@@ -1077,7 +1139,7 @@ async function browserLaunch(browser: string): Promise<ChromiumBrowser | null> {
     const candidates = roots.flatMap((root) => (relativeExecutables[browser] ?? []).map((relative) => path.join(root, relative)))
     const executable = await firstExistingFile(candidates)
     return executable
-      ? { browser, command: executable, argsPrefix: [], displayName: displayNames[browser] as string }
+      ? { browser, command: executable, argsPrefix: [], displayName: displayNames[browser] as string, playwrightExecutablePath: executable }
       : null
   }
 
@@ -1091,7 +1153,7 @@ async function browserLaunch(browser: string): Promise<ChromiumBrowser | null> {
   }
   const executable = await findOnPath(executableNames[browser] ?? [])
   return executable
-    ? { browser, command: executable, argsPrefix: [], displayName: displayNames[browser] as string }
+    ? { browser, command: executable, argsPrefix: [], displayName: displayNames[browser] as string, playwrightExecutablePath: executable }
     : null
 }
 

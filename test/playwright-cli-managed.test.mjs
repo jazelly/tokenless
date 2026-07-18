@@ -10,6 +10,77 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 
+test('canonical noninteractive setup checks skills, selects browser/profile/providers, and proves visible readiness', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-skills-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  try {
+    const setup = spawnCli([
+      'setup',
+      '--profile', 'default',
+      '--clean-profile',
+      '--provider', 'chatgpt',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--skip-skill-install',
+      '--json',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const profile = await waitForManagedProfile(homeDir)
+    const job = await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
+    const result = await waitForProcess(setup, 10000)
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.completed, true)
+    assert.equal(payload.status, 'ready')
+    assert.equal(payload.skills.ok, true)
+    assert.equal(payload.browser.id, 'profile')
+    assert.deepEqual(payload.providers, ['chatgpt'])
+    assert.equal(payload.profile.slug, 'default')
+    assert.equal(payload.readiness.chatgpt.auth, 'authenticated')
+    assert.equal(payload.readiness.chatgpt.jobId, job.job_id)
+
+    const doctor = runCli([
+      'doctor',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--json',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    assert.equal(doctor.status, 0, doctor.stderr || doctor.stdout)
+    const diagnosis = JSON.parse(doctor.stdout)
+    assert.equal(diagnosis.ok, true)
+    assert.equal(diagnosis.checks.skills.ok, true)
+    assert.equal(diagnosis.checks.managedRuntime.ok, true)
+    assert.equal(diagnosis.checks.runner.ok, true)
+    assert.equal(diagnosis.checks.managedProfile.ok, true)
+    assert.equal(diagnosis.checks.providerReadiness.providers.chatgpt.auth, 'authenticated')
+    assert.equal('nativeHostManifests' in diagnosis.checks, false)
+    assert.equal('extensionBridge' in diagnosis.checks, false)
+  } finally {
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+  }
+})
+
 test('CLI discovers Chrome profile directory keys without creating a managed profile registry', () => {
   const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-discover-')))
   const chromeRoot = path.join(tempRoot, 'chrome-root')
@@ -35,7 +106,7 @@ test('CLI discovers Chrome profile directory keys without creating a managed pro
     const discovered = runCli([
       'profiles',
       'discover',
-      '--chrome-user-data-dir',
+      '--browser-user-data-dir',
       chromeRoot,
       '--json',
     ], { TOKENLESS_HOME: poisonHome, TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: path.join(tempRoot, 'runner-must-not-start.mjs') })
@@ -59,6 +130,18 @@ test('CLI discovers Chrome profile directory keys without creating a managed pro
         },
       ],
     }])
+    const brave = runCli([
+      'profiles',
+      'discover',
+      '--browser',
+      'brave',
+      '--browser-user-data-dir',
+      chromeRoot,
+      '--json',
+    ], { TOKENLESS_HOME: poisonHome, TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: path.join(tempRoot, 'runner-must-not-start.mjs') })
+    assert.equal(brave.status, 0, brave.stderr || brave.stdout)
+    assert.equal(JSON.parse(brave.stdout).browser, 'brave')
+    assert.equal(fs.existsSync(poisonHome), false)
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }
@@ -339,7 +422,7 @@ test('attached CLI run returns waiting_for_user envelope promptly without cancel
     assert.equal(payload.provider, 'chatgpt')
     assert.equal(payload.profile.id, added.profile.id)
     assert.equal(payload.blocker.blocker.code, 'visible_recaptcha')
-    assert.match(payload.userAction.message, /Visible Chrome is open|Complete visible verification/)
+    assert.match(payload.userAction.message, /visible managed browser is open|Complete visible verification/i)
 
     const waitingJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(jobId)}`, homeDir)
     assert.equal(waitingJob.status, 'waiting_for_user')
@@ -406,6 +489,37 @@ try {
   return entry
 }
 
+function writeVerifiedSkills(home) {
+  const rootDir = path.join(home, '.agents')
+  const names = ['tokenless', 'tokenless-install']
+  for (const name of names) {
+    const directory = path.join(rootDir, 'skills', name)
+    fs.mkdirSync(directory, { recursive: true })
+    fs.writeFileSync(path.join(directory, 'SKILL.md'), `---\nname: ${name}\n---\n`, 'utf8')
+  }
+  fs.writeFileSync(path.join(rootDir, '.skill-lock.json'), JSON.stringify({
+    version: 3,
+    skills: Object.fromEntries(names.map((name) => [name, {
+      source: 'jazelly/tokenless',
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/jazelly/tokenless.git',
+      skillPath: `skills/${name}/SKILL.md`,
+    }])),
+  }), 'utf8')
+}
+
+async function waitForManagedProfile(homeDir) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const payload = JSON.parse(fs.readFileSync(path.join(homeDir, 'browser', 'profiles.json'), 'utf8'))
+      const profile = payload.profiles?.default
+      if (profile) return profile
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error('Timed out waiting for setup to create the managed profile.')
+}
+
 function installWorkspaceDaemon(homeDir) {
   const suffix = process.platform === 'win32' ? '.exe' : ''
   const source = path.join(
@@ -448,7 +562,9 @@ async function completeAsInjectedRunner({ daemonUrl, homeDir, profileId }) {
           citations: [{ label: 'Fixture citation', href: 'https://example.com/source' }],
           visibleProof: 'in-process-runner',
         }
-      : { visible: true, visibleProof: 'in-process-runner' },
+      : action.action === 'auth.status'
+        ? { state: 'authenticated', visibleProof: 'visible-authenticated-composer' }
+        : { visible: true, visibleProof: 'in-process-runner' },
     error: null,
   }))
   await daemonPost({
