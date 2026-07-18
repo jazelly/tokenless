@@ -166,6 +166,7 @@ pub enum JobStatus {
     Queued,
     Claimed,
     Running,
+    WaitingForUser,
     Succeeded,
     Failed,
     Canceled,
@@ -178,6 +179,7 @@ impl JobStatus {
             Self::Queued => "queued",
             Self::Claimed => "claimed",
             Self::Running => "running",
+            Self::WaitingForUser => "waiting_for_user",
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::Canceled => "canceled",
@@ -190,6 +192,7 @@ impl JobStatus {
             "queued" => Ok(Self::Queued),
             "claimed" => Ok(Self::Claimed),
             "running" => Ok(Self::Running),
+            "waiting_for_user" => Ok(Self::WaitingForUser),
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "canceled" => Ok(Self::Canceled),
@@ -237,6 +240,7 @@ pub struct Job {
     pub request_json: Value,
     pub result_json: Option<Value>,
     pub error_json: Option<Value>,
+    pub blocker_json: Option<Value>,
     pub created_at: String,
     pub updated_at: String,
     pub claim_expires_at_ms: Option<i64>,
@@ -254,6 +258,7 @@ impl Job {
             request_json: self.request_json.clone(),
             result_json: self.result_json.clone(),
             error_json: self.error_json.clone(),
+            blocker_json: self.blocker_json.clone(),
             created_at: self.created_at.clone(),
             updated_at: self.updated_at.clone(),
         }
@@ -271,6 +276,7 @@ impl Job {
             request_json: self.request_json.clone(),
             result_json: self.result_json.clone(),
             error_json: self.error_json.clone(),
+            blocker_json: self.blocker_json.clone(),
             created_at: self.created_at.clone(),
             updated_at: self.updated_at.clone(),
         }
@@ -288,6 +294,7 @@ pub struct JobView {
     pub request_json: Value,
     pub result_json: Option<Value>,
     pub error_json: Option<Value>,
+    pub blocker_json: Option<Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -304,6 +311,7 @@ pub struct JobWithClaimToken {
     pub request_json: Value,
     pub result_json: Option<Value>,
     pub error_json: Option<Value>,
+    pub blocker_json: Option<Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -341,6 +349,11 @@ impl CreateJob {
 pub enum CompleteJob {
     Succeeded { result_json: Value },
     Failed { error_json: Value },
+}
+
+#[derive(Debug, Clone)]
+pub struct UserBlocker {
+    pub blocker_json: Value,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -514,11 +527,11 @@ impl JobStore {
             "INSERT INTO jobs (
                 job_id, claim_token, execution_backend, profile_id,
                 provider, action, status, request_json,
-                result_json, error_json, created_at, updated_at,
+                result_json, error_json, blocker_json, created_at, updated_at,
                 summary_task_id, summary_project_name, summary_chat_name,
                 summary_idempotency_key
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9, ?9,
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, NULL, ?9, ?9,
                 ?10, ?11, ?12, ?13
             )",
             params![
@@ -570,7 +583,7 @@ impl JobStore {
             "SELECT
                 jobs.job_id, jobs.claim_token, jobs.execution_backend, jobs.profile_id,
                 jobs.provider, jobs.action, jobs.status, jobs.request_json, jobs.result_json,
-                jobs.error_json, jobs.created_at, jobs.updated_at, jobs.claim_expires_at
+                jobs.error_json, jobs.blocker_json, jobs.created_at, jobs.updated_at, jobs.claim_expires_at
              FROM jobs",
         );
         let mut parameters = Vec::new();
@@ -728,7 +741,7 @@ impl JobStore {
              RETURNING
                 job_id, claim_token, execution_backend, profile_id,
                 provider, action, status, request_json, result_json, error_json,
-                created_at, updated_at, claim_expires_at",
+                blocker_json, created_at, updated_at, claim_expires_at",
         )?;
 
         stmt.query_row(
@@ -762,7 +775,7 @@ impl JobStore {
              SET claim_expires_at = ?1, updated_at = ?2
              WHERE job_id = ?3
                AND claim_token = ?4
-               AND status IN ('claimed', 'running')
+               AND status IN ('claimed', 'running', 'waiting_for_user')
                AND claim_expires_at > ?5",
             params![expires_at, now, job_id, claim_token, now_ms],
         )?;
@@ -782,10 +795,10 @@ impl JobStore {
         let conn = self.connection()?;
         let affected = conn.execute(
             "UPDATE jobs
-             SET status = ?1, claim_expires_at = ?2, updated_at = ?3
+             SET status = ?1, blocker_json = NULL, claim_expires_at = ?2, updated_at = ?3
              WHERE job_id = ?4
                AND claim_token = ?5
-               AND status = 'claimed'
+               AND status IN ('claimed', 'waiting_for_user')
                AND claim_expires_at > ?6",
             params![
                 JobStatus::Running.as_str(),
@@ -803,19 +816,64 @@ impl JobStore {
         if job.claim_token != claim_token {
             return Err(DaemonError::ClaimRejected(job_id.to_owned()));
         }
-        if matches!(job.status, JobStatus::Claimed | JobStatus::Running)
-            && job
-                .claim_expires_at_ms
-                .map(|expires_at| expires_at <= now_ms)
-                .unwrap_or(true)
+        if matches!(
+            job.status,
+            JobStatus::Claimed | JobStatus::Running | JobStatus::WaitingForUser
+        ) && job
+            .claim_expires_at_ms
+            .map(|expires_at| expires_at <= now_ms)
+            .unwrap_or(true)
         {
             return Err(DaemonError::ClaimExpired(job_id.to_owned()));
         }
         Err(DaemonError::InvalidJobState {
             job_id: job.job_id,
-            expected: "claimed",
+            expected: "claimed or waiting_for_user",
             actual: job.status,
         })
+    }
+
+    pub fn mark_waiting_for_user(
+        &self,
+        job_id: &str,
+        claim_token: &str,
+        blocker: UserBlocker,
+    ) -> Result<Job> {
+        self.mark_waiting_for_user_at(job_id, claim_token, blocker, now_unix_millis())
+    }
+
+    fn mark_waiting_for_user_at(
+        &self,
+        job_id: &str,
+        claim_token: &str,
+        blocker: UserBlocker,
+        now_ms: i64,
+    ) -> Result<Job> {
+        let now = now_rfc3339();
+        let expires_at = now_ms.saturating_add(self.claim_lease_ms);
+        let blocker_json = serde_json::to_string(&blocker.blocker_json)?;
+        let conn = self.connection()?;
+        let affected = conn.execute(
+            "UPDATE jobs
+             SET status = ?1, blocker_json = ?2, claim_expires_at = ?3, updated_at = ?4
+             WHERE job_id = ?5
+               AND claim_token = ?6
+               AND status = 'running'
+               AND claim_expires_at > ?7",
+            params![
+                JobStatus::WaitingForUser.as_str(),
+                blocker_json,
+                expires_at,
+                now,
+                job_id,
+                claim_token,
+                now_ms
+            ],
+        )?;
+        if affected == 1 {
+            return get_job_with_conn(&conn, job_id);
+        }
+        explain_active_claim_failure(&conn, job_id, claim_token, now_ms)
     }
 
     pub fn requeue_expired_claims(&self) -> Result<usize> {
@@ -825,6 +883,7 @@ impl JobStore {
     fn requeue_expired_claims_at(&self, now_ms: i64) -> Result<usize> {
         let now = now_rfc3339();
         let mut conn = self.connection()?;
+        self.fail_expired_waiting_claims_at(now_ms)?;
         let has_expired = conn.query_row(
             "SELECT EXISTS (
                 SELECT 1 FROM jobs
@@ -857,7 +916,7 @@ impl JobStore {
             requeued += transaction.execute(
                 "UPDATE jobs
                  SET status = 'queued', claim_token = ?1, claim_expires_at = NULL,
-                     updated_at = ?2
+                     blocker_json = NULL, updated_at = ?2
                  WHERE job_id = ?3
                    AND status IN ('claimed', 'running')
                    AND (claim_expires_at IS NULL OR claim_expires_at <= ?4)",
@@ -866,6 +925,25 @@ impl JobStore {
         }
         transaction.commit()?;
         Ok(requeued)
+    }
+
+    fn fail_expired_waiting_claims_at(&self, now_ms: i64) -> Result<usize> {
+        let now = now_rfc3339();
+        let error_json = serde_json::to_string(&json!({
+            "code": "playwright_user_handover_lease_lost",
+            "message": "The managed Playwright job lost its lease while waiting for user handover; retry from the same task state instead of replaying partial page actions.",
+            "retryable": true
+        }))?;
+        let conn = self.connection()?;
+        conn.execute(
+            "UPDATE jobs
+             SET status = 'failed', error_json = ?1, result_json = NULL,
+                 blocker_json = NULL, claim_expires_at = NULL, updated_at = ?2
+             WHERE status = 'waiting_for_user'
+               AND (claim_expires_at IS NULL OR claim_expires_at <= ?3)",
+            params![error_json, now, now_ms],
+        )
+        .map_err(DaemonError::Sqlite)
     }
 
     pub fn complete_job(
@@ -900,11 +978,11 @@ impl JobStore {
         let conn = self.connection()?;
         let affected = conn.execute(
             "UPDATE jobs
-             SET status = ?1, result_json = ?2, error_json = ?3, updated_at = ?4,
-                 claim_expires_at = NULL
+             SET status = ?1, result_json = ?2, error_json = ?3, blocker_json = NULL,
+                 updated_at = ?4, claim_expires_at = NULL
              WHERE job_id = ?5
                AND claim_token = ?6
-               AND status IN ('claimed', 'running')
+               AND status IN ('claimed', 'running', 'waiting_for_user')
                AND claim_expires_at > ?7",
             params![
                 status.as_str(),
@@ -933,9 +1011,9 @@ impl JobStore {
         let conn = self.connection()?;
         let affected = conn.execute(
             "UPDATE jobs
-             SET status = ?1, result_json = NULL, error_json = ?2, updated_at = ?3,
-                 claim_expires_at = NULL
-             WHERE job_id = ?4 AND status IN ('queued', 'claimed', 'running')",
+             SET status = ?1, result_json = NULL, error_json = ?2, blocker_json = NULL,
+                 updated_at = ?3, claim_expires_at = NULL
+             WHERE job_id = ?4 AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')",
             params![JobStatus::Canceled.as_str(), error_json, now, job_id],
         )?;
         if affected == 1 {
@@ -949,7 +1027,7 @@ impl JobStore {
         let job = get_job_with_conn(&conn, job_id)?;
         Err(DaemonError::InvalidJobState {
             job_id: job_id.to_owned(),
-            expected: "queued, claimed, or running",
+            expected: "queued, claimed, running, or waiting_for_user",
             actual: job.status,
         })
     }
@@ -959,7 +1037,7 @@ impl JobStore {
         let mut statement = conn.prepare(
             "SELECT request_json
              FROM jobs
-             WHERE status IN ('queued', 'claimed', 'running')",
+             WHERE status IN ('queued', 'claimed', 'running', 'waiting_for_user')",
         )?;
         let requests = statement
             .query_map([], |row| row.get::<_, String>(0))?
@@ -993,6 +1071,7 @@ impl JobStore {
                         'queued',
                         'claimed',
                         'running',
+                        'waiting_for_user',
                         'succeeded',
                         'failed',
                         'canceled',
@@ -1002,6 +1081,7 @@ impl JobStore {
                 request_json TEXT NOT NULL,
                 result_json TEXT,
                 error_json TEXT,
+                blocker_json TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 claim_expires_at INTEGER,
@@ -1024,11 +1104,12 @@ impl JobStore {
                 PRIMARY KEY (job_id, task_id)
              );",
         )?;
+        self.migrate_jobs_table_shape(&mut conn)?;
         let needs_claim_lease_migration = !sqlite_column_exists(&conn, "jobs", "claim_expires_at")?
             || conn.query_row(
                 "SELECT EXISTS (
                         SELECT 1 FROM jobs
-                        WHERE status IN ('claimed', 'running')
+                        WHERE status IN ('claimed', 'running', 'waiting_for_user')
                           AND claim_expires_at IS NULL
                      )",
                 [],
@@ -1042,9 +1123,27 @@ impl JobStore {
             transaction.execute(
                 "UPDATE jobs
                  SET status = 'queued', claim_token = lower(hex(randomblob(32))),
-                     updated_at = ?1
+                     blocker_json = NULL, updated_at = ?1
                  WHERE status IN ('claimed', 'running') AND claim_expires_at IS NULL",
                 params![now_rfc3339()],
+            )?;
+            transaction.execute(
+                "UPDATE jobs
+                 SET status = 'failed',
+                     error_json = ?1,
+                     result_json = NULL,
+                     blocker_json = NULL,
+                     claim_expires_at = NULL,
+                     updated_at = ?2
+                 WHERE status = 'waiting_for_user' AND claim_expires_at IS NULL",
+                params![
+                    serde_json::to_string(&json!({
+                        "code": "playwright_user_handover_lease_lost",
+                        "message": "The managed Playwright job had no recoverable waiting lease after database migration.",
+                        "retryable": true
+                    }))?,
+                    now_rfc3339()
+                ],
             )?;
             transaction.commit()?;
         }
@@ -1131,6 +1230,165 @@ impl JobStore {
         Ok(())
     }
 
+    fn migrate_jobs_table_shape(&self, conn: &mut Connection) -> Result<()> {
+        let create_sql = conn
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'jobs'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_default();
+        let has_waiting_status = create_sql.contains("'waiting_for_user'");
+        let has_blocker_json = sqlite_column_exists(conn, "jobs", "blocker_json")?;
+        if has_waiting_status && has_blocker_json {
+            return Ok(());
+        }
+
+        conn.execute_batch("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON;")?;
+        let migration_result = (|| -> Result<()> {
+            let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch(
+                "ALTER TABLE jobs RENAME TO jobs_old;
+                 CREATE TABLE jobs (
+                    job_id TEXT PRIMARY KEY NOT NULL,
+                    claim_token TEXT NOT NULL,
+                    execution_backend TEXT NOT NULL DEFAULT 'legacy_extension' CHECK (
+                        execution_backend IN ('legacy_extension', 'playwright')
+                    ),
+                    profile_id TEXT CHECK (
+                        profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 128
+                    ),
+                    provider TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN (
+                            'queued',
+                            'claimed',
+                            'running',
+                            'waiting_for_user',
+                            'succeeded',
+                            'failed',
+                            'canceled',
+                            'timed_out'
+                        )
+                    ),
+                    request_json TEXT NOT NULL,
+                    result_json TEXT,
+                    error_json TEXT,
+                    blocker_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    claim_expires_at INTEGER,
+                    summary_task_id TEXT CHECK (
+                        summary_task_id IS NULL OR length(summary_task_id) <= 256
+                    ),
+                    summary_project_name TEXT CHECK (
+                        summary_project_name IS NULL OR length(summary_project_name) <= 256
+                    ),
+                    summary_chat_name TEXT CHECK (
+                        summary_chat_name IS NULL OR length(summary_chat_name) <= 256
+                    ),
+                    summary_idempotency_key TEXT CHECK (
+                        summary_idempotency_key IS NULL OR length(summary_idempotency_key) <= 256
+                    )
+                 );",
+            )?;
+            let old_has_execution_backend =
+                sqlite_column_exists(&transaction, "jobs_old", "execution_backend")?;
+            let old_has_profile_id = sqlite_column_exists(&transaction, "jobs_old", "profile_id")?;
+            let old_has_claim_expires_at =
+                sqlite_column_exists(&transaction, "jobs_old", "claim_expires_at")?;
+            let old_has_blocker_json =
+                sqlite_column_exists(&transaction, "jobs_old", "blocker_json")?;
+            let old_has_summary_task_id =
+                sqlite_column_exists(&transaction, "jobs_old", "summary_task_id")?;
+            let old_has_summary_project_name =
+                sqlite_column_exists(&transaction, "jobs_old", "summary_project_name")?;
+            let old_has_summary_chat_name =
+                sqlite_column_exists(&transaction, "jobs_old", "summary_chat_name")?;
+            let old_has_summary_idempotency_key =
+                sqlite_column_exists(&transaction, "jobs_old", "summary_idempotency_key")?;
+            let select_execution_backend = if old_has_execution_backend {
+                "COALESCE(NULLIF(execution_backend, ''), 'legacy_extension')"
+            } else {
+                "'legacy_extension'"
+            };
+            let select_profile_id = if old_has_profile_id {
+                "profile_id"
+            } else {
+                "NULL"
+            };
+            let select_claim_expires_at = if old_has_claim_expires_at {
+                "claim_expires_at"
+            } else {
+                "NULL"
+            };
+            let select_blocker_json = if old_has_blocker_json {
+                "blocker_json"
+            } else {
+                "NULL"
+            };
+            let select_summary_task_id = if old_has_summary_task_id {
+                "summary_task_id"
+            } else {
+                "NULL"
+            };
+            let select_summary_project_name = if old_has_summary_project_name {
+                "summary_project_name"
+            } else {
+                "NULL"
+            };
+            let select_summary_chat_name = if old_has_summary_chat_name {
+                "summary_chat_name"
+            } else {
+                "NULL"
+            };
+            let select_summary_idempotency_key = if old_has_summary_idempotency_key {
+                "summary_idempotency_key"
+            } else {
+                "NULL"
+            };
+            transaction.execute(
+                &format!(
+                    "INSERT INTO jobs (
+                        job_id, claim_token, execution_backend, profile_id,
+                        provider, action, status, request_json, result_json, error_json,
+                        blocker_json, created_at, updated_at, claim_expires_at,
+                        summary_task_id, summary_project_name, summary_chat_name,
+                        summary_idempotency_key
+                     )
+                     SELECT
+                        job_id, claim_token, {select_execution_backend}, {select_profile_id},
+                        provider, action, status, request_json, result_json, error_json,
+                        {select_blocker_json}, created_at, updated_at, {select_claim_expires_at},
+                        {select_summary_task_id}, {select_summary_project_name},
+                        {select_summary_chat_name}, {select_summary_idempotency_key}
+                     FROM jobs_old"
+                ),
+                [],
+            )?;
+            transaction.execute_batch("DROP TABLE jobs_old;")?;
+            transaction.commit()?;
+            Ok(())
+        })();
+        conn.execute_batch("PRAGMA legacy_alter_table = OFF; PRAGMA foreign_keys = ON;")?;
+        migration_result?;
+        let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        backfill_summary_metadata(&transaction)?;
+        transaction.commit()?;
+        let violations =
+            conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        if violations != 0 {
+            return Err(DaemonError::InvalidInput(format!(
+                "jobs table migration left {violations} foreign key violation(s)"
+            )));
+        }
+        Ok(())
+    }
+
     fn connection(&self) -> Result<Connection> {
         let conn = Connection::open(&self.database_path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -1188,6 +1446,12 @@ struct ClaimJobRequest {
 #[derive(Debug, Deserialize)]
 struct ClaimLifecycleRequest {
     claim_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WaitingForUserRequest {
+    claim_token: String,
+    blocker_json: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1276,6 +1540,10 @@ pub fn http_router(store: JobStore) -> Router {
         .route("/jobs/:job_id/complete", post(complete_job_handler))
         .route("/control/jobs/claim-next", post(claim_next_job_handler))
         .route("/control/jobs/:job_id/running", post(mark_running_handler))
+        .route(
+            "/control/jobs/:job_id/waiting-for-user",
+            post(mark_waiting_for_user_handler),
+        )
         .route("/control/jobs/:job_id/renew", post(renew_claim_handler))
         .route("/control/jobs/:job_id/cancel", post(cancel_job_handler))
         .with_state(HttpState { store })
@@ -1449,6 +1717,28 @@ async fn mark_running_handler(
         state
             .store
             .mark_running(&job_id, &payload.claim_token)?
+            .public_view(),
+    ))
+}
+
+async fn mark_waiting_for_user_handler(
+    State(state): State<HttpState>,
+    AxumPath(job_id): AxumPath<String>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<WaitingForUserRequest>, JsonRejection>,
+) -> ApiResult<JobView> {
+    require_control_auth(&state.store, &headers)?;
+    let Json(payload) = payload.map_err(json_rejection_to_api_error)?;
+    Ok(Json(
+        state
+            .store
+            .mark_waiting_for_user(
+                &job_id,
+                &payload.claim_token,
+                UserBlocker {
+                    blocker_json: payload.blocker_json,
+                },
+            )?
             .public_view(),
     ))
 }
@@ -1754,6 +2044,7 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
     let request_json: String = row.get(7)?;
     let result_json: Option<String> = row.get(8)?;
     let error_json: Option<String> = row.get(9)?;
+    let blocker_json: Option<String> = row.get(10)?;
     Ok(Job {
         job_id: row.get(0)?,
         claim_token: row.get(1)?,
@@ -1765,9 +2056,10 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
         request_json: serde_json::from_str(&request_json).map_err(to_sql_error)?,
         result_json: parse_optional_json(result_json).map_err(to_sql_error)?,
         error_json: parse_optional_json(error_json).map_err(to_sql_error)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
-        claim_expires_at_ms: row.get(12)?,
+        blocker_json: parse_optional_json(blocker_json).map_err(to_sql_error)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        claim_expires_at_ms: row.get(13)?,
     })
 }
 
@@ -1803,7 +2095,7 @@ fn get_job_with_conn(conn: &Connection, job_id: &str) -> Result<Job> {
         "SELECT
             job_id, claim_token, execution_backend, profile_id,
             provider, action, status, request_json, result_json, error_json,
-            created_at, updated_at, claim_expires_at
+            blocker_json, created_at, updated_at, claim_expires_at
          FROM jobs
          WHERE job_id = ?1",
     )?;
@@ -1834,17 +2126,19 @@ fn explain_active_claim_failure(
     if job.claim_token != claim_token {
         return Err(DaemonError::ClaimRejected(job_id.to_owned()));
     }
-    if matches!(job.status, JobStatus::Claimed | JobStatus::Running)
-        && job
-            .claim_expires_at_ms
-            .map(|expires_at| expires_at <= now_ms)
-            .unwrap_or(true)
+    if matches!(
+        job.status,
+        JobStatus::Claimed | JobStatus::Running | JobStatus::WaitingForUser
+    ) && job
+        .claim_expires_at_ms
+        .map(|expires_at| expires_at <= now_ms)
+        .unwrap_or(true)
     {
         return Err(DaemonError::ClaimExpired(job_id.to_owned()));
     }
     Err(DaemonError::InvalidJobState {
         job_id: job_id.to_owned(),
-        expected: "claimed or running",
+        expected: "claimed, running, or waiting_for_user",
         actual: job.status,
     })
 }
@@ -2637,6 +2931,88 @@ mod tests {
     }
 
     #[test]
+    fn waiting_for_user_persists_blocker_renews_resumes_and_expires_retryable() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_millis(100))
+                .unwrap();
+        let created = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({ "prompt": "handover" }),
+            ))
+            .unwrap();
+        let claimed = store
+            .claim_job_at(&created.job_id, &created.claim_token, 1_000)
+            .unwrap();
+        let running = store
+            .mark_running_at(&claimed.job_id, &claimed.claim_token, 1_010)
+            .unwrap();
+        assert_eq!(running.status, JobStatus::Running);
+        let blocker = json!({
+            "protocol": "tokenless.playwright.user-handover.v1",
+            "blocker": { "code": "visible_recaptcha", "kind": "challenge" }
+        });
+        let waiting = store
+            .mark_waiting_for_user_at(
+                &claimed.job_id,
+                &claimed.claim_token,
+                UserBlocker {
+                    blocker_json: blocker.clone(),
+                },
+                1_020,
+            )
+            .unwrap();
+        assert_eq!(waiting.status, JobStatus::WaitingForUser);
+        assert_eq!(waiting.blocker_json, Some(blocker));
+        assert_eq!(
+            store
+                .renew_claim_at(&claimed.job_id, &claimed.claim_token, 1_050)
+                .unwrap()
+                .status,
+            JobStatus::WaitingForUser
+        );
+        let resumed = store
+            .mark_running_at(&claimed.job_id, &claimed.claim_token, 1_060)
+            .unwrap();
+        assert_eq!(resumed.status, JobStatus::Running);
+        assert_eq!(resumed.blocker_json, None);
+
+        let second = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({ "prompt": "expire" }),
+            ))
+            .unwrap();
+        let claimed_second = store
+            .claim_job_at(&second.job_id, &second.claim_token, 2_000)
+            .unwrap();
+        store
+            .mark_running_at(&claimed_second.job_id, &claimed_second.claim_token, 2_010)
+            .unwrap();
+        store
+            .mark_waiting_for_user_at(
+                &claimed_second.job_id,
+                &claimed_second.claim_token,
+                UserBlocker {
+                    blocker_json: json!({ "blocker": { "code": "provider_sign_in_visible" } }),
+                },
+                2_020,
+            )
+            .unwrap();
+        assert_eq!(store.requeue_expired_claims_at(2_120).unwrap(), 0);
+        let expired = store.get_job(&claimed_second.job_id).unwrap();
+        assert_eq!(expired.status, JobStatus::Failed);
+        assert_eq!(
+            expired.error_json.unwrap()["code"],
+            "playwright_user_handover_lease_lost"
+        );
+        assert_eq!(expired.blocker_json, None);
+    }
+
+    #[test]
     fn migrates_existing_database_and_requeues_unleased_claim() {
         let tempdir = tempfile::tempdir().unwrap();
         let database_path = tempdir.path().join(DATABASE_FILE_NAME);
@@ -2701,6 +3077,118 @@ mod tests {
         let summary = store.list_job_summaries(None).unwrap().remove(0);
         assert_eq!(summary.task_id.as_deref(), Some("legacy-task"));
         assert_eq!(summary.project_name.as_deref(), Some("Legacy"));
+    }
+
+    #[test]
+    fn rebuilds_existing_status_check_for_waiting_and_preserves_task_keys() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let database_path = tempdir.path().join(DATABASE_FILE_NAME);
+        let conn = Connection::open(&database_path).unwrap();
+        conn.execute_batch(
+            r#"CREATE TABLE jobs (
+                job_id TEXT PRIMARY KEY NOT NULL,
+                claim_token TEXT NOT NULL,
+                execution_backend TEXT NOT NULL DEFAULT 'legacy_extension' CHECK (
+                    execution_backend IN ('legacy_extension', 'playwright')
+                ),
+                profile_id TEXT CHECK (
+                    profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 128
+                ),
+                provider TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (
+                    status IN (
+                        'queued',
+                        'claimed',
+                        'running',
+                        'succeeded',
+                        'failed',
+                        'canceled',
+                        'timed_out'
+                    )
+                ),
+                request_json TEXT NOT NULL,
+                result_json TEXT,
+                error_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                claim_expires_at INTEGER,
+                summary_task_id TEXT
+             );
+             CREATE TABLE job_task_keys (
+                job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+                task_id TEXT NOT NULL,
+                PRIMARY KEY (job_id, task_id)
+             );
+             INSERT INTO jobs (
+                job_id, claim_token, execution_backend, profile_id, provider,
+                action, status, request_json, result_json, error_json,
+                created_at, updated_at, claim_expires_at, summary_task_id
+             ) VALUES (
+                'modern-old-check', 'token', 'playwright', 'work', 'chatgpt',
+                'visible_provider_actions', 'queued', '{"taskId":"task-1","metadata":{"projectName":"Migrated Project","chatName":"Migrated Chat","idempotencyKey":"idem-1"}}',
+                NULL, NULL, '2026-01-01T00:00:00.000Z',
+                '2026-01-01T00:00:00.000Z', NULL, 'task-1'
+             );
+             INSERT INTO job_task_keys VALUES ('modern-old-check', 'task-1');"#,
+        )
+        .unwrap();
+        drop(conn);
+
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let conn = Connection::open(store.database_path()).unwrap();
+        let create_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'jobs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(create_sql.contains("'waiting_for_user'"));
+        assert!(sqlite_column_exists(&conn, "jobs", "blocker_json").unwrap());
+        let violations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
+        let claimed = store
+            .claim_next_job_with_scope(
+                ClaimNextJob::default(),
+                ExecutionBackend::Playwright,
+                Some("work".to_owned()),
+            )
+            .unwrap()
+            .unwrap();
+        store
+            .mark_running(&claimed.job_id, &claimed.claim_token)
+            .unwrap();
+        let waiting = store
+            .mark_waiting_for_user(
+                &claimed.job_id,
+                &claimed.claim_token,
+                UserBlocker {
+                    blocker_json: json!({ "blocker": { "code": "visible_recaptcha" } }),
+                },
+            )
+            .unwrap();
+        assert_eq!(waiting.status, JobStatus::WaitingForUser);
+        assert_eq!(
+            store
+                .list_jobs(ListJobs {
+                    status: Some(JobStatus::WaitingForUser),
+                    task_id: Some("task-1".to_owned()),
+                    ..ListJobs::default()
+                })
+                .unwrap()
+                .len(),
+            1
+        );
+        let summary = store.list_job_summaries(None).unwrap().remove(0);
+        assert_eq!(summary.task_id.as_deref(), Some("task-1"));
+        assert_eq!(summary.project_name.as_deref(), Some("Migrated Project"));
+        assert_eq!(summary.chat_name.as_deref(), Some("Migrated Chat"));
+        assert_eq!(summary.idempotency_key.as_deref(), Some("idem-1"));
     }
 
     #[test]
@@ -3266,6 +3754,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(running.status(), StatusCode::UNAUTHORIZED);
+        let waiting = client
+            .post(format!(
+                "{base_url}/control/jobs/{}/waiting-for-user",
+                job.job_id
+            ))
+            .json(&json!({
+                "claim_token": job.claim_token,
+                "blocker_json": { "blocker": { "code": "visible_recaptcha" } }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(waiting.status(), StatusCode::UNAUTHORIZED);
         let renew = client
             .post(format!("{base_url}/control/jobs/{}/renew", job.job_id))
             .json(&json!({ "claim_token": job.claim_token }))
@@ -3510,6 +4011,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(renewed["status"], "running");
+
+        let waiting: Value = client
+            .post(format!(
+                "{base_url}/control/jobs/{}/waiting-for-user",
+                personal.job_id
+            ))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "claim_token": claim_token,
+                "blocker_json": { "blocker": { "code": "visible_hcaptcha" } }
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(waiting["status"], "waiting_for_user");
+        assert_eq!(
+            waiting["blocker_json"]["blocker"]["code"],
+            "visible_hcaptcha"
+        );
+
+        let resumed: Value = client
+            .post(format!(
+                "{base_url}/control/jobs/{}/running",
+                personal.job_id
+            ))
+            .bearer_auth(&control_token)
+            .json(&json!({ "claim_token": claim_token }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(resumed["status"], "running");
+        assert_eq!(resumed["blocker_json"], Value::Null);
 
         let wrong_token = client
             .post(format!("{base_url}/control/jobs/{}/renew", personal.job_id))

@@ -5,7 +5,7 @@ import { basename, join, resolve, sep } from 'node:path'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, VISIBLE_ATTACHMENT_PROTOCOL_VERSION, validateAttachmentInput } from '../actions.js'
 import { TokenlessPlaywrightError, tokenlessError } from '../errors.js'
 import { assertProviderUrlAllowed, getProviderForUrl } from '../providers.js'
-import type { AttachmentInput, Choice, VisibleActionRequest, VisibleActionResponse, VisibleActionResult, VisibleCitation } from '../actions.js'
+import type { AttachmentInput, Choice, VisibleActionRequest, VisibleActionResponse, VisibleActionResult, VisibleBlocker, VisibleCitation } from '../actions.js'
 import type { ProviderConfig } from '../providers.js'
 import type { ProviderAdapter, VisibleAdapterContext } from './types.js'
 import type { Locator, Page } from 'playwright-core'
@@ -24,7 +24,7 @@ export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdap
       }
       if (request.action === VISIBLE_ACTIONS.AUTH_STATUS) return success(request, await inspectAuth(page, provider, context.signal))
       if (request.action === VISIBLE_ACTIONS.NAVIGATION_CHECK) return success(request, inspectNavigation(page, provider))
-      if (request.action === VISIBLE_ACTIONS.BLOCKER_CHECK) return success(request, await inspectBlockers(page, provider))
+      if (request.action === VISIBLE_ACTIONS.BLOCKER_CHECK) return success(request, await inspectVisibleBlockers(page, provider))
       if (request.action === VISIBLE_ACTIONS.MODEL_INSPECT) return success(request, await inspectChoices(page, provider, 'model'))
       if (request.action === VISIBLE_ACTIONS.MODEL_SELECT) return success(request, await selectChoice(page, provider, 'model', request.payload.label))
       if (request.action === VISIBLE_ACTIONS.EFFORT_INSPECT) return success(request, await inspectChoices(page, provider, 'effort'))
@@ -82,14 +82,181 @@ function inspectNavigation(page: Page, provider: ProviderConfig) {
   }
 }
 
-async function inspectBlockers(page: Page, provider: ProviderConfig) {
-  const reasons: string[] = []
-  for (const selector of provider.blockerSelectors) {
-    if (await firstVisible(page, selector)) reasons.push(selectorReason(selector))
-  }
+export async function inspectVisibleBlockers(page: Page, provider: ProviderConfig) {
+  const blockers = await detectStructuredBlockers(page, provider)
+  const reasons = blockers.map((blocker) => blocker.code)
   return {
-    blocked: reasons.length > 0,
+    blocked: blockers.length > 0,
     reasons,
+    blockers,
+  }
+}
+
+async function detectStructuredBlockers(page: Page, provider: ProviderConfig): Promise<VisibleBlocker[]> {
+  const url = page.url()
+  const currentUrl = safeUrl(url)
+  const domBlockers = await page.evaluate(() => {
+    type RawBlocker = {
+      kind: 'challenge' | 'auth' | 'terminal'
+      code: string
+      message: string
+      family?: string
+      proof: string
+    }
+    const isVisibleElement = (element: Element | null): element is HTMLElement | SVGElement => {
+      if (!element || !(element instanceof HTMLElement || element instanceof SVGElement)) return false
+      let node: Element | null = element
+      while (node && node instanceof Element) {
+        const style = window.getComputedStyle(node)
+        if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) return false
+        node = node.parentElement
+      }
+      const rect = element.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0
+    }
+    const ownText = (element: Element) => Array.from(element.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent ?? '')
+      .join(' ')
+    const visibleText = () => Array.from(document.body?.querySelectorAll('body, body *') ?? [])
+      .filter(isVisibleElement)
+      .map((element) => element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+        ? [element.getAttribute('aria-label'), element.getAttribute('placeholder')].filter(Boolean).join(' ')
+        : [
+            ownText(element),
+            element.getAttribute('aria-label'),
+            element.getAttribute('placeholder'),
+          ].filter(Boolean).join(' '))
+      .join(' ')
+    const text = visibleText().replace(/\s+/g, ' ').slice(0, 20_000)
+    const lowerText = text.toLowerCase()
+    const raw: RawBlocker[] = []
+    const visibleFrames = Array.from(document.querySelectorAll('iframe')).filter(isVisibleElement)
+    const visibleInputs = Array.from(document.querySelectorAll('input, button, a, [role="button"], [role="textbox"]')).filter(isVisibleElement)
+    const visibleWithAttribute = (selector: string) => {
+      try {
+        return Array.from(document.querySelectorAll(selector)).some(isVisibleElement)
+      } catch {
+        return false
+      }
+    }
+    for (const frame of visibleFrames) {
+      const src = (frame.getAttribute('src') ?? '').toLowerCase()
+      const title = (frame.getAttribute('title') ?? '').toLowerCase()
+      if (src.includes('/recaptcha/') || title.includes('recaptcha')) {
+        raw.push({ kind: 'challenge', code: 'visible_recaptcha', family: 'recaptcha', message: 'Visible reCAPTCHA verification is blocking the provider page.', proof: 'visible-recaptcha-frame' })
+      } else if (src.includes('hcaptcha.com') || title.includes('hcaptcha')) {
+        raw.push({ kind: 'challenge', code: 'visible_hcaptcha', family: 'hcaptcha', message: 'Visible hCaptcha verification is blocking the provider page.', proof: 'visible-hcaptcha-frame' })
+      } else if (src.includes('challenges.cloudflare.com') || src.includes('/cdn-cgi/challenge-platform') || title.includes('cloudflare') || title.includes('turnstile')) {
+        raw.push({ kind: 'challenge', code: 'visible_cloudflare_turnstile', family: 'cloudflare', message: 'Visible Cloudflare verification is blocking the provider page.', proof: 'visible-cloudflare-frame' })
+      } else if (src.includes('arkoselabs') || src.includes('funcaptcha') || title.includes('arkose') || title.includes('funcaptcha')) {
+        raw.push({ kind: 'challenge', code: 'visible_arkose_funcaptcha', family: 'arkose', message: 'Visible Arkose/FunCaptcha verification is blocking the provider page.', proof: 'visible-arkose-frame' })
+      }
+    }
+    if (visibleWithAttribute('.cf-turnstile, [data-cf-turnstile], [data-turnstile-widget]')) {
+      raw.push({ kind: 'challenge', code: 'visible_cloudflare_turnstile', family: 'cloudflare', message: 'Visible Cloudflare Turnstile verification is blocking the provider page.', proof: 'visible-turnstile-widget' })
+    }
+    if (/(checking if the site connection is secure|verify you are human|cloudflare ray id|needs to review the security of your connection)/i.test(text)) {
+      raw.push({ kind: 'challenge', code: 'visible_cloudflare_interstitial', family: 'cloudflare', message: 'Visible Cloudflare interstitial is blocking the provider page.', proof: 'visible-cloudflare-interstitial-text' })
+    }
+    if (visibleInputs.some((element) => /log in|sign in|continue with|enter your email|email address/i.test([
+      ownText(element),
+      element.getAttribute('aria-label'),
+      element.getAttribute('placeholder'),
+    ].filter(Boolean).join(' ')))) {
+      raw.push({ kind: 'auth', code: 'provider_sign_in_visible', family: 'provider_sign_in', message: 'Provider sign-in is visible and requires the user.', proof: 'visible-provider-sign-in-control' })
+    }
+    if (/(rate limit|too many requests|try again later|temporarily unavailable)/i.test(lowerText)) {
+      raw.push({ kind: 'terminal', code: 'provider_rate_limited', family: 'rate_limit', message: 'The provider is showing a visible rate limit or temporary capacity blocker.', proof: 'visible-rate-limit-text' })
+    }
+    if (/(upgrade required|upgrade your plan|subscribe to|requires a paid plan|plan limit|usage limit)/i.test(lowerText)) {
+      raw.push({ kind: 'terminal', code: 'provider_plan_limited', family: 'plan_limit', message: 'The provider is showing a visible plan or quota blocker.', proof: 'visible-plan-limit-text' })
+    }
+    return raw
+  })
+  const selectorBlockers: VisibleBlocker[] = []
+  for (const selector of provider.loginIndicators) {
+    if (await firstVisibleFast(page, selector)) {
+      selectorBlockers.push(blocker({
+        provider,
+        url,
+        kind: 'auth',
+        code: 'provider_sign_in_visible',
+        family: 'provider_sign_in',
+        message: 'Provider sign-in is visible and requires the user.',
+        visibleProof: `visible-login-selector:${selectorReason(selector)}`,
+      }))
+      break
+    }
+  }
+  for (const selector of provider.blockerSelectors) {
+    if (!await firstVisibleFast(page, selector)) continue
+    const reason = selectorReason(selector)
+    const terminal = /rate|upgrade|plan|too many requests/i.test(selector)
+    selectorBlockers.push(blocker({
+      provider,
+      url,
+      kind: terminal ? 'terminal' : 'challenge',
+      code: terminal ? (/upgrade|plan/i.test(selector) ? 'provider_plan_limited' : 'provider_rate_limited') : 'visible_provider_blocker',
+      family: terminal ? (/upgrade|plan/i.test(selector) ? 'plan_limit' : 'rate_limit') : undefined,
+      message: terminal
+        ? 'The provider is showing a visible terminal account or capacity blocker.'
+        : 'A visible provider challenge or blocker is present.',
+      visibleProof: `visible-selector:${reason}`,
+    }))
+  }
+  if (currentUrl && isProviderSignInUrl(currentUrl)) {
+    selectorBlockers.push(blocker({
+      provider,
+      url,
+      kind: 'auth',
+      code: 'provider_sign_in_url',
+      family: 'provider_sign_in',
+      message: 'Provider sign-in URL is visible and requires the user.',
+      visibleProof: 'visible-provider-sign-in-url',
+    }))
+  }
+  const all = [
+    ...domBlockers.map((raw) => blocker({
+      provider,
+      url,
+      kind: raw.kind,
+      code: raw.code,
+      family: raw.family as VisibleBlocker['family'],
+      message: raw.message,
+      visibleProof: raw.proof,
+    })),
+    ...selectorBlockers,
+  ]
+  const seen = new Set<string>()
+  return all.filter((candidate) => {
+    const key = `${candidate.kind}:${candidate.code}:${candidate.visibleProof}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function blocker(input: {
+  provider: ProviderConfig
+  url: string
+  kind: VisibleBlocker['kind']
+  code: string
+  message: string
+  visibleProof: string
+  family?: VisibleBlocker['family']
+}): VisibleBlocker {
+  const userResolvable = input.kind === 'challenge' || input.kind === 'auth'
+  return {
+    kind: input.kind,
+    code: input.code,
+    message: input.message,
+    userResolvable,
+    retryable: userResolvable,
+    visibleProof: input.visibleProof,
+    provider: input.provider.id,
+    url: sanitizeBlockerUrl(input.url),
+    ...(input.family ? { family: input.family } : {}),
   }
 }
 
@@ -357,6 +524,29 @@ async function firstVisible(page: Page, selector: string) {
   }
 }
 
+async function firstVisibleFast(page: Page, selector: string) {
+  try {
+    return await page.locator(selector).evaluateAll((elements) => elements.some((element) => {
+      if (!(element instanceof HTMLElement || element instanceof SVGElement)) return false
+      let node: Element | null = element
+      while (node && node instanceof Element) {
+        const style = window.getComputedStyle(node)
+        if (
+          style.visibility === 'hidden' ||
+          style.visibility === 'collapse' ||
+          style.display === 'none' ||
+          Number(style.opacity) === 0
+        ) return false
+        node = node.parentElement
+      }
+      const rect = element.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0
+    }))
+  } catch {
+    return false
+  }
+}
+
 async function firstLocator(page: Page, selectors: readonly string[]): Promise<Locator | null> {
   for (const selector of selectors) {
     const locator = page.locator(selector).filter({ visible: true }).first()
@@ -422,6 +612,36 @@ function selectorReason(selector: string) {
   if (/rate limit|too many/i.test(selector)) return 'rate_limit'
   if (/upgrade|paywall|subscribe/i.test(selector)) return 'upgrade_or_paywall'
   return 'visible_blocker'
+}
+
+function safeUrl(value: string) {
+  try {
+    return new URL(value)
+  } catch {
+    return null
+  }
+}
+
+function isProviderSignInUrl(url: URL) {
+  const host = url.hostname.toLowerCase()
+  const path = url.pathname.toLowerCase()
+  return host === 'accounts.google.com' ||
+    host === 'auth.openai.com' ||
+    host === 'auth0.openai.com' ||
+    host === 'login.openai.com' ||
+    path.includes('/auth/login') ||
+    path.includes('/login') ||
+    path.includes('/signin') ||
+    path.includes('/sign-in')
+}
+
+function sanitizeBlockerUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.origin
+  } catch {
+    return ''
+  }
 }
 
 function success(request: VisibleActionRequest, result: VisibleActionResult): VisibleActionResponse {

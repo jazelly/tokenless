@@ -37,6 +37,112 @@ const providers = [
   },
 ]
 
+test('blocker.check classifies visible challenge families, sign-in, terminal blockers, and ignores hidden matches', { timeout: 60000 }, async (t) => {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch({ headless: true })
+  const registry = createProviderAdapterRegistry()
+  t.after(() => browser.close())
+
+  const cases = [
+    ['recaptcha', '<iframe title="reCAPTCHA" src="https://www.google.com/recaptcha/api2/anchor" style="width:300px;height:80px"></iframe>', 'visible_recaptcha', 'challenge'],
+    ['cloudflare', '<main style="display:block">Checking if the site connection is secure. Verify you are human.</main>', 'visible_cloudflare_interstitial', 'challenge'],
+    ['turnstile', '<iframe title="Cloudflare Turnstile" src="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/orchestrate/managed/v1" style="width:300px;height:80px"></iframe>', 'visible_cloudflare_turnstile', 'challenge'],
+    ['hcaptcha', '<iframe title="hCaptcha" src="https://newassets.hcaptcha.com/captcha/v1/test" style="width:300px;height:80px"></iframe>', 'visible_hcaptcha', 'challenge'],
+    ['arkose', '<iframe title="FunCaptcha" src="https://client-api.arkoselabs.com/fc/gc/" style="width:300px;height:80px"></iframe>', 'visible_arkose_funcaptcha', 'challenge'],
+    ['sign-in', '<button style="display:block;width:200px;height:40px">Sign in</button>', 'provider_sign_in_visible', 'auth'],
+    ['placeholder-sign-in', '<input placeholder="Email address" style="display:block;width:260px;height:40px">', 'provider_sign_in_visible', 'auth'],
+    ['rate-limit', '<main style="display:block">Rate limit reached. Too many requests.</main>', 'provider_rate_limited', 'terminal'],
+    ['plan-limit', '<main style="display:block">Upgrade your plan to continue.</main>', 'provider_plan_limited', 'terminal'],
+  ]
+
+  for (const [name, body, code, kind] of cases) {
+    await t.test(name, async () => {
+      const context = await browser.newContext({ viewport: { width: 900, height: 700 } })
+      const page = await context.newPage()
+      try {
+        await fulfillProviderPage(page, `<!doctype html><html><body>${body}<textarea style="width:400px;height:80px"></textarea></body></html>`)
+        const response = await registry.execute(
+          page,
+          visibleRequest('chatgpt', VISIBLE_ACTIONS.BLOCKER_CHECK),
+          { profileId: 'profile', operationId: `blocker-${name}` },
+        )
+        assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+        assert.equal(response.result.blocked, true)
+        assert.equal(response.result.blockers.some((blocker) => blocker.code === code && blocker.kind === kind), true)
+      } finally {
+        await context.close()
+      }
+    })
+  }
+
+  const context = await browser.newContext({ viewport: { width: 900, height: 700 } })
+  const page = await context.newPage()
+  try {
+    await fulfillProviderPage(page, '<!doctype html><html><body><iframe title="reCAPTCHA" src="https://www.google.com/recaptcha/api2/anchor" style="display:none;width:300px;height:80px"></iframe><main>Ready</main></body></html>')
+    const startedAt = performance.now()
+    const response = await registry.execute(
+      page,
+      visibleRequest('chatgpt', VISIBLE_ACTIONS.BLOCKER_CHECK),
+      { profileId: 'profile', operationId: 'blocker-hidden' },
+    )
+    const elapsedMs = performance.now() - startedAt
+    assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+    assert.equal(response.result.blocked, false)
+    assert.equal(response.result.blockers.length, 0)
+    assert.ok(elapsedMs < 250, `no-blocker check took ${elapsedMs}ms`)
+  } finally {
+    await context.close()
+  }
+
+  for (const [name, body] of [
+    ['hidden-ancestor-text', '<div style="opacity:0"><main style="display:block;width:300px;height:80px">Checking if the site connection is secure. Verify you are human.</main></div>'],
+    ['hidden-placeholder-sign-in', '<div style="opacity:0"><input placeholder="Email address" style="display:block;width:260px;height:40px"></div>'],
+    ['generic-data-sitekey', '<div data-sitekey="recaptcha-site-key" style="display:block;width:260px;height:80px"></div>'],
+  ]) {
+    await t.test(name, async () => {
+      const context = await browser.newContext({ viewport: { width: 900, height: 700 } })
+      const page = await context.newPage()
+      try {
+        await fulfillProviderPage(page, `<!doctype html><html><body>${body}<textarea style="width:400px;height:80px"></textarea></body></html>`)
+        const response = await registry.execute(
+          page,
+          visibleRequest('chatgpt', VISIBLE_ACTIONS.BLOCKER_CHECK),
+          { profileId: 'profile', operationId: `blocker-${name}` },
+        )
+        assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+        assert.equal(response.result.blocked, false)
+        assert.equal(response.result.blockers.length, 0)
+      } finally {
+        await context.close()
+      }
+    })
+  }
+
+  for (const [name, provider, url, body] of [
+    ['hidden-login-selector-fallback', 'claude', 'https://claude.ai/new', '<div style="opacity:0"><input placeholder="Enter your email" style="display:block;width:260px;height:40px"></div>'],
+    ['hidden-captcha-selector-fallback', 'chatgpt', 'https://chatgpt.com/', '<div style="opacity:0"><iframe title="captcha" src="https://example.com/captcha" style="width:300px;height:80px"></iframe></div>'],
+    ['hidden-rate-selector-fallback', 'chatgpt', 'https://chatgpt.com/', '<div style="opacity:0;width:300px;height:80px">Rate limit reached. Too many requests.</div>'],
+  ]) {
+    await t.test(name, async () => {
+      const context = await browser.newContext({ viewport: { width: 900, height: 700 } })
+      const page = await context.newPage()
+      try {
+        await fulfillProviderPage(page, `<!doctype html><html><body>${body}<textarea style="width:400px;height:80px"></textarea></body></html>`, url)
+        const response = await registry.execute(
+          page,
+          visibleRequest(provider, VISIBLE_ACTIONS.BLOCKER_CHECK),
+          { profileId: 'profile', operationId: `blocker-${name}` },
+        )
+        assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+        assert.equal(response.result.blocked, false)
+        assert.equal(response.result.blockers.length, 0)
+      } finally {
+        await context.close()
+      }
+    })
+  }
+})
+
 test('public Playwright provider registry inputs and clears prompt text on captured composer DOM', { timeout: 60000 }, async (t) => {
   const { chromium } = await import('playwright')
   const browser = await chromium.launch({ headless: true })
@@ -81,6 +187,16 @@ test('public Playwright provider registry inputs and clears prompt text on captu
     })
   }
 })
+
+async function fulfillProviderPage(page, body, url = 'https://chatgpt.com/') {
+  const origin = new URL(url).origin
+  await page.route(`${origin}/**`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body,
+  }))
+  await page.goto(url, { waitUntil: 'domcontentloaded' })
+}
 
 test('public Playwright provider registry fails text-free when prompt text is not visible', { timeout: 30000 }, async (t) => {
   const { chromium } = await import('playwright')

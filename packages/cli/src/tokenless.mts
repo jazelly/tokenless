@@ -1072,6 +1072,19 @@ async function executeDaemonJob({
         : Number(args.timeoutMs),
     })
     const { job, waitResult: result, statusLog } = submitted
+    if (result?.status === 'waiting_for_user') {
+      printPayload(waitingForUserPayload({
+        job,
+        taskId,
+        provider,
+        profile: submitted.profile,
+        projectName,
+        chatName,
+        waitResult: result,
+        statusLog,
+      }), args)
+      return
+    }
     assertDaemonJobSucceeded(result, {
       events: statusLog,
       report() {},
@@ -1830,16 +1843,54 @@ function publicDaemonJobState(job: Record<string, any>) {
     createdAt: job.created_at,
     updatedAt: job.updated_at,
     status: job.status,
+    blocker: job.blocker_json,
     state: {
       status: job.status,
       actor: 'tokenless-daemon',
       updatedAt: job.updated_at,
       error: job.error_json,
+      blocker: job.blocker_json,
     },
     result: job.result_json === null && job.error_json === null
       ? null
       : { ok: job.status === 'succeeded', value: job.result_json, error: job.error_json },
     error: job.error_json,
+  }
+}
+
+function waitingForUserPayload({
+  job,
+  taskId,
+  provider,
+  profile,
+  projectName,
+  chatName,
+  waitResult,
+  statusLog,
+}: Record<string, any>) {
+  const blocker = waitResult?.blocker ?? job.blocker_json ?? null
+  return {
+    ok: true,
+    completed: false,
+    jobContinues: true,
+    transport: 'daemon',
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
+    status: 'waiting_for_user',
+    waitingForUser: true,
+    jobId: job.job_id,
+    taskId,
+    provider,
+    profile: publicManagedProfile(profile, profile.slug),
+    projectName,
+    chatName,
+    blocker,
+    userAction: waitResult?.userAction ?? {
+      message: 'Visible Chrome is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.',
+      resumeCommand: `tokenless state --job-id '${String(job.job_id).replace(/'/g, `'\\''`)}' --json`,
+      queryGuidance: 'Do not submit a replacement job; query the same job/task after user confirmation.',
+    },
+    result: publicDaemonResult(waitResult),
+    statusLog,
   }
 }
 
@@ -2588,6 +2639,15 @@ function normalizeStatusEvent(event: StatusEvent, startedAt: number) {
 }
 
 function formatStatusEvent(event: StatusEvent) {
+  if (event.status === 'waiting_for_user') {
+    const context = [
+      event.provider ? `provider=${formatStatusValue(event.provider)}` : '',
+      event.action ? `action=${formatStatusValue(event.action)}` : '',
+      event.jobId ? `job=${String(event.jobId).slice(0, 8)}` : '',
+      event.elapsedMs !== undefined ? `elapsed=${formatElapsed(event.elapsedMs)}` : '',
+    ].filter(Boolean).join(' ')
+    return `[tokenless] waiting_for_user ${context} Visible Chrome is open; manually complete verification or sign-in there, then query the same task.`
+  }
   const parts = ['[tokenless]', event.event]
   for (const [key, value] of [
     ['status', event.status],

@@ -25,6 +25,7 @@ export type DaemonJob = {
   request_json: unknown
   result_json: unknown | null
   error_json: unknown | null
+  blocker_json: unknown | null
   created_at: string
   updated_at: string
 }
@@ -334,6 +335,15 @@ export async function waitDaemonJobResult({
         },
       }
     }
+    if (job.status === 'waiting_for_user') {
+      return {
+        ok: null,
+        status: job.status,
+        job,
+        blocker: job.blocker_json,
+        userAction: userHandoverAction(job),
+      }
+    }
     await delay(pollMs, signal)
   }
   try {
@@ -360,6 +370,22 @@ export async function waitDaemonJobResult({
     `Timed out waiting for daemon job ${jobId}; cancellation was confirmed.`,
     true
   )
+}
+
+function userHandoverAction(job: DaemonJob) {
+  return {
+    message: 'Visible Chrome is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.',
+    resumeCommand: jobIdResumeCommand(job),
+    queryGuidance: 'Run tokenless state --job-id <jobId> --json or rerun the same task query after the user confirms completion.',
+  }
+}
+
+function jobIdResumeCommand(job: DaemonJob) {
+  return `tokenless state --job-id ${shellQuote(job.job_id)} --json`
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 async function daemonRequest<T>({

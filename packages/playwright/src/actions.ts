@@ -145,9 +145,22 @@ export type NavigationCheckResult = {
   reason: string | null
 }
 
+export type VisibleBlocker = {
+  kind: 'challenge' | 'auth' | 'terminal'
+  code: string
+  message: string
+  userResolvable: boolean
+  retryable: boolean
+  visibleProof: string
+  provider: ProviderId
+  url: string
+  family?: 'recaptcha' | 'cloudflare' | 'hcaptcha' | 'arkose' | 'provider_sign_in' | 'rate_limit' | 'plan_limit'
+}
+
 export type BlockerCheckResult = {
   blocked: boolean
   reasons: readonly string[]
+  blockers: readonly VisibleBlocker[]
 }
 
 export type VisibleActionResult =

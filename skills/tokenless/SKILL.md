@@ -63,7 +63,7 @@ Pass only an exact returned label with `--model`, ordered `--model-fallback`, or
 
 For work expected to exceed three minutes, keep the daemon job attached and add `--long-running`. Do not use `--no-wait`, do not replace the web task with a local agent run, and do not claim a result before the daemon reports `succeeded`.
 
-Retain the returned `taskId` and pass `--task-id "<taskId>"` on later turns for the same task. Continue waiting while a run reports `queued`, `claimed`, `running`, or `daemon_waiting`. Stop on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch` and report the exact visible blocker.
+Retain the returned `jobId` and `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task. Continue waiting while a run reports `queued`, `claimed`, `running`, or `daemon_waiting`. If it reports `waiting_for_user`, stop the agent task immediately: tell the user to complete the visible verification or sign-in in the already-open Chrome window, keep the same `jobId`/`taskId`, never retry, reimport, resubmit, or create a replacement job, and query the same task only after the user confirms. Do not claim completion until the daemon reports `succeeded`. Stop on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch` and report the exact visible blocker.
 
 If sign-in, CAPTCHA, plan limits, consent, or confirmation requires the user, state the completed work, exact visible action, and next verification in the user's preferred language. Never request credentials or browser state.
 

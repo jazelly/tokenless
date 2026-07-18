@@ -234,6 +234,150 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
   }
 })
 
+test('attached CLI run returns waiting_for_user envelope promptly without canceling daemon job', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-waiting-run-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  let jobId
+  try {
+    const add = runCli([
+      'profiles',
+      'add',
+      '--profile',
+      'default',
+      '--label',
+      'Default visible profile',
+      '--set-default',
+      '--home',
+      homeDir,
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(add.status, 0, add.stderr || add.stdout)
+    const added = JSON.parse(add.stdout)
+
+    const run = spawnCli([
+      'run',
+      '--profile',
+      'default',
+      '--provider',
+      'chatgpt',
+      '--task-id',
+      'cli-waiting-task',
+      '--prompt',
+      'wait for user',
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--runner-heartbeat-timeout-ms',
+      '3000',
+      '--timeout-ms',
+      '10000',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+
+    const job = await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: added.profile.id })
+    jobId = job.job_id
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    const claimed = await daemonPost({
+      daemonUrl,
+      homeDir,
+      path: `/control/jobs/claim-next?${new URLSearchParams({
+        execution_backend: 'playwright',
+        profile_id: added.profile.id,
+        action: 'visible_provider_actions',
+      })}`,
+    })
+    assert.equal(claimed.job.job_id, jobId)
+    await daemonPost({
+      daemonUrl,
+      homeDir,
+      path: `/control/jobs/${encodeURIComponent(jobId)}/running`,
+      body: { claim_token: claimed.job.claim_token },
+    })
+    await daemonPost({
+      daemonUrl,
+      homeDir,
+      path: `/control/jobs/${encodeURIComponent(jobId)}/waiting-for-user`,
+      body: {
+        claim_token: claimed.job.claim_token,
+        blocker_json: {
+          protocol: 'tokenless.playwright.user-handover.v1',
+          jobId,
+          taskId: 'cli-waiting-task',
+          provider: 'chatgpt',
+          profileId: added.profile.id,
+          blocker: {
+            kind: 'challenge',
+            code: 'visible_recaptcha',
+            message: 'Visible reCAPTCHA verification is blocking the provider page.',
+            userResolvable: true,
+            retryable: true,
+            visibleProof: 'visible-recaptcha-frame',
+            provider: 'chatgpt',
+            url: 'https://chatgpt.com',
+            family: 'recaptcha',
+          },
+          userAction: {
+            message: 'Complete visible verification in Chrome.',
+          },
+        },
+      },
+    })
+
+    const completedRun = await waitForProcess(run, 5000)
+    assert.equal(completedRun.status, 0, `stdout:\n${completedRun.stdout}\nstderr:\n${completedRun.stderr}`)
+    const payload = JSON.parse(completedRun.stdout)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.completed, false)
+    assert.equal(payload.jobContinues, true)
+    assert.equal(payload.status, 'waiting_for_user')
+    assert.equal(payload.jobId, jobId)
+    assert.equal(payload.taskId, 'cli-waiting-task')
+    assert.equal(payload.provider, 'chatgpt')
+    assert.equal(payload.profile.id, added.profile.id)
+    assert.equal(payload.blocker.blocker.code, 'visible_recaptcha')
+    assert.match(payload.userAction.message, /Visible Chrome is open|Complete visible verification/)
+
+    const waitingJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(jobId)}`, homeDir)
+    assert.equal(waitingJob.status, 'waiting_for_user')
+    assert.equal(waitingJob.blocker_json.blocker.code, 'visible_recaptcha')
+
+    const state = runCli([
+      'state',
+      '--profile',
+      'default',
+      '--job-id',
+      jobId,
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(state.status, 0, state.stderr || state.stdout)
+    const statePayload = JSON.parse(state.stdout)
+    assert.equal(statePayload.latest.status, 'waiting_for_user')
+    assert.equal(statePayload.latest.blocker.blocker.code, 'visible_recaptcha')
+  } finally {
+    if (jobId) {
+      await daemonPost({
+        daemonUrl,
+        homeDir,
+        path: `/control/jobs/${encodeURIComponent(jobId)}/cancel`,
+      }).catch(() => undefined)
+    }
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 function writeFakeRunnerEntry(homeDir) {
   const entry = path.join(homeDir, 'fake-runner.mjs')
   fs.writeFileSync(entry, `
@@ -348,9 +492,54 @@ function runCli(args, env = {}) {
   })
 }
 
+function spawnCli(args, env = {}) {
+  return spawn(process.execPath, [cliEntry, ...args], {
+    cwd: root,
+    env: { ...process.env, TOKENLESS_PROVIDER: '', ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
+async function waitForProcess(child, timeoutMs) {
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (chunk) => { stdout += chunk })
+  child.stderr.on('data', (chunk) => { stderr += chunk })
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM')
+      reject(new Error(`Process timed out.\nstdout:\n${stdout}\nstderr:\n${stderr}`))
+    }, timeoutMs)
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.once('close', (status, signal) => {
+      clearTimeout(timer)
+      resolve({ status, signal, stdout, stderr })
+    })
+  })
+}
+
+async function waitForPlaywrightJob({ daemonUrl, homeDir, profileId }) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      const jobs = await fetchJson(`${daemonUrl}/jobs?execution_backend=playwright&profile_id=${encodeURIComponent(profileId)}`, homeDir)
+      const job = jobs.find((candidate) => candidate.action === 'visible_provider_actions')
+      if (job) return job
+    } catch {
+      // The daemon may still be starting.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error('Timed out waiting for attached CLI run to create a Playwright job.')
+}
+
 function readOptional(file) {
   try {
-    return fsSync.readFileSync(file, 'utf8')
+    return fs.readFileSync(file, 'utf8')
   } catch {
     return ''
   }
