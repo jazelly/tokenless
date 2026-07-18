@@ -50,7 +50,7 @@ async function inspectAuth(page: Page, provider: ProviderConfig, signal: AbortSi
         visibleProof: 'login-indicator-visible',
       }
     }
-    const authVisible = await anyVisible(page, provider.authIndicators)
+    const authVisible = await anyVisible(page, [...provider.authIndicators, ...provider.composerSelectors])
     if (authVisible) {
       return {
         state: 'authenticated' as const,
@@ -163,17 +163,18 @@ async function uploadFiles(page: Page, provider: ProviderConfig, value: unknown,
 
 async function inputPrompt(page: Page, provider: ProviderConfig, text: unknown) {
   if (typeof text !== 'string') throw new Error('Validated request payload unexpectedly lacked prompt text.')
-  const composer = await firstLocator(page, provider.composerSelectors)
-  if (!composer) throw new Error('No visible prompt input is available.')
-  await composer.fill(text, { timeout: 5000 }).catch(async () => {
-    await composer.click({ timeout: 5000 })
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
-    await page.keyboard.type(text)
-  })
-  return {
-    visible: true as const,
-    inputProof: 'prompt-text-visible',
+  if (provider.composerSettleMs > 0) await page.waitForTimeout(provider.composerSettleMs)
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const composer = await firstLocator(page, provider.composerSelectors)
+    if (composer && await writeExactPrompt(page, composer, text)) {
+      return {
+        visible: true as const,
+        inputProof: 'prompt-text-visible',
+      }
+    }
+    if (attempt < 11) await page.waitForTimeout(1000)
   }
+  throw new Error('No stable visible prompt input matched the requested text.')
 }
 
 async function clearPrompt(page: Page, provider: ProviderConfig) {
@@ -358,7 +359,7 @@ async function firstVisible(page: Page, selector: string) {
 
 async function firstLocator(page: Page, selectors: readonly string[]): Promise<Locator | null> {
   for (const selector of selectors) {
-    const locator = page.locator(selector).first()
+    const locator = page.locator(selector).filter({ visible: true }).first()
     try {
       if (await locator.isVisible({ timeout: 1000 })) return locator
     } catch {
@@ -379,6 +380,37 @@ async function latestLocator(page: Page, selectors: readonly string[]): Promise<
     }
   }
   return null
+}
+
+async function composerHasExactText(locator: Locator, expected: string) {
+  try {
+    return await locator.evaluate((element, value) => {
+      const text = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+        ? element.value
+        : (element.textContent ?? '').replace(/\u00a0/g, ' ')
+      return text === value
+    }, expected)
+  } catch {
+    return false
+  }
+}
+
+async function writeExactPrompt(page: Page, composer: Locator, text: string) {
+  try {
+    await composer.fill(text, { timeout: 2000 })
+    if (await composerHasExactText(composer, text)) return true
+  } catch {
+    // Hydration can replace a visible fallback composer while it is being filled.
+  }
+  try {
+    if (!await composer.isVisible({ timeout: 250 })) return false
+    await composer.click({ timeout: 1000 })
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
+    await page.keyboard.type(text)
+    return await composerHasExactText(composer, text)
+  } catch {
+    return false
+  }
 }
 
 function sanitizeVisibleText(text: string) {

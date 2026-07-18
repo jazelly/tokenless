@@ -11,6 +11,8 @@ import {
   VISIBLE_ACTION_PROTOCOL_VERSION,
   createVisibleActionRequest,
   createProviderAdapterRegistry,
+  assertProviderUrlAllowed,
+  canonicalProviderTarget,
   listProviders,
   validateVisibleActionRequest,
 } from '../packages/playwright/dist/src/index.js'
@@ -71,6 +73,31 @@ test('visible action validation is versioned, exact-key only, path-free in uploa
   }), matchCode('invalid_visible_attachment'))
 })
 
+test('observed provider URLs ignore same-origin query state without relaxing requested targets', () => {
+  const claude = listProviders().find((provider) => provider.id === 'claude')
+  assert.ok(claude)
+
+  assert.equal(canonicalProviderTarget(claude, 'https://claude.ai/new?provider-state=opaque#composer'), null)
+  assert.deepEqual(assertProviderUrlAllowed(claude, 'https://claude.ai/new?provider-state=opaque#composer'), {
+    ok: true,
+    target: {
+      providerId: 'claude',
+      href: 'https://claude.ai/new',
+      origin: 'https://claude.ai',
+      pathname: '/new',
+    },
+  })
+  for (const rejected of [
+    'http://claude.ai/new?provider-state=opaque',
+    'https://user@claude.ai/new?provider-state=opaque',
+    'https://claude.ai:444/new?provider-state=opaque',
+    'https://example.com/new?provider-state=opaque',
+    'https://claude.ai/new\\settings?provider-state=opaque',
+  ]) {
+    assert.equal(assertProviderUrlAllowed(claude, rejected).ok, false, rejected)
+  }
+})
+
 test('sanitized snapshots expose only bounded structure and never page body or private route text', async () => {
   const registry = createProviderAdapterRegistry()
   const page = new FakeSnapshotPage()
@@ -121,6 +148,25 @@ test('auth status waits for provider UI hydration before reporting unknown', asy
     visibleProof: 'authenticated-control-visible',
   })
   assert.equal(page.waits > 0, true)
+})
+
+test('auth status accepts a visible provider composer when dedicated account controls drift', async () => {
+  const registry = createProviderAdapterRegistry()
+  const page = new FakeComposerAuthPage()
+  const response = await registry.execute(page, createVisibleActionRequest({
+    provider: 'claude',
+    action: VISIBLE_ACTIONS.AUTH_STATUS,
+    payload: {},
+  }), {
+    profileId: 'profile-a',
+    operationId: 'op-a',
+  })
+
+  assert.equal(response.ok, true)
+  assert.deepEqual(response.result, {
+    state: 'authenticated',
+    visibleProof: 'authenticated-control-visible',
+  })
 })
 
 test('visible file uploads resolve path-free attachment descriptors inside attachmentRoot', async () => {
@@ -299,7 +345,8 @@ class FakeUploadPage {
   }
 
   locator() {
-    return {
+    const locator = {
+      filter: () => locator,
       first: () => ({
         isVisible: async () => true,
         setInputFiles: async (files) => {
@@ -307,6 +354,7 @@ class FakeUploadPage {
         },
       }),
     }
+    return locator
   }
 }
 
@@ -361,6 +409,22 @@ class FakeHydratingAuthPage {
     this.waits += 1
     this.hydrated = true
   }
+}
+
+class FakeComposerAuthPage {
+  url() {
+    return 'https://claude.ai/new'
+  }
+
+  locator(selector) {
+    return {
+      first: () => ({
+        isVisible: async () => selector === 'div[contenteditable="true"][role="textbox"]',
+      }),
+    }
+  }
+
+  async waitForTimeout() {}
 }
 
 function fakeElement(tagName, attributes, textContent) {
