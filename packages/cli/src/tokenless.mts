@@ -71,6 +71,7 @@ import {
   installTokenlessSkills,
 } from './setup-workflow.js'
 import {
+  SETUP_PROFILE_COPY_CONSENT_DEFAULT,
   SETUP_MANAGED_PROFILE_DISCLOSURE,
   SETUP_READINESS_DISCLOSURE,
   createSetupPresenter,
@@ -2140,8 +2141,8 @@ async function requireSetupCopyConsent({
   if (args.consentLocalProfileCopy === true) return
   const approved = prompt
     ? await prompt.confirm(
-        `Copy ${path.join(source.userDataDir, source.directoryKey)} into managed profile ${destination}? The filtered opaque copy may include cookies and local storage to retain visible sign-in; it stays local, is not parsed/extracted/logged/uploaded by Tokenless, and excludes history, bookmarks, saved passwords/Login Data, autofill/payment data, extensions, caches, crash/download artifacts, and sync data.`,
-        false
+        `Copy ${path.join(source.userDataDir, source.directoryKey)} into managed profile ${destination}? The local filtered copy may include cookies and site storage for sign-in; Tokenless never extracts or uploads them. Sensitive browsing data is excluded.`,
+        SETUP_PROFILE_COPY_CONSENT_DEFAULT
       )
     : false
   if (!approved) {
