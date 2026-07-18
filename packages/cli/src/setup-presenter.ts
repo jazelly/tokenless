@@ -36,19 +36,14 @@ type ExplainOptions = {
 const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
-  'Tokenless will read its managed-profile registry to choose or create one persistent browser profile.',
-  'A clean profile changes only Tokenless-managed state.',
-  'Import or re-import makes a filtered opaque local copy only after explicit consent.',
-  'That copy may include browser session artifacts such as cookies and local storage so the managed browser can retain sign-in.',
-  'Tokenless keeps the copy local and does not parse, extract, log, or upload cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider API data.',
-  'The importer excludes history, bookmarks, saved passwords/Login Data, autofill and payment data, extensions, caches, crash/download artifacts, and sync data.',
+  'Keeps provider sign-ins between jobs. Name it default, work, or similar; later use --profile <name>.',
+  'Import may copy cookies and site storage locally; Tokenless never extracts or uploads them.',
+  'Excludes passwords, history, bookmarks, payments, extensions, sync data, and caches.',
 ])
 
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([
-  'Tokenless may start the local daemon/runner and create a readiness job.',
-  'It opens the visible managed browser/profile for the provider page.',
-  'The check reads visible login state only; it does not type or submit a prompt.',
-  'It does not read cookies, localStorage/sessionStorage tokens, hidden auth headers, or private provider APIs.',
+  'Tokenless may start its local runner, open this profile, and check the provider\'s visible sign-in state.',
+  'It does not extract tokens or type and submit a prompt.',
 ])
 
 export class SetupPresenter {
@@ -89,12 +84,12 @@ export class SetupPresenter {
       this.paint('dim', '+--------------------------------------------------+'),
       '',
       `${this.paint('cyan', 'Roadmap')}`,
-      '  1. Configuration read: read existing Tokenless setup choices.',
-      '  2. Agent skills: read local skill manifests and install only when approved.',
-      '  3. Browser/provider choices: choose the managed browser and provider pages.',
-      '  4. Configuration write: save browser, provider list, and daemon URL preferences.',
-      '  5. Managed profile: create a clean profile or copy a local profile only with consent.',
-      '  6. Provider readiness: open the managed browser/profile and inspect visible login state only.',
+      '  1. Check config',
+      '  2. Check agent skills',
+      '  3. Choose browser and providers',
+      '  4. Save preferences',
+      '  5. Choose a managed profile',
+      '  6. Check provider sign-in',
       '',
     ].join('\n'))
   }
@@ -120,8 +115,7 @@ export class SetupPresenter {
     this.write([
       this.paint('yellow', `Visible ${provider} handoff`),
       `  ${this.paint('dim', '-')} ${detail}`,
-      `  ${this.paint('dim', '-')} Complete the sign-in or challenge in the managed browser window Tokenless opened.`,
-      `  ${this.paint('dim', '-')} Return here and press Enter; setup will query the same job instead of submitting a replacement.`,
+      `  ${this.paint('dim', '-')} Finish in the open browser, then press Enter here. The same job will resume.`,
     ].join('\n') + '\n')
   }
 
