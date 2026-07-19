@@ -14,6 +14,8 @@ import {
   createManagedPlaywrightJobRequest,
   tokenlessError,
 } from '../packages/playwright/dist/src/index.js'
+import { createDomProviderAdapter } from '../packages/playwright/dist/src/adapters/provider-dom-adapter.js'
+import { getProviderById } from '../packages/playwright/dist/src/providers.js'
 
 test('runner polls all registered profiles with exact Playwright/profile scoping and completes lifecycle', async () => {
   const profiles = fakeProfiles(['profile-a', 'profile-b'])
@@ -269,6 +271,42 @@ test('runner preserves auth status as an immediate check without user handover g
   assert.deepEqual(adapterEvents, [VISIBLE_ACTIONS.AUTH_STATUS])
 })
 
+test('dom adapter classifies auth status on recognized off-provider sign-in without DOM inspection', async () => {
+  const provider = getProviderById('chatgpt')
+  const adapter = createDomProviderAdapter(provider)
+  const request = createManagedPlaywrightJobRequest({
+    provider: 'chatgpt',
+    actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+  }).actions[0]
+  const page = new FakeOffProviderSignInPage()
+
+  const response = await adapter.execute(page, request, { profileId: 'profile-a', operationId: 'job-auth' })
+
+  assert.equal(response.ok, false)
+  assert.equal(response.error.code, 'provider_sign_in_navigation')
+  assert.equal(response.error.retryable, true)
+  assert.equal(page.offProviderEvaluateCalls, 0)
+})
+
+test('dom adapter fails closed for unsafe off-provider auth status navigation', async () => {
+  const provider = getProviderById('chatgpt')
+  const adapter = createDomProviderAdapter(provider)
+  const request = createManagedPlaywrightJobRequest({
+    provider: 'chatgpt',
+    actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+  }).actions[0]
+  for (const url of ['https://example.com/login', 'https://evil.test/signin']) {
+    const page = new FakeUnsafeOffProviderPage(url)
+
+    const response = await adapter.execute(page, request, { profileId: 'profile-a', operationId: 'job-auth' })
+
+    assert.equal(response.ok, false)
+    assert.equal(response.error.code, 'unsupported_provider_navigation')
+    assert.equal(response.error.retryable, false)
+    assert.equal(page.evaluateCalls, 0)
+  }
+})
+
 test('runner gates setup readiness navigation checks and resumes auth in the same job', async () => {
   const profiles = fakeProfiles(['profile-a'])
   const page = new FakeHandoverPage()
@@ -411,6 +449,30 @@ test('runner classifies off-provider sign-in navigation without DOM inspection a
   assert.equal(daemon.waiting[0].blocker.blocker.code, 'provider_sign_in_navigation')
   assert.equal(daemon.waiting[0].blocker.blocker.url, 'https://accounts.google.com')
   assert.deepEqual(adapterEvents, [VISIBLE_ACTIONS.PROMPT_INPUT])
+})
+
+test('runner fails closed for unsafe off-provider sign-in-shaped navigation without waiting or DOM inspection', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const page = new FakeUnsafeOffProviderPage('https://evil.test/signin')
+  const daemon = new FakeDaemon([
+    fakeJob('job-unsafe-off-provider', profiles[0], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'after login' } }],
+    })),
+  ])
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(page),
+    cancelPollMs: 1000,
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-unsafe-off-provider', status: 'failed' })
+  assert.equal(daemon.waiting.length, 0)
+  assert.equal(daemon.completed[0].error.code, 'unsupported_provider_navigation')
+  assert.equal(page.evaluateCalls, 0)
 })
 
 test('runner cancellation while waiting stops without running further adapter actions', async () => {
@@ -887,6 +949,28 @@ class FakeOffProviderSignInPage {
     if (selector === 'div#prompt-textarea[contenteditable="true"]' || selector === '#prompt-textarea[contenteditable="true"]') {
       return new FakeSingleLocator(() => this.composerVisible)
     }
+    return new FakeSingleLocator(() => false)
+  }
+}
+
+class FakeUnsafeOffProviderPage {
+  constructor(url = 'https://example.com/private?token=secret#fragment') {
+    this.currentUrl = url
+    this.evaluateCalls = 0
+  }
+
+  async goto() {}
+
+  url() {
+    return this.currentUrl
+  }
+
+  async evaluate() {
+    this.evaluateCalls += 1
+    throw new Error('unsafe off-provider DOM must not be inspected')
+  }
+
+  locator() {
     return new FakeSingleLocator(() => false)
   }
 }

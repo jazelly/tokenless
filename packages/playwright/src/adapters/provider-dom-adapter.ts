@@ -4,7 +4,7 @@ import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, join, resolve, sep } from 'node:path'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, VISIBLE_ATTACHMENT_PROTOCOL_VERSION, validateAttachmentInput } from '../actions.js'
 import { TokenlessPlaywrightError, tokenlessError } from '../errors.js'
-import { assertProviderUrlAllowed, getProviderForUrl } from '../providers.js'
+import { assertProviderUrlAllowed, getProviderForUrl, trustedProviderSignInNavigation } from '../providers.js'
 import type { AttachmentInput, Choice, VisibleActionRequest, VisibleActionResponse, VisibleActionResult, VisibleBlocker, VisibleCitation } from '../actions.js'
 import type { ProviderConfig } from '../providers.js'
 import type { ProviderAdapter, VisibleAdapterContext } from './types.js'
@@ -18,10 +18,14 @@ export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdap
       if (request.provider !== provider.id) {
         return failure(request, 'provider_mismatch', 'The action provider does not match this adapter.', false)
       }
-      const navigation = assertProviderUrlAllowed(provider, page.url())
+      const pageUrl = page.url()
+      const navigation = assertProviderUrlAllowed(provider, pageUrl)
       if (!navigation.ok && request.action !== VISIBLE_ACTIONS.NAVIGATION_CHECK) {
+        if (trustedProviderSignInNavigation(provider, pageUrl)) {
+          return failure(request, 'provider_sign_in_navigation', 'Provider sign-in navigation is visible and requires the user.', true)
+        }
         return failure(request, 'unsupported_provider_navigation', 'The visible page is outside the approved provider origin.', false)
-      }
+        }
       if (request.action === VISIBLE_ACTIONS.AUTH_STATUS) return success(request, await inspectAuth(page, provider, context.signal))
       if (request.action === VISIBLE_ACTIONS.NAVIGATION_CHECK) return success(request, inspectNavigation(page, provider))
       if (request.action === VISIBLE_ACTIONS.BLOCKER_CHECK) return success(request, await inspectVisibleBlockers(page, provider))
