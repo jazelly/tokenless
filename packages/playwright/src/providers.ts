@@ -25,6 +25,11 @@ export type ProviderConfig = {
   readonly busySelectors: readonly string[]
 }
 
+type TrustedSignInNavigationPolicy = {
+  readonly host: string
+  readonly pathPrefixes?: readonly string[]
+}
+
 const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
   Object.freeze({
     id: PROVIDER_IDS.CHATGPT,
@@ -235,6 +240,22 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
   }),
 ])
 
+const TRUSTED_SIGN_IN_NAVIGATION: Readonly<Record<ProviderId, readonly TrustedSignInNavigationPolicy[]>> = Object.freeze({
+  [PROVIDER_IDS.CHATGPT]: Object.freeze([
+    Object.freeze({ host: 'accounts.google.com' }),
+    Object.freeze({ host: 'auth.openai.com' }),
+    Object.freeze({ host: 'auth0.openai.com' }),
+    Object.freeze({ host: 'login.openai.com' }),
+  ]),
+  [PROVIDER_IDS.CLAUDE]: Object.freeze([
+    Object.freeze({ host: 'accounts.google.com' }),
+  ]),
+  [PROVIDER_IDS.GEMINI]: Object.freeze([
+    Object.freeze({ host: 'accounts.google.com' }),
+  ]),
+  [PROVIDER_IDS.GROK]: Object.freeze([]),
+})
+
 export function listProviders(): ProviderConfig[] {
   return [...PROVIDERS]
 }
@@ -309,6 +330,20 @@ export function assertProviderUrlAllowed(provider: ProviderConfig, targetUrl: un
   }
 }
 
+export function trustedProviderSignInNavigation(provider: ProviderConfig, targetUrl: unknown) {
+  const parsed = parseTrustedSignInUrl(targetUrl)
+  if (!parsed) return null
+  const host = parsed.hostname.toLowerCase()
+  const policy = TRUSTED_SIGN_IN_NAVIGATION[provider.id].find((entry) => entry.host === host)
+  if (!policy) return null
+  if (policy.pathPrefixes && !policy.pathPrefixes.some((prefix) => parsed.pathname.startsWith(prefix))) return null
+  return {
+    providerId: provider.id,
+    origin: parsed.origin,
+    host,
+  }
+}
+
 function canonicalObservedProviderTarget(provider: ProviderConfig, value: unknown): CanonicalProviderTarget | null {
   if (typeof value !== 'string' || value.length > 2048) return null
   const privateStateIndex = [value.indexOf('?'), value.indexOf('#')]
@@ -338,6 +373,25 @@ function canonicalObservedProviderTarget(provider: ProviderConfig, value: unknow
     origin: parsed.origin,
     pathname,
   }
+}
+
+function parseTrustedSignInUrl(value: unknown): URL | null {
+  if (typeof value !== 'string' || value.length > 2048) return null
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return null
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== ''
+  ) {
+    return null
+  }
+  return parsed
 }
 
 function parseProviderUrl(provider: ProviderConfig, value: unknown): URL | null {

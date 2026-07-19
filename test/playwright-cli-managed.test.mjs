@@ -48,7 +48,7 @@ test('canonical default setup noninteractively selects browser/profile/providers
     assert.equal(payload.profile.slug, 'default')
     assert.equal(payload.readiness.chatgpt.auth, 'authenticated')
     assert.equal(payload.readiness.chatgpt.jobId, job.job_id)
-    assert.deepEqual(job.request_json.actions.map((action) => action.action), ['navigation.check', 'auth.status'])
+    assert.deepEqual(job.request_json.actions.map((action) => action.action), ['auth.status'])
 
     const doctor = runCli([
       'doctor',
@@ -150,6 +150,357 @@ test('setup surfaces failed managed readiness jobs as technical CLI failures', a
   }
 })
 
+test('setup sweeps every selected provider before opening first actionable handoff', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-sweep-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-sweep-skills-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  let handoffJobId
+  try {
+    const setup = spawnCli([
+      'setup',
+      '--defaults',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--preferred-providers', 'chatgpt,claude',
+      '--skip-skill-install',
+      '--json',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const profile = await waitForManagedProfile(homeDir)
+    const chatgptSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['auth.status'],
+    })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    const completedChatgpt = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+    assert.equal(completedChatgpt.job_id, chatgptSweep.job_id)
+
+    const claudeSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'claude',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id]),
+    })
+    const completedClaude = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
+    assert.equal(completedClaude.job_id, claudeSweep.job_id)
+
+    const handoffJob = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['navigation.check'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+    })
+    handoffJobId = handoffJob.job_id
+    assert.equal(handoffJob.request_json.target.url, 'https://chatgpt.com/')
+    await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: handoffJobId })
+
+    const result = await waitForProcess(setup, 10000)
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.status, 'waiting_for_user')
+    assert.equal(payload.summary.counts.ready, 1)
+    assert.equal(payload.summary.counts.action_required, 1)
+    assert.equal(payload.summary.counts.failed, 0)
+    assert.equal(payload.readiness.chatgpt.classification, 'action_required')
+    assert.equal(payload.readiness.chatgpt.handoff.jobId, handoffJobId)
+    assert.equal(payload.readiness.claude.classification, 'ready')
+    assert.equal(payload.readiness.claude.jobId, claudeSweep.job_id)
+  } finally {
+    if (handoffJobId) {
+      await daemonPost({
+        daemonUrl,
+        homeDir,
+        path: `/control/jobs/${encodeURIComponent(handoffJobId)}/cancel`,
+      }).catch(() => undefined)
+    }
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+  }
+})
+
+test('setup returns nonzero mixed ready and failed provider summary without dropping results', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-mixed-failed-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-mixed-failed-skills-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  try {
+    const setup = spawnCli([
+      'setup',
+      '--defaults',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--preferred-providers', 'chatgpt,claude',
+      '--skip-skill-install',
+      '--json',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const profile = await waitForManagedProfile(homeDir)
+    const chatgptSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['auth.status'],
+    })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
+    await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'claude',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id]),
+    })
+    const failedJob = await failNextPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id, expectedProvider: 'claude' })
+
+    const result = await waitForProcess(setup, 10000)
+
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.status, 'failed')
+    assert.equal(payload.summary.counts.ready, 1)
+    assert.equal(payload.summary.counts.failed, 1)
+    assert.equal(payload.readiness.chatgpt.classification, 'ready')
+    assert.equal(payload.readiness.claude.classification, 'failed')
+    assert.equal(payload.readiness.claude.jobId, failedJob.job_id)
+    assert.equal(payload.error.code, 'playwright_navigation_failed')
+  } finally {
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+  }
+})
+
+test('setup preserves actionable handoff guidance when technical failures also exist', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-failed-action-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-failed-action-skills-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  let handoffJobId
+  try {
+    const setup = spawnCli([
+      'setup',
+      '--defaults',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--preferred-providers', 'chatgpt,claude',
+      '--skip-skill-install',
+      '--json',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const profile = await waitForManagedProfile(homeDir)
+    const chatgptSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['auth.status'],
+    })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+    const claudeSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'claude',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id]),
+    })
+    await failNextPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id, expectedProvider: 'claude' })
+    const handoffJob = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['navigation.check'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+    })
+    handoffJobId = handoffJob.job_id
+    await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: handoffJobId })
+
+    const result = await waitForProcess(setup, 10000)
+
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.status, 'failed')
+    assert.equal(payload.waitingForUser, true)
+    assert.equal(payload.summary.counts.action_required, 1)
+    assert.equal(payload.summary.counts.failed, 1)
+    assert.equal(payload.readiness.chatgpt.classification, 'action_required')
+    assert.equal(payload.readiness.chatgpt.handoff.jobId, handoffJobId)
+    assert.equal(payload.readiness.claude.classification, 'failed')
+    assert.equal(payload.userActions.chatgpt.handoff.jobId, handoffJobId)
+    assert.match(payload.compactOutput, /Action required: chatgpt/)
+    assert.match(payload.compactOutput, new RegExp(handoffJobId))
+  } finally {
+    if (handoffJobId) {
+      await daemonPost({
+        daemonUrl,
+        homeDir,
+        path: `/control/jobs/${encodeURIComponent(handoffJobId)}/cancel`,
+      }).catch(() => undefined)
+    }
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+  }
+})
+
+test('interactive setup records handoff wait errors and continues later actionable providers', { skip: process.platform === 'win32' || !fs.existsSync('/usr/bin/expect') }, async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-interactive-wait-failed-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-interactive-wait-failed-skills-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  let restartedDaemonPid
+  let claudeHandoffJobId
+  try {
+    const setup = spawnCliTty([
+      'setup',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--profile', 'default',
+      '--clean-profile',
+      '--preferred-providers', 'chatgpt,claude',
+      '--skip-skill-install',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const browserPrompt = waitForProcessOutput(setup, 'Choose [1]: ')
+    const setupFinished = waitForProcess(setup, 20000)
+    await browserPrompt
+    setup.stdin.write('\n')
+    const profile = await waitForManagedProfile(homeDir)
+    const chatgptSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['auth.status'],
+    })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+    const claudeSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'claude',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id]),
+    })
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+    const chatgptHandoff = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['navigation.check'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+    })
+    await markNextPlaywrightJobWaiting({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      expectedJobId: chatgptHandoff.job_id,
+      provider: 'chatgpt',
+    })
+
+    await stopPid(daemonPid)
+    daemonPid = undefined
+    setup.stdin.write('\n')
+
+    const claudeHandoff = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'claude',
+      actionNames: ['navigation.check'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, chatgptHandoff.job_id]),
+    })
+    claudeHandoffJobId = claudeHandoff.job_id
+    restartedDaemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await markNextPlaywrightJobWaiting({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      expectedJobId: claudeHandoffJobId,
+      provider: 'claude',
+    })
+    await daemonPost({
+      daemonUrl,
+      homeDir,
+      path: `/control/jobs/${encodeURIComponent(claudeHandoffJobId)}/cancel`,
+    })
+    setup.stdin.write('\n')
+
+    const result = await setupFinished
+
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    assert.match(result.stdout, /chatgpt: failed/)
+    assert.match(result.stdout, /claude: failed/)
+  } finally {
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    if (restartedDaemonPid && restartedDaemonPid !== daemonPid) await stopPid(restartedDaemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+  }
+})
+
 test('setup returns actionable waiting_for_user data for managed browser handoff', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-waiting-')))
   const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-waiting-skills-')))
@@ -172,52 +523,28 @@ test('setup returns actionable waiting_for_user data for managed browser handoff
       TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
       TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
       TOKENLESS_SETUP_SKILL_HOME: skillHome,
-    })
-    const profile = await waitForManagedProfile(homeDir)
-    const job = await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
-    jobId = job.job_id
-    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    const claimed = await daemonPost({
-      daemonUrl,
-      homeDir,
-      path: `/control/jobs/claim-next?${new URLSearchParams({
-        execution_backend: 'playwright',
-        profile_id: profile.id,
-        action: 'visible_provider_actions',
-      })}`,
-    })
-    assert.equal(claimed.job.job_id, jobId)
-    await daemonPost({
-      daemonUrl,
-      homeDir,
-      path: `/control/jobs/${encodeURIComponent(jobId)}/running`,
-      body: { claim_token: claimed.job.claim_token },
-    })
-    await daemonPost({
-      daemonUrl,
-      homeDir,
-      path: `/control/jobs/${encodeURIComponent(jobId)}/waiting-for-user`,
-      body: {
-        claim_token: claimed.job.claim_token,
-        blocker_json: {
-          protocol: 'tokenless.playwright.user-handover.v1',
-          jobId,
-          provider: 'chatgpt',
-          profileId: profile.id,
-          blocker: {
-            kind: 'auth',
-            code: 'provider_sign_in_visible',
-            message: 'Provider sign-in is visible and requires the user.',
-            userResolvable: true,
-            retryable: true,
-            visibleProof: 'visible-provider-sign-in-control',
-            provider: 'chatgpt',
-            url: 'https://chatgpt.com/',
-            family: 'provider_sign_in',
-          },
-        },
-      },
-    })
+      })
+      const profile = await waitForManagedProfile(homeDir)
+      const job = await waitForPlaywrightJob({
+        daemonUrl,
+        homeDir,
+        profileId: profile.id,
+        provider: 'chatgpt',
+        actionNames: ['auth.status'],
+      })
+      daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+      const sweepJob = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+      assert.equal(sweepJob.job_id, job.job_id)
+      const handoffJob = await waitForPlaywrightJob({
+        daemonUrl,
+        homeDir,
+        profileId: profile.id,
+        provider: 'chatgpt',
+        actionNames: ['navigation.check'],
+        excludeJobIds: new Set([job.job_id]),
+      })
+      jobId = handoffJob.job_id
+      await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: jobId })
 
     const result = await waitForProcess(setup, 10000)
 
@@ -227,15 +554,17 @@ test('setup returns actionable waiting_for_user data for managed browser handoff
     assert.equal(payload.completed, false)
     assert.equal(payload.status, 'waiting_for_user')
     assert.equal(payload.waitingForUser, true)
-    assert.equal(payload.readiness.chatgpt.status, 'waiting_for_user')
-    assert.equal(payload.readiness.chatgpt.jobId, jobId)
-    assert.equal(payload.readiness.chatgpt.userAction.provider, 'chatgpt')
-    assert.equal(payload.readiness.chatgpt.userAction.profile.slug, 'default')
-    assert.equal(payload.readiness.chatgpt.userAction.profile.id, profile.id)
-    assert.match(payload.readiness.chatgpt.userAction.message, /already-open Tokenless-managed Chrome window\/tab/)
-    assert.match(payload.readiness.chatgpt.userAction.message, /chatgpt profile default/)
-    assert.match(payload.readiness.chatgpt.userAction.message, /composer is visible/)
-    assert.equal(payload.userActions.chatgpt.jobId, jobId)
+      assert.equal(payload.readiness.chatgpt.classification, 'action_required')
+      assert.equal(payload.readiness.chatgpt.status, 'succeeded')
+      assert.equal(payload.readiness.chatgpt.jobId, job.job_id)
+      assert.equal(payload.readiness.chatgpt.handoff.jobId, jobId)
+      assert.equal(payload.readiness.chatgpt.userAction.provider, 'chatgpt')
+      assert.equal(payload.readiness.chatgpt.userAction.profile.slug, 'default')
+      assert.equal(payload.readiness.chatgpt.userAction.profile.id, profile.id)
+      assert.match(payload.readiness.chatgpt.userAction.message, /Tokenless-managed Chrome window\/tab/)
+      assert.match(payload.readiness.chatgpt.userAction.message, /chatgpt profile default/)
+      assert.match(payload.readiness.chatgpt.userAction.message, /composer is visible/)
+      assert.equal(payload.userActions.chatgpt.handoff.jobId, jobId)
   } finally {
     if (jobId) {
       await daemonPost({
@@ -277,9 +606,29 @@ test('setup treats unknown auth readiness as an inconclusive completed check req
       TOKENLESS_SETUP_SKILL_HOME: skillHome,
     })
     const profile = await waitForManagedProfile(homeDir)
-    const job = await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
-    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unknown' })
+      const job = await waitForPlaywrightJob({
+        daemonUrl,
+        homeDir,
+        profileId: profile.id,
+        provider: 'chatgpt',
+        actionNames: ['auth.status'],
+      })
+      daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+      await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unknown' })
+      const handoffJob = await waitForPlaywrightJob({
+        daemonUrl,
+        homeDir,
+        profileId: profile.id,
+        provider: 'chatgpt',
+        actionNames: ['navigation.check'],
+        excludeJobIds: new Set([job.job_id]),
+      })
+      await markNextPlaywrightJobWaiting({
+        daemonUrl,
+        homeDir,
+        profileId: profile.id,
+        expectedJobId: handoffJob.job_id,
+      })
 
     const result = await waitForProcess(setup, 10000)
 
@@ -293,7 +642,7 @@ test('setup treats unknown auth readiness as an inconclusive completed check req
     assert.equal(payload.readiness.chatgpt.jobId, job.job_id)
     assert.equal(payload.readiness.chatgpt.userAction.previousJobId, job.job_id)
     assert.match(payload.readiness.chatgpt.userAction.message, /auth status was unknown/)
-    assert.match(payload.readiness.chatgpt.userAction.message, /already-open Tokenless-managed Chrome window\/tab/)
+      assert.match(payload.readiness.chatgpt.userAction.message, /Tokenless-managed Chrome window\/tab/)
     assert.match(payload.readiness.chatgpt.userAction.recheckCommand, /tokenless profiles status --profile 'default' --provider 'chatgpt' --json/)
     assert.equal('resumeCommand' in payload.readiness.chatgpt.userAction, false)
     assert.match(payload.readiness.chatgpt.userAction.queryGuidance, /cannot resume/)
@@ -330,68 +679,132 @@ test('setup compact waiting output names provider profile managed Chrome window 
       TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
       TOKENLESS_SETUP_SKILL_HOME: skillHome,
     })
-    const profile = await waitForManagedProfile(homeDir)
-    const job = await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
-    jobId = job.job_id
-    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    const claimed = await daemonPost({
-      daemonUrl,
-      homeDir,
-      path: `/control/jobs/claim-next?${new URLSearchParams({
-        execution_backend: 'playwright',
-        profile_id: profile.id,
-        action: 'visible_provider_actions',
-      })}`,
-    })
-    assert.equal(claimed.job.job_id, jobId)
-    await daemonPost({
-      daemonUrl,
-      homeDir,
-      path: `/control/jobs/${encodeURIComponent(jobId)}/running`,
-      body: { claim_token: claimed.job.claim_token },
-    })
-    await daemonPost({
-      daemonUrl,
-      homeDir,
-      path: `/control/jobs/${encodeURIComponent(jobId)}/waiting-for-user`,
-      body: {
-        claim_token: claimed.job.claim_token,
-        blocker_json: {
-          protocol: 'tokenless.playwright.user-handover.v1',
-          jobId,
-          provider: 'chatgpt',
-          profileId: profile.id,
-          blocker: {
-            kind: 'auth',
-            code: 'provider_sign_in_visible',
-            message: 'Provider sign-in is visible and requires the user.',
-            userResolvable: true,
-            retryable: true,
-            visibleProof: 'visible-provider-sign-in-control',
-            provider: 'chatgpt',
-            url: 'https://chatgpt.com/',
-            family: 'provider_sign_in',
-          },
-        },
-      },
-    })
+      const profile = await waitForManagedProfile(homeDir)
+      const job = await waitForPlaywrightJob({
+        daemonUrl,
+        homeDir,
+        profileId: profile.id,
+        provider: 'chatgpt',
+        actionNames: ['auth.status'],
+      })
+      daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+      const sweepJob = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+      assert.equal(sweepJob.job_id, job.job_id)
+      const handoffJob = await waitForPlaywrightJob({
+        daemonUrl,
+        homeDir,
+        profileId: profile.id,
+        provider: 'chatgpt',
+        actionNames: ['navigation.check'],
+        excludeJobIds: new Set([job.job_id]),
+      })
+      jobId = handoffJob.job_id
+      await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: jobId })
 
     const result = await waitForProcess(setup, 10000)
 
-    assert.equal(result.status, 0, result.stderr || result.stdout)
-    assert.match(result.stdout, /chatgpt/)
-    assert.match(result.stdout, /profile default/)
-    assert.match(result.stdout, /already-open Tokenless-managed Chrome window\/tab/)
-    assert.match(result.stdout, /composer is visible/)
-    assert.match(result.stdout, /tokenless state --job-id/)
-    assert.match(result.stdout, new RegExp(jobId))
-    assert.doesNotMatch(result.stdout, /^\s*\{/)
+      assert.equal(result.status, 0, result.stderr || result.stdout)
+      assert.match(result.stdout, /chatgpt/)
+      assert.match(result.stdout, /profile default/)
+      assert.match(result.stdout, /Tokenless-managed Chrome window\/tab/)
+      assert.match(result.stdout, /composer is visible/)
+      assert.match(result.stdout, /tokenless profiles status --profile 'default' --provider 'chatgpt' --json/)
+      assert.match(result.stdout, new RegExp(jobId))
+      assert.doesNotMatch(result.stdout, /^\s*\{/)
   } finally {
     if (jobId) {
       await daemonPost({
         daemonUrl,
         homeDir,
         path: `/control/jobs/${encodeURIComponent(jobId)}/cancel`,
+      }).catch(() => undefined)
+    }
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+  }
+})
+
+test('setup compact output lists every provider classification and handoff guidance', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-compact-summary-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-compact-summary-skills-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  let handoffJobId
+  try {
+    const setup = spawnCli([
+      'setup',
+      '--defaults',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--preferred-providers', 'chatgpt,claude',
+      '--skip-skill-install',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const profile = await waitForManagedProfile(homeDir)
+    const chatgptSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['auth.status'],
+    })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
+    const claudeSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'claude',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id]),
+    })
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+    const handoffJob = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'claude',
+      actionNames: ['navigation.check'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+    })
+    handoffJobId = handoffJob.job_id
+    assert.equal(handoffJob.request_json.target.url, 'https://claude.ai/new')
+    await markNextPlaywrightJobWaiting({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      expectedJobId: handoffJobId,
+      provider: 'claude',
+    })
+
+    const result = await waitForProcess(setup, 10000)
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.match(result.stdout, /chatgpt: ready/)
+    assert.match(result.stdout, /claude: action_required/)
+    assert.match(result.stdout, /Counts: ready 1, action_required 1, failed 0/)
+    assert.match(result.stdout, /claude \(handoff job /)
+    assert.match(result.stdout, new RegExp(handoffJobId))
+    assert.match(result.stdout, /tokenless profiles status --profile 'default' --provider 'claude' --json/)
+    assert.doesNotMatch(result.stdout, /^\s*\{/)
+  } finally {
+    if (handoffJobId) {
+      await daemonPost({
+        daemonUrl,
+        homeDir,
+        path: `/control/jobs/${encodeURIComponent(handoffJobId)}/cancel`,
       }).catch(() => undefined)
     }
     try {
@@ -904,8 +1317,94 @@ async function completeAsInjectedRunner({ daemonUrl, homeDir, profileId, authSta
         responses,
       },
     },
+    })
+    fs.rmSync(path.join(homeDir, 'attachments', job.job_id), { recursive: true, force: true })
+    return job
+  }
+
+async function markNextPlaywrightJobWaiting({
+  daemonUrl,
+  homeDir,
+  profileId,
+  expectedJobId,
+  provider = 'chatgpt',
+}) {
+  const claimed = await daemonPost({
+    daemonUrl,
+    homeDir,
+    path: `/control/jobs/claim-next?${new URLSearchParams({
+      execution_backend: 'playwright',
+      profile_id: profileId,
+      action: 'visible_provider_actions',
+    })}`,
   })
-  fs.rmSync(path.join(homeDir, 'attachments', job.job_id), { recursive: true, force: true })
+  assert.equal(claimed.job.job_id, expectedJobId)
+  await daemonPost({
+    daemonUrl,
+    homeDir,
+    path: `/control/jobs/${encodeURIComponent(expectedJobId)}/running`,
+    body: { claim_token: claimed.job.claim_token },
+  })
+  await daemonPost({
+    daemonUrl,
+    homeDir,
+    path: `/control/jobs/${encodeURIComponent(expectedJobId)}/waiting-for-user`,
+    body: {
+      claim_token: claimed.job.claim_token,
+      blocker_json: {
+        protocol: 'tokenless.playwright.user-handover.v1',
+        jobId: expectedJobId,
+        provider,
+        profileId,
+        blocker: {
+          kind: 'auth',
+          code: 'provider_sign_in_visible',
+          message: 'Provider sign-in is visible and requires the user.',
+          userResolvable: true,
+          retryable: true,
+          visibleProof: 'visible-provider-sign-in-control',
+          provider,
+          url: provider === 'chatgpt' ? 'https://chatgpt.com/' : `https://${provider}.example/`,
+          family: 'provider_sign_in',
+        },
+      },
+    },
+  })
+  return claimed.job
+}
+
+async function failNextPlaywrightJob({
+  daemonUrl,
+  homeDir,
+  profileId,
+  expectedProvider,
+  error = {
+    code: 'playwright_navigation_failed',
+    message: 'Managed Playwright could not open the provider page.',
+    retryable: true,
+  },
+}) {
+  const claimed = await daemonPost({
+    daemonUrl,
+    homeDir,
+    path: `/control/jobs/claim-next?${new URLSearchParams({
+      execution_backend: 'playwright',
+      profile_id: profileId,
+      action: 'visible_provider_actions',
+    })}`,
+  })
+  assert.ok(claimed.job, 'in-process runner should claim queued Playwright job')
+  if (expectedProvider !== undefined) assert.equal(claimed.job.provider, expectedProvider)
+  await daemonPost({
+    daemonUrl,
+    homeDir,
+    path: `/jobs/${encodeURIComponent(claimed.job.job_id)}/complete`,
+    body: {
+      claim_token: claimed.job.claim_token,
+      error_json: error,
+    },
+  })
+  return claimed.job
 }
 
 async function daemonPost({ daemonUrl, homeDir, path: requestPath, body }) {
@@ -941,6 +1440,57 @@ function spawnCli(args, env = {}) {
   })
 }
 
+function spawnCliTty(args, env = {}) {
+  const command = [process.execPath, cliEntry, ...args]
+    .map((value) => `{${String(value).replaceAll('\\', '\\\\').replaceAll('{', '\\{').replaceAll('}', '\\}')}}`)
+    .join(' ')
+  const relayScript = [
+    'log_user 1',
+    'set timeout -1',
+    `spawn ${command}`,
+    'fileevent stdin readable {if {[gets stdin line] < 0} {fileevent stdin readable {}} else {send -- "$line\\r"}}',
+    'expect eof',
+    'catch wait result',
+    'exit [lindex $result 3]',
+  ].join('; ')
+  return spawn('expect', ['-c', relayScript], {
+    cwd: root,
+    env: { ...process.env, TOKENLESS_PROVIDER: '', ...env },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+}
+
+function waitForProcessOutput(child, expected, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    let output = ''
+    const onData = (chunk) => {
+      output += chunk
+      if (!output.includes(expected)) return
+      cleanup()
+      resolve(output)
+    }
+    const onClose = (status) => {
+      cleanup()
+      reject(new Error(`Process exited with status ${status} before output matched ${JSON.stringify(expected)}.\n${output}`))
+    }
+    const timer = setTimeout(() => {
+      cleanup()
+      reject(new Error(`Timed out waiting for output ${JSON.stringify(expected)}.\n${output}`))
+    }, timeoutMs)
+    const cleanup = () => {
+      clearTimeout(timer)
+      child.stdout.off('data', onData)
+      child.stderr.off('data', onData)
+      child.off('close', onClose)
+    }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', onData)
+    child.stderr.on('data', onData)
+    child.once('close', onClose)
+  })
+}
+
 async function waitForProcess(child, timeoutMs) {
   let stdout = ''
   let stderr = ''
@@ -964,11 +1514,27 @@ async function waitForProcess(child, timeoutMs) {
   })
 }
 
-async function waitForPlaywrightJob({ daemonUrl, homeDir, profileId }) {
+async function waitForPlaywrightJob({
+  daemonUrl,
+  homeDir,
+  profileId,
+  provider,
+  actionNames,
+  excludeJobIds = new Set(),
+}) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
       const jobs = await fetchJson(`${daemonUrl}/jobs?execution_backend=playwright&profile_id=${encodeURIComponent(profileId)}`, homeDir)
-      const job = jobs.find((candidate) => candidate.action === 'visible_provider_actions')
+      const job = jobs.find((candidate) => {
+        if (candidate.action !== 'visible_provider_actions') return false
+        if (excludeJobIds.has(candidate.job_id)) return false
+        if (provider !== undefined && candidate.provider !== provider) return false
+        if (actionNames !== undefined) {
+          const candidateActions = candidate.request_json?.actions?.map((action) => action.action) ?? []
+          if (candidateActions.join(',') !== actionNames.join(',')) return false
+        }
+        return true
+      })
       if (job) return job
     } catch {
       // The daemon may still be starting.

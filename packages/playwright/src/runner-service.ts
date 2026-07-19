@@ -14,7 +14,7 @@ import { VISIBLE_ACTIONS } from './actions.js'
 import { inspectVisibleBlockers } from './adapters/provider-dom-adapter.js'
 import { createDaemonClient } from './daemon-client.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
-import { getProviderById } from './providers.js'
+import { getProviderById, trustedProviderSignInNavigation } from './providers.js'
 import type { ProviderAdapterRegistry } from './adapters/index.js'
 import type { ManagedBrowserProfile, PersistentContextManager as PersistentContextManagerType } from './browser/context-manager.js'
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
@@ -640,16 +640,7 @@ function fallbackBlocker(page: Page, provider: NonNullable<ReturnType<typeof get
 
 function blockerFromNavigationUrl(url: URL | null, provider: NonNullable<ReturnType<typeof getProviderById>>): VisibleBlocker | null {
   if (!url || isProviderApprovedUrl(url, provider)) return null
-  const host = url.hostname.toLowerCase()
-  const path = url.pathname.toLowerCase()
-  const signInNavigation = host === 'accounts.google.com' ||
-    host === 'auth.openai.com' ||
-    host === 'auth0.openai.com' ||
-    host === 'login.openai.com' ||
-    path.includes('/auth/login') ||
-    path.includes('/login') ||
-    path.includes('/signin') ||
-    path.includes('/sign-in')
+  const signInNavigation = trustedProviderSignInNavigation(provider, url.toString())
   if (!signInNavigation) return null
   return {
     kind: 'auth',
@@ -659,7 +650,7 @@ function blockerFromNavigationUrl(url: URL | null, provider: NonNullable<ReturnT
     retryable: true,
     visibleProof: 'visible-provider-sign-in-navigation',
     provider: provider.id,
-    url: url.origin,
+    url: signInNavigation.origin,
     family: 'provider_sign_in',
   }
 }
