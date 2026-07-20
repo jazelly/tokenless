@@ -150,6 +150,74 @@ test('setup uses the imported browser profile name as its managed profile label'
   }
 })
 
+test('interactive setup copies the chosen browser profile without a second consent prompt', { skip: process.platform === 'win32' || !fs.existsSync('/usr/bin/expect') }, async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-direct-import-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-direct-import-skills-')))
+  const sourceHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-direct-import-source-')))
+  const chromeRoot = path.join(sourceHome, 'chrome-root')
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: {
+          name: 'Jason',
+          is_using_default_name: true,
+        },
+      },
+    },
+  }), 'utf8')
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  let setup
+  try {
+    setup = spawnCliTty([
+      'setup',
+      '--profile', 'default',
+      '--browser-user-data-dir', chromeRoot,
+      '--preferred-providers', 'chatgpt',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--skip-skill-install',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const setupFinished = waitForProcess(setup, 10000)
+    await waitForProcessOutput(setup, 'Choose [1]: ')
+    setup.stdin.write('\n')
+    await waitForProcessOutput(setup, 'Import an existing profile profile into Tokenless?')
+    const sourcePrompt = waitForProcessOutput(setup, 'Choose [1]: ')
+    setup.stdin.write('\n')
+    await sourcePrompt
+    setup.stdin.write('\n')
+
+    const profile = await waitForManagedProfile(homeDir)
+    await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
+
+    const result = await setupFinished
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.doesNotMatch(result.stdout, /Copy .* into managed profile/)
+    assert.equal(profile.label, 'Jason')
+  } finally {
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (setup?.exitCode === null) setup.kill('SIGTERM')
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+    fs.rmSync(sourceHome, { recursive: true, force: true })
+  }
+})
+
 test('setup surfaces failed managed readiness jobs as technical CLI failures', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-failed-')))
   const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-failed-skills-')))
