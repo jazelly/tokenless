@@ -13,6 +13,7 @@ import {
   discoverChromiumProfiles,
   importChromeProfile,
   providerHomeUrl,
+  resolveChromeProfile,
   runnerSupervisorStatus,
   startRunnerSupervisor,
   stopRunnerSupervisor,
@@ -523,28 +524,31 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         'Importing a local browser profile requires --consent-local-profile-copy.'
       )
     }
+    const importSource = importKey
+      ? await resolveProfileImportSource(args, importKey)
+      : null
     const lifecycle = importKey ? 'importing' : 'ready'
     let record = await registry.addProfile({
       slug,
-      ...(args.label === undefined ? {} : { label: String(args.label) }),
+      ...(args.label === undefined
+        ? (importSource ? { label: importSource.profile.name } : {})
+        : { label: String(args.label) }),
       setDefault: args.setDefault === true,
       lifecycle,
     })
     let imported: Record<string, any> | null = null
     try {
-      if (importKey) {
-        const browser = normalizeProfileImportBrowser(args.browser)
-        const sourceUserDataDir = await resolveBrowserUserDataDirForImport(args.chromeUserDataDir, importKey, browser)
+      if (importKey && importSource) {
         imported = await importChromeProfile({
-          sourceUserDataDir,
+          sourceUserDataDir: importSource.userDataDir,
           profileDirectoryKey: importKey,
           destinationDir: record.directory,
           tokenlessHome: homeDir,
         })
         record = await registry.markImported(record.slug, {
-          source: sourceUserDataDir,
+          source: importSource.userDataDir,
           profileDirectoryKey: importKey,
-          browser,
+          browser: importSource.browser,
         })
       }
     } catch (error) {
@@ -961,6 +965,16 @@ async function resolveBrowserUserDataDirForImport(
     'chrome_profile_ambiguous',
     `${browser} profile directory key '${profileDirectoryKey}' exists in multiple user data directories; pass --browser-user-data-dir.`
   )
+}
+
+async function resolveProfileImportSource(args: CliArgs, profileDirectoryKey: string) {
+  const browser = normalizeProfileImportBrowser(args.browser)
+  const userDataDir = await resolveBrowserUserDataDirForImport(args.chromeUserDataDir, profileDirectoryKey, browser)
+  return {
+    browser,
+    userDataDir,
+    profile: await resolveChromeProfile(userDataDir, profileDirectoryKey),
+  }
 }
 
 function normalizeProfileImportBrowser(value: unknown): 'chrome' | 'brave' {
