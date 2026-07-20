@@ -517,6 +517,9 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const importKey = args.importChromeProfile === undefined
       ? undefined
       : validateChromeProfileDirectoryKey(String(args.importChromeProfile))
+    const importProviders = importKey
+      ? requireProfileImportProviders(args.preferredProviders)
+      : []
     if (importKey && args.consentLocalProfileCopy !== true) {
       throw usageError(
         'profile_import_consent_required',
@@ -544,6 +547,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
           profileDirectoryKey: importKey,
           destinationDir: record.directory,
           tokenlessHome: homeDir,
+          providers: importProviders,
         })
         record = await registry.markImported(record.slug, {
           source: importSource.userDataDir,
@@ -1965,6 +1969,7 @@ async function setupCommand(args: CliArgs) {
       args,
       homeDir,
       browser: browser.browser,
+      providers,
       prompt,
       presenter,
     })
@@ -2346,12 +2351,14 @@ async function ensureSetupManagedProfile({
   args,
   homeDir,
   browser,
+  providers,
   prompt,
   presenter,
 }: {
   args: CliArgs
   homeDir: string
   browser: string
+  providers: readonly ProviderId[]
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
 }) {
@@ -2414,6 +2421,7 @@ async function ensureSetupManagedProfile({
             profileDirectoryKey: source.directoryKey,
             destinationDir: selected.directory,
             tokenlessHome: homeDir,
+            providers,
           })
           return await registry.markImported(selected.slug, {
             source: source.userDataDir,
@@ -2478,6 +2486,7 @@ async function ensureSetupManagedProfile({
           profileDirectoryKey: source.directoryKey,
           destinationDir: record.directory,
           tokenlessHome: homeDir,
+          providers,
         })
         return await registry.markImported(record.slug, {
           source: source.userDataDir,
@@ -2681,6 +2690,20 @@ async function selectSetupProviders({
 function requireSetupProviders(providers: ProviderId[]) {
   if (providers.length === 0) {
     throw usageError('setup_provider_required', 'Tokenless setup requires at least one preferred provider.')
+  }
+  return providers
+}
+
+function requireProfileImportProviders(value: unknown): ProviderId[] {
+  if (value === undefined) {
+    throw usageError(
+      'profile_import_provider_required',
+      'Browser profile import requires --preferred-providers so Tokenless can import only selected provider cookies.'
+    )
+  }
+  const providers = parseProviderList(value) as ProviderId[]
+  if (providers.length === 0) {
+    throw usageError('profile_import_provider_required', 'Browser profile import requires at least one --preferred-providers entry.')
   }
   return providers
 }
@@ -3496,7 +3519,7 @@ function assertProjectCommandArguments(subcommand: string | undefined, args: Cli
 function assertProfilesCommandArguments(subcommand: string | undefined, args: CliArgs) {
   const common = ['files', 'home', 'json', 'profile']
   const byCommand: Record<string, string[]> = {
-    add: [...common, 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'setDefault'],
+    add: [...common, 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'preferredProviders', 'setDefault'],
     discover: ['files', 'browser', 'chromeUserDataDir', 'json'],
     list: ['files', 'home', 'json'],
     status: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
@@ -3957,7 +3980,7 @@ function usage() {
     '  TOKENLESS_DIRECT_CHATGPT_API_KEY=... tokenless run --mode direct --direct-backend api --provider chatgpt --model <api-model> [--direct-base-url <url>] [--max-output-tokens <count>] [--temperature <0..2>] --prompt <text> --json',
     '  TOKENLESS_DIRECT_SERVER_KEY=... tokenless serve --mode direct [--home <path>] [--host 127.0.0.1] [--port 8788] --json',
     '  tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
-    '  tokenless profiles add --profile <slug> --browser <chrome|brave> --import-browser-profile <Default|Profile 1> [--browser-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
+    '  tokenless profiles add --profile <slug> --browser <chrome|brave> --import-browser-profile <Default|Profile 1> --preferred-providers <list> [--browser-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
     '  tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json',
     '  tokenless profiles list --json',
     '  tokenless profiles status|open [--profile <slug>] [--provider <provider>] --json',

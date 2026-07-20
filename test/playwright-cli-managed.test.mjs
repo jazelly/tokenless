@@ -1045,6 +1045,7 @@ test('CLI uses the imported Chrome profile name as the default managed profile l
       '--browser', 'chrome',
       '--browser-user-data-dir', chromeRoot,
       '--import-browser-profile', 'Default',
+      '--preferred-providers', 'chatgpt',
       '--consent-local-profile-copy',
       '--set-default',
       '--home', homeDir,
@@ -1055,6 +1056,43 @@ test('CLI uses the imported Chrome profile name as the default managed profile l
     const payload = JSON.parse(imported.stdout)
     assert.equal(payload.profile.slug, 'default')
     assert.equal(payload.profile.label, 'Jason')
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('CLI requires explicit selected providers for browser profile imports', () => {
+  const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-import-provider-required-')))
+  const chromeRoot = path.join(tempRoot, 'chrome-root')
+  const homeDir = path.join(tempRoot, 'tokenless-home')
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: {
+          name: 'Jason',
+          is_using_default_name: true,
+        },
+      },
+    },
+  }), 'utf8')
+
+  try {
+    const imported = runCli([
+      'profiles',
+      'add',
+      '--profile', 'default',
+      '--browser', 'chrome',
+      '--browser-user-data-dir', chromeRoot,
+      '--import-browser-profile', 'Default',
+      '--consent-local-profile-copy',
+      '--home', homeDir,
+      '--json',
+    ])
+
+    assert.notEqual(imported.status, 0)
+    assert.match(imported.stdout, /profile_import_provider_required/)
+    assert.match(imported.stdout, /--preferred-providers/)
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }
@@ -1083,6 +1121,7 @@ test('CLI recovers legacy imported profile labels from the managed copy', () => 
       '--browser', 'chrome',
       '--browser-user-data-dir', chromeRoot,
       '--import-browser-profile', 'Default',
+      '--preferred-providers', 'chatgpt',
       '--consent-local-profile-copy',
       '--set-default',
       '--home', homeDir,

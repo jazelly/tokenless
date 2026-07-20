@@ -120,9 +120,10 @@ test('setup prompt capability stays independent from stderr presentation capabil
 
 test('setup disclosures state import and readiness boundaries explicitly', () => {
   assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Keeps provider sign-ins between jobs/)
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /copy cookies and site storage locally/)
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /never extracts or uploads/)
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Excludes passwords, history, bookmarks, payments, extensions, sync data, and caches/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /only selected ChatGPT, Claude, or Grok cookies locally/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Gemini\/Google is not imported/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Cookie values stay opaque/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Site storage, passwords, history, bookmarks, payments, extensions, sync data, and caches are excluded/)
   assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /start its local runner/)
   assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /check the provider's visible sign-in state/)
   assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /does not extract tokens or type and submit a prompt/)

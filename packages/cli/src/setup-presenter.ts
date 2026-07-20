@@ -37,8 +37,8 @@ const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
   'Keeps provider sign-ins between jobs. Name it default, work, or similar; later use --profile <name>.',
-  'Import may copy cookies and site storage locally; Tokenless never extracts or uploads them.',
-  'Excludes passwords, history, bookmarks, payments, extensions, sync data, and caches.',
+  'Import copies only selected ChatGPT, Claude, or Grok cookies locally; Gemini/Google is not imported.',
+  'Cookie values stay opaque. Site storage, passwords, history, bookmarks, payments, extensions, sync data, and caches are excluded.',
 ])
 
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([

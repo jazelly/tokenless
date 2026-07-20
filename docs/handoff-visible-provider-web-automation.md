@@ -108,8 +108,11 @@ The implementation must:
   is reported for explicit user recovery;
 - copy into a private staging directory, reject links and path escapes, never
   mutate the source, and atomically promote a complete result;
-- copy root encryption metadata and opaque authentication-relevant profile
-  state without parsing credential databases;
+- copy root encryption metadata and only requested ChatGPT, Claude, or Grok
+  cookie rows selected by audited host and partition allowlists, while keeping
+  cookie contents opaque;
+- never import Gemini/Google authentication, broad X/Twitter sessions, or
+  shared Local Storage, IndexedDB, Session Storage, or Service Worker state;
 - exclude caches, crash data, downloads, browsing history, bookmarks, saved
   passwords, autofill/payment databases, and installed extensions;
 - disable browser sync in the managed clone so it cannot change the user's
@@ -128,9 +131,11 @@ Tokenless home, and requires `--confirm-delete` before deleting it.
 
 The revised credential boundary is:
 
-- an explicitly consented, opaque, local authentication-state copy is allowed;
-- Tokenless never parses, prints, logs, exports, diagnoses, or transmits copied
-  cookie, browser-storage, password, or authentication values;
+- an explicitly consented, provider-scoped local cookie copy is allowed for
+  ChatGPT, Claude, and Grok;
+- Tokenless reads host and partition metadata only for allowlist decisions,
+  treats cookie contents as opaque, and never prints, logs, returns, diagnoses,
+  or transmits copied authentication values;
 - Playwright adapters continue to operate through visible provider DOM and do
   not use cookie/storage export APIs, hidden request interception, private
   provider APIs, or a remote debugging TCP endpoint; and
@@ -933,8 +938,10 @@ After verification:
 
 ## Explicit non-goals
 
-- Extracting provider cookies, credentials, browser-storage tokens, or hidden
-  authorization material.
+- Exporting or transmitting provider cookies, credentials, browser-storage
+  tokens, or hidden authorization material.
+- Importing Gemini/Google authentication, broad X/Twitter sessions, or shared
+  browser storage into a managed profile.
 - Calling undocumented or private provider APIs.
 - Bypassing subscriptions, paywalls, rate limits, CAPTCHA, or upgrade gates.
 - Rebuilding complete provider websites locally.
