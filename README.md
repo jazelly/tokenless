@@ -85,11 +85,12 @@ tokenless profiles discover --browser chrome --json
 tokenless profiles discover --browser brave --json
 tokenless profiles add --profile work --browser chrome --import-browser-profile "Profile 1" --preferred-providers chatgpt,claude --consent-local-profile-copy --set-default
 tokenless profiles reset --profile work
+tokenless profiles clear --profile work
 tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude
 ```
 
-`profiles discover` is read-only: it lists local Chrome or Brave roots and exact profile directory keys without copying data or creating Tokenless profiles. Importing an existing browser profile is an explicit user configuration operation; setup never refreshes it automatically. `profiles reset` explicitly rebuilds an imported managed profile from its recorded source and provider scope while preserving its managed profile id. Jobs and live tests never reset it automatically.
+`profiles discover` is read-only: it lists local Chrome or Brave roots and exact profile directory keys without copying data or creating Tokenless profiles. Importing an existing browser profile is an explicit user configuration operation; setup never refreshes it automatically. `profiles reset` explicitly rebuilds an imported managed profile from its recorded source and provider scope while preserving its managed profile id. `profiles clear --profile <slug>` deletes one managed profile; `profiles clear --all` deletes every managed profile. Neither clear form modifies the source browser profile. Jobs and live tests never reset or clear profiles automatically.
 
 ### Interfaces and modes
 
