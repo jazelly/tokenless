@@ -554,6 +554,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
           profileDirectoryKey: importKey,
           profileName: importSource.profile.name,
           browser: importSource.browser,
+          providers: importProviders,
         })
       }
     } catch (error) {
@@ -568,6 +569,66 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       ...(imported ? { import: imported } : {}),
     }, args)
     return
+  }
+
+  if (subcommand === 'reset') {
+    const record = await registry.resolveProfile(args.profile === undefined ? undefined : String(args.profile))
+    if (!record.import) {
+      throw usageError('profile_reset_requires_import', `Managed profile '${record.slug}' was not imported and has no source to reset from.`)
+    }
+    const config = await readTokenlessConfig(homeDir)
+    const configuredProviders = Array.isArray(config.preferredProviders)
+      ? config.preferredProviders.map(normalizeProvider)
+      : []
+    const providers = args.preferredProviders === undefined
+      ? [...(record.import.providers ?? configuredProviders)]
+      : requireProfileImportProviders(args.preferredProviders)
+    if (providers.length === 0) {
+      throw usageError(
+        'profile_reset_provider_required',
+        'Legacy imported profiles require configured providers or --preferred-providers before reset.'
+      )
+    }
+    const source = await resolveChromeProfile(record.import.source, record.import.profileDirectoryKey)
+    const runner = await stopRunnerSupervisor({ homeDir })
+    if (runner.state === 'unsafe') {
+      throw usageError(
+        'profile_reset_runner_unsafe',
+        'Cannot reset the managed profile while its Playwright runner identity is unverified.'
+      )
+    }
+    const failureLifecycle = record.lifecycle === 'ready' ? 'ready' : 'failed'
+    await registry.updateLifecycle(record.slug, 'importing')
+    try {
+      const imported = await importChromeProfile({
+        sourceUserDataDir: source.userDataDir,
+        profileDirectoryKey: source.directoryKey,
+        destinationDir: record.directory,
+        tokenlessHome: homeDir,
+        providers,
+      })
+      const updated = await registry.markImported(record.slug, {
+        source: source.userDataDir,
+        profileDirectoryKey: source.directoryKey,
+        profileName: source.name,
+        ...(record.import.browser ? { browser: record.import.browser } : {}),
+        providers,
+      })
+      printPayload({
+        ok: true,
+        profile: publicManagedProfile(updated, await defaultProfileSlug(registry)),
+        import: {
+          copiedFiles: imported.copiedFiles,
+          cookieAuth: imported.cookieAuth,
+          syncDisabled: imported.syncDisabled,
+        },
+        runner,
+      }, args)
+      return
+    } catch (error) {
+      await registry.updateLifecycle(record.slug, failureLifecycle).catch(() => undefined)
+      throw error
+    }
   }
 
   if (subcommand === 'list') {
@@ -2428,6 +2489,7 @@ async function ensureSetupManagedProfile({
             profileDirectoryKey: source.directoryKey,
             profileName: source.name,
             browser: setupProfileImportBrowser(browser),
+            providers,
           })
         })
       } catch (error) {
@@ -2493,6 +2555,7 @@ async function ensureSetupManagedProfile({
           profileDirectoryKey: source.directoryKey,
           profileName: source.name,
           browser: setupProfileImportBrowser(browser),
+          providers,
         })
       })
     }
@@ -3522,13 +3585,14 @@ function assertProfilesCommandArguments(subcommand: string | undefined, args: Cl
     add: [...common, 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'preferredProviders', 'setDefault'],
     discover: ['files', 'browser', 'chromeUserDataDir', 'json'],
     list: ['files', 'home', 'json'],
+    reset: [...common, 'preferredProviders'],
     status: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
     open: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
     'set-default': common,
     remove: [...common, 'confirmDelete'],
   }
   if (subcommand === undefined || byCommand[subcommand] === undefined) {
-    throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, discover, list, status, open, set-default, or remove.')
+    throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, discover, list, reset, status, open, set-default, or remove.')
   }
   assertOnlyArguments(args, new Set(byCommand[subcommand]), `profiles ${subcommand}`)
 }
@@ -3983,6 +4047,7 @@ function usage() {
     '  tokenless profiles add --profile <slug> --browser <chrome|brave> --import-browser-profile <Default|Profile 1> --preferred-providers <list> [--browser-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
     '  tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json',
     '  tokenless profiles list --json',
+    '  tokenless profiles reset [--profile <slug>] [--preferred-providers <list>] --json',
     '  tokenless profiles status|open [--profile <slug>] [--provider <provider>] --json',
     '  tokenless profiles set-default --profile <slug> --json',
     '  tokenless profiles remove --profile <slug> --confirm-delete --json',

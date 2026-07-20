@@ -83,12 +83,13 @@ A managed profile is one reusable local browser identity. Use one profile for se
 ```bash
 tokenless profiles discover --browser chrome --json
 tokenless profiles discover --browser brave --json
-tokenless profiles add --profile work --browser chrome --import-browser-profile "Profile 1" --consent-local-profile-copy --set-default
+tokenless profiles add --profile work --browser chrome --import-browser-profile "Profile 1" --preferred-providers chatgpt,claude --consent-local-profile-copy --set-default
+tokenless profiles reset --profile work
 tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude
 ```
 
-`profiles discover` is read-only: it lists local Chrome or Brave roots and exact profile directory keys without copying data or creating Tokenless profiles. Importing an existing browser profile is an explicit user configuration operation; setup never refreshes it automatically. Jobs and live tests reuse the already-managed profile until the user explicitly re-imports or removes it.
+`profiles discover` is read-only: it lists local Chrome or Brave roots and exact profile directory keys without copying data or creating Tokenless profiles. Importing an existing browser profile is an explicit user configuration operation; setup never refreshes it automatically. `profiles reset` explicitly rebuilds an imported managed profile from its recorded source and provider scope while preserving its managed profile id. Jobs and live tests never reset it automatically.
 
 ### Interfaces and modes
 

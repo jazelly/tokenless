@@ -53,6 +53,7 @@ tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir 
 tokenless profiles list
 tokenless profiles status --profile <slug> [--provider <id>]
 tokenless profiles open --profile <slug> [--provider <id>]
+tokenless profiles reset [--profile <slug>] [--preferred-providers <list>]
 tokenless profiles set-default --profile <slug>
 tokenless profiles remove --profile <slug> --confirm-delete
 ```

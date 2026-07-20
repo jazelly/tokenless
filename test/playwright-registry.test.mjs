@@ -52,6 +52,7 @@ test('managed profile registry stores bounded provider status updates', async ()
     source: 'Google Chrome Default',
     profileDirectoryKey: 'Default',
     importedAt: new Date().toISOString(),
+    providers: ['chatgpt', 'claude'],
   })
   const updated = await registry.updateProviderStatus('default', {
     provider: 'chatgpt',
@@ -60,6 +61,7 @@ test('managed profile registry stores bounded provider status updates', async ()
   })
   assert.equal(updated.lastObservedAuth.chatgpt?.auth, 'authenticated')
   assert.equal((await registry.resolveProfile('default')).import?.profileDirectoryKey, 'Default')
+  assert.deepEqual((await registry.resolveProfile('default')).import?.providers, ['chatgpt', 'claude'])
 })
 
 test('managed profile registry serializes concurrent mutations from independent instances', async () => {

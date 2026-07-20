@@ -30,6 +30,7 @@ export type ManagedProfileRecord = {
     profileDirectoryKey: string
     importedAt: string
     browser?: string | undefined
+    providers?: readonly ProviderId[] | undefined
   }
   lastObservedAuth: Partial<Record<ProviderId, ProviderStatus>>
 }
@@ -193,7 +194,7 @@ export class ManagedProfileRegistry {
     })
   }
 
-  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; profileName?: string; importedAt?: string; browser?: string }): Promise<ManagedProfileRecord> {
+  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; profileName?: string; importedAt?: string; browser?: string; providers?: readonly ProviderId[] }): Promise<ManagedProfileRecord> {
     return await this.withWriteLock(async () => {
       const data = await this.readUnlocked()
       const record = data.profiles[normalizeSlug(slug)]
@@ -208,11 +209,13 @@ export class ManagedProfileRegistry {
         } : {}),
         lifecycle: 'ready',
         updatedAt: now,
+        lastObservedAuth: {},
         import: {
           source: imported.source.slice(0, 512),
           profileDirectoryKey: imported.profileDirectoryKey.slice(0, 128),
           importedAt: imported.importedAt === undefined ? now : parseIso(imported.importedAt),
           ...(imported.browser ? { browser: normalizeImportedBrowser(imported.browser) } : {}),
+          ...(imported.providers ? { providers: normalizeImportedProviders(imported.providers) } : {}),
         },
       }
       data.profiles[updated.slug] = updated
@@ -376,6 +379,7 @@ function parseImportMetadata(value: unknown): Pick<ManagedProfileRecord, 'import
       profileDirectoryKey: value.profileDirectoryKey.slice(0, 128),
       importedAt: parseIso(value.importedAt),
       ...(typeof value.browser === 'string' ? { browser: normalizeImportedBrowser(value.browser) } : {}),
+      ...(value.providers === undefined ? {} : { providers: normalizeImportedProviders(value.providers) }),
     },
   }
 }
@@ -395,6 +399,20 @@ function normalizeImportedBrowser(value: string) {
     throw tokenlessError('invalid_profile_registry', 'Managed profile import browser is invalid.')
   }
   return browser
+}
+
+function normalizeImportedProviders(value: unknown): ProviderId[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 4) {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile import providers are invalid.')
+  }
+  const providers: ProviderId[] = []
+  for (const provider of value) {
+    if (typeof provider !== 'string' || !isProviderId(provider) || providers.includes(provider)) {
+      throw tokenlessError('invalid_profile_registry', 'Managed profile import providers are invalid.')
+    }
+    providers.push(provider)
+  }
+  return providers
 }
 
 function emptyRegistry(): ManagedProfileRegistryData {

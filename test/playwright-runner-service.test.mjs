@@ -55,6 +55,29 @@ test('runner polls all registered profiles with exact Playwright/profile scoping
   assert.equal(adapterCalls[0].context.operationId, 'job-b')
 })
 
+test('runner skips profiles while their managed data is being reset', async () => {
+  const profiles = fakeProfiles(['profile-resetting', 'profile-ready'])
+  profiles[0].lifecycle = 'importing'
+  profiles[1].lifecycle = 'ready'
+  const daemon = new FakeDaemon([
+    fakeJob('job-ready', profiles[1], createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+    })),
+  ])
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(),
+    adapterRegistry: fakeAdapterRegistry(),
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: 'job-ready', status: 'succeeded' })
+  assert.deepEqual(daemon.claims.map((claim) => claim.profileId), ['profile-ready'])
+})
+
 test('runner brings the provider target page to the foreground for navigation checks only', async () => {
   const profiles = fakeProfiles(['profile-a'])
   const page = new FakeForegroundPage()

@@ -1061,6 +1061,95 @@ test('CLI uses the imported Chrome profile name as the default managed profile l
   }
 })
 
+test('CLI resets an imported managed profile from its recorded source and provider scope', () => {
+  const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-reset-import-')))
+  const chromeRoot = path.join(tempRoot, 'chrome-root')
+  const homeDir = path.join(tempRoot, 'tokenless-home')
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: { info_cache: { Default: { name: 'Jason', is_using_default_name: true } } },
+  }), 'utf8')
+  fs.writeFileSync(path.join(chromeRoot, 'Default', 'Preferences'), JSON.stringify({ marker: 'source-v1' }), 'utf8')
+
+  try {
+    const added = runCli([
+      'profiles', 'add',
+      '--profile', 'default',
+      '--browser', 'chrome',
+      '--browser-user-data-dir', chromeRoot,
+      '--import-browser-profile', 'Default',
+      '--preferred-providers', 'chatgpt,claude',
+      '--consent-local-profile-copy',
+      '--set-default',
+      '--home', homeDir,
+      '--json',
+    ])
+    assert.equal(added.status, 0, added.stderr || added.stdout)
+    const addedProfile = JSON.parse(added.stdout).profile
+    fs.writeFileSync(path.join(addedProfile.import.source, 'Default', 'Preferences'), JSON.stringify({ marker: 'source-v2' }), 'utf8')
+    const registryPath = path.join(homeDir, 'browser', 'profiles.json')
+    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'))
+    const managedDirectory = registry.profiles.default.directory
+    fs.writeFileSync(path.join(managedDirectory, 'stale-managed-file'), 'remove me', 'utf8')
+    registry.profiles.default.lastObservedAuth = {
+      chatgpt: { provider: 'chatgpt', auth: 'authenticated', checkedAt: new Date().toISOString() },
+    }
+    fs.writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600 })
+
+    const reset = runCli(['profiles', 'reset', '--home', homeDir, '--json'])
+    assert.equal(reset.status, 0, reset.stderr || reset.stdout)
+    const payload = JSON.parse(reset.stdout)
+    assert.equal(payload.profile.id, addedProfile.id)
+    assert.deepEqual(payload.profile.import.providers, ['chatgpt', 'claude'])
+    assert.deepEqual(payload.profile.lastObservedAuth, {})
+    assert.equal(payload.import.syncDisabled, true)
+    assert.equal('skippedEntries' in payload.import, false)
+    assert.equal('destinationDir' in payload.import, false)
+    assert.equal(JSON.parse(fs.readFileSync(path.join(managedDirectory, 'Default', 'Preferences'), 'utf8')).marker, 'source-v2')
+    assert.equal(fs.existsSync(path.join(managedDirectory, 'stale-managed-file')), false)
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('CLI keeps the previous managed profile ready when reset staging fails', () => {
+  const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-reset-failure-')))
+  const chromeRoot = path.join(tempRoot, 'chrome-root')
+  const homeDir = path.join(tempRoot, 'tokenless-home')
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: { info_cache: { Default: { name: 'Jason', is_using_default_name: true } } },
+  }), 'utf8')
+  fs.writeFileSync(path.join(chromeRoot, 'Default', 'Preferences'), JSON.stringify({ marker: 'preserve-me' }), 'utf8')
+
+  try {
+    const added = runCli([
+      'profiles', 'add',
+      '--profile', 'default',
+      '--browser', 'chrome',
+      '--browser-user-data-dir', chromeRoot,
+      '--import-browser-profile', 'Default',
+      '--preferred-providers', 'chatgpt',
+      '--consent-local-profile-copy',
+      '--set-default',
+      '--home', homeDir,
+      '--json',
+    ])
+    assert.equal(added.status, 0, added.stderr || added.stdout)
+    fs.writeFileSync(path.join(chromeRoot, 'Default', 'Cookies'), 'not a sqlite database', 'utf8')
+
+    const reset = runCli(['profiles', 'reset', '--home', homeDir, '--json'])
+    assert.notEqual(reset.status, 0)
+    assert.match(reset.stdout, /chrome_cookie_import_failed/)
+    const registry = JSON.parse(fs.readFileSync(path.join(homeDir, 'browser', 'profiles.json'), 'utf8'))
+    const managedDirectory = registry.profiles.default.directory
+    assert.equal(registry.profiles.default.lifecycle, 'ready')
+    assert.equal(JSON.parse(fs.readFileSync(path.join(managedDirectory, 'Default', 'Preferences'), 'utf8')).marker, 'preserve-me')
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
 test('CLI requires explicit selected providers for browser profile imports', () => {
   const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-import-provider-required-')))
   const chromeRoot = path.join(tempRoot, 'chrome-root')

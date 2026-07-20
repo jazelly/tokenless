@@ -276,7 +276,8 @@ export class ManagedPlaywrightRunnerService {
   }
 
   private async claimableProfiles(inFlightProfiles: ReadonlySet<string>): Promise<ManagedBrowserProfile[]> {
-    const profiles = await this.profileRegistry.listProfiles()
+    const profiles = (await this.profileRegistry.listProfiles())
+      .filter((profile) => profile.lifecycle === undefined || profile.lifecycle === 'ready')
     const activeProfileIds = new Set(this.contextManager.activeProfileIds())
     if (activeProfileIds.size >= 4) {
       return profiles.filter((profile) => activeProfileIds.has(profile.id) && !inFlightProfiles.has(profile.id))
