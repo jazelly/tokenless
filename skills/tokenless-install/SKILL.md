@@ -1,11 +1,11 @@
 ---
 name: tokenless-install
-description: Install, upgrade, repair, and verify Tokenless and its main agent skill with non-interactive defaults. Use for initial setup, Playwright or managed-browser-profile readiness, browser sign-in handoff, upgrades, failed doctor checks, or installation integrity checks.
+description: Install, upgrade, repair, and verify Tokenless, its agent skills, local Playwright runtime, and managed browser profiles. Use for initial setup, choosing existing-profile or fresh-profile onboarding, browser sign-in handoff, upgrades, failed doctor checks, or installation integrity checks.
 ---
 
 # Tokenless installation and maintenance
 
-Complete this workflow before using the `tokenless` skill. Execute commands yourself, keep user-facing updates short, and report every status, manual action, and result in the user's preferred language. Infer that language from the conversation and default to the latest user message.
+Complete this workflow before using the `tokenless` skill. Execute available steps yourself. Report status, manual actions, and final results in the user's preferred language, inferred from the conversation.
 
 ## Install
 
@@ -17,56 +17,72 @@ Complete this workflow before using the `tokenless` skill. Execute commands your
 
    If it is missing or older, report the exact requirement and stop until the user installs it.
 
-2. Run canonical setup with non-interactive defaults:
+2. Install the latest CLI:
 
    ```bash
-   npx tokenless@latest setup --clean-profile --json
+   npm install --global tokenless@latest
    ```
 
-   Setup installs and verifies both Tokenless skills, detects supported browsers, and reuses an existing managed default profile. On a new installation it selects the first browser, uses ChatGPT, and creates a clean profile named `default`. It never imports or re-imports a local browser profile implicitly.
+   Do not run profile setup as root. Setup installs and verifies both Tokenless agent skills, detects supported browsers, starts the local daemon and Playwright worker, and checks provider readiness.
 
-3. Verify the complete installation:
+3. Use one profile strategy.
+
+   **Existing browser profile (recommended):**
 
    ```bash
-   npx tokenless@latest doctor --json
+   tokenless setup
    ```
 
-Report success only when `doctor` exits successfully and returns `ok: true`. Summarize skill, browser, managed profile, daemon, worker, and visible provider readiness without exposing account identity or credential data.
+   Run this in an interactive terminal. Let the user choose the browser, providers, source profile, and local-copy consent. Do not choose or approve profile import for the user. Setup copies only selected provider sign-in state into a separate managed profile and leaves the source unchanged.
 
-## User handoff for browser actions
+   **Fresh profile:**
 
-Run the CLI step first. Pause only when its JSON reports `waiting_for_user` or another user-only action, such as:
+   ```bash
+   tokenless setup --fresh --json
+   ```
 
-- signing in inside the visible Tokenless-managed browser window;
-- completing CAPTCHA, plan, permission, or provider confirmation UI.
+   Use this when the user requests a clean start or interactive input is unavailable. On first use it creates `default`, selects the first supported browser and ChatGPT, starts the runtime, and opens the provider when visible sign-in is needed. It never imports an existing browser profile.
+
+4. Verify the installation:
+
+   ```bash
+   tokenless doctor --json
+   ```
+
+Report success only when `doctor` exits successfully and returns `ok: true`. Summarize skill, browser, managed profile, daemon, worker, and provider readiness without exposing account identity or authentication data.
+
+## User handoff
+
+Run the CLI step first. Pause only for a user-only action such as selecting or consenting to profile import, signing in, CAPTCHA, plan or permission UI, or provider confirmation.
 
 Report the handoff in the user's preferred language with exactly three short parts:
 
 1. **Completed locally:** state which installation steps succeeded.
-2. **Action needed:** give the exact visible user action and name the affected managed profile and provider when known.
-3. **Next verification:** ask the user to reply when finished, then rerun `setup` if requested and always rerun `doctor`.
+2. **Action needed:** give the exact visible action and name the managed profile and provider when known.
+3. **Next verification:** ask the user to reply when finished, then resume the same setup flow when applicable and rerun `doctor`.
 
-Never install or request a browser extension. Never ask for an extension id, cookie, browser-storage value, password, hidden header, or other secret. Do not bypass login, CAPTCHA, copy consent, or provider confirmation.
+Keep authentication data inside the managed profile. Never ask for a cookie, browser-storage value, password, hidden header, or other secret. Do not bypass login, CAPTCHA, copy consent, or provider confirmation.
 
 ## Upgrade
 
 ```bash
-npx tokenless@latest setup --clean-profile --refresh-skills --json
-npx tokenless@latest doctor --json
+npm install --global tokenless@latest
+tokenless setup --fresh --refresh-skills --json
+tokenless doctor --json
 ```
 
-`setup` refreshes the packaged runtime while preserving registered managed profiles. Do not download or substitute binaries manually. Report completion only after the refreshed `doctor` result is healthy.
+Setup refreshes the packaged runtime and both agent skills while reusing the registered default profile. Do not re-import, reset, or replace a profile during upgrade unless the user explicitly asks. Report completion only after `doctor` is healthy.
 
 ## Doctor and repair
 
-Run `npx tokenless@latest doctor --json` first and use its exact failed check as the repair boundary:
+Run `tokenless doctor --json` first and use its exact failed check as the repair boundary:
 
 - Node.js failure: require Node.js 22.13 or newer.
-- CLI, daemon, or Playwright worker failure: rerun `npx tokenless@latest setup --clean-profile --json`, then rerun `doctor`.
-- Browser failure: require a supported installed browser selected by setup; do not silently substitute a different browser.
-- Missing default profile: rerun default setup to create one. For an invalid existing profile, report it instead of replacing or re-importing it automatically.
-- Profile re-import failure: report the copy error and retry only with user consent. The source browser may remain open; a failed or unusable clone must never trigger extension fallback or mutation of the source profile.
-- Provider unauthenticated or visibly blocked: open it with `npx tokenless@latest profiles open --profile <slug> --provider <id>`, use the user handoff, then rerun `doctor`.
+- CLI, daemon, or Playwright worker failure: rerun `npm install --global tokenless@latest`, then `tokenless setup --fresh --refresh-skills --json` and `doctor`.
+- Browser failure: require a supported installed browser selected by setup; do not silently substitute another browser.
+- Missing default profile: run fresh setup to create one. For an invalid existing profile, report it instead of replacing it automatically.
+- Profile import failure: report the copy error and retry only with user consent. Never mutate the source profile.
+- Provider unauthenticated or visibly blocked: run `tokenless profiles open --profile <slug> --provider <id>`, use the user handoff, then rerun `doctor`.
 - Unknown or contradictory output: report the exact failed check and stop instead of guessing, weakening validation, or switching to direct mode.
 
-Keep all authentication state private. Tokenless may preserve it opaquely in a managed local browser profile, but neither this skill nor the agent may inspect, print, log, export, or transmit it.
+Neither this skill nor the agent may inspect, print, log, export, or transmit authentication state.

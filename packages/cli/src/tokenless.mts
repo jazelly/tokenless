@@ -2031,27 +2031,12 @@ async function setupCommand(args: CliArgs) {
   const prompt = setupTerminal.canPrompt ? createSetupPrompt() : null
   try {
     presenter.welcome()
-    presenter.explain({
-      title: 'Configuration read',
-      lines: ['Read existing Tokenless choices. Nothing changes yet.'],
-    })
     const config = await presenter.withProgress('Reading config', () => readTokenlessConfig(homeDir))
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
     const skills = await ensureSetupSkills({ args, prompt, presenter })
-    presenter.explain({
-      title: 'Browser discovery',
-      lines: ['Find supported browsers. No browser data changes.'],
-    })
     const installedBrowsers = await presenter.withProgress('Finding browsers', discoverSetupBrowsers)
     const browser = await selectSetupBrowser({ args, config, installedBrowsers, prompt, presenter })
     const providers = await selectSetupProviders({ args, config, prompt, presenter })
-    presenter.explain({
-      title: 'Configuration write',
-      lines: [
-        `Save ${browser.browser} and ${providers.join(', ')} to Tokenless config.`,
-        'Changing browsers stops the current local runner.',
-      ],
-    })
     await presenter.withProgress('Saving preferences', async () => {
       if (config.browser && config.browser !== browser.browser) {
         await stopRunnerSupervisor({ homeDir })
@@ -2077,11 +2062,8 @@ async function setupCommand(args: CliArgs) {
     let runner: Record<string, any> | null = null
 
     presenter.explain({
-      title: 'Provider readiness sweep',
-      lines: [
-        'Check every selected provider with an immediate auth probe.',
-        'No sweep job waits for visible user handoff; all providers get a result.',
-      ],
+      title: 'Provider sign-in',
+      lines: SETUP_READINESS_DISCLOSURE,
     })
     for (const provider of providers) {
       let result: Awaited<ReturnType<typeof runSetupAuthCheck>>
@@ -2114,17 +2096,6 @@ async function setupCommand(args: CliArgs) {
     }
 
     const actionableProviders = providers.filter((provider) => readiness[provider]?.classification === 'action_required')
-    if (actionableProviders.length > 0) {
-      presenter.explain({
-        title: 'Visible handoff',
-        lines: [
-          'Open or foreground the managed browser only after every provider has a sweep result.',
-          prompt
-            ? 'Handle actionable providers one at a time.'
-            : 'Open the first actionable provider, then return a full summary.',
-        ],
-      })
-    }
 
     for (const provider of actionableProviders) {
       if (!prompt && provider !== actionableProviders[0]) break
@@ -2498,7 +2469,7 @@ async function ensureSetupManagedProfile({
   }
 
   if (selected) {
-    const reimport = args.reimportProfile === true || (prompt
+    const reimport = args.reimportProfile === true || (prompt && args.freshProfile !== true
       ? await prompt.confirm(`Re-import ${selected.slug} from ${browser}? This replaces its managed browser data.`, false)
       : false)
     if (reimport) {
@@ -2555,15 +2526,15 @@ async function ensureSetupManagedProfile({
   let source: { userDataDir: string; directoryKey: string; name: string } | null = null
   if (args.importChromeProfile !== undefined) {
     source = await selectSetupSourceProfile({ args, browser, prompt: null })
-  } else if (prompt) {
+  } else if (prompt && args.freshProfile !== true) {
     const discovered = await setupSourceProfiles(browser, args.chromeUserDataDir)
     if (discovered.length > 0 && await prompt.confirm(`Import an existing ${browser} profile into Tokenless?`, true)) {
       source = await selectSetupSourceProfile({ args, browser, prompt, discovered })
     }
-  } else if (args.cleanProfile !== true && args.setupDefaults !== true) {
+  } else if (args.freshProfile !== true && args.setupDefaults !== true) {
     throw usageError(
       'setup_profile_choice_required',
-      'Initial noninteractive setup requires --defaults, --clean-profile, or --import-browser-profile with explicit copy consent.'
+      'Initial noninteractive setup requires --defaults, --fresh, or --import-browser-profile with explicit copy consent.'
     )
   }
   if (source) requireSetupCopyAuthorization({ args, prompt })
@@ -2650,13 +2621,6 @@ async function ensureSetupSkills({
   presenter: SetupPresenter
 }) {
   const skillHome = process.env.TOKENLESS_SETUP_SKILL_HOME
-  presenter.explain({
-    title: 'Agent skills',
-    lines: [
-      'Check the Tokenless agent skills.',
-      'If missing, setup asks before installing them from GitHub.',
-    ],
-  })
   let check = await presenter.withProgress('Checking Tokenless agent skills', () => inspectTokenlessSkills(skillHome))
   let installed = false
   const refresh = args.refreshSkills === true || (!check.ok && args.skipSkillInstall !== true)
@@ -2760,10 +2724,6 @@ async function selectSetupProviders({
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
 }): Promise<ProviderId[]> {
-  presenter.explain({
-    title: 'Provider preferences',
-    lines: ['Choose which providers Tokenless should prepare.'],
-  })
   if (args.preferredProviders !== undefined) {
     const providers = requireSetupProviders(parseProviderList(args.preferredProviders) as ProviderId[])
     presenter.success(`Using providers: ${providers.join(', ')}.`)
@@ -3483,7 +3443,9 @@ function parseArgs(argv: string[]): CliArgs {
     '--set-default': 'setDefault',
     '--confirm-delete': 'confirmDelete',
     '--consent-local-profile-copy': 'consentLocalProfileCopy',
-    '--clean-profile': 'cleanProfile',
+    '--fresh': 'freshProfile',
+    '-f': 'freshProfile',
+    '--clean-profile': 'freshProfile',
     '--reimport-profile': 'reimportProfile',
     '--refresh-skills': 'refreshSkills',
     '--skip-skill-install': 'skipSkillInstall',
@@ -3746,7 +3708,7 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
     )
   }
   const setupOnly = [
-    ['cleanProfile', '--clean-profile'],
+    ['freshProfile', '--fresh'],
     ['setupDefaults', '--defaults'],
     ['reimportProfile', '--reimport-profile'],
     ['refreshSkills', '--refresh-skills'],
@@ -3755,6 +3717,14 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
   const selectedSetupOnly = setupOnly.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag)
   if (command !== 'setup' && selectedSetupOnly.length > 0) {
     throw usageError('setup_options_require_setup', `${selectedSetupOnly.join(', ')} is accepted only by tokenless setup.`)
+  }
+  if (command === 'setup' && args.freshProfile === true) {
+    if (args.importChromeProfile !== undefined) {
+      throw usageError('setup_profile_choice_conflict', '--fresh cannot be combined with --import-browser-profile.')
+    }
+    if (args.reimportProfile === true) {
+      throw usageError('setup_profile_choice_conflict', '--fresh cannot be combined with --reimport-profile.')
+    }
   }
   if (command === 'run') return
   if (command === 'serve') return
@@ -4125,10 +4095,9 @@ function usage() {
     '  tokenless snapshot-dom --provider chatgpt --json',
     '  tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json',
     '  tokenless setup',
-    '  tokenless setup --defaults --json',
-    '  tokenless setup --profile <slug> --browser <browser> --preferred-providers <list> (--clean-profile|--import-browser-profile <key> --consent-local-profile-copy) --json',
+    '  tokenless setup --fresh --json',
+    '  tokenless setup --profile <slug> --browser <browser> --preferred-providers <list> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',
     '  tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy [--refresh-skills]',
-    '  tokenless install [--extension-id <chrome-extension-id>] --json',
     '  tokenless doctor --json',
   ].join('\n'))
 }

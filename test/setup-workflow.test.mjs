@@ -55,7 +55,7 @@ test('setup installs both skills from the canonical repository with telemetry di
   await fs.rm(home, { recursive: true, force: true })
 })
 
-test('setup presenter prints the roadmap and action explanations in plain output', () => {
+test('setup presenter keeps interactive setup output compact', () => {
   const stream = captureStream()
   const presenter = createSetupPresenter({
     enabled: true,
@@ -75,15 +75,8 @@ test('setup presenter prints the roadmap and action explanations in plain output
 
   const output = stream.output()
   assert.match(output, /Tokenless setup/)
-  assert.match(output, /Roadmap/)
-  assertRoadmapOrder(output, [
-    'Check config',
-    'Check agent skills',
-    'Choose browser and providers',
-    'Save preferences',
-    'Choose a managed profile',
-    'Check provider sign-in',
-  ])
+  assert.doesNotMatch(output, /Roadmap/)
+  assert.doesNotMatch(output, /Visible-session onboarding/)
   assert.match(output, /Tokenless will read local skill manifests before changing anything/)
   assert.doesNotMatch(output, /\u001b\[/)
 })
@@ -118,15 +111,14 @@ test('setup prompt capability stays independent from stderr presentation capabil
   })
 })
 
-test('setup disclosures state import and readiness boundaries explicitly', () => {
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Keeps provider sign-ins between jobs/)
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /only selected ChatGPT, Claude, or Grok cookies locally/)
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Gemini\/Google is not imported/)
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Cookie values stay opaque/)
-  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE.join('\n'), /Site storage, passwords, history, bookmarks, payments, extensions, sync data, and caches are excluded/)
-  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /start its local runner/)
-  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /check the provider's visible sign-in state/)
-  assert.match(SETUP_READINESS_DISCLOSURE.join('\n'), /does not extract tokens or type and submit a prompt/)
+test('setup disclosures state essential boundaries concisely', () => {
+  assert.equal(SETUP_MANAGED_PROFILE_DISCLOSURE.length, 1)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE[0], /Keeps sign-ins between jobs/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE[0], /selected provider cookies only/)
+  assert.match(SETUP_MANAGED_PROFILE_DISCLOSURE[0], /other browser data is excluded/)
+  assert.equal(SETUP_READINESS_DISCLOSURE.length, 1)
+  assert.match(SETUP_READINESS_DISCLOSURE[0], /visible sign-in state/)
+  assert.match(SETUP_READINESS_DISCLOSURE[0], /without submitting a prompt/)
 })
 
 test('setup presenter cleans animated progress on success and failure', async () => {
@@ -243,15 +235,5 @@ function manualTimers() {
     cleared() {
       return clearCount
     },
-  }
-}
-
-function assertRoadmapOrder(output, steps) {
-  let previous = -1
-  for (const step of steps) {
-    const current = output.indexOf(step)
-    assert.notEqual(current, -1, `missing roadmap step: ${step}`)
-    assert.ok(current > previous, `roadmap step is out of order: ${step}`)
-    previous = current
   }
 }

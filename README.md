@@ -2,52 +2,66 @@
 
 # Tokenless
 
-Use the AI web subscriptions you already have from any agent through one local CLI or API. Tokenless handles ChatGPT, Claude, Gemini, and Grok behind one provider-neutral interface.
+Run AI websites from any agent through one local CLI or API. Tokenless gives ChatGPT, Claude, Gemini, and Grok one provider-neutral interface.
 
 ## Why Tokenless
 
-- **Save tokens first.** Reuse web subscriptions for research, drafting, review, explanation, and transformations instead of paying for another model API call.
-- **Safe, visible browser automation.** Playwright operates the normal provider website, keeps sign-in state inside a managed local Chromium profile, and verifies visible outcomes.
-- **Free, MIT-licensed, and local.** Tokenless runs on your machine. Browser profiles and sessions remain local; only prompts and files you select go to the chosen provider.
-- **One interface across providers.** Agents use the same actions for ChatGPT, Claude, Gemini, and Grok while Tokenless handles their different pages and controls.
-- **Built for complete workflows.** The unified contract covers models, effort controls, files, prompts, responses, citations, projects, tools, and multimodal work.
+- **Save tokens.** Use web subscriptions you already pay for instead of another model API call.
+- **Stay safe and visible.** Playwright operates the normal provider website and verifies visible results.
+- **Keep control local.** Tokenless is free and MIT-licensed; the runtime, managed profiles, and sign-in state stay on your machine.
+- **Use one interface.** The CLI targets all four providers, with files, projects, tools, images, and multimodal work converging on the same contract.
 
 ## Install
 
 Requires Node.js 22.13+ and a supported Chromium browser such as Google Chrome or Brave.
 
-### npm (recommended)
-
 ```bash
 npm install --global tokenless@latest
-tokenless setup
-tokenless doctor --json
 ```
 
-`tokenless setup` installs and verifies both Tokenless agent skills directly from the canonical GitHub repository. Then tell your agent:
+Setup installs and verifies the required `tokenless` and `tokenless-install` agent skills. To delegate installation or upgrades, tell your agent:
 
 ```text
-Use $tokenless-install to install or upgrade Tokenless, install its main skill, and run doctor.
+Use $tokenless-install to install or upgrade Tokenless and run doctor.
 ```
 
-### Other installation options
-
-Without a global install:
+Other deployment options:
 
 ```bash
+# Run without a global install
 npx tokenless@latest setup
-npx tokenless@latest doctor --json
-```
 
-System-wide installer:
-
-```bash
+# Install system-wide; review the script before running it
 curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/install.sh | sudo bash
 ```
 
-This executes with `sudo`; [review the script first](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh). Run `tokenless setup` and `tokenless doctor --json` afterward as your normal desktop user.
+## Start
 
-## Quick Start
+Choose one managed-profile path during setup.
+
+### 1. Use an existing browser profile (recommended)
+
+```bash
+tokenless setup
+```
+
+Follow the interactive CLI to choose a browser, providers, and an existing Chrome or Brave profile. With your approval, Tokenless copies only supported sign-in state for the selected providers into a separate managed profile; the source profile is unchanged.
+
+### 2. Start with a fresh profile
+
+```bash
+tokenless setup --fresh
+```
+
+On a new installation, this creates a clean `default` profile, starts the local runtime, and opens ChatGPT when sign-in is needed. It never imports a browser profile implicitly.
+
+Verify either path with:
+
+```bash
+tokenless doctor --json
+```
+
+## First Request
 
 ```bash
 tokenless run \
@@ -58,12 +72,12 @@ tokenless run \
   --json
 ```
 
-The same workflow is being unified across ChatGPT, Claude, Gemini, and Grok. Tokenless is actively completing four-provider parity, end-to-end Playwright file upload, and the public local API.
+ChatGPT, Claude, Gemini, and Grok are being unified behind the same workflow. Four-provider parity, end-to-end file upload, and the public local API are under active development.
 
 ## Roadmap
 
 - Complete one Playwright action contract across ChatGPT, Claude, Gemini, and Grok.
-- Make file upload, model selection, effort controls, citations, and long-running responses seamless across providers.
+- Make files, model controls, citations, and long-running responses seamless across providers.
 - Expose provider projects, workspaces, files, plugins, connectors, and tools.
 - Support image generation, image input, and broader multimodal workflows.
 - Stabilize the local API so agents can use AI websites as a programmable execution surface.
@@ -72,55 +86,56 @@ Roadmap items are not yet compatibility guarantees.
 
 ## How Tokenless Works
 
-`Agent → CLI or local API → tokenless-daemon → Playwright worker → managed browser profile → visible provider website`
+`Agent → CLI or local API → local daemon → Playwright worker → managed browser profile → provider website`
 
-`tokenless setup` is the canonical interactive onboarding flow. It installs and verifies the agent skills, detects installed supported browsers, lets the user select or explicitly re-import a managed profile, records preferred providers, starts the daemon and Playwright worker, opens provider sign-in pages, and reports visible readiness. Later runs and live tests reuse that managed profile without importing it again.
+The CLI and local API submit provider-neutral actions. The local daemon schedules them, Playwright operates the selected managed profile, and provider adapters verify visible outcomes. Later jobs reuse the same profile.
 
 ### Managed profiles
 
-A managed profile is one reusable local browser identity. Use one profile for sessions across several providers, or separate profiles for multiple accounts.
+A managed profile is one reusable local browser identity. One profile can hold sessions for several providers; use separate profiles for multiple accounts of the same provider.
 
 ```bash
 tokenless profiles discover --browser chrome --json
 tokenless profiles discover --browser brave --json
 tokenless profiles add --profile work --browser chrome --import-browser-profile "Profile 1" --preferred-providers chatgpt,claude --consent-local-profile-copy --set-default
-tokenless profiles reset --profile work
-tokenless profiles clear --profile work
+tokenless profiles add --profile clean --set-default
 tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude
+tokenless profiles reset --profile work
+tokenless profiles clear --profile work
 ```
 
-`profiles discover` is read-only: it lists local Chrome or Brave roots and exact profile directory keys without copying data or creating Tokenless profiles. Importing an existing browser profile is an explicit user configuration operation; setup never refreshes it automatically. `profiles reset` explicitly rebuilds an imported managed profile from its recorded source and provider scope while preserving its managed profile id. `profiles clear --profile <slug>` deletes one managed profile; `profiles clear --all` deletes every managed profile. Neither clear form modifies the source browser profile. Jobs and live tests never reset or clear profiles automatically.
+`profiles discover` is read-only. Import, reset, and clear are explicit operations; jobs never change profile lifecycle automatically.
 
 ### Interfaces and modes
 
 | Interface or mode | Execution path | Status |
 | --- | --- | --- |
-| CLI | Playwright web jobs through `tokenless-daemon` | Primary interface |
+| CLI | Playwright web jobs through the local daemon | Primary interface |
 | Local API | The same provider-neutral Playwright jobs | Active development |
 | Direct mode (`--mode direct`) | Official client, public provider API, or explicit compatible gateway | Experimental |
 
-The CLI and local API are two interfaces to the same Playwright automation. Direct mode is a separate path for explicit client or provider API access.
+Direct mode is separate from managed web automation and may incur provider API charges.
 
 ## Privacy and Safety
 
-- Playwright runs locally with visible, persistent managed Chromium profiles.
-- Consented profile import keeps selected ChatGPT, Claude, or Grok cookie contents opaque and local; Gemini/Google and shared browser storage are not imported.
-- Automation uses visible page controls and checks the visible result of each action.
+- Playwright runs locally with visible, persistent managed browser profiles.
+- Consented import copies only selected provider sign-in state; passwords, history, bookmarks, payments, sync data, and caches are excluded.
+- Automation uses visible page controls and checks visible results.
 - CAPTCHA, sign-in, plan limits, consent, and confirmations remain under user control.
 - Selected files are staged locally, integrity-checked, and uploaded through the provider's visible file control.
-- Web and direct requests follow only the mode explicitly selected by the caller.
+- Each request follows only the mode selected by the caller.
+
+See the full [privacy policy](PRIVACY.md).
 
 ## Experimental Direct Mode
-
-Direct mode may incur provider API charges:
 
 ```bash
 codex login
 tokenless run --mode direct --provider chatgpt --prompt "Review this design." --json
 ```
 
-Public API backends require an explicit model and an environment-supplied credential. See [Direct mode](docs/direct-mode.md) for supported providers, the authenticated local broker, account routing, and security boundaries.
+Public API backends require an explicit model and an environment-supplied credential. See [Direct mode](docs/direct-mode.md) for supported providers, account routing, and security boundaries.
 
 ## Development
 
@@ -133,7 +148,7 @@ npm test
 npm run test:e2e
 ```
 
-Nothing is published by these commands. Implementation and acceptance details live in the [Playwright architecture handoff](docs/handoff-visible-provider-web-automation.md); release procedures live in [npm publishing](docs/npm-publishing.md).
+These commands do not publish anything. See [Architecture](docs/architecture.md) for the managed Playwright runtime and [npm publishing](docs/npm-publishing.md) for release procedures.
 
 ## License
 

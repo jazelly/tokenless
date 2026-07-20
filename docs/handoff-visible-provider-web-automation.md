@@ -72,7 +72,7 @@ GitHub-backed Tokenless skills, detects installed browsers, asks the user to
 select or explicitly re-import a managed profile, records preferred providers,
 starts the daemon and worker, opens provider pages, and reports visible
 authentication readiness. Noninteractive initial setup must explicitly choose
-either `--clean-profile` or both `--import-browser-profile <directory-key>` and
+either `--fresh` or both `--import-browser-profile <directory-key>` and
 `--consent-local-profile-copy`.
 
 Store bounded profile metadata in `~/.tokenless/browser/profiles.json`, guarded

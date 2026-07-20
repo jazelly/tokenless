@@ -21,7 +21,7 @@ test('canonical default setup noninteractively selects browser/profile/providers
   try {
     const setup = spawnCli([
       'setup',
-      '--defaults',
+      '--fresh',
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',
@@ -77,6 +77,76 @@ test('canonical default setup noninteractively selects browser/profile/providers
     if (daemonPid) await stopPid(daemonPid)
     fs.rmSync(homeDir, { recursive: true, force: true })
     fs.rmSync(skillHome, { recursive: true, force: true })
+  }
+})
+
+test('interactive setup -f reuses a managed profile without offering source profile import or re-import', { skip: process.platform === 'win32' || !fs.existsSync('/usr/bin/expect') }, async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-fresh-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-fresh-skills-')))
+  const sourceHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-fresh-source-')))
+  const chromeRoot = path.join(sourceHome, 'chrome-root')
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: {
+          name: 'Jason',
+          is_using_default_name: true,
+        },
+      },
+    },
+  }), 'utf8')
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  const added = runCli(['profiles', 'add', '--profile', 'default', '--home', homeDir, '--json'])
+  assert.equal(added.status, 0, added.stderr || added.stdout)
+  let daemonPid
+  let setup
+  try {
+    setup = spawnCliTty([
+      'setup',
+      '-f',
+      '--profile', 'default',
+      '--browser-user-data-dir', chromeRoot,
+      '--preferred-providers', 'chatgpt',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--skip-skill-install',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const browserPrompt = waitForProcessOutput(setup, 'Choose [1]: ')
+    const setupFinished = waitForProcess(setup, 10000)
+    await browserPrompt
+    setup.stdin.write('\n')
+
+    const profile = await waitForManagedProfile(homeDir)
+    await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
+
+    const result = await setupFinished
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.doesNotMatch(result.stdout, /Import an existing .* profile into Tokenless/)
+    assert.doesNotMatch(result.stdout, /Re-import .* from/)
+    assert.equal(profile.slug, 'default')
+    assert.equal(profile.label, 'default')
+    assert.equal(profile.import, undefined)
+  } finally {
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (setup?.exitCode === null) setup.kill('SIGTERM')
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+    fs.rmSync(sourceHome, { recursive: true, force: true })
   }
 })
 

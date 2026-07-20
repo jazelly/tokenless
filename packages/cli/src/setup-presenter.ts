@@ -36,14 +36,11 @@ type ExplainOptions = {
 const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
-  'Keeps provider sign-ins between jobs. Name it default, work, or similar; later use --profile <name>.',
-  'Import copies only selected ChatGPT, Claude, or Grok cookies locally; Gemini/Google is not imported.',
-  'Cookie values stay opaque. Site storage, passwords, history, bookmarks, payments, extensions, sync data, and caches are excluded.',
+  'Keeps sign-ins between jobs. Imports copy selected provider cookies only; other browser data is excluded.',
 ])
 
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([
-  'Tokenless may start its local runner, open this profile, and check the provider\'s visible sign-in state.',
-  'It does not extract tokens or type and submit a prompt.',
+  'Checks visible sign-in state without submitting a prompt.',
 ])
 
 export class SetupPresenter {
@@ -79,17 +76,6 @@ export class SetupPresenter {
     this.write([
       '',
       this.paint('brightCyan', 'Tokenless setup'),
-      this.paint('dim', '+--------------------------------------------------+'),
-      `${this.paint('dim', '|')} Visible-session onboarding, step by step         ${this.paint('dim', '|')}`,
-      this.paint('dim', '+--------------------------------------------------+'),
-      '',
-      `${this.paint('cyan', 'Roadmap')}`,
-      '  1. Check config',
-      '  2. Check agent skills',
-      '  3. Choose browser and providers',
-      '  4. Save preferences',
-      '  5. Choose a managed profile',
-      '  6. Check provider sign-in',
       '',
     ].join('\n'))
   }

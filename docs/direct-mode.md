@@ -4,10 +4,10 @@ Tokenless has two deliberately separate execution modes:
 
 | Mode | Transport | Authentication owner | Default behavior |
 | --- | --- | --- | --- |
-| `visible` | Local daemon, native host, extension, and the provider's visible browser UI | The user's visible browser session | Default for `tokenless run` |
+| `visible` | Local daemon, Playwright worker, managed browser profile, and the provider's visible UI | Sign-in state inside the selected managed profile | Default for `tokenless run` |
 | `direct` | The official Codex executable, a documented public provider API, or an explicitly configured compatible gateway | The provider-owned client or an environment-supplied API key | Opt-in with `--mode direct` |
 
-The mode is selected before Tokenless initializes a transport. There is no fallback between them. A visible-session failure never creates API traffic or charges, and a direct failure never starts the daemon, contacts the extension, opens a browser, or resends the prompt through the visible UI.
+The mode is selected before Tokenless initializes a transport. There is no fallback between them. A managed-web failure never creates API traffic or charges, and a direct failure never starts the daemon or managed browser runtime or resends the prompt through the visible UI.
 
 ## Billing and account boundary
 

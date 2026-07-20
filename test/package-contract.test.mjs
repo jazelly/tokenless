@@ -494,6 +494,46 @@ test('bridge marker reader accepts only the exact current protocol and path', as
 })
 
 test('CLI rejects removed local fallback and oversized native messages before network access', async () => {
+  const cliSource = fs.readFileSync(path.join(cliDir, 'src', 'tokenless.mts'), 'utf8')
+  const usageSource = cliSource.slice(cliSource.indexOf('function usage()'))
+  assert.match(usageSource, /--fresh\|-f/)
+  assert.doesNotMatch(usageSource, /--clean-profile/)
+  assert.doesNotMatch(usageSource, /tokenless install|extension-id/i)
+
+  for (const flag of ['--fresh', '-f']) {
+    const conflict = spawnSync(process.execPath, [
+      cliEntry,
+      'setup',
+      flag,
+      '--import-browser-profile',
+      'Default',
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(conflict.status, 1)
+    const payload = JSON.parse(conflict.stdout)
+    assert.equal(payload.error.code, 'setup_profile_choice_conflict')
+    assert.match(payload.error.message, /--fresh cannot be combined with --import-browser-profile/)
+  }
+
+  const reimportConflict = spawnSync(process.execPath, [
+    cliEntry,
+    'setup',
+    '--fresh',
+    '--reimport-profile',
+    '--json',
+  ], { cwd: root, encoding: 'utf8' })
+  assert.equal(reimportConflict.status, 1)
+  assert.equal(JSON.parse(reimportConflict.stdout).error.code, 'setup_profile_choice_conflict')
+
+  const compatibilityAlias = spawnSync(process.execPath, [
+    cliEntry,
+    'doctor',
+    '--clean-profile',
+    '--json',
+  ], { cwd: root, encoding: 'utf8' })
+  assert.equal(compatibilityAlias.status, 1)
+  assert.equal(JSON.parse(compatibilityAlias.stdout).error.code, 'setup_options_require_setup')
+
   const removed = spawnSync(process.execPath, [
     cliEntry,
     'run',
@@ -518,7 +558,7 @@ test('CLI rejects removed local fallback and oversized native messages before ne
   )
 })
 
-test('agent skills use the managed Playwright workflow and forbid extension fallback', () => {
+test('agent skills use the managed Playwright workflow and two profile setup paths', () => {
   const skill = fs.readFileSync(path.join(root, 'skills/tokenless/SKILL.md'), 'utf8')
   const installSkill = fs.readFileSync(path.join(root, 'skills/tokenless-install/SKILL.md'), 'utf8')
   assert.match(skill, /npx tokenless run/)
@@ -536,11 +576,13 @@ test('agent skills use the managed Playwright workflow and forbid extension fall
   assert.doesNotMatch(skill, /tokenless-native-host|extension id|chrome:\/\/extensions/i)
 
   assert.match(installSkill, /user's preferred language/)
-  assert.match(installSkill, /npx tokenless@latest setup --clean-profile --json/)
-  assert.match(installSkill, /never imports or re-imports a local browser profile implicitly/i)
-  assert.match(installSkill, /installs and verifies both Tokenless skills/)
+  assert.match(installSkill, /npm install --global tokenless@latest/)
+  assert.match(installSkill, /tokenless setup/)
+  assert.match(installSkill, /tokenless setup --fresh --json/)
+  assert.match(installSkill, /never imports an existing browser profile/i)
+  assert.match(installSkill, /installs and verifies both Tokenless agent skills/)
   assert.match(installSkill, /detects supported browsers/)
-  assert.match(installSkill, /npx tokenless@latest doctor --json/)
+  assert.match(installSkill, /tokenless doctor --json/)
   assert.match(installSkill, /Playwright worker/)
   assert.match(installSkill, /managed profile/)
   assert.match(installSkill, /Completed locally/)
@@ -549,32 +591,38 @@ test('agent skills use the managed Playwright workflow and forbid extension fall
   assert.doesNotMatch(installSkill, /extensionBridge|extension_setup_incomplete|chrome:\/\/extensions/i)
 })
 
-test('public READMEs describe the Playwright web runtime and isolated direct boundary', () => {
+test('public onboarding describes managed Playwright startup and an isolated direct boundary', () => {
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
   const chinese = fs.readFileSync(path.join(root, 'README.zh-CN.md'), 'utf8')
   const cliReadme = fs.readFileSync(path.join(root, 'packages/cli/README.md'), 'utf8')
   const installer = fs.readFileSync(path.join(root, 'deploy/install.sh'), 'utf8')
+  const privacy = fs.readFileSync(path.join(root, 'PRIVACY.md'), 'utf8')
+  const architecture = fs.readFileSync(path.join(root, 'docs/architecture.md'), 'utf8')
+  const directMode = fs.readFileSync(path.join(root, 'docs/direct-mode.md'), 'utf8')
+  const skill = fs.readFileSync(path.join(root, 'skills/tokenless/SKILL.md'), 'utf8')
+  const installSkill = fs.readFileSync(path.join(root, 'skills/tokenless-install/SKILL.md'), 'utf8')
   for (const text of [readme, cliReadme]) {
-    assert.match(text, /tokenless-daemon/)
     assert.match(text, /Playwright/)
     assert.match(text, /visible/)
     assert.match(text, /direct/)
-    assert.doesNotMatch(text, /tokenless-native-host/)
     assert.doesNotMatch(text, /\/Users\/jazelly/)
   }
   assert.match(readme, /npx tokenless@latest setup/)
-  assert.match(readme, /Save tokens first/)
+  assert.match(readme, /Save tokens/)
+  assert.match(readme, /tokenless setup --fresh/)
+  assert.match(readme, /Use an existing browser profile \(recommended\)/)
+  assert.match(chinese, /使用现有浏览器配置（推荐）/)
+  assert.match(chinese, /使用全新配置启动/)
   assert.ok(readme.indexOf('## Why Tokenless') < readme.indexOf('## How Tokenless Works'))
-  assert.doesNotMatch(readme, /extension|migration|retired|legacy|Noop/i)
   assert.match(chinese, /Playwright/)
-  assert.match(chinese, /tokenless-daemon/)
   assert.match(chinese, /tokenless profiles/)
   assert.match(chinese, /--mode direct/)
-  assert.doesNotMatch(chinese, /tokenless-native-host/)
   assert.match(readme, /docs\/direct-mode\.md/)
   assert.match(cliReadme, /tokenless serve --mode direct/)
-  assert.match(installer, /Playwright-managed Chrome profile/)
-  assert.doesNotMatch(installer, /install and enable the Tokenless browser extension/i)
+  assert.match(installer, /setup --fresh --json/)
+  for (const text of [readme, chinese, cliReadme, installer, privacy, architecture, directMode, skill, installSkill]) {
+    assert.doesNotMatch(text, /native[- ]host|browser extension|chrome extension/i)
+  }
 })
 
 function readJson(relativePath) {
