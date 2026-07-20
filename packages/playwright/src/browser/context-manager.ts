@@ -5,6 +5,7 @@ import type { BrowserContext, Page } from 'playwright-core'
 export type ManagedBrowserProfile = {
   id: string
   directory: string
+  lifecycle?: 'created' | 'importing' | 'ready' | 'removed' | 'failed'
 }
 
 export type ManagedBrowserContext = {

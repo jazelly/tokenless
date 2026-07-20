@@ -574,6 +574,7 @@ function copyAllowedCookieRows({
 }) {
   const quotedColumns = columns.map(quoteSqlIdentifier)
   const select = source.prepare(`SELECT ${quotedColumns.join(', ')} FROM cookies WHERE host_key IS NOT NULL`)
+  select.setReadBigInts(true)
   const insert = destination.prepare(`INSERT INTO cookies (${quotedColumns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`)
   const hasTopFrameSiteKey = columns.includes('top_frame_site_key')
   destination.exec('BEGIN IMMEDIATE')

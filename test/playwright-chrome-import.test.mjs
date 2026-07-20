@@ -353,7 +353,7 @@ function writeSyntheticCookieDb(path, rows) {
       INSERT INTO cookies(creation_utc, host_key, top_frame_site_key, name, value, encrypted_value)
       VALUES (?, ?, ?, ?, '', ?)
     `)
-    let creation = 1
+    let creation = 13_396_451_883_850_632n
     for (const row of rows) {
       insert.run(creation++, row.host_key, row.top_frame_site_key ?? '', row.name, row.encrypted_value)
     }
