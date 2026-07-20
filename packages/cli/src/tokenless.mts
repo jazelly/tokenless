@@ -533,6 +533,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       ...(args.label === undefined
         ? (importSource ? { label: importSource.profile.name } : {})
         : { label: String(args.label) }),
+      ...(args.label === undefined && importSource ? { labelOrigin: 'import' as const } : {}),
       setDefault: args.setDefault === true,
       lifecycle,
     })
@@ -548,6 +549,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
         record = await registry.markImported(record.slug, {
           source: importSource.userDataDir,
           profileDirectoryKey: importKey,
+          profileName: importSource.profile.name,
           browser: importSource.browser,
         })
       }
@@ -567,7 +569,8 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 
   if (subcommand === 'list') {
     const defaultSlug = await defaultProfileSlug(registry)
-    const profiles = (await registry.listProfiles()).map((profile) => publicManagedProfile(profile, defaultSlug))
+    const profiles = (await managedProfilesWithDisplayLabels(await registry.listProfiles()))
+      .map((profile) => publicManagedProfile(profile, defaultSlug))
     printPayload({ ok: true, profiles }, args)
     return
   }
@@ -987,6 +990,18 @@ function normalizeProfileImportBrowser(value: unknown): 'chrome' | 'brave' {
 
 async function defaultProfileSlug(registry: ManagedProfileRegistry) {
   return (await registry.read()).defaultProfile
+}
+
+async function managedProfilesWithDisplayLabels(profiles: readonly ManagedProfileRecord[]) {
+  return await Promise.all(profiles.map(async (profile) => {
+    if (profile.labelOrigin !== 'import' || profile.label !== profile.slug || !profile.import) return profile
+    try {
+      const importedProfile = await resolveChromeProfile(profile.directory, profile.import.profileDirectoryKey)
+      return { ...profile, label: importedProfile.name }
+    } catch {
+      return profile
+    }
+  }))
 }
 
 function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string | null) {
@@ -2346,7 +2361,7 @@ async function ensureSetupManagedProfile({
     lines: SETUP_MANAGED_PROFILE_DISCLOSURE,
   })
   const registry = new ManagedProfileRegistry(homeDir)
-  const existing = await registry.listProfiles()
+  const existing = await managedProfilesWithDisplayLabels(await registry.listProfiles())
   const configuredDefaultProfile = (await registry.read()).defaultProfile
   let slug = args.profile === undefined ? undefined : String(args.profile)
   let selected: ManagedProfileRecord | null = null
@@ -2404,7 +2419,8 @@ async function ensureSetupManagedProfile({
           return await registry.markImported(selected.slug, {
             source: source.userDataDir,
             profileDirectoryKey: source.directoryKey,
-            browser,
+            profileName: source.name,
+            browser: setupProfileImportBrowser(browser),
           })
         })
       } catch (error) {
@@ -2449,7 +2465,8 @@ async function ensureSetupManagedProfile({
     source ? `Creating managed profile ${slug} for import` : `Creating clean managed profile ${slug}`,
     () => registry.addProfile({
       slug,
-      label: args.label === undefined ? slug : String(args.label),
+      label: args.label === undefined ? (source?.name ?? slug) : String(args.label),
+      labelOrigin: args.label === undefined && source ? 'import' : (args.label === undefined ? 'slug' : 'user'),
       setDefault: true,
       lifecycle: source ? 'importing' : 'ready',
     }),
@@ -2466,7 +2483,8 @@ async function ensureSetupManagedProfile({
         return await registry.markImported(record.slug, {
           source: source.userDataDir,
           profileDirectoryKey: source.directoryKey,
-          browser,
+          profileName: source.name,
+          browser: setupProfileImportBrowser(browser),
         })
       })
     }
@@ -2706,7 +2724,7 @@ async function selectSetupSourceProfile({
 }
 
 async function setupSourceProfiles(browser: string, explicitUserDataDir: unknown) {
-  const sourceBrowser = browser === 'brave' ? 'brave' : 'chrome'
+  const sourceBrowser = setupProfileImportBrowser(browser)
   if (browser !== 'chrome' && browser !== 'brave' && explicitUserDataDir === undefined) return []
   const roots = await discoverChromiumProfiles({
     browser: sourceBrowser,
@@ -2718,6 +2736,10 @@ async function setupSourceProfiles(browser: string, explicitUserDataDir: unknown
     name: profile.name,
     isDefault: profile.isDefault,
   })))
+}
+
+function setupProfileImportBrowser(browser: string): 'chrome' | 'brave' {
+  return browser === 'brave' ? 'brave' : 'chrome'
 }
 
 async function requireSetupCopyConsent({

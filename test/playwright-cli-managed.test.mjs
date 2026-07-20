@@ -80,6 +80,76 @@ test('canonical default setup noninteractively selects browser/profile/providers
   }
 })
 
+test('setup uses the imported browser profile name as its managed profile label', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-import-label-')))
+  const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-import-label-skills-')))
+  const sourceHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-import-source-')))
+  const chromeRoot = path.join(sourceHome, 'chrome-root')
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: {
+          name: 'Jason',
+          is_using_default_name: true,
+        },
+      },
+    },
+  }), 'utf8')
+  writeVerifiedSkills(skillHome)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  try {
+    const setup = spawnCli([
+      'setup',
+      '--profile', 'default',
+      '--browser', 'chrome',
+      '--browser-user-data-dir', chromeRoot,
+      '--import-browser-profile', 'Default',
+      '--consent-local-profile-copy',
+      '--preferred-providers', 'chatgpt',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--skip-skill-install',
+      '--json',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    const setupFinished = waitForProcess(setup, 10000)
+    let profile
+    try {
+      profile = await waitForManagedProfile(homeDir)
+    } catch (error) {
+      const result = await setupFinished
+      assert.fail(`${error.message}\n${result.stderr || result.stdout}`)
+    }
+    await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
+
+    const result = await setupFinished
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.profile.slug, 'default')
+    assert.equal(payload.profile.label, 'Jason')
+    assert.equal(profile.labelOrigin, 'import')
+  } finally {
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(skillHome, { recursive: true, force: true })
+    fs.rmSync(sourceHome, { recursive: true, force: true })
+  }
+})
+
 test('setup surfaces failed managed readiness jobs as technical CLI failures', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-failed-')))
   const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-failed-skills-')))
@@ -917,6 +987,50 @@ test('CLI uses the imported Chrome profile name as the default managed profile l
     const payload = JSON.parse(imported.stdout)
     assert.equal(payload.profile.slug, 'default')
     assert.equal(payload.profile.label, 'Jason')
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('CLI recovers legacy imported profile labels from the managed copy', () => {
+  const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-legacy-label-')))
+  const chromeRoot = path.join(tempRoot, 'chrome-root')
+  const homeDir = path.join(tempRoot, 'tokenless-home')
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: {
+          name: 'Jason',
+          is_using_default_name: true,
+        },
+      },
+    },
+  }), 'utf8')
+
+  try {
+    const imported = runCli([
+      'profiles', 'add',
+      '--profile', 'default',
+      '--browser', 'chrome',
+      '--browser-user-data-dir', chromeRoot,
+      '--import-browser-profile', 'Default',
+      '--consent-local-profile-copy',
+      '--set-default',
+      '--home', homeDir,
+      '--json',
+    ])
+    assert.equal(imported.status, 0, imported.stderr || imported.stdout)
+
+    const registryPath = path.join(homeDir, 'browser', 'profiles.json')
+    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'))
+    registry.profiles.default.label = 'default'
+    delete registry.profiles.default.labelOrigin
+    fs.writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600 })
+
+    const listed = runCli(['profiles', 'list', '--home', homeDir, '--json'])
+    assert.equal(listed.status, 0, listed.stderr || listed.stdout)
+    assert.equal(JSON.parse(listed.stdout).profiles[0].label, 'Jason')
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }
