@@ -623,6 +623,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
           syncDisabled: imported.syncDisabled,
         },
         runner,
+        compactOutput: `Reset managed profile '${updated.slug}' from ${source.name}. Imported ${imported.cookieAuth.totalCookies} selected provider cookies for ${providers.join(', ')}.`,
       }, args)
       return
     } catch (error) {
@@ -660,6 +661,9 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       cleared,
       defaultProfile: (await registry.read()).defaultProfile,
       runner,
+      compactOutput: clearAll
+        ? (cleared.length === 0 ? 'No managed profiles to clear.' : `Cleared ${cleared.length} managed profiles.`)
+        : `Cleared managed profile '${cleared[0]!.slug}'.`,
     }, args)
     return
   }
@@ -3629,6 +3633,9 @@ function assertProfilesCommandArguments(subcommand: string | undefined, args: Cl
   if (subcommand === undefined || byCommand[subcommand] === undefined) {
     throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, clear, discover, list, reset, status, open, set-default, or remove.')
   }
+  if ((subcommand === 'clear' || subcommand === 'reset') && args.json === true) {
+    throw usageError('profile_command_json_unsupported', `Profiles ${subcommand} is a human maintenance command and does not accept --json.`)
+  }
   assertOnlyArguments(args, new Set(byCommand[subcommand]), `profiles ${subcommand}`)
 }
 
@@ -4086,8 +4093,8 @@ function usage() {
     '  tokenless profiles add --profile <slug> --browser <chrome|brave> --import-browser-profile <Default|Profile 1> --preferred-providers <list> [--browser-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
     '  tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json',
     '  tokenless profiles list --json',
-    '  tokenless profiles clear (--profile <slug>|--all) --json',
-    '  tokenless profiles reset [--profile <slug>] [--preferred-providers <list>] --json',
+    '  tokenless profiles clear (--profile <slug>|--all)',
+    '  tokenless profiles reset [--profile <slug>] [--preferred-providers <list>]',
     '  tokenless profiles status|open [--profile <slug>] [--provider <provider>] --json',
     '  tokenless profiles set-default --profile <slug> --json',
     '  tokenless profiles remove --profile <slug> --confirm-delete --json',
