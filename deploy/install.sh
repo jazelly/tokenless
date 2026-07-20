@@ -26,10 +26,13 @@ Tokenless CLI is installed system-wide.
 For security and correct managed Chrome profile ownership, do not run setup as root.
 Return to your normal desktop account, then run:
 
-  tokenless setup --json
-  tokenless doctor --json
+  # Reuse an existing browser profile through the interactive setup (recommended)
+  tokenless setup
 
-Tokenless uses a local Playwright-managed Chrome profile. No browser extension is required.
+  # Or create a fresh managed profile
+  tokenless setup --fresh
+
+  tokenless doctor --json
 
 EOF
   exit 0
@@ -40,17 +43,17 @@ if [[ -z "$tokenless_bin" ]]; then
   global_prefix="$(npm prefix --global)"
   tokenless_bin="${global_prefix}/bin/tokenless"
 fi
-[[ -x "$tokenless_bin" ]] || fail "npm completed, but the tokenless executable is not on PATH. Add npm's global bin directory to PATH, then run tokenless setup --json."
+[[ -x "$tokenless_bin" ]] || fail "npm completed, but the tokenless executable is not on PATH. Add npm's global bin directory to PATH, then run tokenless setup."
 
 cat <<'EOF'
 
 Tokenless CLI is installed.
 
-No browser extension is required. This script will now provision the local Playwright
-runtime and managed Chrome profile, open the provider page when needed, and verify the
+This non-interactive installer will create a clean default profile on first use or
+reuse the registered default, start the local Playwright runtime, and verify the
 installation. Complete any visible sign-in, CAPTCHA, consent, or confirmation yourself.
 
 EOF
 
-"$tokenless_bin" setup --json
+"$tokenless_bin" setup --fresh --json
 "$tokenless_bin" doctor --json
