@@ -9,7 +9,7 @@ Complete this workflow before using the `tokenless` skill. Execute commands your
 
 ## Install
 
-1. Require Node.js 24.15 or newer:
+1. Require Node.js 22.13 or newer:
 
    ```bash
    node --version
@@ -61,7 +61,7 @@ npx tokenless@latest doctor --json
 
 Run `npx tokenless@latest doctor --json` first and use its exact failed check as the repair boundary:
 
-- Node.js failure: require Node.js 24.15 or newer.
+- Node.js failure: require Node.js 22.13 or newer.
 - CLI, daemon, or Playwright worker failure: rerun `npx tokenless@latest setup --clean-profile --json`, then rerun `doctor`.
 - Browser failure: require a supported installed browser selected by setup; do not silently substitute a different browser.
 - Missing default profile: rerun default setup to create one. For an invalid existing profile, report it instead of replacing or re-importing it automatically.

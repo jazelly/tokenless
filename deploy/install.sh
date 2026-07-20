@@ -9,11 +9,11 @@ fail() {
   exit 1
 }
 
-command -v node >/dev/null 2>&1 || fail 'Node.js 24.15 or newer is required.'
-command -v npm >/dev/null 2>&1 || fail 'npm is required with Node.js 24.15 or newer.'
+command -v node >/dev/null 2>&1 || fail 'Node.js 22.13 or newer is required.'
+command -v npm >/dev/null 2>&1 || fail 'npm is required with Node.js 22.13 or newer.'
 
-node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 24 || (major === 24 && minor >= 15) ? 0 : 1)' \
-  || fail "Node.js 24.15 or newer is required; found $(node --version)."
+node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 13) ? 0 : 1)' \
+  || fail "Node.js 22.13 or newer is required; found $(node --version)."
 
 printf 'Installing %s@%s...\n' "$PACKAGE_NAME" "$PACKAGE_VERSION"
 npm install --global "${PACKAGE_NAME}@${PACKAGE_VERSION}"

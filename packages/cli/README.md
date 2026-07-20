@@ -4,7 +4,7 @@
 
 ## Install
 
-Requires Node.js 24.15+ and a supported Chromium browser such as Google Chrome or Brave.
+Requires Node.js 22.13+ and a supported Chromium browser such as Google Chrome or Brave.
 
 ### npm (recommended)
 

@@ -353,7 +353,7 @@ before changing the Dashboard. Do not silently diverge.
 ### Prerequisites
 
 - Chrome or a supported Chromium browser.
-- Node.js 24.15 or later.
+- Node.js 22.13 or later.
 - Internet access to npm and one supported provider website.
 - A normal ChatGPT, Claude, or Gemini account that the reviewer is already
   authorised to use. Vertile does not supply, request, or retain credentials.
@@ -367,7 +367,7 @@ explicit extension ID even after the CLI default is corrected.
 ```text
 Tokenless routes requests from local tools through the visible ChatGPT, Claude, or Gemini page selected by the user. It requires a user-installed local runtime and a normal provider account. Vertile does not supply, request, or retain provider credentials.
 
-Prerequisites: Chrome/Chromium, Node.js 24.15+, internet access to npm, and a normal account already signed in to one supported provider website.
+Prerequisites: Chrome/Chromium, Node.js 22.13+, internet access to npm, and a normal account already signed in to one supported provider website.
 
 1. Install this reviewed extension in Chrome.
 2. In a terminal, run:
