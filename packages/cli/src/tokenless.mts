@@ -72,7 +72,6 @@ import {
   installTokenlessSkills,
 } from './setup-workflow.js'
 import {
-  SETUP_PROFILE_COPY_CONSENT_DEFAULT,
   SETUP_MANAGED_PROFILE_DISCLOSURE,
   SETUP_READINESS_DISCLOSURE,
   createSetupPresenter,
@@ -2405,7 +2404,7 @@ async function ensureSetupManagedProfile({
         )
       }
       const source = await selectSetupSourceProfile({ args, browser, prompt })
-      await requireSetupCopyConsent({ args, prompt, source, destination: selected.directory })
+      requireSetupCopyAuthorization({ args, prompt })
       try {
         return await presenter.withProgress(`Re-importing ${source.name} into managed profile ${selected.slug}`, async () => {
           await stopRunnerSupervisor({ homeDir })
@@ -2460,7 +2459,7 @@ async function ensureSetupManagedProfile({
       'Initial noninteractive setup requires --defaults, --clean-profile, or --import-browser-profile with explicit copy consent.'
     )
   }
-  if (source) await requireSetupCopyConsent({ args, prompt, source, destination: slug })
+  if (source) requireSetupCopyAuthorization({ args, prompt })
   let record = await presenter.withProgress(
     source ? `Creating managed profile ${slug} for import` : `Creating clean managed profile ${slug}`,
     () => registry.addProfile({
@@ -2742,25 +2741,14 @@ function setupProfileImportBrowser(browser: string): 'chrome' | 'brave' {
   return browser === 'brave' ? 'brave' : 'chrome'
 }
 
-async function requireSetupCopyConsent({
+function requireSetupCopyAuthorization({
   args,
   prompt,
-  source,
-  destination,
 }: {
   args: CliArgs
   prompt: ReturnType<typeof createSetupPrompt> | null
-  source: { userDataDir: string; directoryKey: string }
-  destination: string
 }) {
-  if (args.consentLocalProfileCopy === true) return
-  const approved = prompt
-    ? await prompt.confirm(
-        `Copy ${path.join(source.userDataDir, source.directoryKey)} into managed profile ${destination}? The local filtered copy may include cookies and site storage for sign-in; Tokenless never extracts or uploads them. Sensitive browsing data is excluded.`,
-        SETUP_PROFILE_COPY_CONSENT_DEFAULT
-      )
-    : false
-  if (!approved) {
+  if (!prompt && args.consentLocalProfileCopy !== true) {
     throw usageError('profile_import_consent_required', 'Browser profile import requires explicit local profile copy consent.')
   }
 }
