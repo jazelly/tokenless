@@ -103,7 +103,7 @@ The CLI and local API are two interfaces to the same Playwright automation. Dire
 ## Privacy and Safety
 
 - Playwright runs locally with visible, persistent managed Chromium profiles.
-- Authentication state remains opaque inside the selected managed profile.
+- Consented profile import keeps selected ChatGPT, Claude, or Grok cookie contents opaque and local; Gemini/Google and shared browser storage are not imported.
 - Automation uses visible page controls and checks the visible result of each action.
 - CAPTCHA, sign-in, plan limits, consent, and confirmations remain under user control.
 - Selected files are staged locally, integrity-checked, and uploaded through the provider's visible file control.
