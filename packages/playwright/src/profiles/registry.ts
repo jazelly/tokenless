@@ -8,6 +8,7 @@ import { withPrivateSqliteWriterLock } from './sqlite-lock.js'
 import type { ProviderId } from '../providers.js'
 
 export type ProfileLifecycleState = 'created' | 'importing' | 'ready' | 'removed' | 'failed'
+export type ManagedProfileLabelOrigin = 'slug' | 'import' | 'user'
 
 export type ProviderStatus = {
   provider: ProviderId
@@ -19,6 +20,7 @@ export type ManagedProfileRecord = {
   slug: string
   id: string
   label: string
+  labelOrigin: ManagedProfileLabelOrigin
   directory: string
   lifecycle: ProfileLifecycleState
   createdAt: string
@@ -41,6 +43,7 @@ export type ManagedProfileRegistryData = {
 export type AddProfileOptions = {
   slug: string
   label?: string
+  labelOrigin?: ManagedProfileLabelOrigin
   setDefault?: boolean
   lifecycle?: ProfileLifecycleState
 }
@@ -78,10 +81,12 @@ export class ManagedProfileRegistry {
       const id = randomUUID()
       const directory = this.profileDirectory(id)
       const lifecycle = options.lifecycle ?? 'created'
+      const labelOrigin = options.labelOrigin ?? (options.label === undefined ? 'slug' : 'user')
       const record: ManagedProfileRecord = {
         slug,
         id,
         label: normalizeLabel(options.label, slug),
+        labelOrigin,
         directory,
         lifecycle,
         createdAt: now,
@@ -188,14 +193,19 @@ export class ManagedProfileRegistry {
     })
   }
 
-  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; importedAt?: string; browser?: string }): Promise<ManagedProfileRecord> {
+  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; profileName?: string; importedAt?: string; browser?: string }): Promise<ManagedProfileRecord> {
     return await this.withWriteLock(async () => {
       const data = await this.readUnlocked()
       const record = data.profiles[normalizeSlug(slug)]
       if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
       const now = new Date().toISOString()
+      const usesImportedLabel = imported.profileName !== undefined && record.labelOrigin !== 'user'
       const updated: ManagedProfileRecord = {
         ...record,
+        ...(usesImportedLabel ? {
+          label: normalizeLabel(imported.profileName, record.slug),
+          labelOrigin: 'import',
+        } : {}),
         lifecycle: 'ready',
         updatedAt: now,
         import: {
@@ -309,15 +319,18 @@ function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegi
     if (record.directory !== directory || !isPathInside(profilesRoot, directory)) {
       throw tokenlessError('invalid_profile_registry', 'Managed profile directory is malformed.')
     }
+    const label = typeof record.label === 'string' ? record.label.slice(0, 120) : normalizedSlug
+    const importMetadata = parseImportMetadata(record.import)
     profiles[normalizedSlug] = {
       slug: normalizedSlug,
       id: record.id,
-      label: typeof record.label === 'string' ? record.label.slice(0, 120) : normalizedSlug,
+      label,
+      labelOrigin: parseLabelOrigin(record.labelOrigin, label, normalizedSlug, 'import' in importMetadata),
       directory,
       lifecycle: parseLifecycle(record.lifecycle),
       createdAt: parseIso(record.createdAt),
       updatedAt: parseIso(record.updatedAt),
-      ...parseImportMetadata(record.import),
+      ...importMetadata,
       lastObservedAuth: parseProviderStatuses(record.lastObservedAuth),
     }
   }
@@ -330,6 +343,12 @@ function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegi
     defaultProfile,
     profiles,
   }
+}
+
+function parseLabelOrigin(value: unknown, label: string, slug: string, imported: boolean): ManagedProfileLabelOrigin {
+  if (value === 'slug' || value === 'import' || value === 'user') return value
+  if (imported && label === slug) return 'import'
+  return label === slug ? 'slug' : 'user'
 }
 
 function parseProviderStatuses(value: unknown): Partial<Record<ProviderId, ProviderStatus>> {
