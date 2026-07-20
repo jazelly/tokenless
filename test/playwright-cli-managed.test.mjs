@@ -883,6 +883,45 @@ test('CLI discovers Chrome profile directory keys without creating a managed pro
   }
 })
 
+test('CLI uses the imported Chrome profile name as the default managed profile label', () => {
+  const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-import-label-')))
+  const chromeRoot = path.join(tempRoot, 'chrome-root')
+  const homeDir = path.join(tempRoot, 'tokenless-home')
+  fs.mkdirSync(path.join(chromeRoot, 'Default'), { recursive: true })
+  fs.writeFileSync(path.join(chromeRoot, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: {
+          name: 'Jason',
+          is_using_default_name: true,
+        },
+      },
+    },
+  }), 'utf8')
+
+  try {
+    const imported = runCli([
+      'profiles',
+      'add',
+      '--profile', 'default',
+      '--browser', 'chrome',
+      '--browser-user-data-dir', chromeRoot,
+      '--import-browser-profile', 'Default',
+      '--consent-local-profile-copy',
+      '--set-default',
+      '--home', homeDir,
+      '--json',
+    ])
+
+    assert.equal(imported.status, 0, imported.stderr || imported.stdout)
+    const payload = JSON.parse(imported.stdout)
+    assert.equal(payload.profile.slug, 'default')
+    assert.equal(payload.profile.label, 'Jason')
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
 test('CLI submits managed Playwright jobs through real daemon with profile-filtered state', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-playwright-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
