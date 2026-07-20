@@ -51,6 +51,7 @@ Add the following profile administration commands:
 tokenless profiles add --profile <slug> [--label <text>] [--set-default]
 tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json
 tokenless profiles list
+tokenless profiles clear (--profile <slug>|--all)
 tokenless profiles status --profile <slug> [--provider <id>]
 tokenless profiles open --profile <slug> [--provider <id>]
 tokenless profiles reset [--profile <slug>] [--preferred-providers <list>]

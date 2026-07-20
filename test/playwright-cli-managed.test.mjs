@@ -1150,6 +1150,48 @@ test('CLI keeps the previous managed profile ready when reset staging fails', ()
   }
 })
 
+test('CLI clears one managed profile by slug or every profile with --all', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-clear-profiles-')))
+  try {
+    const addDefault = runCli(['profiles', 'add', '--profile', 'default', '--set-default', '--home', homeDir, '--json'])
+    const addWork = runCli(['profiles', 'add', '--profile', 'work', '--home', homeDir, '--json'])
+    assert.equal(addDefault.status, 0, addDefault.stderr || addDefault.stdout)
+    assert.equal(addWork.status, 0, addWork.stderr || addWork.stdout)
+    const registryPath = path.join(homeDir, 'browser', 'profiles.json')
+    let registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'))
+    const defaultDirectory = registry.profiles.default.directory
+    const workDirectory = registry.profiles.work.directory
+
+    const missingTarget = runCli(['profiles', 'clear', '--home', homeDir, '--json'])
+    assert.notEqual(missingTarget.status, 0)
+    assert.match(missingTarget.stdout, /profile_clear_target_required/)
+    const ambiguousTarget = runCli(['profiles', 'clear', '--profile', 'work', '--all', '--home', homeDir, '--json'])
+    assert.notEqual(ambiguousTarget.status, 0)
+    assert.match(ambiguousTarget.stdout, /profile_clear_target_required/)
+
+    const clearWork = runCli(['profiles', 'clear', '--profile', 'work', '--home', homeDir, '--json'])
+    assert.equal(clearWork.status, 0, clearWork.stderr || clearWork.stdout)
+    assert.deepEqual(JSON.parse(clearWork.stdout).cleared.map((profile) => profile.slug), ['work'])
+    assert.equal(fs.existsSync(workDirectory), false)
+    assert.equal(fs.existsSync(defaultDirectory), true)
+
+    const addTest = runCli(['profiles', 'add', '--profile', 'test', '--home', homeDir, '--json'])
+    assert.equal(addTest.status, 0, addTest.stderr || addTest.stdout)
+    registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'))
+    const testDirectory = registry.profiles.test.directory
+    const clearAll = runCli(['profiles', 'clear', '--all', '--home', homeDir, '--json'])
+    assert.equal(clearAll.status, 0, clearAll.stderr || clearAll.stdout)
+    const payload = JSON.parse(clearAll.stdout)
+    assert.deepEqual(payload.cleared.map((profile) => profile.slug).sort(), ['default', 'test'])
+    assert.equal(payload.defaultProfile, null)
+    assert.equal(fs.existsSync(defaultDirectory), false)
+    assert.equal(fs.existsSync(testDirectory), false)
+    assert.deepEqual(JSON.parse(fs.readFileSync(registryPath, 'utf8')).profiles, {})
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('CLI requires explicit selected providers for browser profile imports', () => {
   const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-import-provider-required-')))
   const chromeRoot = path.join(tempRoot, 'chrome-root')

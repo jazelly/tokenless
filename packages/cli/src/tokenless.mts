@@ -631,6 +631,39 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     }
   }
 
+  if (subcommand === 'clear') {
+    const clearAll = args.allProfiles === true
+    const selectedSlug = args.profile === undefined ? null : String(args.profile)
+    if (clearAll === (selectedSlug !== null)) {
+      throw usageError(
+        'profile_clear_target_required',
+        'Profiles clear requires exactly one of --profile <slug> or --all.'
+      )
+    }
+    const targets = clearAll
+      ? await registry.listProfiles()
+      : [await registry.resolveProfile(selectedSlug!)]
+    const runner = await stopRunnerSupervisor({ homeDir })
+    if (runner.state === 'unsafe') {
+      throw usageError(
+        'profile_clear_runner_unsafe',
+        'Cannot clear managed profiles while the Playwright runner identity is unverified.'
+      )
+    }
+    const cleared = []
+    for (const profile of targets) {
+      const removed = await registry.removeProfile(profile.slug, { confirmDelete: true })
+      cleared.push({ slug: removed.slug, id: removed.id, label: removed.label })
+    }
+    printPayload({
+      ok: true,
+      cleared,
+      defaultProfile: (await registry.read()).defaultProfile,
+      runner,
+    }, args)
+    return
+  }
+
   if (subcommand === 'list') {
     const defaultSlug = await defaultProfileSlug(registry)
     const profiles = (await managedProfilesWithDisplayLabels(await registry.listProfiles()))
@@ -3453,6 +3486,7 @@ function parseArgs(argv: string[]): CliArgs {
     '--defaults': 'setupDefaults',
     '--disabled': 'disabled',
     '--isolated': 'isolated',
+    '--all': 'allProfiles',
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] as string
@@ -3583,6 +3617,7 @@ function assertProfilesCommandArguments(subcommand: string | undefined, args: Cl
   const common = ['files', 'home', 'json', 'profile']
   const byCommand: Record<string, string[]> = {
     add: [...common, 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'preferredProviders', 'setDefault'],
+    clear: [...common, 'allProfiles'],
     discover: ['files', 'browser', 'chromeUserDataDir', 'json'],
     list: ['files', 'home', 'json'],
     reset: [...common, 'preferredProviders'],
@@ -3592,7 +3627,7 @@ function assertProfilesCommandArguments(subcommand: string | undefined, args: Cl
     remove: [...common, 'confirmDelete'],
   }
   if (subcommand === undefined || byCommand[subcommand] === undefined) {
-    throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, discover, list, reset, status, open, set-default, or remove.')
+    throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, clear, discover, list, reset, status, open, set-default, or remove.')
   }
   assertOnlyArguments(args, new Set(byCommand[subcommand]), `profiles ${subcommand}`)
 }
@@ -3691,8 +3726,12 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
     ['setDefault', '--set-default'],
     ['confirmDelete', '--confirm-delete'],
     ['consentLocalProfileCopy', '--consent-local-profile-copy'],
+    ['allProfiles', '--all'],
   ] as const
   const selectedProfilesOnly = profilesOnly.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag)
+  if (command !== 'profiles' && args.allProfiles === true) {
+    throw usageError('profiles_options_require_profiles_command', '--all is accepted only by the profiles command.')
+  }
   if (command !== 'profiles' && command !== 'setup' && selectedProfilesOnly.length > 0) {
     throw usageError(
       'profiles_options_require_profiles_command',
@@ -4047,6 +4086,7 @@ function usage() {
     '  tokenless profiles add --profile <slug> --browser <chrome|brave> --import-browser-profile <Default|Profile 1> --preferred-providers <list> [--browser-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
     '  tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json',
     '  tokenless profiles list --json',
+    '  tokenless profiles clear (--profile <slug>|--all) --json',
     '  tokenless profiles reset [--profile <slug>] [--preferred-providers <list>] --json',
     '  tokenless profiles status|open [--profile <slug>] [--provider <provider>] --json',
     '  tokenless profiles set-default --profile <slug> --json',
