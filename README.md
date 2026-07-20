@@ -14,7 +14,7 @@ Use the AI web subscriptions you already have from any agent through one local C
 
 ## Install
 
-Requires Node.js 24.15+ and a supported Chromium browser such as Google Chrome or Brave.
+Requires Node.js 22.13+ and a supported Chromium browser such as Google Chrome or Brave.
 
 ### npm (recommended)
 
@@ -122,7 +122,7 @@ Public API backends require an explicit model and an environment-supplied creden
 
 ## Development
 
-Requires Node.js 24.15+, npm, Rust, and Google Chrome.
+Requires Node.js 22.13+, npm, Rust, and Google Chrome.
 
 ```bash
 npm run build

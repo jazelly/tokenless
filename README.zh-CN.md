@@ -14,7 +14,7 @@
 
 ## 安装
 
-需要 Node.js 24.15+ 和 Google Chrome。
+需要 Node.js 22.13+ 和 Google Chrome。
 
 ### npm（推荐）
 
@@ -128,7 +128,7 @@ tokenless run --mode direct --provider chatgpt --prompt "审查这个设计。" 
 
 ## 开发
 
-需要 Node.js 24.15+、npm、Rust 和 Google Chrome。
+需要 Node.js 22.13+、npm、Rust 和 Google Chrome。
 
 ```bash
 npm run build
