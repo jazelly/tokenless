@@ -54,6 +54,8 @@ test('npm publishing is marker-gated, platform-complete, and cleans up in a seco
   const publish = readText('.github/workflows/publish-npm.yml')
   assert.match(prepare, /uses: changesets\/action@v1/)
   assert.match(prepare, /version: npm run release:version/)
+  assert.match(prepare, /npm install --ignore-scripts/)
+  assert.doesNotMatch(`${prepare}\n${publish}`, /npm ci/)
   assert.match(publish, /id-token: write/)
   assert.doesNotMatch(publish, /NPM_TOKEN|_authToken|Configure npm token fallback/)
   assert.match(publish, /\.changeset\/publish-pending\.json/)

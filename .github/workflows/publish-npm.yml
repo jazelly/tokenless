@@ -85,10 +85,9 @@ jobs:
       - name: Install dependencies
         run: |
           # Native packages are published immediately before this job, so refresh
-          # their optional-dependency entries before performing a clean install.
+          # their optional-dependency entries while installing the workspace.
           rm package-lock.json
-          npm install --package-lock-only --ignore-scripts
-          npm ci --ignore-scripts
+          npm install --ignore-scripts
       - name: Publish universal CLI after every native runtime
         run: node scripts/release/publish-package.mjs packages/cli
 
