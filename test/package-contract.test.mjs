@@ -9,7 +9,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
-const playwrightDir = path.join(root, 'packages/playwright')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const executableSuffix = process.platform === 'win32' ? '.exe' : ''
 const nativeTuples = [
@@ -32,6 +31,8 @@ test('workspace packages keep standalone product names', () => {
 
 test('universal CLI package contains JS only and declares exact platform runtime optionals', () => {
   const pkg = readJson('packages/cli/package.json')
+  assert.equal(pkg.dependencies['@tokenless/playwright'], undefined)
+  assert.equal(typeof pkg.dependencies['playwright-core'], 'string')
   assert.match(pkg.scripts.build, /build:native/)
   assert.match(pkg.scripts['build:native'], /build-rust-binaries\.mjs/)
   assert.doesNotMatch(pkg.scripts.prepack, /build-rust-binaries/)
@@ -48,6 +49,9 @@ test('universal CLI package contains JS only and declares exact platform runtime
   const paths = pack.files.map((file) => file.path)
   assert.equal(paths.some((file) => file.startsWith('dist/bin/') || file.startsWith('npm/')), false)
   assert.ok(paths.includes('dist/src/tokenless.mjs'))
+  assert.ok(paths.includes('dist/src/playwright/index.js'))
+  assert.ok(paths.includes('dist/src/playwright/index.d.ts'))
+  assert.ok(paths.includes('dist/src/playwright/runner-entry.mjs'))
   assert.ok(paths.includes('README.md'))
   assert.equal(paths.some((file) => /native-host\.mjs$/.test(file)), false)
 
@@ -62,6 +66,33 @@ test('universal CLI package contains JS only and declares exact platform runtime
     "path.join(homeDir, 'jobs')",
   ]) {
     assert.doesNotMatch(compiledStore, new RegExp(legacyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+})
+
+test('public manifests do not reference unpublished scoped Tokenless runtime packages', () => {
+  const publicManifests = [
+    readJson('packages/cli/package.json'),
+    ...nativeTuples.map(([platform, arch]) => readJson(`packages/cli/npm/tokenless-native-${platform}-${arch}/package.json`)),
+  ]
+  for (const manifest of publicManifests) {
+    for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const packageName of Object.keys(manifest[field] ?? {})) {
+        assert.notEqual(packageName, '@tokenless/playwright')
+        assert.equal(packageName.startsWith('@tokenless/'), false, `${manifest.name} must not publish ${field}.${packageName}`)
+      }
+    }
+  }
+
+  const rootPackage = readJson('package.json')
+  assert.equal(rootPackage.workspaces.includes('packages/playwright'), false)
+
+  const lock = readJson('package-lock.json')
+  for (const [packagePath, entry] of Object.entries(lock.packages)) {
+    assert.notEqual(entry.name, '@tokenless/playwright', `${packagePath} must not be a scoped Playwright package`)
+    assert.equal(packagePath.includes('@tokenless/playwright'), false)
+    for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      assert.equal(entry[field]?.['@tokenless/playwright'], undefined, `${packagePath} must not depend on @tokenless/playwright`)
+    }
   }
 })
 
@@ -175,16 +206,14 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
   const runtimeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-pack-runtime-'))
   const manifestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-pack-manifest-'))
   let universalTarball
-  let playwrightTarball
   let nativeTarball
   try {
-    const playwrightPack = npmPack(playwrightDir, packDir)
     const universalPack = npmPack(cliDir, packDir)
     const nativePack = npmPack(nativePackageDir, packDir)
-    playwrightTarball = path.join(packDir, playwrightPack.filename)
     universalTarball = path.join(packDir, universalPack.filename)
     nativeTarball = path.join(packDir, nativePack.filename)
-    assert.ok(playwrightPack.files.some((file) => file.path === 'dist/src/index.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/runner-entry.mjs'))
     const nativePaths = nativePack.files.map((file) => file.path)
     assert.ok(nativePaths.includes(`bin/tokenless-daemon${executableSuffix}`))
     assert.equal(nativePaths.includes(`bin/tokenless-native-host${executableSuffix}`), false)
@@ -192,7 +221,6 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
 
     execFileSync('npm', [
       'install',
-      playwrightTarball,
       universalTarball,
       nativeTarball,
       '--prefix',
@@ -204,10 +232,11 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
     ], { encoding: 'utf8' })
 
     const installedCli = path.join(installDir, 'node_modules', 'tokenless')
-    const installedPlaywright = path.join(installDir, 'node_modules', '@tokenless', 'playwright')
     const installedNative = path.join(installDir, 'node_modules', packageName)
     assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'bin')), false)
-    assert.equal(fs.existsSync(path.join(installedPlaywright, 'dist', 'src', 'index.js')), true)
+    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'src', 'playwright', 'index.js')), true)
+    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'src', 'playwright', 'runner-entry.mjs')), true)
+    assert.equal(fs.existsSync(path.join(installDir, 'node_modules', '@tokenless', 'playwright')), false)
     assert.equal(fs.existsSync(path.join(installedNative, 'bin', `tokenless-daemon${executableSuffix}`)), true)
     if (process.platform !== 'win32') {
       const installedBin = path.join(installDir, 'node_modules', '.bin', 'tokenless')
@@ -227,7 +256,6 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
     assert.equal(installed.nativeHostExecutable, undefined)
   } finally {
     if (universalTarball) fs.rmSync(universalTarball, { force: true })
-    if (playwrightTarball) fs.rmSync(playwrightTarball, { force: true })
     if (nativeTarball) fs.rmSync(nativeTarball, { force: true })
     fs.rmSync(packDir, { recursive: true, force: true })
     fs.rmSync(installDir, { recursive: true, force: true })

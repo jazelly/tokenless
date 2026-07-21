@@ -57,9 +57,16 @@ function assertVersion(manifest, version, label) {
 
 function packageVersion(file) {
   const source = fs.readFileSync(file, 'utf8')
-  const match = source.match(/(?:\[package\]|\[\[package\]\]\nname = "tokenless-daemon")[\s\S]*?\nversion = "([^"]+)"/)
-  if (!match?.[1]) throw new Error(`Could not find the Tokenless package version in ${file}.`)
-  return match[1]
+  const packageBlockPattern = path.basename(file) === 'Cargo.lock'
+    ? /(?:^|\n)\[\[package\]\][\s\S]*?(?=\n\[\[package\]\]|\s*$)/g
+    : /(?:^|\n)\[package\][\s\S]*?(?=\n\[|\s*$)/g
+  const matches = [...source.matchAll(packageBlockPattern)]
+    .map((match) => match[0])
+    .filter((block) => /^\s*name\s*=\s*"tokenless-daemon"\s*$/m.test(block))
+  if (matches.length !== 1) throw new Error(`Could not find exactly one Tokenless package in ${file}.`)
+  const version = matches[0].match(/^\s*version\s*=\s*"([^"]+)"\s*$/m)?.[1]
+  if (!version) throw new Error(`Could not find the Tokenless package version in ${file}.`)
+  return version
 }
 
 function writeOutput(values) {

@@ -71,7 +71,7 @@ test('canonical default setup noninteractively selects browser/profile/providers
     assert.equal('extensionBridge' in diagnosis.checks, false)
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -139,7 +139,7 @@ test('interactive setup -f reuses a managed profile without offering source prof
     assert.equal(profile.import, undefined)
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (setup?.exitCode === null) setup.kill('SIGTERM')
@@ -210,7 +210,7 @@ test('setup uses the imported browser profile name as its managed profile label'
     assert.equal(profile.labelOrigin, 'import')
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -277,7 +277,7 @@ test('interactive setup copies the chosen browser profile without a second conse
     assert.equal(profile.label, 'Jason')
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (setup?.exitCode === null) setup.kill('SIGTERM')
@@ -349,7 +349,7 @@ test('setup surfaces failed managed readiness jobs as technical CLI failures', a
     assert.notEqual(payload.status, 'waiting_for_user')
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -438,7 +438,7 @@ test('setup sweeps every selected provider before opening first actionable hando
       }).catch(() => undefined)
     }
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -504,7 +504,7 @@ test('setup returns nonzero mixed ready and failed provider summary without drop
     assert.equal(payload.error.code, 'playwright_navigation_failed')
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -591,7 +591,7 @@ test('setup preserves actionable handoff guidance when technical failures also e
       }).catch(() => undefined)
     }
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -699,7 +699,7 @@ test('interactive setup records handoff wait errors and continues later actionab
     assert.match(result.stdout, /claude: failed/)
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -782,7 +782,7 @@ test('setup returns actionable waiting_for_user data for managed browser handoff
       }).catch(() => undefined)
     }
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -856,7 +856,7 @@ test('setup treats unknown auth readiness as an inconclusive completed check req
     assert.match(payload.readiness.chatgpt.userAction.queryGuidance, /cannot resume/)
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -928,7 +928,7 @@ test('setup compact waiting output names provider profile managed Chrome window 
       }).catch(() => undefined)
     }
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -1016,7 +1016,7 @@ test('setup compact output lists every provider classification and handoff guida
       }).catch(() => undefined)
     }
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -1508,7 +1508,7 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
     assert.equal(jobs.length, 1)
   } finally {
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -1652,7 +1652,7 @@ test('attached CLI run returns waiting_for_user envelope promptly without cancel
       }).catch(() => undefined)
     }
     try {
-      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/playwright/dist/src/index.js'))
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
       await stopRunnerSupervisor({ homeDir })
     } catch {}
     if (daemonPid) await stopPid(daemonPid)
@@ -1665,7 +1665,7 @@ function writeFakeRunnerEntry(homeDir) {
   fs.writeFileSync(entry, `
 import {
   writeRunnerHeartbeat,
-} from ${JSON.stringify(path.join(root, 'packages/playwright/dist/src/index.js'))}
+} from ${JSON.stringify(path.join(root, 'packages/cli/dist/src/playwright/index.js'))}
 
 const args = new Map()
 for (let index = 2; index < process.argv.length; index += 2) args.set(process.argv[index], process.argv[index + 1])

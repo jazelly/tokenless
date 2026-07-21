@@ -12,7 +12,7 @@ import {
   startRunnerSupervisor,
   stopRunnerSupervisor,
   writeRunnerHeartbeat,
-} from '../packages/playwright/dist/src/index.js'
+} from '../packages/cli/dist/src/playwright/index.js'
 
 test('home-scoped supervisor starts one runner, waits for heartbeat, and writes private markers', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'tokenless-runner-supervisor-'))

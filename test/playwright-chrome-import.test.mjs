@@ -14,7 +14,7 @@ import {
   resolveChromeProfile,
   shouldCopyChromeEntry,
   standardChromiumUserDataDirs,
-} from '../packages/playwright/dist/src/index.js'
+} from '../packages/cli/dist/src/playwright/index.js'
 
 test('Chrome discovery enumerates exact directory keys from Local State', async () => {
   const root = await fakeChromeRoot()

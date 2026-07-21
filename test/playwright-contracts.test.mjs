@@ -15,7 +15,7 @@ import {
   canonicalProviderTarget,
   listProviders,
   validateVisibleActionRequest,
-} from '../packages/playwright/dist/src/index.js'
+} from '../packages/cli/dist/src/playwright/index.js'
 
 test('visible action validation is versioned, exact-key only, path-free in upload results, and provider-complete', () => {
   assert.deepEqual(listProviders().map((provider) => provider.id).sort(), ['chatgpt', 'claude', 'gemini', 'grok'])
@@ -284,7 +284,7 @@ test('managed Playwright source contains no forbidden browser credential or priv
     'profiles/sqlite-lock.ts',
     'providers.ts',
   ]
-  const source = (await Promise.all(files.map((file) => readFile(join('packages/playwright/src', file), 'utf8')))).join('\n')
+  const source = (await Promise.all(files.map((file) => readFile(join('packages/cli/src/playwright', file), 'utf8')))).join('\n')
   const forbidden = [
     /\.cookies\s*\(/,
     /\.storageState\s*\(/,
@@ -300,9 +300,10 @@ test('managed Playwright source contains no forbidden browser credential or priv
   }
 })
 
-test('package declares playwright-core as a direct runtime dependency', async () => {
-  const manifest = JSON.parse(await readFile('packages/playwright/package.json', 'utf8'))
+test('CLI package declares playwright-core as a direct runtime dependency', async () => {
+  const manifest = JSON.parse(await readFile('packages/cli/package.json', 'utf8'))
   assert.equal(typeof manifest.dependencies['playwright-core'], 'string')
+  assert.equal(manifest.dependencies['@tokenless/playwright'], undefined)
 })
 
 function matchCode(code) {

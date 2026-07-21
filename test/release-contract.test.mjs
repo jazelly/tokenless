@@ -55,6 +55,8 @@ test('npm publishing is marker-gated, platform-complete, and cleans up in a seco
   assert.match(prepare, /uses: changesets\/action@v1/)
   assert.match(prepare, /version: npm run release:version/)
   assert.match(prepare, /npm install --ignore-scripts/)
+  assert.match(prepare, /\.changeset\/publish-pending\.json/)
+  assert.match(prepare, /if: steps\.release-state\.outputs\.pending != 'true'/)
   assert.doesNotMatch(`${prepare}\n${publish}`, /npm ci/)
   assert.match(publish, /id-token: write/)
   assert.doesNotMatch(publish, /NPM_TOKEN|_authToken|Configure npm token fallback/)
@@ -78,15 +80,28 @@ test('npm publisher invokes Windows npm through a shell', () => {
   assert.match(publisher, /path\.resolve\(packageDirectoryArgument\)/)
 })
 
-test('publish verification is a no-op without the tracked release marker', () => {
+test('publish verification reflects the tracked release marker state', () => {
   const pending = path.join(root, '.changeset', 'publish-pending.json')
-  assert.equal(fs.existsSync(pending), false)
   const result = spawnSync(process.execPath, ['scripts/release/verify-pending.mjs'], {
     cwd: root,
     encoding: 'utf8',
   })
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(result.stdout, 'publish=false\n')
+  if (fs.existsSync(pending)) {
+    const marker = JSON.parse(fs.readFileSync(pending, 'utf8'))
+    assert.equal(result.stdout, `publish=true\nversion=${marker.version}\n`)
+  } else {
+    assert.equal(result.stdout, 'publish=false\n')
+  }
+})
+
+test('tracked Cargo manifests identify the same Tokenless daemon version', () => {
+  const cargoToml = readText('packages/daemon/Cargo.toml')
+  const cargoLock = readText('packages/daemon/Cargo.lock')
+  const manifestVersion = cargoToml.match(/\[package\]\nname = "tokenless-daemon"\nversion = "([^"]+)"/)?.[1]
+  const lockVersion = cargoLock.match(/\[\[package\]\]\nname = "tokenless-daemon"\nversion = "([^"]+)"/)?.[1]
+  assert.equal(lockVersion, manifestVersion)
+  assert.match(cargoLock, /\[\[package\]\]\nname = "ahash"\nversion = "0\.8\.12"/)
 })
 
 test('release versioning updates only tokenless-daemon in Cargo manifests', (t) => {

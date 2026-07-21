@@ -19,12 +19,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - id: release-state
+        run: |
+          if [ -f .changeset/publish-pending.json ]; then
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+            echo "A release is already pending publication; skipping version preparation."
+          else
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@v4
+        if: steps.release-state.outputs.pending != 'true'
         with:
           node-version: '24'
           cache: npm
-      - run: npm install --ignore-scripts
+      - if: steps.release-state.outputs.pending != 'true'
+        run: npm install --ignore-scripts
       - id: changesets
+        if: steps.release-state.outputs.pending != 'true'
         uses: changesets/action@v1
         with:
           version: npm run release:version
