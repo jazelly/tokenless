@@ -59,6 +59,7 @@ test('npm publishing is marker-gated, platform-complete, and cleans up in a seco
   assert.match(prepare, /if: steps\.release-state\.outputs\.pending != 'true'/)
   assert.doesNotMatch(`${prepare}\n${publish}`, /npm ci/)
   assert.match(publish, /id-token: write/)
+  assert.match(publish, /pull-requests: write/)
   assert.doesNotMatch(publish, /NPM_TOKEN|_authToken|Configure npm token fallback/)
   assert.match(publish, /\.changeset\/publish-pending\.json/)
   assert.match(publish, /needs: \[prepare, publish-native\]/)
@@ -66,6 +67,9 @@ test('npm publishing is marker-gated, platform-complete, and cleans up in a seco
   assert.match(publish, /npm install --package-lock-only --ignore-scripts/)
   assert.match(publish, /git rm \.changeset\/publish-pending\.json/)
   assert.match(publish, /git add package-lock\.json/)
+  assert.match(publish, /gh pr create/)
+  assert.match(publish, /gh pr merge/)
+  assert.doesNotMatch(publish, /git push origin HEAD:main/)
   for (const [platform, arch] of [
     ['darwin', 'arm64'], ['darwin', 'x64'], ['linux', 'arm64'],
     ['linux', 'x64'], ['win32', 'arm64'], ['win32', 'x64'],

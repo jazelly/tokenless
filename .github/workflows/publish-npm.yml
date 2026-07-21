@@ -10,6 +10,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  pull-requests: write
 
 concurrency:
   group: tokenless-npm-publish
@@ -104,12 +105,14 @@ jobs:
           node-version: '24'
       - name: Remove the published release marker in a second commit
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          CLEANUP_BRANCH="release/clear-publish-marker-$VERSION"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin main
-          git checkout -B main origin/main
+          git checkout -B "$CLEANUP_BRANCH" origin/main
           node scripts/release/verify-pending.mjs /tmp/release-output
           grep -Fx "version=$VERSION" /tmp/release-output
           rm package-lock.json
@@ -117,4 +120,10 @@ jobs:
           git rm .changeset/publish-pending.json
           git add package-lock.json
           git commit -m "chore(release): clear publish marker for tokenless@$VERSION"
-          git push origin HEAD:main
+          git push origin "HEAD:refs/heads/$CLEANUP_BRANCH"
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "$CLEANUP_BRANCH" \
+            --title "chore(release): clear publish marker for tokenless@$VERSION" \
+            --body "- Clear the completed tokenless@$VERSION publish marker and refresh its release lockfile.")
+          gh pr merge "$PR_URL" --rebase --delete-branch
