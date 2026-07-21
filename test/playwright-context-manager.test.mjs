@@ -6,7 +6,7 @@ import {
   TokenlessPlaywrightError,
   chromeLaunchOptions,
   managedBrowserLaunchOptions,
-} from '../packages/playwright/dist/src/index.js'
+} from '../packages/cli/dist/src/playwright/index.js'
 
 test('persistent context manager serializes same-profile work and launches Chrome persistently', async () => {
   const launches = []

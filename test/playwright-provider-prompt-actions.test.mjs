@@ -9,7 +9,7 @@ import {
   createProviderAdapterRegistry,
   createVisibleActionRequest,
   listProviders,
-} from '../packages/playwright/dist/src/index.js'
+} from '../packages/cli/dist/src/playwright/index.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = path.join(root, 'test/fixtures/provider-dom')

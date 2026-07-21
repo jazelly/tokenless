@@ -1,7 +1,6 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/cli" },
-    { "path": "./packages/playwright" }
+    { "path": "./packages/cli" }
   ]
 }

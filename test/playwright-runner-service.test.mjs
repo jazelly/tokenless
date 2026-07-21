@@ -13,9 +13,9 @@ import {
   VISIBLE_ACTIONS,
   createManagedPlaywrightJobRequest,
   tokenlessError,
-} from '../packages/playwright/dist/src/index.js'
-import { createDomProviderAdapter } from '../packages/playwright/dist/src/adapters/provider-dom-adapter.js'
-import { getProviderById } from '../packages/playwright/dist/src/providers.js'
+} from '../packages/cli/dist/src/playwright/index.js'
+import { createDomProviderAdapter } from '../packages/cli/dist/src/playwright/adapters/provider-dom-adapter.js'
+import { getProviderById } from '../packages/cli/dist/src/playwright/providers.js'
 
 test('runner polls all registered profiles with exact Playwright/profile scoping and completes lifecycle', async () => {
   const profiles = fakeProfiles(['profile-a', 'profile-b'])

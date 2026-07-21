@@ -22,7 +22,7 @@ import {
   type ManagedProfileRecord,
   type ProviderId,
   type VisibleAction,
-} from '@tokenless/playwright'
+} from './playwright/index.js'
 
 import {
   DEFAULT_DAEMON_URL,

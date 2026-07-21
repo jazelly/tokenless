@@ -6,7 +6,7 @@ import test from 'node:test'
 import {
   ManagedProfileRegistry,
   TokenlessPlaywrightError,
-} from '../packages/playwright/dist/src/index.js'
+} from '../packages/cli/dist/src/playwright/index.js'
 
 test('managed profile registry resolves explicit/default profiles without using slugs as directories', async () => {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'tokenless-playwright-registry-')))

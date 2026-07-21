@@ -15,7 +15,7 @@ import {
   cancelManagedPlaywrightJob,
   getManagedPlaywrightJob,
   validateManagedPlaywrightJobRequest,
-} from '../packages/playwright/dist/src/index.js'
+} from '../packages/cli/dist/src/playwright/index.js'
 
 test('managed Playwright job API submits versioned provider-scoped jobs through loopback daemon', async () => {
   const home = await mkdtemp(join(tmpdir(), 'tokenless-runner-api-'))
