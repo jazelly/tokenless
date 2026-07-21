@@ -30,7 +30,7 @@ export function verifyNativePackage(packageRoot = process.cwd()) {
   }
 
   const suffix = platform === 'win32' ? '.exe' : ''
-  for (const binaryName of ['tokenless-daemon', 'tokenless-native-host']) {
+  for (const binaryName of ['tokenless-daemon']) {
     const binary = path.join(packageRoot, 'bin', `${binaryName}${suffix}`)
     const stat = fs.statSync(binary)
     if (!stat.isFile() || stat.size < 100_000) {

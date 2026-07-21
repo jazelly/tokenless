@@ -10,7 +10,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionPath = path.join(root, 'packages/extension/dist/extension')
+const extensionPath = path.join(root, 'legacy/extension/dist/extension')
 const chatGptRealDomFixturePath = path.join(root, 'test/fixtures/chatgpt-real-dom-fixture.html')
 const claudeRealDomFixturePath = path.join(root, 'test/fixtures/claude-real-dom-fixture.html')
 const geminiRealDomFixturePath = path.join(root, 'test/fixtures/gemini-real-dom-fixture.html')
@@ -30,8 +30,8 @@ test('daemon job completes through extension service worker and ChatGPT real-DOM
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     readLiveBridgeMarker,
-  } = await import('../packages/cli/dist/src/index.js')
-  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+  } = await import('../../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../extension/default-extension-id.mjs')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-daemon-e2e-'))
   const artifactDir = await createArtifactDir()
@@ -439,8 +439,8 @@ test('visible attachment bytes traverse CLI, daemon, native host, extension, and
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     readLiveBridgeMarker,
-  } = await import('../packages/cli/dist/src/index.js')
-  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+  } = await import('../../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../extension/default-extension-id.mjs')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-attachment-e2e-'))
   const userDataDir = path.join(tempRoot, 'profile')
@@ -827,8 +827,8 @@ test('daemon job completes through extension service worker and Claude real-DOM 
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     readLiveBridgeMarker,
-  } = await import('../packages/cli/dist/src/index.js')
-  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+  } = await import('../../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../extension/default-extension-id.mjs')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-claude-daemon-e2e-'))
   const artifactDir = await createArtifactDir()
@@ -1071,8 +1071,8 @@ test('daemon job completes through extension service worker and Gemini real-DOM 
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     readLiveBridgeMarker,
-  } = await import('../packages/cli/dist/src/index.js')
-  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+  } = await import('../../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../extension/default-extension-id.mjs')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-gemini-daemon-e2e-'))
   const artifactDir = await createArtifactDir()
@@ -1326,8 +1326,8 @@ test('daemon job completes through extension service worker and Grok real-DOM fi
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     readLiveBridgeMarker,
-  } = await import('../packages/cli/dist/src/index.js')
-  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+  } = await import('../../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../extension/default-extension-id.mjs')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-grok-daemon-e2e-'))
   const artifactDir = await createArtifactDir()
@@ -1583,8 +1583,8 @@ test('an already-open browser extension reconnects after setup installs its nati
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     readLiveBridgeMarker,
-  } = await import('../packages/cli/dist/src/index.js')
-  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+  } = await import('../../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../extension/default-extension-id.mjs')
 
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-setup-reconnect-e2e-'))
   const userDataDir = path.join(tempRoot, 'profile')

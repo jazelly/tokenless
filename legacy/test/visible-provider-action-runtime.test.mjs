@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const ACTION_MODULE = '../packages/extension/dist/extension/shared/visible-provider-actions.js'
-const RUNTIME_MODULE = '../packages/extension/dist/extension/background/visible-provider-action-runtime.js'
+const ACTION_MODULE = '../legacy/extension/dist/extension/shared/visible-provider-actions.js'
+const RUNTIME_MODULE = '../legacy/extension/dist/extension/background/visible-provider-action-runtime.js'
 
 async function runtimeRequest(provider, action, payload, overrides = {}) {
   const actions = await import(ACTION_MODULE)

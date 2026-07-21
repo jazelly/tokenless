@@ -22,15 +22,12 @@ const nativeTuples = [
 ]
 
 test('workspace packages keep standalone product names', () => {
-  const packages = Object.fromEntries(
-    ['cli', 'extension'].map((folder) => [folder, readJson(`packages/${folder}/package.json`)])
-  )
-  assert.equal(packages.cli.name, 'tokenless')
-  assert.equal(packages.extension.name, 'tokenless-browser-session-bridge')
-  assert.deepEqual(packages.cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
-  for (const pkg of Object.values(packages)) {
-    assert.ok(!pkg.name.startsWith('@tokenless/'))
-  }
+  const cli = readJson('packages/cli/package.json')
+  assert.equal(cli.name, 'tokenless')
+  assert.deepEqual(cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
+  assert.ok(!cli.name.startsWith('@tokenless/'))
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
+  assert.equal(fs.existsSync(path.join(root, 'legacy/extension/package.json')), true)
 })
 
 test('universal CLI package contains JS only and declares exact platform runtime optionals', () => {
@@ -122,7 +119,7 @@ test('native package verifier proves binary role, version, and normalized target
   const verification = await import(`${pathToFileURL(verifier).href}?verification=${Date.now()}`)
   const expectedKeys = ['arch', 'binary', 'platform', 'protocol', 'version']
 
-  for (const binary of ['tokenless-daemon', 'tokenless-native-host']) {
+  for (const binary of ['tokenless-daemon']) {
     const executable = path.join(nativePackageDir, 'bin', `${binary}${executableSuffix}`)
     const buildInfo = JSON.parse(execFileSync(executable, ['--tokenless-build-info'], {
       encoding: 'utf8',
@@ -150,18 +147,21 @@ test('native package verifier proves binary role, version, and normalized target
     fs.copyFileSync(path.join(nativePackageDir, 'package.json'), path.join(swappedPackageDir, 'package.json'))
     fs.mkdirSync(path.join(swappedPackageDir, 'bin'))
     const daemon = path.join(nativePackageDir, 'bin', `tokenless-daemon${executableSuffix}`)
-    const nativeHost = path.join(nativePackageDir, 'bin', `tokenless-native-host${executableSuffix}`)
     const swappedDaemon = path.join(swappedPackageDir, 'bin', `tokenless-daemon${executableSuffix}`)
-    const swappedNativeHost = path.join(swappedPackageDir, 'bin', `tokenless-native-host${executableSuffix}`)
-    fs.copyFileSync(nativeHost, swappedDaemon)
-    fs.copyFileSync(daemon, swappedNativeHost)
-    if (process.platform !== 'win32') {
-      fs.chmodSync(swappedDaemon, 0o755)
-      fs.chmodSync(swappedNativeHost, 0o755)
-    }
-    const swapped = spawnSync(process.execPath, [verifier], { cwd: swappedPackageDir, encoding: 'utf8' })
-    assert.notEqual(swapped.status, 0)
-    assert.match(swapped.stderr, /build identity mismatch/)
+    // Corrupt the build-info role by writing an empty executable placeholder when possible.
+    fs.writeFileSync(swappedDaemon, fs.readFileSync(daemon))
+    if (process.platform !== 'win32') fs.chmodSync(swappedDaemon, 0o755)
+    const buildInfo = JSON.parse(execFileSync(swappedDaemon, ['--tokenless-build-info'], {
+      encoding: 'utf8',
+      timeout: 5_000,
+    }))
+    assert.throws(
+      () => verification.validateNativeBuildInfo({ ...buildInfo, binary: 'tokenless-native-host' }, {
+        ...buildInfo,
+        binary: 'tokenless-daemon',
+      }),
+      /build identity mismatch/
+    )
   } finally {
     fs.rmSync(swappedPackageDir, { recursive: true, force: true })
   }
@@ -187,7 +187,7 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
     assert.ok(playwrightPack.files.some((file) => file.path === 'dist/src/index.js'))
     const nativePaths = nativePack.files.map((file) => file.path)
     assert.ok(nativePaths.includes(`bin/tokenless-daemon${executableSuffix}`))
-    assert.ok(nativePaths.includes(`bin/tokenless-native-host${executableSuffix}`))
+    assert.equal(nativePaths.includes(`bin/tokenless-native-host${executableSuffix}`), false)
     assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/bin/')), false)
 
     execFileSync('npm', [
@@ -222,12 +222,9 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
 
     const installed = await exports.installRustRuntime({
       homeDir: runtimeHome,
-      manifestHome,
-      extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-      browsers: ['profile'],
     })
     assert.equal(fs.existsSync(installed.daemonExecutable), true)
-    assert.equal(fs.existsSync(installed.nativeHostExecutable), true)
+    assert.equal(installed.nativeHostExecutable, undefined)
   } finally {
     if (universalTarball) fs.rmSync(universalTarball, { force: true })
     if (playwrightTarball) fs.rmSync(playwrightTarball, { force: true })
@@ -239,34 +236,19 @@ test('current platform runtime and universal CLI truly pack, install, and resolv
   }
 })
 
-test('Rust runtime install copies executables and writes an exact direct native-host manifest', async () => {
+test('Rust runtime install copies the daemon executable only', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-rust-install-'))
-  const manifestHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-manifest-home-'))
   try {
-    const { installRustRuntime, NATIVE_HOST_NAME } = await importCli()
-    const installed = await installRustRuntime({
-      homeDir,
-      manifestHome,
-      extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-      browsers: ['profile'],
-    })
+    const { installRustRuntime } = await importCli()
+    const installed = await installRustRuntime({ homeDir })
     assert.equal(installed.runtime, 'rust')
     assert.equal(path.basename(installed.daemonExecutable), `tokenless-daemon${executableSuffix}`)
-    assert.equal(path.basename(installed.nativeHostExecutable), `tokenless-native-host${executableSuffix}`)
     assert.equal(fs.statSync(installed.daemonExecutable).isFile(), true)
-    assert.equal(fs.statSync(installed.nativeHostExecutable).isFile(), true)
-    assert.equal(installed.manifests.length, 1)
-
-    const manifest = JSON.parse(fs.readFileSync(installed.manifests[0], 'utf8'))
-    assert.equal(manifest.name, NATIVE_HOST_NAME)
-    assert.equal(manifest.path, installed.nativeHostExecutable)
-    assert.equal(manifest.type, 'stdio')
-    assert.deepEqual(manifest.allowed_origins, ['chrome-extension://abcdefghijklmnopabcdefghijklmnop/'])
-    assert.notEqual(fs.readFileSync(installed.nativeHostExecutable, { encoding: 'utf8', flag: 'r' }).slice(0, 2), '#!')
-    assert.equal(fs.existsSync(path.join(homeDir, 'bin', 'tokenless-native-host')), process.platform !== 'win32')
+    assert.equal(installed.nativeHostExecutable, undefined)
+    assert.equal(fs.existsSync(path.join(homeDir, 'bin', 'tokenless-native-host')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'bin', 'tokenless-native-host.exe')), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
-    fs.rmSync(manifestHome, { recursive: true, force: true })
   }
 })
 
@@ -561,8 +543,11 @@ test('CLI rejects removed local fallback and oversized native messages before ne
 test('agent skills use the managed Playwright workflow and two profile setup paths', () => {
   const skill = fs.readFileSync(path.join(root, 'skills/tokenless/SKILL.md'), 'utf8')
   const installSkill = fs.readFileSync(path.join(root, 'skills/tokenless-install/SKILL.md'), 'utf8')
-  assert.match(skill, /npx tokenless run/)
-  assert.match(skill, /npx tokenless state/)
+  assert.match(skill, /tokenless run/)
+  assert.match(skill, /tokenless state/)
+  assert.match(skill, /tokenless profiles list --json/)
+  assert.match(skill, /tokenless profiles status/)
+  assert.match(skill, /--profile/)
   assert.match(skill, /Rust daemon/)
   assert.match(skill, /Playwright worker/)
   assert.match(skill, /persistent managed Chromium profile/)
@@ -571,23 +556,29 @@ test('agent skills use the managed Playwright workflow and two profile setup pat
   assert.match(skill, /Do not use `--no-wait`/)
   assert.match(skill, /daemon_waiting/)
   assert.match(skill, /state.*Rust daemon/s)
+  assert.doesNotMatch(skill, /npx tokenless/)
   assert.doesNotMatch(skill, /packages\/cli/)
   assert.doesNotMatch(skill, /--no-daemon/)
   assert.doesNotMatch(skill, /tokenless-native-host|extension id|chrome:\/\/extensions/i)
 
   assert.match(installSkill, /user's preferred language/)
   assert.match(installSkill, /npm install --global tokenless@latest/)
-  assert.match(installSkill, /tokenless setup/)
   assert.match(installSkill, /tokenless setup --fresh --json/)
+  assert.match(installSkill, /tokenless profiles discover/)
+  assert.match(installSkill, /--import-browser-profile/)
+  assert.match(installSkill, /--consent-local-profile-copy/)
+  assert.match(installSkill, /Never run bare `tokenless setup`/)
   assert.match(installSkill, /never imports an existing browser profile/i)
   assert.match(installSkill, /installs and verifies both Tokenless agent skills/)
   assert.match(installSkill, /detects supported browsers/)
   assert.match(installSkill, /tokenless doctor --json/)
+  assert.match(installSkill, /tokenless profiles status/)
   assert.match(installSkill, /Playwright worker/)
   assert.match(installSkill, /managed profile/)
   assert.match(installSkill, /Completed locally/)
   assert.match(installSkill, /Action needed/)
   assert.match(installSkill, /Next verification/)
+  assert.doesNotMatch(installSkill, /interactive terminal/i)
   assert.doesNotMatch(installSkill, /extensionBridge|extension_setup_incomplete|chrome:\/\/extensions/i)
 })
 

@@ -4,7 +4,7 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionDist = path.join(root, 'packages/extension/dist/extension')
+const extensionDist = path.join(root, 'legacy/extension/dist/extension')
 
 const descriptor = Object.freeze({
   protocol: 'tokenless.visible-attachment.v1',
@@ -29,11 +29,11 @@ test('bridge validation bounds and normalizes staged visible attachment descript
     capabilitiesPayload,
     createBridgeRequest,
     validateBridgeRequest,
-  } = await import('../packages/extension/dist/extension/shared/bridge-protocol.js')
+  } = await import('../legacy/extension/dist/extension/shared/bridge-protocol.js')
   const {
     MAX_VISIBLE_ATTACHMENTS,
     MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES,
-  } = await import('../packages/extension/dist/extension/shared/native-protocol.js')
+  } = await import('../legacy/extension/dist/extension/shared/native-protocol.js')
   const base = {
     protocol: BRIDGE_PROTOCOL_VERSION,
     requestId: 'attachment-contract-1',
@@ -93,7 +93,7 @@ test('bridge validation bounds and normalizes staged visible attachment descript
 
 test('persistent daemon bridge delivers correlated native request errors without dropping the bridge', async () => {
   const { NativeDaemonBridge } = await import(
-    '../packages/extension/dist/extension/background/native-daemon-bridge.js'
+    '../legacy/extension/dist/extension/background/native-daemon-bridge.js'
   )
   const port = createNativePort()
   const delivered = []

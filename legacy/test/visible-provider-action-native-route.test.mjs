@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const BRIDGE_MODULE = '../packages/extension/dist/extension/shared/bridge-protocol.js'
-const ACTION_MODULE = '../packages/extension/dist/extension/shared/visible-provider-actions.js'
+const BRIDGE_MODULE = '../legacy/extension/dist/extension/shared/bridge-protocol.js'
+const ACTION_MODULE = '../legacy/extension/dist/extension/shared/visible-provider-actions.js'
 
 const descriptor = Object.freeze({
   protocol: 'tokenless.visible-attachment.v1',

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const extensionDist = path.join(root, 'packages', 'extension', 'dist', 'extension')
-const ACTION_MODULE = '../packages/extension/dist/extension/shared/visible-provider-actions.js'
+const ACTION_MODULE = '../legacy/extension/dist/extension/shared/visible-provider-actions.js'
 
 test('service worker exposes the v1 runtime route only to extension-owned pages', async () => {
   const previousChrome = globalThis.chrome

@@ -7,7 +7,7 @@ const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const daemonManifest = path.resolve(cliRoot, '../daemon/Cargo.toml')
 const daemonRoot = path.dirname(daemonManifest)
 const executableSuffix = process.platform === 'win32' ? '.exe' : ''
-const binaryNames = ['tokenless-daemon', 'tokenless-native-host']
+const binaryNames = ['tokenless-daemon']
 const supportedTuples = new Set([
   'darwin-arm64',
   'darwin-x64',

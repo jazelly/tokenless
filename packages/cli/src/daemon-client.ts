@@ -514,7 +514,7 @@ function assertNativeMessageSize(value: unknown) {
   if (bytes > MAX_NATIVE_MESSAGE_BYTES) {
     throw daemonClientError(
       'native_message_too_large',
-      `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes so the Rust native host can deliver it to the extension. Attach fewer or smaller files.`,
+      `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes. Attach fewer or smaller files.`,
       false
     )
   }

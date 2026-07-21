@@ -6,11 +6,11 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionSource = path.join(root, 'packages/extension/extension')
-const extensionDist = path.join(root, 'packages/extension/dist/extension')
+const extensionSource = path.join(root, 'legacy/extension/extension')
+const extensionDist = path.join(root, 'legacy/extension/dist/extension')
 
 test('primary manifest owns trusted debugger clicks without broad browser permissions', () => {
-  const manifest = readJson('packages/extension/extension/manifest.json')
+  const manifest = readJson('legacy/extension/extension/manifest.json')
 
   assert.equal(manifest.manifest_version, 3)
   assert.equal(manifest.version, '0.1.5')
@@ -42,8 +42,8 @@ test('primary manifest owns trusted debugger clicks without broad browser permis
 test('extension build and package contain Settings and no debugger companion artifact', () => {
   const sourceArtifacts = listRelativeFiles(extensionSource)
   const builtArtifacts = listRelativeFiles(extensionDist)
-  const buildManifest = readJson('packages/extension/dist/extension-build-manifest.json')
-  const extensionPackage = readJson('packages/extension/package.json')
+  const buildManifest = readJson('legacy/extension/dist/extension-build-manifest.json')
+  const extensionPackage = readJson('legacy/extension/package.json')
   const recordedArtifacts = buildManifest.files.map((entry) => entry.path)
 
   for (const artifacts of [sourceArtifacts, builtArtifacts, recordedArtifacts]) {
@@ -57,11 +57,11 @@ test('extension build and package contain Settings and no debugger companion art
   assert.equal(extensionPackage.exports['./web-client'], undefined)
   assert.ok(!extensionPackage.files.includes('dist/debugger-control'))
   assert.equal(buildManifest.debuggerControl, undefined)
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/control-extension')), false)
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/debugger-control')), false)
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/tokenless-debugger-control.zip')), false)
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/src/web-client.ts')), false)
-  assert.equal(fs.existsSync(path.join(root, 'packages/extension/dist/src/web-client.js')), false)
+  assert.equal(fs.existsSync(path.join(root, 'legacy/extension/control-extension')), false)
+  assert.equal(fs.existsSync(path.join(root, 'legacy/extension/dist/debugger-control')), false)
+  assert.equal(fs.existsSync(path.join(root, 'legacy/extension/dist/tokenless-debugger-control.zip')), false)
+  assert.equal(fs.existsSync(path.join(root, 'legacy/extension/src/web-client.ts')), false)
+  assert.equal(fs.existsSync(path.join(root, 'legacy/extension/dist/src/web-client.js')), false)
   for (const obsoleteDirectory of ['task', 'sidepanel', 'daemon']) {
     assert.equal(fs.existsSync(path.join(extensionSource, obsoleteDirectory)), false)
     assert.equal(fs.existsSync(path.join(extensionDist, obsoleteDirectory)), false)
@@ -72,8 +72,8 @@ test('CLI, bridge, and build sources contain no companion extension plumbing', (
   const removedField = ['debugger', 'ControlExtensionId'].join('')
   const removedFlag = ['--debugger', '-control-extension-id'].join('')
   const cli = readText('packages/cli/src/tokenless.mts')
-  const bridge = readText('packages/extension/extension/shared/bridge-protocol.ts')
-  const build = readText('packages/extension/src/build-extension.mts')
+  const bridge = readText('legacy/extension/extension/shared/bridge-protocol.ts')
+  const build = readText('legacy/extension/src/build-extension.mts')
 
   assert.ok(!cli.includes(removedField))
   assert.ok(!cli.includes(removedFlag))
@@ -88,7 +88,7 @@ test('native messages are constructed and validated with tokenless.native.v1', a
     isNativeMessage,
     NATIVE_MESSAGE_TYPES,
     NATIVE_PROTOCOL_VERSION,
-  } = await import('../packages/extension/dist/extension/shared/native-protocol.js')
+  } = await import('../legacy/extension/dist/extension/shared/native-protocol.js')
 
   assert.equal(NATIVE_PROTOCOL_VERSION, 'tokenless.native.v1')
   for (const type of Object.values(NATIVE_MESSAGE_TYPES)) {
@@ -101,13 +101,13 @@ test('native messages are constructed and validated with tokenless.native.v1', a
 })
 
 test('provider navigation policy centralizes approved visible-session routes', async () => {
-  const { getProviderById } = await import('../packages/extension/dist/extension/shared/provider-config.js')
+  const { getProviderById } = await import('../legacy/extension/dist/extension/shared/provider-config.js')
   const {
     areProviderTransitionSourcesEquivalent,
     canonicalProviderUrl,
     isApprovedProviderTransition,
     isProviderConversationUrl,
-  } = await import('../packages/extension/dist/extension/shared/provider-navigation-policy.js')
+  } = await import('../legacy/extension/dist/extension/shared/provider-navigation-policy.js')
   const chatgpt = getProviderById('chatgpt')
   const claude = getProviderById('claude')
   const gemini = getProviderById('gemini')
@@ -156,7 +156,7 @@ test('provider navigation policy centralizes approved visible-session routes', a
 
 test('daemon bridge requires a v1 handshake and reconnects with bounded backoff', async () => {
   const { NativeDaemonBridge } = await import(
-    '../packages/extension/dist/extension/background/native-daemon-bridge.js'
+    '../legacy/extension/dist/extension/background/native-daemon-bridge.js'
   )
   const scheduler = createManualScheduler()
   const ports = []
@@ -269,7 +269,7 @@ test('Settings model normalizes redacted daemon history and explicit configurati
     configWritePayload,
     normalizeHistoryEntries,
     normalizeProviderOrder,
-  } = await import('../packages/extension/dist/extension/settings/model.js')
+  } = await import('../legacy/extension/dist/extension/settings/model.js')
   const privateMarker = 'private-claim-marker'
   const entries = normalizeHistoryEntries([
     {
@@ -3119,10 +3119,10 @@ test('background enables the Settings side panel and jobs create only approved p
 })
 
 test('background and provider content preserve visible-session safety boundaries', () => {
-  const serviceWorker = readText('packages/extension/extension/background/service-worker.ts')
-  const contentScript = readText('packages/extension/extension/content/provider-content.ts')
-  const settingsScript = readText('packages/extension/extension/settings/index.ts')
-  const builtContentScript = readText('packages/extension/dist/extension/content/provider-content.js')
+  const serviceWorker = readText('legacy/extension/extension/background/service-worker.ts')
+  const contentScript = readText('legacy/extension/extension/content/provider-content.ts')
+  const settingsScript = readText('legacy/extension/extension/settings/index.ts')
+  const builtContentScript = readText('legacy/extension/dist/extension/content/provider-content.js')
 
   assert.doesNotMatch(serviceWorker, /onMessageExternal|externally_connectable/)
   assert.doesNotMatch(serviceWorker, /task\/task\.html|runner\.html|chrome\.runtime\.getURL/)
@@ -3318,7 +3318,7 @@ test('browser bridge advertises sanitized DOM snapshot action', async () => {
     BRIDGE_PROTOCOL_VERSION,
     capabilitiesPayload,
     validateBridgeRequest,
-  } = await import('../packages/extension/dist/extension/shared/bridge-protocol.js')
+  } = await import('../legacy/extension/dist/extension/shared/bridge-protocol.js')
 
   assert.equal(BRIDGE_ACTIONS.SNAPSHOT_DOM, 'snapshot_dom')
   assert.ok(capabilitiesPayload().actions.includes('snapshot_dom'))

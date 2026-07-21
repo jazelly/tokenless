@@ -14,7 +14,7 @@ submission.
 For a release, the following must agree:
 
 1. this document;
-2. `packages/extension/extension/manifest.json` and the ZIP built from it;
+2. `legacy/extension/extension/manifest.json` and the ZIP built from it;
 3. the Chrome Web Store Developer Dashboard;
 4. the public policy at
    `https://vertile.ai/products/tokenless/privacy`; and
@@ -39,7 +39,7 @@ Last inspected in the Chrome Web Store Developer Dashboard: **16 July 2026**.
 | Dashboard package version | `0.1.5` |
 | Dashboard package revision | `main.crx`, draft revision 3 |
 | Verified CRX uploads | Not enabled |
-| Local ZIP | `packages/extension/dist/tokenless-browser-session-bridge.zip` |
+| Local ZIP | `legacy/extension/dist/tokenless-browser-session-bridge.zip` |
 | Inspected local ZIP SHA-256 | `1d6cd185a3e172f55fb74a40a5e3ec9581b8df7ba06ac8f3b1916dae5d6dd452` |
 | Local ZIP manifest version | `0.1.5` |
 | Public npm CLI | `tokenless@0.1.2` |
@@ -87,7 +87,7 @@ The item is not ready to submit or publish.
 
 ### Identity
 
-- Manifest: `packages/extension/extension/manifest.json`
+- Manifest: `legacy/extension/extension/manifest.json`
 - Permanent Store item ID: `cgiocagnojoiblhlkmdjacklcmpbbimf`
 - CLI default ID source: `packages/cli/src/default-extension-id.ts`
 - Build command:
@@ -191,11 +191,11 @@ Tokenless is not made by, affiliated with, endorsed by, or officially supported 
 
 | Dashboard asset | Canonical local file | Required dimensions |
 | --- | --- | --- |
-| Store icon | `packages/extension/assets/chrome-web-store/store-icon-128x128.png` | 128×128 |
-| Activity screenshot | `packages/extension/assets/chrome-web-store/activity-1280x800.png` | 1280×800 |
-| Settings screenshot | `packages/extension/assets/chrome-web-store/settings-1280x800.png` | 1280×800 |
-| Small promo tile | `packages/extension/assets/chrome-web-store/small-promo-440x280.png` | 440×280 |
-| Marquee promo tile | `packages/extension/assets/chrome-web-store/marquee-1400x560.png` | 1400×560 |
+| Store icon | `legacy/extension/assets/chrome-web-store/store-icon-128x128.png` | 128×128 |
+| Activity screenshot | `legacy/extension/assets/chrome-web-store/activity-1280x800.png` | 1280×800 |
+| Settings screenshot | `legacy/extension/assets/chrome-web-store/settings-1280x800.png` | 1280×800 |
+| Small promo tile | `legacy/extension/assets/chrome-web-store/small-promo-440x280.png` | 440×280 |
+| Marquee promo tile | `legacy/extension/assets/chrome-web-store/marquee-1400x560.png` | 1400×560 |
 
 Regenerate the assets after any side-panel or brand change:
 

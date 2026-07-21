@@ -31,7 +31,6 @@ import {
   DIRECT_BROKER_PROTOCOL,
   MAX_NATIVE_MESSAGE_BYTES,
   ManagedProjectExecutorError,
-  NATIVE_PROTOCOL,
   addManagedCodexAccount,
   buildTokenlessPrompt,
   cancelDaemonJob,
@@ -78,7 +77,6 @@ import {
   resolveSetupTerminalCapabilities,
   type SetupPresenter,
 } from './setup-presenter.js'
-import { DEFAULT_EXTENSION_ID } from './default-extension-id.js'
 import {
   ManagedCodexExecutorFailure,
   createManagedCodexProjectExecutor,
@@ -1864,7 +1862,7 @@ async function prepareExtensionBridge({
   if (args.noOpen) {
     throw usageError(
       'extension_bridge_unavailable',
-      'No live Tokenless extension bridge is connected. Remove --no-open so Tokenless can open only the selected provider page, or run "tokenless setup" after installing and enabling the extension.'
+      'No live Tokenless runtime bridge is connected. Remove --no-open so Tokenless can open the selected provider page, or run "tokenless setup" and "tokenless doctor --json".'
     )
   }
 
@@ -1993,7 +1991,6 @@ async function installCommand(args: CliArgs) {
   printPayload({
     ok: true,
     runtime: 'rust',
-    extensionIdSource: provisioned.extensionIdSource,
     browser: provisioned.browser.browser,
     browsers: provisioned.browsers,
     daemon: {
@@ -2002,14 +1999,6 @@ async function installCommand(args: CliArgs) {
       url: provisioned.daemonUrl,
       pid: provisioned.daemon.pid,
       executable: provisioned.installed.daemonExecutable,
-    },
-    nativeHost: {
-      runtime: 'rust',
-      protocol: NATIVE_PROTOCOL,
-      executable: provisioned.installed.nativeHostExecutable,
-      manifests: provisioned.installed.manifests,
-      registryCommands: provisioned.installed.registryCommands,
-      allowedOrigin: provisioned.installed.allowedOrigin,
     },
     nextStep: 'Run "tokenless setup" to configure skills, a managed browser profile, preferred providers, and visible readiness.',
   }, args)
@@ -2933,7 +2922,6 @@ async function waitForSetupJobAfterUser({
 async function provisionRuntime(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
-  const { extensionId, source: extensionIdSource } = resolveInstallExtensionId(args)
   const requestedBrowsers = args.browsers === undefined
     ? [args.browser ?? config.browser ?? undefined]
     : parseList(args.browsers)
@@ -2942,12 +2930,7 @@ async function provisionRuntime(args: CliArgs) {
     const browser = await resolveChromiumBrowser(requested)
     if (!resolvedBrowsers.includes(browser.browser)) resolvedBrowsers.push(browser.browser)
   }
-  const installed = await installRustRuntime({
-    homeDir,
-    manifestHome: args.manifestHome,
-    extensionId,
-    browsers: resolvedBrowsers,
-  })
+  const installed = await installRustRuntime({ homeDir })
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   await writeTokenlessConfig({
     homeDir,
@@ -2962,7 +2945,6 @@ async function provisionRuntime(args: CliArgs) {
   return {
     homeDir,
     config,
-    extensionIdSource,
     browsers: resolvedBrowsers,
     browser: await resolveChromiumBrowser(resolvedBrowsers[0]),
     installed,
@@ -3364,7 +3346,7 @@ function assertNativeRequestSize(value: unknown) {
   if (bytes <= MAX_NATIVE_MESSAGE_BYTES) return
   throw usageError(
     'native_message_too_large',
-    `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes so Chrome native messaging can deliver it. Attach fewer or smaller files.`
+    `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes. Attach fewer or smaller files.`
   )
 }
 
@@ -3408,10 +3390,8 @@ function parseArgs(argv: string[]): CliArgs {
     '--task-id': 'taskId',
     '--job-id': 'jobId',
     '--limit': 'limit',
-    '--extension-id': 'extensionId',
     '--browser': 'browser',
     '--browsers': 'browsers',
-    '--manifest-home': 'manifestHome',
     '--home': 'home',
     '--daemon-url': 'daemonUrl',
     '--timeout-ms': 'timeoutMs',
@@ -3495,32 +3475,6 @@ function requireFlagValue(argv: string[], index: number, flag: string) {
     throw usageError('missing_argument_value', `${flag} requires a value.`)
   }
   return value
-}
-
-function resolveInstallExtensionId(args: CliArgs) {
-  const candidates = [
-    ['argument', args.extensionId],
-    ['environment', process.env.TOKENLESS_EXTENSION_ID],
-    ['bundled_default', DEFAULT_EXTENSION_ID],
-  ]
-  for (const [source, value] of candidates) {
-    if (!value) continue
-    const extensionId = normalizeExtensionId(value)
-    if (!extensionId) {
-      throw usageError(
-        'invalid_extension_id',
-        'Extension id must be the real 32-character Chrome extension id from chrome://extensions.'
-      )
-    }
-    return { extensionId, source }
-  }
-  throw usageError('missing_extension_id', 'Tokenless install needs a Chrome extension id.')
-}
-
-function normalizeExtensionId(value: unknown) {
-  if (typeof value !== 'string') return null
-  const normalized = value.trim().toLowerCase()
-  return /^[a-p]{32}$/.test(normalized) ? normalized : null
 }
 
 function normalizeCliBrowser(browser: unknown) {
@@ -3797,10 +3751,8 @@ function directVisibleOnlyArguments() {
     ['targetUrl', '--target-url'],
     ['jobId', '--job-id'],
     ['limit', '--limit'],
-    ['extensionId', '--extension-id'],
     ['browser', '--browser'],
     ['browsers', '--browsers'],
-    ['manifestHome', '--manifest-home'],
     ['home', '--home'],
     ['daemonUrl', '--daemon-url'],
     ['daemonStartTimeoutMs', '--daemon-start-timeout-ms'],
@@ -4121,7 +4073,7 @@ function setupBridgeUnavailable({
   cause: unknown
 }): CliError {
   const error: CliError = new Error(
-    `Tokenless opened ${targetUrl}, but its extension bridge did not connect. Install or enable the Tokenless extension in ${browser}, then reload the ${provider} page and rerun "tokenless setup". ${cause instanceof Error ? cause.message : ''}`.trim()
+    `Tokenless opened ${targetUrl}, but the local runtime did not become ready for ${provider} in ${browser}. Run "tokenless doctor --json", reload the provider page if needed, then rerun "tokenless setup". ${cause instanceof Error ? cause.message : ''}`.trim()
   )
   error.code = 'extension_setup_incomplete'
   error.retryable = true

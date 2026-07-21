@@ -1,12 +1,11 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::ffi::OsString;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use tokenless_daemon::{
-    native_binary_build_info, native_host::run_native_host_stdio, serve_http, CompleteJob,
-    CreateJob, DaemonError, JobStatus, JobStore, ListJobs, Result,
+    native_binary_build_info, serve_http, CompleteJob, CreateJob, DaemonError, JobStatus, JobStore,
+    ListJobs, Result,
 };
 
 #[derive(Debug, Parser)]
@@ -63,14 +62,6 @@ enum Command {
         host: IpAddr,
         #[arg(long, default_value_t = 7331)]
         port: u16,
-    },
-    NativeHost {
-        #[arg(
-            value_name = "BROWSER_ARG",
-            trailing_var_arg = true,
-            allow_hyphen_values = true
-        )]
-        _browser_args: Vec<OsString>,
     },
 }
 
@@ -181,7 +172,6 @@ async fn run() -> Result<()> {
             )
         }
         Command::Serve { host, port } => serve_http(store, host, port).await,
-        Command::NativeHost { .. } => run_native_host_stdio(store),
     }
 }
 

@@ -8,9 +8,9 @@ Update that document before changing the Dashboard.
 ## One-time identity binding
 
 1. Build the review package with `npm run pack:extension --workspace tokenless-browser-session-bridge`.
-2. Upload `packages/extension/dist/tokenless-browser-session-bridge.zip` to the Chrome Web Store Developer Dashboard as an unpublished item.
+2. Upload `legacy/extension/dist/tokenless-browser-session-bridge.zip` to the Chrome Web Store Developer Dashboard as an unpublished item.
 3. Record the assigned item ID and download its public key from the Package tab.
-4. Add that public key as the `key` field of `packages/extension/extension/manifest.json` so unpacked development builds use the same stable ID.
+4. Add that public key as the `key` field of `legacy/extension/extension/manifest.json` so unpacked development builds use the same stable ID.
 5. Update `packages/cli/src/default-extension-id.ts` to the assigned item ID.
 6. Run `npm run verify:extension-release -- --extension-id "<item-id>"`.
 7. Build the extension again, load it unpacked, and verify that `chrome://extensions` reports the same ID before publishing.
