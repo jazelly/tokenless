@@ -1,5 +1,11 @@
 # tokenless
 
+## 0.2.1
+
+### Patch Changes
+
+- be0cb38: Archive the browser extension and Native Messaging host under legacy/, and ship only the managed Playwright daemon runtime.
+
 ## 0.2.0
 
 ### Minor Changes

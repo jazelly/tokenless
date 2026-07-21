@@ -1,6 +1,6 @@
 {
   "name": "tokenless",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Tokenless CLI for visible browser sessions and isolated direct provider APIs.",
   "type": "module",
   "license": "MIT",
@@ -33,12 +33,12 @@
     "playwright-core": "^1.53.0"
   },
   "optionalDependencies": {
-    "tokenless-native-darwin-arm64": "0.2.0",
-    "tokenless-native-darwin-x64": "0.2.0",
-    "tokenless-native-linux-arm64": "0.2.0",
-    "tokenless-native-linux-x64": "0.2.0",
-    "tokenless-native-win32-arm64": "0.2.0",
-    "tokenless-native-win32-x64": "0.2.0"
+    "tokenless-native-darwin-arm64": "0.2.1",
+    "tokenless-native-darwin-x64": "0.2.1",
+    "tokenless-native-linux-arm64": "0.2.1",
+    "tokenless-native-linux-x64": "0.2.1",
+    "tokenless-native-win32-arm64": "0.2.1",
+    "tokenless-native-win32-x64": "0.2.1"
   },
   "engines": {
     "node": ">=22.13.0"
