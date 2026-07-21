@@ -13,10 +13,6 @@ path = "src/lib.rs"
 name = "tokenless-daemon"
 path = "src/main.rs"
 
-[[bin]]
-name = "tokenless-native-host"
-path = "src/bin/tokenless-native-host.rs"
-
 [dependencies]
 axum = "0.7"
 base64 = "0.22"

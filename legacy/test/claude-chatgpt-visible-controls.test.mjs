@@ -5,7 +5,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const providerContentPath = path.join(root, 'packages/extension/dist/extension/content/provider-content.js')
+const providerContentPath = path.join(root, 'legacy/extension/dist/extension/content/provider-content.js')
 
 test('ChatGPT and Claude auth probes use compound visible signals without returning account identity', { timeout: 30000 }, async () => {
   const { chromium } = await import('playwright')

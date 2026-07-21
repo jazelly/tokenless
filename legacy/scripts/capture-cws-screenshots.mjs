@@ -5,8 +5,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionRoot = path.join(root, 'packages/extension/dist/extension')
-const outputDirectory = path.join(root, 'packages/extension/assets/chrome-web-store')
+const extensionRoot = path.join(root, 'legacy/extension/dist/extension')
+const outputDirectory = path.join(root, 'legacy/extension/assets/chrome-web-store')
 const contentTypes = {
   '.css': 'text/css',
   '.html': 'text/html',
@@ -131,7 +131,7 @@ try {
 
   const logo = await fs.readFile(path.join(
     root,
-    'packages/extension/assets/tokenless_logo.png'
+    'legacy/extension/assets/tokenless_logo.png'
   ))
   const logoDataUrl = `data:image/png;base64,${logo.toString('base64')}`
   await capturePromoImage(browser, {

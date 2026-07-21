@@ -21,9 +21,7 @@ test('Changesets release configuration tracks only the public CLI', () => {
   const rootPackage = readJson('package.json')
   assert.equal(config.access, 'public')
   assert.equal(config.baseBranch, 'main')
-  assert.deepEqual(config.ignore.sort(), [
-    'tokenless-browser-session-bridge',
-  ])
+  assert.deepEqual(config.ignore, [])
   assert.ok(rootPackage.devDependencies['@changesets/cli'])
   assert.equal(rootPackage.scripts.changeset, 'changeset')
   assert.equal(rootPackage.scripts['release:version'], 'node scripts/release/version.mjs')
@@ -32,12 +30,13 @@ test('Changesets release configuration tracks only the public CLI', () => {
 test('npm manifests use the canonical repository and MIT license', () => {
   const rootPackage = readJson('package.json')
   const cliPackage = readJson('packages/cli/package.json')
-  const extensionPackage = readJson('packages/extension/package.json')
+  const legacyExtensionPackage = readJson('legacy/extension/package.json')
   assert.equal(rootPackage.license, 'MIT')
   assert.equal(cliPackage.repository.url, repositoryUrl)
   assert.equal(cliPackage.publishConfig.access, 'public')
   assert.equal(cliPackage.license, 'MIT')
-  assert.equal(extensionPackage.license, 'MIT')
+  assert.equal(legacyExtensionPackage.license, 'MIT')
+  assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
   assert.deepEqual(Object.keys(cliPackage.optionalDependencies).sort(), nativePackages)
 
   for (const packageName of nativePackages) {

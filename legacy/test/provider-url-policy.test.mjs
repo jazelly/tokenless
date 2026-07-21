@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 const extensionPolicyUrl = new URL(
-  '../packages/extension/dist/extension/shared/provider-navigation-policy.js',
+  '../legacy/extension/dist/extension/shared/provider-navigation-policy.js',
   import.meta.url
 )
 const extensionProvidersUrl = new URL(
-  '../packages/extension/dist/extension/shared/provider-config.js',
+  '../legacy/extension/dist/extension/shared/provider-config.js',
   import.meta.url
 )
 const cliUrl = new URL('../packages/cli/dist/src/index.js', import.meta.url)

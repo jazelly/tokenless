@@ -4,8 +4,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const manifestPath = path.join(root, 'packages/extension/extension/manifest.json')
-const defaultIdPath = path.join(root, 'packages/cli/src/default-extension-id.ts')
+const manifestPath = path.join(root, 'legacy/extension/extension/manifest.json')
+const defaultIdPath = path.join(root, 'legacy/extension/default-extension-id.ts')
 const suppliedId = option('--extension-id')
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
 const publicKey = typeof manifest.key === 'string' ? manifest.key.trim() : ''
@@ -23,7 +23,7 @@ if (suppliedId && suppliedId !== computedId) {
 }
 if (configuredId !== computedId) {
   throw new Error(
-    `DEFAULT_EXTENSION_ID is ${configuredId}, but the manifest public key resolves to ${computedId}. Update packages/cli/src/default-extension-id.ts in the same release.`
+    `DEFAULT_EXTENSION_ID is ${configuredId}, but the manifest public key resolves to ${computedId}. Update legacy/extension/default-extension-id.ts in the same release.`
   )
 }
 

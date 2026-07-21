@@ -12,8 +12,8 @@ Account routing amendment: [Tokenless Account Pool and Project Routing](./accoun
 
 Tokenless will support two execution modes behind one CLI:
 
-1. `visible` keeps the current daemon, native host, browser extension, and user-visible provider DOM path.
-2. `direct` runs through a provider-owned programmatic client or calls a user-configured public provider/gateway API without starting the daemon or contacting the extension.
+1. `visible` keeps the current daemon, Playwright worker, managed browser profile, and user-visible provider DOM path.
+2. `direct` runs through a provider-owned programmatic client or calls a user-configured public provider/gateway API without starting the daemon or managed browser runtime.
 
 The first provider-owned client is OpenAI Codex. The first compatible gateway is Sub2API. Compatibility means Tokenless implements Sub2API's documented public inference protocols. Tokenless will not embed, fork, launch, administer, or copy Sub2API, and it will not reproduce Sub2API's upstream account implementation.
 
@@ -88,7 +88,7 @@ The local account-pool amendment does not use multiple ChatGPT subscriptions to 
 ## Architecture
 
 ```text
-                              +-> daemon -> native host -> extension -> visible DOM
+                              +-> daemon -> Playwright worker -> managed profile -> visible DOM
 Agent -> tokenless CLI -> mode |
                               +-> direct
                                   +-> official Codex executable owns auth + transport
@@ -361,8 +361,8 @@ Errors may include upstream HTTP status, a bounded sanitized provider message, r
 - Response normalization for all provider protocols.
 - Bounded and redacted error handling.
 - Timeout and abort behavior.
-- Visible mode regression: the default path still initializes the daemon and extension.
-- Direct mode isolation: it succeeds with daemon and extension unavailable.
+- Visible mode regression: the default path still initializes the daemon and Playwright worker.
+- Direct mode isolation: it succeeds with daemon and Playwright worker unavailable.
 
 ### Focused integration tests
 
@@ -395,7 +395,7 @@ Acceptance: this RFC is internally consistent with the repository boundary and c
 - Add the isolated official Codex adapter.
 - Add direct configuration and OpenAI Responses adapter.
 - Add `--mode direct`, `--direct-base-url`, and direct request options.
-- Prove no daemon, native host, extension, or browser dependency is touched.
+- Prove no daemon, Playwright worker, managed profile, or browser dependency is touched.
 - Add real-socket CLI integration coverage.
 
 Acceptance: ChatGPT direct requests work through official Codex and against official OpenAI-compatible or Sub2API-compatible public gateways. Codex owns subscription authentication; API credentials are environment-only; both return normalized results.
@@ -424,7 +424,7 @@ M4 and later account-pool milestones are specified in the account-routing amendm
 - Direct mode is opt-in and does not change the default visible behavior.
 - Existing installations need no credential migration. The optional account registry stores only metadata, environment-variable references, project bindings, and provider-owned identity fingerprints; credentials remain environment-owned or provider-client-owned.
 - The broker is a separate command and does not change the daemon protocol.
-- A direct-mode regression can be rolled back independently without changing the extension or Rust binaries.
+- A direct-mode regression can be rolled back independently without changing the Playwright worker or Rust daemon binary.
 - Upstream compatibility is tested against a pinned route contract. Upstream drift changes fixtures and implementation together in a reviewed commit.
 
 ## Completion criteria
@@ -433,7 +433,7 @@ The initiative is complete only when:
 
 - all milestone commits exist and contain only initiative-owned changes;
 - all five providers pass focused integration tests;
-- direct mode is proven independent of daemon and extension availability;
+- direct mode is proven independent of daemon and Playwright worker availability;
 - the authenticated broker preserves streaming and enforces its security boundary;
 - lint, build, existing tests, and new tests pass;
 - independent implementation and security reviewers approve the final diff; and

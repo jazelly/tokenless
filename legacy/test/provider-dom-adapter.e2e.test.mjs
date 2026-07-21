@@ -5,7 +5,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const contentScript = path.join(root, 'packages/extension/dist/extension/content/provider-content.js')
+const contentScript = path.join(root, 'legacy/extension/dist/extension/content/provider-content.js')
 const fixtureRoot = path.join(root, 'test/fixtures/provider-dom')
 
 const providers = [

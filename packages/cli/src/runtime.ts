@@ -78,17 +78,13 @@ export type BridgeMarker = {
 
 export type InstallRustRuntimeOptions = {
   homeDir?: string | undefined
-  manifestHome?: string | undefined
-  extensionId: string
-  browsers?: string[] | undefined
   packageRoot?: string | undefined
   platform?: NodeJS.Platform | undefined
   arch?: string | undefined
-  registerWindows?: boolean | undefined
 }
 
 export function bundledRustBinaryPath(
-  name: typeof DAEMON_BINARY_NAME | typeof NATIVE_HOST_BINARY_NAME,
+  name: string = DAEMON_BINARY_NAME,
   packageRoot?: string,
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch
@@ -99,7 +95,7 @@ export function bundledRustBinaryPath(
 
 export function installedRustBinaryPath(
   homeDir = tokenlessHome(),
-  name: typeof DAEMON_BINARY_NAME | typeof NATIVE_HOST_BINARY_NAME = DAEMON_BINARY_NAME,
+  name: string = DAEMON_BINARY_NAME,
   platform: NodeJS.Platform = process.platform
 ) {
   return path.join(homeDir, 'bin', executableName(name, platform))
@@ -128,7 +124,7 @@ export async function resolveDaemonBinary({
   }
   throw runtimeError(
     'daemon_binary_missing',
-    `Tokenless Rust daemon is not installed. Reinstall tokenless with optional dependencies enabled, then run "tokenless install". Checked: ${candidates.join(', ')}${bundledError instanceof Error ? `. ${bundledError.message}` : ''}`,
+    `Tokenless Rust daemon is not installed. Reinstall tokenless with optional dependencies enabled, then run "tokenless setup" or "tokenless doctor". Checked: ${candidates.join(', ')}${bundledError instanceof Error ? `. ${bundledError.message}` : ''}`,
     false
   )
 }
@@ -289,7 +285,7 @@ export async function ensureDaemonReady({
 
     const installedDaemon = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME)
     if (!binaryPath && !(await isExecutable(installedDaemon))) {
-      await refreshInstalledRustBinaries({ homeDir, packageRoot: bundledRoot }).catch(() => undefined)
+      await refreshInstalledManagedRuntime({ homeDir, packageRoot: bundledRoot }).catch(() => undefined)
     }
     const executable = await resolveDaemonBinary({ homeDir, binaryPath, bundledRoot })
     const parsedUrl = new URL(normalizeDaemonUrl(daemonUrl))
@@ -381,7 +377,7 @@ export async function waitForExtensionBridge({
   }
   throw runtimeError(
     'extension_bridge_timeout',
-    `Tokenless opened the provider page, but the Rust extension bridge did not become ready within ${timeoutMs} ms. Ensure the Tokenless extension is installed and enabled, then run "tokenless setup" again.`,
+    `Tokenless opened the provider page, but the local runtime bridge did not become ready within ${timeoutMs} ms. Run "tokenless doctor --json", then rerun "tokenless setup".`,
     true
   )
 }
@@ -507,7 +503,7 @@ export async function resolveChromiumBrowser(requested?: unknown): Promise<Chrom
     'chromium_browser_not_found',
     requestedId
       ? `Configured Chromium browser "${requestedId}" is not installed or executable.`
-      : 'No supported Chromium browser was found. Install Chrome, Brave, Edge, Arc, or Chromium, then rerun tokenless install.',
+      : 'No supported Chromium browser was found. Install Chrome, Brave, Edge, Arc, or Chromium, then rerun tokenless setup.',
     false
   )
 }
@@ -541,70 +537,29 @@ export async function openProviderUrl(url: string, browser: ChromiumBrowser) {
 
 export async function installRustRuntime({
   homeDir = tokenlessHome(),
-  manifestHome,
-  extensionId,
-  browsers = ['chrome'],
   packageRoot,
   platform = process.platform,
   arch = process.arch,
-  registerWindows = true,
-}: InstallRustRuntimeOptions) {
-  if (!/^[a-p]{32}$/.test(extensionId)) {
-    throw runtimeError(
-      'invalid_extension_id',
-      'Extension id must be the real 32-character Chrome extension id from chrome://extensions.',
-      false
-    )
-  }
+}: InstallRustRuntimeOptions = {}) {
   const binDir = path.join(homeDir, 'bin')
   await fs.mkdir(binDir, { recursive: true, mode: 0o700 })
   const daemonSource = bundledRustBinaryPath(DAEMON_BINARY_NAME, packageRoot, platform, arch)
-  const hostSource = bundledRustBinaryPath(NATIVE_HOST_BINARY_NAME, packageRoot, platform, arch)
   const daemonExecutable = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME, platform)
-  const nativeHostExecutable = installedRustBinaryPath(homeDir, NATIVE_HOST_BINARY_NAME, platform)
   await installExecutable(daemonSource, daemonExecutable)
-  await installExecutable(hostSource, nativeHostExecutable)
-
-  const manifest = {
-    name: NATIVE_HOST_NAME,
-    description: 'Tokenless Rust native messaging host',
-    path: nativeHostExecutable,
-    type: 'stdio',
-    allowed_origins: [`chrome-extension://${extensionId}/`],
-  }
-  const manifests: string[] = []
-  const registryCommands: string[][] = []
-  if (platform === 'win32') {
-    const manifestPath = path.join(homeDir, 'native-messaging', `${NATIVE_HOST_NAME}.json`)
-    await writeJsonAtomic(manifestPath, manifest, 0o600)
-    manifests.push(manifestPath)
-    for (const command of windowsNativeHostRegistryCommands({ manifestPath, browsers })) {
-      registryCommands.push(command)
-      if (registerWindows) await execFile(command[0] as string, command.slice(1))
-    }
-  } else {
-    for (const browser of browsers) {
-      const browserId = normalizeBrowserId(browser)
-      if (!browserId) continue
-      for (const dir of nativeMessagingHostDirs(browserId, manifestHome, platform)) {
-        const manifestPath = path.join(dir, `${NATIVE_HOST_NAME}.json`)
-        await writeJsonAtomic(manifestPath, manifest, 0o644)
-        manifests.push(manifestPath)
-      }
-    }
-  }
-
   return {
     runtime: 'rust',
     daemonExecutable,
-    nativeHostExecutable,
-    manifests,
-    registryCommands,
-    allowedOrigin: manifest.allowed_origins[0],
   }
 }
 
-export const installNativeHost = installRustRuntime
+/** @deprecated Native Messaging host install is archived under legacy/. */
+export async function installNativeHost() {
+  throw runtimeError(
+    'legacy_native_host_removed',
+    'The Tokenless Native Messaging host is no longer installed. Use managed Playwright setup via "tokenless setup".',
+    false
+  )
+}
 
 export function windowsNativeHostRegistryCommands({
   manifestPath,
@@ -679,33 +634,7 @@ export async function inspectNativeHostManifests({
 }
 
 export async function inspectRustBinaries(homeDir = tokenlessHome()) {
-  const daemon = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME)
-  const nativeHost = installedRustBinaryPath(homeDir, NATIVE_HOST_BINARY_NAME)
-  const daemonOk = await isExecutable(daemon)
-  const nativeHostOk = await isExecutable(nativeHost)
-  let bundledDaemon: string | null = null
-  let bundledNativeHost: string | null = null
-  let packageError: string | null = null
-  try {
-    bundledDaemon = bundledRustBinaryPath(DAEMON_BINARY_NAME)
-    bundledNativeHost = bundledRustBinaryPath(NATIVE_HOST_BINARY_NAME)
-  } catch (error) {
-    packageError = error instanceof Error ? error.message : String(error)
-  }
-  const [daemonHash, nativeHostHash, bundledDaemonHash, bundledNativeHostHash] = await Promise.all([
-    fileHash(daemon),
-    fileHash(nativeHost),
-    bundledDaemon ? fileHash(bundledDaemon) : null,
-    bundledNativeHost ? fileHash(bundledNativeHost) : null,
-  ])
-  const daemonMatchesBundled = Boolean(bundledDaemonHash) && daemonHash === bundledDaemonHash
-  const nativeHostMatchesBundled = Boolean(bundledNativeHostHash) && nativeHostHash === bundledNativeHostHash
-  return {
-    ok: !packageError && daemonOk && nativeHostOk && daemonMatchesBundled && nativeHostMatchesBundled,
-    package: { ok: !packageError, error: packageError },
-    daemon: { ok: daemonOk, path: daemon, hash: daemonHash, bundledHash: bundledDaemonHash, matchesBundled: daemonMatchesBundled },
-    nativeHost: { ok: nativeHostOk, path: nativeHost, hash: nativeHostHash, bundledHash: bundledNativeHostHash, matchesBundled: nativeHostMatchesBundled },
-  }
+  return inspectManagedRuntime(homeDir)
 }
 
 export async function inspectManagedRuntime(homeDir = tokenlessHome()) {
@@ -737,23 +666,7 @@ export async function refreshInstalledRustBinaries({
   homeDir?: string | undefined
   packageRoot?: string | undefined
 } = {}) {
-  const refreshed: string[] = []
-  for (const name of [DAEMON_BINARY_NAME, NATIVE_HOST_BINARY_NAME] as const) {
-    const source = bundledRustBinaryPath(name, packageRoot)
-    const destination = installedRustBinaryPath(homeDir, name)
-    const [sourceHash, destinationHash, destinationExecutable] = await Promise.all([
-      fileHash(source),
-      fileHash(destination),
-      isExecutable(destination),
-    ])
-    if (!sourceHash) {
-      throw runtimeError('rust_binary_missing', `Native runtime package is missing executable: ${source}`, false)
-    }
-    if (sourceHash === destinationHash && destinationExecutable) continue
-    await installExecutable(source, destination)
-    refreshed.push(destination)
-  }
-  return refreshed
+  return refreshInstalledManagedRuntime({ homeDir, packageRoot })
 }
 
 export async function refreshInstalledManagedRuntime({

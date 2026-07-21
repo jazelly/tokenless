@@ -11,7 +11,6 @@
     "changeset": "changeset",
     "lint": "npm run lint --workspaces --if-present && tsc -p tsconfig.scripts.json --noEmit",
     "release:version": "node scripts/release/version.mjs",
-    "verify:extension-release": "node scripts/verify-extension-release.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node dist/scripts/test-all.mjs",
     "test:e2e": "npm run build && TOKENLESS_E2E=1 node --test test/**/*.e2e.mjs",
@@ -19,8 +18,7 @@
     "test:e2e:live-direct": "npm run build:js --workspace tokenless && TOKENLESS_LIVE_DIRECT=1 node --test test/live-direct-api.e2e.mjs",
     "test:e2e:live-managed-codex": "npm run build:js --workspace tokenless && TOKENLESS_LIVE_MANAGED_CODEX=1 node --test test/live-managed-codex.e2e.mjs",
     "test:e2e:live-managed-playwright-m1": "npm run build && node --test --test-concurrency=1 test/live-managed-playwright-prompt-actions.e2e.mjs",
-    "test:e2e:live-managed-playwright": "npm run build && node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
-    "test:e2e:live-chatgpt": "npm run build && TOKENLESS_LIVE_CHATGPT=1 node --test test/live-chatgpt.e2e.mjs"
+    "test:e2e:live-managed-playwright": "npm run build && node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs"
   },
   "workspaces": [
     "packages/*"
@@ -32,7 +30,6 @@
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
     "@playwright/test": "^1.53.0",
-    "@types/chrome": "^0.2.2",
     "@types/node": "^26.1.1",
     "selfsigned": "^5.5.0",
     "typescript": "^7.0.2"

@@ -5,7 +5,7 @@ description: Route shareable Q&A, analysis, review, research, writing, and file-
 
 # Tokenless agent workflow
 
-Use `npx tokenless` as the entrypoint. Do not reproduce provider-specific Playwright or DOM work yourself.
+Use `tokenless` as the entrypoint. Do not reproduce provider-specific Playwright or DOM work yourself.
 
 Tokenless sends visible jobs through its authenticated local Rust daemon and Playwright worker into a persistent managed Chromium profile selected during `tokenless setup`. Keep provider authentication opaque inside that profile, operate only visible page controls, and use only documented public APIs when the caller explicitly selects direct mode.
 
@@ -16,18 +16,26 @@ Require the `tokenless-install` skill to finish setup, upgrades, repairs, and `d
 ## Resolve provider and profile
 
 ```bash
-npx tokenless config --json
-npx tokenless profiles list --json
+tokenless config --json
+tokenless profiles list --json
 ```
 
 Use an explicitly requested provider and profile first, then configured defaults. ChatGPT is the provider default. Fail before submitting work if no managed profile resolves; use `tokenless-install` to repair it.
+
+Before the first job for a chosen pair, confirm readiness:
+
+```bash
+tokenless profiles status --profile "<managed-profile>" --provider chatgpt --json
+```
+
+If status shows unauthenticated or blocked readiness, hand off to `tokenless-install` instead of submitting a job.
 
 ## Build only shareable context
 
 Create a prompt file when the request needs structured context:
 
 ```bash
-npx tokenless \
+tokenless \
   --project-root "/absolute/path/to/project" \
   --project-name "<agent project name>" \
   --chat-name "<agent task name>" \
@@ -41,7 +49,7 @@ Include only the request, explicit shareable context, and intentionally selected
 ## Run through the visible provider website
 
 ```bash
-npx tokenless run \
+tokenless run \
   --profile "<managed-profile>" \
   --provider chatgpt \
   --project-name "<agent project name>" \
@@ -56,7 +64,7 @@ Repeat `--attach-file <path>` only for files the user intends to share. Tokenles
 Use `provider-controls` to discover exact visible labels before requesting a model or effort setting:
 
 ```bash
-npx tokenless provider-controls --profile "<managed-profile>" --provider chatgpt --json
+tokenless provider-controls --profile "<managed-profile>" --provider chatgpt --json
 ```
 
 Pass only an exact returned label with `--model`, ordered `--model-fallback`, or `--effort`. If a requested control or action is unsupported or unverified, surface the failure; do not guess or silently change providers or modes.
@@ -70,7 +78,7 @@ If sign-in, CAPTCHA, plan limits, consent, or confirmation requires the user, st
 ## Query daemon-backed state
 
 ```bash
-npx tokenless state --task-id "<returned taskId>" --json
+tokenless state --task-id "<returned taskId>" --json
 ```
 
 Use `latest.status`, `latest.state`, `latest.result`, `latest.error`, and `jobs` as the source of truth. State comes from the authenticated Rust daemon, not a local task-page or JSON fallback.
@@ -78,7 +86,7 @@ Use `latest.status`, `latest.state`, `latest.result`, `latest.error`, and `jobs`
 Cancel only through daemon-confirmed cancellation:
 
 ```bash
-npx tokenless cancel --job-id "<jobId>" --json
+tokenless cancel --job-id "<jobId>" --json
 ```
 
 Treat cancellation as complete only when the CLI returns `ok: true` and `status: canceled`. On `job_cancel_failed`, say that the job may still be running or may already have completed, then query `state`.

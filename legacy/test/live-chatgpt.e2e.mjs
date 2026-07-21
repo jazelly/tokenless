@@ -7,7 +7,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const extensionPath = path.join(root, 'packages/extension/dist/extension')
+const extensionPath = path.join(root, 'legacy/extension/dist/extension')
 const testResultsRoot = path.join(root, 'test-results', 'tokenless-live-chatgpt', 'runs')
 
 test('live ChatGPT DOM is driven by Tokenless extension without fixture routing', {
@@ -20,8 +20,8 @@ test('live ChatGPT DOM is driven by Tokenless extension without fixture routing'
     nativeMessagingHostDirs,
     NATIVE_HOST_NAME,
     readLiveBridgeMarker,
-  } = await import('../packages/cli/dist/src/index.js')
-  const { DEFAULT_EXTENSION_ID } = await import('../packages/cli/dist/src/default-extension-id.js')
+  } = await import('../../packages/cli/dist/src/index.js')
+  const { DEFAULT_EXTENSION_ID } = await import('../extension/default-extension-id.mjs')
 
   const artifactDir = await createArtifactDir()
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-live-chatgpt-'))

@@ -6,7 +6,5 @@
   "fixed": [],
   "linked": [],
   "updateInternalDependencies": "patch",
-  "ignore": [
-    "tokenless-browser-session-bridge"
-  ]
+  "ignore": []
 }

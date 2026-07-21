@@ -135,7 +135,7 @@ node scripts/capture-cws-screenshots.mjs
 
 The output directory contains two 1280×800 screenshots, the required 440×280
 small promo tile, an optional 1400×560 marquee image, and a 128×128 Store icon.
-The capture script uses only the canonical logo under `packages/extension/assets`,
+The capture script uses only the canonical logo under `legacy/extension/assets`,
 a local static server, and a mock Native Messaging response; it never opens a
 provider page or includes a real account, prompt, or answer. Inspect the PNGs
 before uploading and regenerate them after any Settings UI or brand change.
