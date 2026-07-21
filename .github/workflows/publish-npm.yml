@@ -67,14 +67,6 @@ jobs:
         run: rustup toolchain install stable --profile minimal
       - name: Build and verify this native runtime
         run: npm --prefix packages/cli run build:native
-      - name: Configure npm token fallback for first publication
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-          fi
       - name: Publish native runtime
         run: node scripts/release/publish-package.mjs "packages/cli/npm/tokenless-native-${{ matrix.platform }}-${{ matrix.arch }}"
 
@@ -97,14 +89,6 @@ jobs:
           rm package-lock.json
           npm install --package-lock-only --ignore-scripts
           npm ci --ignore-scripts
-      - name: Configure npm token fallback for first publication
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-          fi
       - name: Publish universal CLI after every native runtime
         run: node scripts/release/publish-package.mjs packages/cli
 
