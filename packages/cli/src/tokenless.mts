@@ -13,8 +13,10 @@ import {
   discoverChromiumProfiles,
   importChromeProfile,
   providerHomeUrl,
+  readManagedProfileRegistryReadOnly,
   resolveChromeProfile,
   runnerSupervisorStatus,
+  runnerSupervisorStatusReadOnly,
   startRunnerSupervisor,
   stopRunnerSupervisor,
   submitManagedPlaywrightJob,
@@ -43,18 +45,17 @@ import {
   getDaemonJob,
   inspectManagedRuntime,
   inspectManagedCodexAccount,
-  installRustRuntime,
   listDaemonJobs,
   loginManagedCodexAccount,
   normalizeBrowserId,
   normalizeAccountId,
   openProviderUrl,
   persistDaemonSnapshot,
+  probeDaemonReady,
   providerWakeUrl,
   publicAccountRecord,
   readLiveBridgeMarker,
   readTokenlessConfig,
-  refreshInstalledManagedRuntime,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
   stageVisibleAttachments,
@@ -2047,6 +2048,11 @@ async function setupCommand(args: CliArgs) {
         daemonUrl: configuredDaemonUrl,
       })
     })
+    const localRuntime = await presenter.withProgress('Local runtime', () => ensureDaemonReady({
+      homeDir,
+      daemonUrl: configuredDaemonUrl,
+      timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+    }))
     const profile = await ensureSetupManagedProfile({
       args,
       homeDir,
@@ -2278,7 +2284,13 @@ async function setupCommand(args: CliArgs) {
       ...(hasActionRequired ? { waitingForUser: true, userActions } : {}),
       profile: publicManagedProfile(updatedProfile, await defaultProfileSlug(registry)),
       runner,
-      daemon: { ready: true, url: configuredDaemonUrl },
+      daemon: {
+        ready: true,
+        url: configuredDaemonUrl,
+        started: localRuntime.started,
+        pid: localRuntime.pid,
+        version: localRuntime.body?.version,
+      },
       compactOutput: failed
         ? setupFailedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary, userActions })
         : waitingForUser
@@ -2940,7 +2952,6 @@ async function provisionRuntime(args: CliArgs) {
     const browser = await resolveChromiumBrowser(requested)
     if (!resolvedBrowsers.includes(browser.browser)) resolvedBrowsers.push(browser.browser)
   }
-  const installed = await installRustRuntime({ homeDir })
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   await writeTokenlessConfig({
     homeDir,
@@ -2952,12 +2963,16 @@ async function provisionRuntime(args: CliArgs) {
     daemonUrl: configuredDaemonUrl,
     timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
   })
+  const runtime = await inspectManagedRuntime(homeDir)
   return {
     homeDir,
     config,
     browsers: resolvedBrowsers,
     browser: await resolveChromiumBrowser(resolvedBrowsers[0]),
-    installed,
+    installed: {
+      runtime: 'rust',
+      daemonExecutable: runtime.installed.path,
+    },
     daemon,
     daemonUrl: configuredDaemonUrl,
   }
@@ -2965,13 +2980,6 @@ async function provisionRuntime(args: CliArgs) {
 
 async function doctorCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  let runtimeRefresh: Record<string, any>
-  try {
-    const refreshed = await refreshInstalledManagedRuntime({ homeDir })
-    runtimeRefresh = { ok: true, refreshed }
-  } catch (error) {
-    runtimeRefresh = { ok: false, refreshed: [], message: error instanceof Error ? error.message : String(error) }
-  }
   let config: Record<string, any> = { preferredProviders: [], browser: null, daemonUrl: null }
   let configCheck: Record<string, any>
   try {
@@ -3007,49 +3015,132 @@ async function doctorCommand(args: CliArgs) {
     browser = { ok: false, id: normalizeBrowserId(browserId), message: (error as Error).message }
   }
   let daemon: Record<string, any>
+  const daemonLogPath = path.join(homeDir, 'daemon.log')
+  const daemonLogExists = await fileExists(daemonLogPath)
   try {
-    const ready = await ensureDaemonReady({
+    const ready = await probeDaemonReady({
       homeDir,
       daemonUrl: configuredDaemonUrl,
-      timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
     })
-    daemon = {
-      ok: true,
-      ready: true,
-      url: configuredDaemonUrl,
-      homeDir: ready.actualHome,
-      daemonProtocol: ready.body?.daemon_protocol,
-      nativeProtocol: ready.body?.native_protocol,
-      version: ready.body?.version,
-      pid: ready.pid,
+    const expectedVersion = tokenlessPackageVersion()
+    const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
+    const packagedHash = runtime.packaged.hash
+    const runningHash = typeof ready.body?.running_binary_hash === 'string' ? ready.body.running_binary_hash : null
+    const identityError = ready.body?.daemon_process_identity_error
+    if (!ready.ok) {
+      daemon = {
+        ok: false,
+        ready: false,
+        url: configuredDaemonUrl,
+        daemonLogPath,
+        daemonLogExists,
+        code: ready.code,
+        message: ready.message,
+        expectedVersion,
+        runningVersion,
+        packagedHash,
+        runningHash,
+      }
+    } else if (runningVersion !== expectedVersion) {
+      daemon = {
+        ok: false,
+        ready: true,
+        url: configuredDaemonUrl,
+        daemonLogPath,
+        daemonLogExists,
+        code: 'daemon_version_mismatch',
+        message: `Tokenless daemon reports version ${runningVersion ?? 'missing'}; expected tokenless@${expectedVersion}.`,
+        homeDir: ready.actualHome,
+        expectedVersion,
+        runningVersion,
+        packagedHash,
+        runningHash,
+        pid: ready.body?.pid ?? null,
+        processIdentity: identityError === undefined ? 'verified' : 'unverified',
+      }
+    } else if (identityError !== undefined) {
+      daemon = {
+        ok: false,
+        ready: true,
+        url: configuredDaemonUrl,
+        daemonLogPath,
+        daemonLogExists,
+        code: identityError.code ?? 'daemon_process_identity_unverified',
+        message: identityError.message ?? 'Tokenless daemon process identity could not be verified.',
+        homeDir: ready.actualHome,
+        expectedVersion,
+        runningVersion,
+        packagedHash,
+        runningHash,
+        pid: ready.body?.pid ?? null,
+        processIdentity: 'unverified',
+      }
+    } else if (!packagedHash || runningHash !== packagedHash) {
+      daemon = {
+        ok: false,
+        ready: true,
+        url: configuredDaemonUrl,
+        daemonLogPath,
+        daemonLogExists,
+        code: 'daemon_binary_hash_mismatch',
+        message: `Tokenless daemon binary hash is ${runningHash ?? 'missing'}; expected packaged hash ${packagedHash ?? 'unavailable'}.`,
+        homeDir: ready.actualHome,
+        expectedVersion,
+        runningVersion,
+        packagedHash,
+        runningHash,
+        pid: ready.body?.pid ?? null,
+        processIdentity: 'verified',
+      }
+    } else {
+      daemon = {
+        ok: true,
+        ready: true,
+        url: configuredDaemonUrl,
+        daemonLogPath,
+        daemonLogExists,
+        homeDir: ready.actualHome,
+        daemonProtocol: ready.body?.daemon_protocol,
+        nativeProtocol: ready.body?.native_protocol,
+        expectedVersion,
+        runningVersion,
+        packagedHash,
+        runningHash,
+        pid: ready.body?.pid ?? null,
+        processIdentity: 'verified',
+      }
     }
   } catch (error) {
-    daemon = { ok: false, ready: false, url: configuredDaemonUrl, message: (error as Error).message }
+    daemon = { ok: false, ready: false, url: configuredDaemonUrl, daemonLogPath, daemonLogExists, message: (error as Error).message }
   }
-  let managedProfile: Record<string, any>
-  let providerReadiness: Record<string, any>
+  let managedProfile: Record<string, any> = { ok: false, message: 'Managed profile was not inspected.' }
+  let providerReadiness: Record<string, any> = { ok: false, providers: {} }
   try {
-    const registry = new ManagedProfileRegistry(homeDir)
-    const profile = await registry.resolveProfile()
-    managedProfile = {
-      ok: profile.lifecycle === 'ready',
-      slug: profile.slug,
-      id: profile.id,
-      lifecycle: profile.lifecycle,
-      imported: Boolean(profile.import),
-    }
-    const providers = Array.isArray(config.preferredProviders) ? config.preferredProviders : []
-    const statuses = Object.fromEntries(providers.map((provider) => {
-      const observed = profile.lastObservedAuth[provider as ProviderId]
-      return [provider, {
-        ok: observed?.auth === 'authenticated',
-        auth: observed?.auth ?? 'unknown',
-        checkedAt: observed?.checkedAt ?? null,
-      }]
-    }))
-    providerReadiness = {
-      ok: providers.length > 0 && Object.values(statuses).every((status: any) => status.ok === true),
-      providers: statuses,
+    const profileReport = await readManagedProfileReadOnly(homeDir)
+    if (!profileReport.profile) {
+      managedProfile = profileReport
+    } else {
+      const profile = profileReport.profile
+      managedProfile = {
+        ok: profile.lifecycle === 'ready',
+        slug: profile.slug,
+        id: profile.id,
+        lifecycle: profile.lifecycle,
+        imported: Boolean(profile.import),
+      }
+      const providers = Array.isArray(config.preferredProviders) ? config.preferredProviders : []
+      const statuses = Object.fromEntries(providers.map((provider) => {
+        const observed = profile.lastObservedAuth?.[provider as ProviderId]
+        return [provider, {
+          ok: observed?.auth === 'authenticated',
+          auth: observed?.auth ?? 'unknown',
+          checkedAt: observed?.checkedAt ?? null,
+        }]
+      }))
+      providerReadiness = {
+        ok: providers.length > 0 && Object.values(statuses).every((status: any) => status.ok === true),
+        providers: statuses,
+      }
     }
   } catch (error) {
     managedProfile = { ok: false, message: error instanceof Error ? error.message : String(error) }
@@ -3057,7 +3148,7 @@ async function doctorCommand(args: CliArgs) {
   }
   let runner: Record<string, any>
   try {
-    const status = await runnerSupervisorStatus({ homeDir })
+    const status = await runnerSupervisorStatusReadOnly({ homeDir })
     runner = { ok: status.state === 'running', ...status }
   } catch (error) {
     runner = { ok: false, state: 'unknown', message: error instanceof Error ? error.message : String(error) }
@@ -3068,7 +3159,6 @@ async function doctorCommand(args: CliArgs) {
     node: { ok: nodeOk, version: process.version, required: '>=22.13.0' },
     tokenlessHome: { ok: true, path: homeDir },
     skills,
-    runtimeRefresh,
     managedRuntime: runtime,
     daemon,
     runner,
@@ -3085,6 +3175,26 @@ async function doctorCommand(args: CliArgs) {
     checks,
   }, args)
   if (!ok) process.exitCode = 1
+}
+
+async function readManagedProfileReadOnly(homeDir: string) {
+  const registry = new ManagedProfileRegistry(homeDir)
+  const data = await readManagedProfileRegistryReadOnly(homeDir)
+  const defaultSlug = data.defaultProfile
+  const profile = defaultSlug ? data.profiles[defaultSlug] : undefined
+  if (!profile || profile.lifecycle === 'removed') {
+    return {
+      ok: false,
+      path: registry.paths.registryFile,
+      profile: null,
+      message: defaultSlug ? 'Default managed profile is not available.' : 'No default managed profile is configured.',
+    }
+  }
+  return {
+    ok: true,
+    path: registry.paths.registryFile,
+    profile,
+  }
 }
 
 async function configCommand(args: CliArgs) {
@@ -4096,6 +4206,15 @@ function optionalNumber(value: unknown) {
 
 function objectRecord(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
+}
+
+async function fileExists(file: string) {
+  try {
+    await fs.access(file)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function formatStatusValue(value: unknown) {

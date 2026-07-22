@@ -18,7 +18,7 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fmt;
 use std::fs;
@@ -39,7 +39,10 @@ const SUMMARY_SCALAR_CHARS: usize = 256;
 const PROFILE_ID_CHARS: usize = 128;
 pub const DAEMON_PROTOCOL: &str = "tokenless.daemon.v1";
 pub const DAEMON_READY_PROOF_PROTOCOL: &str = "tokenless.daemon-ready-proof.v1";
+pub const DAEMON_PROCESS_PROOF_PROTOCOL: &str = "tokenless.daemon-process-proof.v1";
 pub const NATIVE_BINARY_BUILD_INFO_PROTOCOL: &str = "tokenless.native-binary-build-info.v1";
+static DAEMON_INSTANCE_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static DAEMON_SELF_SHA256: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 pub const READY_CHALLENGE_BYTES: usize = 32;
 pub const READY_CHALLENGE_BASE64URL_CHARS: usize = 43;
 pub const DEFAULT_CLAIM_LEASE: std::time::Duration = std::time::Duration::from_secs(30);
@@ -1411,6 +1414,9 @@ struct HealthResponse {
     status: &'static str,
     ready: bool,
     home_dir: String,
+    pid: u32,
+    instance_id: String,
+    running_binary_hash: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1420,6 +1426,8 @@ struct ReadyResponse {
     ready_proof_protocol: &'static str,
     ready_challenge: String,
     ready_proof: String,
+    daemon_process_proof_protocol: &'static str,
+    daemon_process_proof: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1551,6 +1559,7 @@ pub fn http_router(store: JobStore) -> Router {
 
 pub async fn serve_http(store: JobStore, host: IpAddr, port: u16) -> Result<()> {
     validate_loopback_host(host)?;
+    freeze_daemon_self_sha256()?;
     let listener = TcpListener::bind(SocketAddr::new(host, port)).await?;
     serve_http_listener(store, listener).await
 }
@@ -1563,13 +1572,14 @@ pub fn validate_loopback_host(host: IpAddr) -> Result<()> {
 }
 
 pub async fn serve_http_listener(store: JobStore, listener: TcpListener) -> Result<()> {
+    freeze_daemon_self_sha256()?;
     axum::serve(listener, http_router(store))
         .await
         .map_err(DaemonError::Io)
 }
 
-async fn health_handler(State(state): State<HttpState>) -> Json<HealthResponse> {
-    Json(health_response(&state.store))
+async fn health_handler(State(state): State<HttpState>) -> ApiResult<HealthResponse> {
+    Ok(Json(health_response(&state.store)?))
 }
 
 async fn ready_handler(
@@ -1578,18 +1588,28 @@ async fn ready_handler(
 ) -> ApiResult<ReadyResponse> {
     let Query(query) = query.map_err(query_rejection_to_api_error)?;
     validate_ready_challenge(&query.challenge)?;
-    let health = health_response(&state.store);
+    let health = health_response(&state.store)?;
     let ready_proof = daemon_ready_proof(&state.store, &query.challenge, &health.home_dir)?;
+    let daemon_process_proof = daemon_process_proof(
+        &state.store,
+        &query.challenge,
+        &health.home_dir,
+        health.pid,
+        &health.instance_id,
+        &health.running_binary_hash,
+    )?;
     Ok(Json(ReadyResponse {
         health,
         ready_proof_protocol: DAEMON_READY_PROOF_PROTOCOL,
         ready_challenge: query.challenge,
         ready_proof,
+        daemon_process_proof_protocol: DAEMON_PROCESS_PROOF_PROTOCOL,
+        daemon_process_proof,
     }))
 }
 
-fn health_response(store: &JobStore) -> HealthResponse {
-    HealthResponse {
+fn health_response(store: &JobStore) -> Result<HealthResponse> {
+    Ok(HealthResponse {
         protocol: DAEMON_PROTOCOL,
         daemon_protocol: DAEMON_PROTOCOL,
         version: env!("CARGO_PKG_VERSION"),
@@ -1597,7 +1617,10 @@ fn health_response(store: &JobStore) -> HealthResponse {
         status: "ok",
         ready: true,
         home_dir: store.home_dir().to_string_lossy().into_owned(),
-    }
+        pid: std::process::id(),
+        instance_id: daemon_instance_id().to_owned(),
+        running_binary_hash: daemon_self_sha256()?.to_owned(),
+    })
 }
 
 async fn create_job_handler(
@@ -1896,6 +1919,34 @@ pub fn daemon_ready_proof_message(challenge: &str, canonical_home: &str) -> Resu
         native_host::NATIVE_PROTOCOL,
         canonical_home,
     ];
+    length_prefixed_message(fields)
+}
+
+pub fn daemon_process_proof_message(
+    challenge: &str,
+    canonical_home: &str,
+    pid: u32,
+    instance_id: &str,
+    running_binary_hash: &str,
+) -> Result<Vec<u8>> {
+    validate_ready_challenge(challenge)?;
+    validate_instance_id(instance_id)?;
+    validate_sha256_hex(running_binary_hash)?;
+    let pid_string = pid.to_string();
+    let fields = [
+        DAEMON_PROCESS_PROOF_PROTOCOL,
+        challenge,
+        DAEMON_PROTOCOL,
+        native_host::NATIVE_PROTOCOL,
+        canonical_home,
+        pid_string.as_str(),
+        instance_id,
+        running_binary_hash,
+    ];
+    length_prefixed_message(fields)
+}
+
+fn length_prefixed_message<const N: usize>(fields: [&str; N]) -> Result<Vec<u8>> {
     let total_capacity = fields
         .iter()
         .map(|field| 4_usize.saturating_add(field.len()))
@@ -1914,11 +1965,98 @@ pub fn daemon_ready_proof_message(challenge: &str, canonical_home: &str) -> Resu
 fn daemon_ready_proof(store: &JobStore, challenge: &str, canonical_home: &str) -> Result<String> {
     let token = store.control_token()?;
     let message = daemon_ready_proof_message(challenge, canonical_home)?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes()).map_err(|_| {
-        DaemonError::InvalidInput("daemon token cannot initialize ready proof".to_owned())
-    })?;
-    mac.update(&message);
+    hmac_base64url(
+        token.as_bytes(),
+        &message,
+        "daemon token cannot initialize ready proof",
+    )
+}
+
+fn daemon_process_proof(
+    store: &JobStore,
+    challenge: &str,
+    canonical_home: &str,
+    pid: u32,
+    instance_id: &str,
+    running_binary_hash: &str,
+) -> Result<String> {
+    let token = store.control_token()?;
+    let message = daemon_process_proof_message(
+        challenge,
+        canonical_home,
+        pid,
+        instance_id,
+        running_binary_hash,
+    )?;
+    hmac_base64url(
+        token.as_bytes(),
+        &message,
+        "daemon token cannot initialize process proof",
+    )
+}
+
+fn hmac_base64url(token: &[u8], message: &[u8], error_message: &'static str) -> Result<String> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(token)
+        .map_err(|_| DaemonError::InvalidInput(error_message.to_owned()))?;
+    mac.update(message);
     Ok(URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+}
+
+fn daemon_instance_id() -> &'static str {
+    DAEMON_INSTANCE_ID
+        .get_or_init(|| {
+            let mut bytes = [0u8; 16];
+            getrandom::getrandom(&mut bytes).expect("daemon instance id randomness");
+            URL_SAFE_NO_PAD.encode(bytes)
+        })
+        .as_str()
+}
+
+fn daemon_self_sha256() -> Result<&'static str> {
+    freeze_daemon_self_sha256()
+}
+
+fn freeze_daemon_self_sha256() -> Result<&'static str> {
+    if let Some(hash) = DAEMON_SELF_SHA256.get() {
+        return Ok(hash.as_str());
+    }
+    let executable = env::current_exe().map_err(DaemonError::Io)?;
+    let bytes = fs::read(executable).map_err(DaemonError::Io)?;
+    let hash = hex_sha256(&bytes);
+    let _ = DAEMON_SELF_SHA256.set(hash);
+    Ok(DAEMON_SELF_SHA256
+        .get()
+        .expect("daemon self hash was just initialized")
+        .as_str())
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn validate_instance_id(instance_id: &str) -> Result<()> {
+    if instance_id.len() != 22
+        || !instance_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(DaemonError::InvalidInput(
+            "daemon instance id must be canonical base64url identity".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sha256_hex(value: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(DaemonError::InvalidInput(
+            "daemon running binary hash must be canonical SHA-256 hex".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_ready_challenge(challenge: &str) -> Result<()> {
@@ -3310,6 +3448,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn process_proof_canonicalization_binds_pid_and_instance_without_changing_ready_v1() {
+        let challenge = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let ready_message = daemon_ready_proof_message(challenge, "/tmp/tokenless").unwrap();
+        let process_message = daemon_process_proof_message(
+            challenge,
+            "/tmp/tokenless",
+            12345,
+            "AAAAAAAAAAAAAAAAAAAAAA",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .unwrap();
+
+        assert_ne!(ready_message, process_message);
+        assert_eq!(
+            URL_SAFE_NO_PAD.encode(&ready_message),
+            "AAAAH3Rva2VubGVzcy5kYWVtb24tcmVhZHktcHJvb2YudjEAAAArQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQAAABN0b2tlbmxlc3MuZGFlbW9uLnYxAAAAE3Rva2VubGVzcy5uYXRpdmUudjEAAAAOL3RtcC90b2tlbmxlc3M"
+        );
+        let mut expected_fields = [
+            DAEMON_PROCESS_PROOF_PROTOCOL,
+            challenge,
+            DAEMON_PROTOCOL,
+            native_host::NATIVE_PROTOCOL,
+            "/tmp/tokenless",
+            "12345",
+            "AAAAAAAAAAAAAAAAAAAAAA",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ]
+        .into_iter();
+        let mut offset = 0;
+        while offset < process_message.len() {
+            let length = u32::from_be_bytes(process_message[offset..offset + 4].try_into().unwrap())
+                as usize;
+            offset += 4;
+            let field = std::str::from_utf8(&process_message[offset..offset + length]).unwrap();
+            assert_eq!(Some(field), expected_fields.next());
+            offset += length;
+        }
+        assert!(expected_fields.next().is_none());
+    }
+
     #[tokio::test]
     async fn ready_requires_challenge_and_returns_token_bound_hmac_proof() {
         let tempdir = tempfile::tempdir().unwrap();
@@ -3356,8 +3535,23 @@ mod tests {
         assert_eq!(first["ready"], true);
         assert_eq!(first["ready_proof_protocol"], DAEMON_READY_PROOF_PROTOCOL);
         assert_eq!(first["ready_challenge"], first_challenge);
+        assert_eq!(
+            first["daemon_process_proof_protocol"],
+            DAEMON_PROCESS_PROOF_PROTOCOL
+        );
+        assert_eq!(first["pid"], std::process::id());
+        let instance_id = first["instance_id"].as_str().unwrap();
+        assert_eq!(instance_id.len(), 22);
+        let running_binary_hash = first["running_binary_hash"].as_str().unwrap();
+        assert_eq!(running_binary_hash.len(), 64);
+        assert!(running_binary_hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
         let first_proof = first["ready_proof"].as_str().unwrap();
         assert_eq!(URL_SAFE_NO_PAD.decode(first_proof).unwrap().len(), 32);
+        let first_process_proof = first["daemon_process_proof"].as_str().unwrap();
+        assert_eq!(
+            URL_SAFE_NO_PAD.decode(first_process_proof).unwrap().len(),
+            32
+        );
 
         let message = daemon_ready_proof_message(&first_challenge, &canonical_home).unwrap();
         let mut expected_fields = [
@@ -3384,6 +3578,20 @@ mod tests {
         assert_eq!(
             first_proof,
             URL_SAFE_NO_PAD.encode(expected_mac.finalize().into_bytes())
+        );
+        let process_message = daemon_process_proof_message(
+            &first_challenge,
+            &canonical_home,
+            std::process::id(),
+            instance_id,
+            running_binary_hash,
+        )
+        .unwrap();
+        let mut expected_process_mac = Hmac::<Sha256>::new_from_slice(token.as_bytes()).unwrap();
+        expected_process_mac.update(&process_message);
+        assert_eq!(
+            first_process_proof,
+            URL_SAFE_NO_PAD.encode(expected_process_mac.finalize().into_bytes())
         );
         assert!(!serde_json::to_string(&first).unwrap().contains(&token));
 
