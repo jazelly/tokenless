@@ -9,8 +9,9 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
+const SETUP_VISIBLE_PROVIDERS = ['chatgpt', 'claude', 'gemini', 'grok']
 
-test('canonical default setup noninteractively selects browser/profile/providers and proves visible readiness', async () => {
+test('canonical default setup noninteractively selects a browser/profile and proves all-provider visible readiness', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-')))
   const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-skills-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -33,9 +34,8 @@ test('canonical default setup noninteractively selects browser/profile/providers
       TOKENLESS_SETUP_SKILL_HOME: skillHome,
     })
     const profile = await waitForManagedProfile(homeDir)
-    const job = await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    const jobs = await completeSetupAuthSweep({ daemonUrl, homeDir, profileId: profile.id })
     daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
     const result = await waitForProcess(setup, 10000)
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
@@ -44,11 +44,15 @@ test('canonical default setup noninteractively selects browser/profile/providers
     assert.equal(payload.status, 'ready')
     assert.equal(payload.skills.ok, true)
     assert.equal(payload.browser.id, 'profile')
-    assert.deepEqual(payload.providers, ['chatgpt'])
+    assert.deepEqual(payload.providers, SETUP_VISIBLE_PROVIDERS)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).preferredProviders, SETUP_VISIBLE_PROVIDERS)
     assert.equal(payload.profile.slug, 'default')
-    assert.equal(payload.readiness.chatgpt.auth, 'authenticated')
-    assert.equal(payload.readiness.chatgpt.jobId, job.job_id)
-    assert.deepEqual(job.request_json.actions.map((action) => action.action), ['auth.status'])
+    assert.deepEqual(Object.keys(payload.readiness), SETUP_VISIBLE_PROVIDERS)
+    for (const provider of SETUP_VISIBLE_PROVIDERS) {
+      assert.equal(payload.readiness[provider].auth, 'authenticated')
+      assert.equal(payload.readiness[provider].jobId, jobs[provider].job_id)
+      assert.deepEqual(jobs[provider].request_json.actions.map((action) => action.action), ['auth.status'])
+    }
 
     const doctor = runCli([
       'doctor',
@@ -66,9 +70,32 @@ test('canonical default setup noninteractively selects browser/profile/providers
     assert.equal(diagnosis.checks.managedRuntime.ok, true)
     assert.equal(diagnosis.checks.runner.ok, true)
     assert.equal(diagnosis.checks.managedProfile.ok, true)
-    assert.equal(diagnosis.checks.providerReadiness.providers.chatgpt.auth, 'authenticated')
+    assert.deepEqual(Object.keys(diagnosis.checks.providerReadiness.providers), SETUP_VISIBLE_PROVIDERS)
+    for (const provider of SETUP_VISIBLE_PROVIDERS) {
+      assert.equal(diagnosis.checks.providerReadiness.providers[provider].auth, 'authenticated')
+    }
     assert.equal('nativeHostManifests' in diagnosis.checks, false)
     assert.equal('extensionBridge' in diagnosis.checks, false)
+
+    const defaultRun = runCli([
+      'run',
+      '--profile', 'default',
+      '--prompt', 'default provider check',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--no-wait',
+      '--json',
+    ], {
+      TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
+      TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
+      TOKENLESS_SETUP_SKILL_HOME: skillHome,
+    })
+    assert.equal(defaultRun.status, 0, defaultRun.stderr || defaultRun.stdout)
+    const defaultRunPayload = JSON.parse(defaultRun.stdout)
+    assert.equal(defaultRunPayload.provider, 'chatgpt')
+    const defaultRunJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(defaultRunPayload.jobId)}`, homeDir)
+    assert.equal(defaultRunJob.provider, 'chatgpt')
   } finally {
     try {
       const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
@@ -77,6 +104,26 @@ test('canonical default setup noninteractively selects browser/profile/providers
     if (daemonPid) await stopPid(daemonPid)
     fs.rmSync(homeDir, { recursive: true, force: true })
     fs.rmSync(skillHome, { recursive: true, force: true })
+  }
+})
+
+test('setup rejects obsolete provider selection flags before configuring a profile', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-provider-flag-')))
+  try {
+    for (const args of [
+      ['setup', '--provider', 'claude', '--home', homeDir, '--json'],
+      ['setup', '--preferred-providers', 'chatgpt,claude', '--home', homeDir, '--json'],
+    ]) {
+      const result = runCli(args)
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      const payload = JSON.parse(result.stdout)
+      assert.equal(payload.ok, false)
+      assert.equal(payload.error.code, 'setup_provider_selection_unsupported')
+      assert.match(payload.error.message, /checks every supported visible provider/)
+    }
+    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
@@ -110,7 +157,6 @@ test('interactive setup -f reuses a managed profile without offering source prof
       '-f',
       '--profile', 'default',
       '--browser-user-data-dir', chromeRoot,
-      '--preferred-providers', 'chatgpt',
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',
@@ -126,14 +172,14 @@ test('interactive setup -f reuses a managed profile without offering source prof
     setup.stdin.write('\n')
 
     const profile = await waitForManagedProfile(homeDir)
-    await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    await completeSetupAuthSweep({ daemonUrl, homeDir, profileId: profile.id })
     daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
 
     const result = await setupFinished
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.doesNotMatch(result.stdout, /Import an existing .* profile into Tokenless/)
     assert.doesNotMatch(result.stdout, /Re-import .* from/)
+    assert.doesNotMatch(result.stdout, /Providers \(comma-separated/)
     assert.equal(profile.slug, 'default')
     assert.equal(profile.label, 'default')
     assert.equal(profile.import, undefined)
@@ -179,7 +225,6 @@ test('setup uses the imported browser profile name as its managed profile label'
       '--browser-user-data-dir', chromeRoot,
       '--import-browser-profile', 'Default',
       '--consent-local-profile-copy',
-      '--preferred-providers', 'chatgpt',
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',
@@ -198,15 +243,16 @@ test('setup uses the imported browser profile name as its managed profile label'
       const result = await setupFinished
       assert.fail(`${error.message}\n${result.stderr || result.stdout}`)
     }
-    await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    await completeSetupAuthSweep({ daemonUrl, homeDir, profileId: profile.id })
     daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
 
     const result = await setupFinished
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.profile.slug, 'default')
     assert.equal(payload.profile.label, 'Jason')
+    const registry = JSON.parse(fs.readFileSync(path.join(homeDir, 'browser', 'profiles.json'), 'utf8'))
+    assert.deepEqual(registry.profiles.default.import.providers, SETUP_VISIBLE_PROVIDERS)
     assert.equal(profile.labelOrigin, 'import')
   } finally {
     try {
@@ -247,7 +293,6 @@ test('interactive setup copies the chosen browser profile without a second conse
       'setup',
       '--profile', 'default',
       '--browser-user-data-dir', chromeRoot,
-      '--preferred-providers', 'chatgpt',
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',
@@ -267,13 +312,13 @@ test('interactive setup copies the chosen browser profile without a second conse
     setup.stdin.write('\n')
 
     const profile = await waitForManagedProfile(homeDir)
-    await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    await completeSetupAuthSweep({ daemonUrl, homeDir, profileId: profile.id })
     daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
 
     const result = await setupFinished
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.doesNotMatch(result.stdout, /Copy .* into managed profile/)
+    assert.doesNotMatch(result.stdout, /Providers \(comma-separated/)
     assert.equal(profile.label, 'Jason')
   } finally {
     try {
@@ -311,7 +356,13 @@ test('setup surfaces failed managed readiness jobs as technical CLI failures', a
       TOKENLESS_SETUP_SKILL_HOME: skillHome,
     })
     const profile = await waitForManagedProfile(homeDir)
-    const job = await waitForPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id })
+    const job = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['auth.status'],
+    })
     daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
     const claimed = await daemonPost({
       daemonUrl,
@@ -336,6 +387,13 @@ test('setup surfaces failed managed readiness jobs as technical CLI failures', a
         },
       },
     })
+    await completeSetupAuthSweep({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      providers: ['claude', 'gemini', 'grok'],
+      excludeJobIds: new Set([job.job_id]),
+    })
 
     const result = await waitForProcess(setup, 10000)
 
@@ -344,6 +402,8 @@ test('setup surfaces failed managed readiness jobs as technical CLI failures', a
     assert.equal(payload.ok, false)
     assert.equal(payload.status, 'failed')
     assert.equal(payload.error.code, 'playwright_navigation_failed')
+    assert.equal(payload.summary.counts.ready, 3)
+    assert.equal(payload.summary.counts.failed, 1)
     assert.match(payload.error.message, /Managed Playwright could not open the provider page/)
     assert.notEqual(payload.completed, true)
     assert.notEqual(payload.status, 'waiting_for_user')
@@ -358,7 +418,7 @@ test('setup surfaces failed managed readiness jobs as technical CLI failures', a
   }
 })
 
-test('setup sweeps every selected provider before opening first actionable handoff', async () => {
+test('setup sweeps every supported provider before opening first actionable handoff', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-sweep-')))
   const skillHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-setup-sweep-skills-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -374,7 +434,6 @@ test('setup sweeps every selected provider before opening first actionable hando
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',
-      '--preferred-providers', 'chatgpt,claude',
       '--skip-skill-install',
       '--json',
     ], {
@@ -404,6 +463,26 @@ test('setup sweeps every selected provider before opening first actionable hando
     })
     const completedClaude = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
     assert.equal(completedClaude.job_id, claudeSweep.job_id)
+    const geminiSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'gemini',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+    })
+    const completedGemini = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
+    assert.equal(completedGemini.job_id, geminiSweep.job_id)
+    const grokSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'grok',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, geminiSweep.job_id]),
+    })
+    const completedGrok = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
+    assert.equal(completedGrok.job_id, grokSweep.job_id)
 
     const handoffJob = await waitForPlaywrightJob({
       daemonUrl,
@@ -411,7 +490,7 @@ test('setup sweeps every selected provider before opening first actionable hando
       profileId: profile.id,
       provider: 'chatgpt',
       actionNames: ['navigation.check'],
-      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, geminiSweep.job_id, grokSweep.job_id]),
     })
     handoffJobId = handoffJob.job_id
     assert.equal(handoffJob.request_json.target.url, 'https://chatgpt.com/')
@@ -422,13 +501,17 @@ test('setup sweeps every selected provider before opening first actionable hando
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.status, 'waiting_for_user')
-    assert.equal(payload.summary.counts.ready, 1)
+    assert.deepEqual(payload.providers, SETUP_VISIBLE_PROVIDERS)
+    assert.equal(payload.summary.counts.ready, 3)
     assert.equal(payload.summary.counts.action_required, 1)
     assert.equal(payload.summary.counts.failed, 0)
+    assert.equal(payload.summary.counts.total, 4)
     assert.equal(payload.readiness.chatgpt.classification, 'action_required')
     assert.equal(payload.readiness.chatgpt.handoff.jobId, handoffJobId)
     assert.equal(payload.readiness.claude.classification, 'ready')
     assert.equal(payload.readiness.claude.jobId, claudeSweep.job_id)
+    assert.equal(payload.readiness.gemini.classification, 'ready')
+    assert.equal(payload.readiness.grok.classification, 'ready')
   } finally {
     if (handoffJobId) {
       await daemonPost({
@@ -462,7 +545,6 @@ test('setup returns nonzero mixed ready and failed provider summary without drop
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',
-      '--preferred-providers', 'chatgpt,claude',
       '--skip-skill-install',
       '--json',
     ], {
@@ -489,6 +571,13 @@ test('setup returns nonzero mixed ready and failed provider summary without drop
       excludeJobIds: new Set([chatgptSweep.job_id]),
     })
     const failedJob = await failNextPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id, expectedProvider: 'claude' })
+    await completeSetupAuthSweep({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      providers: ['gemini', 'grok'],
+      excludeJobIds: new Set([chatgptSweep.job_id, failedJob.job_id]),
+    })
 
     const result = await waitForProcess(setup, 10000)
 
@@ -496,11 +585,15 @@ test('setup returns nonzero mixed ready and failed provider summary without drop
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.ok, false)
     assert.equal(payload.status, 'failed')
-    assert.equal(payload.summary.counts.ready, 1)
+    assert.deepEqual(payload.providers, SETUP_VISIBLE_PROVIDERS)
+    assert.equal(payload.summary.counts.ready, 3)
     assert.equal(payload.summary.counts.failed, 1)
+    assert.equal(payload.summary.counts.total, 4)
     assert.equal(payload.readiness.chatgpt.classification, 'ready')
     assert.equal(payload.readiness.claude.classification, 'failed')
     assert.equal(payload.readiness.claude.jobId, failedJob.job_id)
+    assert.equal(payload.readiness.gemini.classification, 'ready')
+    assert.equal(payload.readiness.grok.classification, 'ready')
     assert.equal(payload.error.code, 'playwright_navigation_failed')
   } finally {
     try {
@@ -529,7 +622,6 @@ test('setup preserves actionable handoff guidance when technical failures also e
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',
-      '--preferred-providers', 'chatgpt,claude',
       '--skip-skill-install',
       '--json',
     ], {
@@ -556,13 +648,34 @@ test('setup preserves actionable handoff guidance when technical failures also e
       excludeJobIds: new Set([chatgptSweep.job_id]),
     })
     await failNextPlaywrightJob({ daemonUrl, homeDir, profileId: profile.id, expectedProvider: 'claude' })
+    const providerSweepExclude = new Set([chatgptSweep.job_id, claudeSweep.job_id])
+    const geminiSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'gemini',
+      actionNames: ['auth.status'],
+      excludeJobIds: providerSweepExclude,
+    })
+    providerSweepExclude.add(geminiSweep.job_id)
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
+    const grokSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'grok',
+      actionNames: ['auth.status'],
+      excludeJobIds: providerSweepExclude,
+    })
+    providerSweepExclude.add(grokSweep.job_id)
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
     const handoffJob = await waitForPlaywrightJob({
       daemonUrl,
       homeDir,
       profileId: profile.id,
       provider: 'chatgpt',
       actionNames: ['navigation.check'],
-      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+      excludeJobIds: providerSweepExclude,
     })
     handoffJobId = handoffJob.job_id
     await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: handoffJobId })
@@ -574,11 +687,16 @@ test('setup preserves actionable handoff guidance when technical failures also e
     assert.equal(payload.ok, false)
     assert.equal(payload.status, 'failed')
     assert.equal(payload.waitingForUser, true)
+    assert.deepEqual(payload.providers, SETUP_VISIBLE_PROVIDERS)
     assert.equal(payload.summary.counts.action_required, 1)
     assert.equal(payload.summary.counts.failed, 1)
+    assert.equal(payload.summary.counts.ready, 2)
+    assert.equal(payload.summary.counts.total, 4)
     assert.equal(payload.readiness.chatgpt.classification, 'action_required')
     assert.equal(payload.readiness.chatgpt.handoff.jobId, handoffJobId)
     assert.equal(payload.readiness.claude.classification, 'failed')
+    assert.equal(payload.readiness.gemini.classification, 'ready')
+    assert.equal(payload.readiness.grok.classification, 'ready')
     assert.equal(payload.userActions.chatgpt.handoff.jobId, handoffJobId)
     assert.match(payload.compactOutput, /Action required: chatgpt/)
     assert.match(payload.compactOutput, new RegExp(handoffJobId))
@@ -618,7 +736,6 @@ test('interactive setup records handoff wait errors and continues later actionab
       '--runner-heartbeat-timeout-ms', '3000',
       '--profile', 'default',
       '--clean-profile',
-      '--preferred-providers', 'chatgpt,claude',
       '--skip-skill-install',
     ], {
       TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
@@ -648,13 +765,31 @@ test('interactive setup records handoff wait errors and continues later actionab
       excludeJobIds: new Set([chatgptSweep.job_id]),
     })
     await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+    const geminiSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'gemini',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+    })
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
+    const grokSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'grok',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, geminiSweep.job_id]),
+    })
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
     const chatgptHandoff = await waitForPlaywrightJob({
       daemonUrl,
       homeDir,
       profileId: profile.id,
       provider: 'chatgpt',
       actionNames: ['navigation.check'],
-      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, geminiSweep.job_id, grokSweep.job_id]),
     })
     await markNextPlaywrightJobWaiting({
       daemonUrl,
@@ -674,7 +809,7 @@ test('interactive setup records handoff wait errors and continues later actionab
       profileId: profile.id,
       provider: 'claude',
       actionNames: ['navigation.check'],
-      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, chatgptHandoff.job_id]),
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, geminiSweep.job_id, grokSweep.job_id, chatgptHandoff.job_id]),
     })
     claudeHandoffJobId = claudeHandoff.job_id
     restartedDaemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
@@ -731,28 +866,35 @@ test('setup returns actionable waiting_for_user data for managed browser handoff
       TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
       TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry,
       TOKENLESS_SETUP_SKILL_HOME: skillHome,
-      })
-      const profile = await waitForManagedProfile(homeDir)
-      const job = await waitForPlaywrightJob({
-        daemonUrl,
-        homeDir,
-        profileId: profile.id,
-        provider: 'chatgpt',
-        actionNames: ['auth.status'],
-      })
-      daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-      const sweepJob = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
-      assert.equal(sweepJob.job_id, job.job_id)
-      const handoffJob = await waitForPlaywrightJob({
-        daemonUrl,
-        homeDir,
-        profileId: profile.id,
-        provider: 'chatgpt',
-        actionNames: ['navigation.check'],
-        excludeJobIds: new Set([job.job_id]),
-      })
-      jobId = handoffJob.job_id
-      await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: jobId })
+    })
+    const profile = await waitForManagedProfile(homeDir)
+    const job = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['auth.status'],
+    })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    const sweepJob = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+    assert.equal(sweepJob.job_id, job.job_id)
+    const remainingJobs = await completeSetupAuthSweep({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      providers: ['claude', 'gemini', 'grok'],
+      excludeJobIds: new Set([job.job_id]),
+    })
+    const handoffJob = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['navigation.check'],
+      excludeJobIds: new Set([job.job_id, ...Object.values(remainingJobs).map((candidate) => candidate.job_id)]),
+    })
+    jobId = handoffJob.job_id
+    await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: jobId })
 
     const result = await waitForProcess(setup, 10000)
 
@@ -762,17 +904,20 @@ test('setup returns actionable waiting_for_user data for managed browser handoff
     assert.equal(payload.completed, false)
     assert.equal(payload.status, 'waiting_for_user')
     assert.equal(payload.waitingForUser, true)
-      assert.equal(payload.readiness.chatgpt.classification, 'action_required')
-      assert.equal(payload.readiness.chatgpt.status, 'succeeded')
-      assert.equal(payload.readiness.chatgpt.jobId, job.job_id)
-      assert.equal(payload.readiness.chatgpt.handoff.jobId, jobId)
-      assert.equal(payload.readiness.chatgpt.userAction.provider, 'chatgpt')
-      assert.equal(payload.readiness.chatgpt.userAction.profile.slug, 'default')
-      assert.equal(payload.readiness.chatgpt.userAction.profile.id, profile.id)
-      assert.match(payload.readiness.chatgpt.userAction.message, /Tokenless-managed Chrome window\/tab/)
-      assert.match(payload.readiness.chatgpt.userAction.message, /chatgpt profile default/)
-      assert.match(payload.readiness.chatgpt.userAction.message, /composer is visible/)
-      assert.equal(payload.userActions.chatgpt.handoff.jobId, jobId)
+    assert.deepEqual(payload.providers, SETUP_VISIBLE_PROVIDERS)
+    assert.equal(payload.summary.counts.ready, 3)
+    assert.equal(payload.summary.counts.action_required, 1)
+    assert.equal(payload.readiness.chatgpt.classification, 'action_required')
+    assert.equal(payload.readiness.chatgpt.status, 'succeeded')
+    assert.equal(payload.readiness.chatgpt.jobId, job.job_id)
+    assert.equal(payload.readiness.chatgpt.handoff.jobId, jobId)
+    assert.equal(payload.readiness.chatgpt.userAction.provider, 'chatgpt')
+    assert.equal(payload.readiness.chatgpt.userAction.profile.slug, 'default')
+    assert.equal(payload.readiness.chatgpt.userAction.profile.id, profile.id)
+    assert.match(payload.readiness.chatgpt.userAction.message, /Tokenless-managed Chrome window\/tab/)
+    assert.match(payload.readiness.chatgpt.userAction.message, /chatgpt profile default/)
+    assert.match(payload.readiness.chatgpt.userAction.message, /composer is visible/)
+    assert.equal(payload.userActions.chatgpt.handoff.jobId, jobId)
   } finally {
     if (jobId) {
       await daemonPost({
@@ -814,29 +959,36 @@ test('setup treats unknown auth readiness as an inconclusive completed check req
       TOKENLESS_SETUP_SKILL_HOME: skillHome,
     })
     const profile = await waitForManagedProfile(homeDir)
-      const job = await waitForPlaywrightJob({
-        daemonUrl,
-        homeDir,
-        profileId: profile.id,
-        provider: 'chatgpt',
-        actionNames: ['auth.status'],
-      })
-      daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
-      await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unknown' })
-      const handoffJob = await waitForPlaywrightJob({
-        daemonUrl,
-        homeDir,
-        profileId: profile.id,
-        provider: 'chatgpt',
-        actionNames: ['navigation.check'],
-        excludeJobIds: new Set([job.job_id]),
-      })
-      await markNextPlaywrightJobWaiting({
-        daemonUrl,
-        homeDir,
-        profileId: profile.id,
-        expectedJobId: handoffJob.job_id,
-      })
+    const job = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['auth.status'],
+    })
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unknown' })
+    const remainingJobs = await completeSetupAuthSweep({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      providers: ['claude', 'gemini', 'grok'],
+      excludeJobIds: new Set([job.job_id]),
+    })
+    const handoffJob = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'chatgpt',
+      actionNames: ['navigation.check'],
+      excludeJobIds: new Set([job.job_id, ...Object.values(remainingJobs).map((candidate) => candidate.job_id)]),
+    })
+    await markNextPlaywrightJobWaiting({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      expectedJobId: handoffJob.job_id,
+    })
 
     const result = await waitForProcess(setup, 10000)
 
@@ -845,12 +997,15 @@ test('setup treats unknown auth readiness as an inconclusive completed check req
     assert.equal(payload.ok, true)
     assert.equal(payload.completed, false)
     assert.equal(payload.status, 'waiting_for_user')
+    assert.deepEqual(payload.providers, SETUP_VISIBLE_PROVIDERS)
+    assert.equal(payload.summary.counts.ready, 3)
+    assert.equal(payload.summary.counts.action_required, 1)
     assert.equal(payload.readiness.chatgpt.auth, 'unknown')
     assert.equal(payload.readiness.chatgpt.status, 'succeeded')
     assert.equal(payload.readiness.chatgpt.jobId, job.job_id)
     assert.equal(payload.readiness.chatgpt.userAction.previousJobId, job.job_id)
     assert.match(payload.readiness.chatgpt.userAction.message, /auth status was unknown/)
-      assert.match(payload.readiness.chatgpt.userAction.message, /Tokenless-managed Chrome window\/tab/)
+    assert.match(payload.readiness.chatgpt.userAction.message, /Tokenless-managed Chrome window\/tab/)
     assert.match(payload.readiness.chatgpt.userAction.recheckCommand, /tokenless profiles status --profile 'default' --provider 'chatgpt' --json/)
     assert.equal('resumeCommand' in payload.readiness.chatgpt.userAction, false)
     assert.match(payload.readiness.chatgpt.userAction.queryGuidance, /cannot resume/)
@@ -898,13 +1053,20 @@ test('setup compact waiting output names provider profile managed Chrome window 
       daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
       const sweepJob = await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
       assert.equal(sweepJob.job_id, job.job_id)
+      const remainingJobs = await completeSetupAuthSweep({
+        daemonUrl,
+        homeDir,
+        profileId: profile.id,
+        providers: ['claude', 'gemini', 'grok'],
+        excludeJobIds: new Set([job.job_id]),
+      })
       const handoffJob = await waitForPlaywrightJob({
         daemonUrl,
         homeDir,
         profileId: profile.id,
         provider: 'chatgpt',
         actionNames: ['navigation.check'],
-        excludeJobIds: new Set([job.job_id]),
+        excludeJobIds: new Set([job.job_id, ...Object.values(remainingJobs).map((candidate) => candidate.job_id)]),
       })
       jobId = handoffJob.job_id
       await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: jobId })
@@ -953,7 +1115,6 @@ test('setup compact output lists every provider classification and handoff guida
       '--home', homeDir,
       '--daemon-url', daemonUrl,
       '--runner-heartbeat-timeout-ms', '3000',
-      '--preferred-providers', 'chatgpt,claude',
       '--skip-skill-install',
     ], {
       TOKENLESS_BROWSER_EXECUTABLE: process.execPath,
@@ -979,13 +1140,31 @@ test('setup compact output lists every provider classification and handoff guida
       excludeJobIds: new Set([chatgptSweep.job_id]),
     })
     await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'unauthenticated' })
+    const geminiSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'gemini',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+    })
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
+    const grokSweep = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      provider: 'grok',
+      actionNames: ['auth.status'],
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, geminiSweep.job_id]),
+    })
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id, authState: 'authenticated' })
     const handoffJob = await waitForPlaywrightJob({
       daemonUrl,
       homeDir,
       profileId: profile.id,
       provider: 'claude',
       actionNames: ['navigation.check'],
-      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id]),
+      excludeJobIds: new Set([chatgptSweep.job_id, claudeSweep.job_id, geminiSweep.job_id, grokSweep.job_id]),
     })
     handoffJobId = handoffJob.job_id
     assert.equal(handoffJob.request_json.target.url, 'https://claude.ai/new')
@@ -1002,7 +1181,9 @@ test('setup compact output lists every provider classification and handoff guida
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.match(result.stdout, /chatgpt: ready/)
     assert.match(result.stdout, /claude: action_required/)
-    assert.match(result.stdout, /Counts: ready 1, action_required 1, failed 0/)
+    assert.match(result.stdout, /gemini: ready/)
+    assert.match(result.stdout, /grok: ready/)
+    assert.match(result.stdout, /Counts: ready 3, action_required 1, failed 0/)
     assert.match(result.stdout, /claude \(handoff job /)
     assert.match(result.stdout, new RegExp(handoffJobId))
     assert.match(result.stdout, /tokenless profiles status --profile 'default' --provider 'claude' --json/)
@@ -1785,6 +1966,37 @@ async function completeAsInjectedRunner({ daemonUrl, homeDir, profileId, authSta
     return job
   }
 
+async function completeSetupAuthSweep({
+  daemonUrl,
+  homeDir,
+  profileId,
+  providers = SETUP_VISIBLE_PROVIDERS,
+  authStates = {},
+  excludeJobIds = new Set(),
+}) {
+  const jobs = {}
+  for (const provider of providers) {
+    const job = await waitForPlaywrightJob({
+      daemonUrl,
+      homeDir,
+      profileId,
+      provider,
+      actionNames: ['auth.status'],
+      excludeJobIds,
+    })
+    jobs[provider] = job
+    excludeJobIds.add(job.job_id)
+    const completed = await completeAsInjectedRunner({
+      daemonUrl,
+      homeDir,
+      profileId,
+      authState: authStates[provider] ?? 'authenticated',
+    })
+    assert.equal(completed.job_id, job.job_id)
+  }
+  return jobs
+}
+
 async function markNextPlaywrightJobWaiting({
   daemonUrl,
   homeDir,
@@ -2051,4 +2263,18 @@ async function stopPid(pid) {
       return
     }
   }
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    return
+  }
+  for (let index = 0; index < 50; index += 1) {
+    try {
+      process.kill(pid, 0)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    } catch {
+      return
+    }
+  }
+  throw new Error(`Process ${pid} did not exit after SIGKILL.`)
 }
