@@ -1,6 +1,6 @@
 # Tokenless CLI
 
-`tokenless` gives agents provider-neutral CLI and local API access to visible ChatGPT, Claude, Gemini, and Grok sessions. A local daemon, Playwright worker, and persistent managed browser profiles handle execution.
+`tokenless` gives agents provider-neutral CLI access to visible ChatGPT, Claude, Gemini, and Grok sessions. A local daemon, Playwright worker, and persistent managed browser profiles handle execution. A public local API is planned but is not a compatibility surface yet.
 
 ## Install
 
@@ -96,7 +96,7 @@ tokenless profiles clear --profile work
 
 ## Local API
 
-The local API will expose the same daemon jobs and provider-neutral action contract as the CLI. Authentication, request schemas, and compatibility guarantees are under active development.
+The planned local API will expose the same daemon jobs and provider-neutral action contract as the CLI. Authentication, request schemas, and compatibility guarantees are under active development; the daemon's HTTP endpoints remain an internal control plane.
 
 ## Browser Boundary
 

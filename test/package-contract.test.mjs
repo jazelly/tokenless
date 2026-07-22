@@ -56,6 +56,8 @@ test('universal CLI package contains JS only and declares exact platform runtime
   assert.equal(Object.values(pkg.optionalDependencies).some((version) => version.startsWith('workspace:')), false)
   assert.equal(fs.existsSync(path.join(cliDir, 'dist/src/native-host.mjs')), false)
   assert.equal(fs.existsSync(path.join(cliDir, 'src/native-host.mts')), false)
+  assert.equal(fs.existsSync(path.join(cliDir, 'dist/src/direct')), false)
+  assert.equal(fs.existsSync(path.join(cliDir, 'src/direct')), false)
 
   const output = execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: cliDir, encoding: 'utf8' })
   const [pack] = JSON.parse(output)
@@ -67,6 +69,7 @@ test('universal CLI package contains JS only and declares exact platform runtime
   assert.ok(paths.includes('dist/src/playwright/runner-entry.mjs'))
   assert.ok(paths.includes('README.md'))
   assert.equal(paths.some((file) => /native-host\.mjs$/.test(file)), false)
+  assert.equal(paths.some((file) => file.startsWith('dist/src/direct/')), false)
 
   const compiledStore = fs.readFileSync(path.join(cliDir, 'dist/src/job-store.js'), 'utf8')
   for (const legacyName of [
@@ -412,7 +415,7 @@ test('file collection rejects lexical and symlink escapes from the canonical pro
   }
 })
 
-test('public CLI exports daemon/runtime APIs but not obsolete task-page APIs', async () => {
+test('public CLI exports daemon/runtime APIs but not obsolete removed APIs', async () => {
   const exports = await importCli()
   for (const name of [
     'ensureDaemonReady',
@@ -424,7 +427,19 @@ test('public CLI exports daemon/runtime APIs but not obsolete task-page APIs', a
   ]) {
     assert.equal(typeof exports[name], 'function', `${name} should be public`)
   }
-  for (const name of ['buildTaskUrl', 'createLocalJob', 'readLocalTaskState', 'waitLocalJobResult']) {
+  for (const name of [
+    'buildTaskUrl',
+    'createLocalJob',
+    'readLocalTaskState',
+    'waitLocalJobResult',
+    `execute${'Direct'}Run`,
+    `resolve${'Direct'}Backend`,
+    `execute${'Direct'}Api`,
+    `start${'Direct'}Broker`,
+    `${'Direct'}Error`,
+    `${'DIRECT'}_PROTOCOL`,
+    `${'DIRECT'}_BROKER_PROTOCOL`,
+  ]) {
     assert.equal(exports[name], undefined, `${name} should not remain a public product API`)
   }
 })
@@ -522,6 +537,7 @@ test('CLI rejects removed local fallback and oversized native messages before ne
   assert.match(usageSource, /--fresh\|-f/)
   assert.doesNotMatch(usageSource, /--clean-profile/)
   assert.doesNotMatch(usageSource, /tokenless install|extension-id/i)
+  assert.doesNotMatch(usageSource, new RegExp(`--mode ${'direct'}|--${'direct'}|tokenless ${'serve'}|tokenless ${'accounts'}|tokenless ${'projects'}`, 'i'))
 
   for (const flag of ['--fresh', '-f']) {
     const conflict = spawnSync(process.execPath, [
@@ -568,6 +584,40 @@ test('CLI rejects removed local fallback and oversized native messages before ne
   assert.equal(removed.status, 1)
   assert.equal(JSON.parse(removed.stdout).error.code, 'daemon_only')
   assert.match(JSON.parse(removed.stdout).error.message, /daemon-only/)
+
+  for (const command of ['accounts', 'projects', 'serve']) {
+    const result = spawnSync(process.execPath, [
+      cliEntry,
+      command,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 2)
+    assert.equal(result.stdout, '')
+  }
+
+  const removedFlag = spawnSync(process.execPath, [
+    cliEntry,
+    'run',
+    `--${'direct'}-backend`,
+    'api',
+    '--prompt',
+    'hello',
+    '--json',
+  ], { cwd: root, encoding: 'utf8' })
+  assert.equal(removedFlag.status, 1)
+  assert.equal(JSON.parse(removedFlag.stdout).error.code, 'unknown_argument')
+
+  const removedProjectRouteFlag = spawnSync(process.execPath, [
+    cliEntry,
+    'run',
+    '--project',
+    'legacy-project',
+    '--prompt',
+    'hello',
+    '--json',
+  ], { cwd: root, encoding: 'utf8' })
+  assert.equal(removedProjectRouteFlag.status, 1)
+  assert.equal(JSON.parse(removedProjectRouteFlag.stdout).error.code, 'unknown_argument')
 
   const { createDaemonJob, MAX_NATIVE_MESSAGE_BYTES } = await importCli()
   await assert.rejects(
@@ -623,20 +673,18 @@ test('agent skills use the managed Playwright workflow and two profile setup pat
   assert.doesNotMatch(installSkill, /extensionBridge|extension_setup_incomplete|chrome:\/\/extensions/i)
 })
 
-test('public onboarding describes managed Playwright startup and an isolated direct boundary', () => {
+test('public onboarding describes managed Playwright startup without removed runtime claims', () => {
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
   const chinese = fs.readFileSync(path.join(root, 'README.zh-CN.md'), 'utf8')
   const cliReadme = fs.readFileSync(path.join(root, 'packages/cli/README.md'), 'utf8')
   const installer = fs.readFileSync(path.join(root, 'deploy/install.sh'), 'utf8')
   const privacy = fs.readFileSync(path.join(root, 'PRIVACY.md'), 'utf8')
   const architecture = fs.readFileSync(path.join(root, 'docs/architecture.md'), 'utf8')
-  const directMode = fs.readFileSync(path.join(root, 'docs/direct-mode.md'), 'utf8')
   const skill = fs.readFileSync(path.join(root, 'skills/tokenless/SKILL.md'), 'utf8')
   const installSkill = fs.readFileSync(path.join(root, 'skills/tokenless-install/SKILL.md'), 'utf8')
   for (const text of [readme, cliReadme]) {
     assert.match(text, /Playwright/)
     assert.match(text, /visible/)
-    assert.match(text, /direct/)
     assert.doesNotMatch(text, /\/Users\/jazelly/)
   }
   assert.match(readme, /npx tokenless@latest setup/)
@@ -648,13 +696,15 @@ test('public onboarding describes managed Playwright startup and an isolated dir
   assert.ok(readme.indexOf('## Why Tokenless') < readme.indexOf('## How Tokenless Works'))
   assert.match(chinese, /Playwright/)
   assert.match(chinese, /tokenless profiles/)
-  assert.match(chinese, /--mode direct/)
-  assert.match(readme, /docs\/direct-mode\.md/)
-  assert.match(cliReadme, /tokenless serve --mode direct/)
   assert.match(installer, /setup --fresh --json/)
-  for (const text of [readme, chinese, cliReadme, installer, privacy, architecture, directMode, skill, installSkill]) {
+  for (const text of [readme, chinese, cliReadme, installer, privacy, architecture, skill, installSkill]) {
     assert.doesNotMatch(text, /native[- ]host|browser extension|chrome extension/i)
+    assert.doesNotMatch(text, new RegExp(`${'direct'} mode|--mode ${'direct'}|--${'direct'}|TOKENLESS_${'DIRECT'}|${'direct'} broker|${'direct'} API`, 'i'))
   }
+  assert.equal(fs.existsSync(path.join(root, 'docs', `${'direct'}-mode.md`)), false)
+  assert.equal(fs.existsSync(path.join(root, 'docs', `${'direct'}-gateway-rfc.md`)), false)
+  assert.equal(fs.existsSync(path.join(root, 'docs/account-pool-rfc.md')), false)
+  assert.equal(fs.existsSync(path.join(root, 'docs/multi-account-routing.md')), false)
 })
 
 function readJson(relativePath) {
