@@ -2,7 +2,7 @@
 
 # Tokenless
 
-Run AI websites from any agent through one local CLI or API. Tokenless gives ChatGPT, Claude, Gemini, and Grok one provider-neutral interface.
+Run AI websites from any agent through one local CLI. Tokenless gives ChatGPT, Claude, Gemini, and Grok one provider-neutral workflow; a public local API is under active development.
 
 ## Why Tokenless
 
@@ -94,9 +94,9 @@ Roadmap items are not yet compatibility guarantees.
 
 ## How Tokenless Works
 
-`Agent → CLI or local API → local daemon → Playwright worker → managed browser profile → provider website`
+`Agent → CLI → local daemon → Playwright worker → managed browser profile → provider website`
 
-The CLI and local API submit provider-neutral actions. The local daemon schedules them, Playwright operates the selected managed profile, and provider adapters verify visible outcomes. Later jobs reuse the same profile.
+The CLI submits provider-neutral actions. The local daemon schedules them, Playwright operates the selected managed profile, and provider adapters verify visible outcomes. Later jobs reuse the same profile. The planned local API will use the same application and job contracts after its authentication and compatibility surface is stable.
 
 ### Managed profiles
 
@@ -120,7 +120,7 @@ tokenless profiles clear --profile work
 | Interface | Execution path | Status |
 | --- | --- | --- |
 | CLI | Playwright web jobs through the local daemon | Primary interface |
-| Local API | The same provider-neutral Playwright jobs | Active development |
+| Local API | The same provider-neutral Playwright jobs | Planned; not a public compatibility surface yet |
 
 ## Privacy and Safety
 

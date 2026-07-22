@@ -1,6 +1,6 @@
 # Tokenless Architecture
 
-Tokenless exposes visible AI websites through provider-neutral local interfaces. Managed Playwright through the authenticated local daemon is the only execution path.
+Tokenless exposes visible AI websites through a provider-neutral local CLI today. Managed Playwright through the authenticated local daemon is the only execution path; a public local API is planned but is not a compatibility surface yet.
 
 ## Components
 
@@ -8,16 +8,16 @@ Tokenless exposes visible AI websites through provider-neutral local interfaces.
 2. The local Rust daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
 3. The Playwright worker claims managed-web jobs and runs them in persistent managed browser profiles.
 4. Provider adapters translate shared actions into visible ChatGPT, Claude, Gemini, and Grok page operations.
-5. The local API is being stabilized as a second interface to the same job and action contracts.
+5. A public local API is planned as a second interface to the same application and job contracts.
 
 ## Execution path
 
 `tokenless run` submits a managed Playwright job through the local daemon. Tokenless never resends a failed request through another provider or runtime path.
 
-| Interface | Execution path | Authentication |
-| --- | --- | --- |
-| CLI | CLI → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile |
-| Local API | Local API → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile |
+| Interface | Execution path | Authentication | Status |
+| --- | --- | --- | --- |
+| CLI | CLI → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Primary interface |
+| Local API | Local API → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Planned; schemas and client authentication are not public yet |
 
 ## Managed Playwright flow
 
@@ -49,6 +49,8 @@ Managed profiles live under the Tokenless home and use unique directories. Jobs 
 ## Local control plane
 
 The daemon binds to loopback, stores its bearer token beside its SQLite database, and protects job and control endpoints with that token. The daemon home and token use restrictive filesystem permissions on supported systems.
+
+These HTTP endpoints are an internal runtime control plane, not the planned browser-facing API. A future web client must keep the daemon bearer token inside a trusted local backend rather than exposing it to browser JavaScript.
 
 Job creation, claim, lease renewal, completion, cancellation, and state queries are daemon-backed. Claims are correlated to one worker and expire safely. CLI cancellation is reported as complete only after the authenticated control endpoint confirms `canceled`.
 
