@@ -289,6 +289,26 @@ export class ManagedProfileRegistry {
   }
 }
 
+export async function readManagedProfileRegistryReadOnly(tokenlessHome = tokenlessHomeFromEnv()): Promise<ManagedProfileRegistryData> {
+  const registry = new ManagedProfileRegistry(tokenlessHome)
+  try {
+    const handle = await open(registry.paths.registryFile, fsConstants.O_RDONLY)
+    try {
+      const fileStat = await handle.stat()
+      if ((fileStat.mode & 0o077) !== 0) {
+        throw tokenlessError('profile_registry_permissions', 'Managed profile registry permissions are too broad.')
+      }
+    } finally {
+      await handle.close()
+    }
+    const parsed = JSON.parse(await readFile(registry.paths.registryFile, 'utf8')) as unknown
+    return parseRegistry(parsed, registry.paths.profilesRoot)
+  } catch (error) {
+    if (isMissingFile(error)) return emptyRegistry()
+    throw error
+  }
+}
+
 export function tokenlessHomeFromEnv() {
   return process.env.TOKENLESS_HOME ? resolve(process.env.TOKENLESS_HOME) : join(homedir(), '.tokenless')
 }

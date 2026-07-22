@@ -48,10 +48,12 @@ export {
   DAEMON_LOG_FILE,
   DAEMON_PID_FILE,
   DAEMON_PROCESS_PROTOCOL,
+  DAEMON_PROCESS_PROOF_PROTOCOL,
   DAEMON_PROTOCOL,
   DAEMON_READY_PROOF_PROTOCOL,
   EXTENSION_BRIDGE_FILE,
   EXTENSION_BRIDGE_PROTOCOL,
+  NATIVE_BINARY_BUILD_INFO_PROTOCOL,
   NATIVE_PROTOCOL,
   bundledRustBinaryPath,
   ensureDaemonReady,
@@ -111,6 +113,7 @@ export type {
   DaemonReadyProbe,
   EnsureDaemonOptions,
   InstallRustRuntimeOptions,
+  ManagedRuntimeInspection,
 } from './runtime.js'
 
 export { executeDirectRun, resolveDirectBackend } from './direct/client.js'

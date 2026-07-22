@@ -167,6 +167,12 @@ export async function runnerSupervisorStatus(options: RunnerSupervisorOptions): 
   return await runnerSupervisorStatusUnlocked(options, markers)
 }
 
+export async function runnerSupervisorStatusReadOnly(options: RunnerSupervisorOptions): Promise<RunnerSupervisorStatus> {
+  const markers = await runnerMarkersReadOnly(options.homeDir)
+  if (!markers) return stoppedStatus()
+  return await runnerSupervisorStatusUnlockedReadOnly(options, markers)
+}
+
 async function runnerSupervisorStatusUnlocked(
   options: RunnerSupervisorOptions,
   markers: Awaited<ReturnType<typeof ensureRunnerMarkersDir>>
@@ -217,6 +223,56 @@ async function runnerSupervisorStatusUnlocked(
   }
 }
 
+async function runnerSupervisorStatusUnlockedReadOnly(
+  options: RunnerSupervisorOptions,
+  markers: NonNullable<Awaited<ReturnType<typeof runnerMarkersReadOnly>>>
+): Promise<RunnerSupervisorStatus> {
+  let session: SupervisorSession | null
+  try {
+    session = await readJsonReadOnly<SupervisorSession>(markers.sessionFile)
+  } catch (error) {
+    if (isMarkerMalformedError(error)) return unsafeStatus(null, null)
+    throw error
+  }
+  if (!session) return stoppedStatus()
+  if (!isValidSession(session)) {
+    return unsafeStatus(
+      Number.isInteger(session.pid) && session.pid > 0 ? session.pid : null,
+      typeof session.sessionId === 'string' ? session.sessionId : null
+    )
+  }
+  const alive = await (options.isProcessAlive ?? defaultIsProcessAlive)(session.pid)
+  if (!alive) {
+    return {
+      state: 'stale',
+      pid: session.pid,
+      sessionId: session.sessionId,
+      safeToStop: false,
+      heartbeatAt: null,
+    }
+  }
+  let heartbeat: SupervisorHeartbeat | null
+  try {
+    heartbeat = await readJsonReadOnly<SupervisorHeartbeat>(markers.heartbeatFile)
+  } catch (error) {
+    if (!isMarkerMalformedError(error)) throw error
+    heartbeat = null
+  }
+  const heartbeatMatches = heartbeat !== null &&
+    heartbeat.protocol === 'tokenless.playwright.runner-heartbeat.v1' &&
+    heartbeat.sessionId === session.sessionId &&
+    heartbeat.pid === session.pid &&
+    isFreshHeartbeat(heartbeat.updatedAt, options)
+  const heartbeatAt = heartbeatMatches && heartbeat !== null ? heartbeat.updatedAt : null
+  return {
+    state: heartbeatMatches ? 'running' : 'unsafe',
+    pid: session.pid,
+    sessionId: session.sessionId,
+    safeToStop: heartbeatMatches,
+    heartbeatAt,
+  }
+}
+
 export async function writeRunnerHeartbeat(options: {
   homeDir?: string | undefined
   sessionId: string
@@ -248,6 +304,33 @@ export async function ensureRunnerMarkersDir(homeDir = tokenlessHome()) {
     heartbeatFile: path.join(runnerDir, HEARTBEAT_FILE),
     writerLockFile: path.join(runnerDir, WRITER_LOCK_FILE),
     logFile,
+  }
+}
+
+async function runnerMarkersReadOnly(homeDir = tokenlessHome()) {
+  const resolvedHomeDir = path.resolve(homeDir)
+  let canonicalHomeDir = resolvedHomeDir
+  try {
+    canonicalHomeDir = await fs.realpath(resolvedHomeDir)
+  } catch (error) {
+    if (isMissingFile(error)) return null
+    throw error
+  }
+  const runnerDir = path.join(canonicalHomeDir, RUNNER_DIR)
+  try {
+    await assertPrivateDirectoryReadOnly(runnerDir)
+  } catch (error) {
+    if (isMissingFile(error)) return null
+    throw error
+  }
+  return {
+    homeDir: canonicalHomeDir,
+    runnerDir,
+    pidFile: path.join(runnerDir, PID_FILE),
+    sessionFile: path.join(runnerDir, SESSION_FILE),
+    heartbeatFile: path.join(runnerDir, HEARTBEAT_FILE),
+    writerLockFile: path.join(runnerDir, WRITER_LOCK_FILE),
+    logFile: path.join(runnerDir, LOG_FILE),
   }
 }
 
@@ -329,6 +412,19 @@ async function readJson<T>(file: string): Promise<T | null> {
   }
 }
 
+async function readJsonReadOnly<T>(file: string): Promise<T | null> {
+  try {
+    await assertPrivateFileReadOnly(file)
+    return JSON.parse(await fs.readFile(file, 'utf8')) as T
+  } catch (error) {
+    if (isMarkerPermissionError(error)) throw error
+    if (!isMissingFile(error)) {
+      throw tokenlessError('playwright_runner_marker_malformed', 'Managed Playwright runner marker JSON is malformed.', { cause: error })
+    }
+    return null
+  }
+}
+
 async function waitForMatchingHeartbeat(
   options: RunnerSupervisorOptions,
   markers: Awaited<ReturnType<typeof ensureRunnerMarkersDir>>,
@@ -379,6 +475,17 @@ async function assertPrivateDirectory(directory: string) {
   await fs.chmod(directory, 0o700)
 }
 
+async function assertPrivateDirectoryReadOnly(directory: string) {
+  const fileStat = await fs.lstat(directory)
+  if (!fileStat.isDirectory() || fileStat.isSymbolicLink()) {
+    throw tokenlessError('playwright_runner_marker_permissions', 'Managed Playwright runner marker directory is not private.')
+  }
+  assertCurrentUser(fileStat)
+  if (process.platform !== 'win32' && (fileStat.mode & 0o7777) !== 0o700) {
+    throw tokenlessError('playwright_runner_marker_permissions', 'Managed Playwright runner marker directory is not private.')
+  }
+}
+
 async function assertPrivateFile(file: string) {
   const fileStat = await fs.lstat(file)
   if (!fileStat.isFile() || fileStat.isSymbolicLink() || fileStat.nlink !== 1) {
@@ -389,6 +496,17 @@ async function assertPrivateFile(file: string) {
     throw tokenlessError('playwright_runner_marker_permissions', 'Managed Playwright runner marker file is not private.')
   }
   await fs.chmod(file, 0o600)
+}
+
+async function assertPrivateFileReadOnly(file: string) {
+  const fileStat = await fs.lstat(file)
+  if (!fileStat.isFile() || fileStat.isSymbolicLink() || fileStat.nlink !== 1) {
+    throw tokenlessError('playwright_runner_marker_permissions', 'Managed Playwright runner marker file is not private.')
+  }
+  assertCurrentUser(fileStat)
+  if (process.platform !== 'win32' && (fileStat.mode & 0o7777) !== 0o600) {
+    throw tokenlessError('playwright_runner_marker_permissions', 'Managed Playwright runner marker file is not private.')
+  }
 }
 
 async function ensurePrivateMarkerFile(file: string) {

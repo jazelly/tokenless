@@ -13,22 +13,26 @@ import {
   tokenlessHome,
 } from './job-store.js'
 import { daemonUrl as normalizeDaemonUrl, readDaemonToken } from './daemon-client.js'
-import { resolveNativePlatformPackage } from './platform-package.js'
+import { resolveNativePlatformPackage, tokenlessPackageVersion } from './platform-package.js'
 
 export const EXTENSION_BRIDGE_PROTOCOL = 'tokenless.extension-bridge-state.v1'
 export const DAEMON_PROTOCOL = 'tokenless.daemon.v1'
 export const NATIVE_PROTOCOL = 'tokenless.native.v1'
 export const DAEMON_PROCESS_PROTOCOL = 'tokenless.daemon-process.v1'
 export const DAEMON_READY_PROOF_PROTOCOL = 'tokenless.daemon-ready-proof.v1'
+export const DAEMON_PROCESS_PROOF_PROTOCOL = 'tokenless.daemon-process-proof.v1'
 export const EXTENSION_BRIDGE_FILE = 'extension-bridge.json'
 export const DAEMON_PID_FILE = 'daemon.pid.json'
 export const DAEMON_LOG_FILE = 'daemon.log'
+export const NATIVE_BINARY_BUILD_INFO_PROTOCOL = 'tokenless.native-binary-build-info.v1'
 
 const DAEMON_BINARY_NAME = 'tokenless-daemon'
 const NATIVE_HOST_BINARY_NAME = 'tokenless-native-host'
 const DEFAULT_BRIDGE_MAX_AGE_MS = 15_000
 const BRIDGE_CLOCK_TOLERANCE_MS = 5_000
 const DEFAULT_DAEMON_START_TIMEOUT_MS = 10_000
+const BUILD_INFO_TIMEOUT_MS = 2_000
+const BUILD_INFO_OUTPUT_LIMIT_BYTES = 16_384
 const SUPPORTED_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini', 'grok'])
 
 type RuntimeError = Error & {
@@ -47,6 +51,46 @@ export type DaemonReadyProbe = {
   body?: JsonRecord | undefined
   code?: string | undefined
   message?: string | undefined
+}
+
+export type ManagedRuntimeInspection = {
+  ok: boolean
+  package: {
+    ok: boolean
+    name?: string | undefined
+    version?: string | undefined
+    platform?: string | undefined
+    arch?: string | undefined
+    root?: string | undefined
+    manifestPath?: string | undefined
+    error?: string | null | undefined
+    code?: string | undefined
+  }
+  packaged: {
+    ok: boolean
+    path: string | null
+    hash: string | null
+    buildInfo: JsonRecord | null
+    error: string | null
+    code?: string | undefined
+  }
+  installed: {
+    ok: boolean
+    path: string
+    hash: string | null
+    executable: boolean
+    matchesBundled: boolean
+    buildInfo: JsonRecord | null
+    error: string | null
+    code?: string | undefined
+  }
+  daemon: {
+    ok: boolean
+    path: string
+    hash: string | null
+    bundledHash: string | null
+    matchesBundled: boolean
+  }
 }
 
 export type ChromiumBrowser = {
@@ -210,6 +254,11 @@ export async function probeDaemonReady({
     }
   }
 
+  const processProofError = validateDaemonProcessProof(body, readyChallenge, proofToken)
+  if (processProofError) {
+    body.daemon_process_identity_error = processProofError
+  }
+
   if (body.daemon_protocol !== DAEMON_PROTOCOL) {
     return {
       ok: false,
@@ -272,20 +321,29 @@ export async function ensureDaemonReady({
 }: EnsureDaemonOptions = {}) {
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
   const initial = await probeDaemonReady({ daemonUrl, homeDir })
-  if (initial.ok) return { ...initial, started: false, binaryPath: null, pid: await readDaemonPid(homeDir) }
-  assertNoDaemonIdentityConflict(initial)
+  if (initial.ok) {
+    const coherence = await ensureRunningDaemonVersionCoherent(initial, { homeDir, bundledRoot, skipInstalledRuntime: Boolean(binaryPath) })
+    if (coherence.ok) return { ...initial, started: false, binaryPath: null, pid: daemonPidFromReady(initial) ?? await readDaemonPid(homeDir) }
+  } else {
+    assertNoDaemonIdentityConflict(initial)
+  }
 
   const releaseLock = await acquireDaemonStartLock({ homeDir, timeoutMs })
+  let refreshed: string[] = []
   try {
     const afterLock = await probeDaemonReady({ daemonUrl, homeDir })
     if (afterLock.ok) {
-      return { ...afterLock, started: false, binaryPath: null, pid: await readDaemonPid(homeDir) }
+      const coherence = await ensureRunningDaemonVersionCoherent(afterLock, { homeDir, bundledRoot, skipInstalledRuntime: Boolean(binaryPath) })
+      if (coherence.ok) {
+        return { ...afterLock, started: false, binaryPath: null, pid: daemonPidFromReady(afterLock) ?? await readDaemonPid(homeDir) }
+      }
+      await stopOwnedDaemonForRefresh({ probe: afterLock, homeDir, reason: coherence.message ?? 'Tokenless daemon runtime is not coherent.' })
+    } else {
+      assertNoDaemonIdentityConflict(afterLock)
     }
-    assertNoDaemonIdentityConflict(afterLock)
 
-    const installedDaemon = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME)
-    if (!binaryPath && !(await isExecutable(installedDaemon))) {
-      await refreshInstalledManagedRuntime({ homeDir, packageRoot: bundledRoot }).catch(() => undefined)
+    if (!binaryPath) {
+      refreshed = await refreshInstalledManagedRuntime({ homeDir, packageRoot: bundledRoot })
     }
     const executable = await resolveDaemonBinary({ homeDir, binaryPath, bundledRoot })
     const parsedUrl = new URL(normalizeDaemonUrl(daemonUrl))
@@ -304,32 +362,43 @@ export async function ensureDaemonReady({
     }
     await writeJsonAtomic(path.join(homeDir, DAEMON_PID_FILE), pidPayload, 0o600)
 
-    const deadline = Date.now() + timeoutMs
-    let lastProbe = afterLock
-    while (Date.now() < deadline) {
-      lastProbe = await probeDaemonReady({ daemonUrl, homeDir })
-      if (lastProbe.ok) {
-        child.unref()
-        return {
-          ...lastProbe,
-          started: true,
-          binaryPath: executable,
-          pid: child.pid,
-          logPath,
+    try {
+      const deadline = Date.now() + timeoutMs
+      let lastProbe = afterLock
+      while (Date.now() < deadline) {
+        lastProbe = await probeDaemonReady({ daemonUrl, homeDir })
+        if (lastProbe.ok) {
+          const coherence = await ensureRunningDaemonVersionCoherent(lastProbe, { homeDir, bundledRoot, skipInstalledRuntime: Boolean(binaryPath) })
+          if (!coherence.ok) {
+            throw runtimeError(
+              coherence.code ?? 'daemon_version_mismatch',
+              coherence.message ?? 'Tokenless daemon runtime is not coherent.',
+              false
+            )
+          }
+          child.unref()
+          return {
+            ...lastProbe,
+            started: true,
+            binaryPath: executable,
+            pid: child.pid,
+            logPath,
+          }
         }
+        assertNoDaemonIdentityConflict(lastProbe)
+        if (child.exitCode !== null) break
+        await delay(100)
       }
-      assertNoDaemonIdentityConflict(lastProbe)
-      if (child.exitCode !== null) break
-      await delay(100)
-    }
 
-    if (child.exitCode === null) child.kill('SIGTERM')
-    await removePidIfOwned(homeDir, child.pid)
-    throw runtimeError(
-      'daemon_start_failed',
-      `Tokenless Rust daemon did not become ready for ${homeDir}. See ${logPath}. Last check: ${lastProbe.message ?? lastProbe.code ?? 'unknown error'}`,
-      true
-    )
+      throw runtimeError(
+        'daemon_start_failed',
+        `Tokenless Rust daemon did not become ready for ${homeDir}. See ${logPath}. Last check: ${lastProbe.message ?? lastProbe.code ?? 'unknown error'}${refreshed?.length ? ' Refreshed managed runtime before start.' : ''}`,
+        true
+      )
+    } catch (error) {
+      await terminateSpawnedDaemonChild(child, homeDir)
+      throw error
+    }
   } finally {
     await releaseLock()
   }
@@ -637,26 +706,86 @@ export async function inspectRustBinaries(homeDir = tokenlessHome()) {
   return inspectManagedRuntime(homeDir)
 }
 
-export async function inspectManagedRuntime(homeDir = tokenlessHome()) {
+export async function inspectManagedRuntime(homeDir = tokenlessHome(), packageRoot?: string | undefined) {
   const daemon = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME)
-  const daemonOk = await isExecutable(daemon)
+  const daemonExecutable = await isExecutable(daemon)
   let bundledDaemon: string | null = null
-  let packageError: string | null = null
+  let packageCheck: ManagedRuntimeInspection['package']
   try {
-    bundledDaemon = bundledRustBinaryPath(DAEMON_BINARY_NAME)
+    const nativePackage = packageRoot === undefined
+      ? resolveNativePlatformPackage()
+      : {
+          ok: true,
+          name: null,
+          version: tokenlessPackageVersion(),
+          platform: process.platform,
+          arch: process.arch,
+          root: packageRoot,
+          manifestPath: null,
+        }
+    bundledDaemon = path.join(nativePackage.root, 'bin', executableName(DAEMON_BINARY_NAME))
+    packageCheck = {
+      ok: true,
+      ...(nativePackage.name === null ? {} : { name: nativePackage.name }),
+      version: nativePackage.version,
+      platform: nativePackage.platform,
+      arch: nativePackage.arch,
+      root: nativePackage.root,
+      ...(nativePackage.manifestPath === null ? {} : { manifestPath: nativePackage.manifestPath }),
+      error: null,
+    }
   } catch (error) {
-    packageError = error instanceof Error ? error.message : String(error)
+    const runtimeError = error as RuntimeError
+    packageCheck = {
+      ok: false,
+      error: runtimeError.message ?? String(error),
+      code: runtimeError.code,
+    }
   }
-  const [daemonHash, bundledDaemonHash] = await Promise.all([
+  const [daemonHash, bundledDaemonHash, packagedBuildInfo] = await Promise.all([
     fileHash(daemon),
     bundledDaemon ? fileHash(bundledDaemon) : null,
+    bundledDaemon ? readNativeBinaryBuildInfo(bundledDaemon, DAEMON_BINARY_NAME) : failedBuildInfo('native_platform_package_missing', 'Native platform package is unavailable.'),
   ])
   const matchesBundled = Boolean(bundledDaemonHash) && daemonHash === bundledDaemonHash
+  const installedBuildInfo = matchesBundled && packagedBuildInfo.ok
+    ? {
+        ok: true,
+        buildInfo: packagedBuildInfo.buildInfo,
+        error: null as string | null,
+        code: undefined as string | undefined,
+      }
+    : failedBuildInfo(
+        daemonHash === null ? 'rust_binary_missing' : 'rust_binary_hash_mismatch',
+        daemonHash === null
+          ? `Native runtime executable is missing: ${daemon}`
+          : 'Installed daemon binary hash does not match the verified packaged daemon; refusing to execute it.',
+      )
+  const packagedOk = packageCheck.ok && Boolean(bundledDaemon) && Boolean(bundledDaemonHash) && packagedBuildInfo.ok
+  const installedOk = daemonExecutable && Boolean(daemonHash) && matchesBundled && installedBuildInfo.ok
   return {
-    ok: !packageError && daemonOk && matchesBundled,
-    package: { ok: !packageError, error: packageError },
-    daemon: { ok: daemonOk, path: daemon, hash: daemonHash, bundledHash: bundledDaemonHash, matchesBundled },
-  }
+    ok: packagedOk && installedOk,
+    package: packageCheck,
+    packaged: {
+      ok: packagedOk,
+      path: bundledDaemon,
+      hash: bundledDaemonHash,
+      buildInfo: packagedBuildInfo.buildInfo,
+      error: packagedBuildInfo.error,
+      ...(packagedBuildInfo.code === undefined ? {} : { code: packagedBuildInfo.code }),
+    },
+    installed: {
+      ok: installedOk,
+      path: daemon,
+      hash: daemonHash,
+      executable: daemonExecutable,
+      matchesBundled,
+      buildInfo: installedBuildInfo.buildInfo,
+      error: installedBuildInfo.error,
+      ...(installedBuildInfo.code === undefined ? {} : { code: installedBuildInfo.code }),
+    },
+    daemon: { ok: installedOk, path: daemon, hash: daemonHash, bundledHash: bundledDaemonHash, matchesBundled },
+  } satisfies ManagedRuntimeInspection
 }
 
 export async function refreshInstalledRustBinaries({
@@ -678,13 +807,21 @@ export async function refreshInstalledManagedRuntime({
 } = {}) {
   const source = bundledRustBinaryPath(DAEMON_BINARY_NAME, packageRoot)
   const destination = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME)
-  const [sourceHash, destinationHash, destinationExecutable] = await Promise.all([
+  const [sourceHash, destinationHash, destinationExecutable, sourceBuildInfo] = await Promise.all([
     fileHash(source),
     fileHash(destination),
     isExecutable(destination),
+    readNativeBinaryBuildInfo(source, DAEMON_BINARY_NAME),
   ])
   if (!sourceHash) {
     throw runtimeError('rust_binary_missing', `Native runtime package is missing executable: ${source}`, false)
+  }
+  if (!sourceBuildInfo.ok) {
+    throw runtimeError(
+      sourceBuildInfo.code ?? 'rust_binary_invalid',
+      sourceBuildInfo.error ?? `Native runtime package has invalid build info: ${source}`,
+      false
+    )
   }
   if (sourceHash === destinationHash && destinationExecutable) return []
   await installExecutable(source, destination)
@@ -786,6 +923,155 @@ async function spawnDaemon({
     throw runtimeError('daemon_start_failed', 'Tokenless Rust daemon started without a process id.', true)
   }
   return child as typeof child & { pid: number }
+}
+
+async function ensureRunningDaemonVersionCoherent(
+  probe: DaemonReadyProbe,
+  {
+    homeDir,
+    bundledRoot,
+    skipInstalledRuntime = false,
+  }: {
+    homeDir: string
+    bundledRoot?: string | undefined
+    skipInstalledRuntime?: boolean | undefined
+  }
+) {
+  const expectedVersion = tokenlessPackageVersion()
+  const runningVersion = typeof probe.body?.version === 'string' ? probe.body.version : null
+  const runningHash = typeof probe.body?.running_binary_hash === 'string' ? probe.body.running_binary_hash : null
+  if (runningVersion !== expectedVersion) {
+    return {
+      ok: false,
+      code: 'daemon_version_mismatch',
+      message: `Tokenless daemon at ${probe.url} reports version ${runningVersion ?? 'missing'}; expected tokenless@${expectedVersion}.`,
+    }
+  }
+  const runtime = await inspectManagedRuntime(homeDir, bundledRoot)
+  if (!runtime.packaged.ok || !runtime.packaged.hash) {
+    return {
+      ok: false,
+      code: 'managed_runtime_incoherent',
+      message: runtime.packaged.error ??
+        `Tokenless managed runtime binary is not coherent with tokenless@${expectedVersion}.`,
+    }
+  }
+  const processProofError = probe.body?.daemon_process_identity_error
+  if (processProofError !== undefined) {
+    return {
+      ok: false,
+      code: processProofError.code ?? 'daemon_process_identity_unverified',
+      message: processProofError.message ?? 'Tokenless daemon process identity could not be verified.',
+    }
+  }
+  if (runningHash !== runtime.packaged.hash) {
+    return {
+      ok: false,
+      code: 'daemon_binary_hash_mismatch',
+      message: `Tokenless daemon at ${probe.url} reports binary hash ${runningHash ?? 'missing'}; expected packaged hash ${runtime.packaged.hash}.`,
+    }
+  }
+  if (!skipInstalledRuntime && !runtime.ok) {
+    return {
+      ok: false,
+      code: 'managed_runtime_incoherent',
+      message: runtime.installed.error ??
+        `Tokenless managed runtime binary is not coherent with tokenless@${expectedVersion}.`,
+    }
+  }
+  return { ok: true }
+}
+
+async function stopOwnedDaemonForRefresh({
+  probe,
+  homeDir,
+  reason,
+}: {
+  probe: DaemonReadyProbe
+  homeDir: string
+  reason: string
+}) {
+  const pid = daemonPidFromReady(probe)
+  const instanceId = typeof probe.body?.instance_id === 'string' ? probe.body.instance_id : null
+  const processProofError = probe.body?.daemon_process_identity_error
+  if (
+    pid === null ||
+    !instanceId ||
+    processProofError !== undefined ||
+    typeof probe.body?.daemon_process_proof !== 'string' ||
+    probe.body.daemon_process_proof_protocol !== DAEMON_PROCESS_PROOF_PROTOCOL
+  ) {
+    throw runtimeError(
+      'daemon_restart_unsafe',
+      `${reason} The running daemon did not provide a cryptographically verifiable process identity, so Tokenless will not stop it automatically. Stop the existing daemon bound to ${probe.url}, then rerun tokenless setup.`,
+      false
+    )
+  }
+  if (!pidIsAlive(pid)) {
+    await removePidIfOwned(homeDir, pid)
+    return
+  }
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch (error) {
+    throw runtimeError(
+      'daemon_restart_failed',
+      `${reason} Tokenless verified daemon process ${pid} but could not stop it: ${error instanceof Error ? error.message : String(error)}`,
+      true
+    )
+  }
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (!pidIsAlive(pid)) {
+      await removePidIfOwned(homeDir, pid)
+      return
+    }
+    await delay(100)
+  }
+  throw runtimeError(
+    'daemon_restart_failed',
+    `${reason} Tokenless verified daemon process ${pid} but it did not exit after SIGTERM.`,
+    true
+  )
+}
+
+function daemonPidFromReady(probe: DaemonReadyProbe) {
+  const pid = probe.body?.pid
+  return Number.isSafeInteger(pid) && pid > 0 ? pid as number : null
+}
+
+async function readNativeBinaryBuildInfo(binaryPath: string, expectedBinary: string) {
+  if (!(await isExecutable(binaryPath))) {
+    return failedBuildInfo('rust_binary_missing', `Native runtime executable is missing: ${binaryPath}`)
+  }
+  let result: Awaited<ReturnType<typeof execFileJson>>
+  try {
+    result = await execFileJson(binaryPath, ['--tokenless-build-info'])
+  } catch (error) {
+    return failedBuildInfo(
+      'rust_binary_build_info_failed',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+  const buildInfo = result.value
+  const expectedVersion = tokenlessPackageVersion()
+  const valid = isRecord(buildInfo) &&
+    buildInfo.protocol === NATIVE_BINARY_BUILD_INFO_PROTOCOL &&
+    buildInfo.binary === expectedBinary &&
+    buildInfo.version === expectedVersion &&
+    buildInfo.platform === process.platform &&
+    buildInfo.arch === process.arch
+  if (!valid) {
+    return failedBuildInfo(
+      'rust_binary_build_info_mismatch',
+      `Native runtime build info for ${binaryPath} does not match tokenless@${expectedVersion} on ${process.platform}-${process.arch}.`,
+      isRecord(buildInfo) ? buildInfo : null
+    )
+  }
+  return { ok: true, buildInfo: buildInfo as JsonRecord, error: null as string | null, code: undefined as string | undefined }
+}
+
+function failedBuildInfo(code: string, error: string, buildInfo: JsonRecord | null = null) {
+  return { ok: false, code, error, buildInfo }
 }
 
 async function acquireDaemonStartLock({ homeDir, timeoutMs }: { homeDir: string; timeoutMs: number }) {
@@ -902,6 +1188,27 @@ async function removePidIfOwned(homeDir: string, pid: number) {
   }
 }
 
+async function terminateSpawnedDaemonChild(child: ReturnType<typeof spawn> & { pid: number }, homeDir: string) {
+  if (child.exitCode === null && child.signalCode === null) {
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      // The child may have exited between the readiness failure and cleanup.
+    }
+    for (let attempt = 0; attempt < 50 && child.exitCode === null && child.signalCode === null; attempt += 1) {
+      await delay(100)
+    }
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        // Best-effort final cleanup for a child we just spawned.
+      }
+    }
+  }
+  await removePidIfOwned(homeDir, child.pid)
+}
+
 function readyHomeFromBody(body: JsonRecord) {
   const value = body.home_dir
   return typeof value === 'string' && value.trim() ? value : null
@@ -946,6 +1253,70 @@ function validateDaemonReadyProof(body: JsonRecord, challenge: string, token: st
     return {
       code: 'daemon_ready_proof_mismatch',
       message: 'Daemon identity proof does not match this Tokenless home; refusing to send its control token.',
+    }
+  }
+  return null
+}
+
+function validateDaemonProcessProof(body: JsonRecord, challenge: string, token: string) {
+  if (
+    body.daemon_process_proof_protocol === undefined &&
+    body.daemon_process_proof === undefined &&
+    body.pid === undefined &&
+    body.instance_id === undefined
+  ) {
+    return {
+      code: 'daemon_process_proof_missing',
+      message: 'Tokenless daemon /ready did not return a process identity proof.',
+    }
+  }
+  if (
+    body.daemon_process_proof_protocol !== DAEMON_PROCESS_PROOF_PROTOCOL ||
+    body.ready_challenge !== challenge ||
+    typeof body.daemon_protocol !== 'string' ||
+    typeof body.native_protocol !== 'string' ||
+    typeof body.home_dir !== 'string' ||
+    typeof body.daemon_process_proof !== 'string' ||
+    !Number.isSafeInteger(body.pid) ||
+    body.pid <= 0 ||
+    typeof body.instance_id !== 'string' ||
+    !/^[A-Za-z0-9_-]{22}$/.test(body.instance_id) ||
+    typeof body.running_binary_hash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(body.running_binary_hash)
+  ) {
+    return {
+      code: 'daemon_process_proof_invalid',
+      message: 'Tokenless daemon /ready returned an incomplete process identity proof.',
+    }
+  }
+  let actualProof: Buffer
+  try {
+    actualProof = Buffer.from(body.daemon_process_proof, 'base64url')
+  } catch {
+    actualProof = Buffer.alloc(0)
+  }
+  if (actualProof.length !== 32 || actualProof.toString('base64url') !== body.daemon_process_proof) {
+    return {
+      code: 'daemon_process_proof_invalid',
+      message: 'Tokenless daemon /ready returned an invalid process identity proof.',
+    }
+  }
+  const expectedProof = createHmac('sha256', token)
+    .update(daemonReadyProofMessage([
+      DAEMON_PROCESS_PROOF_PROTOCOL,
+      challenge,
+      body.daemon_protocol,
+      body.native_protocol,
+      body.home_dir,
+      String(body.pid),
+      body.instance_id,
+      body.running_binary_hash,
+    ]))
+    .digest()
+  if (!timingSafeEqual(actualProof, expectedProof)) {
+    return {
+      code: 'daemon_process_proof_mismatch',
+      message: 'Daemon process identity proof does not match this Tokenless home.',
     }
   }
   return null
@@ -1137,6 +1508,80 @@ async function execFile(command: string, args: string[]) {
   if (exitCode !== 0) {
     throw runtimeError('native_host_registry_failed', `${command} failed: ${stderr.trim()}`, false)
   }
+}
+
+async function execFileJson(command: string, args: string[]) {
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+  let stdout = ''
+  let stderr = ''
+  let outputBytes = 0
+  let settled = false
+  const limitOutput = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
+    outputBytes += chunk.byteLength
+    if (outputBytes > BUILD_INFO_OUTPUT_LIMIT_BYTES) {
+      child.kill('SIGTERM')
+      throw runtimeError(
+        'native_binary_build_info_too_large',
+        `${command} --tokenless-build-info exceeded ${BUILD_INFO_OUTPUT_LIMIT_BYTES} bytes of output.`,
+        false
+      )
+    }
+    if (stream === 'stdout') stdout += chunk.toString('utf8')
+    else stderr += chunk.toString('utf8')
+  }
+  let streamError: RuntimeError | null = null
+  child.stdout?.on('data', (chunk: Buffer) => {
+    try {
+      limitOutput('stdout', chunk)
+    } catch (error) {
+      streamError = error as RuntimeError
+    }
+  })
+  child.stderr?.on('data', (chunk: Buffer) => {
+    try {
+      limitOutput('stderr', chunk)
+    } catch (error) {
+      streamError = error as RuntimeError
+    }
+  })
+  const exitCode = await new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM')
+      reject(runtimeError(
+        'native_binary_build_info_timeout',
+        `${command} --tokenless-build-info did not exit within ${BUILD_INFO_TIMEOUT_MS} ms.`,
+        false
+      ))
+    }, BUILD_INFO_TIMEOUT_MS)
+    child.once('error', reject)
+    child.once('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(code ?? 1)
+    })
+  })
+  if (streamError) throw streamError
+  if (exitCode !== 0) {
+    throw runtimeError('native_binary_build_info_failed', `${command} failed: ${stderr.trim()}`, false)
+  }
+  try {
+    return { value: JSON.parse(stdout) as unknown }
+  } catch (error) {
+    throw runtimeError(
+      'native_binary_build_info_invalid',
+      `${command} returned invalid build info JSON: ${error instanceof Error ? error.message : String(error)}`,
+      false
+    )
+  }
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function objectRecord(value: unknown): JsonRecord {
+  return isRecord(value) ? value : {}
 }
 
 function envNumber(name: string, fallback: number) {

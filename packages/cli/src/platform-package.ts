@@ -104,14 +104,14 @@ export function resolveNativePlatformPackage({
 }
 
 function defaultResolvePackageJson(packageName: string) {
+  // Source builds stage the current native package outside the universal
+  // package. This directory is excluded from the published tokenless tarball.
+  const developmentPath = path.join(cliPackageRoot(), 'npm', packageName, 'package.json')
+  if (fs.existsSync(developmentPath)) return developmentPath
   const require = createRequire(import.meta.url)
   try {
     return require.resolve(`${packageName}/package.json`)
   } catch (error) {
-    // Source builds stage the current native package outside the universal
-    // package. This directory is excluded from the published tokenless tarball.
-    const developmentPath = path.join(cliPackageRoot(), 'npm', packageName, 'package.json')
-    if (fs.existsSync(developmentPath)) return developmentPath
     throw error
   }
 }
