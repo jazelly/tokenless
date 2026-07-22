@@ -76,7 +76,7 @@ Keep authentication data inside the managed profile. Never ask for a cookie, bro
 
 ## Upgrade
 
-When `tokenless upgrade` is available, it is the canonical upgrade path. Run it directly instead of composing separate npm, skill, setup, runtime, or doctor commands:
+When `tokenless upgrade` is available, it is the canonical upgrade path. The command itself is prompt-free and does not read answers from stdin. Agents must use its structured automation form instead of composing separate npm, skill, setup, runtime, or doctor commands:
 
 ```bash
 tokenless upgrade --json
@@ -100,6 +100,8 @@ tokenless upgrade --json
 ```
 
 After that bootstrap, always use `tokenless upgrade --json`; do not keep maintaining a parallel manual upgrade recipe.
+
+`--json` selects machine-readable output; it is not a different upgrade workflow or a version selector. Do not allocate a TTY, answer prompts, or add a separate noninteractive command. Human users may omit the flag and run `tokenless upgrade` for concise progress and a summary; agents and CI keep `--json` so stdout contains one structured result.
 
 Report completion only when the top-level result has `ok: true`, every returned phase is healthy, and the nested doctor result is healthy. When `ok` is false, report the first failed phase, its stable error code, and any returned follow-up. Earlier successful phases may remain installed; do not claim rollback. Fix only the reported boundary and rerun the canonical command. If npm installation or global CLI verification fails, later phases are intentionally absent. Once the new CLI is verified, the command still attempts the final doctor check after a skill or runtime failure so the user receives a complete diagnostic.
 

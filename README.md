@@ -64,10 +64,10 @@ tokenless doctor --json
 ## Upgrade
 
 ```bash
-tokenless upgrade --json
+tokenless upgrade
 ```
 
-Upgrade installs the latest global CLI, refreshes the Tokenless agent skills, reconciles the packaged local daemon through the newly installed CLI, and finishes with that new CLI's read-only `doctor --json`. It reports each phase in JSON and exits nonzero if any required phase or doctor check is unhealthy.
+Upgrade is prompt-free: it installs the latest global CLI, refreshes the Tokenless agent skills, reconciles the packaged local daemon through the newly installed CLI, and finishes with that new CLI's read-only doctor check. The default output is concise and human-readable. Agents and CI should run `tokenless upgrade --json` for one structured result on stdout. Both forms exit nonzero if any required phase or doctor check is unhealthy; no separate noninteractive command is needed.
 
 ## First Request
 

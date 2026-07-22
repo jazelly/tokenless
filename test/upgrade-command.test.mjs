@@ -18,6 +18,7 @@ test('upgrade installs npm package, verifies global entrypoint, refreshes skills
     const globalRoot = path.join(fixture.root, 'global')
     const entrypoint = writeGlobalTokenlessPackage(globalRoot, '9.9.9')
     const calls = []
+    const progress = []
     const result = await runUpgradeCommand({
       json: true,
       home: fixture.home,
@@ -39,6 +40,7 @@ test('upgrade installs npm package, verifies global entrypoint, refreshes skills
         calls.push({ kind: 'skills' })
         return { check: { ok: true } }
       },
+      onProgress: (event) => progress.push(event),
       lockDir: fixture.locks,
     })
 
@@ -73,10 +75,47 @@ test('upgrade installs npm package, verifies global entrypoint, refreshes skills
       '--daemon-start-timeout-ms',
       '1234',
     ])
+    assert.deepEqual(progress.map(({ phase, status }) => `${phase}:${status}`), [
+      'npmInstall:started',
+      'npmInstall:succeeded',
+      'resolveGlobalCli:started',
+      'resolveGlobalCli:succeeded',
+      'skills:started',
+      'skills:succeeded',
+      'runtimeInstall:started',
+      'runtimeInstall:succeeded',
+      'doctor:started',
+      'doctor:succeeded',
+    ])
     assert.equal(fs.existsSync(path.join(fixture.locks, `upgrade-${lockOwnerKey()}.lock`)), false)
   } finally {
     fixture.remove()
   }
+})
+
+test('upgrade formats concise human progress and summary without changing the JSON result', async () => {
+  const { formatUpgradeProgress, formatUpgradeSummary } = await import(upgradeModuleUrl)
+  assert.equal(formatUpgradeProgress({
+    phase: 'npmInstall',
+    label: 'Updating global CLI',
+    status: 'started',
+  }), '  - Updating global CLI...')
+  assert.equal(formatUpgradeProgress({
+    phase: 'doctor',
+    label: 'Running doctor',
+    status: 'failed',
+    errorCode: 'tokenless_doctor_unhealthy',
+  }), '  X Running doctor (tokenless_doctor_unhealthy)')
+  assert.equal(formatUpgradeSummary({
+    ok: true,
+    cli: { beforeVersion: '0.2.0', afterVersion: '0.2.1' },
+    phases: { doctor: { ok: true } },
+  }), 'Tokenless upgraded from 0.2.0 to 0.2.1. Skills and local runtime are current; doctor is healthy.')
+  assert.equal(formatUpgradeSummary({
+    ok: false,
+    cli: { beforeVersion: '0.2.0', afterVersion: '0.2.1' },
+    phases: { skills: { ok: false, error: { code: 'tokenless_skill_refresh_failed' } } },
+  }), 'Tokenless upgrade stopped at Refreshing agent skills (tokenless_skill_refresh_failed). Resolve that failure, then rerun tokenless upgrade.')
 })
 
 test('upgrade stops before global resolution when npm install fails', async () => {
@@ -403,9 +442,27 @@ test('CLI upgrade rejects arbitrary scoped arguments before touching Tokenless h
     fs.writeFileSync(poisonHome, 'must remain untouched')
     const completed = await runCli(['upgrade', '--provider', 'chatgpt', '--home', poisonHome, '--json'])
     assert.equal(completed.code, 1, `${completed.stderr}\n${completed.stdout}`)
+    assert.equal(completed.stderr, '')
+    assert.doesNotMatch(completed.stdout, /Tokenless upgrade|Updating global CLI|Running doctor/)
     const payload = JSON.parse(completed.stdout)
     assert.equal(payload.error.code, 'upgrade_option_invalid')
     assert.match(payload.error.message, /Unsupported option: --provider/)
+    assert.equal(fs.readFileSync(poisonHome, 'utf8'), 'must remain untouched')
+  } finally {
+    fixture.remove()
+  }
+})
+
+test('CLI upgrade without --json reports human errors on stderr only', async () => {
+  const fixture = createFixture('tokenless-upgrade-cli-human-routing-')
+  try {
+    const poisonHome = path.join(fixture.root, 'home-is-a-file')
+    fs.writeFileSync(poisonHome, 'must remain untouched')
+    const completed = await runCli(['upgrade', '--provider', 'chatgpt', '--home', poisonHome])
+    assert.equal(completed.code, 1, `${completed.stderr}\n${completed.stdout}`)
+    assert.equal(completed.stdout, '')
+    assert.match(completed.stderr, /^upgrade_option_invalid: .*Unsupported option: --provider/m)
+    assert.doesNotMatch(completed.stderr, /"ok": false/)
     assert.equal(fs.readFileSync(poisonHome, 'utf8'), 'must remain untouched')
   } finally {
     fixture.remove()
