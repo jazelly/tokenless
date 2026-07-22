@@ -166,6 +166,7 @@ export function managedBrowserLaunchOptions(
   return {
     ...executable,
     headless: false,
+    chromiumSandbox: true,
     ignoreDefaultArgs: [
       '--password-store=basic',
       '--use-mock-keychain',
