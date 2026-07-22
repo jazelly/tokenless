@@ -34,6 +34,19 @@ test('tokenless-install skill stays noninteractive for agent sessions', async ()
   assert.doesNotMatch(installSkill, /^```bash\ntokenless setup\n```$/m)
 })
 
+test('tokenless-install skill treats upgrade as the canonical maintenance path', async () => {
+  const installSkill = await fs.readFile(path.join(root, 'skills/tokenless-install/SKILL.md'), 'utf8')
+
+  assert.match(installSkill, /canonical upgrade path/i)
+  assert.match(installSkill, /tokenless upgrade --json/)
+  assert.match(installSkill, /npm install --global tokenless@latest/)
+  assert.match(installSkill, /unknown command/)
+  assert.match(installSkill, /exact CLI entrypoint/)
+  assert.match(installSkill, /Earlier successful phases may remain installed; do not claim rollback/)
+  assert.match(installSkill, /still attempts the final doctor check after a skill or runtime failure/)
+  assert.doesNotMatch(installSkill, /npx skills update/)
+})
+
 test('CLI state contract exposes daemon blocker_json instead of hiding waiting state', async () => {
   const cli = await fs.readFile(path.join(root, 'packages/cli/src/tokenless.mts'), 'utf8')
 

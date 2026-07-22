@@ -76,11 +76,32 @@ Keep authentication data inside the managed profile. Never ask for a cookie, bro
 
 ## Upgrade
 
+When `tokenless upgrade` is available, it is the canonical upgrade path. Run it directly instead of composing separate npm, skill, setup, runtime, or doctor commands:
+
 ```bash
 tokenless upgrade --json
 ```
 
-Upgrade installs the latest global CLI, refreshes both GitHub-backed agent skills, reconciles the packaged local runtime through the newly installed CLI, and then runs the newly installed CLI's read-only `doctor --json`. It does not run provider setup, sign in, re-import, reset, or replace a managed profile. Report completion only when the structured upgrade result has `ok: true` and the nested doctor result is healthy.
+The command owns this order:
+
+1. Install `tokenless@latest` globally with npm.
+2. Resolve and verify the installed package, version, binary declaration, and exact CLI entrypoint before handing off to new code.
+3. Refresh both GitHub-backed Tokenless agent skills.
+4. Use that verified new CLI to reconcile the packaged daemon and local runtime.
+5. Use the same new CLI to run the final read-only `doctor --json` check.
+
+Do not run setup before or after an upgrade unless the returned doctor result identifies a profile or provider problem that specifically requires setup. Upgrade does not run provider setup, sign in, re-import, reset, or replace a managed profile.
+
+For a pre-upgrade CLI that reports `upgrade` as an unknown command, bootstrap the canonical command exactly once:
+
+```bash
+npm install --global tokenless@latest
+tokenless upgrade --json
+```
+
+After that bootstrap, always use `tokenless upgrade --json`; do not keep maintaining a parallel manual upgrade recipe.
+
+Report completion only when the top-level result has `ok: true`, every returned phase is healthy, and the nested doctor result is healthy. When `ok` is false, report the first failed phase, its stable error code, and any returned follow-up. Earlier successful phases may remain installed; do not claim rollback. Fix only the reported boundary and rerun the canonical command. If npm installation or global CLI verification fails, later phases are intentionally absent. Once the new CLI is verified, the command still attempts the final doctor check after a skill or runtime failure so the user receives a complete diagnostic.
 
 ## Doctor and repair
 
