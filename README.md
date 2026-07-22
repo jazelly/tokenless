@@ -45,7 +45,7 @@ Choose one managed-profile path during setup.
 tokenless setup
 ```
 
-Follow the interactive CLI to choose a browser, providers, and an existing Chrome or Brave profile. With your approval, Tokenless copies only supported sign-in state for the selected providers into a separate managed profile; the source profile is unchanged.
+Follow the interactive CLI to choose a browser and an existing Chrome or Brave profile. With your approval, Tokenless copies supported sign-in state for ChatGPT, Claude, and Grok into a separate managed profile; Gemini and shared Google sign-in data are not imported. The source profile is unchanged.
 
 ### 2. Start with a fresh profile
 
@@ -53,7 +53,7 @@ Follow the interactive CLI to choose a browser, providers, and an existing Chrom
 tokenless setup --fresh
 ```
 
-On a new installation, this creates a clean `default` profile, starts the local runtime, and opens ChatGPT when sign-in is needed. It never imports a browser profile implicitly.
+On a new installation, this creates a clean `default` profile, starts the local runtime, and checks every supported visible provider, opening sign-in pages when needed. It never imports a browser profile implicitly.
 
 Verify either path with:
 
@@ -128,7 +128,7 @@ Direct mode is separate from managed web automation and may incur provider API c
 ## Privacy and Safety
 
 - Playwright runs locally with visible, persistent managed browser profiles.
-- Consented import copies only selected provider sign-in state; passwords, history, bookmarks, payments, sync data, and caches are excluded.
+- Consented import copies only supported provider sign-in state; passwords, history, bookmarks, payments, sync data, and caches are excluded.
 - Automation uses visible page controls and checks visible results.
 - CAPTCHA, sign-in, plan limits, consent, and confirmations remain under user control.
 - Selected files are staged locally, integrity-checked, and uploaded through the provider's visible file control.

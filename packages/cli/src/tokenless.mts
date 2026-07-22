@@ -12,6 +12,7 @@ import {
   createManagedPlaywrightJobRequest,
   discoverChromiumProfiles,
   importChromeProfile,
+  listProviders,
   providerHomeUrl,
   readManagedProfileRegistryReadOnly,
   resolveChromeProfile,
@@ -2046,7 +2047,7 @@ async function setupCommand(args: CliArgs) {
     const skills = await ensureSetupSkills({ args, prompt, presenter })
     const installedBrowsers = await presenter.withProgress('Finding browsers', discoverSetupBrowsers)
     const browser = await selectSetupBrowser({ args, config, installedBrowsers, prompt, presenter })
-    const providers = await selectSetupProviders({ args, config, prompt, presenter })
+    const providers = selectSetupProviders({ presenter })
     await presenter.withProgress('Saving preferences', async () => {
       if (config.browser && config.browser !== browser.browser) {
         await stopRunnerSupervisor({ homeDir })
@@ -2734,43 +2735,34 @@ async function selectSetupBrowser({
   return browser
 }
 
-async function selectSetupProviders({
-  args,
-  config,
-  prompt,
+function selectSetupProviders({
   presenter,
 }: {
-  args: CliArgs
-  config: Record<string, any>
-  prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
-}): Promise<ProviderId[]> {
-  if (args.preferredProviders !== undefined) {
-    const providers = requireSetupProviders(parseProviderList(args.preferredProviders) as ProviderId[])
-    presenter.success(`Using providers: ${providers.join(', ')}.`)
-    return providers
-  }
-  if (args.provider !== undefined || process.env.TOKENLESS_PROVIDER) {
-    const providers = [normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER)]
-    presenter.success(`Using providers: ${providers.join(', ')}.`)
-    return providers
-  }
-  const configured = Array.isArray(config.preferredProviders) && config.preferredProviders.length > 0
-    ? config.preferredProviders.map(normalizeProvider)
-    : ['chatgpt'] as ProviderId[]
-  if (!prompt) return requireSetupProviders(configured)
-  const answer = await prompt.text(
-    'Providers (comma-separated: chatgpt, claude, gemini, grok)',
-    configured.join(',')
-  )
-  const providers = requireSetupProviders(parseProviderList(answer) as ProviderId[])
-  presenter.success(`Using providers: ${providers.join(', ')}.`)
+}): ProviderId[] {
+  const providers = setupVisibleProviders()
+  presenter.success(`Checking providers: ${providers.join(', ')}.`)
   return providers
+}
+
+function setupVisibleProviders(): ProviderId[] {
+  const providerIds = listProviders().map((provider) => normalizeProvider(provider.id))
+  return requireSetupProviders(providerIds.sort((left, right) => setupProviderSortKey(left) - setupProviderSortKey(right)))
+}
+
+function setupProviderSortKey(provider: ProviderId) {
+  const order: Record<ProviderId, number> = {
+    chatgpt: 0,
+    claude: 1,
+    gemini: 2,
+    grok: 3,
+  }
+  return order[provider]
 }
 
 function requireSetupProviders(providers: ProviderId[]) {
   if (providers.length === 0) {
-    throw usageError('setup_provider_required', 'Tokenless setup requires at least one preferred provider.')
+    throw usageError('setup_provider_required', 'Tokenless setup requires at least one supported visible provider.')
   }
   return providers
 }
@@ -3802,6 +3794,19 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
   if (command !== 'setup' && selectedSetupOnly.length > 0) {
     throw usageError('setup_options_require_setup', `${selectedSetupOnly.join(', ')} is accepted only by tokenless setup.`)
   }
+  if (command === 'setup') {
+    const setupProviderScope = [
+      ['provider', '--provider'],
+      ['preferredProviders', '--preferred-providers'],
+    ] as const
+    const selectedSetupProviderScope = setupProviderScope.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag)
+    if (selectedSetupProviderScope.length > 0) {
+      throw usageError(
+        'setup_provider_selection_unsupported',
+        `tokenless setup checks every supported visible provider; remove ${selectedSetupProviderScope.join(', ')}.`,
+      )
+    }
+  }
   if (command === 'setup' && args.freshProfile === true) {
     if (args.importChromeProfile !== undefined) {
       throw usageError('setup_profile_choice_conflict', '--fresh cannot be combined with --import-browser-profile.')
@@ -4178,7 +4183,7 @@ function usage() {
     '  tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json',
     '  tokenless setup',
     '  tokenless setup --fresh --json',
-    '  tokenless setup --profile <slug> --browser <browser> --preferred-providers <list> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',
+    '  tokenless setup --profile <slug> --browser <browser> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',
     '  tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy [--refresh-skills]',
     '  tokenless upgrade [--json]',
     '  tokenless doctor --json',
