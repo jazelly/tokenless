@@ -77,19 +77,17 @@ Keep authentication data inside the managed profile. Never ask for a cookie, bro
 ## Upgrade
 
 ```bash
-npm install --global tokenless@latest
-tokenless setup --fresh --refresh-skills --json
-tokenless doctor --json
+tokenless upgrade --json
 ```
 
-Setup refreshes the packaged runtime and both agent skills while reusing the registered default profile. Do not re-import, reset, or replace a profile during upgrade unless the user explicitly asks. Report completion only after `doctor` is healthy.
+Upgrade installs the latest global CLI, refreshes both GitHub-backed agent skills, reconciles the packaged local runtime through the newly installed CLI, and then runs the newly installed CLI's read-only `doctor --json`. It does not run provider setup, sign in, re-import, reset, or replace a managed profile. Report completion only when the structured upgrade result has `ok: true` and the nested doctor result is healthy.
 
 ## Doctor and repair
 
 Run `tokenless doctor --json` first and use its exact failed check as the repair boundary:
 
 - Node.js failure: require Node.js 22.13 or newer.
-- CLI, daemon, or Playwright worker failure: rerun `npm install --global tokenless@latest`, then `tokenless setup --fresh --refresh-skills --json` and `doctor`.
+- CLI, daemon, or Playwright worker failure: run `tokenless upgrade --json`, then inspect its nested doctor result.
 - Browser failure: require a supported installed browser selected by setup; do not silently substitute another browser.
 - Missing default profile: run fresh setup to create one. For an invalid existing profile, report it instead of replacing it automatically.
 - Profile import failure: report the copy error, obtain fresh chat consent, rediscover if needed, then retry only with `--import-browser-profile`, `--preferred-providers`, `--consent-local-profile-copy`, and `--json`. Never mutate the source profile.

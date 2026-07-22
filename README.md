@@ -61,6 +61,14 @@ Verify either path with:
 tokenless doctor --json
 ```
 
+## Upgrade
+
+```bash
+tokenless upgrade --json
+```
+
+Upgrade installs the latest global CLI, refreshes the Tokenless agent skills, reconciles the packaged local daemon through the newly installed CLI, and finishes with that new CLI's read-only `doctor --json`. It reports each phase in JSON and exits nonzero if any required phase or doctor check is unhealthy.
+
 ## First Request
 
 ```bash
