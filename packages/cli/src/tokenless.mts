@@ -83,6 +83,7 @@ import {
   createManagedCodexProjectExecutor,
 } from './direct/managed-codex-executor.js'
 import { tokenlessPackageVersion } from './platform-package.js'
+import { runUpgradeCommand } from './upgrade.js'
 
 type CliArgs = Record<string, any> & { attachFiles: string[]; files: string[] }
 type StatusEvent = Record<string, any>
@@ -195,6 +196,10 @@ try {
     await setupCommand(args)
   } else if (command === 'install') {
     await installCommand(args)
+  } else if (command === 'upgrade') {
+    const result = await runUpgradeCommand(args)
+    printPayload(result, args)
+    if (!result.ok) process.exitCode = 1
   } else if (command === 'doctor') {
     await doctorCommand(args)
   } else if (command === 'config') {
@@ -4170,6 +4175,7 @@ function usage() {
     '  tokenless setup --fresh --json',
     '  tokenless setup --profile <slug> --browser <browser> --preferred-providers <list> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',
     '  tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy [--refresh-skills]',
+    '  tokenless upgrade --json',
     '  tokenless doctor --json',
   ].join('\n'))
 }

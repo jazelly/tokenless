@@ -61,6 +61,14 @@ tokenless setup --fresh
 tokenless doctor --json
 ```
 
+## 升级
+
+```bash
+tokenless upgrade --json
+```
+
+升级会安装最新的全局 CLI，刷新 Tokenless 智能体技能，通过新安装的 CLI 对打包的本地守护进程进行协调更新，最后运行这个新 CLI 的只读 `doctor --json`。命令会以 JSON 报告每个阶段；任何必需阶段或 doctor 检查不健康时都会以非零状态退出。
+
 ## 第一次调用
 
 ```bash
