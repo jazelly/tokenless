@@ -38,6 +38,7 @@ type UpgradeDependencies = {
     }
   ) => Promise<UpgradeProcessResult>
   installSkills: () => Promise<unknown>
+  onProgress?: (event: UpgradeProgressEvent) => void
   lockDir?: string
 }
 
@@ -49,6 +50,23 @@ type PhaseResult = Record<string, any> & {
     retryable: boolean
   }
 }
+
+export type UpgradePhaseName = 'npmInstall' | 'resolveGlobalCli' | 'skills' | 'runtimeInstall' | 'doctor'
+
+export type UpgradeProgressEvent = {
+  phase: UpgradePhaseName
+  label: string
+  status: 'started' | 'succeeded' | 'failed'
+  errorCode?: string
+}
+
+const UPGRADE_PHASE_LABELS: Record<UpgradePhaseName, string> = Object.freeze({
+  npmInstall: 'Updating global CLI',
+  resolveGlobalCli: 'Verifying installed CLI',
+  skills: 'Refreshing agent skills',
+  runtimeInstall: 'Updating local runtime',
+  doctor: 'Running doctor',
+})
 
 const NPM_INSTALL_TIMEOUT_MS = 180_000
 const NPM_ROOT_TIMEOUT_MS = 30_000
@@ -84,18 +102,25 @@ export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partia
       phases: {},
     }
 
+    emitUpgradeProgress(deps, 'npmInstall', 'started')
     const npmInstall = await runNpmInstall(deps)
     result.phases.npmInstall = npmInstall
+    emitUpgradeProgress(deps, 'npmInstall', npmInstall.ok ? 'succeeded' : 'failed', npmInstall)
     if (!npmInstall.ok) return finishUpgradeResult(result)
 
+    emitUpgradeProgress(deps, 'resolveGlobalCli', 'started')
     const resolved = await resolveVerifiedGlobalTokenless(deps)
     result.phases.resolveGlobalCli = resolved.phase
+    emitUpgradeProgress(deps, 'resolveGlobalCli', resolved.phase.ok ? 'succeeded' : 'failed', resolved.phase)
     if (!resolved.phase.ok || !resolved.entrypoint || !resolved.version) return finishUpgradeResult(result)
     result.cli.afterVersion = resolved.version
 
+    emitUpgradeProgress(deps, 'skills', 'started')
     const skills = await runSkillsRefresh(deps)
     result.phases.skills = skills
+    emitUpgradeProgress(deps, 'skills', skills.ok ? 'succeeded' : 'failed', skills)
 
+    emitUpgradeProgress(deps, 'runtimeInstall', 'started')
     const runtimeInstall = await runNewCliJsonPhase({
       deps,
       entrypoint: resolved.entrypoint,
@@ -104,7 +129,9 @@ export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partia
       timeoutMs: NEW_CLI_INSTALL_TIMEOUT_MS,
     })
     result.phases.runtimeInstall = runtimeInstall
+    emitUpgradeProgress(deps, 'runtimeInstall', runtimeInstall.ok ? 'succeeded' : 'failed', runtimeInstall)
 
+    emitUpgradeProgress(deps, 'doctor', 'started')
     const doctor = await runNewCliJsonPhase({
       deps,
       entrypoint: resolved.entrypoint,
@@ -113,10 +140,52 @@ export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partia
       timeoutMs: NEW_CLI_DOCTOR_TIMEOUT_MS,
     })
     result.phases.doctor = doctor
+    emitUpgradeProgress(deps, 'doctor', doctor.ok ? 'succeeded' : 'failed', doctor)
 
     return finishUpgradeResult(result)
   } finally {
     await releaseLock()
+  }
+}
+
+export function formatUpgradeProgress(event: UpgradeProgressEvent) {
+  if (event.status === 'started') return `  - ${event.label}...`
+  if (event.status === 'succeeded') return `  OK ${event.label}`
+  return `  X ${event.label}${event.errorCode ? ` (${event.errorCode})` : ''}`
+}
+
+export function formatUpgradeSummary(result: Record<string, any>) {
+  const beforeVersion = String(result.cli?.beforeVersion ?? 'unknown')
+  const afterVersion = String(result.cli?.afterVersion ?? 'unknown')
+  if (result.ok === true) {
+    const versionSummary = beforeVersion === afterVersion
+      ? `Tokenless ${afterVersion} is up to date.`
+      : `Tokenless upgraded from ${beforeVersion} to ${afterVersion}.`
+    return `${versionSummary} Skills and local runtime are current; doctor is healthy.`
+  }
+  const failed = Object.entries(result.phases ?? {})
+    .find(([, phase]) => (phase as PhaseResult)?.ok !== true) as [UpgradePhaseName, PhaseResult] | undefined
+  if (!failed) return 'Tokenless upgrade did not complete. Rerun tokenless upgrade for a full diagnostic.'
+  const [phase, detail] = failed
+  const code = detail.error?.code
+  return `Tokenless upgrade stopped at ${UPGRADE_PHASE_LABELS[phase]}${code ? ` (${code})` : ''}. Resolve that failure, then rerun tokenless upgrade.`
+}
+
+function emitUpgradeProgress(
+  deps: UpgradeDependencies,
+  phase: UpgradePhaseName,
+  status: UpgradeProgressEvent['status'],
+  result?: PhaseResult,
+) {
+  try {
+    deps.onProgress?.({
+      phase,
+      label: UPGRADE_PHASE_LABELS[phase],
+      status,
+      ...(result?.error?.code ? { errorCode: result.error.code } : {}),
+    })
+  } catch {
+    // Presentation must never change upgrade execution or its structured result.
   }
 }
 

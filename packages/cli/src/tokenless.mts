@@ -83,7 +83,7 @@ import {
   createManagedCodexProjectExecutor,
 } from './direct/managed-codex-executor.js'
 import { tokenlessPackageVersion } from './platform-package.js'
-import { runUpgradeCommand } from './upgrade.js'
+import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand } from './upgrade.js'
 
 type CliArgs = Record<string, any> & { attachFiles: string[]; files: string[] }
 type StatusEvent = Record<string, any>
@@ -197,8 +197,13 @@ try {
   } else if (command === 'install') {
     await installCommand(args)
   } else if (command === 'upgrade') {
-    const result = await runUpgradeCommand(args)
-    printPayload(result, args)
+    const humanOutput = args.json !== true
+    if (humanOutput) console.error('Tokenless upgrade')
+    const result = await runUpgradeCommand(args, humanOutput
+      ? { onProgress: (event) => console.error(formatUpgradeProgress(event)) }
+      : undefined)
+    if (humanOutput) console.log(formatUpgradeSummary(result))
+    else printPayload(result, args)
     if (!result.ok) process.exitCode = 1
   } else if (command === 'doctor') {
     await doctorCommand(args)
@@ -4175,7 +4180,7 @@ function usage() {
     '  tokenless setup --fresh --json',
     '  tokenless setup --profile <slug> --browser <browser> --preferred-providers <list> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',
     '  tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy [--refresh-skills]',
-    '  tokenless upgrade --json',
+    '  tokenless upgrade [--json]',
     '  tokenless doctor --json',
   ].join('\n'))
 }
