@@ -116,7 +116,7 @@ function defaultResolvePackageJson(packageName: string) {
   }
 }
 
-function tokenlessPackageVersion() {
+export function tokenlessPackageVersion() {
   const manifestPath = path.join(cliPackageRoot(), 'package.json')
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { version?: unknown }

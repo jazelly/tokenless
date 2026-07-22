@@ -81,6 +81,7 @@ import {
   ManagedCodexExecutorFailure,
   createManagedCodexProjectExecutor,
 } from './direct/managed-codex-executor.js'
+import { tokenlessPackageVersion } from './platform-package.js'
 
 type CliArgs = Record<string, any> & { attachFiles: string[]; files: string[] }
 type StatusEvent = Record<string, any>
@@ -148,11 +149,20 @@ let args: CliArgs = { attachFiles: [], files: [], json: process.argv.includes('-
 
 try {
   const argv = process.argv.slice(2)
-  const command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
+  const versionRequested = argv.length === 1 && (argv[0] === '-V' || argv[0] === '--version')
+  let command: string
+  if (versionRequested) {
+    argv.shift()
+    command = 'version'
+  } else {
+    command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
+  }
   const subcommand = command === 'accounts' || command === 'projects' || command === 'profiles' ? argv.shift() : undefined
   args = parseArgs(argv)
   assertCommandRoutingArguments(command, args)
-  if (command === 'accounts') {
+  if (command === 'version') {
+    console.log(tokenlessPackageVersion())
+  } else if (command === 'accounts') {
     await accountsCommand(subcommand, args)
   } else if (command === 'projects') {
     await projectsCommand(subcommand, args)

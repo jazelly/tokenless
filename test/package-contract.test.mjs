@@ -29,6 +29,19 @@ test('workspace packages keep standalone product names', () => {
   assert.equal(fs.existsSync(path.join(root, 'legacy/extension/package.json')), true)
 })
 
+test('CLI reports the installed package version through standard version flags', () => {
+  const expectedVersion = readJson('packages/cli/package.json').version
+  for (const flag of ['-V', '--version']) {
+    const result = spawnSync(process.execPath, [cliEntry, flag], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.equal(result.stdout, `${expectedVersion}\n`)
+    assert.equal(result.stderr, '')
+  }
+})
+
 test('universal CLI package contains JS only and declares exact platform runtime optionals', () => {
   const pkg = readJson('packages/cli/package.json')
   assert.equal(pkg.dependencies['@tokenless/playwright'], undefined)
