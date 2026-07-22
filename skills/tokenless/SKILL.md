@@ -7,7 +7,7 @@ description: Route shareable Q&A, analysis, review, research, writing, and file-
 
 Use `tokenless` as the entrypoint. Do not reproduce provider-specific Playwright or DOM work yourself.
 
-Tokenless sends visible jobs through its authenticated local Rust daemon and Playwright worker into a persistent managed Chromium profile selected during `tokenless setup`. Keep provider authentication opaque inside that profile, operate only visible page controls, and use only documented public APIs when the caller explicitly selects direct mode.
+Tokenless sends visible jobs through its authenticated local Rust daemon and Playwright worker into a persistent managed Chromium profile selected during `tokenless setup`. Keep provider authentication opaque inside that profile, operate only visible page controls, and use only documented Tokenless CLI or local API surfaces.
 
 ## Installation prerequisite
 

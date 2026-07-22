@@ -1,6 +1,6 @@
 # Tokenless Architecture
 
-Tokenless exposes visible AI websites through provider-neutral local interfaces. Managed web mode is the primary path; direct mode is explicit and experimental.
+Tokenless exposes visible AI websites through provider-neutral local interfaces. Managed Playwright through the authenticated local daemon is the only execution path.
 
 ## Components
 
@@ -10,16 +10,16 @@ Tokenless exposes visible AI websites through provider-neutral local interfaces.
 4. Provider adapters translate shared actions into visible ChatGPT, Claude, Gemini, and Grok page operations.
 5. The local API is being stabilized as a second interface to the same job and action contracts.
 
-## Mode selection
+## Execution path
 
-`tokenless run` uses managed web mode by default. `--mode direct` must be selected explicitly. Mode selection happens before runtime initialization, and Tokenless never resends a failed request through another mode.
+`tokenless run` submits a managed Playwright job through the local daemon. Tokenless never resends a failed request through another provider or runtime path.
 
-| Mode | Execution path | Authentication |
+| Interface | Execution path | Authentication |
 | --- | --- | --- |
-| Managed web | CLI or local API → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile |
-| Direct | CLI or authenticated direct broker → official client, public provider API, or configured gateway | Provider-owned login or environment-supplied API credential |
+| CLI | CLI → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile |
+| Local API | Local API → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile |
 
-## Managed web flow
+## Managed Playwright flow
 
 ```text
 request
@@ -72,12 +72,6 @@ The CLI accepts only intentionally selected regular files. It stages them under 
 Managed jobs transition through daemon states such as `queued`, `claimed`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`. When a provider requires visible user action, the existing job and browser profile remain authoritative. Callers must resume or query that job rather than submitting a replacement.
 
 `--long-running` extends the attached wait for provider work that exceeds the normal timeout while keeping machine-readable stdout clean. `--no-wait` is a detached submission option and is not used for flows that require immediate user handoff.
-
-## Direct mode boundary
-
-Direct mode does not start the daemon or managed browser runtime. Credentials come from the current process environment or remain owned by the selected official client. Remote upstreams require HTTPS, except explicit loopback development. Redirects, implicit retries, and cross-provider fallback are disabled.
-
-The direct broker binds to loopback and requires its own bearer key. It forwards reviewed public inference routes, strips inbound credentials and cookies, enforces bounded bodies and deadlines, and closes outstanding work during graceful shutdown. See [Direct mode](direct-mode.md) for the current route contract.
 
 ## Current delivery status
 

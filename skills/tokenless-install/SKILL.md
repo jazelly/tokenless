@@ -115,6 +115,6 @@ Run `tokenless doctor --json` first and use its exact failed check as the repair
 - Missing default profile: run fresh setup to create one. For an invalid existing profile, report it instead of replacing it automatically.
 - Profile import failure: report the copy error, obtain fresh chat consent, rediscover if needed, then retry only with `--import-browser-profile`, `--preferred-providers`, `--consent-local-profile-copy`, and `--json`. Never mutate the source profile.
 - Provider unauthenticated or visibly blocked: run `tokenless profiles open --profile <slug> --provider <id>`, use the user handoff, then rerun `profiles status` and `doctor`.
-- Unknown or contradictory output: report the exact failed check and stop instead of guessing, weakening validation, or switching to direct mode.
+- Unknown or contradictory output: report the exact failed check and stop instead of guessing, weakening validation, or switching runtime paths.
 
 Neither this skill nor the agent may inspect, print, log, export, or transmit authentication state.

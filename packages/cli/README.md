@@ -50,9 +50,9 @@ curl -fsSL https://raw.githubusercontent.com/jazelly/tokenless/main/deploy/insta
 
 Because this executes with `sudo`, [review the installer source](https://github.com/jazelly/tokenless/blob/main/deploy/install.sh) first. Run setup afterward as the normal desktop user so the managed profile has the correct ownership.
 
-## Web Automation
+## Managed Playwright Automation
 
-Web mode is the default; `--mode visible` is optional.
+`tokenless run` always submits a managed Playwright job through the authenticated local daemon.
 
 ```bash
 tokenless run \
@@ -98,30 +98,6 @@ tokenless profiles clear --profile work
 
 The local API will expose the same daemon jobs and provider-neutral action contract as the CLI. Authentication, request schemas, and compatibility guarantees are under active development.
 
-## Experimental Direct Mode
-
-Direct mode uses provider-owned clients, documented public APIs, or explicitly configured compatible gateways. Public API traffic may be billed separately from web subscriptions.
-
-```bash
-codex login
-tokenless run --mode direct --provider chatgpt --prompt "Summarize this." --json
-
-TOKENLESS_DIRECT_GEMINI_API_KEY=... \
-tokenless run --mode direct --provider gemini --model <api-model> --prompt "Summarize this." --json
-```
-
-Start the authenticated loopback direct broker for compatible local clients:
-
-```bash
-TOKENLESS_DIRECT_SERVER_KEY=... \
-TOKENLESS_DIRECT_CHATGPT_API_KEY=... \
-tokenless serve --mode direct --host 127.0.0.1 --port 8788 --json
-```
-
-Every broker route requires `Authorization: Bearer <TOKENLESS_DIRECT_SERVER_KEY>`. Credentials come only from the broker environment; inbound credentials and cookies are stripped.
-
-See [Direct mode](../../docs/direct-mode.md) and [multi-account routing](../../docs/multi-account-routing.md) for route allowlists, account binding, failover, and security details.
-
 ## Browser Boundary
 
 - Playwright uses a visible, persistent, non-default user-data directory.
@@ -129,13 +105,13 @@ See [Direct mode](../../docs/direct-mode.md) and [multi-account routing](../../d
 - Authentication state stays opaque inside the selected managed profile.
 - CAPTCHA, sign-in, rate limits, upgrade prompts, and confirmations remain under user control.
 - Selected regular files are staged privately and sent through Playwright file inputs; raw caller paths do not enter daemon job JSON.
-- Every request follows only the mode explicitly selected by the caller.
+- Every request follows the authenticated local daemon and managed Playwright path.
 
 ## Roadmap
 
 - Complete Playwright parity for ChatGPT, Claude, Gemini, and Grok.
 - Finish seamless files, model controls, citations, and long-running work.
-- Add provider projects, workspaces, files, plugins, connectors, and tools.
+- Add provider workspaces, files, plugins, connectors, and tools when they are available through visible pages.
 - Add image and broader multimodal workflows.
 - Stabilize the local API as a public compatibility surface.
 

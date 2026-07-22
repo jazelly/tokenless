@@ -9,7 +9,7 @@ Run AI websites from any agent through one local CLI or API. Tokenless gives Cha
 - **Save tokens.** Use web subscriptions you already pay for instead of another model API call.
 - **Stay safe and visible.** Playwright operates the normal provider website and verifies visible results.
 - **Keep control local.** Tokenless is free and MIT-licensed; the runtime, managed profiles, and sign-in state stay on your machine.
-- **Use one interface.** The CLI targets all four providers, with files, projects, tools, images, and multimodal work converging on the same contract.
+- **Use one interface.** The CLI targets all four providers, with files, tools, images, and multimodal work converging on the same contract.
 
 ## Install
 
@@ -86,7 +86,7 @@ ChatGPT, Claude, Gemini, and Grok are being unified behind the same workflow. Fo
 
 - Complete one Playwright action contract across ChatGPT, Claude, Gemini, and Grok.
 - Make files, model controls, citations, and long-running responses seamless across providers.
-- Expose provider projects, workspaces, files, plugins, connectors, and tools.
+- Expose provider workspaces, files, plugins, connectors, and tools when they are available through visible pages.
 - Support image generation, image input, and broader multimodal workflows.
 - Stabilize the local API so agents can use AI websites as a programmable execution surface.
 
@@ -115,15 +115,12 @@ tokenless profiles clear --profile work
 
 `profiles discover` is read-only. Import, reset, and clear are explicit operations; jobs never change profile lifecycle automatically.
 
-### Interfaces and modes
+### Interfaces
 
-| Interface or mode | Execution path | Status |
+| Interface | Execution path | Status |
 | --- | --- | --- |
 | CLI | Playwright web jobs through the local daemon | Primary interface |
 | Local API | The same provider-neutral Playwright jobs | Active development |
-| Direct mode (`--mode direct`) | Official client, public provider API, or explicit compatible gateway | Experimental |
-
-Direct mode is separate from managed web automation and may incur provider API charges.
 
 ## Privacy and Safety
 
@@ -132,18 +129,9 @@ Direct mode is separate from managed web automation and may incur provider API c
 - Automation uses visible page controls and checks visible results.
 - CAPTCHA, sign-in, plan limits, consent, and confirmations remain under user control.
 - Selected files are staged locally, integrity-checked, and uploaded through the provider's visible file control.
-- Each request follows only the mode selected by the caller.
+- Each request follows the authenticated local daemon and managed Playwright path.
 
 See the full [privacy policy](PRIVACY.md).
-
-## Experimental Direct Mode
-
-```bash
-codex login
-tokenless run --mode direct --provider chatgpt --prompt "Review this design." --json
-```
-
-Public API backends require an explicit model and an environment-supplied credential. See [Direct mode](docs/direct-mode.md) for supported providers, account routing, and security boundaries.
 
 ## Development
 
