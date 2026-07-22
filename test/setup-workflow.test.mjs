@@ -138,7 +138,8 @@ test('setup presenter cleans animated progress on success and failure', async ()
 
   assert.equal(value, 'ready')
   assert.equal(successTimers.cleared(), 1)
-  assert.match(successStream.output(), /\r/)
+  assert.match(successStream.output(), /\u001b\[2K\u001b\[1G/)
+  assert.doesNotMatch(successStream.output(), /\r/)
   assert.match(successStream.output(), /OK.*Checking visible login state/)
   assert.equal(successStream.output().endsWith('\n'), true)
 
@@ -160,9 +161,33 @@ test('setup presenter cleans animated progress on success and failure', async ()
   )
 
   assert.equal(failureTimers.cleared(), 1)
-  assert.match(failureStream.output(), /\r/)
+  assert.match(failureStream.output(), /\u001b\[2K\u001b\[1G/)
+  assert.doesNotMatch(failureStream.output(), /\r/)
   assert.match(failureStream.output(), /X.*Installing skills/)
   assert.equal(failureStream.output().endsWith('\n'), true)
+})
+
+test('setup presenter keeps animated progress on one terminal line', async () => {
+  const stream = captureStream({ columns: 40 })
+  const timers = manualTimers()
+  const presenter = createSetupPresenter({
+    enabled: true,
+    stream,
+    env: { NO_COLOR: '1', TERM: 'xterm-256color' },
+    timers,
+  })
+
+  await presenter.withProgress('Installing and verifying Tokenless agent skills from GitHub', async () => {
+    timers.tick()
+    timers.tick()
+  })
+
+  assert.doesNotMatch(stream.output(), /\r/)
+  assert.equal(stream.output().match(/\n/g)?.length, 1)
+  for (const write of stream.writes()) {
+    const visible = write.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').replace(/\n$/, '')
+    assert.ok(visible.length < stream.columns, `progress write exceeded terminal width: ${visible.length}`)
+  }
 })
 
 test('setup presenter is silent when disabled and respects reduced terminal environments', async () => {
@@ -205,14 +230,18 @@ async function writeInstalledSkills(home) {
   }), 'utf8')
 }
 
-function captureStream() {
+function captureStream({ columns } = {}) {
   const chunks = []
   return {
+    ...(columns === undefined ? {} : { columns }),
     write(chunk) {
       chunks.push(String(chunk))
     },
     output() {
       return chunks.join('')
+    },
+    writes() {
+      return [...chunks]
     },
   }
 }

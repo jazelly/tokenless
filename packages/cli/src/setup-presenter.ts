@@ -1,4 +1,5 @@
 type WritableStream = {
+  columns?: number
   write(chunk: string): unknown
 }
 
@@ -34,6 +35,7 @@ type ExplainOptions = {
 }
 
 const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
+const REPLACE_TERMINAL_LINE = '\u001b[2K\u001b[1G'
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
   'Keeps sign-ins between jobs. Imports copy selected provider cookies only; other browser data is excluded.',
@@ -50,7 +52,6 @@ export class SetupPresenter {
   private readonly stream: WritableStream
   private readonly timers: TimerApi
   private readonly intervalMs: number
-  private lastProgressWidth = 0
 
   constructor(options: SetupPresenterOptions = {}) {
     const env = options.env ?? process.env
@@ -114,26 +115,24 @@ export class SetupPresenter {
       const prefix = this.animationEnabled
         ? `${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]}`
         : '-'
-      this.writeProgress(`${this.paint('cyan', prefix)} ${message}...`)
+      this.writeProgress(prefix, message)
     }
 
     if (this.animationEnabled) {
       render()
       timer = this.timers.setInterval(render, this.intervalMs)
-    } else {
-      this.write(`  - ${message}...\n`)
     }
 
     try {
       const result = await task()
       if (timer !== null) this.timers.clearInterval(timer)
-      this.clearProgress()
-      this.success(message)
+      if (this.animationEnabled) this.finishProgress('OK', message, 'green')
+      else this.success(message)
       return result
     } catch (error) {
       if (timer !== null) this.timers.clearInterval(timer)
-      this.clearProgress()
-      this.write(`  ${this.paint('red', 'X')} ${message}\n`)
+      if (this.animationEnabled) this.finishProgress('X', message, 'red')
+      else this.write(`  ${this.paint('red', 'X')} ${message}\n`)
       throw error
     }
   }
@@ -143,16 +142,20 @@ export class SetupPresenter {
     this.write(`\n${this.paint('brightGreen', message)}\n`)
   }
 
-  private writeProgress(line: string) {
-    const visible = stripAnsi(line)
-    this.lastProgressWidth = Math.max(this.lastProgressWidth, visible.length)
-    this.write(`\r  ${line}${' '.repeat(Math.max(0, this.lastProgressWidth - visible.length))}`)
+  private writeProgress(prefix: string, message: string) {
+    this.write(`${REPLACE_TERMINAL_LINE}${this.progressLine(prefix, message, '...', 'cyan')}`)
   }
 
-  private clearProgress() {
-    if (this.lastProgressWidth === 0) return
-    this.write(`\r${' '.repeat(this.lastProgressWidth + 2)}\r`)
-    this.lastProgressWidth = 0
+  private finishProgress(prefix: string, message: string, color: keyof typeof ANSI_COLORS) {
+    this.write(`${REPLACE_TERMINAL_LINE}${this.progressLine(prefix, message, '', color)}\n`)
+  }
+
+  private progressLine(prefix: string, message: string, suffix: string, color: keyof typeof ANSI_COLORS) {
+    const fixed = `  ${prefix} `
+    const maxWidth = terminalLineWidth(this.stream.columns)
+    if (maxWidth <= fixed.length) return truncateLine(fixed.trimStart(), maxWidth)
+    const detail = truncateLine(`${message}${suffix}`, maxWidth - fixed.length)
+    return `  ${this.paint(color, prefix)} ${detail}`
   }
 
   private write(chunk: string) {
@@ -192,8 +195,15 @@ export function supportsAnimation(env: NodeJS.ProcessEnv = process.env) {
   return true
 }
 
-function stripAnsi(value: string) {
-  return value.replace(/\u001b\[[0-9;]*m/g, '')
+function terminalLineWidth(columns: number | undefined) {
+  if (columns === undefined || !Number.isFinite(columns)) return Number.POSITIVE_INFINITY
+  return Math.max(1, Math.floor(columns) - 1)
+}
+
+function truncateLine(value: string, maxLength: number) {
+  if (value.length <= maxLength) return value
+  if (maxLength <= 1) return '…'.slice(0, Math.max(0, maxLength))
+  return `${value.slice(0, maxLength - 1)}…`
 }
 
 const ANSI_COLORS = Object.freeze({
