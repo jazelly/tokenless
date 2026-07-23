@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { normalizeBrowserVisibility } from './browser-visibility.js'
+import type { BrowserVisibility } from './browser-visibility.js'
 
 export const TOKENLESS_CONFIG_PROTOCOL_VERSION = 'tokenless.config.v1'
 export const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
@@ -23,6 +25,7 @@ export type TokenlessConfig = {
   updatedAt: string | null
   preferredProviders: string[]
   browser: string | null
+  browserVisibility: BrowserVisibility
   daemonUrl: string | null
 }
 
@@ -97,6 +100,9 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.browser !== undefined && payload.browser !== null && !normalizeBrowserId(payload.browser)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.browserVisibility !== undefined && !normalizeBrowserVisibility(payload.browserVisibility)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   if (payload.daemonUrl !== undefined && payload.daemonUrl !== null && !normalizeDaemonUrl(payload.daemonUrl)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
@@ -105,6 +111,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
     preferredProviders: normalizeProviderList(payload.preferredProviders),
     browser: normalizeBrowserId(payload.browser),
+    browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
   }
 }
@@ -113,11 +120,13 @@ export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
   preferredProviders,
   browser,
+  browserVisibility,
   daemonUrl,
 }: {
   homeDir?: string
   preferredProviders?: unknown
   browser?: unknown
+  browserVisibility?: unknown
   daemonUrl?: unknown
 } = {}) {
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
@@ -130,6 +139,9 @@ export async function writeTokenlessConfig({
       ? current.preferredProviders
       : normalizeProviderList(preferredProviders),
     browser: browser === undefined ? current.browser : normalizeBrowserId(browser),
+    browserVisibility: browserVisibility === undefined
+      ? current.browserVisibility
+      : validateConfigBrowserVisibility(browserVisibility),
     daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
   }
   await writeJsonAtomic(configPath(homeDir), config, 0o600)
@@ -194,8 +206,17 @@ function emptyTokenlessConfig(): TokenlessConfig {
     updatedAt: null,
     preferredProviders: [],
     browser: null,
+    browserVisibility: 'auto',
     daemonUrl: null,
   }
+}
+
+function validateConfigBrowserVisibility(value: unknown): BrowserVisibility {
+  const visibility = normalizeBrowserVisibility(value)
+  if (!visibility) {
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless browser visibility.')
+  }
+  return visibility
 }
 
 function normalizeNonemptyString(value: unknown) {

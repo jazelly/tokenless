@@ -68,6 +68,10 @@ export type CancelDaemonJobOptions = GetDaemonJobOptions & {
   reason?: unknown
 }
 
+export type ResumeDaemonJobOptions = GetDaemonJobOptions & {
+  browserVisibility: 'headed'
+}
+
 export type CompleteDaemonJobOptions = DaemonClientOptions & {
   jobId: string
   claimToken: string
@@ -275,6 +279,32 @@ export async function cancelDaemonJob({
   })
 }
 
+export async function resumeDaemonJob({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  jobId,
+  browserVisibility,
+}: ResumeDaemonJobOptions) {
+  if (browserVisibility !== 'headed') {
+    throw daemonClientError(
+      'invalid_resume_browser_visibility',
+      'A parked Tokenless browser job can be resumed only with headed visibility.',
+      false
+    )
+  }
+  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<DaemonJob>({
+    daemonUrl: explicitDaemonUrl,
+    path: `/jobs/${encodeURIComponent(jobId)}/resume`,
+    body: { browser_visibility: browserVisibility },
+    token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
 export async function waitDaemonJobResult({
   daemonUrl: explicitDaemonUrl,
   homeDir,
@@ -373,15 +403,32 @@ export async function waitDaemonJobResult({
 }
 
 function userHandoverAction(job: DaemonJob) {
+  const blocker = jsonRecord(job.blocker_json)
+  const browser = jsonRecord(blocker.browser)
+  const windowOpen = browser.windowOpen !== false
   return {
-    message: 'The visible managed browser is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.',
-    resumeCommand: jobIdResumeCommand(job),
-    queryGuidance: 'Run tokenless state --job-id <jobId> --json or rerun the same task query after the user confirms completion.',
+    message: windowOpen
+      ? 'The visible managed browser is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.'
+      : 'This headless job requires user interaction and no browser window is open. Resume the same job with headed visibility.',
+    resumeCommand: windowOpen ? jobIdStateCommand(job) : jobIdHeadedResumeCommand(job),
+    queryGuidance: windowOpen
+      ? 'Run tokenless state --job-id <jobId> --json after the user confirms completion.'
+      : 'Do not submit a replacement job; resume this exact job with headed visibility.',
   }
 }
 
-function jobIdResumeCommand(job: DaemonJob) {
+function jobIdStateCommand(job: DaemonJob) {
   return `tokenless state --job-id ${shellQuote(job.job_id)} --json`
+}
+
+function jobIdHeadedResumeCommand(job: DaemonJob) {
+  return `tokenless resume --job-id ${shellQuote(job.job_id)} --browser-visibility headed --json`
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
 }
 
 function shellQuote(value: string) {

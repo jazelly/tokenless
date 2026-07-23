@@ -244,6 +244,8 @@ pub struct Job {
     pub result_json: Option<Value>,
     pub error_json: Option<Value>,
     pub blocker_json: Option<Value>,
+    pub checkpoint_json: Option<Value>,
+    pub resume_json: Option<Value>,
     pub created_at: String,
     pub updated_at: String,
     pub claim_expires_at_ms: Option<i64>,
@@ -280,6 +282,8 @@ impl Job {
             result_json: self.result_json.clone(),
             error_json: self.error_json.clone(),
             blocker_json: self.blocker_json.clone(),
+            checkpoint_json: self.checkpoint_json.clone(),
+            resume_json: self.resume_json.clone(),
             created_at: self.created_at.clone(),
             updated_at: self.updated_at.clone(),
         }
@@ -315,6 +319,8 @@ pub struct JobWithClaimToken {
     pub result_json: Option<Value>,
     pub error_json: Option<Value>,
     pub blocker_json: Option<Value>,
+    pub checkpoint_json: Option<Value>,
+    pub resume_json: Option<Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -357,6 +363,22 @@ pub enum CompleteJob {
 #[derive(Debug, Clone)]
 pub struct UserBlocker {
     pub blocker_json: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct JobCheckpoint {
+    pub checkpoint_json: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParkJob {
+    pub blocker_json: Value,
+    pub checkpoint_json: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResumeJob {
+    pub resume_json: Value,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -586,7 +608,8 @@ impl JobStore {
             "SELECT
                 jobs.job_id, jobs.claim_token, jobs.execution_backend, jobs.profile_id,
                 jobs.provider, jobs.action, jobs.status, jobs.request_json, jobs.result_json,
-                jobs.error_json, jobs.blocker_json, jobs.created_at, jobs.updated_at, jobs.claim_expires_at
+                jobs.error_json, jobs.blocker_json, jobs.checkpoint_json, jobs.resume_json,
+                jobs.created_at, jobs.updated_at, jobs.claim_expires_at
              FROM jobs",
         );
         let mut parameters = Vec::new();
@@ -744,7 +767,8 @@ impl JobStore {
              RETURNING
                 job_id, claim_token, execution_backend, profile_id,
                 provider, action, status, request_json, result_json, error_json,
-                blocker_json, created_at, updated_at, claim_expires_at",
+                blocker_json, checkpoint_json, resume_json,
+                created_at, updated_at, claim_expires_at",
         )?;
 
         stmt.query_row(
@@ -879,6 +903,188 @@ impl JobStore {
         explain_active_claim_failure(&conn, job_id, claim_token, now_ms)
     }
 
+    pub fn checkpoint_job(
+        &self,
+        job_id: &str,
+        claim_token: &str,
+        checkpoint: JobCheckpoint,
+    ) -> Result<Job> {
+        self.checkpoint_job_at(job_id, claim_token, checkpoint, now_unix_millis())
+    }
+
+    fn checkpoint_job_at(
+        &self,
+        job_id: &str,
+        claim_token: &str,
+        checkpoint: JobCheckpoint,
+        now_ms: i64,
+    ) -> Result<Job> {
+        let now = now_rfc3339();
+        let checkpoint_json = serde_json::to_string(&checkpoint.checkpoint_json)?;
+        let conn = self.connection()?;
+        let affected = conn.execute(
+            "UPDATE jobs
+             SET checkpoint_json = ?1, updated_at = ?2
+             WHERE job_id = ?3
+               AND claim_token = ?4
+               AND execution_backend = 'playwright'
+               AND status IN ('claimed', 'running', 'waiting_for_user')
+               AND claim_expires_at > ?5",
+            params![checkpoint_json, now, job_id, claim_token, now_ms],
+        )?;
+        if affected == 1 {
+            return get_job_with_conn(&conn, job_id);
+        }
+        let job = get_job_with_conn(&conn, job_id)?;
+        if job.claim_token != claim_token {
+            return Err(DaemonError::ClaimRejected(job_id.to_owned()));
+        }
+        if matches!(
+            job.status,
+            JobStatus::Claimed | JobStatus::Running | JobStatus::WaitingForUser
+        ) && job
+            .claim_expires_at_ms
+            .map(|expires_at| expires_at <= now_ms)
+            .unwrap_or(true)
+        {
+            return Err(DaemonError::ClaimExpired(job_id.to_owned()));
+        }
+        if job.execution_backend != ExecutionBackend::Playwright {
+            return Err(DaemonError::InvalidInput(
+                "only playwright jobs can persist browser checkpoints".to_owned(),
+            ));
+        }
+        Err(DaemonError::InvalidJobState {
+            job_id: job.job_id,
+            expected: "claimed, running, or waiting_for_user",
+            actual: job.status,
+        })
+    }
+
+    pub fn park_job(&self, job_id: &str, claim_token: &str, park: ParkJob) -> Result<Job> {
+        self.park_job_at(job_id, claim_token, park, now_unix_millis())
+    }
+
+    fn park_job_at(
+        &self,
+        job_id: &str,
+        claim_token: &str,
+        park: ParkJob,
+        now_ms: i64,
+    ) -> Result<Job> {
+        let now = now_rfc3339();
+        let replacement_token = generate_secret_token()?;
+        let blocker_json = serde_json::to_string(&park.blocker_json)?;
+        let checkpoint_json = serde_json::to_string(&park.checkpoint_json)?;
+        let conn = self.connection()?;
+        let affected = conn.execute(
+            "UPDATE jobs
+             SET status = ?1, claim_token = ?2, blocker_json = ?3,
+                 checkpoint_json = ?4, resume_json = NULL,
+                 claim_expires_at = NULL, updated_at = ?5
+             WHERE job_id = ?6
+               AND claim_token = ?7
+               AND execution_backend = 'playwright'
+               AND status IN ('claimed', 'running', 'waiting_for_user')
+               AND claim_expires_at > ?8",
+            params![
+                JobStatus::WaitingForUser.as_str(),
+                replacement_token,
+                blocker_json,
+                checkpoint_json,
+                now,
+                job_id,
+                claim_token,
+                now_ms
+            ],
+        )?;
+        if affected == 1 {
+            return get_job_with_conn(&conn, job_id);
+        }
+        let job = get_job_with_conn(&conn, job_id)?;
+        if job.claim_token != claim_token {
+            return Err(DaemonError::ClaimRejected(job_id.to_owned()));
+        }
+        if matches!(
+            job.status,
+            JobStatus::Claimed | JobStatus::Running | JobStatus::WaitingForUser
+        ) && job
+            .claim_expires_at_ms
+            .map(|expires_at| expires_at <= now_ms)
+            .unwrap_or(true)
+        {
+            return Err(DaemonError::ClaimExpired(job_id.to_owned()));
+        }
+        if job.execution_backend != ExecutionBackend::Playwright {
+            return Err(DaemonError::InvalidInput(
+                "only playwright jobs can be parked for browser resume".to_owned(),
+            ));
+        }
+        Err(DaemonError::InvalidJobState {
+            job_id: job.job_id,
+            expected: "claimed, running, or waiting_for_user",
+            actual: job.status,
+        })
+    }
+
+    pub fn resume_job(&self, job_id: &str, resume: ResumeJob) -> Result<Job> {
+        self.resume_job_at(job_id, resume, now_unix_millis())
+    }
+
+    fn resume_job_at(&self, job_id: &str, resume: ResumeJob, now_ms: i64) -> Result<Job> {
+        self.requeue_expired_claims_at(now_ms)?;
+        let now = now_rfc3339();
+        let replacement_token = generate_secret_token()?;
+        let resume_json = serde_json::to_string(&resume.resume_json)?;
+        let mut conn = self.connection()?;
+        let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let job = get_job_with_conn(&transaction, job_id)?;
+        if job.execution_backend != ExecutionBackend::Playwright {
+            return Err(DaemonError::InvalidInput(
+                "only playwright jobs can be resumed with browser visibility".to_owned(),
+            ));
+        }
+        if matches!(
+            job.status,
+            JobStatus::Queued | JobStatus::Claimed | JobStatus::Running
+        ) && job.resume_json.is_some()
+        {
+            transaction.commit()?;
+            return Ok(job);
+        }
+        if job.status != JobStatus::WaitingForUser
+            || job.checkpoint_json.is_none()
+            || job.claim_expires_at_ms.is_some()
+        {
+            return Err(DaemonError::InvalidJobState {
+                job_id: job.job_id,
+                expected: "parked playwright waiting_for_user",
+                actual: job.status,
+            });
+        }
+        let affected = transaction.execute(
+            "UPDATE jobs
+             SET status = 'queued', claim_token = ?1, resume_json = ?2,
+                 claim_expires_at = NULL, updated_at = ?3
+             WHERE job_id = ?4
+               AND execution_backend = 'playwright'
+               AND status = 'waiting_for_user'
+               AND checkpoint_json IS NOT NULL
+               AND claim_expires_at IS NULL",
+            params![replacement_token, resume_json, now, job_id],
+        )?;
+        if affected != 1 {
+            return Err(DaemonError::InvalidJobState {
+                job_id: job_id.to_owned(),
+                expected: "parked playwright waiting_for_user",
+                actual: job.status,
+            });
+        }
+        let resumed = get_job_with_conn(&transaction, job_id)?;
+        transaction.commit()?;
+        Ok(resumed)
+    }
+
     pub fn requeue_expired_claims(&self) -> Result<usize> {
         self.requeue_expired_claims_at(now_unix_millis())
     }
@@ -886,6 +1092,7 @@ impl JobStore {
     fn requeue_expired_claims_at(&self, now_ms: i64) -> Result<usize> {
         let now = now_rfc3339();
         let mut conn = self.connection()?;
+        self.park_expired_checkpointed_waiting_claims_at(now_ms)?;
         self.fail_expired_waiting_claims_at(now_ms)?;
         let has_expired = conn.query_row(
             "SELECT EXISTS (
@@ -919,7 +1126,7 @@ impl JobStore {
             requeued += transaction.execute(
                 "UPDATE jobs
                  SET status = 'queued', claim_token = ?1, claim_expires_at = NULL,
-                     blocker_json = NULL, updated_at = ?2
+                     blocker_json = NULL, resume_json = NULL, updated_at = ?2
                  WHERE job_id = ?3
                    AND status IN ('claimed', 'running')
                    AND (claim_expires_at IS NULL OR claim_expires_at <= ?4)",
@@ -928,6 +1135,64 @@ impl JobStore {
         }
         transaction.commit()?;
         Ok(requeued)
+    }
+
+    fn park_expired_checkpointed_waiting_claims_at(&self, now_ms: i64) -> Result<usize> {
+        let now = now_rfc3339();
+        let mut conn = self.connection()?;
+        let has_expired = conn.query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM jobs
+                WHERE status = 'waiting_for_user'
+                  AND execution_backend = 'playwright'
+                  AND checkpoint_json IS NOT NULL
+                  AND claim_expires_at <= ?1
+             )",
+            params![now_ms],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !has_expired {
+            return Ok(0);
+        }
+        let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let expired_jobs = {
+            let mut stmt = transaction.prepare(
+                "SELECT job_id, blocker_json
+                 FROM jobs
+                 WHERE status = 'waiting_for_user'
+                   AND execution_backend = 'playwright'
+                   AND checkpoint_json IS NOT NULL
+                   AND claim_expires_at <= ?1
+                 ORDER BY job_id ASC",
+            )?;
+            let rows = stmt
+                .query_map(params![now_ms], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        let mut parked = 0;
+        for (job_id, blocker_json) in expired_jobs {
+            let replacement_token = generate_secret_token()?;
+            let parked_blocker_json = serde_json::to_string(&parked_resume_blocker_json(
+                parse_optional_json(blocker_json)?,
+            ))?;
+            parked += transaction.execute(
+                "UPDATE jobs
+                 SET claim_token = ?1, blocker_json = ?2,
+                     claim_expires_at = NULL, resume_json = NULL,
+                     updated_at = ?3
+                 WHERE job_id = ?4
+                   AND status = 'waiting_for_user'
+                   AND execution_backend = 'playwright'
+                   AND checkpoint_json IS NOT NULL
+                   AND claim_expires_at <= ?5",
+                params![replacement_token, parked_blocker_json, now, job_id, now_ms],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(parked)
     }
 
     fn fail_expired_waiting_claims_at(&self, now_ms: i64) -> Result<usize> {
@@ -941,8 +1206,10 @@ impl JobStore {
         conn.execute(
             "UPDATE jobs
              SET status = 'failed', error_json = ?1, result_json = NULL,
-                 blocker_json = NULL, claim_expires_at = NULL, updated_at = ?2
+                 blocker_json = NULL, checkpoint_json = NULL, resume_json = NULL,
+                 claim_expires_at = NULL, updated_at = ?2
              WHERE status = 'waiting_for_user'
+               AND (execution_backend != 'playwright' OR checkpoint_json IS NULL)
                AND (claim_expires_at IS NULL OR claim_expires_at <= ?3)",
             params![error_json, now, now_ms],
         )
@@ -982,6 +1249,7 @@ impl JobStore {
         let affected = conn.execute(
             "UPDATE jobs
              SET status = ?1, result_json = ?2, error_json = ?3, blocker_json = NULL,
+                 checkpoint_json = NULL, resume_json = NULL,
                  updated_at = ?4, claim_expires_at = NULL
              WHERE job_id = ?5
                AND claim_token = ?6
@@ -1015,6 +1283,7 @@ impl JobStore {
         let affected = conn.execute(
             "UPDATE jobs
              SET status = ?1, result_json = NULL, error_json = ?2, blocker_json = NULL,
+                 checkpoint_json = NULL, resume_json = NULL,
                  updated_at = ?3, claim_expires_at = NULL
              WHERE job_id = ?4 AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')",
             params![JobStatus::Canceled.as_str(), error_json, now, job_id],
@@ -1085,6 +1354,8 @@ impl JobStore {
                 result_json TEXT,
                 error_json TEXT,
                 blocker_json TEXT,
+                checkpoint_json TEXT,
+                resume_json TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 claim_expires_at INTEGER,
@@ -1108,6 +1379,7 @@ impl JobStore {
              );",
         )?;
         self.migrate_jobs_table_shape(&mut conn)?;
+        self.ensure_runtime_state_columns(&mut conn)?;
         let needs_claim_lease_migration = !sqlite_column_exists(&conn, "jobs", "claim_expires_at")?
             || conn.query_row(
                 "SELECT EXISTS (
@@ -1126,7 +1398,7 @@ impl JobStore {
             transaction.execute(
                 "UPDATE jobs
                  SET status = 'queued', claim_token = lower(hex(randomblob(32))),
-                     blocker_json = NULL, updated_at = ?1
+                     blocker_json = NULL, resume_json = NULL, updated_at = ?1
                  WHERE status IN ('claimed', 'running') AND claim_expires_at IS NULL",
                 params![now_rfc3339()],
             )?;
@@ -1136,9 +1408,13 @@ impl JobStore {
                      error_json = ?1,
                      result_json = NULL,
                      blocker_json = NULL,
+                     checkpoint_json = NULL,
+                     resume_json = NULL,
                      claim_expires_at = NULL,
                      updated_at = ?2
-                 WHERE status = 'waiting_for_user' AND claim_expires_at IS NULL",
+                 WHERE status = 'waiting_for_user'
+                   AND checkpoint_json IS NULL
+                   AND claim_expires_at IS NULL",
                 params![
                     serde_json::to_string(&json!({
                         "code": "playwright_user_handover_lease_lost",
@@ -1233,6 +1509,30 @@ impl JobStore {
         Ok(())
     }
 
+    fn ensure_runtime_state_columns(&self, conn: &mut Connection) -> Result<()> {
+        let runtime_columns = [("checkpoint_json", "TEXT"), ("resume_json", "TEXT")];
+        let needs_runtime_migration =
+            runtime_columns
+                .iter()
+                .try_fold(false, |missing, (column, _)| -> Result<bool> {
+                    Ok(missing || !sqlite_column_exists(conn, "jobs", column)?)
+                })?;
+        if !needs_runtime_migration {
+            return Ok(());
+        }
+        let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for (column, definition) in runtime_columns {
+            if !sqlite_column_exists(&transaction, "jobs", column)? {
+                transaction.execute(
+                    &format!("ALTER TABLE jobs ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     fn migrate_jobs_table_shape(&self, conn: &mut Connection) -> Result<()> {
         let create_sql = conn
             .query_row(
@@ -1280,6 +1580,8 @@ impl JobStore {
                     result_json TEXT,
                     error_json TEXT,
                     blocker_json TEXT,
+                    checkpoint_json TEXT,
+                    resume_json TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     claim_expires_at INTEGER,
@@ -1304,6 +1606,10 @@ impl JobStore {
                 sqlite_column_exists(&transaction, "jobs_old", "claim_expires_at")?;
             let old_has_blocker_json =
                 sqlite_column_exists(&transaction, "jobs_old", "blocker_json")?;
+            let old_has_checkpoint_json =
+                sqlite_column_exists(&transaction, "jobs_old", "checkpoint_json")?;
+            let old_has_resume_json =
+                sqlite_column_exists(&transaction, "jobs_old", "resume_json")?;
             let old_has_summary_task_id =
                 sqlite_column_exists(&transaction, "jobs_old", "summary_task_id")?;
             let old_has_summary_project_name =
@@ -1332,6 +1638,16 @@ impl JobStore {
             } else {
                 "NULL"
             };
+            let select_checkpoint_json = if old_has_checkpoint_json {
+                "checkpoint_json"
+            } else {
+                "NULL"
+            };
+            let select_resume_json = if old_has_resume_json {
+                "resume_json"
+            } else {
+                "NULL"
+            };
             let select_summary_task_id = if old_has_summary_task_id {
                 "summary_task_id"
             } else {
@@ -1357,14 +1673,16 @@ impl JobStore {
                     "INSERT INTO jobs (
                         job_id, claim_token, execution_backend, profile_id,
                         provider, action, status, request_json, result_json, error_json,
-                        blocker_json, created_at, updated_at, claim_expires_at,
+                        blocker_json, checkpoint_json, resume_json,
+                        created_at, updated_at, claim_expires_at,
                         summary_task_id, summary_project_name, summary_chat_name,
                         summary_idempotency_key
                      )
                      SELECT
                         job_id, claim_token, {select_execution_backend}, {select_profile_id},
                         provider, action, status, request_json, result_json, error_json,
-                        {select_blocker_json}, created_at, updated_at, {select_claim_expires_at},
+                        {select_blocker_json}, {select_checkpoint_json}, {select_resume_json},
+                        created_at, updated_at, {select_claim_expires_at},
                         {select_summary_task_id}, {select_summary_project_name},
                         {select_summary_chat_name}, {select_summary_idempotency_key}
                      FROM jobs_old"
@@ -1463,6 +1781,31 @@ struct WaitingForUserRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct CheckpointJobRequest {
+    claim_token: String,
+    checkpoint_json: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct ParkJobRequest {
+    claim_token: String,
+    blocker_json: Value,
+    checkpoint_json: Value,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BrowserVisibility {
+    Headed,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResumeJobRequest {
+    browser_visibility: BrowserVisibility,
+}
+
+#[derive(Debug, Deserialize)]
 struct CompleteJobRequest {
     claim_token: String,
     result_json: Option<Value>,
@@ -1546,7 +1889,13 @@ pub fn http_router(store: JobStore) -> Router {
         .route("/jobs/:job_id", get(get_job_handler))
         .route("/jobs/:job_id/claim", post(claim_job_handler))
         .route("/jobs/:job_id/complete", post(complete_job_handler))
+        .route("/jobs/:job_id/resume", post(resume_job_handler))
         .route("/control/jobs/claim-next", post(claim_next_job_handler))
+        .route(
+            "/control/jobs/:job_id/checkpoint",
+            post(checkpoint_job_handler),
+        )
+        .route("/control/jobs/:job_id/park", post(park_job_handler))
         .route("/control/jobs/:job_id/running", post(mark_running_handler))
         .route(
             "/control/jobs/:job_id/waiting-for-user",
@@ -1705,6 +2054,23 @@ async fn complete_job_handler(
     Ok(Json(job.public_view()))
 }
 
+async fn resume_job_handler(
+    State(state): State<HttpState>,
+    AxumPath(job_id): AxumPath<String>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<ResumeJobRequest>, JsonRejection>,
+) -> ApiResult<JobView> {
+    require_control_auth(&state.store, &headers)?;
+    let Json(payload) = payload.map_err(json_rejection_to_api_error)?;
+    let job = state.store.resume_job(
+        &job_id,
+        ResumeJob {
+            resume_json: json!({ "browser_visibility": payload.browser_visibility }),
+        },
+    )?;
+    Ok(Json(job.public_view()))
+}
+
 async fn claim_next_job_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
@@ -1726,6 +2092,51 @@ async fn claim_next_job_handler(
         )?
         .map(|job| job.with_claim_token());
     Ok(Json(ClaimNextResponse { job }))
+}
+
+async fn checkpoint_job_handler(
+    State(state): State<HttpState>,
+    AxumPath(job_id): AxumPath<String>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<CheckpointJobRequest>, JsonRejection>,
+) -> ApiResult<JobView> {
+    require_control_auth(&state.store, &headers)?;
+    let Json(payload) = payload.map_err(json_rejection_to_api_error)?;
+    Ok(Json(
+        state
+            .store
+            .checkpoint_job(
+                &job_id,
+                &payload.claim_token,
+                JobCheckpoint {
+                    checkpoint_json: payload.checkpoint_json,
+                },
+            )?
+            .public_view(),
+    ))
+}
+
+async fn park_job_handler(
+    State(state): State<HttpState>,
+    AxumPath(job_id): AxumPath<String>,
+    headers: HeaderMap,
+    payload: std::result::Result<Json<ParkJobRequest>, JsonRejection>,
+) -> ApiResult<JobView> {
+    require_control_auth(&state.store, &headers)?;
+    let Json(payload) = payload.map_err(json_rejection_to_api_error)?;
+    Ok(Json(
+        state
+            .store
+            .park_job(
+                &job_id,
+                &payload.claim_token,
+                ParkJob {
+                    blocker_json: payload.blocker_json,
+                    checkpoint_json: payload.checkpoint_json,
+                },
+            )?
+            .public_view(),
+    ))
 }
 
 async fn mark_running_handler(
@@ -2183,6 +2594,8 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
     let result_json: Option<String> = row.get(8)?;
     let error_json: Option<String> = row.get(9)?;
     let blocker_json: Option<String> = row.get(10)?;
+    let checkpoint_json: Option<String> = row.get(11)?;
+    let resume_json: Option<String> = row.get(12)?;
     Ok(Job {
         job_id: row.get(0)?,
         claim_token: row.get(1)?,
@@ -2195,9 +2608,11 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
         result_json: parse_optional_json(result_json).map_err(to_sql_error)?,
         error_json: parse_optional_json(error_json).map_err(to_sql_error)?,
         blocker_json: parse_optional_json(blocker_json).map_err(to_sql_error)?,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
-        claim_expires_at_ms: row.get(13)?,
+        checkpoint_json: parse_optional_json(checkpoint_json).map_err(to_sql_error)?,
+        resume_json: parse_optional_json(resume_json).map_err(to_sql_error)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        claim_expires_at_ms: row.get(15)?,
     })
 }
 
@@ -2233,7 +2648,8 @@ fn get_job_with_conn(conn: &Connection, job_id: &str) -> Result<Job> {
         "SELECT
             job_id, claim_token, execution_backend, profile_id,
             provider, action, status, request_json, result_json, error_json,
-            blocker_json, created_at, updated_at, claim_expires_at
+            blocker_json, checkpoint_json, resume_json,
+            created_at, updated_at, claim_expires_at
          FROM jobs
          WHERE job_id = ?1",
     )?;
@@ -2285,6 +2701,34 @@ fn parse_optional_json(value: Option<String>) -> Result<Option<Value>> {
     value
         .map(|json| serde_json::from_str(&json).map_err(DaemonError::Json))
         .transpose()
+}
+
+fn parked_resume_blocker_json(blocker_json: Option<Value>) -> Value {
+    let browser = json!({
+        "windowOpen": false,
+        "resumeRequired": true,
+    });
+    match blocker_json {
+        Some(Value::Object(mut object)) => {
+            match object.get_mut("browser") {
+                Some(Value::Object(browser_object)) => {
+                    browser_object.insert("windowOpen".to_owned(), Value::Bool(false));
+                    browser_object.insert("resumeRequired".to_owned(), Value::Bool(true));
+                }
+                _ => {
+                    object.insert("browser".to_owned(), browser);
+                }
+            }
+            Value::Object(object)
+        }
+        Some(value) => json!({
+            "blocker": value,
+            "browser": browser,
+        }),
+        None => json!({
+            "browser": browser,
+        }),
+    }
 }
 
 fn to_sql_error(error: impl std::error::Error + Send + Sync + 'static) -> rusqlite::Error {
@@ -2591,26 +3035,45 @@ mod tests {
     }
 
     #[test]
-    fn public_job_view_does_not_serialize_claim_token() {
+    fn public_job_view_does_not_serialize_claim_token_or_private_runtime_state() {
         let tempdir = tempfile::tempdir().unwrap();
         let store = JobStore::open(tempdir.path()).unwrap();
-        let job = store
-            .create_job(CreateJob::new(
-                "claude",
-                "submit",
-                json!({ "prompt": "keep the token private" }),
-            ))
+        let job = create_playwright_job(&store, "work", "keep private runtime state");
+        let claimed = store
+            .claim_next_job_with_scope(
+                ClaimNextJob::default(),
+                ExecutionBackend::Playwright,
+                Some("work".to_owned()),
+            )
+            .unwrap()
+            .unwrap();
+        let checkpointed = store
+            .checkpoint_job(
+                &claimed.job_id,
+                &claimed.claim_token,
+                JobCheckpoint {
+                    checkpoint_json: json!({ "page": { "url": "https://example.test" } }),
+                },
+            )
             .unwrap();
 
-        let view_json = serde_json::to_value(job.public_view()).unwrap();
-        let claim_json = serde_json::to_value(job.with_claim_token()).unwrap();
+        let view_json = serde_json::to_value(checkpointed.public_view()).unwrap();
+        let claim_json = serde_json::to_value(checkpointed.with_claim_token()).unwrap();
 
         assert!(view_json.get("claim_token").is_none());
-        assert_eq!(claim_json["claim_token"], job.claim_token);
-        assert_eq!(view_json["execution_backend"], "legacy_extension");
-        assert_eq!(view_json["profile_id"], Value::Null);
-        assert_eq!(claim_json["execution_backend"], "legacy_extension");
-        assert_eq!(claim_json["profile_id"], Value::Null);
+        assert!(view_json.get("checkpoint_json").is_none());
+        assert!(view_json.get("resume_json").is_none());
+        assert_eq!(claim_json["claim_token"], checkpointed.claim_token);
+        assert_eq!(
+            claim_json["checkpoint_json"],
+            json!({ "page": { "url": "https://example.test" } })
+        );
+        assert_eq!(claim_json["resume_json"], Value::Null);
+        assert_eq!(view_json["execution_backend"], "playwright");
+        assert_eq!(view_json["profile_id"], "work");
+        assert_eq!(claim_json["execution_backend"], "playwright");
+        assert_eq!(claim_json["profile_id"], "work");
+        assert_eq!(job.status, JobStatus::Queued);
     }
 
     #[test]
@@ -3151,6 +3614,428 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_requires_live_active_claim_and_persists_opaque_json() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_millis(100))
+                .unwrap();
+        let created = create_playwright_job(&store, "work", "checkpoint auth");
+
+        let queued_rejected = store
+            .checkpoint_job_at(
+                &created.job_id,
+                &created.claim_token,
+                JobCheckpoint {
+                    checkpoint_json: json!({ "step": 0 }),
+                },
+                1_000,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            queued_rejected,
+            DaemonError::InvalidJobState { .. }
+        ));
+
+        let claimed = store
+            .claim_job_at(&created.job_id, &created.claim_token, 1_000)
+            .unwrap();
+        let wrong_token = store
+            .checkpoint_job_at(
+                &claimed.job_id,
+                "wrong-token",
+                JobCheckpoint {
+                    checkpoint_json: json!({ "step": "wrong" }),
+                },
+                1_010,
+            )
+            .unwrap_err();
+        assert!(matches!(wrong_token, DaemonError::ClaimRejected(_)));
+
+        let checkpoint = json!({
+            "opaque": {
+                "frames": [1, 2, 3],
+                "storageState": { "cookies": [] }
+            }
+        });
+        let checkpointed = store
+            .checkpoint_job_at(
+                &claimed.job_id,
+                &claimed.claim_token,
+                JobCheckpoint {
+                    checkpoint_json: checkpoint.clone(),
+                },
+                1_020,
+            )
+            .unwrap();
+        assert_eq!(checkpointed.checkpoint_json, Some(checkpoint.clone()));
+        assert_eq!(
+            serde_json::to_value(checkpointed.public_view())
+                .unwrap()
+                .get("checkpoint_json"),
+            None
+        );
+        assert_eq!(
+            serde_json::to_value(checkpointed.with_claim_token()).unwrap()["checkpoint_json"],
+            checkpoint
+        );
+
+        let expired = store
+            .checkpoint_job_at(
+                &claimed.job_id,
+                &claimed.claim_token,
+                JobCheckpoint {
+                    checkpoint_json: json!({ "step": "late" }),
+                },
+                1_100,
+            )
+            .unwrap_err();
+        assert!(matches!(expired, DaemonError::ClaimExpired(_)));
+    }
+
+    #[test]
+    fn checkpoint_rejects_legacy_jobs() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_secs(60))
+                .unwrap();
+        let created = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({ "prompt": "legacy checkpoint" }),
+            ))
+            .unwrap();
+        let claimed = store
+            .claim_job_at(&created.job_id, &created.claim_token, 1_000)
+            .unwrap();
+
+        let rejected = store
+            .checkpoint_job_at(
+                &claimed.job_id,
+                &claimed.claim_token,
+                JobCheckpoint {
+                    checkpoint_json: json!({ "checkpoint": { "legacy": true } }),
+                },
+                1_010,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            rejected,
+            DaemonError::InvalidInput(message) if message.contains("only playwright jobs")
+        ));
+        let conn = Connection::open(store.database_path()).unwrap();
+        let (execution_backend, status, checkpoint_json): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT execution_backend, status, checkpoint_json FROM jobs WHERE job_id = ?1",
+                params![claimed.job_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            execution_backend,
+            ExecutionBackend::LegacyExtension.as_str()
+        );
+        assert_eq!(status, JobStatus::Claimed.as_str());
+        assert_eq!(checkpoint_json, None);
+    }
+
+    #[test]
+    fn park_persists_blocker_checkpoint_clears_lease_and_invalidates_claim() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_secs(60))
+                .unwrap();
+        let created = create_playwright_job(&store, "work", "park");
+        let claimed = store
+            .claim_job_at(&created.job_id, &created.claim_token, 1_000)
+            .unwrap();
+        let running = store
+            .mark_running_at(&claimed.job_id, &claimed.claim_token, 1_010)
+            .unwrap();
+        let blocker = json!({ "blocker": { "code": "provider_sign_in_visible" } });
+        let checkpoint = json!({ "checkpoint": { "page": "provider" } });
+
+        let parked = store
+            .park_job_at(
+                &running.job_id,
+                &running.claim_token,
+                ParkJob {
+                    blocker_json: blocker.clone(),
+                    checkpoint_json: checkpoint.clone(),
+                },
+                1_020,
+            )
+            .unwrap();
+
+        assert_eq!(parked.status, JobStatus::WaitingForUser);
+        assert_eq!(parked.blocker_json, Some(blocker));
+        assert_eq!(parked.checkpoint_json, Some(checkpoint));
+        assert_eq!(parked.resume_json, None);
+        assert_eq!(parked.claim_expires_at_ms, None);
+        assert_ne!(parked.claim_token, running.claim_token);
+        assert!(matches!(
+            store.renew_claim_at(&parked.job_id, &running.claim_token, 1_030),
+            Err(DaemonError::ClaimRejected(_))
+        ));
+    }
+
+    #[test]
+    fn resume_requeues_parked_playwright_job_and_is_idempotent_until_terminal() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_secs(60))
+                .unwrap();
+        let created = create_playwright_job(&store, "work", "resume");
+        let claimed = store
+            .claim_job_at(&created.job_id, &created.claim_token, 1_000)
+            .unwrap();
+        let parked = store
+            .park_job_at(
+                &claimed.job_id,
+                &claimed.claim_token,
+                ParkJob {
+                    blocker_json: json!({ "blocker": { "code": "visible_recaptcha" } }),
+                    checkpoint_json: json!({ "checkpoint": { "cursor": 7 } }),
+                },
+                1_010,
+            )
+            .unwrap();
+        let resume = ResumeJob {
+            resume_json: json!({ "browser_visibility": "headed" }),
+        };
+
+        let resumed = store
+            .resume_job_at(&parked.job_id, resume.clone(), 1_020)
+            .unwrap();
+        assert_eq!(resumed.status, JobStatus::Queued);
+        assert_eq!(resumed.resume_json, Some(resume.resume_json.clone()));
+        assert_ne!(resumed.claim_token, parked.claim_token);
+        assert_eq!(resumed.checkpoint_json, parked.checkpoint_json);
+        assert_eq!(resumed.blocker_json, parked.blocker_json);
+
+        let repeated_queued = store
+            .resume_job_at(&parked.job_id, resume.clone(), 1_030)
+            .unwrap();
+        assert_eq!(repeated_queued.status, JobStatus::Queued);
+        assert_eq!(repeated_queued.claim_token, resumed.claim_token);
+
+        let reclaimed = store
+            .claim_next_job_with_scope_at(
+                ClaimNextJob::default(),
+                ExecutionBackend::Playwright,
+                Some("work".to_owned()),
+                1_040,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reclaimed.job_id, parked.job_id);
+        assert_eq!(reclaimed.checkpoint_json, parked.checkpoint_json);
+        assert_eq!(reclaimed.resume_json, Some(resume.resume_json.clone()));
+        let repeated_claimed = store
+            .resume_job_at(&parked.job_id, resume.clone(), 1_050)
+            .unwrap();
+        assert_eq!(repeated_claimed.status, JobStatus::Claimed);
+
+        let running = store
+            .mark_running_at(&reclaimed.job_id, &reclaimed.claim_token, 1_060)
+            .unwrap();
+        assert_eq!(running.status, JobStatus::Running);
+        assert_eq!(running.blocker_json, None);
+        assert_eq!(running.resume_json, Some(resume.resume_json.clone()));
+        let repeated_running = store
+            .resume_job_at(&parked.job_id, resume.clone(), 1_070)
+            .unwrap();
+        assert_eq!(repeated_running.status, JobStatus::Running);
+
+        let completed = store
+            .complete_job_at(
+                &reclaimed.job_id,
+                &reclaimed.claim_token,
+                CompleteJob::Succeeded {
+                    result_json: json!({ "text": "done" }),
+                },
+                1_080,
+            )
+            .unwrap();
+        assert_eq!(completed.status, JobStatus::Succeeded);
+        assert_eq!(completed.checkpoint_json, None);
+        assert_eq!(completed.resume_json, None);
+        assert!(matches!(
+            store.resume_job_at(&parked.job_id, resume, 1_090),
+            Err(DaemonError::InvalidJobState { .. })
+        ));
+    }
+
+    #[test]
+    fn resume_rejects_non_playwright_and_unparked_waiting_jobs() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_secs(60))
+                .unwrap();
+        let legacy = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({ "prompt": "legacy" }),
+            ))
+            .unwrap();
+        assert!(matches!(
+            store.resume_job_at(
+                &legacy.job_id,
+                ResumeJob {
+                    resume_json: json!({ "browser_visibility": "headed" }),
+                },
+                1_000
+            ),
+            Err(DaemonError::InvalidInput(_))
+        ));
+
+        let playwright = create_playwright_job(&store, "work", "not parked");
+        let claimed = store
+            .claim_job_at(&playwright.job_id, &playwright.claim_token, 1_000)
+            .unwrap();
+        store
+            .mark_running_at(&claimed.job_id, &claimed.claim_token, 1_010)
+            .unwrap();
+        let waiting = store
+            .mark_waiting_for_user_at(
+                &claimed.job_id,
+                &claimed.claim_token,
+                UserBlocker {
+                    blocker_json: json!({ "blocker": { "code": "manual" } }),
+                },
+                1_020,
+            )
+            .unwrap();
+        assert_eq!(waiting.status, JobStatus::WaitingForUser);
+        assert_eq!(waiting.checkpoint_json, None);
+        assert!(matches!(
+            store.resume_job_at(
+                &waiting.job_id,
+                ResumeJob {
+                    resume_json: json!({ "browser_visibility": "headed" }),
+                },
+                1_030
+            ),
+            Err(DaemonError::InvalidJobState { .. })
+        ));
+    }
+
+    #[test]
+    fn expired_checkpointed_waiting_job_becomes_parked_instead_of_failed() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_millis(100))
+                .unwrap();
+        let created = create_playwright_job(&store, "work", "expire checkpointed waiting");
+        let claimed = store
+            .claim_job_at(&created.job_id, &created.claim_token, 1_000)
+            .unwrap();
+        store
+            .mark_running_at(&claimed.job_id, &claimed.claim_token, 1_010)
+            .unwrap();
+        let waiting = store
+            .mark_waiting_for_user_at(
+                &claimed.job_id,
+                &claimed.claim_token,
+                UserBlocker {
+                    blocker_json: json!({
+                        "blocker": { "code": "visible_recaptcha" },
+                        "browser": {
+                            "requestedVisibility": "auto",
+                            "effectiveVisibility": "headed",
+                            "windowOpen": true
+                        }
+                    }),
+                },
+                1_020,
+            )
+            .unwrap();
+        store
+            .checkpoint_job_at(
+                &waiting.job_id,
+                &waiting.claim_token,
+                JobCheckpoint {
+                    checkpoint_json: json!({ "checkpoint": { "safe": true } }),
+                },
+                1_030,
+            )
+            .unwrap();
+
+        assert_eq!(store.requeue_expired_claims_at(1_121).unwrap(), 0);
+        let parked = store.get_job(&waiting.job_id).unwrap();
+        assert_eq!(parked.status, JobStatus::WaitingForUser);
+        assert_eq!(parked.error_json, None);
+        assert_eq!(parked.claim_expires_at_ms, None);
+        assert_eq!(
+            parked.checkpoint_json,
+            Some(json!({ "checkpoint": { "safe": true } }))
+        );
+        assert_eq!(
+            parked.blocker_json.as_ref().unwrap()["browser"],
+            json!({
+                "requestedVisibility": "auto",
+                "effectiveVisibility": "headed",
+                "windowOpen": false,
+                "resumeRequired": true
+            })
+        );
+        assert_ne!(parked.claim_token, waiting.claim_token);
+        assert!(matches!(
+            store.renew_claim_at(&waiting.job_id, &waiting.claim_token, 1_122),
+            Err(DaemonError::ClaimRejected(_))
+        ));
+    }
+
+    #[test]
+    fn expired_legacy_checkpointed_waiting_job_fails_closed() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_millis(100))
+                .unwrap();
+        let created = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit",
+                json!({ "prompt": "legacy checkpointed waiting" }),
+            ))
+            .unwrap();
+        let claimed = store
+            .claim_job_at(&created.job_id, &created.claim_token, 1_000)
+            .unwrap();
+        let conn = Connection::open(store.database_path()).unwrap();
+        conn.execute(
+            "UPDATE jobs
+	             SET status = 'waiting_for_user',
+	                 blocker_json = ?1,
+	                 checkpoint_json = ?2,
+	                 claim_expires_at = ?3
+	             WHERE job_id = ?4",
+            params![
+                serde_json::to_string(&json!({ "blocker": { "code": "legacy_wait" } })).unwrap(),
+                serde_json::to_string(&json!({ "checkpoint": { "legacy": true } })).unwrap(),
+                1_050_i64,
+                claimed.job_id
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(store.requeue_expired_claims_at(1_100).unwrap(), 0);
+        let failed = store.get_job(&created.job_id).unwrap();
+        assert_eq!(failed.execution_backend, ExecutionBackend::LegacyExtension);
+        assert_eq!(failed.status, JobStatus::Failed);
+        assert_eq!(
+            failed.error_json.unwrap()["code"],
+            "playwright_user_handover_lease_lost"
+        );
+        assert_eq!(failed.blocker_json, None);
+        assert_eq!(failed.checkpoint_json, None);
+        assert_eq!(failed.resume_json, None);
+        assert_eq!(failed.claim_expires_at_ms, None);
+    }
+
+    #[test]
     fn migrates_existing_database_and_requeues_unleased_claim() {
         let tempdir = tempfile::tempdir().unwrap();
         let database_path = tempdir.path().join(DATABASE_FILE_NAME);
@@ -3192,6 +4077,8 @@ mod tests {
         assert!(sqlite_column_exists(&conn, "jobs", "claim_expires_at").unwrap());
         assert!(sqlite_column_exists(&conn, "jobs", "execution_backend").unwrap());
         assert!(sqlite_column_exists(&conn, "jobs", "profile_id").unwrap());
+        assert!(sqlite_column_exists(&conn, "jobs", "checkpoint_json").unwrap());
+        assert!(sqlite_column_exists(&conn, "jobs", "resume_json").unwrap());
         assert!(sqlite_column_exists(&conn, "jobs", "summary_task_id").unwrap());
         assert!(sqlite_table_exists(&conn, "job_task_keys").unwrap());
         let (execution_backend, profile_id): (String, Option<String>) = conn
@@ -3284,6 +4171,8 @@ mod tests {
             .unwrap();
         assert!(create_sql.contains("'waiting_for_user'"));
         assert!(sqlite_column_exists(&conn, "jobs", "blocker_json").unwrap());
+        assert!(sqlite_column_exists(&conn, "jobs", "checkpoint_json").unwrap());
+        assert!(sqlite_column_exists(&conn, "jobs", "resume_json").unwrap());
         let violations: i64 = conn
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -3544,7 +4433,9 @@ mod tests {
         assert_eq!(instance_id.len(), 22);
         let running_binary_hash = first["running_binary_hash"].as_str().unwrap();
         assert_eq!(running_binary_hash.len(), 64);
-        assert!(running_binary_hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert!(running_binary_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit()));
         let first_proof = first["ready_proof"].as_str().unwrap();
         assert_eq!(URL_SAFE_NO_PAD.decode(first_proof).unwrap().len(), 32);
         let first_process_proof = first["daemon_process_proof"].as_str().unwrap();
@@ -3763,11 +4654,28 @@ mod tests {
         assert_eq!(claimed["status"], "claimed");
         assert!(claimed.get("claim_token").is_none());
 
+        let legacy_checkpoint = client
+            .post(format!("{base_url}/control/jobs/{job_id}/checkpoint"))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "claim_token": claim_token,
+                "checkpoint_json": { "checkpoint": { "legacy": true } }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(legacy_checkpoint.status(), StatusCode::BAD_REQUEST);
+        let legacy_checkpoint_body: Value = legacy_checkpoint.json().await.unwrap();
+        assert!(legacy_checkpoint_body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("only playwright jobs"));
+
         let completed: Value = client
             .post(format!("{base_url}/jobs/{job_id}/complete"))
             .bearer_auth(&control_token)
             .json(&json!({
-                "claim_token": claim_token,
+                    "claim_token": claim_token,
                 "result_json": { "text": "done" }
             }))
             .send()
@@ -3955,6 +4863,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(complete.status(), StatusCode::UNAUTHORIZED);
+        let resume = client
+            .post(format!("{base_url}/jobs/{}/resume", job.job_id))
+            .json(&json!({ "browser_visibility": "headed" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resume.status(), StatusCode::UNAUTHORIZED);
+        let checkpoint = client
+            .post(format!("{base_url}/control/jobs/{}/checkpoint", job.job_id))
+            .json(&json!({
+                "claim_token": job.claim_token,
+                "checkpoint_json": { "checkpoint": true }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(checkpoint.status(), StatusCode::UNAUTHORIZED);
+        let park = client
+            .post(format!("{base_url}/control/jobs/{}/park", job.job_id))
+            .json(&json!({
+                "claim_token": job.claim_token,
+                "blocker_json": { "blocker": { "code": "visible_recaptcha" } },
+                "checkpoint_json": { "checkpoint": true }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(park.status(), StatusCode::UNAUTHORIZED);
         let running = client
             .post(format!("{base_url}/control/jobs/{}/running", job.job_id))
             .json(&json!({ "claim_token": job.claim_token }))
@@ -4270,6 +5206,216 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(wrong_token.status(), StatusCode::FORBIDDEN);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_checkpoint_park_resume_keep_private_state_off_public_views() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store =
+            JobStore::open_with_claim_lease(tempdir.path(), std::time::Duration::from_secs(60))
+                .unwrap();
+        let control_token = store.control_token().unwrap();
+        let job = create_playwright_job(&store, "work", "http park resume");
+        let server_store = store.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            serve_http_listener(server_store, listener).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+
+        let claimed: Value = client
+            .post(format!(
+                "{base_url}/control/jobs/claim-next?execution_backend=playwright&profile_id=work"
+            ))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(claimed["job"]["job_id"], job.job_id);
+        assert_eq!(claimed["job"]["checkpoint_json"], Value::Null);
+        assert_eq!(claimed["job"]["resume_json"], Value::Null);
+        let claim_token = claimed["job"]["claim_token"].as_str().unwrap();
+
+        let checkpoint = client
+            .post(format!("{base_url}/control/jobs/{}/checkpoint", job.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "claim_token": claim_token,
+                "checkpoint_json": { "checkpoint": { "step": "claimed" } }
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+        assert_eq!(checkpoint["status"], "claimed");
+        assert!(checkpoint.get("claim_token").is_none());
+        assert!(checkpoint.get("checkpoint_json").is_none());
+        assert!(checkpoint.get("resume_json").is_none());
+
+        let parked = client
+            .post(format!("{base_url}/control/jobs/{}/park", job.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "claim_token": claim_token,
+                "blocker_json": { "blocker": { "code": "visible_recaptcha" } },
+                "checkpoint_json": { "checkpoint": { "step": "parked" } }
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+        assert_eq!(parked["status"], "waiting_for_user");
+        assert_eq!(
+            parked["blocker_json"]["blocker"]["code"],
+            "visible_recaptcha"
+        );
+        assert!(parked.get("checkpoint_json").is_none());
+        assert!(parked.get("resume_json").is_none());
+        assert!(matches!(
+            store.renew_claim(&job.job_id, claim_token),
+            Err(DaemonError::ClaimRejected(_))
+        ));
+
+        let invalid_extra_field = client
+            .post(format!("{base_url}/jobs/{}/resume", job.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "browser_visibility": "headed",
+                "checkpoint_json": { "leak": true }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid_extra_field.status(), StatusCode::BAD_REQUEST);
+
+        let invalid_visibility = client
+            .post(format!("{base_url}/jobs/{}/resume", job.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({ "browser_visibility": "headless" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(invalid_visibility.status(), StatusCode::BAD_REQUEST);
+
+        let resumed = client
+            .post(format!("{base_url}/jobs/{}/resume", job.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({ "browser_visibility": "headed" }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+        assert_eq!(resumed["status"], "queued");
+        assert!(resumed.get("checkpoint_json").is_none());
+        assert!(resumed.get("resume_json").is_none());
+
+        let listed: Value = client
+            .get(format!(
+                "{base_url}/jobs?execution_backend=playwright&profile_id=work"
+            ))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(listed[0].get("checkpoint_json").is_none());
+        assert!(listed[0].get("resume_json").is_none());
+
+        let got: Value = client
+            .get(format!("{base_url}/jobs/{}", job.job_id))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(got.get("checkpoint_json").is_none());
+        assert!(got.get("resume_json").is_none());
+
+        let reclaimed: Value = client
+            .post(format!(
+                "{base_url}/control/jobs/claim-next?execution_backend=playwright&profile_id=work"
+            ))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            reclaimed["job"]["checkpoint_json"],
+            json!({ "checkpoint": { "step": "parked" } })
+        );
+        assert_eq!(
+            reclaimed["job"]["resume_json"],
+            json!({ "browser_visibility": "headed" })
+        );
+        assert_ne!(reclaimed["job"]["claim_token"], claim_token);
+
+        let repeat_resume: Value = client
+            .post(format!("{base_url}/jobs/{}/resume", job.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({ "browser_visibility": "headed" }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(repeat_resume["status"], "claimed");
+
+        let reclaim_token = reclaimed["job"]["claim_token"].as_str().unwrap();
+        let running: Value = client
+            .post(format!("{base_url}/control/jobs/{}/running", job.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({ "claim_token": reclaim_token }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(running["status"], "running");
+        assert_eq!(running["blocker_json"], Value::Null);
+        assert!(running.get("resume_json").is_none());
+        assert_eq!(
+            store.get_job(&job.job_id).unwrap().resume_json,
+            Some(json!({ "browser_visibility": "headed" }))
+        );
 
         server.abort();
     }

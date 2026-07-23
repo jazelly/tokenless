@@ -44,6 +44,8 @@ export type CancelManagedPlaywrightJobOptions = GetManagedPlaywrightJobOptions &
   reason?: unknown
 }
 
+export type ResumeManagedPlaywrightJobOptions = GetManagedPlaywrightJobOptions
+
 export async function submitManagedPlaywrightJob(options: SubmitManagedPlaywrightJobOptions) {
   const request = normalizeJobRequest(options.request)
   return daemonClient(options).createJob({
@@ -86,6 +88,17 @@ export async function cancelManagedPlaywrightJob(options: CancelManagedPlaywrigh
     jobId: options.jobId,
     reason: options.reason,
   })
+}
+
+export async function resumeManagedPlaywrightJob(options: ResumeManagedPlaywrightJobOptions): Promise<DaemonJob> {
+  await getManagedPlaywrightJob(options)
+  const job = await daemonClient(options).resumeJob({
+    ...daemonOptions(options),
+    jobId: options.jobId,
+    browserVisibility: 'headed',
+  })
+  validateManagedDaemonJob(job, options.profileId)
+  return job
 }
 
 function normalizeJobRequest(

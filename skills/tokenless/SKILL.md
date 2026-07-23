@@ -59,6 +59,8 @@ tokenless run \
   --json
 ```
 
+Omit `--browser-visibility` in ordinary jobs so the configured default applies. Pass it only when the user explicitly asks for a different visibility policy on this job. If a run parks with `waiting_for_user`, keep the same `jobId`/`taskId` and resume the same daemon job with headed visibility instead of resubmitting it.
+
 Repeat `--attach-file <path>` only for files the user intends to share. Tokenless stages regular files privately, verifies integrity, uploads through the visible page control, and keeps raw local paths out of daemon job results.
 
 Use `provider-controls` to discover exact visible labels before requesting a model or effort setting:
@@ -71,9 +73,11 @@ Pass only an exact returned label with `--model`, ordered `--model-fallback`, or
 
 For work expected to exceed three minutes, keep the daemon job attached and add `--long-running`. Do not use `--no-wait`, do not replace the web task with a local agent run, and do not claim a result before the daemon reports `succeeded`.
 
-Retain the returned `jobId` and `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task. Continue waiting while a run reports `queued`, `claimed`, `running`, or `daemon_waiting`. If it reports `waiting_for_user`, stop the agent task immediately: tell the user to complete the visible verification or sign-in in the already-open managed browser window, keep the same `jobId`/`taskId`, never retry, reimport, resubmit, or create a replacement job, and query the same task only after the user confirms. Do not claim completion until the daemon reports `succeeded`. Stop on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch` and report the exact visible blocker.
+Retain the returned `jobId` and `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task. Continue waiting while a run reports `queued`, `claimed`, `running`, or `daemon_waiting`. If it reports `waiting_for_user`, stop the agent task immediately and inspect `blocker.browser.windowOpen`: when true, tell the user to complete the visible verification or sign-in in the already-open managed browser window, keep the same `jobId`/`taskId`, and query the same task only after the user confirms; when false, run `tokenless resume --job-id "<jobId>" --browser-visibility headed --json` for that exact job, then complete the opened visible browser handoff; never retry, reimport, resubmit, or create a replacement job. Do not claim completion until the daemon reports `succeeded`. Stop on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch` and report the exact visible blocker.
 
 If sign-in, CAPTCHA, plan limits, consent, or confirmation requires the user, state the completed work, exact visible action, and next verification in the user's preferred language. Never request credentials or browser state.
+
+Use `profiles open` only for headed browser handoff. It always opens a visible browser window.
 
 ## Query daemon-backed state
 

@@ -13,7 +13,9 @@ import {
   submitManagedPlaywrightJob,
   listManagedPlaywrightJobs,
   cancelManagedPlaywrightJob,
+  createDaemonClient,
   getManagedPlaywrightJob,
+  resumeManagedPlaywrightJob,
   validateManagedPlaywrightJobRequest,
 } from '../packages/cli/dist/src/playwright/index.js'
 
@@ -108,6 +110,9 @@ test('managed Playwright job API lists and cancels without entrypoint coupling',
     },
     async claimNextJob() { throw new Error('unused') },
     async markJobRunning() { throw new Error('unused') },
+    async checkpointJob() { throw new Error('unused') },
+    async parkJob() { throw new Error('unused') },
+    async resumeJob() { throw new Error('unused') },
     async renewJobClaim() { throw new Error('unused') },
     async completeJob() { throw new Error('unused') },
     async listJobs(options) {
@@ -158,6 +163,60 @@ test('managed Playwright job API lists and cancels without entrypoint coupling',
   }])
 })
 
+test('managed Playwright job API resumes parked jobs headed with public job shape', async () => {
+  const request = createManagedPlaywrightJobRequest({
+    provider: 'chatgpt',
+    actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+  })
+  const paths = []
+  const daemonClient = {
+    async createJob() { throw new Error('unused') },
+    async listJobs() { throw new Error('unused') },
+    async claimNextJob() { throw new Error('unused') },
+    async markJobRunning() { throw new Error('unused') },
+    async markJobWaitingForUser() { throw new Error('unused') },
+    async checkpointJob() { throw new Error('unused') },
+    async parkJob() { throw new Error('unused') },
+    async renewJobClaim() { throw new Error('unused') },
+    async completeJob() { throw new Error('unused') },
+    async cancelJob() { throw new Error('unused') },
+    async getJob(options) {
+      paths.push(['get', options])
+      return daemonJob({
+        jobId: options.jobId,
+        status: 'waiting_for_user',
+        request_json: request,
+        checkpoint_json: { private: true },
+        resume_json: { private: true },
+      })
+    },
+    async resumeJob(options) {
+      paths.push(['resume', options])
+      return daemonJob({
+        jobId: options.jobId,
+        status: 'queued',
+        request_json: request,
+      })
+    },
+  }
+
+  const job = await resumeManagedPlaywrightJob({ daemonClient, jobId: 'job-1', profileId: 'profile-a' })
+
+  assert.equal(job.status, 'queued')
+  assert.equal(job.checkpoint_json, undefined)
+  assert.equal(job.resume_json, undefined)
+  assert.deepEqual(paths[1], ['resume', {
+    daemonUrl: undefined,
+    homeDir: undefined,
+    token: undefined,
+    fetchImpl: undefined,
+    requestTimeoutMs: undefined,
+    signal: undefined,
+    jobId: 'job-1',
+    browserVisibility: 'headed',
+  }])
+})
+
 test('managed Playwright get/cancel reject legacy and different-profile jobs before returning or canceling', async () => {
   const request = createManagedPlaywrightJobRequest({
     provider: 'chatgpt',
@@ -169,6 +228,9 @@ test('managed Playwright get/cancel reject legacy and different-profile jobs bef
     async listJobs() { throw new Error('unused') },
     async claimNextJob() { throw new Error('unused') },
     async markJobRunning() { throw new Error('unused') },
+    async checkpointJob() { throw new Error('unused') },
+    async parkJob() { throw new Error('unused') },
+    async resumeJob() { throw new Error('unused') },
     async renewJobClaim() { throw new Error('unused') },
     async completeJob() { throw new Error('unused') },
     async getJob({ jobId }) {
@@ -194,6 +256,36 @@ test('managed Playwright get/cancel reject legacy and different-profile jobs bef
     profileId: 'profile-a',
   }), matchCode('invalid_playwright_job_profile'))
   assert.equal(canceled, false)
+})
+
+test('managed Playwright daemon client posts checkpoint, park, and resume payloads', async () => {
+  const calls = []
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, body: init.body ? JSON.parse(init.body) : null })
+    return jsonResponse(daemonJob({
+      jobId: 'job-1',
+      status: url.endsWith('/resume') ? 'queued' : 'running',
+      request_json: createManagedPlaywrightJobRequest({
+        provider: 'chatgpt',
+        actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+      }),
+    }))
+  }
+  const client = createDaemonClient({
+    daemonUrl: 'http://127.0.0.1:7331',
+    token: 'control-token',
+    fetchImpl,
+  })
+
+  await client.checkpointJob({ jobId: 'job-1', claimToken: 'claim-1', checkpoint: { cursor: 1 } })
+  await client.parkJob({ jobId: 'job-1', claimToken: 'claim-1', blocker: { code: 'captcha' }, checkpoint: { cursor: 1 } })
+  await client.resumeJob({ jobId: 'job-1', browserVisibility: 'headed' })
+
+  assert.deepEqual(calls.map((call) => [new URL(call.url).pathname, call.body]), [
+    ['/control/jobs/job-1/checkpoint', { claim_token: 'claim-1', checkpoint_json: { cursor: 1 } }],
+    ['/control/jobs/job-1/park', { claim_token: 'claim-1', blocker_json: { code: 'captcha' }, checkpoint_json: { cursor: 1 } }],
+    ['/jobs/job-1/resume', { browser_visibility: 'headed' }],
+  ])
 })
 
 test('managed Playwright job contract rejects provider subdomains and non-loopback daemon URLs', async () => {

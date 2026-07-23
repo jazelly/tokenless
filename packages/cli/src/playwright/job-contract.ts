@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
   VISIBLE_ACTIONS,
   VISIBLE_ACTION_PROTOCOL_VERSION,
@@ -7,10 +8,12 @@ import {
 } from './actions.js'
 import { tokenlessError } from './errors.js'
 import { getProviderById } from './providers.js'
+import type { BrowserVisibility } from '../browser-visibility.js'
 import type { VisibleActionRequest } from './actions.js'
 import type { ProviderId } from './providers.js'
 
-export const MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION = 'tokenless.playwright.job.v1' as const
+export const MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 = 'tokenless.playwright.job.v1' as const
+export const MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION = 'tokenless.playwright.job.v2' as const
 export const MANAGED_PLAYWRIGHT_JOB_ACTION = 'visible_provider_actions' as const
 export const PLAYWRIGHT_EXECUTION_BACKEND = 'playwright' as const
 
@@ -24,6 +27,7 @@ export type ManagedPlaywrightJobRequest = {
   provider: ProviderId
   target: ManagedPlaywrightSafeTarget
   taskId: string | null
+  browserVisibility: BrowserVisibility
   actions: readonly VisibleActionRequest[]
 }
 
@@ -31,6 +35,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   provider: ProviderId
   target?: Partial<ManagedPlaywrightSafeTarget> | undefined
   taskId?: string | null | undefined
+  browserVisibility?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionRequest>, 'protocol' | 'provider'> & {
     requestId?: string | undefined
   }))[]
@@ -62,6 +67,7 @@ export function createManagedPlaywrightJobRequest(
     provider: provider.id,
     target,
     taskId: validateTaskId(input.taskId ?? null),
+    browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     actions,
   })
 }
@@ -70,14 +76,21 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   if (!isPlainRecord(input)) {
     throw tokenlessError('invalid_playwright_job_request', 'Managed Playwright job request must be an object.')
   }
-  requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'actions'], 'invalid_playwright_job_request')
-  if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION) {
+  if (input.protocol === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1) {
+    requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'actions'], 'invalid_playwright_job_request')
+  } else {
+    requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'], 'invalid_playwright_job_request')
+  }
+  if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION && input.protocol !== MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1) {
     throw tokenlessError('invalid_playwright_job_protocol', 'Managed Playwright job protocol version is not supported.')
   }
   const provider = getProviderById(input.provider)
   if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
   const target = validateSafeTarget(input.target, provider.id)
   const taskId = validateTaskId(input.taskId)
+  const browserVisibility = input.protocol === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1
+    ? 'headed'
+    : validateJobBrowserVisibility(input.browserVisibility)
   if (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 100) {
     throw tokenlessError('invalid_playwright_job_actions', 'Managed Playwright job requires one to one hundred actions.')
   }
@@ -95,6 +108,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     provider: provider.id,
     target,
     taskId,
+    browserVisibility,
     actions,
   }
 }
@@ -140,6 +154,14 @@ function validateTaskId(value: unknown): string | null {
     throw tokenlessError('invalid_playwright_job_task_id', 'Managed Playwright job taskId must be null or a non-empty string without control characters.')
   }
   return value
+}
+
+function validateJobBrowserVisibility(value: unknown): BrowserVisibility {
+  const visibility = normalizeBrowserVisibility(value)
+  if (!visibility) {
+    throw tokenlessError('invalid_playwright_job_browser_visibility', 'Managed Playwright job browserVisibility is invalid.')
+  }
+  return visibility
 }
 
 function requireExactKeys(record: Record<string, unknown>, keys: readonly string[], code: string) {

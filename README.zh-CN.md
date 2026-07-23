@@ -61,6 +61,18 @@ tokenless setup --fresh
 tokenless doctor --json
 ```
 
+## 浏览器可见性
+
+Tokenless 会把浏览器可见性保存在配置中；如果没有设置，就默认使用 `auto`。可以通过 `tokenless config --browser-visibility ...` 持久设置默认值；只有某一个任务需要不同可见性时，才把同一个参数传给 `tokenless run`。
+
+- `auto` 先以 headless 启动，只在出现用户可直接处理的阻塞时才打开 headed 窗口，例如登录、CAPTCHA、MFA、授权同意或确认步骤。
+- `headed` 总是打开可见浏览器窗口。
+- `headless` 永远不会打开浏览器窗口。如果任务停在等待用户操作，就用 `tokenless resume --job-id <job-id> --browser-visibility headed --json` 恢复同一个任务；不要提交替代任务。
+- `profiles open` 永远是 headed。
+- `doctor` 只读。
+- Chromium sandbox 在两种模式下都会保持启用。
+- auto 自动升级后的窗口会在任务完成后空闲 30 秒关闭；显式的 headed 窗口和 `profiles open` 打开的窗口会保持打开。
+
 ## 升级
 
 ```bash

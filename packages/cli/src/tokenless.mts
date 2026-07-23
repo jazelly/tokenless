@@ -40,6 +40,7 @@ import {
   inspectManagedRuntime,
   listDaemonJobs,
   normalizeBrowserId,
+  normalizeBrowserVisibility,
   openProviderUrl,
   persistDaemonSnapshot,
   probeDaemonReady,
@@ -48,6 +49,7 @@ import {
   readTokenlessConfig,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
+  resumeDaemonJob,
   stageVisibleAttachments,
   tokenlessHome,
   waitDaemonJobResult,
@@ -159,6 +161,8 @@ try {
     await snapshotDomCommand(args)
   } else if (command === 'state' || command === 'status') {
     await stateCommand(args)
+  } else if (command === 'resume') {
+    await resumeCommand(args)
   } else if (command === 'cancel') {
     await cancelCommand(args)
   } else if (command === 'setup') {
@@ -421,7 +425,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const provider = normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER || 'chatgpt')
     const visibleAction = subcommand === 'status' ? VISIBLE_ACTIONS.AUTH_STATUS : VISIBLE_ACTIONS.NAVIGATION_CHECK
     const result = await executeManagedPlaywrightJob({
-      args,
+      args: subcommand === 'open' ? { ...args, browserVisibility: 'headed' } : args,
       provider,
       request: createManagedPlaywrightJobRequest({
         provider,
@@ -1171,6 +1175,7 @@ async function executeManagedPlaywrightJob({
 }) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
+  const browserVisibility = requiredBrowserVisibility(args.browserVisibility ?? config.browserVisibility)
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   const statusReporter = createCliStatusReporter(args)
   const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
@@ -1221,9 +1226,11 @@ async function executeManagedPlaywrightJob({
     daemonUrl: configuredDaemonUrl,
     homeDir,
     profileId: profile.id,
-    request: request.taskId === (taskId ?? null)
-      ? request
-      : { ...request, taskId: taskId ?? null },
+    request: {
+      ...request,
+      taskId: taskId ?? null,
+      browserVisibility,
+    },
     ...(jobId === undefined ? {} : { jobId }),
   })
   statusReporter.report({
@@ -1451,10 +1458,14 @@ async function stateCommand(args: CliArgs) {
   }
   const providerValue = args.provider || process.env.TOKENLESS_PROVIDER || (args.jobId ? undefined : config.preferredProviders[0] || 'chatgpt')
   const provider = providerValue ? normalizeProvider(providerValue) : undefined
-  const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+  const registry = new ManagedProfileRegistry(homeDir)
   const daemonJobs = args.jobId
     ? [await getDaemonJob({ daemonUrl: configuredDaemonUrl, homeDir, jobId: args.jobId })]
-    : await listDaemonJobs({
+    : null
+  const profile = daemonJobs
+    ? await resolveProfileForDaemonJob(registry, daemonJobs[0]!, args.profile)
+    : await registry.resolveProfile(args.profile)
+  const listedDaemonJobs = daemonJobs ?? await listDaemonJobs({
         daemonUrl: configuredDaemonUrl,
         homeDir,
         taskId: requestedTaskId,
@@ -1463,7 +1474,7 @@ async function stateCommand(args: CliArgs) {
         profileId: profile.id,
         limit: Math.max(1, Number(args.limit) || 10),
       })
-  const jobs = daemonJobs
+  const jobs = listedDaemonJobs
     .map(publicDaemonJobState)
     .filter((job) => {
       if (job.backend !== PLAYWRIGHT_EXECUTION_BACKEND) return false
@@ -1490,6 +1501,124 @@ async function stateCommand(args: CliArgs) {
     profile: publicManagedProfile(profile, profile.slug),
     latest,
     jobs: jobs.slice(0, Math.max(1, Number(args.limit) || 10)),
+  }, args)
+}
+
+async function resolveProfileForDaemonJob(
+  registry: ManagedProfileRegistry,
+  job: Awaited<ReturnType<typeof getDaemonJob>>,
+  requestedProfile: string | undefined
+) {
+  if (!job.profile_id) {
+    throw usageError('task_state_profile_not_found', 'The daemon job does not have a managed Playwright profile.')
+  }
+  if (requestedProfile !== undefined) {
+    const explicitProfile = await registry.resolveProfile(requestedProfile)
+    if (explicitProfile.id !== job.profile_id) {
+      throw usageError('task_state_not_found', `No daemon-backed Tokenless task state found for ${job.job_id}.`)
+    }
+    return explicitProfile
+  }
+  const profile = (await registry.listProfiles()).find((candidate) => candidate.id === job.profile_id)
+  if (!profile) {
+    throw usageError('task_state_profile_not_found', 'The managed profile for this Tokenless job is not available.')
+  }
+  return profile
+}
+
+async function resumeCommand(args: CliArgs) {
+  if (!args.jobId) {
+    throw usageError('missing_job_id', 'Usage: tokenless resume --job-id <job-id> --browser-visibility headed.')
+  }
+  const browserVisibility = requiredBrowserVisibility(args.browserVisibility)
+  if (browserVisibility !== 'headed') {
+    throw usageError('invalid_resume_browser_visibility', 'tokenless resume requires --browser-visibility headed.')
+  }
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  await ensureDaemonReady({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+  })
+  const existing = await getDaemonJob({ homeDir, daemonUrl: configuredDaemonUrl, jobId: args.jobId })
+  if (existing.execution_backend !== PLAYWRIGHT_EXECUTION_BACKEND || !existing.profile_id) {
+    throw usageError('invalid_resume_job', 'tokenless resume accepts only a managed Playwright job with a profile.')
+  }
+  const registry = new ManagedProfileRegistry(homeDir)
+  const profile = (await registry.listProfiles()).find((candidate) => candidate.id === existing.profile_id)
+  if (!profile) throw usageError('resume_profile_not_found', 'The managed profile for this Tokenless job is not available.')
+
+  const injectedRunnerEntry = process.env.TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY
+  const browser = injectedRunnerEntry
+    ? {
+        browser: config.browser ?? 'chrome',
+        displayName: 'injected managed Playwright runner',
+        command: process.execPath,
+        argsPrefix: [],
+      }
+    : await resolveChromiumBrowser(config.browser ?? undefined)
+  const runner = await startRunnerSupervisor({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    browser: browser.browser,
+    ...(browser.browser === 'chrome' || browser.browser === 'edge'
+      ? {}
+      : { browserExecutablePath: browser.playwrightExecutablePath }),
+    ...(injectedRunnerEntry === undefined ? {} : { entryPath: injectedRunnerEntry }),
+    ...(args.runnerHeartbeatTimeoutMs === undefined
+      ? {}
+      : { heartbeatTimeoutMs: Number(args.runnerHeartbeatTimeoutMs) }),
+  })
+  const resumed = await resumeDaemonJob({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    jobId: args.jobId,
+    browserVisibility: 'headed',
+  })
+  const statusReporter = createCliStatusReporter(args)
+  statusReporter.report({
+    event: 'playwright_job_resumed',
+    status: resumed.status,
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
+    jobId: resumed.job_id,
+    provider: resumed.provider,
+    browserVisibility: 'headed',
+  })
+  const result = await waitForJobWithInterruptCancellation({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    jobId: resumed.job_id,
+    timeoutMs: args.timeoutMs === undefined ? DEFAULT_RUN_TIMEOUT_MS : Number(args.timeoutMs),
+    cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
+    statusReporter,
+  })
+  if (result?.status === 'waiting_for_user') {
+    printPayload(waitingForUserPayload({
+      job: resumed,
+      taskId: daemonTaskId(resumed),
+      provider: resumed.provider,
+      profile,
+      waitResult: result,
+      statusLog: statusReporter.events,
+    }), args)
+    return
+  }
+  assertDaemonJobSucceeded(result, statusReporter)
+  printPayload({
+    ok: true,
+    transport: 'daemon',
+    backend: PLAYWRIGHT_EXECUTION_BACKEND,
+    jobId: resumed.job_id,
+    taskId: daemonTaskId(resumed),
+    provider: resumed.provider,
+    profile: publicManagedProfile(profile, profile.slug),
+    runner,
+    result: publicDaemonResult(result),
+    compactOutput: result?.compactOutput,
+    status: result?.status,
+    statusLog: statusReporter.events,
   }, args)
 }
 
@@ -2720,12 +2849,13 @@ async function readManagedProfileReadOnly(homeDir: string) {
 
 async function configCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  if (args.preferredProviders !== undefined || args.browser !== undefined || args.daemonUrl !== undefined) {
+  if (args.preferredProviders !== undefined || args.browser !== undefined || args.browserVisibility !== undefined || args.daemonUrl !== undefined) {
     const browser = args.browser === undefined ? undefined : normalizeCliBrowser(args.browser)
     const config = await writeTokenlessConfig({
       homeDir,
       preferredProviders: args.preferredProviders === undefined ? undefined : parseProviderList(args.preferredProviders),
       browser,
+      browserVisibility: args.browserVisibility === undefined ? undefined : requiredBrowserVisibility(args.browserVisibility),
       daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
     })
     printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args)
@@ -2795,6 +2925,7 @@ function publicDaemonJobState(job: Record<string, any>) {
       : { id: job.profile_id },
     provider: job.provider,
     action: job.action,
+    browserVisibility: request.browserVisibility,
     projectName: metadata.projectName,
     chatName: metadata.chatName,
     targetUrl: safeStateTarget(job.provider, request.targetUrl),
@@ -2827,6 +2958,11 @@ function waitingForUserPayload({
   statusLog,
 }: Record<string, any>) {
   const blocker = waitResult?.blocker ?? job.blocker_json ?? null
+  const browser = blockerBrowserState(blocker)
+  const windowOpen = browser.windowOpen !== false
+  const resumeCommand = windowOpen
+    ? `tokenless state --job-id '${String(job.job_id).replace(/'/g, `'\\''`)}' --json`
+    : `tokenless resume --job-id '${String(job.job_id).replace(/'/g, `'\\''`)}' --browser-visibility headed --json`
   return {
     ok: true,
     completed: false,
@@ -2842,13 +2978,28 @@ function waitingForUserPayload({
     projectName,
     chatName,
     blocker,
-    userAction: waitResult?.userAction ?? {
-      message: 'The visible managed browser is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.',
-      resumeCommand: `tokenless state --job-id '${String(job.job_id).replace(/'/g, `'\\''`)}' --json`,
-      queryGuidance: 'Do not submit a replacement job; query the same job/task after user confirmation.',
+    browser,
+    userAction: {
+      ...(waitResult?.userAction ?? {}),
+      message: windowOpen
+        ? 'The visible managed browser is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.'
+        : 'This headless job requires user interaction and no browser window is open. Resume the same job with headed visibility; do not submit a replacement job.',
+      resumeCommand,
+      queryGuidance: windowOpen
+        ? 'Do not submit a replacement job; query the same job/task after user confirmation.'
+        : 'Resume this exact job with headed visibility, then complete the visible verification in the opened browser.',
     },
     result: publicDaemonResult(waitResult),
     statusLog,
+  }
+}
+
+function blockerBrowserState(value: unknown) {
+  const browser = objectRecord(objectRecord(value).browser)
+  return {
+    requestedVisibility: browser.requestedVisibility,
+    effectiveVisibility: browser.effectiveVisibility,
+    windowOpen: typeof browser.windowOpen === 'boolean' ? browser.windowOpen : undefined,
   }
 }
 
@@ -3020,6 +3171,7 @@ function parseArgs(argv: string[]): CliArgs {
     '--job-id': 'jobId',
     '--limit': 'limit',
     '--browser': 'browser',
+    '--browser-visibility': 'browserVisibility',
     '--browsers': 'browsers',
     '--home': 'home',
     '--daemon-url': 'daemonUrl',
@@ -3110,6 +3262,14 @@ function normalizeCliBrowser(browser: unknown) {
   return browserId
 }
 
+function requiredBrowserVisibility(value: unknown) {
+  const visibility = normalizeBrowserVisibility(value)
+  if (!visibility) {
+    throw usageError('invalid_browser_visibility', '--browser-visibility must be auto, headed, or headless.')
+  }
+  return visibility
+}
+
 function normalizeProvider(provider: unknown): ProviderId {
   const normalized = String(provider).trim().toLowerCase()
   if (!['chatgpt', 'claude', 'gemini', 'grok'].includes(normalized)) {
@@ -3126,7 +3286,7 @@ function assertProfilesCommandArguments(subcommand: string | undefined, args: Cl
     discover: ['files', 'browser', 'chromeUserDataDir', 'json'],
     list: ['files', 'home', 'json'],
     reset: [...common, 'preferredProviders'],
-    status: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
+    status: [...common, 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
     open: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
     'set-default': common,
     remove: [...common, 'confirmDelete'],
@@ -3183,6 +3343,28 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
     throw usageError(
       'profiles_options_require_profiles_command',
       `${selectedProfilesOnly.join(', ')} is accepted only by the profiles command.`,
+    )
+  }
+  const browserVisibilityCommands = new Set([
+    'run',
+    'provider-status',
+    'provider-auth-status',
+    'provider-action',
+    'provider-controls',
+    'inspect-provider-controls',
+    'provider-configure',
+    'chatgpt-controls',
+    'inspect-chatgpt-controls',
+    'chatgpt-configure',
+    'snapshot-dom',
+    'config',
+    'setup',
+    'resume',
+  ])
+  if (args.browserVisibility !== undefined && command !== 'profiles' && !browserVisibilityCommands.has(command)) {
+    throw usageError(
+      'browser_visibility_command_invalid',
+      `--browser-visibility is not accepted by tokenless ${command}.`
     )
   }
   const setupOnly = [
@@ -3372,6 +3554,9 @@ function normalizeStatusEvent(event: StatusEvent, startedAt: number) {
     provider: event.provider ?? event.detail?.provider,
     action: event.action,
     browser: event.browser,
+    browserVisibility: event.browserVisibility,
+    effectiveBrowserVisibility: event.effectiveBrowserVisibility,
+    windowOpen: event.windowOpen,
     providerUrl: event.providerUrl,
     daemonUrl: event.daemonUrl,
     daemonPid: event.daemonPid,
@@ -3392,7 +3577,7 @@ function formatStatusEvent(event: StatusEvent) {
       event.jobId ? `job=${String(event.jobId).slice(0, 8)}` : '',
       event.elapsedMs !== undefined ? `elapsed=${formatElapsed(event.elapsedMs)}` : '',
     ].filter(Boolean).join(' ')
-    return `[tokenless] waiting_for_user ${context} The visible managed browser is open; manually complete verification or sign-in there, then query the same task.`
+    return `[tokenless] waiting_for_user ${context} User action is required; inspect the structured result for the safe resume step.`
   }
   const parts = ['[tokenless]', event.event]
   for (const [key, value] of [
@@ -3403,6 +3588,8 @@ function formatStatusEvent(event: StatusEvent) {
     ['action', event.action],
     ['taskId', event.taskId],
     ['browser', event.browser],
+    ['browserVisibility', event.browserVisibility],
+    ['effectiveBrowserVisibility', event.effectiveBrowserVisibility],
     ['url', event.providerUrl],
     ['errorCode', event.errorCode],
     ['elapsed', formatElapsed(event.elapsedMs)],
@@ -3428,7 +3615,7 @@ function attachStatusLog(error: CliError, statusReporter: StatusReporter) {
 function usage() {
   console.error([
     'Usage:',
-    '  tokenless run --provider chatgpt --prompt <text> --json',
+    '  tokenless run --provider chatgpt [--browser-visibility <auto|headed|headless>] --prompt <text> --json',
     '  tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
     '  tokenless profiles add --profile <slug> --browser <chrome|brave> --import-browser-profile <Default|Profile 1> --preferred-providers <list> [--browser-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
     '  tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json',
@@ -3450,9 +3637,10 @@ function usage() {
     '  tokenless chatgpt-controls --json',
     '  tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
     '  tokenless state --task-id <task-id> [--profile <slug>] --json',
+    '  tokenless resume --job-id <job-id> --browser-visibility headed --json',
     '  tokenless cancel --job-id <job-id> --json',
     '  tokenless snapshot-dom --provider chatgpt --json',
-    '  tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --json',
+    '  tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --browser-visibility auto --json',
     '  tokenless setup',
     '  tokenless setup --fresh --json',
     '  tokenless setup --profile <slug> --browser <browser> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',

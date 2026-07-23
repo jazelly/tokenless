@@ -40,6 +40,39 @@ test('CLI daemon wait returns waiting_for_user promptly with blocker and does no
   })
 })
 
+test('headless waiting jobs expose the same-job headed resume command and authenticated resume request', async () => {
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-cli-headless-waiting-'))
+  const canonicalHome = await fs.realpath(homeDir)
+  await fs.writeFile(path.join(homeDir, 'daemon.token'), 'control-token\n', { mode: 0o600 })
+  const requests = []
+  const job = daemonJob({
+    status: 'waiting_for_user',
+    blocker_json: {
+      blocker: { code: 'visible_recaptcha', kind: 'challenge', userResolvable: true },
+      browser: { requestedVisibility: 'headless', effectiveVisibility: 'headless', windowOpen: false },
+    },
+  })
+
+  await withReadyDaemon({ homeDir: canonicalHome, token: 'control-token', job, requests }, async (daemonUrl) => {
+    const { resumeDaemonJob, waitDaemonJobResult } = await import(pathToFileURL(cliDaemonClient).href)
+    const waiting = await waitDaemonJobResult({ homeDir, daemonUrl, jobId: job.job_id, timeoutMs: 10_000, pollMs: 5 })
+
+    assert.match(waiting.userAction.message, /no browser window is open/i)
+    assert.match(waiting.userAction.resumeCommand, /tokenless resume .*--browser-visibility headed/)
+
+    const resumed = await resumeDaemonJob({
+      homeDir,
+      daemonUrl,
+      jobId: job.job_id,
+      browserVisibility: 'headed',
+    })
+    assert.equal(resumed.status, 'queued')
+    const request = requests.find((candidate) => candidate.url.endsWith('/resume'))
+    assert.deepEqual(request.body, { browser_visibility: 'headed' })
+    assert.equal(request.authorization, 'Bearer control-token')
+  })
+})
+
 function daemonJob(overrides = {}) {
   return {
     job_id: 'job-waiting',
@@ -60,7 +93,13 @@ function daemonJob(overrides = {}) {
 
 async function withReadyDaemon({ homeDir, token, job, requests }, callback) {
   const server = http.createServer(async (request, response) => {
-    requests.push({ method: request.method, url: request.url })
+    const body = request.method === 'POST' ? await readJsonBody(request) : undefined
+    requests.push({
+      method: request.method,
+      url: request.url,
+      body,
+      authorization: request.headers.authorization,
+    })
     if (request.url?.startsWith('/ready?')) {
       const challenge = new URL(request.url, 'http://127.0.0.1').searchParams.get('challenge')
       const body = {
@@ -88,6 +127,9 @@ async function withReadyDaemon({ homeDir, token, job, requests }, callback) {
     if (request.url === `/jobs/${encodeURIComponent(job.job_id)}` && request.method === 'GET') {
       return respondJson(response, 200, job)
     }
+    if (request.url === `/jobs/${encodeURIComponent(job.job_id)}/resume` && request.method === 'POST') {
+      return respondJson(response, 200, { ...job, status: 'queued' })
+    }
     respondJson(response, 404, { error: { message: 'not found' } })
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -96,6 +138,12 @@ async function withReadyDaemon({ homeDir, token, job, requests }, callback) {
   } finally {
     await new Promise((resolve) => server.close(resolve))
   }
+}
+
+async function readJsonBody(request) {
+  const chunks = []
+  for await (const chunk of request) chunks.push(chunk)
+  return chunks.length === 0 ? undefined : JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 function daemonReadyProofMessage(fields) {
