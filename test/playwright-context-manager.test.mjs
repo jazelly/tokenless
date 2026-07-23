@@ -6,6 +6,7 @@ import {
   TokenlessPlaywrightError,
   chromeLaunchOptions,
   managedBrowserLaunchOptions,
+  normalizeBrowserVisibility,
 } from '../packages/cli/dist/src/playwright/index.js'
 
 test('persistent context manager serializes same-profile work and launches Chrome persistently', async () => {
@@ -122,6 +123,99 @@ test('persistent context manager reports browser closure as retryable and relaun
   await manager.shutdown()
 })
 
+test('persistent context manager relaunches one profile when effective visibility changes', async () => {
+  const closed = []
+  const launches = []
+  const manager = new PersistentContextManager({
+    launcher: async (userDataDir, options) => {
+      const context = new FakeContext(() => closed.push(`${userDataDir}:${options.headless ? 'headless' : 'headed'}`))
+      launches.push({ userDataDir, options, context })
+      return context
+    },
+  })
+  const profile = { id: 'profile-a', directory: '/tmp/profile-a' }
+
+  const auto = await manager.ensureContext(profile, 'auto')
+  const headed = await manager.switchProfileVisibility(profile, 'headed')
+  const headless = await manager.switchProfileVisibility(profile, 'headless')
+
+  assert.notEqual(auto.browserContext, headed.browserContext)
+  assert.notEqual(headed.browserContext, headless.browserContext)
+  assert.equal(auto.browserVisibility, 'auto')
+  assert.equal(auto.effectiveBrowserVisibility, 'headless')
+  assert.equal(headed.effectiveBrowserVisibility, 'headed')
+  assert.equal(headless.browserVisibility, 'headless')
+  assert.equal(headless.effectiveBrowserVisibility, 'headless')
+  assert.deepEqual(launches.map((launch) => launch.options.headless), [true, false, true])
+  assert.deepEqual(launches.map((launch) => launch.options.chromiumSandbox), [true, true, true])
+  assert.deepEqual(closed, ['/tmp/profile-a:headless', '/tmp/profile-a:headed'])
+  assert.deepEqual(manager.activeProfileIds(), ['profile-a'])
+  await manager.shutdown()
+})
+
+test('persistent context manager accepts per-run visibility while preserving legacy call shape', async () => {
+  const launches = []
+  const manager = new PersistentContextManager({
+    launcher: async (_userDataDir, options) => {
+      launches.push(options)
+      return new FakeContext()
+    },
+  })
+  const profile = { id: 'profile-a', directory: '/tmp/profile-a' }
+  const observed = []
+
+  await manager.runWithProfile(profile, async (context) => {
+    observed.push(context.effectiveBrowserVisibility)
+  })
+  await manager.runWithProfile(profile, 'headless', async (context) => {
+    observed.push(context.effectiveBrowserVisibility)
+  })
+
+  assert.deepEqual(observed, ['headed', 'headless'])
+  assert.deepEqual(launches.map((options) => options.headless), [false, true])
+  await manager.shutdown()
+})
+
+test('persistent context manager scheduled profile close is idle and context identity safe', async () => {
+  const timers = new FakeTimers()
+  const contexts = []
+  const manager = new PersistentContextManager({
+    timers,
+    launcher: async () => {
+      const context = new FakeContext()
+      contexts.push(context)
+      return context
+    },
+  })
+  const profile = { id: 'profile-a', directory: '/tmp/profile-a' }
+
+  const headed = await manager.ensureContext(profile, 'headed')
+  manager.scheduleCloseProfile(profile.id, { delayMs: 30_000, browserContext: headed.browserContext })
+  await manager.runWithProfile(profile, 'headed', async () => undefined)
+  await timers.advance(30_000)
+  assert.deepEqual(manager.activeProfileIds(), ['profile-a'])
+  assert.equal(contexts[0].closed, false)
+
+  manager.scheduleCloseProfile(profile.id, { delayMs: 30_000, browserContext: headed.browserContext })
+  const headless = await manager.switchProfileVisibility(profile, 'headless')
+  await timers.advance(30_000)
+  assert.deepEqual(manager.activeProfileIds(), ['profile-a'])
+  assert.equal(contexts[0].closed, true)
+  assert.equal(contexts[1].closed, false)
+
+  manager.scheduleCloseProfile(profile.id, { delayMs: 30_000, browserContext: headed.browserContext })
+  await timers.advance(30_000)
+  assert.deepEqual(manager.activeProfileIds(), ['profile-a'])
+  assert.equal(contexts[1].closed, false)
+
+  manager.scheduleCloseProfile(profile.id, { delayMs: 30_000, browserContext: headless.browserContext })
+  await timers.advance(29_999)
+  assert.deepEqual(manager.activeProfileIds(), ['profile-a'])
+  await timers.advance(1)
+  assert.deepEqual(manager.activeProfileIds(), [])
+  assert.equal(contexts[1].closed, true)
+})
+
 test('Chrome launch options preserve imported OS credential state without exposing remote debugging', () => {
   const options = chromeLaunchOptions()
   assert.equal(options.channel, 'chrome')
@@ -134,6 +228,21 @@ test('Chrome launch options preserve imported OS credential state without exposi
   assert.equal(options.args.some((arg) => /remote-debugging/i.test(arg)), false)
 })
 
+test('headless launch options keep Chromium sandbox enabled', () => {
+  const options = managedBrowserLaunchOptions({ id: 'chrome' }, 'headless')
+  assert.equal(options.channel, 'chrome')
+  assert.equal(options.headless, true)
+  assert.equal(options.chromiumSandbox, true)
+  assert.equal(options.args.some((arg) => /no-sandbox/i.test(arg)), false)
+})
+
+test('auto launch options use fresh headless mode with Chromium sandbox enabled', () => {
+  const options = managedBrowserLaunchOptions({ id: 'chrome' }, 'auto')
+  assert.equal(options.channel, 'chrome')
+  assert.equal(options.headless, true)
+  assert.equal(options.chromiumSandbox, true)
+})
+
 test('managed Brave launch uses the selected executable with the same visible persistent safety options', () => {
   const options = managedBrowserLaunchOptions({ id: 'brave', executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser' })
   assert.equal(options.channel, undefined)
@@ -144,6 +253,13 @@ test('managed Brave launch uses the selected executable with the same visible pe
   assert.equal(options.args.some((arg) => /remote-debugging/i.test(arg)), false)
 })
 
+test('browser visibility normalization accepts only public visibility policies', () => {
+  assert.equal(normalizeBrowserVisibility(' AUTO '), 'auto')
+  assert.equal(normalizeBrowserVisibility('headed'), 'headed')
+  assert.equal(normalizeBrowserVisibility('headless'), 'headless')
+  assert.equal(normalizeBrowserVisibility('hidden'), null)
+})
+
 class FakeContext extends EventEmitter {
   #pages = []
   #onClose
@@ -151,6 +267,7 @@ class FakeContext extends EventEmitter {
   constructor(onClose = () => undefined) {
     super()
     this.#onClose = onClose
+    this.closed = false
   }
 
   pages() {
@@ -164,6 +281,7 @@ class FakeContext extends EventEmitter {
   }
 
   async close() {
+    this.closed = true
     this.#onClose()
     this.emit('close')
   }
@@ -175,4 +293,38 @@ function delay(ms) {
 
 function matchCode(code) {
   return (error) => error instanceof TokenlessPlaywrightError && error.code === code
+}
+
+class FakeTimers {
+  constructor() {
+    this.now = 0
+    this.timers = []
+  }
+
+  setTimeout(callback, ms) {
+    const timer = {
+      dueAt: this.now + ms,
+      callback,
+      cleared: false,
+    }
+    this.timers.push(timer)
+    return timer
+  }
+
+  clearTimeout(timer) {
+    timer.cleared = true
+  }
+
+  async advance(ms) {
+    this.now += ms
+    while (true) {
+      const due = this.timers
+        .filter((timer) => !timer.cleared && timer.dueAt <= this.now)
+        .sort((left, right) => left.dueAt - right.dueAt)[0]
+      if (!due) return
+      due.cleared = true
+      due.callback()
+      await Promise.resolve()
+    }
+  }
 }

@@ -6,14 +6,18 @@ import { join } from 'node:path'
 import test from 'node:test'
 import {
   TokenlessPlaywrightError,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   VISIBLE_ACTIONS,
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
   VISIBLE_ACTION_PROTOCOL_VERSION,
+  createManagedPlaywrightJobRequest,
   createVisibleActionRequest,
   createProviderAdapterRegistry,
   assertProviderUrlAllowed,
   canonicalProviderTarget,
   listProviders,
+  validateManagedPlaywrightJobRequest,
   validateVisibleActionRequest,
 } from '../packages/cli/dist/src/playwright/index.js'
 
@@ -71,6 +75,39 @@ test('visible action validation is versioned, exact-key only, path-free in uploa
       }],
     },
   }), matchCode('invalid_visible_attachment'))
+})
+
+test('managed Playwright job contract emits v2 visibility and normalizes v1 as headed', () => {
+  const request = createManagedPlaywrightJobRequest({
+    provider: 'chatgpt',
+    browserVisibility: 'headless',
+    actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+  })
+
+  assert.equal(request.protocol, MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION)
+  assert.equal(request.browserVisibility, 'headless')
+  assert.throws(() => validateManagedPlaywrightJobRequest({
+    ...request,
+    browserVisibility: 'hidden',
+  }), matchCode('invalid_playwright_job_browser_visibility'))
+
+  const legacy = validateManagedPlaywrightJobRequest({
+    protocol: MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+    provider: 'chatgpt',
+    target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
+    taskId: null,
+    actions: request.actions,
+  })
+
+  assert.equal(legacy.protocol, MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION)
+  assert.equal(legacy.browserVisibility, 'headed')
+
+  const defaulted = createManagedPlaywrightJobRequest({
+    provider: 'chatgpt',
+    actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+  })
+
+  assert.equal(defaulted.browserVisibility, 'auto')
 })
 
 test('observed provider URLs ignore same-origin query state without relaxing requested targets', () => {

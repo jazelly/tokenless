@@ -13,6 +13,7 @@ export {
   getDaemonJob,
   listDaemonJobs,
   readDaemonToken,
+  resumeDaemonJob,
   waitDaemonJobResult,
 } from './daemon-client.js'
 
@@ -26,10 +27,18 @@ export type {
   DaemonJob,
   GetDaemonJobOptions,
   ListDaemonJobsOptions,
+  ResumeDaemonJobOptions,
   WaitDaemonJobResultOptions,
 } from './daemon-client.js'
 
 export type { TokenlessConfig } from './job-store.js'
+export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
+
+export {
+  BROWSER_VISIBILITIES,
+  normalizeBrowserVisibility,
+  resolveEffectiveBrowserVisibility,
+} from './browser-visibility.js'
 
 export {
   configPath,

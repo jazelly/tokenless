@@ -61,6 +61,18 @@ Verify either path with:
 tokenless doctor --json
 ```
 
+## Browser Visibility
+
+Tokenless stores browser visibility in config and uses `auto` when the setting is omitted. Set the default with `tokenless config --browser-visibility ...`, and pass the same flag to `tokenless run` only when one job needs a different visibility policy.
+
+- `auto` starts headless and opens a headed window only for user-resolvable blockers such as sign-in, CAPTCHA, MFA, consent, or confirmation.
+- `headed` always opens a visible browser window.
+- `headless` never opens a browser window. If a job parks for user action, resume the same job with `tokenless resume --job-id <job-id> --browser-visibility headed --json`; do not submit a replacement job.
+- `profiles open` is always headed.
+- `doctor` is read-only.
+- Chromium sandbox stays enabled in both modes.
+- Auto-escalated windows close after 30 seconds of idle time after the job completes; explicit headed and `profiles open` windows remain open.
+
 ## Upgrade
 
 ```bash

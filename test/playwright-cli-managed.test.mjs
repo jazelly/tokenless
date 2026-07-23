@@ -1552,6 +1552,32 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
     const added = JSON.parse(add.stdout)
     assert.equal(added.profile.slug, 'default')
     assert.equal(added.profile.isDefault, true)
+    const addWork = runCli([
+      'profiles',
+      'add',
+      '--profile',
+      'work',
+      '--label',
+      'Work visible profile',
+      '--home',
+      homeDir,
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(addWork.status, 0, addWork.stderr || addWork.stdout)
+    const workProfile = JSON.parse(addWork.stdout).profile
+    assert.equal(workProfile.slug, 'work')
+    assert.equal(workProfile.isDefault, false)
+
+    const visibilityConfig = runCli([
+      'config',
+      '--browser-visibility',
+      'headed',
+      '--home',
+      homeDir,
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(visibilityConfig.status, 0, visibilityConfig.stderr || visibilityConfig.stdout)
+    assert.equal(JSON.parse(visibilityConfig.stdout).config.browserVisibility, 'headed')
 
     const missing = runCli([
       'run',
@@ -1593,6 +1619,8 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
       daemonUrl,
       '--runner-heartbeat-timeout-ms',
       '3000',
+      '--browser-visibility',
+      'auto',
       '--no-wait',
       '--json',
     ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
@@ -1611,7 +1639,8 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
     assert.equal(daemonJob.action, 'visible_provider_actions')
     assert.equal(daemonJob.execution_backend, 'playwright', JSON.stringify(daemonJob))
     assert.equal(daemonJob.profile_id, added.profile.id)
-    assert.equal(daemonJob.request_json.protocol, 'tokenless.playwright.job.v1')
+    assert.equal(daemonJob.request_json.protocol, 'tokenless.playwright.job.v2')
+    assert.equal(daemonJob.request_json.browserVisibility, 'auto')
     assert.equal(daemonJob.request_json.taskId, 'cli-managed-task')
     assert.deepEqual(daemonJob.request_json.actions.map((action) => action.action), [
       'model.select',
@@ -1652,6 +1681,65 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
     assert.equal(statePayload.latest.profile.id, added.profile.id)
     assert.equal(statePayload.latest.status, 'succeeded')
     assert.match(JSON.stringify(statePayload.latest.result), /fake managed response for cli-managed-task/)
+
+    const workRun = runCli([
+      'run',
+      '--profile',
+      'work',
+      '--provider',
+      'chatgpt',
+      '--task-id',
+      'cli-managed-work-task',
+      '--prompt',
+      'hello managed playwright work profile',
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--runner-heartbeat-timeout-ms',
+      '3000',
+      '--no-wait',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(workRun.status, 0, workRun.stderr || workRun.stdout)
+    const workPayload = JSON.parse(workRun.stdout)
+    assert.equal(workPayload.profile.id, workProfile.id)
+    const workDaemonJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(workPayload.jobId)}`, homeDir)
+    assert.equal(workDaemonJob.request_json.browserVisibility, 'headed')
+    await completeAsInjectedRunner({
+      daemonUrl,
+      homeDir,
+      profileId: workProfile.id,
+    })
+    const workStateByJobId = runCli([
+      'state',
+      '--job-id',
+      workPayload.jobId,
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(workStateByJobId.status, 0, workStateByJobId.stderr || workStateByJobId.stdout)
+    const workStatePayload = JSON.parse(workStateByJobId.stdout)
+    assert.equal(workStatePayload.profile.slug, 'work')
+    assert.equal(workStatePayload.profile.id, workProfile.id)
+    assert.equal(workStatePayload.latest.profile.id, workProfile.id)
+    const workStateWrongProfile = runCli([
+      'state',
+      '--profile',
+      'default',
+      '--job-id',
+      workPayload.jobId,
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(workStateWrongProfile.status, 1, workStateWrongProfile.stderr || workStateWrongProfile.stdout)
+    assert.equal(JSON.parse(workStateWrongProfile.stdout).error.code, 'task_state_not_found')
 
     const taskState = runCli([
       'state',
@@ -1956,7 +2044,7 @@ async function completeAsInjectedRunner({ daemonUrl, homeDir, profileId, authSta
     body: {
       claim_token: job.claim_token,
       result_json: {
-        protocol: 'tokenless.playwright.job.v1',
+        protocol: 'tokenless.playwright.job.v2',
         provider: request.provider,
         responses,
       },

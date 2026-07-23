@@ -74,6 +74,10 @@ Report the handoff in the user's preferred language with exactly three short par
 
 Keep authentication data inside the managed profile. Never ask for a cookie, browser-storage value, password, hidden header, or other secret. Do not bypass login, CAPTCHA, copy consent, or provider confirmation.
 
+Use `profiles open` only for headed browser handoff. It always opens a visible browser window. If a job was parked from a headless run, tell the user to resume the same job with `tokenless resume --job-id <job-id> --browser-visibility headed --json` instead of starting over.
+
+`doctor` is read-only. It does not open or close browser windows, and Chromium sandbox stays enabled in both headless and headed modes.
+
 ## Upgrade
 
 When `tokenless upgrade` is available, it is the canonical upgrade path. The command itself is prompt-free and does not read answers from stdin. Agents must use its structured automation form instead of composing separate npm, skill, setup, runtime, or doctor commands:

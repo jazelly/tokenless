@@ -76,6 +76,22 @@ The shared Playwright action contract covers:
 
 Four-provider parity and end-to-end upload acceptance are still being completed. Unsupported or unverified actions fail explicitly.
 
+## Browser Visibility Policy
+
+Tokenless stores browser visibility in config and defaults omitted values to `auto`.
+
+```bash
+tokenless config --browser-visibility auto --json
+tokenless run --browser-visibility headed --json
+tokenless run --browser-visibility headless --json
+```
+
+- Use `tokenless config --browser-visibility ...` to set the persistent default. Pass the same flag to `tokenless run` only when a single job needs an explicit visibility intent.
+- `auto` starts headless and escalates to headed only for user-resolvable blockers such as sign-in, CAPTCHA, MFA, consent, or confirmation. Terminal errors do not open a visible window.
+- `headless` never opens a visible window. If the job parks waiting for user action, resume the same daemon job with `tokenless resume --job-id <job-id> --browser-visibility headed --json`; do not resubmit, replace, or change the job/task identity.
+- `profiles open` is always headed. `doctor` is read-only. Chromium sandbox stays enabled in both modes.
+- Auto-escalated windows close after 30 seconds of idle time after the job completes. Explicit headed and `profiles open` windows remain open.
+
 ## Managed Profiles
 
 A profile is one persistent local browser identity. One profile can hold sessions for all supported providers; use separate profiles for multiple accounts of the same provider.

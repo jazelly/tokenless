@@ -345,6 +345,27 @@ test('CLI config preserves Grok as a visible preferred provider', async () => {
   }
 })
 
+test('CLI config defaults and preserves browser visibility policy', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-visibility-config-'))
+  const { readTokenlessConfig, writeTokenlessConfig } = await importCli()
+  try {
+    assert.equal((await readTokenlessConfig(homeDir)).browserVisibility, 'auto')
+    const written = await writeTokenlessConfig({
+      homeDir,
+      browserVisibility: ' HEADLESS ',
+    })
+    assert.equal(written.browserVisibility, 'headless')
+    await writeTokenlessConfig({ homeDir, preferredProviders: ['chatgpt'] })
+    assert.equal((await readTokenlessConfig(homeDir)).browserVisibility, 'headless')
+    await assert.rejects(
+      () => writeTokenlessConfig({ homeDir, browserVisibility: 'hidden' }),
+      (error) => error?.code === 'tokenless_config_invalid'
+    )
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('file collection rejects lexical and symlink escapes from the canonical project root', {
   skip: process.platform === 'win32' && 'Creating symlinks may require Developer Mode on Windows.',
 }, async () => {
@@ -423,6 +444,7 @@ test('public CLI exports daemon/runtime APIs but not obsolete removed APIs', asy
     'readLiveBridgeMarker',
     'listDaemonJobs',
     'cancelDaemonJob',
+    'resumeDaemonJob',
     'providerWakeUrl',
   ]) {
     assert.equal(typeof exports[name], 'function', `${name} should be public`)

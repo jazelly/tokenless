@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { tokenlessError } from './errors.js'
+import type { BrowserVisibility } from '../browser-visibility.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331' as const
 const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 5_000
@@ -26,6 +27,8 @@ export type DaemonJob = {
 
 export type DaemonClaimedJob = DaemonJob & {
   claim_token: string
+  checkpoint_json: unknown | null
+  resume_json: unknown | null
 }
 
 export type DaemonClientOptions = {
@@ -80,6 +83,19 @@ export type CompleteDaemonJobOptions = ClaimLifecycleDaemonJobOptions & {
   error?: unknown
 }
 
+export type CheckpointDaemonJobOptions = ClaimLifecycleDaemonJobOptions & {
+  checkpoint: unknown
+}
+
+export type ParkDaemonJobOptions = ClaimLifecycleDaemonJobOptions & {
+  blocker: unknown
+  checkpoint: unknown
+}
+
+export type ResumeDaemonJobOptions = GetDaemonJobOptions & {
+  browserVisibility: Extract<BrowserVisibility, 'headed'>
+}
+
 export type CancelDaemonJobOptions = GetDaemonJobOptions & {
   reason?: unknown
 }
@@ -91,6 +107,9 @@ export type ManagedDaemonClient = {
   claimNextJob(options: ClaimNextDaemonJobOptions): Promise<{ job: DaemonClaimedJob | null }>
   markJobRunning(options: ClaimLifecycleDaemonJobOptions): Promise<DaemonJob>
   markJobWaitingForUser(options: WaitingForUserDaemonJobOptions): Promise<DaemonJob>
+  checkpointJob(options: CheckpointDaemonJobOptions): Promise<DaemonJob>
+  parkJob(options: ParkDaemonJobOptions): Promise<DaemonJob>
+  resumeJob(options: ResumeDaemonJobOptions): Promise<DaemonJob>
   renewJobClaim(options: ClaimLifecycleDaemonJobOptions): Promise<DaemonJob>
   completeJob(options: CompleteDaemonJobOptions): Promise<DaemonJob>
   cancelJob(options: CancelDaemonJobOptions): Promise<DaemonJob>
@@ -126,6 +145,9 @@ export function createDaemonClient(defaults: DaemonClientOptions = {}): ManagedD
     claimNextJob: (options) => claimNextDaemonJob({ ...defaults, ...options }),
     markJobRunning: (options) => markDaemonJobRunning({ ...defaults, ...options }),
     markJobWaitingForUser: (options) => markDaemonJobWaitingForUser({ ...defaults, ...options }),
+    checkpointJob: (options) => checkpointDaemonJob({ ...defaults, ...options }),
+    parkJob: (options) => parkDaemonJob({ ...defaults, ...options }),
+    resumeJob: (options) => resumeDaemonJob({ ...defaults, ...options }),
     renewJobClaim: (options) => renewDaemonJobClaim({ ...defaults, ...options }),
     completeJob: (options) => completeDaemonJob({ ...defaults, ...options }),
     cancelJob: (options) => cancelDaemonJob({ ...defaults, ...options }),
@@ -219,6 +241,34 @@ export async function markDaemonJobWaitingForUser({ jobId, claimToken, blocker, 
     ...options,
     path: `/control/jobs/${encodeURIComponent(jobId)}/waiting-for-user`,
     body: { claim_token: claimToken, blocker_json: blocker },
+  })
+}
+
+export async function checkpointDaemonJob({ jobId, claimToken, checkpoint, ...options }: CheckpointDaemonJobOptions) {
+  return daemonRequest<DaemonJob>({
+    ...options,
+    path: `/control/jobs/${encodeURIComponent(jobId)}/checkpoint`,
+    body: { claim_token: claimToken, checkpoint_json: checkpoint },
+  })
+}
+
+export async function parkDaemonJob({ jobId, claimToken, blocker, checkpoint, ...options }: ParkDaemonJobOptions) {
+  return daemonRequest<DaemonJob>({
+    ...options,
+    path: `/control/jobs/${encodeURIComponent(jobId)}/park`,
+    body: {
+      claim_token: claimToken,
+      blocker_json: blocker,
+      checkpoint_json: checkpoint,
+    },
+  })
+}
+
+export async function resumeDaemonJob({ jobId, browserVisibility, ...options }: ResumeDaemonJobOptions) {
+  return daemonRequest<DaemonJob>({
+    ...options,
+    path: `/jobs/${encodeURIComponent(jobId)}/resume`,
+    body: { browser_visibility: browserVisibility },
   })
 }
 
