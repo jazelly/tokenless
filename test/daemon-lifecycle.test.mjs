@@ -43,7 +43,7 @@ test('ensureDaemonReady installs the packaged daemon and reports the running ver
   }
 })
 
-test('ensureDaemonReady refuses to restart a stale daemon without process correlation', async () => {
+test('ensureDaemonReady rejects an invalid-version daemon without stopping it', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-foreign-')))
   const token = 'foreign-control-token'
   fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${token}\n`, { mode: 0o600 })
@@ -51,7 +51,7 @@ test('ensureDaemonReady refuses to restart a stale daemon without process correl
   const server = await startForeignReadyServer({
     homeDir,
     token,
-    version: '0.0.0-stale',
+    version: 'not-semver',
     includeProcessProof: false,
     onReady: () => { readyRequests += 1 },
   })
@@ -59,7 +59,7 @@ test('ensureDaemonReady refuses to restart a stale daemon without process correl
     const runtime = await importCli()
     await assert.rejects(
       runtime.ensureDaemonReady({ homeDir, daemonUrl: server.url, timeoutMs: 1000 }),
-      (error) => error.code === 'daemon_restart_unsafe' && /will not stop it automatically/.test(error.message)
+      (error) => error.code === 'daemon_version_mismatch' && /left the daemon running/.test(error.message)
     )
     assert.equal(server.listening(), true)
     assert.equal(readyRequests > 0, true)
@@ -69,29 +69,32 @@ test('ensureDaemonReady refuses to restart a stale daemon without process correl
   }
 })
 
-test('ensureDaemonReady restarts a process-correlated stale daemon after refreshing runtime', async () => {
+test('ensureDaemonReady rejects a process-correlated different-major daemon without replacing it', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-safe-restart-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const token = 'safe-restart-control-token'
   fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${token}\n`, { mode: 0o600 })
-  const stale = await startChildStaleDaemon({ homeDir, token, daemonUrl, includeProcessProof: true })
-  let restartedPid
+  const stale = await startChildStaleDaemon({
+    homeDir,
+    token,
+    daemonUrl,
+    version: differentMajorVersion(packageVersion),
+    includeProcessProof: true,
+  })
   try {
     const runtime = await importCli()
-    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    restartedPid = ready.pid
-    assert.equal(ready.started, true)
-    assert.equal(ready.body.version, packageVersion)
-    assert.notEqual(restartedPid, stale.pid)
-    assert.equal(await processExited(stale.child), true)
+    await assert.rejects(
+      runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 }),
+      (error) => error.code === 'daemon_version_mismatch' && /tokenless daemon stop/.test(error.message)
+    )
+    assert.equal(await processExited(stale.child), false)
   } finally {
-    if (restartedPid) await stopPid(restartedPid)
     stale.child.kill('SIGTERM')
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('ensureDaemonReady restarts a same-version daemon whose process proof binds a different binary hash', async () => {
+test('ensureDaemonReady reuses a same-major daemon even when exact version and hash differ', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-same-version-hash-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const token = 'same-version-hash-control-token'
@@ -100,40 +103,27 @@ test('ensureDaemonReady restarts a same-version daemon whose process proof binds
     homeDir,
     token,
     daemonUrl,
-    version: packageVersion,
+    version: sameMajorDifferentVersion(packageVersion),
     includeProcessProof: true,
     runningBinaryHash: '0'.repeat(64),
   })
-  let restartedPid
   try {
     const runtime = await importCli()
     const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    restartedPid = ready.pid
-    const inspection = await runtime.inspectManagedRuntime(homeDir)
-    assert.equal(ready.started, true)
-    assert.equal(ready.body.version, packageVersion)
-    assert.equal(ready.body.running_binary_hash, inspection.packaged.hash)
-    assert.notEqual(restartedPid, stale.pid)
-    assert.equal(await processExited(stale.child), true)
+    assert.equal(ready.started, false)
+    assert.equal(ready.pid, stale.pid)
+    assert.equal(ready.body.version, sameMajorDifferentVersion(packageVersion))
+    assert.equal(ready.body.running_binary_hash, '0'.repeat(64))
+    assert.equal(await processExited(stale.child), false)
   } finally {
-    if (restartedPid) await stopPid(restartedPid)
     stale.child.kill('SIGTERM')
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('concurrent ensureDaemonReady serializes stale daemon stop, refresh, and start under the lifecycle lock', async () => {
+test('concurrent ensureDaemonReady serializes one fresh daemon start under the lifecycle lock', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-concurrent-lock-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
-  const token = 'concurrent-lifecycle-control-token'
-  fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${token}\n`, { mode: 0o600 })
-  const stale = await startChildStaleDaemon({
-    homeDir,
-    token,
-    daemonUrl,
-    includeProcessProof: true,
-    runningBinaryHash: '1'.repeat(64),
-  })
   const runtime = await importCli()
   const lockPath = path.join(homeDir, '.daemon-start.lock')
   let startedPid
@@ -147,11 +137,9 @@ test('concurrent ensureDaemonReady serializes stale daemon stop, refresh, and st
     startedPid = started[0].pid
     assert.equal(results.every((result) => result.body.version === packageVersion), true)
     assert.equal(new Set(results.map((result) => result.pid)).size, 1)
-    assert.equal(await processExited(stale.child), true)
     assert.equal(fs.existsSync(lockPath), false)
   } finally {
     if (startedPid) await stopPid(startedPid)
-    stale.child.kill('SIGTERM')
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -231,7 +219,39 @@ test('doctor is read-only for an uninitialized Tokenless home', () => {
   }
 })
 
-test('doctor reports daemon mismatch for an old running daemon instead of ok=true', async () => {
+test('doctor accepts a same-major running daemon with a different version and hash', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-same-major-daemon-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const token = 'doctor-same-major-daemon-control-token'
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${token}\n`, { mode: 0o600 })
+  const server = await startChildStaleDaemon({
+    homeDir,
+    token,
+    daemonUrl,
+    version: sameMajorDifferentVersion(packageVersion),
+    includeProcessProof: true,
+    runningBinaryHash: '2'.repeat(64),
+  })
+  try {
+    const result = runCli(['doctor', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    assert.equal(result.status, 1)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.ok, false)
+    assert.equal(payload.checks.daemon.ok, true)
+    assert.equal(payload.checks.daemon.ready, true)
+    assert.equal(payload.checks.daemon.versionCompatible, true)
+    assert.equal(payload.checks.daemon.expectedVersion, packageVersion)
+    assert.equal(payload.checks.daemon.runningVersion, sameMajorDifferentVersion(packageVersion))
+    assert.equal(payload.checks.daemon.runningHash, '2'.repeat(64))
+    assert.match(payload.checks.daemon.packagedHash, /^[0-9a-f]{64}$/)
+  } finally {
+    server.child.kill('SIGTERM')
+    await processExited(server.child)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('doctor reports daemon mismatch for a different-major running daemon instead of ok=true', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-old-daemon-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const token = 'doctor-old-daemon-control-token'
@@ -240,7 +260,7 @@ test('doctor reports daemon mismatch for an old running daemon instead of ok=tru
     homeDir,
     token,
     daemonUrl,
-    version: '0.1.2',
+    version: differentMajorVersion(packageVersion),
     includeProcessProof: true,
     runningBinaryHash: '2'.repeat(64),
   })
@@ -251,13 +271,133 @@ test('doctor reports daemon mismatch for an old running daemon instead of ok=tru
     assert.equal(payload.checks.daemon.ok, false)
     assert.equal(payload.checks.daemon.ready, true)
     assert.equal(payload.checks.daemon.code, 'daemon_version_mismatch')
+    assert.equal(payload.checks.daemon.versionCompatible, false)
     assert.equal(payload.checks.daemon.expectedVersion, packageVersion)
-    assert.equal(payload.checks.daemon.runningVersion, '0.1.2')
+    assert.equal(payload.checks.daemon.runningVersion, differentMajorVersion(packageVersion))
     assert.equal(payload.checks.daemon.runningHash, '2'.repeat(64))
     assert.match(payload.checks.daemon.packagedHash, /^[0-9a-f]{64}$/)
     assert.equal(payload.checks.daemon.daemonLogPath, path.join(homeDir, 'daemon.log'))
     assert.equal(payload.checks.daemon.daemonLogExists, false)
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.log')), false)
+  } finally {
+    server.child.kill('SIGTERM')
+    await processExited(server.child)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('daemon stop is idempotent when no daemon is listening', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-not-running-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  try {
+    const result = runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.status, 'not_running')
+    assert.equal(payload.url, daemonUrl)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('daemon stop uses authenticated self-shutdown for a verified daemon', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-self-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  let pid
+  try {
+    const runtime = await importCli()
+    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
+    pid = ready.pid
+    const result = runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.status, 'stopped')
+    assert.equal(payload.pid, pid)
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.pid.json')), false)
+    assert.equal(await pidExited(pid), true)
+    pid = undefined
+  } finally {
+    if (pid) await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('daemon stop refuses a foreign listener without sending the bearer token', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-foreign-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const token = 'foreign-stop-control-token'
+  const seenAuthorizations = []
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${token}\n`, { mode: 0o600 })
+  const server = http.createServer((request, response) => {
+    seenAuthorizations.push(request.headers.authorization ?? null)
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ ok: true, service: 'foreign' }))
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    const parsed = new URL(daemonUrl)
+    server.listen(Number(parsed.port), parsed.hostname, resolve)
+  })
+  try {
+    const result = runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    assert.equal(result.status, 1)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.error.code, 'daemon_stop_identity_unverified')
+    assert.match(payload.error.message, /Tokenless did not send its control token or stop any process/)
+    assert.equal(server.listening, true)
+    assert.equal(seenAuthorizations.includes(`Bearer ${token}`), false)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('daemon stop refuses a verified daemon without self-shutdown support', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-unsupported-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const token = 'unsupported-shutdown-control-token'
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${token}\n`, { mode: 0o600 })
+  const server = await startChildStaleDaemon({
+    homeDir,
+    token,
+    daemonUrl,
+    version: sameMajorDifferentVersion(packageVersion),
+    includeProcessProof: true,
+  })
+  try {
+    const result = runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    assert.equal(result.status, 1)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.error.code, 'daemon_shutdown_unsupported')
+    assert.equal(await processExited(server.child), false)
+  } finally {
+    server.child.kill('SIGTERM')
+    await processExited(server.child)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('daemon stop reports unconfirmed shutdown when a verified listener stays alive', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-unconfirmed-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const token = 'unconfirmed-shutdown-control-token'
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${token}\n`, { mode: 0o600 })
+  const server = await startChildStaleDaemon({
+    homeDir,
+    token,
+    daemonUrl,
+    version: sameMajorDifferentVersion(packageVersion),
+    includeProcessProof: true,
+    shutdownControl: true,
+  })
+  try {
+    const result = runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--timeout-ms', '300', '--json'])
+    assert.equal(result.status, 1)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.error.code, 'daemon_shutdown_unconfirmed')
+    assert.equal(await processExited(server.child), false)
   } finally {
     server.child.kill('SIGTERM')
     await processExited(server.child)
@@ -319,7 +459,7 @@ test('setup aborts on local runtime failure before provider readiness jobs', asy
     homeDir,
     token,
     daemonUrl: `http://127.0.0.1:${await freePort()}`,
-    version: '0.0.0-stale',
+    version: 'not-semver',
     includeProcessProof: false,
   })
   try {
@@ -337,7 +477,8 @@ test('setup aborts on local runtime failure before provider readiness jobs', asy
     })
     assert.equal(result.status, 1, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
-    assert.equal(payload.error.code, 'daemon_restart_unsafe')
+    assert.equal(payload.error.code, 'daemon_version_mismatch')
+    assert.match(payload.error.message, /left the daemon running/)
     assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
     assert.equal(server.jobRequests(), 0)
   } finally {
@@ -472,6 +613,7 @@ async function startChildStaleDaemon({
   includeProcessProof,
   runningBinaryHash = 'f'.repeat(64),
   version = '0.0.0-stale',
+  shutdownControl = false,
 }) {
   const entry = path.join(homeDir, 'stale-daemon.mjs')
   const jobRequestsPath = path.join(homeDir, 'stale-daemon-job-requests.txt')
@@ -486,10 +628,21 @@ const daemonUrl = new URL(${JSON.stringify(daemonUrl)})
 const instanceId = 'BBBBBBBBBBBBBBBBBBBBBB'
 const includeProcessProof = ${JSON.stringify(includeProcessProof)}
 const runningBinaryHash = ${JSON.stringify(runningBinaryHash)}
+const shutdownControl = ${JSON.stringify(shutdownControl)}
 const jobRequestsPath = ${JSON.stringify(jobRequestsPath)}
 const server = http.createServer((request, response) => {
   if (request.url?.startsWith('/jobs')) {
     fs.appendFileSync(jobRequestsPath, '1\\n')
+  }
+  if (request.url?.startsWith('/control/shutdown') && shutdownControl) {
+    if (request.headers.authorization !== \`Bearer \${token}\`) {
+      response.writeHead(403, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: 'forbidden' }))
+      return
+    }
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ ok: true, status: 'shutting_down', pid: process.pid }))
+    return
   }
   if (!request.url?.startsWith('/ready')) {
     response.writeHead(404, { 'content-type': 'application/json' })
@@ -750,6 +903,20 @@ function pidIsAlive(pid) {
 
 function fileHash(file) {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+}
+
+function sameMajorDifferentVersion(version) {
+  const [major, minor] = version.split('.').map((part) => Number(part))
+  assert.equal(Number.isSafeInteger(major), true)
+  assert.equal(Number.isSafeInteger(minor), true)
+  const nextMinor = minor === 2 ? 3 : 2
+  return `${major}.${nextMinor}.0`
+}
+
+function differentMajorVersion(version) {
+  const [major] = version.split('.').map((part) => Number(part))
+  assert.equal(Number.isSafeInteger(major), true)
+  return `${major + 1}.0.0`
 }
 
 function snapshotTree(rootDir) {

@@ -42,6 +42,78 @@ test('CLI reports the installed package version through standard version flags',
   }
 })
 
+test('CLI help separates canonical and advanced commands into described workflow groups', () => {
+  const result = spawnSync(process.execPath, [cliEntry, 'help'], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  assert.equal(result.stdout, '')
+
+  const advancedHeading = '\nAdvanced Usage:\n'
+  const advancedIndex = result.stderr.indexOf(advancedHeading)
+  assert.ok(advancedIndex > 0, 'advanced usage heading must follow canonical usage')
+  const canonicalUsage = result.stderr.slice(0, advancedIndex)
+  const advancedUsage = result.stderr.slice(advancedIndex + 1)
+  const expectedSections = ['Run', 'Setup', 'Profile', 'Provider', 'Other']
+  const sectionNames = (text) => [...text.matchAll(/^  ([^:\n]+):$/gm)].map((match) => match[1])
+
+  assert.match(canonicalUsage, /^Usage:\n  Canonical commands for everyday workflows\./)
+  assert.match(advancedUsage, /^Advanced Usage:\n  Less common commands for detailed control and maintenance\./)
+  assert.deepEqual(sectionNames(canonicalUsage), expectedSections)
+  assert.deepEqual(sectionNames(advancedUsage), expectedSections)
+  for (const description of [
+    'Send work through a visible AI provider.',
+    'Get Tokenless ready for first use.',
+    'Manage browser profiles and their sign-in sessions.',
+    'Manage AI providers and their visible controls.',
+    'Use miscellaneous maintenance and help commands.',
+    'Customize, inspect, resume, or cancel jobs.',
+    'Automate setup, profile import, or profile re-import.',
+    'Discover, import, reset, or remove browser profiles.',
+    'Use low-level actions and provider-specific controls.',
+    'Inspect or update persistent Tokenless configuration.',
+  ]) {
+    assert.match(result.stderr, new RegExp(`^    ${description.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'))
+  }
+
+  assert.match(canonicalUsage, /tokenless run --provider/)
+  assert.match(canonicalUsage, /tokenless setup/)
+  assert.match(canonicalUsage, /tokenless profiles list/)
+  assert.match(canonicalUsage, /tokenless provider-status/)
+  assert.match(canonicalUsage, /tokenless doctor/)
+  assert.match(canonicalUsage, /tokenless upgrade/)
+  assert.match(canonicalUsage, /tokenless help/)
+  assert.match(canonicalUsage, /tokenless daemon stop \[--json\]/)
+  assert.doesNotMatch(result.stderr, /^  Daemon:$/m)
+  assert.doesNotMatch(canonicalUsage, /tokenless (provider-action|state|resume|cancel|snapshot-dom)/)
+  assert.doesNotMatch(canonicalUsage, /tokenless profiles (add|clear|reset|remove)/)
+  assert.match(advancedUsage, /tokenless provider-action/)
+  assert.match(advancedUsage, /tokenless state/)
+  assert.match(advancedUsage, /tokenless profiles remove/)
+  assert.match(advancedUsage, /tokenless config/)
+})
+
+test('daemon stop accepts only daemon stop options and positive integer timeout', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-args-'))
+  try {
+    for (const args of [
+      ['daemon', 'stop', '--home', homeDir, '--provider', 'chatgpt', '--json'],
+      ['daemon', 'stop', '--home', homeDir, '--timeout-ms', '1.5', '--json'],
+    ]) {
+      const result = spawnSync(process.execPath, [cliEntry, ...args], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+      assert.equal(result.status, 1)
+      const payload = JSON.parse(result.stdout)
+      assert.equal(payload.ok, false)
+    }
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('universal CLI package contains JS only and declares exact platform runtime optionals', () => {
   const pkg = readJson('packages/cli/package.json')
   assert.equal(pkg.dependencies['@tokenless/playwright'], undefined)

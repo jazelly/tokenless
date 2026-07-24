@@ -27,6 +27,7 @@ use std::io::{ErrorKind, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use tokio::net::TcpListener;
+use tokio::sync::watch;
 use uuid::Uuid;
 
 pub mod config;
@@ -1721,6 +1722,7 @@ impl JobStore {
 #[derive(Debug, Clone)]
 struct HttpState {
     store: JobStore,
+    shutdown: Option<watch::Sender<bool>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1840,6 +1842,13 @@ struct ClaimNextResponse {
     job: Option<JobWithClaimToken>,
 }
 
+#[derive(Debug, Serialize)]
+struct ShutdownResponse {
+    ok: bool,
+    status: &'static str,
+    pid: u32,
+}
+
 #[derive(Debug)]
 struct ApiError(DaemonError);
 
@@ -1882,7 +1891,11 @@ impl IntoResponse for ApiError {
 type ApiResult<T> = std::result::Result<Json<T>, ApiError>;
 
 pub fn http_router(store: JobStore) -> Router {
-    Router::new()
+    http_router_with_shutdown(store, None)
+}
+
+fn http_router_with_shutdown(store: JobStore, shutdown: Option<watch::Sender<bool>>) -> Router {
+    let mut router = Router::new()
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
         .route("/jobs", post(create_job_handler).get(list_jobs_handler))
@@ -1902,8 +1915,11 @@ pub fn http_router(store: JobStore) -> Router {
             post(mark_waiting_for_user_handler),
         )
         .route("/control/jobs/:job_id/renew", post(renew_claim_handler))
-        .route("/control/jobs/:job_id/cancel", post(cancel_job_handler))
-        .with_state(HttpState { store })
+        .route("/control/jobs/:job_id/cancel", post(cancel_job_handler));
+    if shutdown.is_some() {
+        router = router.route("/control/shutdown", post(shutdown_handler));
+    }
+    router.with_state(HttpState { store, shutdown })
 }
 
 pub async fn serve_http(store: JobStore, host: IpAddr, port: u16) -> Result<()> {
@@ -1922,9 +1938,20 @@ pub fn validate_loopback_host(host: IpAddr) -> Result<()> {
 
 pub async fn serve_http_listener(store: JobStore, listener: TcpListener) -> Result<()> {
     freeze_daemon_self_sha256()?;
-    axum::serve(listener, http_router(store))
-        .await
-        .map_err(DaemonError::Io)
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    axum::serve(
+        listener,
+        http_router_with_shutdown(store, Some(shutdown_tx)),
+    )
+    .with_graceful_shutdown(async move {
+        while shutdown_rx.changed().await.is_ok() {
+            if *shutdown_rx.borrow() {
+                break;
+            }
+        }
+    })
+    .await
+    .map_err(DaemonError::Io)
 }
 
 async fn health_handler(State(state): State<HttpState>) -> ApiResult<HealthResponse> {
@@ -2213,6 +2240,24 @@ async fn cancel_job_handler(
             .cancel_job(&job_id, payload.reason)?
             .public_view(),
     ))
+}
+
+async fn shutdown_handler(
+    State(state): State<HttpState>,
+    headers: HeaderMap,
+) -> ApiResult<ShutdownResponse> {
+    require_control_auth(&state.store, &headers)?;
+    let shutdown = state.shutdown.ok_or_else(|| {
+        DaemonError::InvalidInput("shutdown control is unavailable".to_owned())
+    })?;
+    shutdown
+        .send(true)
+        .map_err(|_| DaemonError::InvalidInput("shutdown control is unavailable".to_owned()))?;
+    Ok(Json(ShutdownResponse {
+        ok: true,
+        status: "shutting_down",
+        pid: std::process::id(),
+    }))
 }
 
 fn json_rejection_to_api_error(error: JsonRejection) -> ApiError {
@@ -4918,10 +4963,86 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(renew.status(), StatusCode::UNAUTHORIZED);
+        let shutdown = client
+            .post(format!("{base_url}/control/shutdown"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(shutdown.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
             store.get_job(&job.job_id).unwrap().status,
             JobStatus::Queued
         );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_control_shutdown_requires_auth_and_stops_server_gracefully() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let control_token = store.control_token().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { serve_http_listener(store, listener).await });
+        let client = reqwest::Client::new();
+
+        let unauthorized = client
+            .post(format!("{base_url}/control/shutdown"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let rejected = client
+            .post(format!("{base_url}/control/shutdown"))
+            .bearer_auth("wrong-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+
+        let accepted: Value = client
+            .post(format!("{base_url}/control/shutdown"))
+            .bearer_auth(control_token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(accepted["ok"], true);
+        assert_eq!(accepted["status"], "shutting_down");
+        assert_eq!(accepted["pid"], std::process::id());
+
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(joined.is_ok());
+    }
+
+    #[tokio::test]
+    async fn http_router_without_shutdown_does_not_mount_shutdown_control() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let control_token = store.control_token().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, http_router(store)).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+
+        let shutdown = client
+            .post(format!("{base_url}/control/shutdown"))
+            .bearer_auth(control_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(shutdown.status(), StatusCode::NOT_FOUND);
 
         server.abort();
     }

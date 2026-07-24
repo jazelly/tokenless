@@ -86,6 +86,16 @@ export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
   onStatus?: ((event: Record<string, unknown>) => unknown) | undefined
 }
 
+export type ShutdownDaemonOptions = DaemonClientOptions & {
+  token?: string | undefined
+}
+
+export type ShutdownDaemonResponse = {
+  ok: boolean
+  status: 'shutting_down'
+  pid?: number | undefined
+}
+
 type DaemonError = Error & {
   code?: string
   retryable?: boolean
@@ -274,6 +284,27 @@ export async function cancelDaemonJob({
     path: `/control/jobs/${encodeURIComponent(jobId)}/cancel`,
     ...(reason === undefined ? {} : { body: { reason } }),
     token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function shutdownDaemon({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  token,
+}: ShutdownDaemonOptions = {}) {
+  const controlToken = token ?? await authenticatedDaemonToken({
+    daemonUrl: explicitDaemonUrl,
+    homeDir,
+    requestTimeoutMs,
+  })
+  return daemonRequest<ShutdownDaemonResponse>({
+    daemonUrl: explicitDaemonUrl,
+    path: '/control/shutdown',
+    token: controlToken,
     timeoutMs: requestTimeoutMs,
     signal,
   })
