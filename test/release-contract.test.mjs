@@ -5,6 +5,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { extractChangelogSection } from '../scripts/release/extract-changelog-section.mjs'
 import { updateCargoPackageVersion, updatePackageLock } from '../scripts/release/version.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -63,6 +64,14 @@ test('npm publishing is marker-gated, platform-complete, and cleans up in a seco
   assert.doesNotMatch(publish, /NPM_TOKEN|_authToken|Configure npm token fallback/)
   assert.match(publish, /\.changeset\/publish-pending\.json/)
   assert.match(publish, /needs: \[prepare, publish-native\]/)
+  assert.match(publish, /create-github-release:\n\s+needs: \[prepare, publish-cli\]/)
+  assert.match(publish, /node scripts\/release\/extract-changelog-section\.mjs "\$VERSION" \/tmp\/tokenless-release-notes\.md/)
+  assert.match(publish, /TAG="v\$VERSION"/)
+  assert.match(publish, /gh release view "\$TAG"/)
+  assert.match(publish, /Release \$TAG already exists; leaving it unchanged\./)
+  assert.match(publish, /gh release create "\$TAG"[\s\S]*--title "tokenless \$TAG"[\s\S]*--notes-file \/tmp\/tokenless-release-notes\.md/)
+  assert.doesNotMatch(publish, /gh release (?:upload|edit)/)
+  assert.match(publish, /clear-pending-marker:\n\s+needs: \[prepare, create-github-release\]/)
   assert.match(publish, /rm package-lock\.json/)
   assert.match(publish, /npm install --package-lock-only --ignore-scripts/)
   assert.match(publish, /git rm \.changeset\/publish-pending\.json/)
@@ -76,6 +85,44 @@ test('npm publishing is marker-gated, platform-complete, and cleans up in a seco
   ]) {
     assert.match(publish, new RegExp(`platform: ${platform}[\\s\\S]*arch: ${arch}`))
   }
+})
+
+test('GitHub release notes come from the matching persisted CLI changelog section', () => {
+  const changelog = readText('packages/cli/CHANGELOG.md')
+  const section = extractChangelogSection(changelog, '0.3.0')
+  assert.equal(section, `## 0.3.0
+
+### Minor Changes
+
+- 462123b: Add browser visibility policy support to Tokenless config and managed Playwright job requests, including durable resume after a headless job parks for user handoff.
+
+### Patch Changes
+
+- 6d52df5: Ship the current Tokenless reliability release as one patch:
+
+  - Archive the browser extension and Native Messaging host under \`legacy/\`, leaving the managed Playwright daemon as the active runtime.
+  - Remove the experimental direct runtime, direct broker, account/project routing commands, direct public exports, and direct-only documentation so managed Playwright through the authenticated local daemon is the only execution path.
+  - Provision and verify the local Rust daemon before provider sign-in, restart only process-correlated stale daemons, and keep doctor diagnostics read-only.
+  - Add prompt-free \`tokenless upgrade\` with concise human progress and structured \`--json\` output to update the global CLI, refresh Tokenless agent skills, reconcile the packaged daemon through the verified new CLI, and report its final doctor result.
+  - Keep animated setup progress stable on one terminal line, including in narrow and hosted terminals.
+  - Make setup check every supported visible provider, preserve ChatGPT as the default run provider, reject obsolete setup-only provider filters, and document the supported browser-profile import scope.
+
+- 08000f1: Enable Chromium sandboxing for managed visible browser sessions so Chrome no longer launches with the unsupported \`--no-sandbox\` flag.
+`)
+})
+
+test('GitHub release notes extraction fails when the version is missing', () => {
+  assert.throws(
+    () => extractChangelogSection('# tokenless\n\n## 0.3.0\n\n- Released.\n', '9.9.9'),
+    /Could not find exactly one changelog section for version 9\.9\.9\./,
+  )
+})
+
+test('GitHub release notes extraction fails when the version appears twice', () => {
+  assert.throws(
+    () => extractChangelogSection('# tokenless\n\n## 0.3.0\n\n- First.\n\n## 0.3.0\n\n- Second.\n', '0.3.0'),
+    /Could not find exactly one changelog section for version 0\.3\.0\./,
+  )
 })
 
 test('npm publisher invokes Windows npm through a shell', () => {

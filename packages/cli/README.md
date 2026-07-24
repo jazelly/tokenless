@@ -92,6 +92,18 @@ tokenless run --browser-visibility headless --json
 - `profiles open` is always headed. `doctor` is read-only. Chromium sandbox stays enabled in both modes.
 - Auto-escalated windows close after 30 seconds of idle time after the job completes. Explicit headed and `profiles open` windows remain open.
 
+## Daemon Lifecycle
+
+The CLI reuses an authenticated running daemon when its semantic-version major matches the CLI, even when their minor or patch versions differ. An invalid or different-major daemon is left running and reported as incompatible.
+
+Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
+
+```bash
+tokenless daemon stop --json
+```
+
+The command verifies the daemon identity before sending the local control token and never kills a process merely because it occupies the configured loopback port. If the listener is foreign, cannot be verified, or predates graceful shutdown support, Tokenless reports that manual action is required. The daemon binds the exact configured port and does not choose a fallback when that port is occupied.
+
 ## Managed Profiles
 
 A profile is one persistent local browser identity. One profile can hold sessions for all supported providers; use separate profiles for multiple accounts of the same provider.

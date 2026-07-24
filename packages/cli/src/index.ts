@@ -14,6 +14,7 @@ export {
   listDaemonJobs,
   readDaemonToken,
   resumeDaemonJob,
+  shutdownDaemon,
   waitDaemonJobResult,
 } from './daemon-client.js'
 
@@ -28,6 +29,8 @@ export type {
   GetDaemonJobOptions,
   ListDaemonJobsOptions,
   ResumeDaemonJobOptions,
+  ShutdownDaemonOptions,
+  ShutdownDaemonResponse,
   WaitDaemonJobResultOptions,
 } from './daemon-client.js'
 
@@ -81,6 +84,8 @@ export {
   refreshInstalledManagedRuntime,
   resolveChromiumBrowser,
   resolveDaemonBinary,
+  semanticVersionMajor,
+  stopDaemon,
   waitForExtensionBridge,
   windowsNativeHostRegistryCommands,
 } from './runtime.js'
@@ -123,6 +128,7 @@ export type {
   EnsureDaemonOptions,
   InstallRustRuntimeOptions,
   ManagedRuntimeInspection,
+  StopDaemonResult,
 } from './runtime.js'
 
 const DEFAULT_MAX_FILE_BYTES = 24_000

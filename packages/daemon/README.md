@@ -51,6 +51,8 @@ cargo run --manifest-path packages/daemon/Cargo.toml --bin tokenless-daemon -- \
 The daemon binds to `127.0.0.1:7331` by default.
 It rejects non-loopback bind hosts such as `0.0.0.0` by default because the
 HTTP API is a local control plane.
+The daemon binds the exact configured/default port. If that port is unavailable,
+startup fails instead of choosing a fallback port.
 
 Available JSON endpoints:
 
@@ -63,6 +65,7 @@ Available JSON endpoints:
 - `POST /jobs/{job_id}/complete`
 - `POST /control/jobs/claim-next`
 - `POST /control/jobs/{job_id}/cancel`
+- `POST /control/shutdown`
 
 `GET /health` is an unauthenticated diagnostic and must not be trusted as daemon
 identity. `GET /ready` requires a canonical unpadded base64url challenge that
@@ -108,6 +111,9 @@ claimed job with `claim_token`. When no queued job matches, the daemon returns
 Missing bearer auth returns `401` JSON. Invalid bearer auth returns `403` JSON.
 Cancellation accepts an empty body or `{ "reason": <structured JSON> }` and
 atomically transitions a queued, claimed, or running job to `canceled`.
+`POST /control/shutdown` requires the same bearer auth and returns
+`{ "ok": true, "status": "shutting_down", "pid": <pid> }` before the Axum server
+gracefully exits. Clients should use this endpoint instead of killing a PID.
 
 Security note: this remains a loopback-only local control plane. The bearer
 token protects all job data and mutations from unrelated local processes; it

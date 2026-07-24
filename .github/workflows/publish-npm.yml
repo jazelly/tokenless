@@ -92,8 +92,36 @@ jobs:
       - name: Publish universal CLI after every native runtime
         run: node scripts/release/publish-package.mjs packages/cli
 
-  clear-pending-marker:
+  create-github-release:
     needs: [prepare, publish-cli]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Extract release notes from persisted changelog
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/release/extract-changelog-section.mjs "$VERSION" /tmp/tokenless-release-notes.md
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it unchanged."
+          else
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "tokenless $TAG" \
+              --notes-file /tmp/tokenless-release-notes.md
+          fi
+
+  clear-pending-marker:
+    needs: [prepare, create-github-release]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     steps:
