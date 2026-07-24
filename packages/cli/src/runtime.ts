@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -12,7 +13,7 @@ import {
   snapshotsDir,
   tokenlessHome,
 } from './job-store.js'
-import { daemonUrl as normalizeDaemonUrl, readDaemonToken } from './daemon-client.js'
+import { daemonUrl as normalizeDaemonUrl, readDaemonToken, shutdownDaemon } from './daemon-client.js'
 import { resolveNativePlatformPackage, tokenlessPackageVersion } from './platform-package.js'
 
 export const EXTENSION_BRIDGE_PROTOCOL = 'tokenless.extension-bridge-state.v1'
@@ -31,6 +32,8 @@ const NATIVE_HOST_BINARY_NAME = 'tokenless-native-host'
 const DEFAULT_BRIDGE_MAX_AGE_MS = 15_000
 const BRIDGE_CLOCK_TOLERANCE_MS = 5_000
 const DEFAULT_DAEMON_START_TIMEOUT_MS = 10_000
+const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 5_000
+const MAX_TIMEOUT_MS = 2_147_483_647
 const BUILD_INFO_TIMEOUT_MS = 2_000
 const BUILD_INFO_OUTPUT_LIMIT_BYTES = 16_384
 const SUPPORTED_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini', 'grok'])
@@ -38,6 +41,7 @@ const SUPPORTED_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini', 'grok'])
 type RuntimeError = Error & {
   code?: string
   retryable?: boolean
+  status?: number
 }
 
 type JsonRecord = Record<string, any>
@@ -107,6 +111,16 @@ export type EnsureDaemonOptions = {
   binaryPath?: string | undefined
   bundledRoot?: string | undefined
   timeoutMs?: number | undefined
+}
+
+export type StopDaemonResult = {
+  ok: true
+  status: 'not_running' | 'stopped'
+  url: string
+  homeDir: string
+  pid?: number | undefined
+  response?: JsonRecord | undefined
+  compactOutput: string
 }
 
 export type BridgeMarker = {
@@ -322,8 +336,9 @@ export async function ensureDaemonReady({
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
   const initial = await probeDaemonReady({ daemonUrl, homeDir })
   if (initial.ok) {
-    const coherence = await ensureRunningDaemonVersionCoherent(initial, { homeDir, bundledRoot, skipInstalledRuntime: Boolean(binaryPath) })
+    const coherence = await ensureRunningDaemonVersionCoherent(initial)
     if (coherence.ok) return { ...initial, started: false, binaryPath: null, pid: daemonPidFromReady(initial) ?? await readDaemonPid(homeDir) }
+    throw incompatibleRunningDaemonError(coherence)
   } else {
     assertNoDaemonIdentityConflict(initial)
   }
@@ -333,11 +348,11 @@ export async function ensureDaemonReady({
   try {
     const afterLock = await probeDaemonReady({ daemonUrl, homeDir })
     if (afterLock.ok) {
-      const coherence = await ensureRunningDaemonVersionCoherent(afterLock, { homeDir, bundledRoot, skipInstalledRuntime: Boolean(binaryPath) })
+      const coherence = await ensureRunningDaemonVersionCoherent(afterLock)
       if (coherence.ok) {
         return { ...afterLock, started: false, binaryPath: null, pid: daemonPidFromReady(afterLock) ?? await readDaemonPid(homeDir) }
       }
-      await stopOwnedDaemonForRefresh({ probe: afterLock, homeDir, reason: coherence.message ?? 'Tokenless daemon runtime is not coherent.' })
+      throw incompatibleRunningDaemonError(coherence)
     } else {
       assertNoDaemonIdentityConflict(afterLock)
     }
@@ -346,6 +361,10 @@ export async function ensureDaemonReady({
       refreshed = await refreshInstalledManagedRuntime({ homeDir, packageRoot: bundledRoot })
     }
     const executable = await resolveDaemonBinary({ homeDir, binaryPath, bundledRoot })
+    const executableHash = await fileHash(executable)
+    if (!executableHash) {
+      throw runtimeError('daemon_binary_missing', `Tokenless Rust daemon executable is missing: ${executable}`, false)
+    }
     const parsedUrl = new URL(normalizeDaemonUrl(daemonUrl))
     const host = daemonBindHost(parsedUrl.hostname)
     const port = parsedUrl.port ? Number(parsedUrl.port) : 80
@@ -368,7 +387,9 @@ export async function ensureDaemonReady({
       while (Date.now() < deadline) {
         lastProbe = await probeDaemonReady({ daemonUrl, homeDir })
         if (lastProbe.ok) {
-          const coherence = await ensureRunningDaemonVersionCoherent(lastProbe, { homeDir, bundledRoot, skipInstalledRuntime: Boolean(binaryPath) })
+          const coherence = await ensureRunningDaemonVersionCoherent(lastProbe, {
+            expectedRunningHash: executableHash,
+          })
           if (!coherence.ok) {
             throw runtimeError(
               coherence.code ?? 'daemon_version_mismatch',
@@ -401,6 +422,95 @@ export async function ensureDaemonReady({
     }
   } finally {
     await releaseLock()
+  }
+}
+
+export async function stopDaemon({
+  homeDir = tokenlessHome(),
+  daemonUrl,
+  timeoutMs,
+}: {
+  homeDir?: string | undefined
+  daemonUrl?: string | undefined
+  timeoutMs?: number | undefined
+} = {}): Promise<StopDaemonResult> {
+  const stopTimeoutMs = normalizeStopTimeoutMs(timeoutMs)
+  const url = normalizeDaemonUrl(daemonUrl)
+  const expectedHome = await canonicalPath(homeDir)
+  const reachable = await probeDaemonReachable(url, Math.min(stopTimeoutMs, 1_000))
+  if (!reachable.reachable) {
+    return {
+      ok: true,
+      status: 'not_running',
+      url,
+      homeDir: expectedHome,
+      compactOutput: `Tokenless daemon is not running at ${url}.`,
+    }
+  }
+  const token = await readDaemonToken({ homeDir }).catch((error) => {
+    throw runtimeError(
+      'daemon_stop_identity_unverified',
+      `A service is listening at ${url}, but Tokenless cannot read the local daemon token needed to verify it: ${error instanceof Error ? error.message : String(error)} Stop it manually if it is a Tokenless daemon.`,
+      false
+    )
+  })
+  const ready = await probeDaemonReady({ homeDir, daemonUrl: url, daemonToken: token, timeoutMs: Math.min(stopTimeoutMs, 1_000) })
+  if (!ready.ok) {
+    const stillReachable = await probeDaemonReachable(url, Math.min(stopTimeoutMs, 1_000))
+    if (ready.code === 'daemon_unavailable' && !stillReachable.reachable) {
+      return {
+        ok: true,
+        status: 'not_running',
+        url,
+        homeDir: expectedHome,
+        compactOutput: `Tokenless daemon is not running at ${url}.`,
+      }
+    }
+    throw runtimeError(
+      'daemon_stop_identity_unverified',
+      `${ready.message ?? 'Tokenless daemon identity could not be verified.'} Tokenless did not send its control token or stop any process. Stop the service bound to ${url} manually if needed.`,
+      false
+    )
+  }
+  let response: JsonRecord
+  try {
+    response = await shutdownDaemon({
+      homeDir,
+      daemonUrl: url,
+      requestTimeoutMs: stopTimeoutMs,
+      token,
+    }) as JsonRecord
+  } catch (error) {
+    const status = typeof (error as RuntimeError).status === 'number' ? (error as RuntimeError).status : undefined
+    if (status === 404 || status === 405) {
+      throw runtimeError(
+        'daemon_shutdown_unsupported',
+        `The verified daemon at ${url} does not support authenticated self-shutdown. Tokenless did not stop any process. Upgrade Tokenless or stop daemon pid ${daemonPidFromReady(ready) ?? '<unknown>'} manually.`,
+        false
+      )
+    }
+    throw error
+  }
+  const pid = typeof response.pid === 'number' && Number.isSafeInteger(response.pid) && response.pid > 0
+    ? response.pid
+    : daemonPidFromReady(ready) ?? undefined
+  const stopped = await waitForDaemonListenerGone(url, stopTimeoutMs)
+  if (!stopped) {
+    throw runtimeError(
+      'daemon_shutdown_unconfirmed',
+      `The verified daemon at ${url} accepted authenticated shutdown, but the loopback listener was still reachable after ${stopTimeoutMs}ms. Tokenless did not kill any process. Stop daemon pid ${pid ?? '<unknown>'} manually if needed.`,
+      true
+    )
+  }
+  if (pid !== undefined) await removePidIfOwned(ready.actualHome ?? expectedHome, pid)
+  return {
+    ok: true,
+    status: 'stopped',
+    url,
+    homeDir: ready.actualHome ?? expectedHome,
+    ...(pid === undefined ? {} : { pid }),
+    response,
+    compactOutput: `Tokenless daemon stopped at ${url}${pid === undefined ? '' : ` (pid ${pid})`}.`,
   }
 }
 
@@ -927,33 +1037,18 @@ async function spawnDaemon({
 
 async function ensureRunningDaemonVersionCoherent(
   probe: DaemonReadyProbe,
-  {
-    homeDir,
-    bundledRoot,
-    skipInstalledRuntime = false,
-  }: {
-    homeDir: string
-    bundledRoot?: string | undefined
-    skipInstalledRuntime?: boolean | undefined
-  }
+  { expectedRunningHash }: { expectedRunningHash?: string | undefined } = {}
 ) {
   const expectedVersion = tokenlessPackageVersion()
   const runningVersion = typeof probe.body?.version === 'string' ? probe.body.version : null
   const runningHash = typeof probe.body?.running_binary_hash === 'string' ? probe.body.running_binary_hash : null
-  if (runningVersion !== expectedVersion) {
+  const expectedMajor = semanticVersionMajor(expectedVersion)
+  const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
+  if (expectedMajor === null || runningMajor === null || runningMajor !== expectedMajor) {
     return {
       ok: false,
       code: 'daemon_version_mismatch',
-      message: `Tokenless daemon at ${probe.url} reports version ${runningVersion ?? 'missing'}; expected tokenless@${expectedVersion}.`,
-    }
-  }
-  const runtime = await inspectManagedRuntime(homeDir, bundledRoot)
-  if (!runtime.packaged.ok || !runtime.packaged.hash) {
-    return {
-      ok: false,
-      code: 'managed_runtime_incoherent',
-      message: runtime.packaged.error ??
-        `Tokenless managed runtime binary is not coherent with tokenless@${expectedVersion}.`,
+      message: `Tokenless daemon at ${probe.url} reports version ${runningVersion ?? 'missing'}; expected semantic-version major ${expectedMajor ?? 'from tokenless@' + expectedVersion}.`,
     }
   }
   const processProofError = probe.body?.daemon_process_identity_error
@@ -964,73 +1059,81 @@ async function ensureRunningDaemonVersionCoherent(
       message: processProofError.message ?? 'Tokenless daemon process identity could not be verified.',
     }
   }
-  if (runningHash !== runtime.packaged.hash) {
+  if (expectedRunningHash !== undefined && runningHash !== expectedRunningHash) {
     return {
       ok: false,
       code: 'daemon_binary_hash_mismatch',
-      message: `Tokenless daemon at ${probe.url} reports binary hash ${runningHash ?? 'missing'}; expected packaged hash ${runtime.packaged.hash}.`,
-    }
-  }
-  if (!skipInstalledRuntime && !runtime.ok) {
-    return {
-      ok: false,
-      code: 'managed_runtime_incoherent',
-      message: runtime.installed.error ??
-        `Tokenless managed runtime binary is not coherent with tokenless@${expectedVersion}.`,
+      message: `Newly spawned Tokenless daemon at ${probe.url} reports binary hash ${runningHash ?? 'missing'}; expected started executable hash ${expectedRunningHash}.`,
     }
   }
   return { ok: true }
 }
 
-async function stopOwnedDaemonForRefresh({
-  probe,
-  homeDir,
-  reason,
-}: {
-  probe: DaemonReadyProbe
-  homeDir: string
-  reason: string
-}) {
-  const pid = daemonPidFromReady(probe)
-  const instanceId = typeof probe.body?.instance_id === 'string' ? probe.body.instance_id : null
-  const processProofError = probe.body?.daemon_process_identity_error
-  if (
-    pid === null ||
-    !instanceId ||
-    processProofError !== undefined ||
-    typeof probe.body?.daemon_process_proof !== 'string' ||
-    probe.body.daemon_process_proof_protocol !== DAEMON_PROCESS_PROOF_PROTOCOL
-  ) {
+export function semanticVersionMajor(value: string) {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value)
+  if (!match) return null
+  const major = Number(match[1])
+  return Number.isSafeInteger(major) ? major : null
+}
+
+async function probeDaemonReachable(url: string, timeoutMs: number) {
+  const parsed = new URL(url)
+  const host = daemonBindHost(parsed.hostname)
+  const port = parsed.port === ''
+    ? (parsed.protocol === 'https:' ? 443 : 80)
+    : Number(parsed.port)
+  try {
+    await tcpConnect({ host, port, timeoutMs: normalizeStopTimeoutMs(timeoutMs) })
+    return { reachable: true }
+  } catch {
+    return { reachable: false }
+  }
+}
+
+async function waitForDaemonListenerGone(url: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs
+  do {
+    const reachable = await probeDaemonReachable(url, Math.min(500, Math.max(1, deadline - Date.now())))
+    if (!reachable.reachable) return true
+    await delay(100)
+  } while (Date.now() < deadline)
+  return !(await probeDaemonReachable(url, 250)).reachable
+}
+
+function tcpConnect({ host, port, timeoutMs }: { host: string; port: number; timeoutMs: number }) {
+  return new Promise<void>((resolve, reject) => {
+    const socket = net.createConnection({ host, port })
+    let settled = false
+    const finish = (error?: Error) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      if (error) reject(error)
+      else resolve()
+    }
+    socket.setTimeout(timeoutMs, () => finish(new Error('timeout')))
+    socket.once('connect', () => finish())
+    socket.once('error', finish)
+  })
+}
+
+function normalizeStopTimeoutMs(value: number | undefined) {
+  const numeric = value === undefined ? DEFAULT_DAEMON_STOP_TIMEOUT_MS : Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0 || !Number.isInteger(numeric) || numeric > MAX_TIMEOUT_MS) {
     throw runtimeError(
-      'daemon_restart_unsafe',
-      `${reason} The running daemon did not provide a cryptographically verifiable process identity, so Tokenless will not stop it automatically. Stop the existing daemon bound to ${probe.url}, then rerun tokenless setup.`,
+      'invalid_daemon_stop_timeout',
+      `daemon stop --timeout-ms must be a finite positive integer no greater than ${MAX_TIMEOUT_MS}.`,
       false
     )
   }
-  if (!pidIsAlive(pid)) {
-    await removePidIfOwned(homeDir, pid)
-    return
-  }
-  try {
-    process.kill(pid, 'SIGTERM')
-  } catch (error) {
-    throw runtimeError(
-      'daemon_restart_failed',
-      `${reason} Tokenless verified daemon process ${pid} but could not stop it: ${error instanceof Error ? error.message : String(error)}`,
-      true
-    )
-  }
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (!pidIsAlive(pid)) {
-      await removePidIfOwned(homeDir, pid)
-      return
-    }
-    await delay(100)
-  }
-  throw runtimeError(
-    'daemon_restart_failed',
-    `${reason} Tokenless verified daemon process ${pid} but it did not exit after SIGTERM.`,
-    true
+  return Math.max(1, Math.floor(numeric))
+}
+
+function incompatibleRunningDaemonError(coherence: { code?: string; message?: string }) {
+  return runtimeError(
+    coherence.code ?? 'daemon_version_mismatch',
+    `${coherence.message ?? 'The running Tokenless daemon is incompatible.'} Tokenless left the daemon running. Run "tokenless daemon stop --json", then retry.`,
+    false
   )
 }
 

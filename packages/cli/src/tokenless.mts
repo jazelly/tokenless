@@ -50,7 +50,9 @@ import {
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
   resumeDaemonJob,
+  semanticVersionMajor,
   stageVisibleAttachments,
+  stopDaemon,
   tokenlessHome,
   waitDaemonJobResult,
   waitForExtensionBridge,
@@ -136,13 +138,15 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = command === 'profiles' ? argv.shift() : undefined
+  const subcommand = command === 'profiles' || command === 'daemon' ? argv.shift() : undefined
   args = parseArgs(argv)
   assertCommandRoutingArguments(command, args)
   if (command === 'version') {
     console.log(tokenlessPackageVersion())
   } else if (command === 'profiles') {
     await profilesCommand(subcommand, args)
+  } else if (command === 'daemon') {
+    await daemonCommand(subcommand, args)
   } else if (command === 'run') {
     await runCommand(args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
@@ -1656,6 +1660,19 @@ async function cancelCommand(args: CliArgs) {
   }, args)
 }
 
+async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
+  assertDaemonCommandArguments(subcommand, args)
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const result = await stopDaemon({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    timeoutMs: args.timeoutMs === undefined ? undefined : strictPositiveInteger(args.timeoutMs, '--timeout-ms'),
+  })
+  printPayload(result, args)
+}
+
 async function installCommand(args: CliArgs) {
   const provisioned = await provisionRuntime(args)
   printPayload({
@@ -2674,6 +2691,9 @@ async function doctorCommand(args: CliArgs) {
     })
     const expectedVersion = tokenlessPackageVersion()
     const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
+    const expectedMajor = semanticVersionMajor(expectedVersion)
+    const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
+    const versionCompatible = expectedMajor !== null && runningMajor !== null && runningMajor === expectedMajor
     const packagedHash = runtime.packaged.hash
     const runningHash = typeof ready.body?.running_binary_hash === 'string' ? ready.body.running_binary_hash : null
     const identityError = ready.body?.daemon_process_identity_error
@@ -2688,10 +2708,13 @@ async function doctorCommand(args: CliArgs) {
         message: ready.message,
         expectedVersion,
         runningVersion,
+        expectedMajor,
+        runningMajor,
+        versionCompatible,
         packagedHash,
         runningHash,
       }
-    } else if (runningVersion !== expectedVersion) {
+    } else if (!versionCompatible) {
       daemon = {
         ok: false,
         ready: true,
@@ -2699,10 +2722,13 @@ async function doctorCommand(args: CliArgs) {
         daemonLogPath,
         daemonLogExists,
         code: 'daemon_version_mismatch',
-        message: `Tokenless daemon reports version ${runningVersion ?? 'missing'}; expected tokenless@${expectedVersion}.`,
+        message: `Tokenless daemon reports version ${runningVersion ?? 'missing'}; expected semantic-version major ${expectedMajor ?? 'from tokenless@' + expectedVersion}.`,
         homeDir: ready.actualHome,
         expectedVersion,
         runningVersion,
+        expectedMajor,
+        runningMajor,
+        versionCompatible,
         packagedHash,
         runningHash,
         pid: ready.body?.pid ?? null,
@@ -2720,27 +2746,13 @@ async function doctorCommand(args: CliArgs) {
         homeDir: ready.actualHome,
         expectedVersion,
         runningVersion,
+        expectedMajor,
+        runningMajor,
+        versionCompatible,
         packagedHash,
         runningHash,
         pid: ready.body?.pid ?? null,
         processIdentity: 'unverified',
-      }
-    } else if (!packagedHash || runningHash !== packagedHash) {
-      daemon = {
-        ok: false,
-        ready: true,
-        url: configuredDaemonUrl,
-        daemonLogPath,
-        daemonLogExists,
-        code: 'daemon_binary_hash_mismatch',
-        message: `Tokenless daemon binary hash is ${runningHash ?? 'missing'}; expected packaged hash ${packagedHash ?? 'unavailable'}.`,
-        homeDir: ready.actualHome,
-        expectedVersion,
-        runningVersion,
-        packagedHash,
-        runningHash,
-        pid: ready.body?.pid ?? null,
-        processIdentity: 'verified',
       }
     } else {
       daemon = {
@@ -2754,6 +2766,9 @@ async function doctorCommand(args: CliArgs) {
         nativeProtocol: ready.body?.native_protocol,
         expectedVersion,
         runningVersion,
+        expectedMajor,
+        runningMajor,
+        versionCompatible,
         packagedHash,
         runningHash,
         pid: ready.body?.pid ?? null,
@@ -3300,17 +3315,33 @@ function assertProfilesCommandArguments(subcommand: string | undefined, args: Cl
   assertOnlyArguments(args, new Set(byCommand[subcommand]), `profiles ${subcommand}`)
 }
 
+function assertDaemonCommandArguments(subcommand: string | undefined, args: CliArgs) {
+  if (subcommand === undefined || subcommand !== 'stop') {
+    throw usageError('daemon_command_invalid', 'Daemon subcommand must be stop.')
+  }
+  assertOnlyArguments(args, new Set(['home', 'daemonUrl', 'timeoutMs', 'json']), 'daemon stop')
+}
+
 function assertOnlyArguments(args: CliArgs, allowed: Set<string>, command: string) {
   const unsupported = Object.entries(args)
     .filter(([key, value]) => !['attachFiles', 'files'].includes(key) && value !== undefined && !allowed.has(key))
     .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`)
   if (args.files.length > 0) unsupported.push('--file')
+  if (args.attachFiles.length > 0) unsupported.push('--attach-file')
   if (unsupported.length > 0) {
     throw usageError(
       'admin_command_option_invalid',
       `${command} does not accept option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`,
     )
   }
+}
+
+function strictPositiveInteger(value: unknown, flag: string) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0 || !Number.isInteger(numeric) || numeric > 2_147_483_647) {
+    throw usageError('invalid_timeout', `${flag} must be a finite positive integer no greater than 2147483647.`)
+  }
+  return numeric
 }
 
 function requiredAdminValue(value: unknown, flag: string): string {
@@ -3612,42 +3643,132 @@ function attachStatusLog(error: CliError, statusReporter: StatusReporter) {
   error.statusLog = statusReporter.events
 }
 
+type UsageSection = {
+  title: 'Run' | 'Setup' | 'Profile' | 'Provider' | 'Other'
+  description: string
+  commands: string[]
+}
+
 function usage() {
+  const canonicalSections: UsageSection[] = [
+    {
+      title: 'Run',
+      description: 'Send work through a visible AI provider.',
+      commands: [
+        'tokenless run --provider <chatgpt|claude|gemini|grok> --prompt <text> --json',
+      ],
+    },
+    {
+      title: 'Setup',
+      description: 'Get Tokenless ready for first use.',
+      commands: [
+        'tokenless setup',
+        'tokenless setup --fresh --json',
+      ],
+    },
+    {
+      title: 'Profile',
+      description: 'Manage browser profiles and their sign-in sessions.',
+      commands: [
+        'tokenless profiles list --json',
+        'tokenless profiles status [--profile <slug>] [--provider <provider>] --json',
+        'tokenless profiles open [--profile <slug>] [--provider <provider>] --json',
+      ],
+    },
+    {
+      title: 'Provider',
+      description: 'Manage AI providers and their visible controls.',
+      commands: [
+        'tokenless provider-status --profile <slug> --provider <chatgpt|claude|gemini|grok> --json',
+        'tokenless provider-controls --profile <slug> --provider <chatgpt|claude|gemini|grok> --json',
+        'tokenless provider-configure --profile <slug> --provider <chatgpt|claude|gemini|grok> [--model <exact-visible-model>] [--effort <exact-visible-effort>] --json',
+      ],
+    },
+    {
+      title: 'Other',
+      description: 'Use miscellaneous maintenance and help commands.',
+      commands: [
+        'tokenless daemon stop [--json]',
+        'tokenless doctor --json',
+        'tokenless upgrade [--json]',
+        'tokenless help',
+      ],
+    },
+  ]
+  const advancedSections: UsageSection[] = [
+    {
+      title: 'Run',
+      description: 'Customize, inspect, resume, or cancel jobs.',
+      commands: [
+        'tokenless run --profile <slug> --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
+        'tokenless run --profile <slug> --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> --prompt <text> --json',
+        'tokenless run --provider chatgpt --model <visible-model> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
+        'tokenless run --provider <chatgpt|claude|gemini|grok> --attach-file <path> [--attach-file <path>] --prompt <text> --json',
+        'tokenless run --long-running --provider chatgpt --prompt <text> --json',
+        'tokenless state --task-id <task-id> [--profile <slug>] --json',
+        'tokenless resume --job-id <job-id> --browser-visibility headed --json',
+        'tokenless cancel --job-id <job-id> --json',
+      ],
+    },
+    {
+      title: 'Setup',
+      description: 'Automate setup, profile import, or profile re-import.',
+      commands: [
+        'tokenless setup --profile <slug> --browser <browser> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',
+        'tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy [--refresh-skills]',
+      ],
+    },
+    {
+      title: 'Profile',
+      description: 'Discover, import, reset, or remove browser profiles.',
+      commands: [
+        'tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
+        'tokenless profiles add --profile <slug> --browser <chrome|brave> --import-browser-profile <Default|Profile 1> --preferred-providers <list> [--browser-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
+        'tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json',
+        'tokenless profiles clear (--profile <slug>|--all)',
+        'tokenless profiles reset [--profile <slug>] [--preferred-providers <list>]',
+        'tokenless profiles set-default --profile <slug> --json',
+        'tokenless profiles remove --profile <slug> --confirm-delete --json',
+      ],
+    },
+    {
+      title: 'Provider',
+      description: 'Use low-level actions and provider-specific controls.',
+      commands: [
+        'tokenless provider-action --profile <slug> --provider <chatgpt|claude|gemini|grok> --action <auth.status|model.inspect|model.select|effort.inspect|effort.select|file.upload|prompt.clear|prompt.input|prompt.submit|response.read|snapshot.sanitized|navigation.check|blocker.check> [action options] --json',
+        'tokenless chatgpt-controls --json',
+        'tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
+        'tokenless snapshot-dom --provider chatgpt --json',
+      ],
+    },
+    {
+      title: 'Other',
+      description: 'Inspect or update persistent Tokenless configuration.',
+      commands: [
+        'tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --browser-visibility auto --json',
+        'tokenless daemon stop --daemon-url <loopback-url> --json',
+      ],
+    },
+  ]
+
   console.error([
-    'Usage:',
-    '  tokenless run --provider chatgpt [--browser-visibility <auto|headed|headless>] --prompt <text> --json',
-    '  tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
-    '  tokenless profiles add --profile <slug> --browser <chrome|brave> --import-browser-profile <Default|Profile 1> --preferred-providers <list> [--browser-user-data-dir <dir>] --consent-local-profile-copy [--set-default] --json',
-    '  tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json',
-    '  tokenless profiles list --json',
-    '  tokenless profiles clear (--profile <slug>|--all)',
-    '  tokenless profiles reset [--profile <slug>] [--preferred-providers <list>]',
-    '  tokenless profiles status|open [--profile <slug>] [--provider <provider>] --json',
-    '  tokenless profiles set-default --profile <slug> --json',
-    '  tokenless profiles remove --profile <slug> --confirm-delete --json',
-    '  tokenless run --profile <slug> --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
-    '  tokenless run --profile <slug> --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> --prompt <text> --json',
-    '  tokenless run --provider chatgpt --model <visible-model> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
-    '  tokenless run --provider <chatgpt|claude|gemini|grok> --attach-file <path> [--attach-file <path>] --prompt <text> --json',
-    '  tokenless run --long-running --provider chatgpt --prompt <text> --json',
-    '  tokenless provider-action --profile <slug> --provider <chatgpt|claude|gemini|grok> --action <auth.status|model.inspect|model.select|effort.inspect|effort.select|file.upload|prompt.clear|prompt.input|prompt.submit|response.read|snapshot.sanitized|navigation.check|blocker.check> [action options] --json',
-    '  tokenless provider-status --profile <slug> --provider <chatgpt|claude|gemini|grok> --json',
-    '  tokenless provider-controls --profile <slug> --provider <chatgpt|claude|gemini|grok> --json',
-    '  tokenless provider-configure --profile <slug> --provider <chatgpt|claude|gemini|grok> [--model <exact-visible-model>] [--effort <exact-visible-effort>] --json',
-    '  tokenless chatgpt-controls --json',
-    '  tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
-    '  tokenless state --task-id <task-id> [--profile <slug>] --json',
-    '  tokenless resume --job-id <job-id> --browser-visibility headed --json',
-    '  tokenless cancel --job-id <job-id> --json',
-    '  tokenless snapshot-dom --provider chatgpt --json',
-    '  tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --browser-visibility auto --json',
-    '  tokenless setup',
-    '  tokenless setup --fresh --json',
-    '  tokenless setup --profile <slug> --browser <browser> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',
-    '  tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy [--refresh-skills]',
-    '  tokenless upgrade [--json]',
-    '  tokenless doctor --json',
+    formatUsageGroup('Usage', 'Canonical commands for everyday workflows.', canonicalSections),
+    '',
+    formatUsageGroup('Advanced Usage', 'Less common commands for detailed control and maintenance.', advancedSections),
   ].join('\n'))
+}
+
+function formatUsageGroup(title: string, description: string, sections: UsageSection[]) {
+  return [
+    `${title}:`,
+    `  ${description}`,
+    ...sections.flatMap((section) => [
+      '',
+      `  ${section.title}:`,
+      `    ${section.description}`,
+      ...section.commands.map((command) => `    ${command}`),
+    ]),
+  ].join('\n')
 }
 
 function usageError(code: string, message: string): CliError {
