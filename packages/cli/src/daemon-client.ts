@@ -1,6 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { createHmac } from 'node:crypto'
 
+import {
+  DAEMON_ERROR_PROTOCOL,
+  DAEMON_SHUTDOWN_PROOF_PROTOCOL,
+} from './generated/protocol-constants.js'
 import { tokenlessHome } from './job-store.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
@@ -86,8 +91,18 @@ export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
   onStatus?: ((event: Record<string, unknown>) => unknown) | undefined
 }
 
-export type ShutdownDaemonOptions = DaemonClientOptions & {
-  token?: string | undefined
+export type ShutdownDaemonOptions = {
+  daemonUrl?: string | undefined
+  requestTimeoutMs?: number | undefined
+  signal?: AbortSignal | undefined
+  controlToken: string
+  identity: {
+    challenge: string
+    homeDir: string
+    pid: number
+    instanceId: string
+    runningBinaryHash: string
+  }
 }
 
 export type ShutdownDaemonResponse = {
@@ -100,6 +115,7 @@ type DaemonError = Error & {
   code?: string
   retryable?: boolean
   status?: number
+  details?: unknown
 }
 
 export function daemonUrl(explicitUrl?: string) {
@@ -291,20 +307,43 @@ export async function cancelDaemonJob({
 
 export async function shutdownDaemon({
   daemonUrl: explicitDaemonUrl,
-  homeDir,
   requestTimeoutMs,
   signal,
-  token,
-}: ShutdownDaemonOptions = {}) {
-  const controlToken = token ?? await authenticatedDaemonToken({
-    daemonUrl: explicitDaemonUrl,
-    homeDir,
-    requestTimeoutMs,
-  })
+  controlToken,
+  identity,
+}: ShutdownDaemonOptions) {
+  validateShutdownIdentity(identity)
+  if (typeof controlToken !== 'string' || !controlToken) {
+    throw daemonClientError(
+      'daemon_shutdown_proof_invalid',
+      'A non-empty daemon control token is required to create the shutdown proof.',
+      false
+    )
+  }
+  const proof = createHmac('sha256', controlToken)
+    .update(lengthPrefixedMessage([
+      DAEMON_SHUTDOWN_PROOF_PROTOCOL,
+      identity.challenge,
+      'POST',
+      '/control/shutdown',
+      identity.homeDir,
+      String(identity.pid),
+      identity.instanceId,
+      identity.runningBinaryHash,
+    ]))
+    .digest('base64url')
   return daemonRequest<ShutdownDaemonResponse>({
     daemonUrl: explicitDaemonUrl,
     path: '/control/shutdown',
-    token: controlToken,
+    body: {
+      protocol: DAEMON_SHUTDOWN_PROOF_PROTOCOL,
+      challenge: identity.challenge,
+      home_dir: identity.homeDir,
+      pid: identity.pid,
+      instance_id: identity.instanceId,
+      running_binary_hash: identity.runningBinaryHash,
+      proof,
+    },
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -466,6 +505,39 @@ function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+function validateShutdownIdentity(identity: ShutdownDaemonOptions['identity']) {
+  if (
+    !identity ||
+    typeof identity.challenge !== 'string' ||
+    !/^[A-Za-z0-9_-]{43}$/.test(identity.challenge) ||
+    typeof identity.homeDir !== 'string' ||
+    !identity.homeDir ||
+    !Number.isSafeInteger(identity.pid) ||
+    identity.pid <= 0 ||
+    typeof identity.instanceId !== 'string' ||
+    !/^[A-Za-z0-9_-]{22}$/.test(identity.instanceId) ||
+    typeof identity.runningBinaryHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(identity.runningBinaryHash)
+  ) {
+    throw daemonClientError(
+      'daemon_shutdown_identity_invalid',
+      'Verified daemon process identity is required to create a shutdown proof.',
+      false
+    )
+  }
+}
+
+function lengthPrefixedMessage(fields: string[]) {
+  const chunks: Buffer[] = []
+  for (const field of fields) {
+    const value = Buffer.from(field, 'utf8')
+    const length = Buffer.allocUnsafe(4)
+    length.writeUInt32BE(value.length)
+    chunks.push(length, value)
+  }
+  return Buffer.concat(chunks)
+}
+
 async function daemonRequest<T>({
   daemonUrl: explicitDaemonUrl,
   method = 'POST',
@@ -525,8 +597,14 @@ async function daemonRequest<T>({
     throw daemonClientError('daemon_unavailable', 'Tokenless daemon is not reachable on the configured loopback URL.', true)
   }
   if (!response.ok) {
-    const message = errorMessageFromBody(responseBody) || `Tokenless daemon request failed with HTTP ${response.status}.`
-    throw daemonClientError('daemon_request_failed', message, response.status >= 500, response.status)
+    const serverError = daemonServerErrorFromBody(responseBody)
+    throw daemonClientError(
+      serverError?.code ?? 'daemon_request_failed',
+      serverError?.message ?? `Tokenless daemon request failed with HTTP ${response.status}.`,
+      serverError?.retryable ?? response.status >= 500,
+      response.status,
+      serverError?.details
+    )
   }
   return responseBody as T
 }
@@ -541,19 +619,35 @@ async function readJsonResponse(response: Response) {
   }
 }
 
-function errorMessageFromBody(body: unknown) {
+function daemonServerErrorFromBody(body: unknown) {
   if (!body || typeof body !== 'object') return null
   const error = (body as { error?: unknown }).error
   if (!error || typeof error !== 'object') return null
-  const message = (error as { message?: unknown }).message
-  return typeof message === 'string' && message.trim() ? message : null
+  const envelope = error as { protocol?: unknown; code?: unknown; message?: unknown; retryable?: unknown; details?: unknown }
+  const message = typeof envelope.message === 'string' && envelope.message.trim() ? envelope.message : null
+  if (!message) return null
+  if (
+    envelope.protocol === DAEMON_ERROR_PROTOCOL &&
+    typeof envelope.code === 'string' &&
+    envelope.code.trim() &&
+    typeof envelope.retryable === 'boolean'
+  ) {
+    return {
+      code: envelope.code,
+      message,
+      retryable: envelope.retryable,
+      details: envelope.details,
+    }
+  }
+  return { code: undefined, message, retryable: undefined, details: undefined }
 }
 
-function daemonClientError(code: string, message: string, retryable: boolean, status?: number) {
+function daemonClientError(code: string, message: string, retryable: boolean, status?: number, details?: unknown) {
   const error = new Error(message) as DaemonError
   error.code = code
   error.retryable = retryable
   if (status !== undefined) error.status = status
+  if (details !== undefined) error.details = details
   return error
 }
 

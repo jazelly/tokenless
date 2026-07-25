@@ -5,7 +5,11 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { tokenlessError } from '../errors.js'
 import { withPrivateSqliteWriterLock } from './sqlite-lock.js'
-import type { ProviderId } from '../providers.js'
+import type {
+  ProviderAccessClass,
+  ProviderAccountTier,
+  ProviderId,
+} from '../providers.js'
 
 export type ProfileLifecycleState = 'created' | 'importing' | 'ready' | 'removed' | 'failed'
 export type ManagedProfileLabelOrigin = 'slug' | 'import' | 'user'
@@ -13,10 +17,12 @@ export type ManagedProfileLabelOrigin = 'slug' | 'import' | 'user'
 export type ProviderStatus = {
   provider: ProviderId
   auth: 'authenticated' | 'unauthenticated' | 'unknown'
+  access: ProviderAccessClass
   checkedAt: string
   account?: {
     name: string | null
     subscription: string | null
+    tier: ProviderAccountTier
   }
 }
 
@@ -388,6 +394,7 @@ function parseProviderStatuses(value: unknown): Partial<Record<ProviderId, Provi
     statuses[provider] = {
       provider,
       auth,
+      access: parseProviderAccess(status.access, auth),
       checkedAt: parseIso(status.checkedAt),
       ...parseProviderAccount(status.account),
     }
@@ -408,11 +415,47 @@ function parseProviderAccount(value: unknown): Pick<ProviderStatus, 'account'> |
       ? normalizeProviderAccountValue(value.subscription)
       : undefined
   if (name === undefined || subscription === undefined) return {}
+  const tier = parseProviderAccountTier(value.tier)
   return {
     account: {
       name,
       subscription,
+      tier,
     },
+  }
+}
+
+function parseProviderAccess(
+  value: unknown,
+  auth: ProviderStatus['auth'],
+): ProviderStatus['access'] {
+  if (
+    value === 'guest' ||
+    value === 'sign_in_required' ||
+    value === 'signed_in_free' ||
+    value === 'signed_in_paid' ||
+    value === 'signed_in_unknown' ||
+    value === 'unknown'
+  ) return value
+  return auth === 'authenticated' ? 'signed_in_unknown' : 'unknown'
+}
+
+function parseProviderAccountTier(value: unknown): NonNullable<ProviderStatus['account']>['tier'] {
+  if (!isRecord(value)) return { class: 'signed_in_unknown', label: null }
+  const tierClass = value.class
+  if (
+    tierClass !== 'signed_in_free' &&
+    tierClass !== 'signed_in_paid' &&
+    tierClass !== 'signed_in_unknown'
+  ) return { class: 'signed_in_unknown', label: null }
+  const label = value.label === null
+    ? null
+    : typeof value.label === 'string'
+      ? normalizeProviderAccountValue(value.label)
+      : null
+  return {
+    class: tierClass,
+    label,
   }
 }
 

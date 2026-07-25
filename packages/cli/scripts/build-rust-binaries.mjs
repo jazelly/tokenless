@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { NATIVE_PLATFORM_PACKAGE_PROTOCOL } from '../../../scripts/generated/protocol-constants.mjs'
 
 const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const daemonManifest = path.resolve(cliRoot, '../daemon/Cargo.toml')
@@ -29,7 +30,7 @@ if (
   packageManifest.version !== cliManifest.version ||
   packageManifest.os?.[0] !== process.platform ||
   packageManifest.cpu?.[0] !== process.arch ||
-  packageManifest.tokenlessRuntime?.protocol !== 'tokenless.native-package.v1'
+  packageManifest.tokenlessRuntime?.protocol !== NATIVE_PLATFORM_PACKAGE_PROTOCOL
 ) {
   throw new Error(`Native package manifest does not match ${tuple}: ${packageRoot}`)
 }

@@ -82,14 +82,15 @@ home, exposes `tokenless.daemon.v1`, and the binary version, and adds:
 
 The HMAC key is the UTF-8 daemon-token string. Missing, padded, noncanonical, or
 wrong-length challenges return `400` without a proof. Every `/jobs` and
-`/control/jobs` request requires `Authorization: Bearer <contents of daemon.token>`.
+`/control/jobs` request except `/control/shutdown` requires
+`Authorization: Bearer <contents of daemon.token>`.
 
 `GET /jobs` accepts optional `status`, `provider`, `task_id`, and `limit` query
 parameters. Results remain newest-first and `limit` is clamped to `1..=1000`.
 
 ## Protected job endpoints
 
-Every endpoint listed above except `/health` and `/ready` requires:
+Every job endpoint listed above requires:
 
 ```http
 Authorization: Bearer <contents of daemon.token>
@@ -111,11 +112,19 @@ claimed job with `claim_token`. When no queued job matches, the daemon returns
 Missing bearer auth returns `401` JSON. Invalid bearer auth returns `403` JSON.
 Cancellation accepts an empty body or `{ "reason": <structured JSON> }` and
 atomically transitions a queued, claimed, or running job to `canceled`.
-`POST /control/shutdown` requires the same bearer auth and returns
-`{ "ok": true, "status": "shutting_down", "pid": <pid> }` before the Axum server
-gracefully exits. Clients should use this endpoint instead of killing a PID.
+`POST /control/shutdown` does not accept bearer authentication. It requires a
+closed `tokenless.daemon-shutdown-proof.v1` JSON request. Its HMAC-SHA256 input
+is the ordered 4-byte-length-prefixed tuple of protocol, the signed
+server-issued `shutdown_challenge` from `/ready`, `POST`,
+`/control/shutdown`, canonical home, pid, instance id, and the running binary
+SHA-256 from the verified response. Challenges expire after 10 seconds, are
+single-use, and are kept in a bounded 128-entry in-memory registry. A valid request returns
+`{ "ok": true, "status": "shutting_down", "pid": <pid> }` before the server
+gracefully exits. Invalid, tampered, or stale-instance proofs are rejected
+without stopping the daemon. The request body is limited to 4096 bytes.
 
 Security note: this remains a loopback-only local control plane. The bearer
-token protects all job data and mutations from unrelated local processes; it
-is not remote network auth and should not be copied into logs, telemetry, or
-provider sessions.
+token protects job data and mutations from unrelated local processes. Shutdown
+uses the request proof so the reusable token does not cross HTTP. Neither the
+token nor request proofs should be copied into logs, telemetry, or provider
+sessions.

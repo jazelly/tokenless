@@ -7,8 +7,10 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI today
 1. The `tokenless` CLI handles setup, profile management, job submission, state, cancellation, and diagnostics.
 2. The local Rust daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
 3. The Playwright worker claims managed-web jobs and runs them in persistent managed browser profiles.
-4. Provider adapters translate shared actions into visible ChatGPT, Claude, Gemini, and Grok page operations.
-5. A public local API is planned as a second interface to the same application and job contracts.
+4. The provider catalog declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, and Grok.
+5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
+6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
+7. A public local API is planned as a second interface to the same application and job contracts.
 
 ## Execution path
 
@@ -42,15 +44,35 @@ Jobs use explicit provider and profile identity. Unsupported controls, ambiguous
 - Import one existing Chrome or Brave profile with explicit consent. Only selected provider sign-in state is copied into a separate managed directory; the source remains unchanged.
 - Create a clean managed profile without requiring provider sign-in during setup.
 
-`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and ChatGPT, checks the installed CLI against the latest npm release, reconciles the local daemon, checks each provider's visible sign-in status once, and reports the observed results without opening a sign-in handoff or retrying the check. Setup requires the running daemon to match the CLI semantic-version major and automatically restarts an authenticated same-home daemon when that compatibility check fails. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
+`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and ChatGPT, checks the installed CLI against the latest npm release, reconciles the local daemon, checks each provider's visible sign-in status once, and reports the observed results without opening a sign-in handoff or retrying the check. Ordinary daemon startup uses authenticated protocol negotiation: package versions and semantic-version majors remain diagnostics, while compatibility comes from the signed daemon accept/emit sets (with the legacy proof-only `tokenless.daemon.v1` contract retained for old compatible daemons). Setup then performs an exact reconciliation against the current packaged native runtime. It may replace a protocol-incompatible daemon only when the challenge-bound ready proof, process proof, signed capability proof, canonical same-home check, independently versioned `tokenless.daemon-lifecycle.v1` contract, and signed acceptance of `tokenless.daemon-shutdown-proof.v1` are all verified. Foreign, tampered, different-home, and legacy no-lifecycle listeners remain untouched. For a verified daemon with exact version or executable drift, setup sends an HMAC shutdown proof bound to the signed, short-lived, single-use server challenge plus the verified home, pid, instance id, and executable hash without transmitting the reusable control token, waits for the configured port listener to disappear, atomically refreshes the installed daemon, and restarts it on the same configured URL. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. Import, reset, and deletion require explicit commands and consent.
 
-Authentication checks fail closed: a provider-specific account control must be visible and successfully clicked. A composer or other generally available page control is not authentication evidence. Successful checks retain only the visible account display name and visible subscription evidence; absent or ambiguous plan evidence remains `null`. Grok derives that evidence from its visible model entitlements: all of `Auto`, `Expert`, and `Heavy` unavailable means `Free`, while any available entitlement means `SuperGrok`.
+Authentication status is a single visible observation, not an enforced login workflow. A provider-specific account control is authenticated evidence; it does not have to be clicked to prove the state. A visible login surface is unauthenticated evidence. For guest-capable providers, an unauthenticated visible composer produces `access: guest`; for providers that require an account it produces `access: sign_in_required`. A page that has not stabilized may be reported honestly as `unknown`. Setup does not retry after login or open a handoff.
+
+Successful account observations retain only the visible account display name, subscription evidence, and the normalized tier class `signed_in_free`, `signed_in_paid`, or `signed_in_unknown`. Plan labels remain diagnostic: they never authorize a capability. Grok derives plan evidence from visible model entitlements: all of `Auto`, `Expert`, and `Heavy` unavailable means `Free`, while any available entitlement means `SuperGrok`.
 
 `profiles status` runs this provider-page inspection and persists the observation. `profiles list` is a registry read: it reports the last saved observation and never refreshes a provider page implicitly.
 
-Normal prompt jobs do not run an authentication-status check. `prompt.input` and `prompt.submit` each wait up to 15 seconds for their visible control, so providers may expose usable free or anonymous prompt surfaces. A visibility timeout is distinct from a failure to type into or click an already visible control.
+Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT and Gemini may proceed in guest mode. Claude and Grok hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
+
+## Provider catalog and session state machine
+
+Provider-specific policy lives in `packages/cli/src/playwright/providers.ts`. Observation, account classification, decisions, and resolution live under `packages/cli/src/playwright/provider-session/`. The runner consumes normalized decisions; the DOM adapter no longer owns a second authentication/blocker state machine.
+
+| Provider | Guest policy | Account-name strategy | Plan strategy |
+| --- | --- | --- | --- |
+| ChatGPT | Supported | Visible account control text | `Free`; paid `Go`, `Plus`, `Pro`, `Team`, `Business`, or `Enterprise` |
+| Claude | Sign-in required | Visible account control text | `Free`; paid `Pro`, `Max`, `Team`, or `Enterprise` |
+| Gemini | Supported | Google account ARIA label | Unknown until reliable visible plan evidence is available |
+| Grok | Sign-in required | Visible account control text | Derived from visible model entitlements as `Free` or `SuperGrok` |
+
+The provider-session machine is intentionally separate from the daemon job state machine:
+
+- The provider-session machine handles one page observation cycle: `wait`, `continue_guest`, `ready(guest|account|unknown)`, `handoff`, or `terminal`.
+- The daemon state machine owns durable execution: `queued`, `claimed`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`.
+- A provider `handoff` becomes the daemon's durable `waiting_for_user` state. It does not create a replacement job.
+- A plan, quota, or rate-limit blocker remains terminal and is not collapsed into authentication.
 
 ## Local control plane
 

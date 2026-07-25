@@ -18,6 +18,32 @@ export type ProviderCapabilityId = typeof PROVIDER_CAPABILITIES[keyof typeof PRO
 export type ProviderCapabilityAvailability = 'available' | 'unavailable' | 'unknown'
 export type ProviderCapabilityResourceKind = 'visible_action' | 'file_attachment' | 'project' | 'conversation'
 export type ProviderCapabilityStability = 'experimental'
+export type ProviderGuestAccess = 'supported' | 'unsupported'
+export type ProviderAccountNameStrategy = 'menu-text' | 'google-account-aria'
+export type ProviderPlanStrategy = 'menu-label' | 'grok-entitlements' | 'unknown'
+export type ProviderAccessClass =
+  | 'guest'
+  | 'sign_in_required'
+  | 'signed_in_free'
+  | 'signed_in_paid'
+  | 'signed_in_unknown'
+  | 'unknown'
+export type ProviderAccountTier = {
+  class: 'signed_in_free' | 'signed_in_paid' | 'signed_in_unknown'
+  label: string | null
+}
+
+export type ProviderAccessPolicy = {
+  readonly guest: ProviderGuestAccess
+  readonly guestContinueControlNames: readonly string[]
+}
+
+export type ProviderAccountPolicy = {
+  readonly nameStrategy: ProviderAccountNameStrategy
+  readonly planStrategy: ProviderPlanStrategy
+  readonly freePlanLabels: readonly string[]
+  readonly paidPlanLabels: readonly string[]
+}
 
 export type ProviderCapabilityStrategy = {
   readonly capability: ProviderCapabilityId
@@ -45,6 +71,8 @@ export type ProviderConfig = {
   readonly label: string
   readonly homeUrl: string
   readonly hosts: readonly string[]
+  readonly access: ProviderAccessPolicy
+  readonly account: ProviderAccountPolicy
   readonly composerSelectors: readonly string[]
   readonly submitSelectors: readonly string[]
   readonly answerSelectors: readonly string[]
@@ -54,7 +82,6 @@ export type ProviderConfig = {
   readonly modelControlSelectors: readonly string[]
   readonly effortControlSelectors: readonly string[]
   readonly authIndicators: readonly string[]
-  readonly authMenuIndicators: readonly string[]
   readonly loginIndicators: readonly string[]
   readonly blockerSelectors: readonly string[]
   readonly busySelectors: readonly string[]
@@ -157,6 +184,22 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     label: 'ChatGPT',
     homeUrl: 'https://chatgpt.com/',
     hosts: Object.freeze(['chatgpt.com', 'chat.openai.com']),
+    access: Object.freeze({
+      guest: 'supported',
+      guestContinueControlNames: Object.freeze([
+        'Continue as guest',
+        'Stay in guest mode',
+        'Continue without signing in',
+        'Continue without an account',
+        'Use without an account',
+      ]),
+    }),
+    account: Object.freeze({
+      nameStrategy: 'menu-text',
+      planStrategy: 'menu-label',
+      freePlanLabels: Object.freeze(['Free']),
+      paidPlanLabels: Object.freeze(['Go', 'Plus', 'Pro', 'Team', 'Business', 'Enterprise']),
+    }),
     composerSelectors: Object.freeze([
       'div#prompt-textarea[contenteditable="true"]',
       '#prompt-textarea[contenteditable="true"]',
@@ -203,10 +246,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'button:has-text("Thinking")',
     ]),
     authIndicators: Object.freeze([
-      '[data-testid="accounts-profile-button"][role="button"]',
-    ]),
-    authMenuIndicators: Object.freeze([
-      '[role="menuitem"]:has-text("Log out")',
+      '[data-testid="accounts-profile-button"][role="button"]:not([aria-label="Open profile menu"])',
     ]),
     loginIndicators: Object.freeze([
       'a[href*="/auth/login"]',
@@ -230,6 +270,16 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     label: 'Claude',
     homeUrl: 'https://claude.ai/new',
     hosts: Object.freeze(['claude.ai']),
+    access: Object.freeze({
+      guest: 'unsupported',
+      guestContinueControlNames: Object.freeze([]),
+    }),
+    account: Object.freeze({
+      nameStrategy: 'menu-text',
+      planStrategy: 'menu-label',
+      freePlanLabels: Object.freeze(['Free']),
+      paidPlanLabels: Object.freeze(['Pro', 'Max', 'Team', 'Enterprise']),
+    }),
     composerSelectors: Object.freeze([
       'div[data-testid="chat-input"][contenteditable="true"][role="textbox"]',
       'div[aria-label="Write your prompt to Claude"][contenteditable="true"][role="textbox"]',
@@ -267,9 +317,6 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     authIndicators: Object.freeze([
       'button[data-testid="user-menu-button"]',
     ]),
-    authMenuIndicators: Object.freeze([
-      '[role="menuitem"]:has-text("Log out")',
-    ]),
     loginIndicators: Object.freeze([
       'button[data-testid="login-with-google"]',
       'input[placeholder="Enter your email"]',
@@ -292,6 +339,22 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     label: 'Gemini',
     homeUrl: 'https://gemini.google.com/app',
     hosts: Object.freeze(['gemini.google.com']),
+    access: Object.freeze({
+      guest: 'supported',
+      guestContinueControlNames: Object.freeze([
+        'Continue as guest',
+        'Stay in guest mode',
+        'Continue without signing in',
+        'Continue without an account',
+        'Use without an account',
+      ]),
+    }),
+    account: Object.freeze({
+      nameStrategy: 'google-account-aria',
+      planStrategy: 'unknown',
+      freePlanLabels: Object.freeze([]),
+      paidPlanLabels: Object.freeze([]),
+    }),
     composerSelectors: Object.freeze([
       'rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"]',
       'div[contenteditable="true"][role="textbox"]',
@@ -324,10 +387,11 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     authIndicators: Object.freeze([
       'a[href^="https://accounts.google.com/SignOutOptions"]',
     ]),
-    authMenuIndicators: Object.freeze([]),
     loginIndicators: Object.freeze([
       'a[href*="accounts.google.com/ServiceLogin"]',
       'a[href*="/signin"]',
+      'a[aria-label="Sign in"]',
+      'button[aria-label="Sign in"]',
       'button:has-text("Sign in")',
     ]),
     blockerSelectors: Object.freeze([
@@ -345,6 +409,16 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     label: 'Grok',
     homeUrl: 'https://grok.com/',
     hosts: Object.freeze(['grok.com']),
+    access: Object.freeze({
+      guest: 'unsupported',
+      guestContinueControlNames: Object.freeze([]),
+    }),
+    account: Object.freeze({
+      nameStrategy: 'menu-text',
+      planStrategy: 'grok-entitlements',
+      freePlanLabels: Object.freeze(['Free']),
+      paidPlanLabels: Object.freeze(['SuperGrok']),
+    }),
     composerSelectors: Object.freeze([
       'div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"][aria-multiline="true"]',
       'textarea[aria-label="Ask Grok anything"][placeholder="What do you want to know?"]',
@@ -380,9 +454,6 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     ]),
     authIndicators: Object.freeze([
       'button:has(img[alt="pfp"])',
-    ]),
-    authMenuIndicators: Object.freeze([
-      '[role="menuitem"]:has-text("Sign Out")',
     ]),
     loginIndicators: Object.freeze([
       'div[data-testid="anon-paywall-sign-up-card"]',

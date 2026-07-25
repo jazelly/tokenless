@@ -2,9 +2,10 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeBrowserVisibility } from './browser-visibility.js'
+import { TOKENLESS_CONFIG_PROTOCOL_VERSION } from './generated/protocol-constants.js'
 import type { BrowserVisibility } from './browser-visibility.js'
 
-export const TOKENLESS_CONFIG_PROTOCOL_VERSION = 'tokenless.config.v1'
+export { TOKENLESS_CONFIG_PROTOCOL_VERSION } from './generated/protocol-constants.js'
 export const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 
 const SUPPORTED_PROVIDER_IDS = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok'])

@@ -1,12 +1,27 @@
 import { randomUUID } from 'node:crypto'
+import {
+  VISIBLE_ACTION_PROTOCOL_VERSION,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
+} from '../generated/protocol-constants.js'
 import { tokenlessError } from './errors.js'
 import { getProviderById } from './providers.js'
-import type { ProviderCapabilityId, ProviderCapabilityResourceKind, ProviderCapabilityStability, ProviderId } from './providers.js'
+import type {
+  ProviderAccessClass,
+  ProviderAccountTier,
+  ProviderCapabilityId,
+  ProviderCapabilityResourceKind,
+  ProviderCapabilityStability,
+  ProviderId,
+} from './providers.js'
 
-export const VISIBLE_ACTION_PROTOCOL_VERSION_V1 = 'tokenless.playwright.visible-action.v1' as const
-export const VISIBLE_ACTION_PROTOCOL_VERSION_V2 = 'tokenless.playwright.visible-action.v2' as const
-export const VISIBLE_ACTION_PROTOCOL_VERSION = VISIBLE_ACTION_PROTOCOL_VERSION_V2
-export const VISIBLE_ATTACHMENT_PROTOCOL_VERSION = 'tokenless.visible-attachment.v1' as const
+export {
+  VISIBLE_ACTION_PROTOCOL_VERSION,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
+} from '../generated/protocol-constants.js'
 
 export type VisibleActionProtocolVersion =
   | typeof VISIBLE_ACTION_PROTOCOL_VERSION_V1
@@ -72,10 +87,12 @@ export type VisibleActionResponse =
 
 export type AuthStatusResult = {
   state: 'authenticated' | 'unauthenticated' | 'unknown'
+  access: ProviderAccessClass
   visibleProof: string
   account?: {
     name: string | null
     subscription: string | null
+    tier: ProviderAccountTier
     subscriptionEvidence: {
       status: 'observed' | 'derived' | 'unknown'
       source: string | null
@@ -193,6 +210,20 @@ export type VisibleCitation = {
 }
 
 export type SnapshotResult = {
+  status: 'snapshotted'
+  provider: ProviderId
+  capturedAt: string
+  url: string
+  title: string
+  sanitized: true
+  includeText: false
+  html: string
+  selectorProbes: {
+    composer: number
+    authenticatedAccount: number
+    login: number
+    blocker: number
+  }
   page: {
     origin: string
   }
@@ -200,6 +231,10 @@ export type SnapshotResult = {
     tag: string
     role?: string
     inputType?: string
+    dataTestId?: string
+    ariaLabel?: string
+    placeholder?: string
+    text?: string
     disabled: boolean
     visible: boolean
   }[]

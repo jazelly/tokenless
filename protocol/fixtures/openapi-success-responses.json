@@ -1,0 +1,92 @@
+{
+  "openapi": "protocol/openapi/tokenless.daemon.v1.openapi.json",
+  "cases": [
+    {
+      "name": "health",
+      "schema": "#/components/schemas/HealthResponse",
+      "valid": true,
+      "data": {
+        "protocol": "tokenless.daemon.v1",
+        "daemon_protocol": "tokenless.daemon.v1",
+        "version": "0.3.0",
+        "native_protocol": "tokenless.native.v1",
+        "status": "ok",
+        "ready": true,
+        "home_dir": "/tmp/tokenless",
+        "pid": 12345,
+        "instance_id": "AAAAAAAAAAAAAAAAAAAAAA",
+        "running_binary_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
+    },
+    {
+      "name": "ready",
+      "schema": "#/components/schemas/ReadyResponse",
+      "valid": true,
+      "data": {
+        "protocol": "tokenless.daemon.v1",
+        "daemon_protocol": "tokenless.daemon.v1",
+        "version": "0.3.0",
+        "native_protocol": "tokenless.native.v1",
+        "status": "ok",
+        "ready": true,
+        "home_dir": "/tmp/tokenless",
+        "pid": 12345,
+        "instance_id": "AAAAAAAAAAAAAAAAAAAAAA",
+        "running_binary_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "ready_proof_protocol": "tokenless.daemon-ready-proof.v1",
+        "ready_challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "ready_proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "daemon_process_proof_protocol": "tokenless.daemon-process-proof.v1",
+        "daemon_process_proof": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "readiness_protocol": "tokenless.daemon-readiness.v2",
+        "daemon_lifecycle_protocol": "tokenless.daemon-lifecycle.v1",
+        "shutdown_challenge": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+        "daemon_accepts": [
+          "tokenless.daemon.v1",
+          "tokenless.daemon-lifecycle.v1",
+          "tokenless.daemon-shutdown-proof.v1",
+          "tokenless.native.v1",
+          "tokenless.visible-attachment.v1"
+        ],
+        "daemon_emits": [
+          "tokenless.daemon.v1",
+          "tokenless.daemon-readiness.v2",
+          "tokenless.daemon-lifecycle.v1",
+          "tokenless.daemon-ready-proof.v1",
+          "tokenless.daemon-process-proof.v1",
+          "tokenless.daemon-capability-proof.v1",
+          "tokenless.daemon.error.v1",
+          "tokenless.native.v1",
+          "tokenless.native-binary-build-info.v1",
+          "tokenless.visible-attachment.v1"
+        ],
+        "capability_proof_protocol": "tokenless.daemon-capability-proof.v1",
+        "capability_proof": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+      }
+    },
+    {
+      "name": "job-with-claim-token",
+      "schema": "#/components/schemas/JobWithClaimToken",
+      "valid": true,
+      "data": {
+        "job_id": "job-1",
+        "claim_token": "claim-1",
+        "execution_backend": "playwright",
+        "profile_id": "work",
+        "provider": "chatgpt",
+        "action": "visible_provider_actions",
+        "status": "queued",
+        "request_json": {
+          "protocol": "tokenless.playwright.job.v2"
+        },
+        "result_json": null,
+        "error_json": null,
+        "blocker_json": null,
+        "checkpoint_json": null,
+        "resume_json": null,
+        "created_at": "2026-07-26T00:00:00Z",
+        "updated_at": "2026-07-26T00:00:00Z"
+      }
+    }
+  ]
+}

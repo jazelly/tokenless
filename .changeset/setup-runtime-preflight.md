@@ -2,4 +2,4 @@
 "tokenless": patch
 ---
 
-Make `tokenless setup` report the local CLI version against npm latest and automatically replace a verified same-home daemon whose version is not semantic-major compatible with the CLI.
+Make `tokenless setup` report the local CLI version against npm latest and reconcile exact runtime drift or signed protocol mismatch through verified same-home lifecycle shutdown.

@@ -10,3 +10,7 @@ packages/*/dist/
 
 .workbuddy-ai/
 docs/
+!docs/
+docs/*
+!docs/roadmaps/
+!docs/roadmaps/**

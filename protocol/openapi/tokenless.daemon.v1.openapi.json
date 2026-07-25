@@ -1,0 +1,1483 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tokenless daemon HTTP API",
+    "version": "1.0.0",
+    "description": "Composite local loopback control-plane API. Core job control is tokenless.daemon.v1; readiness, lifecycle, shutdown proof, errors, jobs, and actions are independently versioned and must be negotiated where applicable."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:7331"
+    }
+  ],
+  "security": [
+    {
+      "controlBearer": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Read daemon health without auth",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Daemon health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "getReady",
+        "summary": "Read token-bound daemon readiness proof without auth",
+        "security": [],
+        "parameters": [
+          {
+            "name": "challenge",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daemon readiness proof",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "summary": "List public job views",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/status"
+          },
+          {
+            "$ref": "#/components/parameters/execution_backend"
+          },
+          {
+            "$ref": "#/components/parameters/profile_id"
+          },
+          {
+            "$ref": "#/components/parameters/provider"
+          },
+          {
+            "$ref": "#/components/parameters/task_id"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobView"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createJob",
+        "summary": "Create a job and return its private claim token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created job with claim token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobWithClaimToken"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "operationId": "getJob",
+        "summary": "Read a public job view",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/claim": {
+      "post": {
+        "operationId": "claimJob",
+        "summary": "Claim a queued job with its claim token",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ClaimToken"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/complete": {
+      "post": {
+        "operationId": "completeJob",
+        "summary": "Complete a claimed job",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}/resume": {
+      "post": {
+        "operationId": "resumeJob",
+        "summary": "Resume a parked Playwright job",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/control/jobs/claim-next": {
+      "post": {
+        "operationId": "claimNextJob",
+        "summary": "Claim the next queued job for a worker scope",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/execution_backend"
+          },
+          {
+            "$ref": "#/components/parameters/profile_id"
+          },
+          {
+            "$ref": "#/components/parameters/provider"
+          },
+          {
+            "$ref": "#/components/parameters/action"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Next matching job, or null when the queue is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimNextResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/control/jobs/{job_id}/checkpoint": {
+      "post": {
+        "operationId": "checkpointJob",
+        "summary": "Persist private Playwright checkpoint state",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/control/jobs/{job_id}/park": {
+      "post": {
+        "operationId": "parkJob",
+        "summary": "Park a Playwright job for user handover",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParkJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/control/jobs/{job_id}/running": {
+      "post": {
+        "operationId": "markJobRunning",
+        "summary": "Mark a claimed or waiting job as running",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ClaimToken"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/control/jobs/{job_id}/waiting-for-user": {
+      "post": {
+        "operationId": "markJobWaitingForUser",
+        "summary": "Mark a running job as waiting for user handover",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaitingForUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/control/jobs/{job_id}/renew": {
+      "post": {
+        "operationId": "renewJobClaim",
+        "summary": "Renew an active job claim lease",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ClaimToken"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/control/jobs/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancelJob",
+        "summary": "Cancel an active job",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PublicJob"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/control/shutdown": {
+      "post": {
+        "operationId": "shutdownDaemon",
+        "summary": "Request graceful daemon shutdown using a challenge-bound proof without transmitting the control token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DaemonShutdownProofV1"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Shutdown accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShutdownResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Shutdown route is not mounted by runtimes that use http_router(store); Axum may return its default 404 body."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "controlBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Bearer token read from the daemon home control token file. /health and /ready are public challenge endpoints; /control/shutdown uses a dedicated challenge-bound HMAC request proof."
+      }
+    },
+    "parameters": {
+      "job_id": {
+        "name": "job_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "status": {
+        "name": "status",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/JobStatus"
+        }
+      },
+      "execution_backend": {
+        "name": "execution_backend",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ExecutionBackend"
+        }
+      },
+      "profile_id": {
+        "name": "profile_id",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "provider": {
+        "name": "provider",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "task_id": {
+        "name": "task_id",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "action": {
+        "name": "action",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100
+        }
+      }
+    },
+    "requestBodies": {
+      "ClaimToken": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ClaimTokenRequest"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "PublicJob": {
+        "description": "Public job view",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/JobView"
+            }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "Invalid request body, path, query, or daemon input",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing bearer token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Rejected bearer token or claim token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Job or routed endpoint not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Claim lease or job state conflict",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Daemon internal failure",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DaemonErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "DaemonErrorResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DaemonErrorEnvelopeV1"
+          },
+          {
+            "$ref": "#/components/schemas/LegacyDaemonErrorEnvelope"
+          }
+        ]
+      },
+      "DaemonErrorEnvelopeV1": {
+        "type": "object",
+        "required": ["error"],
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["protocol", "code", "message", "retryable"],
+            "additionalProperties": false,
+            "properties": {
+              "protocol": {
+                "const": "tokenless.daemon.error.v1"
+              },
+              "code": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,127}$"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "LegacyDaemonErrorEnvelope": {
+        "type": "object",
+        "required": ["error"],
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["message"],
+            "additionalProperties": true,
+            "properties": {
+              "message": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "protocol",
+          "daemon_protocol",
+          "version",
+          "native_protocol",
+          "status",
+          "ready",
+          "home_dir",
+          "pid",
+          "instance_id",
+          "running_binary_hash"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "const": "tokenless.daemon.v1"
+          },
+          "daemon_protocol": {
+            "const": "tokenless.daemon.v1"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "native_protocol": {
+            "const": "tokenless.native.v1"
+          },
+          "status": {
+            "const": "ok"
+          },
+          "ready": {
+            "const": true
+          },
+          "home_dir": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "running_binary_hash": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          }
+        }
+      },
+      "ReadyResponse": {
+        "type": "object",
+        "required": [
+          "protocol",
+          "daemon_protocol",
+          "version",
+          "native_protocol",
+          "status",
+          "ready",
+          "home_dir",
+          "pid",
+          "instance_id",
+          "running_binary_hash",
+          "ready_proof_protocol",
+          "ready_challenge",
+          "ready_proof",
+          "daemon_process_proof_protocol",
+          "daemon_process_proof",
+          "readiness_protocol",
+          "daemon_lifecycle_protocol",
+          "shutdown_challenge",
+          "daemon_accepts",
+          "daemon_emits",
+          "capability_proof_protocol",
+          "capability_proof"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "const": "tokenless.daemon.v1"
+          },
+          "daemon_protocol": {
+            "const": "tokenless.daemon.v1"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "native_protocol": {
+            "const": "tokenless.native.v1"
+          },
+          "status": {
+            "const": "ok"
+          },
+          "ready": {
+            "const": true
+          },
+          "home_dir": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "instance_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "running_binary_hash": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          },
+          "ready_proof_protocol": {
+            "const": "tokenless.daemon-ready-proof.v1"
+          },
+          "ready_challenge": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          },
+          "ready_proof": {
+            "type": "string",
+            "minLength": 1
+          },
+          "daemon_process_proof_protocol": {
+            "const": "tokenless.daemon-process-proof.v1"
+          },
+          "daemon_process_proof": {
+            "type": "string",
+            "minLength": 1
+          },
+          "readiness_protocol": {
+            "const": "tokenless.daemon-readiness.v2"
+          },
+          "daemon_lifecycle_protocol": {
+            "const": "tokenless.daemon-lifecycle.v1"
+          },
+          "shutdown_challenge": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          },
+          "daemon_accepts": {
+            "$ref": "#/components/schemas/ProtocolList"
+          },
+          "daemon_emits": {
+            "$ref": "#/components/schemas/ProtocolList"
+          },
+          "worker_capabilities": {
+            "$ref": "#/components/schemas/RunnerHeartbeatV2"
+          },
+          "capability_proof_protocol": {
+            "const": "tokenless.daemon-capability-proof.v1"
+          },
+          "capability_proof": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          }
+        }
+      },
+      "ProtocolList": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^tokenless\\.[a-z0-9.-]+\\.v\\d+$"
+        },
+        "uniqueItems": true
+      },
+      "DaemonLifecycleV1": {
+        "type": "object",
+        "required": ["protocol", "ready", "shutdown"],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "const": "tokenless.daemon-lifecycle.v1"
+          },
+          "ready": {
+            "type": "object",
+            "required": ["method", "path", "authentication", "proof_protocol"],
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/ready"
+              },
+              "authentication": {
+                "const": "challenge-bound-hmac-control-token"
+              },
+              "proof_protocol": {
+                "const": "tokenless.daemon-capability-proof.v1"
+              }
+            }
+          },
+          "shutdown": {
+            "type": "object",
+            "required": ["method", "path", "authentication", "proof_protocol", "success_status", "error_protocol"],
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/control/shutdown"
+              },
+              "authentication": {
+                "const": "challenge-bound-hmac-control-token"
+              },
+              "proof_protocol": {
+                "const": "tokenless.daemon-shutdown-proof.v1"
+              },
+              "success_status": {
+                "const": "shutting_down"
+              },
+              "error_protocol": {
+                "const": "tokenless.daemon.error.v1"
+              }
+            }
+          }
+        }
+      },
+      "RunnerHeartbeatV2": {
+        "type": "object",
+        "required": [
+          "protocol",
+          "session_id",
+          "pid",
+          "observed_at",
+          "expires_at",
+          "accepts",
+          "emits"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "const": "tokenless.playwright.runner-heartbeat.v2"
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "accepts": {
+            "$ref": "#/components/schemas/ProtocolList"
+          },
+          "emits": {
+            "$ref": "#/components/schemas/ProtocolList"
+          }
+        }
+      },
+      "ExecutionBackend": {
+        "enum": ["legacy_extension", "playwright"]
+      },
+      "JobStatus": {
+        "enum": ["queued", "claimed", "running", "waiting_for_user", "succeeded", "failed", "canceled", "timed_out"]
+      },
+      "JobView": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "execution_backend",
+          "profile_id",
+          "provider",
+          "action",
+          "status",
+          "request_json",
+          "result_json",
+          "error_json",
+          "blocker_json",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "execution_backend": {
+            "$ref": "#/components/schemas/ExecutionBackend"
+          },
+          "profile_id": {
+            "type": ["string", "null"]
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "request_json": {},
+          "result_json": {},
+          "error_json": {},
+          "blocker_json": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "JobWithClaimToken": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "claim_token",
+          "execution_backend",
+          "profile_id",
+          "provider",
+          "action",
+          "status",
+          "request_json",
+          "result_json",
+          "error_json",
+          "blocker_json",
+          "checkpoint_json",
+          "resume_json",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "execution_backend": {
+            "$ref": "#/components/schemas/ExecutionBackend"
+          },
+          "profile_id": {
+            "type": ["string", "null"]
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "request_json": {},
+          "result_json": {},
+          "error_json": {},
+          "blocker_json": {},
+          "checkpoint_json": {},
+          "resume_json": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateJobRequest": {
+        "type": "object",
+        "required": ["provider", "action", "request_json"],
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request_json": {},
+          "execution_backend": {
+            "$ref": "#/components/schemas/ExecutionBackend"
+          },
+          "profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "job_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim_token": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "ClaimTokenRequest": {
+        "type": "object",
+        "required": ["claim_token"],
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "CompleteJobRequest": {
+        "type": "object",
+        "required": ["claim_token"],
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result_json": {},
+          "error_json": {}
+        },
+        "oneOf": [
+          {
+            "required": ["result_json"],
+            "not": {
+              "required": ["error_json"]
+            }
+          },
+          {
+            "required": ["error_json"],
+            "not": {
+              "required": ["result_json"]
+            }
+          }
+        ]
+      },
+      "ResumeJobRequest": {
+        "type": "object",
+        "required": ["browser_visibility"],
+        "additionalProperties": false,
+        "properties": {
+          "browser_visibility": {
+            "const": "headed"
+          }
+        }
+      },
+      "WaitingForUserRequest": {
+        "type": "object",
+        "required": ["claim_token", "blocker_json"],
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "blocker_json": {}
+        }
+      },
+      "CheckpointJobRequest": {
+        "type": "object",
+        "required": ["claim_token", "checkpoint_json"],
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "checkpoint_json": {}
+        }
+      },
+      "ParkJobRequest": {
+        "type": "object",
+        "required": ["claim_token", "blocker_json", "checkpoint_json"],
+        "additionalProperties": false,
+        "properties": {
+          "claim_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "blocker_json": {},
+          "checkpoint_json": {}
+        }
+      },
+      "CancelJobRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {}
+        }
+      },
+      "DaemonShutdownProofV1": {
+        "type": "object",
+        "required": [
+          "protocol",
+          "challenge",
+          "home_dir",
+          "pid",
+          "instance_id",
+          "running_binary_hash",
+          "proof"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "const": "tokenless.daemon-shutdown-proof.v1"
+          },
+          "challenge": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          },
+          "home_dir": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "instance_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{22}$"
+          },
+          "running_binary_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "proof": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          }
+        }
+      },
+      "ClaimNextResponse": {
+        "type": "object",
+        "required": ["job"],
+        "additionalProperties": false,
+        "properties": {
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobWithClaimToken"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ShutdownResponse": {
+        "type": "object",
+        "required": ["ok", "status", "pid"],
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "status": {
+            "const": "shutting_down"
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

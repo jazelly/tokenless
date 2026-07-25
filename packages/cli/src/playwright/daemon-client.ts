@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { DAEMON_ERROR_PROTOCOL } from '../generated/protocol-constants.js'
 import { tokenlessError } from './errors.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 
@@ -354,10 +355,14 @@ async function daemonRequest<T>({
     throw tokenlessError('daemon_unavailable', 'Tokenless daemon is not reachable on the configured loopback URL.', { retryable: true, cause: error })
   }
   if (!response.ok) {
+    const serverError = daemonServerErrorFromBody(responseBody)
     throw tokenlessError(
-      'daemon_request_failed',
-      errorMessageFromBody(responseBody) ?? `Tokenless daemon request failed with HTTP ${response.status}.`,
-      { retryable: response.status >= 500 }
+      serverError?.code ?? 'daemon_request_failed',
+      serverError?.message ?? `Tokenless daemon request failed with HTTP ${response.status}.`,
+      {
+        retryable: serverError?.retryable ?? response.status >= 500,
+        ...(serverError?.details === undefined ? {} : { details: serverError.details }),
+      }
     )
   }
   return responseBody as T
@@ -373,12 +378,27 @@ async function readJsonResponse(response: Response) {
   }
 }
 
-function errorMessageFromBody(body: unknown) {
+function daemonServerErrorFromBody(body: unknown) {
   if (!body || typeof body !== 'object') return null
   const error = (body as { error?: unknown }).error
   if (!error || typeof error !== 'object') return null
-  const message = (error as { message?: unknown }).message
-  return typeof message === 'string' && message.trim() ? message : null
+  const envelope = error as { protocol?: unknown; code?: unknown; message?: unknown; retryable?: unknown; details?: unknown }
+  const message = typeof envelope.message === 'string' && envelope.message.trim() ? envelope.message : null
+  if (!message) return null
+  if (
+    envelope.protocol === DAEMON_ERROR_PROTOCOL &&
+    typeof envelope.code === 'string' &&
+    envelope.code.trim() &&
+    typeof envelope.retryable === 'boolean'
+  ) {
+    return {
+      code: envelope.code,
+      message,
+      retryable: envelope.retryable,
+      details: envelope.details,
+    }
+  }
+  return { code: undefined, message, retryable: undefined, details: undefined }
 }
 
 function validateDaemonUrl(value: string) {

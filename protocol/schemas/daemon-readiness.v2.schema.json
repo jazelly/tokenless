@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tokenless.dev/protocol/schemas/daemon-readiness.v2.schema.json",
+  "title": "Tokenless daemon readiness v2",
+  "type": "object",
+  "required": [
+    "readiness_protocol",
+    "daemon_lifecycle_protocol",
+    "shutdown_challenge",
+    "daemon_accepts",
+    "daemon_emits",
+    "capability_proof_protocol",
+    "capability_proof"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "readiness_protocol": {
+      "const": "tokenless.daemon-readiness.v2"
+    },
+    "daemon_lifecycle_protocol": {
+      "const": "tokenless.daemon-lifecycle.v1"
+    },
+    "shutdown_challenge": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "daemon_accepts": {
+      "$ref": "#/$defs/protocolList"
+    },
+    "daemon_emits": {
+      "$ref": "#/$defs/protocolList"
+    },
+    "worker_capabilities": {
+      "$ref": "https://tokenless.dev/protocol/schemas/runner-heartbeat.v2.schema.json"
+    },
+    "capability_proof_protocol": {
+      "const": "tokenless.daemon-capability-proof.v1"
+    },
+    "capability_proof": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    }
+  },
+  "$defs": {
+    "protocolList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^tokenless\\.[a-z0-9.-]+\\.v\\d+$"
+      },
+      "uniqueItems": true
+    }
+  }
+}

@@ -1,8 +1,8 @@
 use axum::{
-    body::Bytes,
+    body::{to_bytes, Bytes},
     extract::{
         rejection::{JsonRejection, QueryRejection},
-        Path as AxumPath, Query, State,
+        Path as AxumPath, Query, Request, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use hmac::{Hmac, Mac};
 use rusqlite::{
     params, params_from_iter, types::Value as SqlValue, Connection, OptionalExtension,
@@ -19,6 +19,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -26,22 +27,36 @@ use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use uuid::Uuid;
 
 pub mod config;
+pub mod generated {
+    pub mod protocol_constants;
+}
 pub mod native_host;
+pub use generated::protocol_constants::{
+    DAEMON_CAPABILITY_PROOF_PROTOCOL, DAEMON_ERROR_PROTOCOL, DAEMON_LIFECYCLE_PROTOCOL,
+    DAEMON_PROCESS_PROOF_PROTOCOL, DAEMON_PROTOCOL, DAEMON_READINESS_PROTOCOL,
+    DAEMON_READY_PROOF_PROTOCOL, DAEMON_SHUTDOWN_PROOF_PROTOCOL, NATIVE_BINARY_BUILD_INFO_PROTOCOL,
+    PLAYWRIGHT_JOB_PROTOCOL_V1, PLAYWRIGHT_JOB_PROTOCOL_V2, RUNNER_CHECKPOINT_PROTOCOL,
+    RUNNER_HEARTBEAT_PROTOCOL, VISIBLE_ACTION_PROTOCOL_V1, VISIBLE_ACTION_PROTOCOL_V2,
+    VISIBLE_ATTACHMENT_PROTOCOL,
+};
 
 const DATABASE_FILE_NAME: &str = "tokenless.sqlite3";
 const CONTROL_TOKEN_FILE_NAME: &str = "daemon.token";
 const SECRET_TOKEN_BYTES: usize = 32;
+const MAX_SHUTDOWN_PROOF_REQUEST_BYTES: usize = 4 * 1024;
+const SHUTDOWN_CHALLENGE_CAPACITY: usize = 128;
+const SHUTDOWN_CHALLENGE_TTL: Duration = Duration::from_secs(10);
 const SUMMARY_SCALAR_CHARS: usize = 256;
 const PROFILE_ID_CHARS: usize = 128;
-pub const DAEMON_PROTOCOL: &str = "tokenless.daemon.v1";
-pub const DAEMON_READY_PROOF_PROTOCOL: &str = "tokenless.daemon-ready-proof.v1";
-pub const DAEMON_PROCESS_PROOF_PROTOCOL: &str = "tokenless.daemon-process-proof.v1";
-pub const NATIVE_BINARY_BUILD_INFO_PROTOCOL: &str = "tokenless.native-binary-build-info.v1";
+const RUNNER_DIR_NAME: &str = "playwright-runner";
+const RUNNER_HEARTBEAT_FILE_NAME: &str = "heartbeat.json";
 static DAEMON_INSTANCE_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 static DAEMON_SELF_SHA256: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 pub const READY_CHALLENGE_BYTES: usize = 32;
@@ -84,6 +99,8 @@ pub enum DaemonError {
     BridgeBusy,
     ControlAuthMissing,
     ControlAuthRejected,
+    ShutdownProofMissing,
+    ShutdownProofRejected,
     InvalidJobState {
         job_id: String,
         expected: &'static str,
@@ -114,6 +131,8 @@ impl fmt::Display for DaemonError {
             Self::BridgeBusy => write!(f, "another extension bridge session is already active"),
             Self::ControlAuthMissing => write!(f, "missing bearer token"),
             Self::ControlAuthRejected => write!(f, "invalid bearer token"),
+            Self::ShutdownProofMissing => write!(f, "missing daemon shutdown proof"),
+            Self::ShutdownProofRejected => write!(f, "invalid daemon shutdown proof"),
             Self::InvalidJobState {
                 job_id,
                 expected,
@@ -1723,6 +1742,54 @@ impl JobStore {
 struct HttpState {
     store: JobStore,
     shutdown: Option<watch::Sender<bool>>,
+    shutdown_challenges: Arc<Mutex<ShutdownChallengeRegistry>>,
+}
+
+#[derive(Debug, Default)]
+struct ShutdownChallengeRegistry {
+    entries: VecDeque<(String, Instant)>,
+}
+
+impl ShutdownChallengeRegistry {
+    fn issue(&mut self, now: Instant) -> Result<String> {
+        self.prune(now);
+        while self.entries.len() >= SHUTDOWN_CHALLENGE_CAPACITY {
+            self.entries.pop_front();
+        }
+        for _ in 0..4 {
+            let challenge = generate_shutdown_challenge()?;
+            if !self.entries.iter().any(|(entry, _)| entry == &challenge) {
+                self.entries.push_back((challenge.clone(), now));
+                return Ok(challenge);
+            }
+        }
+        Err(DaemonError::InvalidInput(
+            "could not allocate a unique shutdown challenge".to_owned(),
+        ))
+    }
+
+    fn consume(&mut self, challenge: &str, now: Instant) -> bool {
+        self.prune(now);
+        let Some(index) = self
+            .entries
+            .iter()
+            .position(|(entry, _)| entry == challenge)
+        else {
+            return false;
+        };
+        self.entries.remove(index);
+        true
+    }
+
+    fn prune(&mut self, now: Instant) {
+        while self
+            .entries
+            .front()
+            .is_some_and(|(_, issued_at)| now.duration_since(*issued_at) >= SHUTDOWN_CHALLENGE_TTL)
+        {
+            self.entries.pop_front();
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1739,6 +1806,28 @@ struct HealthResponse {
     running_binary_hash: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct WorkerCapabilities {
+    protocol: &'static str,
+    session_id: String,
+    pid: u32,
+    observed_at: String,
+    expires_at: String,
+    accepts: Vec<String>,
+    emits: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerHeartbeatFile {
+    protocol: String,
+    session_id: String,
+    pid: u32,
+    observed_at: String,
+    expires_at: String,
+    accepts: Vec<String>,
+    emits: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct ReadyResponse {
     #[serde(flatten)]
@@ -1748,6 +1837,15 @@ struct ReadyResponse {
     ready_proof: String,
     daemon_process_proof_protocol: &'static str,
     daemon_process_proof: String,
+    shutdown_challenge: String,
+    readiness_protocol: &'static str,
+    daemon_lifecycle_protocol: &'static str,
+    daemon_accepts: Vec<&'static str>,
+    daemon_emits: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worker_capabilities: Option<WorkerCapabilities>,
+    capability_proof_protocol: &'static str,
+    capability_proof: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1849,6 +1947,18 @@ struct ShutdownResponse {
     pid: u32,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShutdownProofRequest {
+    protocol: String,
+    challenge: String,
+    home_dir: String,
+    pid: u32,
+    instance_id: String,
+    running_binary_hash: String,
+    proof: String,
+}
+
 #[derive(Debug)]
 struct ApiError(DaemonError);
 
@@ -1860,31 +1970,84 @@ impl From<DaemonError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let status = match self.0 {
-            DaemonError::InvalidInput(_)
-            | DaemonError::NonLoopbackBind(_)
-            | DaemonError::InvalidStatus(_) => StatusCode::BAD_REQUEST,
-            DaemonError::ControlAuthMissing => StatusCode::UNAUTHORIZED,
-            DaemonError::JobNotFound(_) => StatusCode::NOT_FOUND,
-            DaemonError::ClaimRejected(_) | DaemonError::ControlAuthRejected => {
-                StatusCode::FORBIDDEN
-            }
-            DaemonError::ClaimExpired(_) | DaemonError::InvalidJobState { .. } => {
-                StatusCode::CONFLICT
-            }
-            DaemonError::BridgeBusy => StatusCode::CONFLICT,
-            DaemonError::Io(_)
-            | DaemonError::Random(_)
-            | DaemonError::Sqlite(_)
-            | DaemonError::Json(_)
-            | DaemonError::MissingHome => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-        let body = Json(json!({
-            "error": {
-                "message": self.0.to_string()
-            }
-        }));
+        let status = daemon_error_status(&self.0);
+        let (code, retryable) = daemon_error_code_retryable(&self.0);
+        let details = daemon_error_details(&self.0);
+        let mut error = json!({
+            "protocol": DAEMON_ERROR_PROTOCOL,
+            "code": code,
+            "message": self.0.to_string(),
+            "retryable": retryable,
+        });
+        if let Some(details) = details {
+            error["details"] = details;
+        }
+        let body = Json(json!({ "error": error }));
         (status, body).into_response()
+    }
+}
+
+fn daemon_error_status(error: &DaemonError) -> StatusCode {
+    match error {
+        DaemonError::InvalidInput(_)
+        | DaemonError::NonLoopbackBind(_)
+        | DaemonError::InvalidStatus(_) => StatusCode::BAD_REQUEST,
+        DaemonError::ControlAuthMissing | DaemonError::ShutdownProofMissing => {
+            StatusCode::UNAUTHORIZED
+        }
+        DaemonError::JobNotFound(_) => StatusCode::NOT_FOUND,
+        DaemonError::ClaimRejected(_)
+        | DaemonError::ControlAuthRejected
+        | DaemonError::ShutdownProofRejected => StatusCode::FORBIDDEN,
+        DaemonError::ClaimExpired(_) | DaemonError::InvalidJobState { .. } => StatusCode::CONFLICT,
+        DaemonError::BridgeBusy => StatusCode::CONFLICT,
+        DaemonError::Io(_)
+        | DaemonError::Random(_)
+        | DaemonError::Sqlite(_)
+        | DaemonError::Json(_)
+        | DaemonError::MissingHome => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn daemon_error_code_retryable(error: &DaemonError) -> (&'static str, bool) {
+    match error {
+        DaemonError::Io(_) => ("daemon_io_error", true),
+        DaemonError::Random(_) => ("daemon_random_error", true),
+        DaemonError::Sqlite(_) => ("daemon_store_error", true),
+        DaemonError::Json(_) => ("daemon_json_error", false),
+        DaemonError::MissingHome => ("daemon_home_missing", false),
+        DaemonError::InvalidInput(_) => ("invalid_input", false),
+        DaemonError::NonLoopbackBind(_) => ("non_loopback_bind", false),
+        DaemonError::InvalidStatus(_) => ("invalid_status", false),
+        DaemonError::JobNotFound(_) => ("job_not_found", false),
+        DaemonError::ClaimRejected(_) => ("claim_rejected", false),
+        DaemonError::ClaimExpired(_) => ("claim_expired", false),
+        DaemonError::BridgeBusy => ("bridge_busy", true),
+        DaemonError::ControlAuthMissing => ("control_auth_missing", false),
+        DaemonError::ControlAuthRejected => ("control_auth_rejected", false),
+        DaemonError::ShutdownProofMissing => ("daemon_shutdown_proof_missing", false),
+        DaemonError::ShutdownProofRejected => ("daemon_shutdown_proof_rejected", false),
+        DaemonError::InvalidJobState { .. } => ("invalid_job_state", false),
+    }
+}
+
+fn daemon_error_details(error: &DaemonError) -> Option<Value> {
+    match error {
+        DaemonError::NonLoopbackBind(host) => Some(json!({ "host": host.to_string() })),
+        DaemonError::InvalidStatus(status) => Some(json!({ "status": status })),
+        DaemonError::JobNotFound(job_id)
+        | DaemonError::ClaimRejected(job_id)
+        | DaemonError::ClaimExpired(job_id) => Some(json!({ "job_id": job_id })),
+        DaemonError::InvalidJobState {
+            job_id,
+            expected,
+            actual,
+        } => Some(json!({
+            "job_id": job_id,
+            "expected": expected,
+            "actual": actual.as_str(),
+        })),
+        _ => None,
     }
 }
 
@@ -1895,6 +2058,7 @@ pub fn http_router(store: JobStore) -> Router {
 }
 
 fn http_router_with_shutdown(store: JobStore, shutdown: Option<watch::Sender<bool>>) -> Router {
+    let shutdown_challenges = Arc::new(Mutex::new(ShutdownChallengeRegistry::default()));
     let mut router = Router::new()
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
@@ -1919,7 +2083,11 @@ fn http_router_with_shutdown(store: JobStore, shutdown: Option<watch::Sender<boo
     if shutdown.is_some() {
         router = router.route("/control/shutdown", post(shutdown_handler));
     }
-    router.with_state(HttpState { store, shutdown })
+    router.with_state(HttpState {
+        store,
+        shutdown,
+        shutdown_challenges,
+    })
 }
 
 pub async fn serve_http(store: JobStore, host: IpAddr, port: u16) -> Result<()> {
@@ -1974,6 +2142,19 @@ async fn ready_handler(
         &health.instance_id,
         &health.running_binary_hash,
     )?;
+    let daemon_accepts = daemon_accepts();
+    let daemon_emits = daemon_emits();
+    let shutdown_challenge = issue_shutdown_challenge(&state)?;
+    let worker_capabilities = fresh_worker_capabilities(&state.store)?;
+    let capability_proof = daemon_capability_proof(
+        &state.store,
+        &query.challenge,
+        &shutdown_challenge,
+        &health,
+        &daemon_accepts,
+        &daemon_emits,
+        worker_capabilities.as_ref(),
+    )?;
     Ok(Json(ReadyResponse {
         health,
         ready_proof_protocol: DAEMON_READY_PROOF_PROTOCOL,
@@ -1981,6 +2162,14 @@ async fn ready_handler(
         ready_proof,
         daemon_process_proof_protocol: DAEMON_PROCESS_PROOF_PROTOCOL,
         daemon_process_proof,
+        shutdown_challenge,
+        readiness_protocol: DAEMON_READINESS_PROTOCOL,
+        daemon_lifecycle_protocol: DAEMON_LIFECYCLE_PROTOCOL,
+        daemon_accepts,
+        daemon_emits,
+        worker_capabilities,
+        capability_proof_protocol: DAEMON_CAPABILITY_PROOF_PROTOCOL,
+        capability_proof,
     }))
 }
 
@@ -1997,6 +2186,106 @@ fn health_response(store: &JobStore) -> Result<HealthResponse> {
         instance_id: daemon_instance_id().to_owned(),
         running_binary_hash: daemon_self_sha256()?.to_owned(),
     })
+}
+
+fn daemon_accepts() -> Vec<&'static str> {
+    vec![
+        DAEMON_PROTOCOL,
+        DAEMON_LIFECYCLE_PROTOCOL,
+        DAEMON_SHUTDOWN_PROOF_PROTOCOL,
+        native_host::NATIVE_PROTOCOL,
+        VISIBLE_ATTACHMENT_PROTOCOL,
+    ]
+}
+
+fn daemon_emits() -> Vec<&'static str> {
+    vec![
+        DAEMON_PROTOCOL,
+        DAEMON_READINESS_PROTOCOL,
+        DAEMON_LIFECYCLE_PROTOCOL,
+        DAEMON_READY_PROOF_PROTOCOL,
+        DAEMON_PROCESS_PROOF_PROTOCOL,
+        DAEMON_CAPABILITY_PROOF_PROTOCOL,
+        DAEMON_ERROR_PROTOCOL,
+        native_host::NATIVE_PROTOCOL,
+        NATIVE_BINARY_BUILD_INFO_PROTOCOL,
+        VISIBLE_ATTACHMENT_PROTOCOL,
+    ]
+}
+
+fn runner_accepts() -> Vec<String> {
+    [
+        PLAYWRIGHT_JOB_PROTOCOL_V1,
+        PLAYWRIGHT_JOB_PROTOCOL_V2,
+        VISIBLE_ACTION_PROTOCOL_V1,
+        VISIBLE_ACTION_PROTOCOL_V2,
+        VISIBLE_ATTACHMENT_PROTOCOL,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn runner_emits() -> Vec<String> {
+    [
+        PLAYWRIGHT_JOB_PROTOCOL_V2,
+        VISIBLE_ACTION_PROTOCOL_V1,
+        VISIBLE_ACTION_PROTOCOL_V2,
+        VISIBLE_ATTACHMENT_PROTOCOL,
+        RUNNER_CHECKPOINT_PROTOCOL,
+        generated::protocol_constants::USER_HANDOVER_PROTOCOL,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn fresh_worker_capabilities(store: &JobStore) -> Result<Option<WorkerCapabilities>> {
+    let heartbeat_path = store
+        .home_dir()
+        .join(RUNNER_DIR_NAME)
+        .join(RUNNER_HEARTBEAT_FILE_NAME);
+    let content = match fs::read_to_string(heartbeat_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(DaemonError::Io(error)),
+    };
+    let heartbeat: WorkerHeartbeatFile = match serde_json::from_str(&content) {
+        Ok(heartbeat) => heartbeat,
+        Err(_) => return Ok(None),
+    };
+    if heartbeat.protocol != RUNNER_HEARTBEAT_PROTOCOL
+        || heartbeat.session_id.trim().is_empty()
+        || heartbeat.pid == 0
+        || heartbeat.accepts.is_empty()
+        || heartbeat.emits.is_empty()
+    {
+        return Ok(None);
+    }
+    let observed = match DateTime::parse_from_rfc3339(&heartbeat.observed_at) {
+        Ok(value) => value.with_timezone(&Utc),
+        Err(_) => return Ok(None),
+    };
+    let expires = match DateTime::parse_from_rfc3339(&heartbeat.expires_at) {
+        Ok(value) => value.with_timezone(&Utc),
+        Err(_) => return Ok(None),
+    };
+    let now = Utc::now();
+    if observed > now + chrono::Duration::seconds(5) || expires <= now || observed > expires {
+        return Ok(None);
+    }
+    if heartbeat.accepts != runner_accepts() || heartbeat.emits != runner_emits() {
+        return Ok(None);
+    }
+    Ok(Some(WorkerCapabilities {
+        protocol: RUNNER_HEARTBEAT_PROTOCOL,
+        session_id: heartbeat.session_id,
+        pid: heartbeat.pid,
+        observed_at: observed.to_rfc3339_opts(SecondsFormat::Millis, true),
+        expires_at: expires.to_rfc3339_opts(SecondsFormat::Millis, true),
+        accepts: heartbeat.accepts,
+        emits: heartbeat.emits,
+    }))
 }
 
 async fn create_job_handler(
@@ -2244,12 +2533,32 @@ async fn cancel_job_handler(
 
 async fn shutdown_handler(
     State(state): State<HttpState>,
-    headers: HeaderMap,
+    request: Request,
 ) -> ApiResult<ShutdownResponse> {
-    require_control_auth(&state.store, &headers)?;
-    let shutdown = state.shutdown.ok_or_else(|| {
-        DaemonError::InvalidInput("shutdown control is unavailable".to_owned())
-    })?;
+    if request.headers().contains_key(header::AUTHORIZATION) {
+        return Err(DaemonError::ShutdownProofRejected.into());
+    }
+    let payload = to_bytes(request.into_body(), MAX_SHUTDOWN_PROOF_REQUEST_BYTES)
+        .await
+        .map_err(|_| {
+            DaemonError::InvalidInput("shutdown proof request body is too large".to_owned())
+        })?;
+    let request: ShutdownProofRequest = if payload.is_empty() {
+        return Err(DaemonError::ShutdownProofMissing.into());
+    } else {
+        serde_json::from_slice(&payload).map_err(|_| {
+            DaemonError::InvalidInput(
+                "shutdown request must match the daemon shutdown proof schema".to_owned(),
+            )
+        })?
+    };
+    verify_daemon_shutdown_proof(&state.store, &request)?;
+    if !consume_shutdown_challenge(&state, &request.challenge)? {
+        return Err(DaemonError::ShutdownProofRejected.into());
+    }
+    let shutdown = state
+        .shutdown
+        .ok_or_else(|| DaemonError::InvalidInput("shutdown control is unavailable".to_owned()))?;
     shutdown
         .send(true)
         .map_err(|_| DaemonError::InvalidInput("shutdown control is unavailable".to_owned()))?;
@@ -2345,6 +2654,32 @@ fn generate_secret_token() -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
+fn generate_shutdown_challenge() -> Result<String> {
+    let mut bytes = [0u8; READY_CHALLENGE_BYTES];
+    getrandom::getrandom(&mut bytes)?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn issue_shutdown_challenge(state: &HttpState) -> Result<String> {
+    state
+        .shutdown_challenges
+        .lock()
+        .map_err(|_| {
+            DaemonError::InvalidInput("shutdown challenge registry is unavailable".to_owned())
+        })?
+        .issue(Instant::now())
+}
+
+fn consume_shutdown_challenge(state: &HttpState, challenge: &str) -> Result<bool> {
+    Ok(state
+        .shutdown_challenges
+        .lock()
+        .map_err(|_| {
+            DaemonError::InvalidInput("shutdown challenge registry is unavailable".to_owned())
+        })?
+        .consume(challenge, Instant::now()))
+}
+
 fn require_control_auth(
     store: &JobStore,
     headers: &HeaderMap,
@@ -2402,6 +2737,135 @@ pub fn daemon_process_proof_message(
     length_prefixed_message(fields)
 }
 
+pub fn daemon_shutdown_proof_message(
+    challenge: &str,
+    canonical_home: &str,
+    pid: u32,
+    instance_id: &str,
+    running_binary_hash: &str,
+) -> Result<Vec<u8>> {
+    validate_ready_challenge(challenge)?;
+    validate_instance_id(instance_id)?;
+    validate_sha256_hex(running_binary_hash)?;
+    let pid_string = pid.to_string();
+    let fields = [
+        DAEMON_SHUTDOWN_PROOF_PROTOCOL,
+        challenge,
+        "POST",
+        "/control/shutdown",
+        canonical_home,
+        pid_string.as_str(),
+        instance_id,
+        running_binary_hash,
+    ];
+    length_prefixed_message(fields)
+}
+
+fn verify_daemon_shutdown_proof(store: &JobStore, request: &ShutdownProofRequest) -> Result<()> {
+    let canonical_home = store.home_dir().to_string_lossy().into_owned();
+    let pid = std::process::id();
+    let instance_id = daemon_instance_id();
+    let running_binary_hash = daemon_self_sha256()?;
+    if request.protocol != DAEMON_SHUTDOWN_PROOF_PROTOCOL
+        || validate_ready_challenge(&request.challenge).is_err()
+        || request.home_dir != canonical_home
+        || request.pid != pid
+        || request.instance_id != instance_id
+        || request.running_binary_hash != running_binary_hash
+    {
+        return Err(DaemonError::ShutdownProofRejected);
+    }
+    let proof = URL_SAFE_NO_PAD
+        .decode(&request.proof)
+        .map_err(|_| DaemonError::ShutdownProofRejected)?;
+    if proof.len() != 32 || URL_SAFE_NO_PAD.encode(&proof) != request.proof {
+        return Err(DaemonError::ShutdownProofRejected);
+    }
+    let message = daemon_shutdown_proof_message(
+        &request.challenge,
+        &canonical_home,
+        pid,
+        instance_id,
+        running_binary_hash,
+    )
+    .map_err(|_| DaemonError::ShutdownProofRejected)?;
+    let token = store.control_token()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes())
+        .map_err(|_| DaemonError::ShutdownProofRejected)?;
+    mac.update(&message);
+    mac.verify_slice(&proof)
+        .map_err(|_| DaemonError::ShutdownProofRejected)
+}
+
+fn daemon_capability_proof_message(
+    challenge: &str,
+    shutdown_challenge: &str,
+    health: &HealthResponse,
+    daemon_accepts: &[&str],
+    daemon_emits: &[&str],
+    worker_capabilities: Option<&WorkerCapabilities>,
+) -> Result<Vec<u8>> {
+    validate_ready_challenge(challenge)?;
+    validate_ready_challenge(shutdown_challenge)?;
+    validate_instance_id(&health.instance_id)?;
+    validate_sha256_hex(&health.running_binary_hash)?;
+    let pid_string = health.pid.to_string();
+    let ready_string = if health.ready { "true" } else { "false" };
+    let daemon_accepts_joined = daemon_accepts.join("\n");
+    let daemon_emits_joined = daemon_emits.join("\n");
+    let (
+        worker_protocol,
+        worker_session_id,
+        worker_pid,
+        worker_observed_at,
+        worker_expires_at,
+        worker_accepts,
+        worker_emits,
+    ) = match worker_capabilities {
+        Some(worker) => {
+            let worker_pid = worker.pid.to_string();
+            (
+                worker.protocol,
+                worker.session_id.as_str(),
+                worker_pid,
+                worker.observed_at.as_str(),
+                worker.expires_at.as_str(),
+                worker.accepts.join("\n"),
+                worker.emits.join("\n"),
+            )
+        }
+        None => ("", "", String::new(), "", "", String::new(), String::new()),
+    };
+    let fields = [
+        DAEMON_CAPABILITY_PROOF_PROTOCOL,
+        challenge,
+        DAEMON_READINESS_PROTOCOL,
+        DAEMON_LIFECYCLE_PROTOCOL,
+        shutdown_challenge,
+        health.protocol,
+        health.daemon_protocol,
+        health.version,
+        health.native_protocol,
+        DAEMON_ERROR_PROTOCOL,
+        health.status,
+        ready_string,
+        health.home_dir.as_str(),
+        pid_string.as_str(),
+        health.instance_id.as_str(),
+        health.running_binary_hash.as_str(),
+        daemon_accepts_joined.as_str(),
+        daemon_emits_joined.as_str(),
+        worker_protocol,
+        worker_session_id,
+        worker_pid.as_str(),
+        worker_observed_at,
+        worker_expires_at,
+        worker_accepts.as_str(),
+        worker_emits.as_str(),
+    ];
+    length_prefixed_message(fields)
+}
+
 fn length_prefixed_message<const N: usize>(fields: [&str; N]) -> Result<Vec<u8>> {
     let total_capacity = fields
         .iter()
@@ -2448,6 +2912,31 @@ fn daemon_process_proof(
         token.as_bytes(),
         &message,
         "daemon token cannot initialize process proof",
+    )
+}
+
+fn daemon_capability_proof(
+    store: &JobStore,
+    challenge: &str,
+    shutdown_challenge: &str,
+    health: &HealthResponse,
+    daemon_accepts: &[&str],
+    daemon_emits: &[&str],
+    worker_capabilities: Option<&WorkerCapabilities>,
+) -> Result<String> {
+    let token = store.control_token()?;
+    let message = daemon_capability_proof_message(
+        challenge,
+        shutdown_challenge,
+        health,
+        daemon_accepts,
+        daemon_emits,
+        worker_capabilities,
+    )?;
+    hmac_base64url(
+        token.as_bytes(),
+        &message,
+        "daemon token cannot initialize capability proof",
     )
 }
 
@@ -2883,6 +3372,53 @@ mod tests {
     use serde_json::json;
     use std::sync::{Arc, Barrier};
     use std::thread;
+
+    async fn issued_shutdown_request(
+        client: &reqwest::Client,
+        base_url: &str,
+        control_token: &str,
+        ready_seed: u8,
+    ) -> Value {
+        let ready_challenge = URL_SAFE_NO_PAD.encode([ready_seed; READY_CHALLENGE_BYTES]);
+        let ready: Value = client
+            .get(format!("{base_url}/ready?challenge={ready_challenge}"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let shutdown_challenge = ready["shutdown_challenge"].as_str().unwrap();
+        let canonical_home = ready["home_dir"].as_str().unwrap();
+        let pid = ready["pid"].as_u64().unwrap() as u32;
+        let instance_id = ready["instance_id"].as_str().unwrap();
+        let running_binary_hash = ready["running_binary_hash"].as_str().unwrap();
+        let message = daemon_shutdown_proof_message(
+            shutdown_challenge,
+            canonical_home,
+            pid,
+            instance_id,
+            running_binary_hash,
+        )
+        .unwrap();
+        let proof = hmac_base64url(
+            control_token.as_bytes(),
+            &message,
+            "shutdown proof HTTP test HMAC",
+        )
+        .unwrap();
+        json!({
+            "protocol": DAEMON_SHUTDOWN_PROOF_PROTOCOL,
+            "challenge": shutdown_challenge,
+            "home_dir": canonical_home,
+            "pid": pid,
+            "instance_id": instance_id,
+            "running_binary_hash": running_binary_hash,
+            "proof": proof,
+        })
+    }
 
     #[test]
     fn creates_state_under_explicit_home() {
@@ -3597,7 +4133,7 @@ mod tests {
             .unwrap();
         assert_eq!(running.status, JobStatus::Running);
         let blocker = json!({
-            "protocol": "tokenless.playwright.user-handover.v1",
+            "protocol": generated::protocol_constants::USER_HANDOVER_PROTOCOL,
             "blocker": { "code": "visible_recaptcha", "kind": "challenge" }
         });
         let waiting = store
@@ -4529,6 +5065,31 @@ mod tests {
             first_process_proof,
             URL_SAFE_NO_PAD.encode(expected_process_mac.finalize().into_bytes())
         );
+        assert_eq!(first["readiness_protocol"], DAEMON_READINESS_PROTOCOL);
+        assert_eq!(first["daemon_accepts"], json!(daemon_accepts()));
+        assert_eq!(first["daemon_emits"], json!(daemon_emits()));
+        assert!(first.get("worker_capabilities").is_none());
+        assert_eq!(
+            first["capability_proof_protocol"],
+            DAEMON_CAPABILITY_PROOF_PROTOCOL
+        );
+        let capability_proof = first["capability_proof"].as_str().unwrap();
+        assert_eq!(URL_SAFE_NO_PAD.decode(capability_proof).unwrap().len(), 32);
+        let capability_message = daemon_capability_proof_message(
+            &first_challenge,
+            first["shutdown_challenge"].as_str().unwrap(),
+            &health_response(&store).unwrap(),
+            &daemon_accepts(),
+            &daemon_emits(),
+            None,
+        )
+        .unwrap();
+        let mut expected_capability_mac = Hmac::<Sha256>::new_from_slice(token.as_bytes()).unwrap();
+        expected_capability_mac.update(&capability_message);
+        assert_eq!(
+            capability_proof,
+            URL_SAFE_NO_PAD.encode(expected_capability_mac.finalize().into_bytes())
+        );
         assert!(!serde_json::to_string(&first).unwrap().contains(&token));
 
         let second_challenge = URL_SAFE_NO_PAD.encode([8_u8; READY_CHALLENGE_BYTES]);
@@ -4565,6 +5126,209 @@ mod tests {
             assert!(!body.contains("ready_proof"));
             assert!(!body.contains(&token));
         }
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn ready_aggregates_only_fresh_runner_capabilities() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let canonical_home = store.home_dir().to_path_buf();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server_store = store.clone();
+        let server = tokio::spawn(async move {
+            serve_http_listener(server_store, listener).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+        let challenge = URL_SAFE_NO_PAD.encode([10_u8; READY_CHALLENGE_BYTES]);
+
+        let absent: Value = client
+            .get(format!("{base_url}/ready?challenge={challenge}"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(absent.get("worker_capabilities").is_none());
+        let absent_proof = absent["capability_proof"].as_str().unwrap();
+
+        let runner_dir = canonical_home.join(RUNNER_DIR_NAME);
+        fs::create_dir_all(&runner_dir).unwrap();
+        let heartbeat_path = runner_dir.join(RUNNER_HEARTBEAT_FILE_NAME);
+        let stale_observed = Utc::now() - chrono::Duration::seconds(60);
+        let stale_expires = Utc::now() - chrono::Duration::seconds(30);
+        fs::write(
+            &heartbeat_path,
+            serde_json::to_string(&json!({
+                "protocol": RUNNER_HEARTBEAT_PROTOCOL,
+                "session_id": "runner-stale",
+                "pid": 12345,
+                "observed_at": stale_observed.to_rfc3339_opts(SecondsFormat::Millis, true),
+                "expires_at": stale_expires.to_rfc3339_opts(SecondsFormat::Millis, true),
+                "accepts": runner_accepts(),
+                "emits": runner_emits()
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let stale: Value = client
+            .get(format!("{base_url}/ready?challenge={challenge}"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(stale.get("worker_capabilities").is_none());
+        assert_ne!(stale["capability_proof"], absent_proof);
+
+        let observed = Utc::now();
+        let expires = observed + chrono::Duration::seconds(15);
+        fs::write(
+            &heartbeat_path,
+            serde_json::to_string(&json!({
+                "protocol": RUNNER_HEARTBEAT_PROTOCOL,
+                "session_id": "runner-fresh",
+                "pid": 12345,
+                "observed_at": observed.to_rfc3339_opts(SecondsFormat::Millis, true),
+                "expires_at": expires.to_rfc3339_opts(SecondsFormat::Millis, true),
+                "accepts": runner_accepts(),
+                "emits": runner_emits()
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let fresh: Value = client
+            .get(format!("{base_url}/ready?challenge={challenge}"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let worker = fresh["worker_capabilities"].as_object().unwrap();
+        assert_eq!(worker["protocol"], RUNNER_HEARTBEAT_PROTOCOL);
+        assert_eq!(worker["session_id"], "runner-fresh");
+        assert_eq!(worker["pid"], 12345);
+        assert_eq!(worker["accepts"], json!(runner_accepts()));
+        assert_eq!(worker["emits"], json!(runner_emits()));
+        assert_ne!(fresh["capability_proof"], absent_proof);
+
+        let capability_message = daemon_capability_proof_message(
+            &challenge,
+            fresh["shutdown_challenge"].as_str().unwrap(),
+            &health_response(&store).unwrap(),
+            &daemon_accepts(),
+            &daemon_emits(),
+            fresh_worker_capabilities(&store).unwrap().as_ref(),
+        )
+        .unwrap();
+        let mut expected_capability_mac =
+            Hmac::<Sha256>::new_from_slice(store.control_token().unwrap().as_bytes()).unwrap();
+        expected_capability_mac.update(&capability_message);
+        assert_eq!(
+            fresh["capability_proof"].as_str().unwrap(),
+            URL_SAFE_NO_PAD.encode(expected_capability_mac.finalize().into_bytes())
+        );
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_errors_use_stable_versioned_daemon_error_envelope() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let control_token = store.control_token().unwrap();
+        let queued = store
+            .create_job(CreateJob::new(
+                "chatgpt",
+                "submit_and_read",
+                json!({ "prompt": "stable errors" }),
+            ))
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            serve_http_listener(store, listener).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+
+        assert_daemon_error(
+            client
+                .get(format!("{base_url}/ready"))
+                .send()
+                .await
+                .unwrap(),
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            false,
+        )
+        .await;
+        assert_daemon_error(
+            client
+                .post(format!("{base_url}/jobs"))
+                .json(&json!({
+                    "provider": "chatgpt",
+                    "action": "submit_and_read",
+                    "request_json": {}
+                }))
+                .send()
+                .await
+                .unwrap(),
+            StatusCode::UNAUTHORIZED,
+            "control_auth_missing",
+            false,
+        )
+        .await;
+        assert_daemon_error(
+            client
+                .get(format!("{base_url}/jobs"))
+                .bearer_auth("wrong-token")
+                .send()
+                .await
+                .unwrap(),
+            StatusCode::FORBIDDEN,
+            "control_auth_rejected",
+            false,
+        )
+        .await;
+        assert_daemon_error(
+            client
+                .get(format!("{base_url}/jobs/missing-job"))
+                .bearer_auth(&control_token)
+                .send()
+                .await
+                .unwrap(),
+            StatusCode::NOT_FOUND,
+            "job_not_found",
+            false,
+        )
+        .await;
+        let conflict = client
+            .post(format!("{base_url}/jobs/{}/complete", queued.job_id))
+            .bearer_auth(&control_token)
+            .json(&json!({
+                "claim_token": queued.claim_token,
+                "result_json": { "ok": true }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let conflict_body =
+            assert_daemon_error(conflict, StatusCode::CONFLICT, "invalid_job_state", false).await;
+        assert_eq!(
+            conflict_body["error"]["details"]["job_id"],
+            queued.job_id.as_str()
+        );
 
         server.abort();
     }
@@ -4978,10 +5742,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_control_shutdown_requires_auth_and_stops_server_gracefully() {
+    async fn http_control_shutdown_requires_proof_and_stops_server_gracefully() {
         let tempdir = tempfile::tempdir().unwrap();
         let store = JobStore::open(tempdir.path()).unwrap();
         let control_token = store.control_token().unwrap();
+        let canonical_home = store.home_dir().to_string_lossy().into_owned();
+        let pid = std::process::id();
+        let instance_id = daemon_instance_id().to_owned();
+        let running_binary_hash = daemon_self_sha256().unwrap().to_owned();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { serve_http_listener(store, listener).await });
@@ -4994,17 +5762,101 @@ mod tests {
             .unwrap();
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
+        let bearer_only = client
+            .post(format!("{base_url}/control/shutdown"))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(bearer_only.status(), StatusCode::FORBIDDEN);
+
+        let oversized = client
+            .post(format!("{base_url}/control/shutdown"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body("x".repeat(MAX_SHUTDOWN_PROOF_REQUEST_BYTES + 1))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(oversized.status(), StatusCode::BAD_REQUEST);
+        let oversized_body: Value = oversized.json().await.unwrap();
+        assert_eq!(oversized_body["error"]["protocol"], DAEMON_ERROR_PROTOCOL);
+        assert_eq!(oversized_body["error"]["code"], "invalid_input");
+        assert_eq!(
+            client
+                .get(format!("{base_url}/health"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+
+        let ready_challenge = URL_SAFE_NO_PAD.encode([7_u8; READY_CHALLENGE_BYTES]);
+        let ready: Value = client
+            .get(format!("{base_url}/ready?challenge={ready_challenge}"))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let challenge = ready["shutdown_challenge"].as_str().unwrap().to_owned();
+        let message = daemon_shutdown_proof_message(
+            &challenge,
+            &canonical_home,
+            pid,
+            &instance_id,
+            &running_binary_hash,
+        )
+        .unwrap();
+        let proof = hmac_base64url(
+            control_token.as_bytes(),
+            &message,
+            "shutdown proof test HMAC",
+        )
+        .unwrap();
+        let request = json!({
+            "protocol": DAEMON_SHUTDOWN_PROOF_PROTOCOL,
+            "challenge": challenge,
+            "home_dir": canonical_home,
+            "pid": pid,
+            "instance_id": instance_id,
+            "running_binary_hash": running_binary_hash,
+            "proof": proof,
+        });
         let rejected = client
             .post(format!("{base_url}/control/shutdown"))
-            .bearer_auth("wrong-token")
+            .json(&json!({
+                "protocol": request["protocol"],
+                "challenge": request["challenge"],
+                "home_dir": request["home_dir"],
+                "pid": request["pid"],
+                "instance_id": request["instance_id"],
+                "running_binary_hash": request["running_binary_hash"],
+                "proof": URL_SAFE_NO_PAD.encode([9_u8; 32]),
+            }))
             .send()
             .await
             .unwrap();
         assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
+        let rejected_body = rejected.text().await.unwrap();
+        assert!(!rejected_body.contains(&control_token));
+        assert!(!rejected_body.contains(proof.as_str()));
+        assert_eq!(
+            client
+                .get(format!("{base_url}/health"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
 
         let accepted: Value = client
             .post(format!("{base_url}/control/shutdown"))
-            .bearer_auth(control_token)
+            .json(&request)
             .send()
             .await
             .unwrap()
@@ -5015,13 +5867,111 @@ mod tests {
             .unwrap();
         assert_eq!(accepted["ok"], true);
         assert_eq!(accepted["status"], "shutting_down");
-        assert_eq!(accepted["pid"], std::process::id());
+        assert_eq!(accepted["pid"], pid);
 
         let joined = tokio::time::timeout(std::time::Duration::from_secs(2), server)
             .await
             .unwrap()
             .unwrap();
         assert!(joined.is_ok());
+    }
+
+    #[tokio::test]
+    async fn http_shutdown_challenges_are_single_use_and_expire() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let store = JobStore::open(tempdir.path()).unwrap();
+        let control_token = store.control_token().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                http_router_with_shutdown(store, Some(shutdown_tx)),
+            )
+            .await
+            .unwrap();
+        });
+        let client = reqwest::Client::new();
+
+        let request = issued_shutdown_request(&client, &base_url, &control_token, 11).await;
+        let first = client
+            .post(format!("{base_url}/control/shutdown"))
+            .json(&request)
+            .send();
+        let second = client
+            .post(format!("{base_url}/control/shutdown"))
+            .json(&request)
+            .send();
+        let (first, second) = tokio::join!(first, second);
+        let mut statuses = [
+            first.unwrap().status().as_u16(),
+            second.unwrap().status().as_u16(),
+        ];
+        statuses.sort_unstable();
+        assert_eq!(
+            statuses,
+            [StatusCode::OK.as_u16(), StatusCode::FORBIDDEN.as_u16()]
+        );
+
+        let replay = client
+            .post(format!("{base_url}/control/shutdown"))
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::FORBIDDEN);
+
+        let expired_request = issued_shutdown_request(&client, &base_url, &control_token, 12).await;
+        tokio::time::sleep(SHUTDOWN_CHALLENGE_TTL + Duration::from_millis(100)).await;
+        let expired = client
+            .post(format!("{base_url}/control/shutdown"))
+            .json(&expired_request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(expired.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            client
+                .get(format!("{base_url}/health"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+
+        let mut oldest_request = None;
+        let mut newest_request = None;
+        for ready_seed in 0..=SHUTDOWN_CHALLENGE_CAPACITY {
+            let request = issued_shutdown_request(
+                &client,
+                &base_url,
+                &control_token,
+                u8::try_from(ready_seed).unwrap(),
+            )
+            .await;
+            if oldest_request.is_none() {
+                oldest_request = Some(request.clone());
+            }
+            newest_request = Some(request);
+        }
+        let evicted = client
+            .post(format!("{base_url}/control/shutdown"))
+            .json(oldest_request.as_ref().unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(evicted.status(), StatusCode::FORBIDDEN);
+        let newest = client
+            .post(format!("{base_url}/control/shutdown"))
+            .json(newest_request.as_ref().unwrap())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(newest.status(), StatusCode::OK);
+
+        server.abort();
     }
 
     #[tokio::test]
@@ -5685,6 +6635,22 @@ mod tests {
         input.execution_backend = ExecutionBackend::Playwright;
         input.profile_id = Some(profile_id.to_owned());
         store.create_job(input).unwrap()
+    }
+
+    async fn assert_daemon_error(
+        response: reqwest::Response,
+        status: StatusCode,
+        code: &str,
+        retryable: bool,
+    ) -> Value {
+        assert_eq!(response.status(), status);
+        assert_json_content_type(&response);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["protocol"], DAEMON_ERROR_PROTOCOL);
+        assert_eq!(body["error"]["code"], code);
+        assert_eq!(body["error"]["retryable"], retryable);
+        assert!(body["error"]["message"].as_str().unwrap().len() > 0);
+        body
     }
 
     fn assert_json_content_type(response: &reqwest::Response) {

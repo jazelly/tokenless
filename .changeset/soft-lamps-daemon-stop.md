@@ -2,4 +2,4 @@
 "tokenless": patch
 ---
 
-Allow Tokenless CLI and daemon compatibility across matching semantic-version majors, and add `tokenless daemon stop` for authenticated daemon self-shutdown.
+Negotiate explicit daemon protocols independently from package versions, and add `tokenless daemon stop` with capability-verified, challenge-bound graceful self-shutdown.

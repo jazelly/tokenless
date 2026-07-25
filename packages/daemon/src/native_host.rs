@@ -3,6 +3,10 @@
 // no longer built or shipped.
 
 use crate::config::{write_json_atomic_secure, ConfigStore, ConfigUpdate};
+pub use crate::generated::protocol_constants::{
+    EXTENSION_BRIDGE_PROTOCOL as BRIDGE_MARKER_PROTOCOL, NATIVE_PROTOCOL,
+    VISIBLE_ATTACHMENT_PROTOCOL,
+};
 use crate::{ClaimNextJob, CompleteJob, DaemonError, Job, JobStatus, JobStore, JobSummary, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{SecondsFormat, Utc};
@@ -21,13 +25,10 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 use uuid::Uuid;
 
-pub const NATIVE_PROTOCOL: &str = "tokenless.native.v1";
-pub const BRIDGE_MARKER_PROTOCOL: &str = "tokenless.extension-bridge-state.v1";
 pub const BRIDGE_MARKER_FILE_NAME: &str = "extension-bridge.json";
 pub const MAX_NATIVE_INPUT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_NATIVE_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const NATIVE_INPUT_QUEUE_CAPACITY: usize = 4;
-pub const VISIBLE_ATTACHMENT_PROTOCOL: &str = "tokenless.visible-attachment.v1";
 pub const MAX_VISIBLE_ATTACHMENT_CHUNK_BYTES: usize = 512 * 1024;
 const MAX_VISIBLE_ATTACHMENTS: usize = 100;
 const MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES: u64 = 512 * 1024 * 1024;

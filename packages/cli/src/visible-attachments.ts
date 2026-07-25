@@ -3,7 +3,9 @@ import fs from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 
-export const VISIBLE_ATTACHMENT_PROTOCOL = 'tokenless.visible-attachment.v1' as const
+import { VISIBLE_ATTACHMENT_PROTOCOL_VERSION } from './generated/protocol-constants.js'
+
+export const VISIBLE_ATTACHMENT_PROTOCOL = VISIBLE_ATTACHMENT_PROTOCOL_VERSION
 export const VISIBLE_ATTACHMENT_DIRECTORY = 'attachments' as const
 export const DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES = 512 * 1024 * 1024
 export const DEFAULT_VISIBLE_ATTACHMENT_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000

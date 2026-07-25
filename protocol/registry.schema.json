@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tokenless.dev/protocol/registry.schema.json",
+  "title": "Tokenless protocol registry",
+  "type": "object",
+  "required": ["$schema", "registryProtocol", "generatedHeader", "protocols"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "const": "https://tokenless.dev/protocol/registry.schema.json"
+    },
+    "registryProtocol": {
+      "const": "tokenless.protocol-registry.v1"
+    },
+    "generatedHeader": {
+      "type": "string",
+      "minLength": 1
+    },
+    "protocols": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/protocol"
+      }
+    }
+  },
+  "$defs": {
+    "component": {
+      "enum": ["cli", "daemon", "playwright-worker", "release"]
+    },
+    "protocolId": {
+      "type": "string",
+      "pattern": "^tokenless\\.[a-z0-9.-]+\\.v\\d+$"
+    },
+    "componentList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/component"
+      },
+      "uniqueItems": true
+    },
+    "artifactList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^protocol/[A-Za-z0-9._/-]+\\.json$"
+      },
+      "uniqueItems": true
+    },
+    "constantMap": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "rust": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "typescript": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "javascript": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        }
+      }
+    },
+    "aliasMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rust": {
+          "$ref": "#/$defs/constantList"
+        },
+        "typescript": {
+          "$ref": "#/$defs/constantList"
+        },
+        "javascript": {
+          "$ref": "#/$defs/constantList"
+        }
+      }
+    },
+    "constantList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]*$"
+      },
+      "uniqueItems": true
+    },
+    "protocol": {
+      "type": "object",
+      "required": ["id", "owner", "status", "accepts", "emits", "constants"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/protocolId"
+        },
+        "owner": {
+          "$ref": "#/$defs/component"
+        },
+        "status": {
+          "enum": ["active", "legacy", "legacy-accepted"]
+        },
+        "accepts": {
+          "$ref": "#/$defs/componentList"
+        },
+        "emits": {
+          "$ref": "#/$defs/componentList"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/artifactList"
+        },
+        "plannedArtifacts": {
+          "$ref": "#/$defs/artifactList"
+        },
+        "constants": {
+          "$ref": "#/$defs/constantMap"
+        },
+        "aliases": {
+          "$ref": "#/$defs/aliasMap"
+        }
+      }
+    }
+  }
+}

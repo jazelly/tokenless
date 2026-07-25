@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+} from '../generated/protocol-constants.js'
+import {
   VISIBLE_ACTIONS,
   VISIBLE_ACTION_PROTOCOL_VERSION,
   createVisibleActionRequest,
@@ -12,8 +16,10 @@ import type { BrowserVisibility } from '../browser-visibility.js'
 import type { VisibleActionRequest } from './actions.js'
 import type { ProviderId } from './providers.js'
 
-export const MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 = 'tokenless.playwright.job.v1' as const
-export const MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION = 'tokenless.playwright.job.v2' as const
+export {
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+} from '../generated/protocol-constants.js'
 export const MANAGED_PLAYWRIGHT_JOB_ACTION = 'visible_provider_actions' as const
 export const PLAYWRIGHT_EXECUTION_BACKEND = 'playwright' as const
 

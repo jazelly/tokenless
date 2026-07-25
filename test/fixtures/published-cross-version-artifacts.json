@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "historicalVersion": "0.2.0",
+  "registry": "https://registry.npmjs.org",
+  "cli": {
+    "name": "tokenless",
+    "version": "0.2.0",
+    "integrity": "sha512-6At9aVbj9RyKtYUJAcNizYRsfsAj40TOPHFuZYc7SQ2omoHv9aQ5XagvXNUaA3OLhC7coC3RQCVCpOUOvbSWkg=="
+  },
+  "runtimeDependencies": [
+    {
+      "name": "playwright-core",
+      "version": "1.53.2",
+      "integrity": "sha512-ox/OytMy+2w1jcYEYlOo1Hhp8hZkLCximMTUTMBXjGUA1KoFfiSZ+DU+3a739jsPY0yoKH2TFy9S2fsJas8yAw=="
+    }
+  ],
+  "native": {
+    "darwin-arm64": {
+      "name": "tokenless-native-darwin-arm64",
+      "version": "0.2.0",
+      "integrity": "sha512-9CleVHo3NkqfBap5+v0RlAGaJMY5vZzDxGAXqNApKw+uyf5LaMxpn3HkWdF3Mj0XQ7eygWyW6Lr1b5NajA0A4Q=="
+    },
+    "darwin-x64": {
+      "name": "tokenless-native-darwin-x64",
+      "version": "0.2.0",
+      "integrity": "sha512-KVWujQ8k6vKe5+uCCh/v8AJxRuhF4n1n+j5y9+WCY87CC4UZPs13PzjLuSIn92YtYEl7oL23up1QorkecGfkJw=="
+    },
+    "linux-arm64": {
+      "name": "tokenless-native-linux-arm64",
+      "version": "0.2.0",
+      "integrity": "sha512-dTWI7AJfidCKNzZfmTVIALuQQ5Nw1hxh42qyM+SCLieO1zqDWLx1zVEuZ1+PTS8V7Zz5sNb7Jp07WcL78yveFw=="
+    },
+    "linux-x64": {
+      "name": "tokenless-native-linux-x64",
+      "version": "0.2.0",
+      "integrity": "sha512-TrliE8AUPJdLEZPEJYPqx8NpBaGHMe77tscpzmj+QGo6hDbYFSrJYow4myfwxh+t+6MK1SV+uYc3yJxG3Bj3gA=="
+    },
+    "win32-arm64": {
+      "name": "tokenless-native-win32-arm64",
+      "version": "0.2.0",
+      "integrity": "sha512-H12A0wPEPSVPwalpsnH8sCInvSlHj3l+NADZu+u8vvDks0vLtadVrBcznfZ9yKevhhtx8+ztARkg2SLTPHK4+Q=="
+    },
+    "win32-x64": {
+      "name": "tokenless-native-win32-x64",
+      "version": "0.2.0",
+      "integrity": "sha512-LX+0UuK4cjMAYsY8J7C0ArobQ5e+jFmQLei0Hyn3A2JSJKzNlu1q5wN43AOuGhxaBsDFJa4k5Z8SMaJ2L42qCg=="
+    }
+  }
+}

@@ -76,6 +76,10 @@ test('live setup checks provider auth once and reports without handoff or retry'
     const readiness = payload.readiness[provider]
     assert.equal(readiness.classification, readiness.auth)
     assert.match(readiness.auth, /^(authenticated|unauthenticated|unknown)$/)
+    assert.match(
+      readiness.access,
+      /^(guest|sign_in_required|signed_in_free|signed_in_paid|signed_in_unknown|unknown)$/,
+    )
     assert.equal(typeof readiness.jobId, 'string')
     assert.equal('handoff' in readiness, false)
     assert.equal('userAction' in readiness, false)

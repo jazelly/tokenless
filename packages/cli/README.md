@@ -26,7 +26,10 @@ tokenless setup
 The interactive flow chooses a browser and providers, discovers existing Chrome
 or Brave profiles, asks for explicit copy consent, creates a separate managed
 profile, reconciles and verifies the local daemon, and checks provider sign-in.
-Daemon compatibility is based on the CLI and daemon semantic-version major.
+Ordinary daemon compatibility is based on authenticated protocol negotiation,
+not the CLI and daemon package-version major. Setup also reconciles the verified
+same-home daemon back to the exact packaged runtime when the running or installed
+executable is stale.
 
 ### Start clean
 
@@ -121,7 +124,7 @@ tokenless run --browser-visibility headless --json
 
 ## Daemon Lifecycle
 
-Outside setup, the CLI reuses an authenticated running daemon when its semantic-version major matches the CLI, even when their minor or patch versions differ. An invalid or different-major daemon is left running and reported as incompatible. During `tokenless setup`, a verified same-home daemon with an unparseable or semantic-major incompatible version is automatically stopped through authenticated shutdown and replaced.
+Outside setup, the CLI reuses an authenticated running daemon when its signed `daemon_accepts` and `daemon_emits` capabilities negotiate the required control-plane and native protocols. Package versions and semantic-version majors are diagnostics only, so a different-major daemon remains reusable when the protocols overlap. During `tokenless setup`, Tokenless performs an exact reconciliation against the current packaged native runtime. It can also replace a protocol-incompatible daemon, but only after the challenge-bound ready proof, process proof, signed capability proof, canonical home, `tokenless.daemon-lifecycle.v1`, and `tokenless.daemon-shutdown-proof.v1` are all verified. Foreign, tampered, different-home, and legacy daemons without the signed lifecycle contract are left running. For an eligible daemon, setup uses the signed, short-lived, single-use server challenge to send a process-bound shutdown proof without transmitting the reusable control token, waits for the configured port listener to disappear, atomically refreshes the installed daemon, and restarts it on the same configured URL.
 
 Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 
@@ -129,7 +132,7 @@ Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 tokenless daemon stop --json
 ```
 
-The command verifies the daemon identity before sending the local control token and never kills a process merely because it occupies the configured loopback port. If the listener is foreign, cannot be verified, or predates graceful shutdown support, Tokenless reports that manual action is required. The daemon binds the exact configured port and does not choose a fallback when that port is occupied.
+The command verifies the daemon identity before deriving a one-request shutdown proof; the reusable local control token never crosses HTTP. It never kills a process merely because it occupies the configured loopback port. If the listener is foreign, cannot be verified, or predates graceful shutdown support, Tokenless reports that manual action is required. The daemon binds the exact configured port and does not choose a fallback when that port is occupied.
 
 ## Managed Profiles
 
@@ -151,7 +154,9 @@ tokenless profiles clear --profile work
 
 `profiles discover` is read-only. Import with `profiles add --browser <chrome|brave> --import-browser-profile <directory-key> --preferred-providers <list> --consent-local-profile-copy` only after explicit user choice. Imported provider sign-in state remains local and opaque to agents. Jobs reuse registered profiles without refreshing them from the source.
 
-`profiles status` performs a live provider-page check and authenticates only when the provider-specific account control is visible and clickable; a composer alone is not sufficient. It saves the resulting observation in the managed profile registry. `profiles list` reads that saved observation and does not open provider pages or refresh status ad hoc. After a successful check, `profiles list --json` reports the visible provider username and subscription label under `profiles[].providers`. A subscription is `null` when the visible UI does not establish a reliable tier.
+`profiles status` performs one live provider-page observation and does not enforce login, open a handoff, or retry after the user signs in. It reports both authentication and normalized access (`guest`, `sign_in_required`, `signed_in_free`, `signed_in_paid`, `signed_in_unknown`, or `unknown`) and saves the observation in the managed profile registry. `profiles list` reads that saved observation and does not open provider pages or refresh status ad hoc. Authenticated observations may also report the visible provider username, subscription label, and normalized tier. Ambiguous plan evidence remains `null`/`signed_in_unknown`.
+
+ChatGPT and Gemini can execute prompt jobs through a visible guest composer. Claude and Grok require an authenticated account; a signed-out task job enters durable `waiting_for_user` before Tokenless writes or submits the prompt. Plan labels are diagnostic only—visible enabled or disabled controls remain the capability authority.
 
 For Grok, the model menu is the subscription evidence: when `Auto`, `Expert`, and `Heavy` are all visibly unavailable, the saved subscription is `Free`; otherwise it is `SuperGrok`. Tokenless intentionally does not distinguish paid SuperGrok tiers.
 
