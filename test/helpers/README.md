@@ -39,6 +39,16 @@ Artifacts are written under `test-results/<provider>-dom-captures/<timestamp>/`:
 
 The helper does not read or export provider cookies, localStorage, sessionStorage, hidden authentication headers, or private provider backend APIs. It evaluates read-only page JavaScript through CDP and writes only the sanitized DOM, probes, and metadata described above. Use a dedicated capture profile and inspect every artifact before promoting it into a test fixture.
 
+Promoted regression evidence lives under `test/fixtures/provider-dom/<provider>/<account-state>/`. Its machine-readable v2 `manifest.json` lists each HTML/provenance pair with the provider, sanitized page URL, route class, account state, capture date, scenario, operation phase, and capability outcome. A ready menu, input, or form does not imply that a later provider mutation succeeded; only a captured success postcondition may record that outcome.
+
+The authenticated deep-workflow reductions are maintained by:
+
+```bash
+node test/helpers/build-provider-workflow-fixtures.mjs
+```
+
+That helper rewrites the reduced workflow fixtures, recalculates their provenance digests, and inventories the full corpus. It never replaces the capture step: refresh visible evidence through Chrome or CDP first, inspect and redact it, then update the descriptor.
+
 Useful options:
 
 ```bash

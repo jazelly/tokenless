@@ -7,6 +7,39 @@ export const PROVIDER_IDS = Object.freeze({
 
 export type ProviderId = typeof PROVIDER_IDS[keyof typeof PROVIDER_IDS]
 
+export const PROVIDER_CAPABILITIES = Object.freeze({
+  CAPABILITY_INSPECT: 'capability.inspect',
+  FILE_UPLOAD: 'file.upload',
+  WORKSPACE_ENSURE: 'workspace.ensure',
+  CONVERSATION_CONTINUE: 'conversation.continue',
+})
+
+export type ProviderCapabilityId = typeof PROVIDER_CAPABILITIES[keyof typeof PROVIDER_CAPABILITIES]
+export type ProviderCapabilityAvailability = 'available' | 'unavailable' | 'unknown'
+export type ProviderCapabilityResourceKind = 'visible_action' | 'file_attachment' | 'project' | 'conversation'
+export type ProviderCapabilityStability = 'experimental'
+
+export type ProviderCapabilityStrategy = {
+  readonly capability: ProviderCapabilityId
+  readonly availability: ProviderCapabilityAvailability
+  readonly visibleProof: string
+  readonly reason: string | null
+  readonly native: {
+    readonly resourceKind: ProviderCapabilityResourceKind | null
+    readonly availability: ProviderCapabilityAvailability
+    readonly visibleProof: string | null
+    readonly reason: string | null
+  }
+  readonly fallback: {
+    readonly resourceKind: ProviderCapabilityResourceKind | null
+    readonly availability: ProviderCapabilityAvailability
+    readonly mode: 'conversation' | null
+    readonly visibleProof: string | null
+    readonly reason: string | null
+  }
+  readonly stability: ProviderCapabilityStability
+}
+
 export type ProviderConfig = {
   readonly id: ProviderId
   readonly label: string
@@ -17,6 +50,8 @@ export type ProviderConfig = {
   readonly submitSelectors: readonly string[]
   readonly answerSelectors: readonly string[]
   readonly fileInputSelectors: readonly string[]
+  readonly fileUploadTriggerSelectors: readonly string[]
+  readonly fileUploadLocalSelectors: readonly string[]
   readonly modelControlSelectors: readonly string[]
   readonly effortControlSelectors: readonly string[]
   readonly authIndicators: readonly string[]
@@ -24,11 +59,97 @@ export type ProviderConfig = {
   readonly loginIndicators: readonly string[]
   readonly blockerSelectors: readonly string[]
   readonly busySelectors: readonly string[]
+  readonly capabilities: Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>>
 }
 
 type TrustedSignInNavigationPolicy = {
   readonly host: string
   readonly pathPrefixes?: readonly string[]
+}
+
+function providerCapabilities(): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
+  return Object.freeze({
+    [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.CAPABILITY_INSPECT,
+      availability: 'available',
+      visibleProof: 'provider-capability-registry',
+      reason: null,
+      native: Object.freeze({
+        resourceKind: 'visible_action',
+        availability: 'available',
+        visibleProof: 'provider-capability-registry',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'native_visible_action_has_no_fallback',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.FILE_UPLOAD]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.FILE_UPLOAD,
+      availability: 'unknown',
+      visibleProof: 'runtime-visible-upload-evidence-required',
+      reason: 'availability_depends_on_visible_provider_controls',
+      native: Object.freeze({
+        resourceKind: 'file_attachment',
+        availability: 'unknown',
+        visibleProof: 'runtime-visible-upload-evidence-required',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'no_provider_neutral_file_upload_fallback',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.WORKSPACE_ENSURE]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.WORKSPACE_ENSURE,
+      availability: 'available',
+      visibleProof: 'conversation-fallback-declared',
+      reason: 'native_workspace_creation_unproven',
+      native: Object.freeze({
+        resourceKind: 'project',
+        availability: 'unavailable',
+        visibleProof: null,
+        reason: 'no_fixture_proven_native_workspace_creation_closure',
+      }),
+      fallback: Object.freeze({
+        resourceKind: 'conversation',
+        availability: 'available',
+        mode: 'conversation',
+        visibleProof: 'conversation-composer-visible',
+        reason: null,
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE,
+      availability: 'unknown',
+      visibleProof: 'runtime-visible-composer-evidence-required',
+      reason: 'availability_depends_on_visible_composer',
+      native: Object.freeze({
+        resourceKind: 'conversation',
+        availability: 'unknown',
+        visibleProof: 'runtime-visible-composer-evidence-required',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'conversation_continuation_is_the_native_visible_outcome',
+      }),
+      stability: 'experimental',
+    }),
+  })
 }
 
 const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
@@ -63,7 +184,16 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'main article',
     ]),
     fileInputSelectors: Object.freeze([
+      'input#upload-files[type="file"]',
       'input[type="file"]',
+    ]),
+    fileUploadTriggerSelectors: Object.freeze([
+      'button[data-testid="composer-plus-btn"][aria-label="Add files and more"]',
+      'button[aria-label="Add files and more"]',
+    ]),
+    fileUploadLocalSelectors: Object.freeze([
+      '[role="menuitem"]:has-text("Upload from computer")',
+      '.__menu-item:has-text("Upload from computer")',
     ]),
     modelControlSelectors: Object.freeze([
       'button[data-testid="model-switcher-dropdown-button"]',
@@ -95,6 +225,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'button[data-testid="stop-button"]',
       'button[aria-label*="Stop generating" i]',
     ]),
+    capabilities: providerCapabilities(),
   }),
   Object.freeze({
     id: PROVIDER_IDS.CLAUDE,
@@ -121,7 +252,15 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       '.font-claude-response-body',
     ]),
     fileInputSelectors: Object.freeze([
+      'input#chat-input-file-upload-onpage[data-testid="file-upload"][type="file"]',
+      'input[data-testid="file-upload"][type="file"]',
       'input[type="file"]',
+    ]),
+    fileUploadTriggerSelectors: Object.freeze([
+      'button[aria-label="Add files, connectors, and more"]',
+    ]),
+    fileUploadLocalSelectors: Object.freeze([
+      '[role="menuitem"]:has-text("Add files or photos")',
     ]),
     modelControlSelectors: Object.freeze([
       'button[aria-label*="model" i]',
@@ -149,6 +288,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       '[data-testid="virtual-message-list"] [data-is-streaming="true"]',
       'button[aria-label*="Stop" i]',
     ]),
+    capabilities: providerCapabilities(),
   }),
   Object.freeze({
     id: PROVIDER_IDS.GEMINI,
@@ -169,7 +309,16 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'message-content',
     ]),
     fileInputSelectors: Object.freeze([
+      'input[type="file"][name="Filedata"]',
       'input[type="file"]',
+    ]),
+    fileUploadTriggerSelectors: Object.freeze([
+      'button[aria-label="Upload and tools"]',
+    ]),
+    fileUploadLocalSelectors: Object.freeze([
+      'button[role="menuitem"][data-test-id="local-images-files-uploader-button"][aria-label^="Upload files"]',
+      '[role="menuitem"][aria-label^="Upload files"]',
+      '[role="menuitem"]:has-text("Upload files")',
     ]),
     modelControlSelectors: Object.freeze([
       'button[aria-label*="model" i]',
@@ -193,6 +342,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     busySelectors: Object.freeze([
       'button[aria-label="Stop response"]',
     ]),
+    capabilities: providerCapabilities(),
   }),
   Object.freeze({
     id: PROVIDER_IDS.GROK,
@@ -214,9 +364,18 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'div[data-testid="assistant-message"]',
     ]),
     fileInputSelectors: Object.freeze([
+      'input[type="file"][name="files"]',
       'input[type="file"]',
     ]),
+    fileUploadTriggerSelectors: Object.freeze([
+      'button[data-testid="attach-button"][aria-label="Attach"]',
+      'button[aria-label="Attach"]',
+    ]),
+    fileUploadLocalSelectors: Object.freeze([
+      '[role="menuitem"]:has-text("Upload a file")',
+    ]),
     modelControlSelectors: Object.freeze([
+      'button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]',
       'button[aria-label*="model" i]',
       'button:has-text("Grok")',
     ]),
@@ -240,6 +399,7 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'text=/upgrade required|upgrade your plan/i',
     ]),
     busySelectors: Object.freeze([]),
+    capabilities: providerCapabilities(),
   }),
 ])
 

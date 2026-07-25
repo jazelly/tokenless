@@ -1,0 +1,26 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-free",
+  "observedPlan": { "status": "observed", "label": "Free" },
+  "scenario": "model-menu-open",
+  "routeClass": "new-chat",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://grok.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "9b91f8d0cacbaccaa5c878b6fc2442ddc9c8a1d26083ae6904520020f6c5cd71",
+  "evidenceSelectors": [
+    { "capability": "model.inspect", "selector": "button#model-select-trigger[aria-label=\"Model select\"][aria-haspopup=\"menu\"]", "expectedCount": 1 },
+    { "capability": "model.free-tier-unavailable", "selector": "[role=\"menuitem\"][data-radix-collection-item].text-secondary.opacity-75 span.font-semibold", "expectedCount": 3 },
+    { "capability": "model.free-tier-available", "selector": "[role=\"menuitem\"][data-radix-collection-item].text-primary span.font-semibold", "expectedCount": 1 },
+    { "capability": "model.upgrade", "selector": "[role=\"menuitem\"].group\\/mode-select-upsell button", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "current-unavailable-rows-use-visual-state-not-native-disabled", "selector": "[role=\"menuitem\"][data-radix-collection-item][disabled], [role=\"menuitem\"][data-radix-collection-item][aria-disabled=\"true\"], [role=\"menuitem\"][data-radix-collection-item][data-disabled]", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Free is inferred only when Auto, Expert, and Heavy all expose Grok's visible unavailable state.", "The current Grok DOM uses text-secondary and opacity-75 instead of native disabled or aria-disabled attributes."]
+}

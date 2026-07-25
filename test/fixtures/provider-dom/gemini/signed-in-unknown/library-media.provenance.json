@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": {
+    "status": "unknown",
+    "label": null
+  },
+  "scenario": "library-media",
+  "routeClass": "library",
+  "operationPhase": "observed",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://gemini.google.com/library",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "0f443d262ae8c52d7cba16ecb6a5326ad6c8fc3ae931b326d0fe73db2fac89be",
+  "evidenceSelectors": [
+    {
+      "capability": "library.sections",
+      "selector": "main section",
+      "expectedCount": 2
+    },
+    {
+      "capability": "image.retrieve",
+      "selector": "button[aria-label=\"Preview or open\"] img",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

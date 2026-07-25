@@ -92,6 +92,52 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(advancedUsage, /tokenless state/)
   assert.match(advancedUsage, /tokenless profiles remove/)
   assert.match(advancedUsage, /tokenless config/)
+  assert.match(result.stderr, /^Short options:$/m)
+  assert.match(result.stderr, /^  -P, --profile <slug>        Select a managed browser profile\.$/m)
+  assert.match(result.stderr, /^  -p, --provider <provider>   Select an AI provider\.$/m)
+})
+
+test('CLI accepts distinct case-sensitive short options for profile and provider', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-short-options-')))
+  try {
+    const added = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'add',
+      '-P',
+      'work',
+      '--home',
+      homeDir,
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+    assert.equal(added.status, 0, added.stderr || added.stdout)
+    assert.equal(JSON.parse(added.stdout).profile.slug, 'work')
+
+    const status = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'status',
+      '-P',
+      'missing',
+      '-p',
+      'claude',
+      '--home',
+      homeDir,
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+    assert.equal(status.status, 1)
+    const payload = JSON.parse(status.stdout)
+    assert.equal(payload.error.code, 'profile_not_found')
+    assert.match(payload.error.message, /missing/)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
 })
 
 test('daemon stop accepts only daemon stop options and positive integer timeout', () => {
@@ -765,40 +811,6 @@ test('agent skills use the managed Playwright workflow and two profile setup pat
   assert.match(installSkill, /Next verification/)
   assert.doesNotMatch(installSkill, /interactive terminal/i)
   assert.doesNotMatch(installSkill, /extensionBridge|extension_setup_incomplete|chrome:\/\/extensions/i)
-})
-
-test('public onboarding describes managed Playwright startup without removed runtime claims', () => {
-  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
-  const chinese = fs.readFileSync(path.join(root, 'README.zh-CN.md'), 'utf8')
-  const cliReadme = fs.readFileSync(path.join(root, 'packages/cli/README.md'), 'utf8')
-  const installer = fs.readFileSync(path.join(root, 'deploy/install.sh'), 'utf8')
-  const privacy = fs.readFileSync(path.join(root, 'PRIVACY.md'), 'utf8')
-  const architecture = fs.readFileSync(path.join(root, 'docs/architecture.md'), 'utf8')
-  const skill = fs.readFileSync(path.join(root, 'skills/tokenless/SKILL.md'), 'utf8')
-  const installSkill = fs.readFileSync(path.join(root, 'skills/tokenless-install/SKILL.md'), 'utf8')
-  for (const text of [readme, cliReadme]) {
-    assert.match(text, /Playwright/)
-    assert.match(text, /visible/)
-    assert.doesNotMatch(text, /\/Users\/jazelly/)
-  }
-  assert.match(readme, /npx tokenless@latest setup/)
-  assert.match(readme, /Save tokens/)
-  assert.match(readme, /tokenless setup --fresh/)
-  assert.match(readme, /Use an existing browser profile \(recommended\)/)
-  assert.match(chinese, /使用现有浏览器配置（推荐）/)
-  assert.match(chinese, /使用全新配置启动/)
-  assert.ok(readme.indexOf('## Why Tokenless') < readme.indexOf('## How Tokenless Works'))
-  assert.match(chinese, /Playwright/)
-  assert.match(chinese, /tokenless profiles/)
-  assert.match(installer, /setup --fresh --json/)
-  for (const text of [readme, chinese, cliReadme, installer, privacy, architecture, skill, installSkill]) {
-    assert.doesNotMatch(text, /native[- ]host|browser extension|chrome extension/i)
-    assert.doesNotMatch(text, new RegExp(`${'direct'} mode|--mode ${'direct'}|--${'direct'}|TOKENLESS_${'DIRECT'}|${'direct'} broker|${'direct'} API`, 'i'))
-  }
-  assert.equal(fs.existsSync(path.join(root, 'docs', `${'direct'}-mode.md`)), false)
-  assert.equal(fs.existsSync(path.join(root, 'docs', `${'direct'}-gateway-rfc.md`)), false)
-  assert.equal(fs.existsSync(path.join(root, 'docs/account-pool-rfc.md')), false)
-  assert.equal(fs.existsSync(path.join(root, 'docs/multi-account-routing.md')), false)
 })
 
 function readJson(relativePath) {

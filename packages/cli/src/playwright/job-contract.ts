@@ -145,7 +145,7 @@ function validateSafeTarget(input: unknown, providerId: ProviderId): ManagedPlay
 }
 
 function isVisibleActionRequestLike(value: unknown): value is VisibleActionRequest {
-  return isPlainRecord(value) && value.protocol === VISIBLE_ACTION_PROTOCOL_VERSION
+  return isPlainRecord(value) && typeof value.protocol === 'string'
 }
 
 function validateTaskId(value: unknown): string | null {

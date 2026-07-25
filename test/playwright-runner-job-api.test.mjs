@@ -9,6 +9,8 @@ import {
   PLAYWRIGHT_EXECUTION_BACKEND,
   TokenlessPlaywrightError,
   VISIBLE_ACTIONS,
+  VISIBLE_ACTION_PROTOCOL_VERSION,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   createManagedPlaywrightJobRequest,
   submitManagedPlaywrightJob,
   listManagedPlaywrightJobs,
@@ -92,6 +94,66 @@ test('managed Playwright job contract carries bounded top-level taskId metadata'
     target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
     actions: request.actions,
   }), matchCode('invalid_playwright_job_request'))
+})
+
+test('managed Playwright job contract accepts visible-action v1 legacy actions and v2 actions only for new actions', () => {
+  const base = {
+    provider: 'chatgpt',
+    target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
+    taskId: null,
+    browserVisibility: 'headed',
+  }
+
+  const legacy = validateManagedPlaywrightJobRequest({
+    protocol: MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+    ...base,
+    actions: [{
+      protocol: VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+      requestId: 'legacy-auth',
+      provider: 'chatgpt',
+      action: VISIBLE_ACTIONS.AUTH_STATUS,
+      payload: {},
+    }],
+  })
+  assert.equal(legacy.actions[0].protocol, VISIBLE_ACTION_PROTOCOL_VERSION_V1)
+  assert.equal(legacy.actions[0].action, VISIBLE_ACTIONS.AUTH_STATUS)
+
+  const current = validateManagedPlaywrightJobRequest({
+    protocol: MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+    ...base,
+    actions: [
+      {
+        protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+        requestId: 'capabilities',
+        provider: 'chatgpt',
+        action: VISIBLE_ACTIONS.CAPABILITY_INSPECT,
+        payload: {},
+      },
+      {
+        protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+        requestId: 'workspace',
+        provider: 'chatgpt',
+        action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+        payload: { name: 'Agent Project', mode: 'conversation' },
+      },
+    ],
+  })
+  assert.deepEqual(current.actions.map((action) => action.action), [
+    VISIBLE_ACTIONS.CAPABILITY_INSPECT,
+    VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+  ])
+
+  assert.throws(() => validateManagedPlaywrightJobRequest({
+    protocol: MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+    ...base,
+    actions: [{
+      protocol: VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+      requestId: 'legacy-workspace',
+      provider: 'chatgpt',
+      action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+      payload: { name: 'Agent Project', mode: 'conversation' },
+    }],
+  }), matchCode('invalid_visible_action_protocol'))
 })
 
 test('managed Playwright job API lists and cancels without entrypoint coupling', async () => {

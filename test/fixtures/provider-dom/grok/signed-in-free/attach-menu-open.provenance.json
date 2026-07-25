@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-free",
+  "observedPlan": {
+    "status": "observed",
+    "label": "Free"
+  },
+  "scenario": "attach-menu-open",
+  "routeClass": "new-chat",
+  "operationPhase": "upload-menu-open",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://grok.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "f3507e5ac81868009e4b2336d14b9cd7dc6987372c3ec2ef3d04897a30bfa1b4",
+  "evidenceSelectors": [
+    {
+      "capability": "upload.open",
+      "selector": "button[data-testid=\"attach-button\"][aria-expanded=\"true\"]",
+      "expectedCount": 1
+    },
+    {
+      "capability": "tools.enumerate",
+      "selector": "[role=\"menu\"][aria-label=\"Attach\"] [role=\"menuitem\"]",
+      "expectedCount": 4
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

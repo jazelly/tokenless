@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "claude",
+  "accountState": "signed-in-free",
+  "observedPlan": {
+    "status": "observed",
+    "label": "Free"
+  },
+  "scenario": "conversation-existing",
+  "routeClass": "conversation",
+  "operationPhase": "conversation-existing",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://claude.ai/chat/[redacted]",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "00db7aa2ff62f6c517158ab9a1c67953b1960c7a34906b8fb1222ef6d3f0d35b",
+  "evidenceSelectors": [
+    {
+      "capability": "job.existing",
+      "selector": "[role=\"feed\"][aria-label=\"Chat messages\"] article",
+      "expectedCount": 2
+    },
+    {
+      "capability": "job.continue",
+      "selector": "[data-testid=\"chat-input\"][role=\"textbox\"]",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

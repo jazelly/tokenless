@@ -15,6 +15,12 @@ const scenarios = Object.freeze([
   'file-input-ready',
   'composer-idle',
 ])
+const deepWorkflowMinimums = Object.freeze({
+  chatgpt: 7,
+  claude: 6,
+  gemini: 7,
+  grok: 9,
+})
 const providers = Object.freeze({
   chatgpt: {
     accountState: 'signed-in-paid',
@@ -125,11 +131,14 @@ test('authenticated provider DOM fixtures retain only redacted, provenance-bound
   try {
     for (const [provider, expected] of Object.entries(providers)) {
       const accountRoot = path.join(fixtureRoot, provider, expected.accountState)
-      assert.deepEqual(
-        (await fs.readdir(accountRoot)).filter((name) => name.endsWith('.html')).sort(),
-        scenarios.map((scenario) => `${scenario}.html`).sort(),
-        `${provider} authenticated scenario set`
+      const retainedScenarios = new Set(
+        (await fs.readdir(accountRoot))
+          .filter((name) => name.endsWith('.html'))
+          .map((name) => name.replace(/\.html$/, ''))
       )
+      for (const scenario of scenarios) {
+        assert.equal(retainedScenarios.has(scenario), true, `${provider} retains ${scenario}`)
+      }
 
       for (const scenario of scenarios) {
         const htmlPath = path.join(accountRoot, `${scenario}.html`)
@@ -197,6 +206,146 @@ test('authenticated evidence does not replace the existing legacy fixture corpus
     const legacyPath = path.join(root, 'test', 'fixtures', `${provider}-real-dom-fixture.html`)
     const stat = await fs.stat(legacyPath)
     assert.equal(stat.isFile(), true, `${provider} legacy fixture remains available`)
+  }
+})
+
+test('provider DOM manifest inventories every fixture with its sanitized page URL', async () => {
+  const manifest = JSON.parse(await fs.readFile(path.join(fixtureRoot, 'manifest.json'), 'utf8'))
+  assert.equal(manifest.schema, 'tokenless.provider-dom-manifest.v2')
+  assert.equal(manifest.generatedBy, 'test/helpers/build-provider-workflow-fixtures.mjs')
+  assert.equal(Array.isArray(manifest.fixtures), true)
+
+  const listed = new Set()
+  for (const entry of manifest.fixtures) {
+    const provenance = JSON.parse(await fs.readFile(
+      path.join(fixtureRoot, entry.provenancePath),
+      'utf8'
+    ))
+    await fs.access(path.join(fixtureRoot, entry.htmlPath))
+    assert.equal(provenance.provider, entry.provider)
+    assert.equal(provenance.accountState, entry.accountState)
+    assert.equal(provenance.scenario, entry.scenario)
+    assert.equal(provenance.routeClass, entry.routeClass)
+    assert.equal(typeof entry.operationPhase, 'string')
+    assert.match(entry.capabilityOutcome, /^(?:available|unavailable|unknown)$/)
+    if (provenance.operationPhase !== undefined) {
+      assert.equal(provenance.operationPhase, entry.operationPhase)
+      assert.equal(provenance.capabilityOutcome, entry.capabilityOutcome)
+    }
+    assert.equal(provenance.sanitizedUrl, entry.sanitizedUrl)
+    assert.equal(provenance.observedOn, entry.observedOn)
+    listed.add(entry.htmlPath)
+  }
+
+  const actual = new Set()
+  for (const provider of Object.keys(providers)) {
+    const accountStates = await fs.readdir(path.join(fixtureRoot, provider), { withFileTypes: true })
+    for (const accountState of accountStates.filter((entry) => entry.isDirectory())) {
+      const files = await fs.readdir(path.join(fixtureRoot, provider, accountState.name))
+      for (const file of files.filter((name) => name.endsWith('.html'))) {
+        actual.add(path.join(provider, accountState.name, file))
+      }
+    }
+  }
+  assert.deepEqual([...listed].sort(), [...actual].sort())
+})
+
+test('deep workflow fixtures cover authenticated provider jobs, settings, connectors, uploads, and media', {
+  timeout: 30000,
+}, async () => {
+  const manifest = JSON.parse(await fs.readFile(path.join(fixtureRoot, 'manifest.json'), 'utf8'))
+  const deepEntries = manifest.fixtures.filter((entry) => entry.observedOn === '2026-07-25')
+  const counts = Object.fromEntries(Object.keys(deepWorkflowMinimums).map((provider) => [provider, 0]))
+  const routeClasses = Object.fromEntries(Object.keys(deepWorkflowMinimums).map((provider) => [provider, new Set()]))
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+
+  try {
+    for (const entry of deepEntries) {
+      const [htmlBytes, provenanceText] = await Promise.all([
+        fs.readFile(path.join(fixtureRoot, entry.htmlPath)),
+        fs.readFile(path.join(fixtureRoot, entry.provenancePath), 'utf8'),
+      ])
+      const html = htmlBytes.toString('utf8')
+      const provenance = JSON.parse(provenanceText)
+      counts[entry.provider] += 1
+      routeClasses[entry.provider].add(entry.routeClass)
+
+      assert.equal(provenance.source, 'authenticated-user-visible-chrome-session')
+      assert.equal(provenance.artifactKind, 'redacted-reduced-dom')
+      assert.equal(provenance.containsProviderJavaScript, false)
+      assert.equal(provenance.containsSyntheticBehavior, false)
+      if (provenance.operationPhase !== undefined) {
+        assert.equal(provenance.operationPhase, entry.operationPhase)
+        assert.equal(provenance.capabilityOutcome, entry.capabilityOutcome)
+      }
+      assert.equal(sha256(htmlBytes), provenance.contentSha256)
+      assertPrivacyBoundary(html)
+      assertPrivacyBoundary(provenanceText)
+      assert.doesNotMatch(html, /<script\b|<style\b/i)
+
+      await page.setContent(html)
+      for (const evidence of provenance.evidenceSelectors) {
+        assert.equal(
+          await page.locator(evidence.selector).count(),
+          evidence.expectedCount,
+          `${entry.provider}/${entry.scenario} ${evidence.capability}: ${evidence.selector}`
+        )
+      }
+      for (const expectedAbsence of provenance.absenceSelectors) {
+        assert.equal(
+          await page.locator(expectedAbsence.selector).count(),
+          expectedAbsence.expectedCount,
+          `${entry.provider}/${entry.scenario} ${expectedAbsence.purpose}: ${expectedAbsence.selector}`
+        )
+      }
+      await assertSanitizedLinks(page, `${entry.provider}/${entry.scenario}`)
+    }
+  } finally {
+    await browser.close()
+  }
+
+  for (const [provider, minimum] of Object.entries(deepWorkflowMinimums)) {
+    assert.equal(counts[provider] >= minimum, true, `${provider} deep fixture count`)
+    assert.equal(routeClasses[provider].size >= 4, true, `${provider} distinct route classes`)
+  }
+})
+
+test('current Grok Free fixture preserves the visible model entitlement boundary', async () => {
+  const accountRoot = path.join(fixtureRoot, 'grok', 'signed-in-free')
+  const [htmlBytes, provenanceText] = await Promise.all([
+    fs.readFile(path.join(accountRoot, 'model-menu-open.html')),
+    fs.readFile(path.join(accountRoot, 'model-menu-open.provenance.json'), 'utf8'),
+  ])
+  const html = htmlBytes.toString('utf8')
+  const provenance = JSON.parse(provenanceText)
+
+  assert.equal(provenance.observedOn, '2026-07-25')
+  assert.equal(provenance.sanitizedUrl, 'https://grok.com/')
+  assert.deepEqual(provenance.observedPlan, { status: 'observed', label: 'Free' })
+  assert.equal(sha256(htmlBytes), provenance.contentSha256)
+  assertPrivacyBoundary(html)
+  assertPrivacyBoundary(provenanceText)
+
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  try {
+    await page.setContent(html)
+    assert.equal(
+      await page.locator('[role="menuitem"][data-radix-collection-item].text-secondary.opacity-75 span.font-semibold').count(),
+      3
+    )
+    assert.deepEqual(
+      await page.locator('[role="menuitem"][data-radix-collection-item].text-secondary.opacity-75 span.font-semibold').allTextContents(),
+      ['Auto', 'Expert', 'Heavy']
+    )
+    assert.equal(
+      await page.locator('[role="menuitem"][data-radix-collection-item][disabled], [role="menuitem"][data-radix-collection-item][aria-disabled="true"], [role="menuitem"][data-radix-collection-item][data-disabled]').count(),
+      0
+    )
+    assert.equal(await page.getByRole('button', { name: 'Upgrade' }).count(), 1)
+  } finally {
+    await browser.close()
   }
 })
 

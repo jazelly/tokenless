@@ -1803,6 +1803,201 @@ test('CLI submits managed Playwright jobs through real daemon with profile-filte
   }
 })
 
+test('CLI wires capability and explicit workspace actions without implicit project-name workspace creation', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-workspace-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const fakeRunnerEntry = writeFakeRunnerEntry(homeDir)
+  installWorkspaceDaemon(homeDir)
+  let daemonPid
+  try {
+    const add = runCli([
+      'profiles',
+      'add',
+      '--profile',
+      'default',
+      '--label',
+      'Default visible profile',
+      '--set-default',
+      '--home',
+      homeDir,
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(add.status, 0, add.stderr || add.stdout)
+    const profile = JSON.parse(add.stdout).profile
+
+    const omitted = runCli([
+      'run',
+      '--profile', 'default',
+      '--provider', 'chatgpt',
+      '--task-id', 'workspace-omitted',
+      '--project-name', 'Agent Project',
+      '--prompt', 'project name is metadata only',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--no-wait',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(omitted.status, 0, omitted.stderr || omitted.stdout)
+    daemonPid = JSON.parse(fs.readFileSync(path.join(homeDir, 'daemon.pid.json'), 'utf8')).pid
+    const omittedPayload = JSON.parse(omitted.stdout)
+    const omittedJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(omittedPayload.jobId)}`, homeDir)
+    assert.deepEqual(omittedJob.request_json.actions.map((action) => action.action), [
+      'prompt.input',
+      'prompt.submit',
+      'response.read',
+    ])
+    assert.equal(omittedJob.request_json.target.url, 'https://chatgpt.com/')
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
+
+    const firstWorkspace = runCli([
+      'run',
+      '--profile', 'default',
+      '--provider', 'chatgpt',
+      '--task-id', 'workspace-continue',
+      '--project-name', 'Agent Project',
+      '--workspace-mode', 'conversation',
+      '--project-instructions', 'Keep this task in a dedicated conversation.',
+      '--prompt', 'first workspace turn',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--no-wait',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(firstWorkspace.status, 0, firstWorkspace.stderr || firstWorkspace.stdout)
+    const firstWorkspacePayload = JSON.parse(firstWorkspace.stdout)
+    const firstWorkspaceJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(firstWorkspacePayload.jobId)}`, homeDir)
+    assert.deepEqual(firstWorkspaceJob.request_json.actions.map((action) => action.action), [
+      'workspace.ensure',
+      'prompt.input',
+      'prompt.submit',
+      'response.read',
+    ])
+    assert.deepEqual(firstWorkspaceJob.request_json.actions[0].payload, {
+      name: 'Agent Project',
+      mode: 'conversation',
+      instructions: 'Keep this task in a dedicated conversation.',
+    })
+    assert.equal(firstWorkspaceJob.request_json.target.url, 'https://chatgpt.com/')
+    await completeAsInjectedRunner({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      resultUrl: 'https://chatgpt.com/c/workspace-continue',
+    })
+
+    const continued = runCli([
+      'run',
+      '--profile', 'default',
+      '--provider', 'chatgpt',
+      '--task-id', 'workspace-continue',
+      '--project-name', 'Agent Project',
+      '--workspace-mode', 'auto',
+      '--prompt', 'second workspace turn',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--no-wait',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(continued.status, 0, continued.stderr || continued.stdout)
+    const continuedJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(JSON.parse(continued.stdout).jobId)}`, homeDir)
+    assert.equal(continuedJob.request_json.target.url, 'https://chatgpt.com/c/workspace-continue')
+    assert.deepEqual(continuedJob.request_json.actions.map((action) => action.action), [
+      'workspace.ensure',
+      'prompt.input',
+      'prompt.submit',
+      'response.read',
+    ])
+    await completeAsInjectedRunner({ daemonUrl, homeDir, profileId: profile.id })
+
+    const claudeMapped = runCli([
+      'run',
+      '--profile', 'default',
+      '--provider', 'claude',
+      '--task-id', 'provider-isolation',
+      '--project-name', 'Provider Isolation',
+      '--workspace-mode', 'conversation',
+      '--prompt', 'claude mapping only',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--no-wait',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(claudeMapped.status, 0, claudeMapped.stderr || claudeMapped.stdout)
+    await completeAsInjectedRunner({
+      daemonUrl,
+      homeDir,
+      profileId: profile.id,
+      resultUrl: 'https://claude.ai/chat/provider-isolation',
+    })
+
+    const isolated = runCli([
+      'run',
+      '--profile', 'default',
+      '--provider', 'chatgpt',
+      '--task-id', 'provider-isolation',
+      '--project-name', 'Provider Isolation',
+      '--workspace-mode', 'conversation',
+      '--prompt', 'must not use claude mapping',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--no-wait',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(isolated.status, 0, isolated.stderr || isolated.stdout)
+    const isolatedJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(JSON.parse(isolated.stdout).jobId)}`, homeDir)
+    assert.equal(isolatedJob.request_json.target.url, 'https://chatgpt.com/')
+
+    const capability = runCli([
+      'provider-action',
+      '--profile', 'default',
+      '--provider', 'chatgpt',
+      '--action', 'capability.inspect',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--no-wait',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(capability.status, 0, capability.stderr || capability.stdout)
+    const capabilityJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(JSON.parse(capability.stdout).jobId)}`, homeDir)
+    assert.deepEqual(capabilityJob.request_json.actions.map((action) => action.action), ['capability.inspect'])
+    assert.deepEqual(capabilityJob.request_json.actions[0].payload, {})
+
+    const workspaceAction = runCli([
+      'provider-action',
+      '--profile', 'default',
+      '--provider', 'chatgpt',
+      '--action', 'workspace.ensure',
+      '--project-name', 'Provider Action Project',
+      '--workspace-mode', 'auto',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--runner-heartbeat-timeout-ms', '3000',
+      '--no-wait',
+      '--json',
+    ], { TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY: fakeRunnerEntry })
+    assert.equal(workspaceAction.status, 0, workspaceAction.stderr || workspaceAction.stdout)
+    const workspaceActionJob = await fetchJson(`${daemonUrl}/jobs/${encodeURIComponent(JSON.parse(workspaceAction.stdout).jobId)}`, homeDir)
+    assert.deepEqual(workspaceActionJob.request_json.actions.map((action) => action.action), ['workspace.ensure'])
+    assert.deepEqual(workspaceActionJob.request_json.actions[0].payload, {
+      name: 'Provider Action Project',
+      mode: 'auto',
+    })
+  } finally {
+    try {
+      const { stopRunnerSupervisor } = await import(path.join(root, 'packages/cli/dist/src/playwright/index.js'))
+      await stopRunnerSupervisor({ homeDir })
+    } catch {}
+    if (daemonPid) await stopPid(daemonPid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('attached CLI run returns waiting_for_user envelope promptly without canceling daemon job', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cli-waiting-run-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -2022,7 +2217,7 @@ function installWorkspaceDaemon(homeDir) {
   if (process.platform !== 'win32') fs.chmodSync(destination, 0o755)
 }
 
-async function completeAsInjectedRunner({ daemonUrl, homeDir, profileId, authState = 'authenticated' }) {
+async function completeAsInjectedRunner({ daemonUrl, homeDir, profileId, authState = 'authenticated', resultUrl }) {
   const claimed = await daemonPost({
     daemonUrl,
     homeDir,
@@ -2065,6 +2260,7 @@ async function completeAsInjectedRunner({ daemonUrl, homeDir, profileId, authSta
         protocol: 'tokenless.playwright.job.v2',
         provider: request.provider,
         responses,
+        ...(resultUrl === undefined ? {} : { url: resultUrl }),
       },
     },
     })

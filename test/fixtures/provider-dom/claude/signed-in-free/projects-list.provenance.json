@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "claude",
+  "accountState": "signed-in-free",
+  "observedPlan": {
+    "status": "observed",
+    "label": "Free"
+  },
+  "scenario": "projects-list",
+  "routeClass": "projects",
+  "operationPhase": "workspace-list",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://claude.ai/projects",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "ab88319450fd3a9fa3b0a10ffe97e985b83c1fcfe2160847c3e0ef135961fb44",
+  "evidenceSelectors": [
+    {
+      "capability": "project.list",
+      "selector": "ul[aria-label=\"Projects\"] li",
+      "expectedCount": 1
+    },
+    {
+      "capability": "project.create",
+      "selector": "button",
+      "expectedCount": 4
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

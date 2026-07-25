@@ -1,0 +1,49 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-free",
+  "observedPlan": {
+    "status": "observed",
+    "label": "Free"
+  },
+  "scenario": "imagine-workspace",
+  "routeClass": "imagine",
+  "operationPhase": "observed",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://grok.com/imagine",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "e9c87ab2c6be19e822160e899829dd2ebe16d99c223d737dd77aecd38591d4ca",
+  "evidenceSelectors": [
+    {
+      "capability": "image.prompt",
+      "selector": "[role=\"textbox\"][data-placeholder=\"Type to imagine\"]",
+      "expectedCount": 1
+    },
+    {
+      "capability": "image.mode",
+      "selector": "[role=\"radiogroup\"][aria-label=\"Generation mode\"] input",
+      "expectedCount": 3
+    },
+    {
+      "capability": "image.upload",
+      "selector": "button[aria-label=\"Upload\"]",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

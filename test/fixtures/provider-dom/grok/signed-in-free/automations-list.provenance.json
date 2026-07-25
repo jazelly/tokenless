@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "grok",
+  "accountState": "signed-in-free",
+  "observedPlan": {
+    "status": "observed",
+    "label": "Free"
+  },
+  "scenario": "automations-list",
+  "routeClass": "automations",
+  "operationPhase": "observed",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://grok.com/automations",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "aa932ecf3cd5db0fca085669b48678df81c7b47289d32d4da415a5d9d99269c3",
+  "evidenceSelectors": [
+    {
+      "capability": "automation.list",
+      "selector": "section[aria-label=\"Suggested automations\"] article",
+      "expectedCount": 3
+    },
+    {
+      "capability": "automation.create",
+      "selector": "button[aria-label=\"New Automation\"]",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

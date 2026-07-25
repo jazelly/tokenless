@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, join, resolve, sep } from 'node:path'
-import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, VISIBLE_ATTACHMENT_PROTOCOL_VERSION, validateAttachmentInput } from '../actions.js'
+import { VISIBLE_ACTIONS, VISIBLE_ATTACHMENT_PROTOCOL_VERSION, validateAttachmentInput } from '../actions.js'
 import { TokenlessPlaywrightError, tokenlessError } from '../errors.js'
-import { assertProviderUrlAllowed, getProviderForUrl, trustedProviderSignInNavigation } from '../providers.js'
-import type { AttachmentInput, Choice, VisibleActionRequest, VisibleActionResponse, VisibleActionResult, VisibleBlocker, VisibleCitation } from '../actions.js'
-import type { ProviderConfig } from '../providers.js'
+import { PROVIDER_CAPABILITIES, assertProviderUrlAllowed, getProviderForUrl, trustedProviderSignInNavigation } from '../providers.js'
+import type { AttachmentInput, Choice, CapabilityInspectResult, ProviderCapabilityInspection, VisibleActionRequest, VisibleActionResponse, VisibleActionResult, VisibleBlocker, VisibleCitation } from '../actions.js'
+import type { ProviderCapabilityId, ProviderConfig } from '../providers.js'
 import type { ProviderAdapter, VisibleAdapterContext } from './types.js'
-import type { Locator, Page } from 'playwright-core'
+import type { FileChooser, Locator, Page } from 'playwright-core'
 
 export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdapter {
   return {
@@ -26,6 +26,7 @@ export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdap
         }
         return failure(request, 'unsupported_provider_navigation', 'The visible page is outside the approved provider origin.', false)
         }
+      if (request.action === VISIBLE_ACTIONS.CAPABILITY_INSPECT) return success(request, await inspectCapabilities(page, provider))
       if (request.action === VISIBLE_ACTIONS.AUTH_STATUS) return success(request, await inspectAuth(page, provider, context.signal))
       if (request.action === VISIBLE_ACTIONS.NAVIGATION_CHECK) return success(request, inspectNavigation(page, provider))
       if (request.action === VISIBLE_ACTIONS.BLOCKER_CHECK) return success(request, await inspectVisibleBlockers(page, provider))
@@ -34,6 +35,12 @@ export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdap
       if (request.action === VISIBLE_ACTIONS.EFFORT_INSPECT) return success(request, await inspectChoices(page, provider, 'effort'))
       if (request.action === VISIBLE_ACTIONS.EFFORT_SELECT) return success(request, await selectChoice(page, provider, 'effort', request.payload.label))
       if (request.action === VISIBLE_ACTIONS.FILE_UPLOAD) return success(request, await uploadFiles(page, provider, request.payload.attachments, context))
+      if (request.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE) {
+        if (request.payload.mode === 'native') {
+          return failure(request, 'workspace_native_unavailable', 'Native workspace creation is unavailable from fixture-proven visible provider controls.', false)
+        }
+        return success(request, await ensureWorkspace(page, provider, request.payload))
+      }
       if (request.action === VISIBLE_ACTIONS.PROMPT_INPUT) return success(request, await inputPrompt(page, provider, request.payload.text))
       if (request.action === VISIBLE_ACTIONS.PROMPT_CLEAR) return success(request, await clearPrompt(page, provider))
       if (request.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) return success(request, await submitPrompt(page, provider))
@@ -64,12 +71,18 @@ async function inspectAuth(page: Page, provider: ProviderConfig, signal: AbortSi
           visibleProof: 'account-control-action-unverified',
         }
       }
+      const observedAccount = provider.id === 'grok'
+        ? {
+            ...account,
+            ...grokSubscriptionEvidence(await inspectGrokSubscription(page, provider, signal)),
+          }
+        : account
       return {
         state: 'authenticated' as const,
         visibleProof: provider.authMenuIndicators.length > 0
           ? 'authenticated-account-menu-visible'
           : 'authenticated-account-control-clicked',
-        account,
+        account: observedAccount,
       }
     }
     if (attempt < 50) await page.waitForTimeout(100)
@@ -132,6 +145,15 @@ async function readProviderAccount(accountControl: Locator, provider: ProviderCo
   return {
     name,
     subscription,
+    subscriptionEvidence: subscription === null
+      ? {
+          status: 'unknown' as const,
+          source: null,
+        }
+      : {
+          status: 'observed' as const,
+          source: 'account-menu-label',
+        },
   }
 }
 
@@ -162,6 +184,248 @@ function looksLikeEmail(value: string) {
 
 function normalizeAccountText(value: string) {
   return value.replace(/\s+/g, ' ').trim().slice(0, 120)
+}
+
+async function inspectGrokSubscription(
+  page: Page,
+  provider: ProviderConfig,
+  signal: AbortSignal | undefined,
+): Promise<'Free' | 'SuperGrok' | null> {
+  const trigger = await firstLocator(page, provider.modelControlSelectors)
+  if (!trigger) return null
+
+  let openedHere = false
+  try {
+    const expanded = await trigger.getAttribute('aria-expanded').catch(() => null)
+    if (expanded !== 'true') {
+      await trigger.click({ timeout: 2000 })
+      openedHere = true
+    }
+
+    for (let attempt = 0; attempt <= 10; attempt += 1) {
+      assertNotAborted(signal)
+      const rows = await collectGrokEntitlementRows(page)
+      if (rows.length === 3) {
+        return rows.every((row) => row.unavailable) ? 'Free' : 'SuperGrok'
+      }
+      if (attempt < 10) await page.waitForTimeout(100)
+    }
+    return null
+  } catch {
+    return null
+  } finally {
+    if (openedHere) {
+      await trigger.click({ timeout: 1000 }).catch(() => undefined)
+    }
+  }
+}
+
+function grokSubscriptionEvidence(subscription: 'Free' | 'SuperGrok' | null) {
+  if (subscription === null) {
+    return {
+      subscription,
+      subscriptionEvidence: {
+        status: 'unknown' as const,
+        source: null,
+      },
+    }
+  }
+  return {
+    subscription,
+    subscriptionEvidence: {
+      status: 'derived' as const,
+      source: 'model-entitlement-rows',
+    },
+  }
+}
+
+async function collectGrokEntitlementRows(page: Page): Promise<Array<{ label: string, unavailable: boolean }>> {
+  return page.locator('[role="menuitem"][data-radix-collection-item]').evaluateAll((elements) => {
+    const entitlementLabels = new Set(['auto', 'expert', 'heavy'])
+    return elements.flatMap((element) => {
+      if (!(element instanceof HTMLElement)) return []
+      const rect = element.getBoundingClientRect()
+      const style = window.getComputedStyle(element)
+      if (
+        rect.width === 0 ||
+        rect.height === 0 ||
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        Number(style.opacity) === 0
+      ) return []
+
+      const label = (element.querySelector('.font-semibold')?.textContent ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (!entitlementLabels.has(label.toLowerCase())) return []
+
+      const classTokens = new Set((element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean))
+      const dataDisabled = element.getAttribute('data-disabled')
+      const explicitlyDisabled = (
+        element.hasAttribute('disabled') ||
+        element.getAttribute('aria-disabled') === 'true' ||
+        (dataDisabled !== null && dataDisabled !== 'false') ||
+        Boolean(element.querySelector(':disabled, [aria-disabled="true"], [data-disabled]:not([data-disabled="false"])'))
+      )
+      const visuallyUnavailable = (
+        classTokens.has('cursor-not-allowed') ||
+        (
+          classTokens.has('text-secondary') &&
+          (classTokens.has('opacity-75') || Number(style.opacity) < 1)
+        )
+      )
+      return [{
+        label,
+        unavailable: explicitlyDisabled || visuallyUnavailable,
+      }]
+    })
+  }).catch(() => [])
+}
+
+async function inspectCapabilities(page: Page, provider: ProviderConfig): Promise<CapabilityInspectResult> {
+  const entries = await Promise.all((Object.keys(provider.capabilities) as ProviderCapabilityId[]).map(async (capability) => [
+    capability,
+    await inspectCapability(page, provider, capability),
+  ] as const))
+  return {
+    visibleProof: 'provider-capability-registry',
+    capabilities: Object.fromEntries(entries) as Readonly<Record<ProviderCapabilityId, ProviderCapabilityInspection>>,
+  }
+}
+
+async function inspectCapability(page: Page, provider: ProviderConfig, capability: ProviderCapabilityId): Promise<ProviderCapabilityInspection> {
+  const strategy = provider.capabilities[capability]
+  if (capability === PROVIDER_CAPABILITIES.FILE_UPLOAD) {
+    const evidence = await inspectFileUploadAvailability(page, provider)
+    return {
+      ...strategy,
+      availability: evidence.availability,
+      visibleProof: evidence.visibleProof,
+      reason: evidence.reason,
+      native: {
+        ...strategy.native,
+        availability: evidence.availability,
+        visibleProof: evidence.availability === 'unknown' ? strategy.native.visibleProof : evidence.visibleProof,
+        reason: evidence.reason,
+      },
+    }
+  }
+  if (capability === PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE) {
+    const composer = await firstLocator(page, provider.composerSelectors)
+    const availability = composer ? 'available' as const : 'unknown' as const
+    const visibleProof = composer ? 'conversation-composer-visible' : 'no-visible-conversation-composer'
+    const reason = composer ? null : 'visible_composer_not_observed'
+    return {
+      ...strategy,
+      availability,
+      visibleProof,
+      reason,
+      native: {
+        ...strategy.native,
+        availability,
+        visibleProof,
+        reason,
+      },
+    }
+  }
+  if (capability === PROVIDER_CAPABILITIES.WORKSPACE_ENSURE) {
+    const composer = await firstLocator(page, provider.composerSelectors)
+    const availability = composer ? 'available' as const : 'unknown' as const
+    const visibleProof = composer ? 'conversation-composer-visible' : 'no-visible-conversation-composer'
+    const reason = composer ? strategy.reason : 'visible_composer_not_observed'
+    return {
+      ...strategy,
+      availability,
+      visibleProof,
+      reason,
+      fallback: {
+        ...strategy.fallback,
+        availability,
+        visibleProof,
+        reason: composer ? null : 'visible_composer_not_observed',
+      },
+    }
+  }
+  return strategy
+}
+
+async function inspectFileUploadAvailability(page: Page, provider: ProviderConfig) {
+  const unavailable = await firstUnavailableLocator(page, [
+    ...provider.fileUploadLocalSelectors,
+    ...provider.fileUploadTriggerSelectors,
+  ])
+  if (unavailable) {
+    return {
+      availability: 'unavailable' as const,
+      visibleProof: 'visible-upload-control-disabled-or-upgrade',
+      reason: 'visible_upload_control_disabled_or_requires_upgrade',
+    }
+  }
+  const localUpload = await firstEnabledLocator(page, provider.fileUploadLocalSelectors)
+  if (localUpload) {
+    return {
+      availability: 'available' as const,
+      visibleProof: 'visible-local-upload-control-enabled',
+      reason: null,
+    }
+  }
+  const trigger = await firstEnabledLocator(page, provider.fileUploadTriggerSelectors)
+  if (trigger) {
+    return {
+      availability: 'available' as const,
+      visibleProof: 'visible-upload-trigger-enabled',
+      reason: null,
+    }
+  }
+  const input = await firstFileInputLocator(page, provider)
+  if (input && await fileInputAcceptsUserFiles(input)) {
+    return {
+      availability: 'unknown' as const,
+      visibleProof: 'hidden-file-input-present-without-visible-upload-control',
+      reason: 'hidden_file_input_is_not_visible_availability_evidence',
+    }
+  }
+  return {
+    availability: 'unknown' as const,
+    visibleProof: 'no-visible-upload-control',
+    reason: 'visible_upload_control_not_observed',
+  }
+}
+
+async function ensureWorkspace(page: Page, provider: ProviderConfig, payload: Record<string, unknown>) {
+  const name = payload.name
+  const mode = payload.mode
+  if (typeof name !== 'string' || (mode !== 'auto' && mode !== 'conversation')) {
+    throw new Error('Validated request payload unexpectedly lacked workspace fields.')
+  }
+  const composer = await firstLocator(page, provider.composerSelectors)
+  if (!composer) {
+    throw tokenlessError(
+      'workspace_conversation_unavailable',
+      'No visible conversation composer is available for workspace fallback.',
+      { retryable: true },
+    )
+  }
+  const requestedMode = mode === 'auto' ? 'auto' as const : 'conversation' as const
+  return {
+    mode: 'conversation' as const,
+    requestedMode,
+    name,
+    resource: {
+      kind: 'conversation' as const,
+      native: false as const,
+    },
+    availability: 'available' as const,
+    visibleProof: 'conversation-composer-visible',
+    reason: mode === 'auto' ? 'auto_fell_back_to_conversation' : null,
+    fallback: mode === 'auto'
+      ? {
+          mode: 'conversation' as const,
+          resourceKind: 'conversation' as const,
+          availability: 'available' as const,
+        }
+      : null,
+  }
 }
 
 function inspectNavigation(page: Page, provider: ProviderConfig) {
@@ -375,7 +639,7 @@ async function inspectChoices(page: Page, provider: ProviderConfig, kind: 'model
     }
   }
   await trigger.click({ timeout: 5000 })
-  const choices = await collectVisibleChoices(page)
+  const choices = await collectVisibleChoices(page, provider)
   return {
     supported: true as const,
     choices,
@@ -407,13 +671,33 @@ async function selectChoice(page: Page, provider: ProviderConfig, kind: 'model' 
 async function uploadFiles(page: Page, provider: ProviderConfig, value: unknown, context: VisibleAdapterContext) {
   if (!Array.isArray(value)) throw new Error('Validated request payload unexpectedly lacked attachments.')
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
-  const fileInput = await firstLocator(page, provider.fileInputSelectors)
+  const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
+  const visibleEvidenceBeforeUpload = await visibleAttachmentEvidence(page, attachments)
+  let fileInput = await firstFileInputLocator(page, provider)
+  let selectedProof = 'hidden-file-input-filelist-selected'
   if (!fileInput) {
+    const chooser = await openProviderFileChooser(page, provider)
+    if (chooser) {
+      await chooser.setFiles(files)
+      selectedProof = 'file-chooser-selected'
+    } else {
+      fileInput = await firstFileInputLocator(page, provider)
+    }
+  }
+  if (!fileInput && selectedProof !== 'file-chooser-selected') {
     throw new Error('No visible provider file input is available.')
   }
-  const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
-  await fileInput.setInputFiles(files)
+  if (fileInput) {
+    await fileInput.setInputFiles(files)
+    selectedProof = await fileInputContainsNames(fileInput, attachments)
+      ? 'hidden-file-input-filelist-selected'
+      : 'set-input-files-completed'
+  }
+  const acceptedProof = await waitForVisibleAttachmentProof(page, attachments, visibleEvidenceBeforeUpload, context.signal)
+  const accepted = acceptedProof !== null
   return {
+    acceptance: accepted ? 'accepted' as const : 'selected' as const,
+    visibleProof: acceptedProof ?? selectedProof,
     attachments: attachments.map((attachment) => ({
       protocol: VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
       bundleId: attachment.bundleId,
@@ -524,6 +808,138 @@ async function resolveAttachmentPayload(attachmentRoot: string | undefined, atta
   }
 }
 
+async function openProviderFileChooser(page: Page, provider: ProviderConfig): Promise<FileChooser | null> {
+  const trigger = await firstEnabledLocator(page, provider.fileUploadTriggerSelectors)
+  if (trigger) {
+    const expanded = await trigger.getAttribute('aria-expanded').catch(() => null)
+    if (expanded !== 'true') {
+      await trigger.click({ timeout: 2000 }).catch(() => undefined)
+    }
+  }
+  const localUpload = await firstEnabledLocator(page, provider.fileUploadLocalSelectors)
+  if (!localUpload) return null
+
+  const waitForEvent = (page as Page & {
+    waitForEvent?: (event: 'filechooser', options?: { timeout?: number }) => Promise<FileChooser>
+  }).waitForEvent
+  if (typeof waitForEvent !== 'function') {
+    await localUpload.click({ timeout: 2000 }).catch(() => undefined)
+    return null
+  }
+  const chooser = waitForEvent.call(page, 'filechooser', { timeout: 1000 }).catch(() => null)
+  await localUpload.click({ timeout: 2000 }).catch(() => undefined)
+  return await chooser
+}
+
+async function fileInputContainsNames(fileInput: Locator, attachments: readonly AttachmentInput[]) {
+  const expected = attachments.map((attachment) => basename(attachment.name)).sort()
+  const actual = await fileInput.evaluate((element) => {
+    if (!(element instanceof HTMLInputElement) || !element.files) return []
+    return Array.from(element.files).map((file) => file.name).sort()
+  }).catch(() => [])
+  return expected.length === actual.length && expected.every((name, index) => name === actual[index])
+}
+
+async function visibleAttachmentEvidence(page: Page, attachments: readonly AttachmentInput[]) {
+  const evaluate = (page as Page & {
+    evaluate?: (callback: (expectedNames: string[]) => string[], expectedNames: string[]) => Promise<unknown>
+  }).evaluate
+  if (typeof evaluate !== 'function') return new Set<string>()
+  const names = attachments.map((attachment) => basename(attachment.name))
+  const result = await evaluate.call(page, (expectedNames) => {
+    const isVisibleElement = (element: Element | null): element is HTMLElement | SVGElement => {
+      if (!element || !(element instanceof HTMLElement || element instanceof SVGElement)) return false
+      let node: Element | null = element
+      while (node && node instanceof Element) {
+        const style = window.getComputedStyle(node)
+        if (
+          style.visibility === 'hidden' ||
+          style.visibility === 'collapse' ||
+          style.display === 'none' ||
+          Number(style.opacity) === 0
+        ) return false
+        node = node.parentElement
+      }
+      const rect = element.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0
+    }
+    const selectors = [
+      '[data-testid*="attachment" i]',
+      '[data-testid*="upload" i]',
+      '[data-testid*="file" i]',
+      '[aria-label*="attachment" i]',
+      '[aria-label*="upload" i]',
+      '[aria-label*="file" i]',
+      '[title]',
+      '[role="listitem"]',
+      '[role="status"]',
+      'li',
+    ]
+    const elements = selectors.flatMap((selector) => {
+      try {
+        return Array.from(document.querySelectorAll(selector))
+      } catch {
+        return []
+      }
+    })
+    const seen = new Set<Element>()
+    return elements
+      .filter((element) => {
+        if (seen.has(element) || !isVisibleElement(element)) return false
+        seen.add(element)
+        return true
+      })
+      .slice(0, 200)
+      .flatMap((element) => {
+        const visibleText = [
+          element.textContent ?? '',
+          element.getAttribute('aria-label') ?? '',
+          element.getAttribute('title') ?? '',
+        ].join(' ').replace(/\s+/g, ' ').trim()
+        if (!expectedNames.every((name) => visibleText.includes(name))) return []
+        const tag = element.tagName.toLowerCase()
+        const role = element.getAttribute('role') ?? ''
+        const testId = element.getAttribute('data-testid') ?? ''
+        return [`${tag}|${role}|${testId}|${visibleText.slice(0, 240)}`]
+      })
+  }, names).catch(() => [])
+  return new Set(Array.isArray(result) ? result.filter((entry): entry is string => typeof entry === 'string') : [])
+}
+
+async function visibleAttachmentProof(
+  page: Page,
+  attachments: readonly AttachmentInput[],
+  evidenceBeforeUpload: ReadonlySet<string>,
+) {
+  const evidence = await visibleAttachmentEvidence(page, attachments)
+  for (const entry of evidence) {
+    if (!evidenceBeforeUpload.has(entry)) return 'visible-attachment-filename'
+  }
+  return null
+}
+
+async function waitForVisibleAttachmentProof(
+  page: Page,
+  attachments: readonly AttachmentInput[],
+  evidenceBeforeUpload: ReadonlySet<string>,
+  signal: AbortSignal | undefined,
+) {
+  for (let attempt = 0; attempt <= 25; attempt += 1) {
+    assertNotAborted(signal)
+    const proof = await visibleAttachmentProof(page, attachments, evidenceBeforeUpload)
+    if (proof) return proof
+    if (attempt < 25) await waitForPageTimeout(page, 200)
+  }
+  return null
+}
+
+async function waitForPageTimeout(page: Page, ms: number) {
+  const waitForTimeout = (page as Page & { waitForTimeout?: (timeout: number) => Promise<void> }).waitForTimeout
+  if (typeof waitForTimeout === 'function') {
+    await waitForTimeout.call(page, ms).catch(() => undefined)
+  }
+}
+
 async function resolveAttachmentPayloadUnsafe(attachmentRoot: string | undefined, attachment: AttachmentInput) {
   if (attachmentRoot === undefined) {
     throw tokenlessError('invalid_visible_attachment_root', 'Attachment root is required for visible file uploads.')
@@ -582,22 +998,40 @@ function isPathInside(root: string, candidate: string) {
   return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${sep}`)
 }
 
-async function collectVisibleChoices(page: Page): Promise<Choice[]> {
+async function collectVisibleChoices(page: Page, provider: ProviderConfig): Promise<Choice[]> {
   const locators = [
     page.locator('[role="menuitem"], [role="option"], [cmdk-item], button'),
   ]
   const choices: Choice[] = []
   for (const locator of locators) {
-    const values = await locator.evaluateAll((elements) => elements.slice(0, 80).map((element) => {
+    const values = await locator.evaluateAll((elements, providerId) => elements.slice(0, 80).map((element) => {
       const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
       const ariaSelected = element.getAttribute('aria-selected') === 'true' || element.getAttribute('data-state') === 'checked'
-      const disabled = element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true'
+      const dataDisabled = element.getAttribute('data-disabled')
+      const classTokens = new Set((element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean))
+      const style = element instanceof HTMLElement ? window.getComputedStyle(element) : null
+      const grokVisuallyUnavailable = (
+        providerId === 'grok' &&
+        (
+          classTokens.has('cursor-not-allowed') ||
+          (
+            classTokens.has('text-secondary') &&
+            (classTokens.has('opacity-75') || (style !== null && Number(style.opacity) < 1))
+          )
+        )
+      )
+      const disabled = (
+        element.hasAttribute('disabled') ||
+        element.getAttribute('aria-disabled') === 'true' ||
+        (dataDisabled !== null && dataDisabled !== 'false') ||
+        grokVisuallyUnavailable
+      )
       return {
         label: text.slice(0, 120),
         selected: ariaSelected,
         enabled: !disabled,
       }
-    }).filter((entry) => entry.label.length > 0))
+    }).filter((entry) => entry.label.length > 0), provider.id)
     choices.push(...values)
   }
   const seen = new Set<string>()
@@ -644,6 +1078,66 @@ async function firstVisibleFast(page: Page, selector: string) {
   } catch {
     return false
   }
+}
+
+async function firstFileInputLocator(page: Page, provider: ProviderConfig): Promise<Locator | null> {
+  for (const selector of provider.fileInputSelectors) {
+    const locator = page.locator(selector).first()
+    try {
+      const count = typeof (locator as Locator & { count?: unknown }).count === 'function'
+        ? await locator.count()
+        : (await locator.isVisible({ timeout: 250 }) ? 1 : 0)
+      if (count > 0 && await fileInputAcceptsUserFiles(locator)) return locator
+    } catch {
+      // Try the next selector.
+    }
+  }
+  return null
+}
+
+async function fileInputAcceptsUserFiles(locator: Locator) {
+  return await locator.evaluate((element) => (
+    element instanceof HTMLInputElement &&
+    element.type === 'file' &&
+    !element.disabled &&
+    element.getAttribute('aria-disabled') !== 'true'
+  )).catch(() => true)
+}
+
+async function firstEnabledLocator(page: Page, selectors: readonly string[]): Promise<Locator | null> {
+  for (const selector of selectors) {
+    const locator = page.locator(selector).filter({ visible: true }).first()
+    try {
+      if (await locator.isVisible({ timeout: 500 }) && !await locatorIsUnavailable(locator)) return locator
+    } catch {
+      // Try the next selector.
+    }
+  }
+  return null
+}
+
+async function firstUnavailableLocator(page: Page, selectors: readonly string[]): Promise<Locator | null> {
+  for (const selector of selectors) {
+    const locator = page.locator(selector).filter({ visible: true }).first()
+    try {
+      if (await locator.isVisible({ timeout: 500 }) && await locatorIsUnavailable(locator)) return locator
+    } catch {
+      // Try the next selector.
+    }
+  }
+  return null
+}
+
+async function locatorIsUnavailable(locator: Locator) {
+  return await locator.evaluate((element) => {
+    const text = (element.textContent ?? '').replace(/\s+/g, ' ').toLowerCase()
+    const aria = (element.getAttribute('aria-label') ?? '').toLowerCase()
+    const dataDisabled = element.getAttribute('data-disabled')
+    return element.hasAttribute('disabled') ||
+      element.getAttribute('aria-disabled') === 'true' ||
+      (dataDisabled !== null && dataDisabled !== 'false') ||
+      /upgrade|subscribe|requires paid|plan limit/.test(`${text} ${aria}`)
+  }).catch(() => false)
 }
 
 async function firstLocator(page: Page, selectors: readonly string[]): Promise<Locator | null> {
@@ -745,7 +1239,7 @@ function sanitizeBlockerUrl(value: string) {
 
 function success(request: VisibleActionRequest, result: VisibleActionResult): VisibleActionResponse {
   return {
-    protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+    protocol: request.protocol,
     requestId: request.requestId,
     provider: request.provider,
     action: request.action,
@@ -757,7 +1251,7 @@ function success(request: VisibleActionRequest, result: VisibleActionResult): Vi
 
 function failure(request: VisibleActionRequest, code: string, message: string, retryable: boolean): VisibleActionResponse {
   return {
-    protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+    protocol: request.protocol,
     requestId: request.requestId,
     provider: request.provider,
     action: request.action,
