@@ -147,6 +147,10 @@ const RECONSTRUCTABLE_PRE_SUBMIT_ACTIONS = new Set<string>([
   VISIBLE_ACTIONS.PROMPT_INPUT,
   VISIBLE_ACTIONS.PROMPT_CLEAR,
 ])
+const AUTH_OPTIONAL_GATED_ACTIONS = new Set<string>([
+  VISIBLE_ACTIONS.PROMPT_INPUT,
+  VISIBLE_ACTIONS.PROMPT_CLEAR,
+])
 const RUNNER_CHECKPOINT_PROTOCOL = 'tokenless.playwright.runner-checkpoint.v1' as const
 
 export class ManagedPlaywrightRunnerService {
@@ -448,7 +452,7 @@ export class ManagedPlaywrightRunnerService {
           now: this.now,
         })
       }
-      const clearBlocker = async (): Promise<number> => {
+      const clearBlocker = async (ignoreAuth = false): Promise<number> => {
         const cleared = await this.clearUserResolvableBlocker({
           managedContext,
           page,
@@ -463,6 +467,7 @@ export class ManagedPlaywrightRunnerService {
           isCanceled,
           renewalError,
           onAutoEscalated,
+          ignoreAuth,
         })
         managedContext = cleared.managedContext
         page = cleared.page
@@ -473,7 +478,7 @@ export class ManagedPlaywrightRunnerService {
         if (!action) throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner action cursor is invalid.')
         throwIfStopped(signal, isCanceled, renewalError)
         if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
-          await clearBlocker()
+          await clearBlocker(true)
           state.responseBaseline = await countVisibleAnswers(page, provider.answerSelectors)
         }
         if (action.action === VISIBLE_ACTIONS.RESPONSE_READ && state.responseBaseline !== null) {
@@ -486,7 +491,7 @@ export class ManagedPlaywrightRunnerService {
             signal,
             isCanceled,
             renewalError,
-            clearBlocker,
+            clearBlocker: () => clearBlocker(true),
           })
         }
         if (
@@ -494,7 +499,7 @@ export class ManagedPlaywrightRunnerService {
           action.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT &&
           action.action !== VISIBLE_ACTIONS.RESPONSE_READ
         ) {
-          await clearBlocker()
+          await clearBlocker(AUTH_OPTIONAL_GATED_ACTIONS.has(action.action))
         }
         await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('started', actionIndex, action, page, provider))
         const adapterContext = {
@@ -559,9 +564,10 @@ export class ManagedPlaywrightRunnerService {
     isCanceled: () => boolean
     renewalError: () => unknown
     onAutoEscalated: (context: ManagedBrowserContext) => void
+    ignoreAuth: boolean
   }): Promise<ClearBlockerResult> {
     throwIfStopped(options.signal, options.isCanceled, options.renewalError)
-    const initial = await visibleBlockerState(options.page, options.provider)
+    const initial = await visibleBlockerState(options.page, options.provider, options.ignoreAuth)
     if (!initial.blocked) {
       return { managedContext: options.managedContext, page: options.page, waitedMs: 0 }
     }
@@ -630,7 +636,7 @@ export class ManagedPlaywrightRunnerService {
     while (Date.now() <= deadline) {
       throwIfStopped(options.signal, options.isCanceled, options.renewalError)
       await delay(Math.min(this.userHandoverPollMs, Math.max(1, deadline - Date.now())), options.signal)
-      const latest = await visibleBlockerState(page, options.provider)
+      const latest = await visibleBlockerState(page, options.provider, options.ignoreAuth)
       if (latest.terminal) {
         throw tokenlessError(latest.primary.code, latest.primary.message, { retryable: latest.primary.retryable })
       }
@@ -1075,7 +1081,11 @@ function assertSafeJobId(jobId: string) {
   }
 }
 
-async function visibleBlockerState(page: Page, provider: NonNullable<ReturnType<typeof getProviderById>>) {
+async function visibleBlockerState(
+  page: Page,
+  provider: NonNullable<ReturnType<typeof getProviderById>>,
+  ignoreAuth: boolean
+) {
   const pageUrl = currentPageUrl(page)
   const parsedUrl = safeUrl(pageUrl)
   const navigationBlocker = blockerFromNavigationUrl(parsedUrl, provider)
@@ -1096,13 +1106,16 @@ async function visibleBlockerState(page: Page, provider: NonNullable<ReturnType<
     }
   }
   const result = await inspectVisibleBlockers(page, provider)
-  const terminal = result.blockers.find((blocker) => blocker.kind === 'terminal')
-  const userResolvable = result.blockers.find((blocker) => blocker.userResolvable)
+  const blockers = ignoreAuth
+    ? result.blockers.filter((blocker) => blocker.kind !== 'auth')
+    : result.blockers
+  const terminal = blockers.find((blocker) => blocker.kind === 'terminal')
+  const userResolvable = blockers.find((blocker) => blocker.userResolvable)
   return {
     blocked: Boolean(userResolvable || terminal),
     terminal: Boolean(terminal),
-    primary: terminal ?? userResolvable ?? result.blockers[0] ?? fallbackBlocker(page, provider),
-    blockers: result.blockers,
+    primary: terminal ?? userResolvable ?? blockers[0] ?? fallbackBlocker(page, provider),
+    blockers,
   }
 }
 

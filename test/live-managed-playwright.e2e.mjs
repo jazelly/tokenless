@@ -68,11 +68,6 @@ async function exerciseProvider({ provider, homeDir, profileSlug }) {
   let draftInputConfirmed = false
   let draftCleared = false
   try {
-    const auth = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'auth.status', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-    const authState = findResponseResult(auth, 'auth.status')?.state
-    assert.equal(authState, 'authenticated', `${provider} must be authenticated`)
-    entry.actions.auth = { state: authState, ms: Date.now() - started }
-
     const controls = runJson(['provider-controls', '--profile', profileSlug, '--provider', provider, '--home', homeDir, '--timeout-ms', '90000', '--json'])
     const modelInspect = findResponseResult(controls, 'model.inspect')
     const effortInspect = findResponseResult(controls, 'effort.inspect')

@@ -69,6 +69,7 @@ export {
   NATIVE_PROTOCOL,
   bundledRustBinaryPath,
   ensureDaemonReady,
+  ensureSetupDaemonRunnable,
   inspectNativeHostManifests,
   inspectRustBinaries,
   inspectManagedRuntime,

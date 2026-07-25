@@ -19,7 +19,7 @@ const liveEnabled = gates.every((key) => (
   key === 'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_M1' ? process.env[key] === '1' : Boolean(process.env[key])
 ))
 
-test('live managed Playwright milestone 1 authenticates then inputs and clears provider drafts only', {
+test('live managed Playwright waits for prompt controls then inputs and clears provider drafts only', {
   skip: liveEnabled ? false : `set ${gates.join(', ')} to run live managed Playwright prompt-action E2E`,
   timeout: 900000,
 }, async () => {
@@ -72,19 +72,6 @@ function exerciseProvider({ provider, homeDir, profileSlug }) {
   let promptCleared = false
 
   try {
-    const auth = runJson([
-      'provider-action',
-      '--profile', profileSlug,
-      '--provider', provider,
-      '--action', 'auth.status',
-      '--home', homeDir,
-      '--timeout-ms', '90000',
-      '--json',
-    ])
-    const authResult = findResponseResult(auth, 'auth.status')
-    assert.equal(authResult?.state, 'authenticated', `${provider} must be authenticated before prompt mutation`)
-    entry.actions.auth = { state: authResult.state, visibleProof: authResult.visibleProof }
-
     const input = runJson([
       'provider-action',
       '--profile', profileSlug,

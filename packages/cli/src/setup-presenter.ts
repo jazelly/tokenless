@@ -97,15 +97,6 @@ export class SetupPresenter {
     this.write(`  ${this.paint('green', 'OK')} ${message}\n`)
   }
 
-  handover(provider: string, detail: string, nextStep = 'Finish in the already-open Tokenless-managed Chrome window/tab, then press Enter here. The same job will resume.') {
-    if (!this.enabled) return
-    this.write([
-      this.paint('yellow', `Visible ${provider} handoff`),
-      `  ${this.paint('dim', '-')} ${detail}`,
-      `  ${this.paint('dim', '-')} ${nextStep}`,
-    ].join('\n') + '\n')
-  }
-
   async withProgress<T>(message: string, task: () => Promise<T>): Promise<T> {
     if (!this.enabled) return await task()
 
