@@ -462,6 +462,7 @@ export async function ensureSetupDaemonRunnable({
 
     const verified = await probeDaemonReady({ homeDir, daemonUrl })
     if (!verified.ok) throw error
+    if (verified.body?.daemon_process_identity_error !== undefined) throw error
 
     const expectedVersion = tokenlessPackageVersion()
     const runningVersion = typeof verified.body?.version === 'string' ? verified.body.version : null

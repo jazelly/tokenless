@@ -1,4 +1,4 @@
-[中文](README.zh-CN.md) | [English](README.md)
+[中文](README.zh-CN.md) | [English](README.md) | [CLI commands](COMMANDS.md)
 
 # Tokenless
 
@@ -31,6 +31,8 @@ Profile and provider selection use distinct, case-sensitive short options:
 - `-p <provider>` is short for `--provider <provider>`.
 
 For example, `tokenless profiles status -P work -p claude --json` checks Claude for the `work` profile.
+
+For the complete public command inventory, see the [Tokenless CLI Command Reference](COMMANDS.md).
 
 ## Experimental Workspace Handling
 

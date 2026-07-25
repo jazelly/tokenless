@@ -3647,6 +3647,9 @@ function usage() {
     'Short options:',
     '  -P, --profile <slug>        Select a managed browser profile.',
     '  -p, --provider <provider>   Select an AI provider.',
+    '',
+    'Command reference:',
+    '  https://github.com/jazelly/tokenless/blob/main/COMMANDS.md',
   ].join('\n'))
 }
 
