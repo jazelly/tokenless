@@ -93,6 +93,8 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(result.stderr, /^Short options:$/m)
   assert.match(result.stderr, /^  -P, --profile <slug>        Select a managed browser profile\.$/m)
   assert.match(result.stderr, /^  -p, --provider <provider>   Select an AI provider\.$/m)
+  assert.match(result.stderr, /^Command reference:$/m)
+  assert.match(result.stderr, /^  https:\/\/github\.com\/jazelly\/tokenless\/blob\/main\/COMMANDS\.md$/m)
 })
 
 test('CLI accepts distinct case-sensitive short options for profile and provider', () => {

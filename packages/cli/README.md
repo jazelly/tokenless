@@ -2,6 +2,8 @@
 
 `tokenless` gives agents provider-neutral CLI access to visible ChatGPT, Claude, Gemini, and Grok sessions. A local daemon, Playwright worker, and persistent managed browser profiles handle execution. A public local API is planned but is not a compatibility surface yet.
 
+Complete command inventory: [English](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) | [中文](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md)
+
 ## Install
 
 Requires Node.js 22.13+ and a supported Chromium browser such as Google Chrome or Brave.
@@ -119,7 +121,7 @@ tokenless run --browser-visibility headless --json
 
 ## Daemon Lifecycle
 
-The CLI reuses an authenticated running daemon when its semantic-version major matches the CLI, even when their minor or patch versions differ. An invalid or different-major daemon is left running and reported as incompatible.
+Outside setup, the CLI reuses an authenticated running daemon when its semantic-version major matches the CLI, even when their minor or patch versions differ. An invalid or different-major daemon is left running and reported as incompatible. During `tokenless setup`, a verified same-home daemon with an unparseable or semantic-major incompatible version is automatically stopped through authenticated shutdown and replaced.
 
 Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 

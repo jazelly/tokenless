@@ -1,4 +1,4 @@
-[中文](README.zh-CN.md) | [English](README.md)
+[中文](README.zh-CN.md) | [English](README.md) | [命令大全](COMMANDS.zh-CN.md)
 
 # Tokenless
 
@@ -31,6 +31,8 @@ Profile 和 provider 使用不同且区分大小写的短选项：
 - `-p <provider>` 是 `--provider <provider>` 的短形式。
 
 例如，`tokenless profiles status -P work -p claude --json` 会检查 `work` profile 中的 Claude 状态。
+
+完整的公开命令清单请参阅 [Tokenless CLI 命令参考](COMMANDS.zh-CN.md)。
 
 ## 实验性 Workspace 处理
 

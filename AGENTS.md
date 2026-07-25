@@ -7,6 +7,10 @@
 - Keep paired documentation, such as `README.md` and `README.zh-CN.md`, aligned in structure and meaning. When updating one language, update its counterpart as part of the same change whenever possible.
 - Internal technical documentation may remain in English when a bilingual version would not benefit users.
 
+## Tokenless skill
+
+- The `tokenless` skill is an external integration surface for users and their agents. Do not read or invoke it while developing or maintaining this repository; use this `AGENTS.md`, the source code, and the repository tests directly.
+
 ## Branches and releases
 
 - Treat `dev` as the prerelease integration branch. All prerelease work must land on `dev` before it reaches `main`.
