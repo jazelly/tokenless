@@ -20,6 +20,7 @@ export type ProviderConfig = {
   readonly modelControlSelectors: readonly string[]
   readonly effortControlSelectors: readonly string[]
   readonly authIndicators: readonly string[]
+  readonly authMenuIndicators: readonly string[]
   readonly loginIndicators: readonly string[]
   readonly blockerSelectors: readonly string[]
   readonly busySelectors: readonly string[]
@@ -74,10 +75,10 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'button:has-text("Thinking")',
     ]),
     authIndicators: Object.freeze([
-      '[data-testid="composer"]',
-      '#prompt-textarea',
-      'button[data-testid="profile-button"]',
-      'button[aria-label*="account" i]',
+      '[data-testid="accounts-profile-button"][role="button"]',
+    ]),
+    authMenuIndicators: Object.freeze([
+      '[role="menuitem"]:has-text("Log out")',
     ]),
     loginIndicators: Object.freeze([
       'a[href*="/auth/login"]',
@@ -128,9 +129,10 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     ]),
     effortControlSelectors: Object.freeze([]),
     authIndicators: Object.freeze([
-      'div[data-testid="chat-input"]',
-      '[data-testid="user-menu"]',
-      'button[aria-label*="account" i]',
+      'button[data-testid="user-menu-button"]',
+    ]),
+    authMenuIndicators: Object.freeze([
+      '[role="menuitem"]:has-text("Log out")',
     ]),
     loginIndicators: Object.freeze([
       'button[data-testid="login-with-google"]',
@@ -175,11 +177,12 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
     ]),
     effortControlSelectors: Object.freeze([]),
     authIndicators: Object.freeze([
-      'rich-textarea',
-      'button[aria-label*="Google Account" i]',
+      'a[href^="https://accounts.google.com/SignOutOptions"]',
     ]),
+    authMenuIndicators: Object.freeze([]),
     loginIndicators: Object.freeze([
-      'a[href*="accounts.google.com"]',
+      'a[href*="accounts.google.com/ServiceLogin"]',
+      'a[href*="/signin"]',
       'button:has-text("Sign in")',
     ]),
     blockerSelectors: Object.freeze([
@@ -222,14 +225,14 @@ const PROVIDERS: readonly ProviderConfig[] = Object.freeze([
       'button:has-text("Think")',
     ]),
     authIndicators: Object.freeze([
-      'div[data-testid="assistant-message"]',
-      'textarea[aria-label="Ask Grok anything"]',
-      'button[data-testid="chat-submit"]',
+      'button:has(img[alt="pfp"])',
+    ]),
+    authMenuIndicators: Object.freeze([
+      '[role="menuitem"]:has-text("Sign Out")',
     ]),
     loginIndicators: Object.freeze([
       'div[data-testid="anon-paywall-sign-up-card"]',
       'button:has-text("Sign in")',
-      'button:has-text("Subscribe")',
     ]),
     blockerSelectors: Object.freeze([
       'div[data-testid="anon-paywall-sign-up-card"]',

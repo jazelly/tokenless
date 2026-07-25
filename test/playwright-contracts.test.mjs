@@ -167,7 +167,7 @@ test('sanitized snapshots expose only bounded structure and never page body or p
   assert.equal('text' in response.result, false)
 })
 
-test('auth status waits for provider UI hydration before reporting unknown', async () => {
+test('auth status waits for provider account UI hydration and returns visible account metadata', async () => {
   const registry = createProviderAdapterRegistry()
   const page = new FakeHydratingAuthPage()
   const response = await registry.execute(page, createVisibleActionRequest({
@@ -182,12 +182,16 @@ test('auth status waits for provider UI hydration before reporting unknown', asy
   assert.equal(response.ok, true)
   assert.deepEqual(response.result, {
     state: 'authenticated',
-    visibleProof: 'authenticated-control-visible',
+    visibleProof: 'authenticated-account-menu-visible',
+    account: {
+      name: 'Alice Smith',
+      subscription: 'Plus',
+    },
   })
   assert.equal(page.waits > 0, true)
 })
 
-test('auth status accepts a visible provider composer when dedicated account controls drift', async () => {
+test('auth status fails closed when only a provider composer is visible', async () => {
   const registry = createProviderAdapterRegistry()
   const page = new FakeComposerAuthPage()
   const response = await registry.execute(page, createVisibleActionRequest({
@@ -201,9 +205,67 @@ test('auth status accepts a visible provider composer when dedicated account con
 
   assert.equal(response.ok, true)
   assert.deepEqual(response.result, {
-    state: 'authenticated',
-    visibleProof: 'authenticated-control-visible',
+    state: 'unauthenticated',
+    visibleProof: 'no-authenticated-account-control',
   })
+})
+
+test('auth status extracts provider usernames and only explicit subscription labels', async () => {
+  const cases = [
+    {
+      provider: 'chatgpt',
+      url: 'https://chatgpt.com/',
+      control: '[data-testid="accounts-profile-button"][role="button"]',
+      menu: '[role="menuitem"]:has-text("Log out")',
+      signal: { ariaLabel: 'Xinzhe Zhang Pro, open profile menu', title: '', text: 'Xinzhe Zhang\nPro' },
+      expected: { name: 'Xinzhe Zhang', subscription: 'Pro' },
+      proof: 'authenticated-account-menu-visible',
+    },
+    {
+      provider: 'claude',
+      url: 'https://claude.ai/new',
+      control: 'button[data-testid="user-menu-button"]',
+      menu: '[role="menuitem"]:has-text("Log out")',
+      signal: { ariaLabel: 'jazelly, Settings', title: '', text: 'J\njazelly\nFree plan' },
+      expected: { name: 'jazelly', subscription: 'Free plan' },
+      proof: 'authenticated-account-menu-visible',
+    },
+    {
+      provider: 'gemini',
+      url: 'https://gemini.google.com/app',
+      control: 'a[href^="https://accounts.google.com/SignOutOptions"]',
+      menu: null,
+      signal: { ariaLabel: 'Google Account: Jason (redacted@example.com)', title: '', text: '' },
+      expected: { name: 'Jason', subscription: null },
+      proof: 'authenticated-account-control-clicked',
+    },
+    {
+      provider: 'grok',
+      url: 'https://grok.com/',
+      control: 'button:has(img[alt="pfp"])',
+      menu: '[role="menuitem"]:has-text("Sign Out")',
+      signal: { ariaLabel: '', title: '', text: 'Jason\nredacted@example.com' },
+      expected: { name: 'Jason', subscription: null },
+      proof: 'authenticated-account-menu-visible',
+    },
+  ]
+  const registry = createProviderAdapterRegistry()
+  for (const entry of cases) {
+    const response = await registry.execute(new FakeProviderAccountPage(entry), createVisibleActionRequest({
+      provider: entry.provider,
+      action: VISIBLE_ACTIONS.AUTH_STATUS,
+      payload: {},
+    }), {
+      profileId: 'profile-a',
+      operationId: `auth-${entry.provider}`,
+    })
+    assert.equal(response.ok, true)
+    assert.deepEqual(response.result, {
+      state: 'authenticated',
+      visibleProof: entry.proof,
+      account: entry.expected,
+    })
+  }
 })
 
 test('visible file uploads resolve path-free attachment descriptors inside attachmentRoot', async () => {
@@ -429,6 +491,7 @@ class FakeSnapshotPage {
 
 class FakeHydratingAuthPage {
   hydrated = false
+  menuOpen = false
   waits = 0
 
   url() {
@@ -436,11 +499,25 @@ class FakeHydratingAuthPage {
   }
 
   locator(selector) {
-    return {
-      first: () => ({
-        isVisible: async () => this.hydrated && selector === '#prompt-textarea',
+    const locator = {
+      filter: () => locator,
+      first: () => locator,
+      isVisible: async () => (
+        (this.hydrated && selector === '[data-testid="accounts-profile-button"][role="button"]') ||
+        (this.menuOpen && selector === '[role="menuitem"]:has-text("Log out")')
+      ),
+      click: async () => {
+        if (selector === '[data-testid="accounts-profile-button"][role="button"]') {
+          this.menuOpen = !this.menuOpen
+        }
+      },
+      evaluate: async () => ({
+        ariaLabel: 'Alice Smith, Plus, open profile menu',
+        title: '',
+        text: 'Alice Smith\nPlus',
       }),
     }
+    return locator
   }
 
   async waitForTimeout() {
@@ -455,11 +532,42 @@ class FakeComposerAuthPage {
   }
 
   locator(selector) {
-    return {
-      first: () => ({
-        isVisible: async () => selector === 'div[contenteditable="true"][role="textbox"]',
-      }),
+    const locator = {
+      filter: () => locator,
+      first: () => locator,
+      isVisible: async () => selector === 'div[contenteditable="true"][role="textbox"]',
     }
+    return locator
+  }
+
+  async waitForTimeout() {}
+}
+
+class FakeProviderAccountPage {
+  menuOpen = false
+
+  constructor(entry) {
+    this.entry = entry
+  }
+
+  url() {
+    return this.entry.url
+  }
+
+  locator(selector) {
+    const locator = {
+      filter: () => locator,
+      first: () => locator,
+      isVisible: async () => (
+        selector === this.entry.control ||
+        (this.menuOpen && selector === this.entry.menu)
+      ),
+      click: async () => {
+        if (selector === this.entry.control) this.menuOpen = !this.menuOpen
+      },
+      evaluate: async () => this.entry.signal,
+    }
+    return locator
   }
 
   async waitForTimeout() {}

@@ -46,6 +46,8 @@ Jobs use explicit provider and profile identity. Unsupported controls, ambiguous
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. Import, reset, and deletion require explicit commands and consent.
 
+Authentication checks fail closed: a provider-specific account control must be visible and successfully clicked. A composer or other generally available page control is not authentication evidence. Successful checks retain only the visible account display name and an explicit visible subscription label; absent or ambiguous plan evidence remains `null`.
+
 ## Local control plane
 
 The daemon binds to loopback, stores its bearer token beside its SQLite database, and protects job and control endpoints with that token. The daemon home and token use restrictive filesystem permissions on supported systems.
@@ -60,7 +62,7 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 
 - Playwright launches the configured supported Chromium browser with a persistent non-default user-data directory.
 - Automation uses approved provider origins, visible page controls, and visible postconditions.
-- Provider sign-in state stays opaque inside the managed profile.
+- Provider credentials and browser sign-in data stay opaque inside the managed profile; only visible account display and subscription labels cross the boundary.
 - Sign-in, CAPTCHA, account limits, payment, consent, and confirmation remain user actions.
 - Every provider adapter has an explicit action and capability contract. Unverified behavior is unavailable rather than guessed.
 - Navigation and target URLs are canonicalized and checked before and after actions.

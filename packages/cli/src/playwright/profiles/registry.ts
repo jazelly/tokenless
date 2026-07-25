@@ -14,6 +14,10 @@ export type ProviderStatus = {
   provider: ProviderId
   auth: 'authenticated' | 'unauthenticated' | 'unknown'
   checkedAt: string
+  account?: {
+    name: string | null
+    subscription: string | null
+  }
 }
 
 export type ManagedProfileRecord = {
@@ -385,9 +389,35 @@ function parseProviderStatuses(value: unknown): Partial<Record<ProviderId, Provi
       provider,
       auth,
       checkedAt: parseIso(status.checkedAt),
+      ...parseProviderAccount(status.account),
     }
   }
   return statuses
+}
+
+function parseProviderAccount(value: unknown): Pick<ProviderStatus, 'account'> | Record<string, never> {
+  if (!isRecord(value)) return {}
+  const name = value.name === null
+    ? null
+    : typeof value.name === 'string'
+      ? normalizeProviderAccountValue(value.name)
+      : undefined
+  const subscription = value.subscription === null
+    ? null
+    : typeof value.subscription === 'string'
+      ? normalizeProviderAccountValue(value.subscription)
+      : undefined
+  if (name === undefined || subscription === undefined) return {}
+  return {
+    account: {
+      name,
+      subscription,
+    },
+  }
+}
+
+function normalizeProviderAccountValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 120) || null
 }
 
 function parseImportMetadata(value: unknown): Pick<ManagedProfileRecord, 'import'> | Record<string, never> {

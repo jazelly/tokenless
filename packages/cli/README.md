@@ -122,6 +122,8 @@ tokenless profiles clear --profile work
 
 `profiles discover` is read-only. Import with `profiles add --browser <chrome|brave> --import-browser-profile <directory-key> --preferred-providers <list> --consent-local-profile-copy` only after explicit user choice. Imported provider sign-in state remains local and opaque to agents. Jobs reuse registered profiles without refreshing them from the source.
 
+`profiles status` authenticates only when the provider-specific account control is visible and clickable; a composer alone is not sufficient. After a successful check, `profiles list --json` reports the visible provider username and subscription label under `profiles[].providers`. A subscription is `null` when the visible UI does not establish a reliable tier.
+
 ## Local API
 
 The planned local API will expose the same daemon jobs and provider-neutral action contract as the CLI. Authentication, request schemas, and compatibility guarantees are under active development; the daemon's HTTP endpoints remain an internal control plane.
@@ -130,7 +132,7 @@ The planned local API will expose the same daemon jobs and provider-neutral acti
 
 - Playwright uses a visible, persistent, non-default user-data directory.
 - Web automation operates through visible provider pages and visible postconditions.
-- Authentication state stays opaque inside the selected managed profile.
+- Credentials and browser authentication data stay opaque inside the selected managed profile; only visible account display and subscription labels are reported.
 - CAPTCHA, sign-in, rate limits, upgrade prompts, and confirmations remain under user control.
 - Selected regular files are staged privately and sent through Playwright file inputs; raw caller paths do not enter daemon job JSON.
 - Every request follows the authenticated local daemon and managed Playwright path.

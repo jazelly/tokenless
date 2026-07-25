@@ -98,7 +98,7 @@ const adapterSelectorAudit = Object.freeze({
     'composer-idle': [['rich-textarea div.ql-editor[data-gramm="false"][contenteditable="true"][role="textbox"][aria-multiline="true"][aria-label="Enter a prompt for Gemini"]', 1]],
   },
   grok: {
-    'session-status': [['a[href="/skills-and-connectors"]', 1]],
+    'session-status': [['button:has(img[alt="pfp"])', 1]],
     'model-menu-open': [
       ['button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]', 1],
       ['[role="menuitem"][data-radix-collection-item] span.font-semibold', 4],
