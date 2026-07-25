@@ -11,9 +11,9 @@
   "artifactKind": "redacted-reduced-dom",
   "containsProviderJavaScript": false,
   "containsSyntheticBehavior": false,
-  "contentSha256": "aefdc93f212e7fb07a6320c860947215d06c3dfcbe4c1f97911ca5e0f596f591",
+  "contentSha256": "0da4e5b87dd4a8e6ed895d0dbafc41c3d4d1203561e23edbcae48c6da1a503ee",
   "evidenceSelectors": [
-    { "capability": "auth.status", "selector": "a[href=\"/skills-and-connectors\"]", "expectedCount": 1 },
+    { "capability": "auth.status", "selector": "button:has(img[alt=\"pfp\"])", "expectedCount": 1 },
     { "capability": "project.inspect", "selector": "button[aria-label=\"New Project\"]", "expectedCount": 1 },
     { "capability": "history.inspect", "selector": "button[aria-label=\"History\"]", "expectedCount": 1 }
   ],
@@ -21,5 +21,5 @@
     { "purpose": "signed-out-control", "selector": "a[href*=\"login\"], button[aria-label=\"Sign in\"]", "expectedCount": 0 }
   ],
   "redactions": ["account identity", "chat titles", "message content", "private route identifiers", "scripts", "styles"],
-  "notes": ["Signed-in status uses compound authenticated-only navigation evidence; no plan tier was established."]
+  "notes": ["Signed-in status uses the visible account button; no plan tier was established."]
 }

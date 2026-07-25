@@ -494,6 +494,7 @@ test('setup sweeps every supported provider before opening first actionable hand
     })
     handoffJobId = handoffJob.job_id
     assert.equal(handoffJob.request_json.target.url, 'https://chatgpt.com/')
+    assert.equal(handoffJob.request_json.browserVisibility, 'headed')
     await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: handoffJobId })
 
     const result = await waitForProcess(setup, 10000)
@@ -894,6 +895,7 @@ test('setup returns actionable waiting_for_user data for managed browser handoff
       excludeJobIds: new Set([job.job_id, ...Object.values(remainingJobs).map((candidate) => candidate.job_id)]),
     })
     jobId = handoffJob.job_id
+    assert.equal(handoffJob.request_json.browserVisibility, 'headed')
     await markNextPlaywrightJobWaiting({ daemonUrl, homeDir, profileId: profile.id, expectedJobId: jobId })
 
     const result = await waitForProcess(setup, 10000)
@@ -1517,11 +1519,27 @@ test('CLI recovers legacy imported profile labels from the managed copy', () => 
     const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'))
     registry.profiles.default.label = 'default'
     delete registry.profiles.default.labelOrigin
+    registry.profiles.default.lastObservedAuth.chatgpt = {
+      provider: 'chatgpt',
+      auth: 'authenticated',
+      checkedAt: '2026-07-25T00:00:00.000Z',
+      account: {
+        name: 'Alice Smith',
+        subscription: 'Pro',
+      },
+    }
     fs.writeFileSync(registryPath, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600 })
 
     const listed = runCli(['profiles', 'list', '--home', homeDir, '--json'])
     assert.equal(listed.status, 0, listed.stderr || listed.stdout)
-    assert.equal(JSON.parse(listed.stdout).profiles[0].label, 'Jason')
+    const listedProfile = JSON.parse(listed.stdout).profiles[0]
+    assert.equal(listedProfile.label, 'Jason')
+    assert.deepEqual(listedProfile.providers.chatgpt, {
+      auth: 'authenticated',
+      username: 'Alice Smith',
+      subscription: 'Pro',
+      checkedAt: '2026-07-25T00:00:00.000Z',
+    })
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }

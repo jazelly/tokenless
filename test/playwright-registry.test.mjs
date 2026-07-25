@@ -58,8 +58,16 @@ test('managed profile registry stores bounded provider status updates', async ()
     provider: 'chatgpt',
     auth: 'authenticated',
     checkedAt: new Date().toISOString(),
+    account: {
+      name: 'Alice Smith',
+      subscription: 'Pro',
+    },
   })
   assert.equal(updated.lastObservedAuth.chatgpt?.auth, 'authenticated')
+  assert.deepEqual(updated.lastObservedAuth.chatgpt?.account, {
+    name: 'Alice Smith',
+    subscription: 'Pro',
+  })
   assert.equal((await registry.resolveProfile('default')).import?.profileDirectoryKey, 'Default')
   assert.deepEqual((await registry.resolveProfile('default')).import?.providers, ['chatgpt', 'claude'])
 })

@@ -61,6 +61,10 @@ export type VisibleActionResponse =
 export type AuthStatusResult = {
   state: 'authenticated' | 'unauthenticated' | 'unknown'
   visibleProof: string
+  account?: {
+    name: string | null
+    subscription: string | null
+  }
 }
 
 export type Choice = {

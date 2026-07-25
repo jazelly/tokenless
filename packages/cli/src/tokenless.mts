@@ -107,6 +107,13 @@ type SetupTechnicalFailure = {
   jobId?: string | undefined
   statusLog?: StatusEvent[] | undefined
 }
+type ManagedAuthObservation = {
+  state: 'authenticated' | 'unauthenticated' | 'unknown'
+  account?: {
+    name: string | null
+    subscription: string | null
+  }
+}
 
 const DEFAULT_RUN_TIMEOUT_MS = 180_000
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000
@@ -440,14 +447,17 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       statusEventAction: `profiles.${subcommand}`,
       noWait: false,
     })
-    const observedAuth = subcommand === 'status'
-      ? authStateFromManagedResult(result.waitResult?.result)
+    const authObservation = subcommand === 'status'
+      ? authObservationFromManagedResult(result.waitResult?.result)
       : null
-    const profile = observedAuth
+    const profile = authObservation
       ? await registry.updateProviderStatus(result.profile.slug, {
           provider,
-          auth: observedAuth,
+          auth: authObservation.state,
           checkedAt: new Date().toISOString(),
+          ...(authObservation.state === 'authenticated' && authObservation.account
+            ? { account: authObservation.account }
+            : {}),
         })
       : result.profile
     printPayload({
@@ -471,6 +481,10 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 }
 
 function authStateFromManagedResult(value: unknown): 'authenticated' | 'unauthenticated' | 'unknown' | null {
+  return authObservationFromManagedResult(value)?.state ?? null
+}
+
+function authObservationFromManagedResult(value: unknown): ManagedAuthObservation | null {
   if (!value || typeof value !== 'object') return null
   const responses = (value as { responses?: unknown }).responses
   if (!Array.isArray(responses)) return null
@@ -480,10 +494,32 @@ function authStateFromManagedResult(value: unknown): 'authenticated' | 'unauthen
     (response as { action?: unknown }).action === VISIBLE_ACTIONS.AUTH_STATUS &&
     (response as { ok?: unknown }).ok === true
   ))
-  const state = auth && typeof auth === 'object'
-    ? ((auth as { result?: { state?: unknown } }).result?.state)
+  const result = auth && typeof auth === 'object'
+    ? (auth as { result?: unknown }).result
     : null
-  return state === 'authenticated' || state === 'unauthenticated' || state === 'unknown' ? state : null
+  if (!result || typeof result !== 'object') return null
+  const state = (result as { state?: unknown }).state
+  if (state !== 'authenticated' && state !== 'unauthenticated' && state !== 'unknown') return null
+  if (state !== 'authenticated') return { state }
+  const account = managedAuthAccount((result as { account?: unknown }).account)
+  return {
+    state,
+    ...(account ? { account } : {}),
+  }
+}
+
+function managedAuthAccount(value: unknown): ManagedAuthObservation['account'] | null {
+  if (!value || typeof value !== 'object') return null
+  const name = managedAuthAccountValue((value as { name?: unknown }).name)
+  const subscription = managedAuthAccountValue((value as { subscription?: unknown }).subscription)
+  if (name === undefined || subscription === undefined) return null
+  return { name, subscription }
+}
+
+function managedAuthAccountValue(value: unknown): string | null | undefined {
+  if (value === null) return null
+  if (typeof value !== 'string') return undefined
+  return value.replace(/\s+/g, ' ').trim().slice(0, 120) || null
 }
 
 function setupReadinessTechnicalFailure(
@@ -843,6 +879,15 @@ function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string
     updatedAt: profile.updatedAt,
     import: profile.import,
     lastObservedAuth: profile.lastObservedAuth,
+    providers: Object.fromEntries(Object.entries(profile.lastObservedAuth).map(([provider, status]) => [
+      provider,
+      {
+        auth: status?.auth,
+        username: status?.auth === 'authenticated' ? status.account?.name ?? null : null,
+        subscription: status?.auth === 'authenticated' ? status.account?.subscription ?? null : null,
+        checkedAt: status?.checkedAt,
+      },
+    ])),
   }
 }
 
@@ -2005,12 +2050,16 @@ async function recordSetupSweepResult({
     return
   }
 
-  const observedAuth = authStateFromManagedResult(result.waitResult?.result)
-  if (observedAuth) {
+  const authObservation = authObservationFromManagedResult(result.waitResult?.result)
+  const observedAuth = authObservation?.state ?? null
+  if (authObservation) {
     await registry.updateProviderStatus(profile.slug, {
       provider,
-      auth: observedAuth,
+      auth: authObservation.state,
       checkedAt: new Date().toISOString(),
+      ...(authObservation.state === 'authenticated' && authObservation.account
+        ? { account: authObservation.account }
+        : {}),
     })
   }
 
@@ -2556,7 +2605,13 @@ async function runSetupHandoffOpenCheck({
   quietStatus?: boolean
 }) {
   return await executeManagedPlaywrightJob({
-    args: { ...args, home: homeDir, profile: profile.slug, quiet: args.quiet === true || quietStatus },
+    args: {
+      ...args,
+      home: homeDir,
+      profile: profile.slug,
+      quiet: args.quiet === true || quietStatus,
+      browserVisibility: 'headed',
+    },
     provider,
     request: createManagedPlaywrightJobRequest({
       provider,

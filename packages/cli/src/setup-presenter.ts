@@ -89,7 +89,7 @@ export class SetupPresenter {
 
   note(message: string) {
     if (!this.enabled) return
-    this.write(`  ${this.paint('cyan', '*')} ${message}\n`)
+    this.write(`  ${this.paint('yellow', '*')} ${message}\n`)
   }
 
   success(message: string) {

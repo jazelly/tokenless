@@ -54,19 +54,114 @@ async function inspectAuth(page: Page, provider: ProviderConfig, signal: AbortSi
         visibleProof: 'login-indicator-visible',
       }
     }
-    const authVisible = await anyVisible(page, [...provider.authIndicators, ...provider.composerSelectors])
-    if (authVisible) {
+    const accountControl = await firstLocator(page, provider.authIndicators)
+    if (accountControl) {
+      const account = await readProviderAccount(accountControl, provider)
+      const menuVerified = await verifyAccountControl(page, accountControl, provider, signal)
+      if (!menuVerified) {
+        return {
+          state: 'unauthenticated' as const,
+          visibleProof: 'account-control-action-unverified',
+        }
+      }
       return {
         state: 'authenticated' as const,
-        visibleProof: 'authenticated-control-visible',
+        visibleProof: provider.authMenuIndicators.length > 0
+          ? 'authenticated-account-menu-visible'
+          : 'authenticated-account-control-clicked',
+        account,
       }
     }
     if (attempt < 50) await page.waitForTimeout(100)
   }
   return {
-    state: 'unknown' as const,
-    visibleProof: 'no-auth-proof-visible',
+    state: 'unauthenticated' as const,
+    visibleProof: 'no-authenticated-account-control',
   }
+}
+
+async function verifyAccountControl(
+  page: Page,
+  accountControl: Locator,
+  provider: ProviderConfig,
+  signal: AbortSignal | undefined,
+) {
+  let opened = false
+  let verified = false
+  try {
+    await accountControl.click({ timeout: 2000 })
+    opened = true
+    if (provider.authMenuIndicators.length === 0) {
+      verified = await accountControl.isVisible({ timeout: 500 })
+      return verified
+    }
+    for (let attempt = 0; attempt <= 10; attempt += 1) {
+      assertNotAborted(signal)
+      if (await anyVisible(page, provider.authMenuIndicators)) {
+        verified = true
+        return true
+      }
+      if (attempt < 10) await page.waitForTimeout(100)
+    }
+    return false
+  } catch {
+    return false
+  } finally {
+    if (opened && verified) {
+      await accountControl.click({ timeout: 1000 }).catch(() => undefined)
+    }
+  }
+}
+
+async function readProviderAccount(accountControl: Locator, provider: ProviderConfig) {
+  const signal = await accountControl.evaluate((element) => ({
+    ariaLabel: element.getAttribute('aria-label') ?? '',
+    title: element.getAttribute('title') ?? '',
+    text: element instanceof HTMLElement ? element.innerText : (element.textContent ?? ''),
+  })).catch(() => ({ ariaLabel: '', title: '', text: '' }))
+  const lines = signal.text
+    .split(/\r?\n/)
+    .map(normalizeAccountText)
+    .filter(Boolean)
+  const subscription = provider.id === 'chatgpt' || provider.id === 'claude'
+    ? lines.find(isSubscriptionLabel) ?? null
+    : null
+  const name = provider.id === 'gemini'
+    ? googleAccountName(signal.ariaLabel)
+    : firstAccountName(lines, subscription)
+  return {
+    name,
+    subscription,
+  }
+}
+
+function firstAccountName(lines: string[], subscription: string | null) {
+  const candidates = lines.filter((line) => (
+    line !== subscription &&
+    !looksLikeEmail(line) &&
+    !isSubscriptionLabel(line) &&
+    !/^(?:profile image|download apps|get apps and extensions)$/i.test(line) &&
+    /[\p{L}\p{N}]/u.test(line)
+  ))
+  return candidates.find((line) => line.length > 1) ?? candidates[0] ?? null
+}
+
+function googleAccountName(ariaLabel: string) {
+  const normalized = normalizeAccountText(ariaLabel)
+  const match = normalized.match(/^Google Account:\s*(.+?)(?:\s*\(|$)/i)
+  return match ? normalizeAccountText(match[1] ?? '') || null : null
+}
+
+function isSubscriptionLabel(value: string) {
+  return /^(?:Free|Go|Plus|Pro|Max|Team|Business|Enterprise)(?:\s+plan)?$/i.test(value)
+}
+
+function looksLikeEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function normalizeAccountText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 120)
 }
 
 function inspectNavigation(page: Page, provider: ProviderConfig) {
