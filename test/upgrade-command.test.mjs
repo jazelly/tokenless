@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const upgradeModuleUrl = pathToFileURL(path.join(root, 'packages/cli/dist/src/upgrade.js')).href
+const cliVersion = JSON.parse(fs.readFileSync(path.join(root, 'packages/cli/package.json'), 'utf8')).version
 
 test('upgrade installs npm package, verifies global entrypoint, refreshes skills, then hands off to the new CLI', async () => {
   const fixture = createFixture('tokenless-upgrade-success-')
@@ -45,7 +46,7 @@ test('upgrade installs npm package, verifies global entrypoint, refreshes skills
     })
 
     assert.equal(result.ok, true)
-    assert.equal(result.cli.beforeVersion, '0.2.0')
+    assert.equal(result.cli.beforeVersion, cliVersion)
     assert.equal(result.cli.afterVersion, '9.9.9')
     assert.equal(result.phases.resolveGlobalCli.entrypoint, fs.realpathSync(entrypoint))
     assert.deepEqual(calls.map((call) => call.kind), ['npm-install', 'npm-root', 'version', 'skills', 'install', 'doctor'])

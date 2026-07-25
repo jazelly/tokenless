@@ -15,7 +15,7 @@ As AI agents are used in more scenarios, they consume an increasing number of to
 - **Intelligent task routing**: Customizable Skill Prompts let users define which types of tasks should be handled by which AI service, enabling flexible and controlled routing strategies.
 - **Multiple AI services**: Tokenless currently supports the web versions of ChatGPT, Claude, Grok, and Gemini, and can use multiple services together.
 - **Fully local operation**: All automation runs locally, with no third-party relays and no collection of user data.
-- **Complete web interaction capabilities**: Tokenless automates the full web workflow, including entering prompts, uploading files, managing Projects, managing conversation threads, and operating Connectors. These actions can be performed throughout long-running agent interactions.
+- **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity across all four providers. Experimental capability inspection and Workspace handling make subscription-dependent native support and fallbacks explicit.
 
 ## Technology Stack
 
@@ -23,11 +23,26 @@ As AI agents are used in more scenarios, they consume an increasing number of to
 - **Command-line tool**: A TypeScript CLI that serves as the user-facing entry point
 - **Local daemon**: A Rust daemon responsible for persistent local execution and state management
 
+## Command-Line Short Options
+
+Profile and provider selection use distinct, case-sensitive short options:
+
+- `-P <slug>` is short for `--profile <slug>`.
+- `-p <provider>` is short for `--provider <provider>`.
+
+For example, `tokenless profiles status -P work -p claude --json` checks Claude for the `work` profile.
+
+## Experimental Workspace Handling
+
+`--project-name` remains task metadata by default. Add `--workspace-mode auto` to request a provider-neutral Workspace: Tokenless uses a fixture-proven native Project only when available and otherwise reports an explicit conversation-scoped fallback. Use `--workspace-mode native` to reject fallback, or `--workspace-mode conversation` to require conversation continuity.
+
+Run `tokenless provider-action --action capability.inspect --provider <provider> --json` to inspect the visible, subscription-dependent capability state. These contracts remain experimental until the live free, paid, unknown-plan, and managed-account matrix is complete.
+
 ## Implementation
 
 - A TypeScript CLI provides the user-facing interface, while a Rust daemon runs persistently on the user's machine and manages state.
 - Routing is implemented through Skill Prompts. Users can define rules that assign different types of tasks to different AI services.
-- Playwright automates the full set of browser interactions, including entering prompts, uploading files, managing Projects, managing conversation threads, and operating Connectors. Together, these workflows cover the main interactions offered by web-based AI services.
+- Playwright operates provider-visible controls and reports fixture-proven postconditions. File uploads distinguish selected files from visibly accepted attachments, while Workspace requests expose whether the provider used a native resource or a conversation fallback.
 - The entire workflow runs locally, without passing through third-party relay services or collecting user activity data.
 
 ## Current Status

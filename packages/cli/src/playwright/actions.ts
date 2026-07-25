@@ -1,18 +1,30 @@
 import { randomUUID } from 'node:crypto'
 import { tokenlessError } from './errors.js'
 import { getProviderById } from './providers.js'
-import type { ProviderId } from './providers.js'
+import type { ProviderCapabilityId, ProviderCapabilityResourceKind, ProviderCapabilityStability, ProviderId } from './providers.js'
 
-export const VISIBLE_ACTION_PROTOCOL_VERSION = 'tokenless.playwright.visible-action.v1' as const
+export const VISIBLE_ACTION_PROTOCOL_VERSION_V1 = 'tokenless.playwright.visible-action.v1' as const
+export const VISIBLE_ACTION_PROTOCOL_VERSION_V2 = 'tokenless.playwright.visible-action.v2' as const
+export const VISIBLE_ACTION_PROTOCOL_VERSION = VISIBLE_ACTION_PROTOCOL_VERSION_V2
 export const VISIBLE_ATTACHMENT_PROTOCOL_VERSION = 'tokenless.visible-attachment.v1' as const
 
+export type VisibleActionProtocolVersion =
+  | typeof VISIBLE_ACTION_PROTOCOL_VERSION_V1
+  | typeof VISIBLE_ACTION_PROTOCOL_VERSION_V2
+
+export function isVisibleActionProtocolVersion(value: unknown): value is VisibleActionProtocolVersion {
+  return value === VISIBLE_ACTION_PROTOCOL_VERSION_V1 || value === VISIBLE_ACTION_PROTOCOL_VERSION_V2
+}
+
 export const VISIBLE_ACTIONS = Object.freeze({
+  CAPABILITY_INSPECT: 'capability.inspect',
   AUTH_STATUS: 'auth.status',
   MODEL_INSPECT: 'model.inspect',
   MODEL_SELECT: 'model.select',
   EFFORT_INSPECT: 'effort.inspect',
   EFFORT_SELECT: 'effort.select',
   FILE_UPLOAD: 'file.upload',
+  WORKSPACE_ENSURE: 'workspace.ensure',
   PROMPT_INPUT: 'prompt.input',
   PROMPT_CLEAR: 'prompt.clear',
   PROMPT_SUBMIT: 'prompt.submit',
@@ -25,7 +37,7 @@ export const VISIBLE_ACTIONS = Object.freeze({
 export type VisibleAction = typeof VISIBLE_ACTIONS[keyof typeof VISIBLE_ACTIONS]
 
 export type VisibleActionRequest = {
-  protocol: typeof VISIBLE_ACTION_PROTOCOL_VERSION
+  protocol: VisibleActionProtocolVersion
   requestId: string
   provider: ProviderId
   action: VisibleAction
@@ -40,7 +52,7 @@ export type VisibleActionError = {
 
 export type VisibleActionResponse =
   | {
-    protocol: typeof VISIBLE_ACTION_PROTOCOL_VERSION
+    protocol: VisibleActionProtocolVersion
     requestId: string
     provider: ProviderId
     action: VisibleAction
@@ -49,7 +61,7 @@ export type VisibleActionResponse =
     error: null
   }
   | {
-    protocol: typeof VISIBLE_ACTION_PROTOCOL_VERSION
+    protocol: VisibleActionProtocolVersion
     requestId: string | null
     provider: ProviderId | null
     action: VisibleAction | null
@@ -64,7 +76,37 @@ export type AuthStatusResult = {
   account?: {
     name: string | null
     subscription: string | null
+    subscriptionEvidence: {
+      status: 'observed' | 'derived' | 'unknown'
+      source: string | null
+    }
   }
+}
+
+export type CapabilityInspectResult = {
+  visibleProof: string
+  capabilities: Readonly<Record<ProviderCapabilityId, ProviderCapabilityInspection>>
+}
+
+export type ProviderCapabilityInspection = {
+  capability: ProviderCapabilityId
+  availability: 'available' | 'unavailable' | 'unknown'
+  visibleProof: string
+  reason: string | null
+  native: {
+    resourceKind: ProviderCapabilityResourceKind | null
+    availability: 'available' | 'unavailable' | 'unknown'
+    visibleProof: string | null
+    reason: string | null
+  }
+  fallback: {
+    resourceKind: ProviderCapabilityResourceKind | null
+    availability: 'available' | 'unavailable' | 'unknown'
+    mode: 'conversation' | null
+    visibleProof: string | null
+    reason: string | null
+  }
+  stability: ProviderCapabilityStability
 }
 
 export type Choice = {
@@ -92,6 +134,8 @@ export type ChoiceSelectResult = {
 }
 
 export type FileUploadResult = {
+  acceptance: 'selected' | 'accepted'
+  visibleProof: string
   attachments: readonly {
     protocol: typeof VISIBLE_ATTACHMENT_PROTOCOL_VERSION
     bundleId: string
@@ -102,6 +146,24 @@ export type FileUploadResult = {
     sha256: string
     visible: true
   }[]
+}
+
+export type WorkspaceEnsureResult = {
+  mode: 'conversation'
+  requestedMode: 'auto' | 'conversation'
+  name: string
+  resource: {
+    kind: 'conversation' | null
+    native: false
+  }
+  availability: 'available' | 'unavailable'
+  visibleProof: string
+  reason: string | null
+  fallback: {
+    mode: 'conversation'
+    resourceKind: 'conversation'
+    availability: 'available'
+  } | null
 }
 
 export type PromptInputResult = {
@@ -167,11 +229,18 @@ export type BlockerCheckResult = {
   blockers: readonly VisibleBlocker[]
 }
 
-export type VisibleActionResult =
+type VisibleActionResultBase = {
+  availability?: 'available' | 'unavailable' | 'unknown'
+  reason?: string | null
+}
+
+export type VisibleActionResult = (
+  | CapabilityInspectResult
   | AuthStatusResult
   | ChoiceInspectResult
   | ChoiceSelectResult
   | FileUploadResult
+  | WorkspaceEnsureResult
   | PromptInputResult
   | PromptClearResult
   | PromptSubmitResult
@@ -179,6 +248,7 @@ export type VisibleActionResult =
   | SnapshotResult
   | NavigationCheckResult
   | BlockerCheckResult
+) & VisibleActionResultBase
 
 export type AttachmentInput = {
   protocol: typeof VISIBLE_ATTACHMENT_PROTOCOL_VERSION
@@ -192,7 +262,23 @@ export type AttachmentInput = {
 
 const ACTIONS = Object.freeze(Object.values(VISIBLE_ACTIONS)) as readonly VisibleAction[]
 const ACTION_SET = new Set<string>(ACTIONS)
+const LEGACY_V1_ACTIONS = new Set<string>([
+  VISIBLE_ACTIONS.AUTH_STATUS,
+  VISIBLE_ACTIONS.MODEL_INSPECT,
+  VISIBLE_ACTIONS.MODEL_SELECT,
+  VISIBLE_ACTIONS.EFFORT_INSPECT,
+  VISIBLE_ACTIONS.EFFORT_SELECT,
+  VISIBLE_ACTIONS.FILE_UPLOAD,
+  VISIBLE_ACTIONS.PROMPT_INPUT,
+  VISIBLE_ACTIONS.PROMPT_CLEAR,
+  VISIBLE_ACTIONS.PROMPT_SUBMIT,
+  VISIBLE_ACTIONS.RESPONSE_READ,
+  VISIBLE_ACTIONS.SNAPSHOT_SANITIZED,
+  VISIBLE_ACTIONS.NAVIGATION_CHECK,
+  VISIBLE_ACTIONS.BLOCKER_CHECK,
+])
 const EMPTY_PAYLOAD_ACTIONS = new Set<VisibleAction>([
+  VISIBLE_ACTIONS.CAPABILITY_INSPECT,
   VISIBLE_ACTIONS.AUTH_STATUS,
   VISIBLE_ACTIONS.MODEL_INSPECT,
   VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -206,6 +292,7 @@ const EMPTY_PAYLOAD_ACTIONS = new Set<VisibleAction>([
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 const LABEL_MAX_BYTES = 512
 const PROMPT_MAX_BYTES = 1024 * 1024
+const WORKSPACE_TEXT_MAX_BYTES = 32 * 1024
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
 export function createVisibleActionRequest(
@@ -225,7 +312,7 @@ export function validateVisibleActionRequest(input: unknown): VisibleActionReque
     throw tokenlessError('invalid_visible_action_request', 'Visible action request must be an object.')
   }
   requireExactKeys(input, ['protocol', 'requestId', 'provider', 'action', 'payload'], 'invalid_visible_action_request')
-  if (input.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION) {
+  if (!isVisibleActionProtocolVersion(input.protocol)) {
     throw tokenlessError('invalid_visible_action_protocol', 'Visible action protocol version is not supported.')
   }
   if (typeof input.requestId !== 'string' || !REQUEST_ID_PATTERN.test(input.requestId)) {
@@ -238,12 +325,15 @@ export function validateVisibleActionRequest(input: unknown): VisibleActionReque
   if (typeof input.action !== 'string' || !ACTION_SET.has(input.action)) {
     throw tokenlessError('unknown_visible_action', 'Visible action is not supported.')
   }
+  if (input.protocol === VISIBLE_ACTION_PROTOCOL_VERSION_V1 && !LEGACY_V1_ACTIONS.has(input.action)) {
+    throw tokenlessError('invalid_visible_action_protocol', 'Visible action requires visible action protocol v2.')
+  }
   if (!isPlainRecord(input.payload)) {
     throw tokenlessError('invalid_visible_action_payload', 'Visible action payload must be an object.')
   }
   validatePayload(input.action as VisibleAction, input.payload)
   return {
-    protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+    protocol: input.protocol,
     requestId: input.requestId,
     provider: provider.id,
     action: input.action as VisibleAction,
@@ -288,6 +378,10 @@ function validatePayload(action: VisibleAction, payload: Record<string, unknown>
     validateVisibleLabel(payload.label)
     return
   }
+  if (action === VISIBLE_ACTIONS.WORKSPACE_ENSURE) {
+    validateWorkspaceEnsurePayload(payload)
+    return
+  }
   if (action === VISIBLE_ACTIONS.PROMPT_INPUT) {
     requireExactKeys(payload, ['text'], 'invalid_visible_action_payload')
     if (typeof payload.text !== 'string' || Buffer.byteLength(payload.text, 'utf8') > PROMPT_MAX_BYTES) {
@@ -304,6 +398,37 @@ function validatePayload(action: VisibleAction, payload: Record<string, unknown>
     return
   }
   throw tokenlessError('unknown_visible_action', 'Visible action is not supported.')
+}
+
+function validateWorkspaceEnsurePayload(payload: Record<string, unknown>) {
+  const keys = Object.keys(payload)
+  const expected = new Set(['name', 'mode', 'instructions'])
+  if (
+    (keys.length !== 2 && keys.length !== 3) ||
+    !keys.every((key) => expected.has(key)) ||
+    !Object.hasOwn(payload, 'name') ||
+    !Object.hasOwn(payload, 'mode')
+  ) {
+    throw tokenlessError('invalid_visible_action_payload', 'Expected exact keys: name, mode, optional instructions.')
+  }
+  validateWorkspaceText(payload.name, 'invalid_visible_workspace_name', 'Workspace name is invalid or too large.')
+  if (payload.mode !== 'auto' && payload.mode !== 'native' && payload.mode !== 'conversation') {
+    throw tokenlessError('invalid_visible_workspace_mode', 'Workspace ensure mode is invalid.')
+  }
+  if (Object.hasOwn(payload, 'instructions')) {
+    validateWorkspaceText(payload.instructions, 'invalid_visible_workspace_instructions', 'Workspace instructions are invalid or too large.')
+  }
+}
+
+function validateWorkspaceText(value: unknown, code: string, message: string) {
+  if (
+    typeof value !== 'string' ||
+    !/\S/u.test(value) ||
+    Buffer.byteLength(value, 'utf8') > WORKSPACE_TEXT_MAX_BYTES ||
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)
+  ) {
+    throw tokenlessError(code, message)
+  }
 }
 
 function validateVisibleLabel(value: unknown) {

@@ -60,6 +60,7 @@ tokenless run \
   --provider chatgpt \
   --project-name "Website redesign" \
   --chat-name "Navbar review" \
+  --workspace-mode auto \
   --project-root /path/to/project \
   --attach-file ./brief.pdf \
   --prompt "Review the navigation against this brief." \
@@ -69,12 +70,28 @@ tokenless run \
 The shared Playwright action contract covers:
 
 - visible authentication and blocker checks;
+- experimental subscription-aware capability inspection;
 - exact-label model and effort inspection and selection;
-- integrity-checked file upload through the visible page control;
+- integrity-checked file upload with separate `selected` and visibly proven `accepted` outcomes;
+- experimental Workspace ensure with explicit native-only or conversation fallback policy;
 - prompt submission, correlated response reading, and visible citations;
 - fail-closed navigation checks and sanitized structural snapshots.
 
 Four-provider parity and end-to-end upload acceptance are still being completed. Unsupported or unverified actions fail explicitly.
+
+`--project-name` continues to provide task identity only unless `--workspace-mode` is present. `auto` prefers a fixture-proven native Project and otherwise reports a conversation fallback, `native` fails when native creation is unverified or unavailable, and `conversation` requires the conversation strategy. Repeated `auto` or `conversation` runs with the same provider, profile, and task identity reuse only a trusted successful conversation URL.
+
+Inspect all current provider capabilities with:
+
+```bash
+tokenless provider-action \
+  --profile default \
+  --provider chatgpt \
+  --action capability.inspect \
+  --json
+```
+
+Use the low-level Workspace action with `--action workspace.ensure --project-name <name> --workspace-mode <auto|native|conversation>`. Optional instructions can be supplied with `--project-instructions` or `--project-instructions-file`.
 
 ## Browser Visibility Policy
 
@@ -120,9 +137,13 @@ tokenless profiles reset --profile work
 tokenless profiles clear --profile work
 ```
 
+`--profile` has the case-sensitive short option `-P`, while `--provider` uses `-p`. For example, `tokenless profiles status -P work -p claude --json` checks Claude for the `work` profile.
+
 `profiles discover` is read-only. Import with `profiles add --browser <chrome|brave> --import-browser-profile <directory-key> --preferred-providers <list> --consent-local-profile-copy` only after explicit user choice. Imported provider sign-in state remains local and opaque to agents. Jobs reuse registered profiles without refreshing them from the source.
 
-`profiles status` authenticates only when the provider-specific account control is visible and clickable; a composer alone is not sufficient. After a successful check, `profiles list --json` reports the visible provider username and subscription label under `profiles[].providers`. A subscription is `null` when the visible UI does not establish a reliable tier.
+`profiles status` performs a live provider-page check and authenticates only when the provider-specific account control is visible and clickable; a composer alone is not sufficient. It saves the resulting observation in the managed profile registry. `profiles list` reads that saved observation and does not open provider pages or refresh status ad hoc. After a successful check, `profiles list --json` reports the visible provider username and subscription label under `profiles[].providers`. A subscription is `null` when the visible UI does not establish a reliable tier.
+
+For Grok, the model menu is the subscription evidence: when `Auto`, `Expert`, and `Heavy` are all visibly unavailable, the saved subscription is `Free`; otherwise it is `SuperGrok`. Tokenless intentionally does not distinguish paid SuperGrok tiers.
 
 ## Local API
 

@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": {
+    "status": "unknown",
+    "label": null
+  },
+  "scenario": "upload-tools-menu-open",
+  "routeClass": "new-chat",
+  "operationPhase": "upload-menu-open",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://gemini.google.com/app",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "f3d0db9158c5d71e006e6676a84409828662af8263965829273b050eba3d2f61",
+  "evidenceSelectors": [
+    {
+      "capability": "upload.open",
+      "selector": "button[aria-label=\"Upload and tools\"][aria-expanded=\"true\"]",
+      "expectedCount": 1
+    },
+    {
+      "capability": "tools.enumerate",
+      "selector": "[role=\"menu\"] [role^=\"menuitem\"]",
+      "expectedCount": 5
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

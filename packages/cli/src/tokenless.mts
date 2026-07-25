@@ -119,12 +119,14 @@ const DEFAULT_RUN_TIMEOUT_MS = 180_000
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000
 const LONG_RUNNING_JOB_TIMEOUT_MS = 2_160_000
 const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
+  'capability.inspect',
   'auth.status',
   'model.inspect',
   'model.select',
   'effort.inspect',
   'effort.select',
   'file.upload',
+  'workspace.ensure',
   'prompt.clear',
   'prompt.input',
   'prompt.submit',
@@ -133,6 +135,7 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'navigation.check',
   'blocker.check',
 ])
+const PRIORITY_VISIBLE_PROVIDER_ACTION_LIST = [...PRIORITY_VISIBLE_PROVIDER_ACTIONS].join(', ')
 let args: CliArgs = { attachFiles: [], files: [], json: process.argv.includes('--json') }
 
 try {
@@ -440,7 +443,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       provider,
       request: createManagedPlaywrightJobRequest({
         provider,
-        target: { kind: 'provider_home', url: managedProviderTargetUrl(provider, args.targetUrl) },
+        target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
         actions: [{ action: visibleAction, payload: {} }],
       }),
       taskId: args.taskId || `profile:${subcommand}:${randomUUID()}`,
@@ -926,8 +929,13 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (!PRIORITY_VISIBLE_PROVIDER_ACTIONS.has(action)) {
     throw usageError(
       'invalid_visible_provider_action',
-      'provider-action --action must be one of: auth.status, model.inspect, model.select, effort.inspect, effort.select, file.upload, prompt.clear, prompt.input, prompt.submit, response.read, snapshot.sanitized, navigation.check, blocker.check.'
+      `provider-action --action must be one of: ${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST}.`
     )
+  }
+
+  if (action === 'capability.inspect') {
+    assertProviderActionPayloadOptions(args, new Set())
+    return { action, payload: {} }
   }
 
   if (action === 'auth.status' || action === 'model.inspect' || action === 'effort.inspect') {
@@ -990,10 +998,18 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     return { action, payload: {} }
   }
 
+  if (action === 'workspace.ensure') {
+    assertProviderActionPayloadOptions(args, new Set(['projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode']))
+    return {
+      action,
+      payload: await workspaceEnsurePayloadFromArgs(args, args.workspaceMode ?? 'auto'),
+    }
+  }
+
   if (action !== 'prompt.input') {
     throw usageError(
       'invalid_visible_provider_action',
-      'provider-action --action must be one of: auth.status, model.inspect, model.select, effort.inspect, effort.select, file.upload, prompt.clear, prompt.input, prompt.submit, response.read, snapshot.sanitized, navigation.check, blocker.check.'
+      `provider-action --action must be one of: ${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST}.`
     )
   }
 
@@ -1023,6 +1039,10 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['effort', '--effort'],
     ['thinkingEffort', '--thinking-effort'],
     ['chatSurface', '--chat-surface'],
+    ['projectName', '--project-name'],
+    ['projectInstructions', '--project-instructions'],
+    ['projectInstructionsFile', '--project-instructions-file'],
+    ['workspaceMode', '--workspace-mode'],
   ] as const
   const unsupported: string[] = payloadOptions
     .filter(([key]) => args[key] !== undefined && !allowed.has(key))
@@ -1083,6 +1103,12 @@ async function executeDaemonJob({
   })
   const requestId = visibleRequestId(visibleAction ? (taskId ?? randomUUID()) : (taskId ?? randomUUID()))
   const managedJobId = managedPlaywrightJobId()
+  const workspaceMode = args.workspaceMode === undefined ? undefined : normalizeWorkspaceMode(args.workspaceMode)
+  const workspace = visibleAction || workspaceMode === undefined
+    ? undefined
+    : await workspaceEnsurePayloadFromArgs(args, workspaceMode)
+  const profileForTarget = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   let stagedAttachmentBundleId: string | undefined
   let daemonJobSubmissionStarted = false
 
@@ -1103,7 +1129,19 @@ async function executeDaemonJob({
     }
     const request = createManagedPlaywrightJobRequest({
       provider,
-      target: { kind: 'provider_home', url: managedProviderTargetUrl(provider, args.targetUrl) },
+      target: {
+        kind: 'provider_home',
+        url: await managedProviderTargetUrl({
+          provider,
+          explicitTargetUrl: args.targetUrl,
+          workspaceMode,
+          taskId,
+          homeDir,
+          daemonUrl: configuredDaemonUrl,
+          daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+          profileId: profileForTarget.id,
+        }),
+      },
       taskId: taskId ?? null,
       actions: managedVisibleActions({
         action,
@@ -1113,6 +1151,7 @@ async function executeDaemonJob({
         attachments,
         providerControls,
         visibleAction,
+        workspace,
       }),
     })
 
@@ -1216,7 +1255,7 @@ async function executeManagedPlaywrightJob({
   args: CliArgs
   provider: string
   request: ReturnType<typeof createManagedPlaywrightJobRequest>
-  taskId?: string | undefined
+  taskId?: string | null | undefined
   statusEventAction: string
   noWait: boolean
   timeoutMs?: number | undefined
@@ -1345,6 +1384,7 @@ function managedVisibleActions({
   attachments,
   providerControls,
   visibleAction,
+  workspace,
 }: {
   action: string
   provider: string
@@ -1353,6 +1393,7 @@ function managedVisibleActions({
   attachments?: readonly Record<string, unknown>[] | undefined
   providerControls: Record<string, any>
   visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
+  workspace?: Record<string, unknown> | undefined
 }) {
   if (visibleAction) {
     return [{
@@ -1399,6 +1440,9 @@ function managedVisibleActions({
   if (providerControls.effort !== undefined) {
     actions.push({ requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_SELECT, payload: { label: providerControls.effort } })
   }
+  if (workspace !== undefined) {
+    actions.push({ requestId: `${requestId}:workspace`, action: VISIBLE_ACTIONS.WORKSPACE_ENSURE, payload: workspace })
+  }
   if (attachments !== undefined && attachments.length > 0) {
     actions.push({ requestId: `${requestId}:files`, action: VISIBLE_ACTIONS.FILE_UPLOAD, payload: { attachments } })
   }
@@ -1417,9 +1461,52 @@ function managedVisibleActions({
   return actions
 }
 
-function managedProviderTargetUrl(provider: string, targetUrl: unknown) {
-  if (targetUrl === undefined) return providerHomeUrl(provider as any)
-  const candidate = providerWakeUrl(provider, targetUrl)
+async function managedProviderTargetUrl({
+  provider,
+  explicitTargetUrl,
+  workspaceMode,
+  taskId,
+  homeDir,
+  daemonUrl,
+  daemonStartTimeoutMs,
+  profileId,
+}: {
+  provider: string
+  explicitTargetUrl: unknown
+  workspaceMode?: string | undefined
+  taskId?: string | null | undefined
+  homeDir: string
+  daemonUrl: string
+  daemonStartTimeoutMs?: number | undefined
+  profileId: string
+}) {
+  if (explicitTargetUrl !== undefined) {
+    const candidate = providerWakeUrl(provider, explicitTargetUrl)
+    const parsed = new URL(candidate)
+    parsed.search = ''
+    parsed.hash = ''
+    return parsed.toString()
+  }
+  if ((workspaceMode === 'auto' || workspaceMode === 'conversation') && taskId) {
+    await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs })
+    const mapped = await mappedDaemonTarget({
+      homeDir,
+      daemonUrl,
+      provider,
+      profileId,
+      taskId,
+    })
+    if (mapped) return mapped
+  }
+  const candidate = providerHomeUrl(provider as any)
+  const parsed = new URL(candidate)
+  parsed.search = ''
+  parsed.hash = ''
+  return parsed.toString()
+}
+
+function managedProviderExplicitTargetUrl(provider: string, targetUrl: unknown) {
+  const candidate = targetUrl === undefined ? providerHomeUrl(provider as any) : providerWakeUrl(provider, targetUrl)
   const parsed = new URL(candidate)
   parsed.search = ''
   parsed.hash = ''
@@ -2581,7 +2668,7 @@ async function runSetupAuthCheck({
     provider,
     request: createManagedPlaywrightJobRequest({
         provider,
-        target: { kind: 'provider_home', url: managedProviderTargetUrl(provider, args.targetUrl) },
+        target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
         actions: [{ action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
       }),
       taskId: `setup:${provider}:${randomUUID()}`,
@@ -2615,7 +2702,7 @@ async function runSetupHandoffOpenCheck({
     provider,
     request: createManagedPlaywrightJobRequest({
       provider,
-      target: { kind: 'provider_home', url: managedProviderTargetUrl(provider, args.targetUrl) },
+      target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
       actions: [{ action: VISIBLE_ACTIONS.NAVIGATION_CHECK, payload: {} }],
     }),
     taskId: `setup:handoff:${provider}:${randomUUID()}`,
@@ -2961,17 +3048,29 @@ async function mappedDaemonTarget({
   homeDir,
   daemonUrl,
   provider,
+  profileId,
   taskId,
 }: {
   homeDir: string
   daemonUrl: string
   provider: string
+  profileId?: string | undefined
   taskId?: string | undefined
 }) {
   if (!taskId) return null
-  const jobs = await listDaemonJobs({ homeDir, daemonUrl, provider, taskId, limit: 1000 })
+  const jobs = await listDaemonJobs({
+    homeDir,
+    daemonUrl,
+    provider,
+    taskId,
+    executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
+    ...(profileId === undefined ? {} : { profileId }),
+    limit: 1000,
+  })
   for (const job of jobs) {
     if (job.provider !== provider || daemonTaskId(job) !== taskId) continue
+    if (profileId !== undefined && job.profile_id !== profileId) continue
+    if (job.status !== 'succeeded') continue
     const candidate = resultUrl(job.result_json)
     if (!candidate) continue
     try {
@@ -3219,6 +3318,9 @@ function parseArgs(argv: string[]): CliArgs {
     '--prompt-file': 'promptFile',
     '--project-root': 'projectRoot',
     '--project-name': 'projectName',
+    '--project-instructions': 'projectInstructions',
+    '--project-instructions-file': 'projectInstructionsFile',
+    '--workspace-mode': 'workspaceMode',
     '--chat-name': 'chatName',
     '--context': 'context',
     '--context-file': 'contextFile',
@@ -3226,7 +3328,9 @@ function parseArgs(argv: string[]): CliArgs {
     '--turn-context-file': 'turnContextFile',
     '--output': 'output',
     '--provider': 'provider',
+    '-p': 'provider',
     '--profile': 'profile',
+    '-P': 'profile',
     '--label': 'label',
     '--import-chrome-profile': 'importChromeProfile',
     '--import-browser-profile': 'importChromeProfile',
@@ -3595,6 +3699,42 @@ function normalizeVisibleModelLabel(value: unknown, flag: string, errorCode = 'i
   return normalized
 }
 
+function normalizeWorkspaceMode(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized !== 'auto' && normalized !== 'native' && normalized !== 'conversation') {
+    throw usageError('invalid_workspace_mode', '--workspace-mode must be auto, native, or conversation.')
+  }
+  return normalized
+}
+
+async function workspaceEnsurePayloadFromArgs(args: CliArgs, modeValue: unknown) {
+  const name = args.projectName || process.env.TOKENLESS_PROJECT_NAME
+  if (typeof name !== 'string' || name.trim() === '') {
+    throw usageError('missing_workspace_name', 'workspace.ensure requires --project-name <name>.')
+  }
+  if (args.projectInstructions !== undefined && args.projectInstructionsFile !== undefined) {
+    throw usageError('duplicate_workspace_instructions', 'Use either --project-instructions or --project-instructions-file, not both.')
+  }
+  const instructions = args.projectInstructionsFile === undefined
+    ? args.projectInstructions
+    : await fs.readFile(args.projectInstructionsFile, 'utf8')
+  return {
+    name: normalizeWorkspaceText(name, '--project-name', 'invalid_workspace_name'),
+    mode: normalizeWorkspaceMode(modeValue),
+    ...(instructions === undefined
+      ? {}
+      : { instructions: normalizeWorkspaceText(instructions, '--project-instructions', 'invalid_workspace_instructions') }),
+  }
+}
+
+function normalizeWorkspaceText(value: unknown, flag: string, errorCode: string) {
+  const normalized = String(value).trim()
+  if (normalized.length === 0 || Buffer.byteLength(normalized, 'utf8') > 32 * 1024 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(normalized)) {
+    throw usageError(errorCode, `${flag} must be nonempty text up to 32768 bytes without unsupported control characters.`)
+  }
+  return normalized
+}
+
 function normalizeVisibleModelFallbacks(value: unknown) {
   const labels = parseList(value).map((label) => normalizeVisibleModelLabel(label, '--model-fallback'))
   if (labels.length === 0 || labels.length > 8) {
@@ -3755,7 +3895,7 @@ function usage() {
       title: 'Run',
       description: 'Customize, inspect, resume, or cancel jobs.',
       commands: [
-        'tokenless run --profile <slug> --provider chatgpt --project-name <agent-project> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
+        'tokenless run --profile <slug> --provider chatgpt --project-name <agent-project> --workspace-mode <auto|native|conversation> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
         'tokenless run --profile <slug> --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> --prompt <text> --json',
         'tokenless run --provider chatgpt --model <visible-model> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
         'tokenless run --provider <chatgpt|claude|gemini|grok> --attach-file <path> [--attach-file <path>] --prompt <text> --json',
@@ -3790,7 +3930,7 @@ function usage() {
       title: 'Provider',
       description: 'Use low-level actions and provider-specific controls.',
       commands: [
-        'tokenless provider-action --profile <slug> --provider <chatgpt|claude|gemini|grok> --action <auth.status|model.inspect|model.select|effort.inspect|effort.select|file.upload|prompt.clear|prompt.input|prompt.submit|response.read|snapshot.sanitized|navigation.check|blocker.check> [action options] --json',
+        `tokenless provider-action --profile <slug> --provider <chatgpt|claude|gemini|grok> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> [action options] --json`,
         'tokenless chatgpt-controls --json',
         'tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
         'tokenless snapshot-dom --provider chatgpt --json',
@@ -3810,6 +3950,10 @@ function usage() {
     formatUsageGroup('Usage', 'Canonical commands for everyday workflows.', canonicalSections),
     '',
     formatUsageGroup('Advanced Usage', 'Less common commands for detailed control and maintenance.', advancedSections),
+    '',
+    'Short options:',
+    '  -P, --profile <slug>        Select a managed browser profile.',
+    '  -p, --provider <provider>   Select an AI provider.',
   ].join('\n'))
 }
 

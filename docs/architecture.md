@@ -46,7 +46,9 @@ Jobs use explicit provider and profile identity. Unsupported controls, ambiguous
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. Import, reset, and deletion require explicit commands and consent.
 
-Authentication checks fail closed: a provider-specific account control must be visible and successfully clicked. A composer or other generally available page control is not authentication evidence. Successful checks retain only the visible account display name and an explicit visible subscription label; absent or ambiguous plan evidence remains `null`.
+Authentication checks fail closed: a provider-specific account control must be visible and successfully clicked. A composer or other generally available page control is not authentication evidence. Successful checks retain only the visible account display name and visible subscription evidence; absent or ambiguous plan evidence remains `null`. Grok derives that evidence from its visible model entitlements: all of `Auto`, `Expert`, and `Heavy` unavailable means `Free`, while any available entitlement means `SuperGrok`.
+
+`profiles status` runs this provider-page inspection and persists the observation. `profiles list` is a registry read: it reports the last saved observation and never refreshes a provider page implicitly.
 
 ## Local control plane
 
@@ -67,6 +69,16 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 - Every provider adapter has an explicit action and capability contract. Unverified behavior is unavailable rather than guessed.
 - Navigation and target URLs are canonicalized and checked before and after actions.
 
+## Capability and Workspace strategy
+
+Visible action protocol v2 adds `capability.inspect` and `workspace.ensure`; the worker continues accepting stored v1 requests for legacy actions. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every supported provider.
+
+Subscription labels are diagnostic evidence, not authorization. Runtime decisions prefer an enabled visible control, then an explicit disabled, upgrade, or plan-limit state, and otherwise report `unknown`. Missing selectors never prove that a subscription lacks a capability.
+
+Native Project creation remains unavailable until a complete fixture sequence proves its list, form, final mutation, and success postcondition. `workspace.ensure` therefore supports explicit conversation-scoped fallback. `auto` reports that fallback, `conversation` requires it, and `native` fails before prompt or file mutation. `--project-name` remains metadata unless the caller opts in with `--workspace-mode`.
+
+Conversation fallback is scoped to one provider, managed profile, and task identifier. Before reusing a previous provider URL, the CLI queries the authenticated daemon and accepts only a successful same-scope job result that passes provider URL validation.
+
 ## Browser visibility policy
 
 Tokenless stores browser visibility in config and defaults omitted values to `auto`. The same policy can be overridden per job, but the runner resolves it into the same managed-browser contract every time.
@@ -80,7 +92,7 @@ Tokenless stores browser visibility in config and defaults omitted values to `au
 
 ## File handling
 
-The CLI accepts only intentionally selected regular files. It stages them under the Tokenless home, records bounded metadata and integrity hashes, and passes private staged paths only to the local worker. Provider adapters upload through visible file inputs and verify the resulting filename or other visible postcondition. Daemon results do not expose raw caller paths.
+The CLI accepts only intentionally selected regular files. It stages them under the Tokenless home, records bounded metadata and integrity hashes, and passes private staged paths only to the local worker. Provider adapters use provider-specific visible upload controls or generated file inputs. A hidden `FileList` proves only `selected`; only a visible filename, attachment chip, preview, or equivalent postcondition proves `accepted`. Daemon results do not expose raw caller paths.
 
 ## Long-running and user-handoff states
 

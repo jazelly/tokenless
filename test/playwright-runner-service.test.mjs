@@ -11,6 +11,7 @@ import {
   PLAYWRIGHT_EXECUTION_BACKEND,
   PersistentContextManager,
   VISIBLE_ACTIONS,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   createManagedPlaywrightJobRequest,
   tokenlessError,
 } from '../packages/cli/dist/src/playwright/index.js'
@@ -1356,6 +1357,121 @@ test('runner treats renewal failure as a failed job and refuses unsafe attachmen
   })
   const unsafeResult = await unsafe.runOnce()
   assert.deepEqual(unsafeResult, { claimed: true, jobId: 'job-2', status: 'failed' })
+})
+
+test('runner accepts v1 action responses in checkpoints and resumes from the next action', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const request = createManagedPlaywrightJobRequest({
+    provider: 'chatgpt',
+    browserVisibility: 'headed',
+    actions: [
+      { requestId: 'checkpoint-v1:auth', action: VISIBLE_ACTIONS.AUTH_STATUS, payload: {} },
+      { requestId: 'checkpoint-v1:input', action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'continue after checkpoint' } },
+    ],
+  })
+  const job = fakeJob('job-checkpoint-v1', profiles[0], request)
+  job.checkpoint_json = {
+    protocol: 'tokenless.playwright.runner-checkpoint.v1',
+    jobId: job.job_id,
+    profileId: profiles[0].id,
+    provider: request.provider,
+    targetUrl: request.target.url,
+    browserVisibility: request.browserVisibility,
+    actionCursor: 1,
+    responses: [{
+      protocol: VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+      requestId: 'checkpoint-v1:auth',
+      provider: 'chatgpt',
+      action: VISIBLE_ACTIONS.AUTH_STATUS,
+      ok: true,
+      result: { state: 'authenticated', visibleProof: 'legacy-checkpoint' },
+      error: null,
+    }],
+    responseBaseline: null,
+    submitted: null,
+    phase: {
+      state: 'completed',
+      actionIndex: 0,
+      requestId: 'checkpoint-v1:auth',
+      action: VISIBLE_ACTIONS.AUTH_STATUS,
+      mutating: false,
+      providerUrl: 'https://chatgpt.com/',
+    },
+  }
+  const daemon = new FakeDaemon([job])
+  const adapterEvents = []
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(new FakeForegroundPage()),
+    adapterRegistry: fakeAdapterRegistry(async (_page, action) => {
+      adapterEvents.push(action.action)
+      return successResponse(action, { visible: true, inputProof: 'typed' })
+    }),
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: job.job_id, status: 'succeeded' })
+  assert.deepEqual(adapterEvents, [VISIBLE_ACTIONS.PROMPT_INPUT])
+  assert.deepEqual(daemon.completed[0].result.responses.map((response) => response.action), [
+    VISIBLE_ACTIONS.AUTH_STATUS,
+    VISIBLE_ACTIONS.PROMPT_INPUT,
+  ])
+})
+
+test('runner refuses to replay an interrupted native workspace mutation', async () => {
+  const profiles = fakeProfiles(['profile-a'])
+  const request = createManagedPlaywrightJobRequest({
+    provider: 'chatgpt',
+    browserVisibility: 'headed',
+    actions: [
+      {
+        requestId: 'native-workspace',
+        action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+        payload: { name: 'Agent Project', mode: 'native' },
+      },
+      { requestId: 'after-workspace', action: VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'must not type' } },
+    ],
+  })
+  const job = fakeJob('job-native-workspace-replay', profiles[0], request)
+  job.checkpoint_json = {
+    protocol: 'tokenless.playwright.runner-checkpoint.v1',
+    jobId: job.job_id,
+    profileId: profiles[0].id,
+    provider: request.provider,
+    targetUrl: request.target.url,
+    browserVisibility: request.browserVisibility,
+    actionCursor: 0,
+    responses: [],
+    responseBaseline: null,
+    submitted: null,
+    phase: {
+      state: 'started',
+      actionIndex: 0,
+      requestId: 'native-workspace',
+      action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+      mutating: true,
+      providerUrl: 'https://chatgpt.com/',
+    },
+  }
+  const daemon = new FakeDaemon([job])
+  const adapterEvents = []
+  const service = new ManagedPlaywrightRunnerService({
+    profileRegistry: { async listProfiles() { return profiles } },
+    daemonClient: daemon,
+    contextManager: fakeContextManager(new FakeForegroundPage()),
+    adapterRegistry: fakeAdapterRegistry(async (_page, action) => {
+      adapterEvents.push(action.action)
+      return successResponse(action, { visible: true })
+    }),
+  })
+
+  const result = await service.runOnce()
+
+  assert.deepEqual(result, { claimed: true, jobId: job.job_id, status: 'failed' })
+  assert.equal(daemon.completed[0].error.code, 'ambiguous_action_outcome')
+  assert.deepEqual(adapterEvents, [])
 })
 
 class FakeDaemon {

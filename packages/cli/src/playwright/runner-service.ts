@@ -10,7 +10,7 @@ import {
   PLAYWRIGHT_EXECUTION_BACKEND,
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
-import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION } from './actions.js'
+import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, VISIBLE_ACTION_PROTOCOL_VERSION_V1 } from './actions.js'
 import { inspectVisibleBlockers } from './adapters/provider-dom-adapter.js'
 import { createDaemonClient } from './daemon-client.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
@@ -118,12 +118,14 @@ const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
 const DEFAULT_AUTO_ESCALATED_CLOSE_DELAY_MS = 30_000
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const GATED_ACTIONS = new Set<string>([
+  VISIBLE_ACTIONS.CAPABILITY_INSPECT,
   VISIBLE_ACTIONS.NAVIGATION_CHECK,
   VISIBLE_ACTIONS.MODEL_INSPECT,
   VISIBLE_ACTIONS.MODEL_SELECT,
   VISIBLE_ACTIONS.EFFORT_INSPECT,
   VISIBLE_ACTIONS.EFFORT_SELECT,
   VISIBLE_ACTIONS.FILE_UPLOAD,
+  VISIBLE_ACTIONS.WORKSPACE_ENSURE,
   VISIBLE_ACTIONS.PROMPT_INPUT,
   VISIBLE_ACTIONS.PROMPT_CLEAR,
   VISIBLE_ACTIONS.PROMPT_SUBMIT,
@@ -133,6 +135,7 @@ const MUTATING_ACTIONS = new Set<string>([
   VISIBLE_ACTIONS.MODEL_SELECT,
   VISIBLE_ACTIONS.EFFORT_SELECT,
   VISIBLE_ACTIONS.FILE_UPLOAD,
+  VISIBLE_ACTIONS.WORKSPACE_ENSURE,
   VISIBLE_ACTIONS.PROMPT_INPUT,
   VISIBLE_ACTIONS.PROMPT_CLEAR,
   VISIBLE_ACTIONS.PROMPT_SUBMIT,
@@ -505,6 +508,7 @@ export class ManagedPlaywrightRunnerService {
         if (!response.ok) {
           throw tokenlessError(response.error.code, response.error.message, { retryable: response.error.retryable })
         }
+        assertNativeWorkspaceAvailable(action, response)
         state.responses.push(response)
         if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
           state.submitted = {
@@ -681,6 +685,19 @@ export class ManagedPlaywrightRunnerService {
   }
 }
 
+function assertNativeWorkspaceAvailable(action: VisibleActionRequest, response: VisibleActionResponse) {
+  if (action.action !== VISIBLE_ACTIONS.WORKSPACE_ENSURE || action.payload.mode !== 'native') return
+  const result = response.ok && isPlainRecord(response.result) ? response.result : null
+  if (result?.availability === 'available') return
+  throw tokenlessError(
+    'native_workspace_unavailable',
+    typeof result?.reason === 'string' && result.reason
+      ? `Native workspace creation is unavailable: ${result.reason}.`
+      : 'Native workspace creation is unavailable.',
+    { retryable: false }
+  )
+}
+
 export function serializeRunnerError(error: unknown) {
   const response = errorResponse(error)
   return {
@@ -785,7 +802,12 @@ function validateCheckpointResponse(
   action: VisibleActionRequest | undefined,
   index: number
 ): VisibleActionResponse {
-  if (!action || !isPlainRecord(value) || value.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION || value.ok !== true) {
+  if (
+    !action ||
+    !isPlainRecord(value) ||
+    (value.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION && value.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION_V1) ||
+    value.ok !== true
+  ) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint response is invalid.')
   }
   if (value.requestId !== action.requestId || value.provider !== action.provider || value.action !== action.action || value.error !== null) {

@@ -11,6 +11,7 @@ import {
   VISIBLE_ACTIONS,
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
   VISIBLE_ACTION_PROTOCOL_VERSION,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   createManagedPlaywrightJobRequest,
   createVisibleActionRequest,
   createProviderAdapterRegistry,
@@ -75,6 +76,189 @@ test('visible action validation is versioned, exact-key only, path-free in uploa
       }],
     },
   }), matchCode('invalid_visible_attachment'))
+})
+
+test('visible action protocol v2 accepts new actions while v1 remains readable for legacy actions', async () => {
+  const legacy = validateVisibleActionRequest({
+    protocol: VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+    requestId: 'legacy-auth',
+    provider: 'chatgpt',
+    action: VISIBLE_ACTIONS.AUTH_STATUS,
+    payload: {},
+  })
+  assert.equal(legacy.protocol, VISIBLE_ACTION_PROTOCOL_VERSION_V1)
+
+  const registry = createProviderAdapterRegistry()
+  const response = await registry.execute(new FakeHydratingAuthPage(), legacy, {
+    profileId: 'profile-a',
+    operationId: 'legacy-auth',
+  })
+  assert.equal(response.ok, true)
+  assert.equal(response.protocol, VISIBLE_ACTION_PROTOCOL_VERSION_V1)
+
+  assert.throws(() => validateVisibleActionRequest({
+    protocol: VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+    requestId: 'legacy-capability',
+    provider: 'chatgpt',
+    action: VISIBLE_ACTIONS.CAPABILITY_INSPECT,
+    payload: {},
+  }), matchCode('invalid_visible_action_protocol'))
+
+  assert.throws(() => validateVisibleActionRequest({
+    protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+    requestId: 'capability-extra',
+    provider: 'chatgpt',
+    action: VISIBLE_ACTIONS.CAPABILITY_INSPECT,
+    payload: { capability: 'file.upload' },
+  }), matchCode('invalid_visible_action_payload'))
+
+  assert.doesNotThrow(() => validateVisibleActionRequest({
+    protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+    requestId: 'workspace-ok',
+    provider: 'chatgpt',
+    action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+    payload: { name: 'Research notes', instructions: 'Keep context local to this conversation.', mode: 'auto' },
+  }))
+})
+
+test('provider capability.inspect returns four-provider parity maps with runtime visible evidence', async () => {
+  const registry = createProviderAdapterRegistry()
+  const expectedCapabilities = [
+    'capability.inspect',
+    'conversation.continue',
+    'file.upload',
+    'workspace.ensure',
+  ]
+  for (const provider of listProviders()) {
+    assert.deepEqual(Object.keys(provider.capabilities).sort(), expectedCapabilities)
+    const response = await registry.execute(new FakeCapabilityPage(provider), createVisibleActionRequest({
+      provider: provider.id,
+      action: VISIBLE_ACTIONS.CAPABILITY_INSPECT,
+      payload: {},
+    }), {
+      profileId: 'profile-a',
+      operationId: `capability-${provider.id}`,
+    })
+    assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+    assert.deepEqual(Object.keys(response.result.capabilities).sort(), expectedCapabilities)
+    assert.equal(response.result.capabilities['capability.inspect'].availability, 'available')
+    assert.equal(response.result.capabilities['workspace.ensure'].native.availability, 'unavailable')
+    assert.deepEqual(response.result.capabilities['workspace.ensure'].fallback, {
+      resourceKind: 'conversation',
+      availability: 'available',
+      mode: 'conversation',
+      visibleProof: 'conversation-composer-visible',
+      reason: null,
+    })
+    assert.equal(response.result.capabilities['conversation.continue'].availability, 'available')
+    assert.equal(response.result.capabilities['file.upload'].availability, 'unknown')
+    assert.equal(response.result.capabilities['file.upload'].stability, 'experimental')
+  }
+})
+
+test('provider capability.inspect reports workspace fallback unknown without visible composer on allowed origin', async () => {
+  const registry = createProviderAdapterRegistry()
+  const provider = listProviders().find((entry) => entry.id === 'chatgpt')
+  assert.ok(provider)
+  const response = await registry.execute(new FakeNoComposerCapabilityPage(provider), createVisibleActionRequest({
+    provider: provider.id,
+    action: VISIBLE_ACTIONS.CAPABILITY_INSPECT,
+    payload: {},
+  }), {
+    profileId: 'profile-a',
+    operationId: 'capability-no-composer',
+  })
+
+  assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+  assert.equal(response.result.capabilities['capability.inspect'].availability, 'available')
+  assert.equal(response.result.capabilities['conversation.continue'].availability, 'unknown')
+  assert.equal(response.result.capabilities['conversation.continue'].visibleProof, 'no-visible-conversation-composer')
+  assert.equal(response.result.capabilities['workspace.ensure'].availability, 'unknown')
+  assert.equal(response.result.capabilities['workspace.ensure'].visibleProof, 'no-visible-conversation-composer')
+  assert.deepEqual(response.result.capabilities['workspace.ensure'].fallback, {
+    resourceKind: 'conversation',
+    availability: 'unknown',
+    mode: 'conversation',
+    visibleProof: 'no-visible-conversation-composer',
+    reason: 'visible_composer_not_observed',
+  })
+})
+
+test('workspace.ensure falls back to conversation for auto, succeeds for conversation, and fails native', async () => {
+  const registry = createProviderAdapterRegistry()
+  const page = new FakeWorkspacePage()
+  const auto = await registry.execute(page, createVisibleActionRequest({
+    provider: 'chatgpt',
+    action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+    payload: { name: 'Tokenless workspace', instructions: 'Do not persist this text in results.', mode: 'auto' },
+  }), {
+    profileId: 'profile-a',
+    operationId: 'workspace-auto',
+  })
+  assert.equal(auto.ok, true, JSON.stringify(auto, null, 2))
+  assert.deepEqual(auto.result, {
+    mode: 'conversation',
+    requestedMode: 'auto',
+    name: 'Tokenless workspace',
+    resource: {
+      kind: 'conversation',
+      native: false,
+    },
+    availability: 'available',
+    visibleProof: 'conversation-composer-visible',
+    reason: 'auto_fell_back_to_conversation',
+    fallback: {
+      mode: 'conversation',
+      resourceKind: 'conversation',
+      availability: 'available',
+    },
+  })
+  assert.equal(JSON.stringify(auto.result).includes('Do not persist'), false)
+
+  const conversation = await registry.execute(page, createVisibleActionRequest({
+    provider: 'chatgpt',
+    action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+    payload: { name: 'Tokenless workspace', mode: 'conversation' },
+  }), {
+    profileId: 'profile-a',
+    operationId: 'workspace-conversation',
+  })
+  assert.equal(conversation.ok, true, JSON.stringify(conversation, null, 2))
+  assert.equal(conversation.result.requestedMode, 'conversation')
+  assert.equal(conversation.result.resource.kind, 'conversation')
+  assert.equal(conversation.result.fallback, null)
+
+  const native = await registry.execute(page, createVisibleActionRequest({
+    provider: 'chatgpt',
+    action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+    payload: { name: 'Tokenless workspace', mode: 'native' },
+  }), {
+    profileId: 'profile-a',
+    operationId: 'workspace-native',
+  })
+  assert.equal(native.ok, false)
+  assert.equal(native.error.code, 'workspace_native_unavailable')
+  assert.equal(native.result, null)
+})
+
+test('workspace.ensure fails without visible composer on allowed provider origin', async () => {
+  const registry = createProviderAdapterRegistry()
+  const page = new FakeNoComposerWorkspacePage()
+  for (const mode of ['auto', 'conversation']) {
+    const response = await registry.execute(page, createVisibleActionRequest({
+      provider: 'chatgpt',
+      action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+      payload: { name: 'Tokenless workspace', mode },
+    }), {
+      profileId: 'profile-a',
+      operationId: `workspace-no-composer-${mode}`,
+    })
+
+    assert.equal(response.ok, false)
+    assert.equal(response.error.code, 'workspace_conversation_unavailable')
+    assert.equal(response.error.retryable, true)
+    assert.equal(response.result, null)
+  }
 })
 
 test('managed Playwright job contract emits v2 visibility and normalizes v1 as headed', () => {
@@ -186,6 +370,10 @@ test('auth status waits for provider account UI hydration and returns visible ac
     account: {
       name: 'Alice Smith',
       subscription: 'Plus',
+      subscriptionEvidence: {
+        status: 'observed',
+        source: 'account-menu-label',
+      },
     },
   })
   assert.equal(page.waits > 0, true)
@@ -218,7 +406,7 @@ test('auth status extracts provider usernames and only explicit subscription lab
       control: '[data-testid="accounts-profile-button"][role="button"]',
       menu: '[role="menuitem"]:has-text("Log out")',
       signal: { ariaLabel: 'Xinzhe Zhang Pro, open profile menu', title: '', text: 'Xinzhe Zhang\nPro' },
-      expected: { name: 'Xinzhe Zhang', subscription: 'Pro' },
+      expected: { name: 'Xinzhe Zhang', subscription: 'Pro', subscriptionEvidence: { status: 'observed', source: 'account-menu-label' } },
       proof: 'authenticated-account-menu-visible',
     },
     {
@@ -227,7 +415,7 @@ test('auth status extracts provider usernames and only explicit subscription lab
       control: 'button[data-testid="user-menu-button"]',
       menu: '[role="menuitem"]:has-text("Log out")',
       signal: { ariaLabel: 'jazelly, Settings', title: '', text: 'J\njazelly\nFree plan' },
-      expected: { name: 'jazelly', subscription: 'Free plan' },
+      expected: { name: 'jazelly', subscription: 'Free plan', subscriptionEvidence: { status: 'observed', source: 'account-menu-label' } },
       proof: 'authenticated-account-menu-visible',
     },
     {
@@ -236,7 +424,7 @@ test('auth status extracts provider usernames and only explicit subscription lab
       control: 'a[href^="https://accounts.google.com/SignOutOptions"]',
       menu: null,
       signal: { ariaLabel: 'Google Account: Jason (redacted@example.com)', title: '', text: '' },
-      expected: { name: 'Jason', subscription: null },
+      expected: { name: 'Jason', subscription: null, subscriptionEvidence: { status: 'unknown', source: null } },
       proof: 'authenticated-account-control-clicked',
     },
     {
@@ -245,7 +433,26 @@ test('auth status extracts provider usernames and only explicit subscription lab
       control: 'button:has(img[alt="pfp"])',
       menu: '[role="menuitem"]:has-text("Sign Out")',
       signal: { ariaLabel: '', title: '', text: 'Jason\nredacted@example.com' },
-      expected: { name: 'Jason', subscription: null },
+      grokModelRows: [
+        { label: 'Auto', unavailable: true },
+        { label: 'Expert', unavailable: true },
+        { label: 'Heavy', unavailable: true },
+      ],
+      expected: { name: 'Jason', subscription: 'Free', subscriptionEvidence: { status: 'derived', source: 'model-entitlement-rows' } },
+      proof: 'authenticated-account-menu-visible',
+    },
+    {
+      provider: 'grok',
+      url: 'https://grok.com/',
+      control: 'button:has(img[alt="pfp"])',
+      menu: '[role="menuitem"]:has-text("Sign Out")',
+      signal: { ariaLabel: '', title: '', text: 'Taylor\nredacted@example.com' },
+      grokModelRows: [
+        { label: 'Auto', unavailable: false },
+        { label: 'Expert', unavailable: false },
+        { label: 'Heavy', unavailable: false },
+      ],
+      expected: { name: 'Taylor', subscription: 'SuperGrok', subscriptionEvidence: { status: 'derived', source: 'model-entitlement-rows' } },
       proof: 'authenticated-account-menu-visible',
     },
   ]
@@ -291,6 +498,8 @@ test('visible file uploads resolve path-free attachment descriptors inside attac
     assert.equal(page.uploads[0].mimeType, 'text/plain')
     assert.deepEqual(page.uploads[0].buffer, content)
     assert.equal(JSON.stringify(response.result).includes(root), false)
+    assert.equal(response.result.acceptance, 'selected')
+    assert.equal(response.result.visibleProof, 'hidden-file-input-filelist-selected')
     assert.deepEqual(response.result.attachments[0], {
       protocol: VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
       bundleId: 'bundle-1',
@@ -301,6 +510,84 @@ test('visible file uploads resolve path-free attachment descriptors inside attac
       sha256: descriptor.sha256,
       visible: true,
     })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('visible file upload marks accepted only after visible attachment filename proof', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tokenless-attachments-'))
+  try {
+    const content = Buffer.from('visible upload payload')
+    const descriptor = await writeAttachment(root, 'bundle-1', 'attachment-1', content)
+    const page = new FakeAcceptedUploadPage()
+    const registry = createProviderAdapterRegistry()
+    const response = await registry.execute(page, createVisibleActionRequest({
+      provider: 'chatgpt',
+      action: VISIBLE_ACTIONS.FILE_UPLOAD,
+      payload: { attachments: [descriptor] },
+    }), {
+      profileId: 'profile-a',
+      operationId: 'op-a',
+      attachmentRoot: root,
+    })
+
+    assert.equal(response.ok, true)
+    assert.equal(response.result.acceptance, 'accepted')
+    assert.equal(response.result.visibleProof, 'visible-attachment-filename')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('visible file upload keeps selected status when filename proof was already visible before upload', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tokenless-attachments-'))
+  try {
+    const content = Buffer.from('visible upload payload')
+    const descriptor = await writeAttachment(root, 'bundle-1', 'attachment-1', content)
+    const page = new FakeStaleFilenameUploadPage()
+    const registry = createProviderAdapterRegistry()
+    const response = await registry.execute(page, createVisibleActionRequest({
+      provider: 'chatgpt',
+      action: VISIBLE_ACTIONS.FILE_UPLOAD,
+      payload: { attachments: [descriptor] },
+    }), {
+      profileId: 'profile-a',
+      operationId: 'op-a',
+      attachmentRoot: root,
+    })
+
+    assert.equal(response.ok, true)
+    assert.equal(page.uploads.length, 1)
+    assert.equal(response.result.acceptance, 'selected')
+    assert.equal(response.result.visibleProof, 'hidden-file-input-filelist-selected')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('visible file upload can lazily open provider-specific local upload controls before selecting files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tokenless-attachments-'))
+  try {
+    const content = Buffer.from('visible upload payload')
+    const descriptor = await writeAttachment(root, 'bundle-1', 'attachment-1', content)
+    const page = new FakeLazyUploadPage()
+    const registry = createProviderAdapterRegistry()
+    const response = await registry.execute(page, createVisibleActionRequest({
+      provider: 'chatgpt',
+      action: VISIBLE_ACTIONS.FILE_UPLOAD,
+      payload: { attachments: [descriptor] },
+    }), {
+      profileId: 'profile-a',
+      operationId: 'op-a',
+      attachmentRoot: root,
+    })
+
+    assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+    assert.equal(page.triggerClicked, true)
+    assert.equal(page.localUploadClicked, true)
+    assert.equal(page.uploads.length, 1)
+    assert.equal(response.result.acceptance, 'selected')
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -452,10 +739,79 @@ class FakeUploadPage {
         setInputFiles: async (files) => {
           this.uploads = files
         },
+        evaluate: async () => this.uploads.map((file) => file.name).sort(),
       }),
     }
     return locator
   }
+}
+
+class FakeAcceptedUploadPage extends FakeUploadPage {
+  async evaluate() {
+    return this.uploads.some((file) => file.name === 'note.txt')
+      ? ['li|listitem|uploaded-attachment|note.txt']
+      : []
+  }
+}
+
+class FakeStaleFilenameUploadPage extends FakeUploadPage {
+  async evaluate() {
+    return ['li|listitem|previous-attachment|note.txt']
+  }
+}
+
+class FakeLazyUploadPage {
+  uploads = []
+  triggerClicked = false
+  localUploadClicked = false
+  inputReady = false
+
+  url() {
+    return 'https://chatgpt.com/'
+  }
+
+  locator(selector) {
+    const isTrigger = selector === 'button[data-testid="composer-plus-btn"][aria-label="Add files and more"]'
+    const isLocalUpload = selector === '[role="menuitem"]:has-text("Upload from computer")'
+    const isInput = selector === 'input#upload-files[type="file"]'
+    const locator = {
+      filter: () => locator,
+      first: () => locator,
+      count: async () => (isInput && this.inputReady ? 1 : 0),
+      isVisible: async () => (
+        isTrigger ||
+        (isLocalUpload && this.triggerClicked) ||
+        (isInput && this.inputReady)
+      ),
+      getAttribute: async (name) => (
+        isTrigger && name === 'aria-expanded'
+          ? String(this.triggerClicked)
+          : null
+      ),
+      click: async () => {
+        if (isTrigger) this.triggerClicked = true
+        if (isLocalUpload) {
+          this.localUploadClicked = true
+          this.inputReady = true
+        }
+      },
+      setInputFiles: async (files) => {
+        this.uploads = files
+      },
+      evaluate: async () => (
+        isInput
+          ? this.uploads.map((file) => file.name).sort()
+          : false
+      ),
+    }
+    return locator
+  }
+
+  async evaluate() {
+    return false
+  }
+
+  async waitForTimeout() {}
 }
 
 class FakeSnapshotPage {
@@ -486,6 +842,74 @@ class FakeSnapshotPage {
       globalThis.document = previousDocument
       globalThis.location = previousLocation
     }
+  }
+}
+
+class FakeCapabilityPage {
+  constructor(provider) {
+    this.provider = provider
+  }
+
+  url() {
+    return this.provider.homeUrl
+  }
+
+  locator(selector) {
+    const visible = selector === this.provider.composerSelectors[0]
+    const locator = {
+      filter: () => locator,
+      first: () => locator,
+      count: async () => 0,
+      isVisible: async () => visible,
+      evaluate: async () => false,
+    }
+    return locator
+  }
+
+  async waitForTimeout() {}
+}
+
+class FakeNoComposerCapabilityPage extends FakeCapabilityPage {
+  locator() {
+    const locator = {
+      filter: () => locator,
+      first: () => locator,
+      count: async () => 0,
+      isVisible: async () => false,
+      evaluate: async () => false,
+    }
+    return locator
+  }
+}
+
+class FakeWorkspacePage {
+  url() {
+    return 'https://chatgpt.com/'
+  }
+
+  locator(selector) {
+    const visible = selector === 'div#prompt-textarea[contenteditable="true"]'
+    const locator = {
+      filter: () => locator,
+      first: () => locator,
+      isVisible: async () => visible,
+    }
+    return locator
+  }
+}
+
+class FakeNoComposerWorkspacePage {
+  url() {
+    return 'https://chatgpt.com/'
+  }
+
+  locator() {
+    const locator = {
+      filter: () => locator,
+      first: () => locator,
+      isVisible: async () => false,
+    }
+    return locator
   }
 }
 
@@ -545,6 +969,7 @@ class FakeComposerAuthPage {
 
 class FakeProviderAccountPage {
   menuOpen = false
+  modelOpen = false
 
   constructor(entry) {
     this.entry = entry
@@ -555,17 +980,31 @@ class FakeProviderAccountPage {
   }
 
   locator(selector) {
+    const grokModelTrigger = 'button#model-select-trigger[aria-label="Model select"][aria-haspopup="menu"]'
+    const grokModelRows = '[role="menuitem"][data-radix-collection-item]'
     const locator = {
       filter: () => locator,
       first: () => locator,
       isVisible: async () => (
         selector === this.entry.control ||
-        (this.menuOpen && selector === this.entry.menu)
+        (this.menuOpen && selector === this.entry.menu) ||
+        (this.entry.provider === 'grok' && selector === grokModelTrigger)
       ),
       click: async () => {
         if (selector === this.entry.control) this.menuOpen = !this.menuOpen
+        if (selector === grokModelTrigger) this.modelOpen = !this.modelOpen
       },
+      getAttribute: async (name) => (
+        selector === grokModelTrigger && name === 'aria-expanded'
+          ? String(this.modelOpen)
+          : null
+      ),
       evaluate: async () => this.entry.signal,
+      evaluateAll: async () => (
+        selector === grokModelRows && this.modelOpen
+          ? this.entry.grokModelRows ?? []
+          : []
+      ),
     }
     return locator
   }

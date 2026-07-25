@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": {
+    "status": "unknown",
+    "label": null
+  },
+  "scenario": "search-chats",
+  "routeClass": "chat-search",
+  "operationPhase": "observed",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://gemini.google.com/search",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "9cee327d575bbc6ea25c6d0cb5a4f336cabfde14ffd5ba29ff01489b43dc2628",
+  "evidenceSelectors": [
+    {
+      "capability": "job.search",
+      "selector": "[role=\"textbox\"][aria-label=\"Search chats\"]",
+      "expectedCount": 1
+    },
+    {
+      "capability": "job.history",
+      "selector": "[role=\"listbox\"][aria-label=\"Recent\"] [role=\"option\"]",
+      "expectedCount": 2
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

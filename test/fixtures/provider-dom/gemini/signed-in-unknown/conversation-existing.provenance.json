@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": {
+    "status": "unknown",
+    "label": null
+  },
+  "scenario": "conversation-existing",
+  "routeClass": "conversation",
+  "operationPhase": "conversation-existing",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://gemini.google.com/app/[redacted]",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "8cf0d149eb6666b471aa430f89978c951cc1240966372256d962e956d63c2640",
+  "evidenceSelectors": [
+    {
+      "capability": "job.existing",
+      "selector": "section[aria-label=\"Conversation turns\"] article",
+      "expectedCount": 2
+    },
+    {
+      "capability": "job.continue",
+      "selector": "[role=\"textbox\"][aria-label=\"Enter a prompt for Gemini\"]",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

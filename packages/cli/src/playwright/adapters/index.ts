@@ -5,7 +5,6 @@ import type { VisibleActionRequest, VisibleActionResponse } from '../actions.js'
 import type { ProviderId } from '../providers.js'
 import { listProviders } from '../providers.js'
 import { errorResponse } from '../errors.js'
-import { VISIBLE_ACTION_PROTOCOL_VERSION } from '../actions.js'
 
 export type { ProviderAdapter, ProviderAdapterRegistry, VisibleAdapterContext } from './types.js'
 
@@ -25,7 +24,7 @@ export function createProviderAdapterRegistry(
       const adapter = byProvider.get(request.provider)
       if (!adapter) {
         return {
-          protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+          protocol: request.protocol,
           requestId: request.requestId,
           provider: request.provider,
           action: request.action,
@@ -42,7 +41,7 @@ export function createProviderAdapterRegistry(
         return await adapter.execute(page, request, context)
       } catch (error) {
         return {
-          protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+          protocol: request.protocol,
           requestId: request.requestId,
           provider: request.provider,
           action: request.action,
