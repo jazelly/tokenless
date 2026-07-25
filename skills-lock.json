@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "skills": {
+    "tokenless": {
+      "source": "jazelly/tokenless",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/tokenless/SKILL.md",
+      "computedHash": "96aa3578e15c602e6cfe845100868e24b50a506ee5e84027f94254af6981dbf4"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 // Retained inside the daemon crate for shared protocol constants, attachment
 // cleanup, and historical unit coverage. The Chrome Native Messaging binary is
-// archived under legacy/native-host/ and is no longer built or shipped.
+// no longer built or shipped.
 
 use crate::config::{write_json_atomic_secure, ConfigStore, ConfigUpdate};
 use crate::{ClaimNextJob, CompleteJob, DaemonError, Job, JobStatus, JobStore, JobSummary, Result};

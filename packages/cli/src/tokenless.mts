@@ -36,6 +36,7 @@ import {
   daemonUrl,
   deriveTaskId,
   ensureDaemonReady,
+  ensureSetupDaemonRunnable,
   getDaemonJob,
   inspectManagedRuntime,
   listDaemonJobs,
@@ -62,6 +63,7 @@ import {
   inspectTokenlessSkills,
   installTokenlessSkills,
 } from './setup-workflow.js'
+import { fetchTokenlessLatestVersion } from './npm-registry.js'
 import {
   SETUP_MANAGED_PROFILE_DISCLOSURE,
   SETUP_READINESS_DISCLOSURE,
@@ -87,7 +89,7 @@ type StatusReporter = {
   report(event: StatusEvent): void
   lastStatus(): string | undefined
 }
-type SetupProviderClassification = 'ready' | 'action_required' | 'failed'
+type SetupProviderClassification = 'authenticated' | 'unauthenticated' | 'unknown' | 'failed'
 type SetupProviderReadiness = {
   provider: string
   classification: SetupProviderClassification
@@ -95,8 +97,6 @@ type SetupProviderReadiness = {
   status: string
   jobId?: string | undefined
   blocker?: unknown
-  userAction?: Record<string, any> | undefined
-  handoff?: Record<string, any> | undefined
   error?: Record<string, any> | undefined
 }
 type SetupTechnicalFailure = {
@@ -113,6 +113,22 @@ type ManagedAuthObservation = {
     name: string | null
     subscription: string | null
   }
+}
+type SetupCliVersionCheck = {
+  packageName: 'tokenless'
+  registryUrl: string
+  currentVersion: string
+  currentMajor: number | null
+  latestVersion: string | null
+  latestMajor: number | null
+  status: 'up_to_date' | 'update_available' | 'check_unavailable'
+  updateAvailable: boolean | null
+  ok: boolean
+  error?: {
+    code: string
+    message: string
+    retryable: boolean
+  } | undefined
 }
 
 const DEFAULT_RUN_TIMEOUT_MS = 180_000
@@ -558,10 +574,6 @@ function setupReadinessCaughtFailure(error: unknown): SetupTechnicalFailure {
   }
 }
 
-function isSetupActionableReadinessFailure(failure: SetupTechnicalFailure) {
-  return failure.code === 'provider_sign_in_navigation'
-}
-
 function setupReadinessErrorPayload(failure: SetupTechnicalFailure) {
   return {
     code: failure.code,
@@ -575,13 +587,14 @@ function setupReadinessErrorPayload(failure: SetupTechnicalFailure) {
 function setupProviderSummary(readiness: Record<string, SetupProviderReadiness>) {
   const providers = Object.values(readiness)
   const counts = {
-    ready: providers.filter((provider) => provider.classification === 'ready').length,
-    action_required: providers.filter((provider) => provider.classification === 'action_required').length,
+    authenticated: providers.filter((provider) => provider.classification === 'authenticated').length,
+    unauthenticated: providers.filter((provider) => provider.classification === 'unauthenticated').length,
+    unknown: providers.filter((provider) => provider.classification === 'unknown').length,
     failed: providers.filter((provider) => provider.classification === 'failed').length,
     total: providers.length,
   }
   return {
-    status: counts.failed > 0 ? 'failed' : counts.action_required > 0 ? 'waiting_for_user' : 'ready',
+    status: counts.failed > 0 ? 'failed' : 'reported',
     counts,
     providers: Object.fromEntries(providers.map((provider) => [provider.provider, {
       classification: provider.classification,
@@ -589,8 +602,6 @@ function setupProviderSummary(readiness: Record<string, SetupProviderReadiness>)
       status: provider.status,
       ...(provider.jobId === undefined ? {} : { jobId: provider.jobId }),
       ...(provider.error === undefined ? {} : { error: provider.error }),
-      ...(provider.userAction === undefined ? {} : { userAction: provider.userAction }),
-      ...(provider.handoff === undefined ? {} : { handoff: provider.handoff }),
     }])),
   }
 }
@@ -609,160 +620,7 @@ function firstSetupFailure(readiness: Record<string, SetupProviderReadiness>): S
   return null
 }
 
-function setupReadinessHandoffDetail({
-  provider,
-  profile,
-  jobId,
-}: {
-  provider: string
-  profile: ManagedProfileRecord
-  jobId: string
-}) {
-  return `Job ${jobId} for ${provider} profile ${profile.slug} needs sign-in or verification in the Tokenless-managed Chrome window/tab. Wait until the ${provider} composer is visible.`
-}
-
-function setupReadinessUserAction({
-  provider,
-  profile,
-  jobId,
-  blocker,
-}: {
-  provider: string
-  profile: ManagedProfileRecord
-  jobId: string
-  blocker?: unknown
-}) {
-  return {
-    provider,
-    profile: {
-      slug: profile.slug,
-      id: profile.id,
-    },
-    jobId,
-    blocker,
-    message: `Use the Tokenless-managed Chrome window/tab for ${provider} profile ${profile.slug}. Complete sign-in or verification there, then wait until the ${provider} composer is visible; Tokenless will recheck or resume job ${jobId}.`,
-    resumeCommand: `tokenless state --job-id ${setupShellQuote(jobId)} --profile ${setupShellQuote(profile.slug)} --json`,
-    queryGuidance: 'Do not open ordinary Chrome or submit a replacement setup job; use the managed window/tab opened by Tokenless and query this same job/profile after the user action.',
-  }
-}
-
-function setupReadinessFreshRecheckAction({
-  provider,
-  profile,
-  jobId,
-  reason = 'The previous readiness check was inconclusive.',
-}: {
-  provider: string
-  profile: ManagedProfileRecord
-  jobId: string
-  reason?: string
-}) {
-  const recheckCommand = `tokenless profiles status --profile ${setupShellQuote(profile.slug)} --provider ${setupShellQuote(provider)} --json`
-  return {
-    provider,
-    profile: {
-      slug: profile.slug,
-      id: profile.id,
-    },
-    previousJobId: jobId,
-    reason,
-    message: `${reason} Use the Tokenless-managed Chrome window/tab for ${provider} profile ${profile.slug}; complete sign-in or verification until the ${provider} composer is visible, then run a fresh readiness check.`,
-    recheckCommand,
-    queryGuidance: `The completed setup readiness job ${jobId} cannot resume. Run ${recheckCommand} after the visible composer is available.`,
-  }
-}
-
-function setupReadinessFailureUserAction({
-  provider,
-  profile,
-  failure,
-}: {
-  provider: string
-  profile: ManagedProfileRecord
-  failure: SetupTechnicalFailure
-}) {
-  const recheckCommand = `tokenless profiles status --profile ${setupShellQuote(profile.slug)} --provider ${setupShellQuote(provider)} --json`
-  return {
-    provider,
-    profile: {
-      slug: profile.slug,
-      id: profile.id,
-    },
-    previousJobId: failure.jobId,
-    reason: 'The setup auth sweep could not safely inspect the provider page because it left the approved provider origin.',
-    message: `Tokenless will open ${provider} in the managed Chrome profile ${profile.slug}. Complete sign-in or verification until the ${provider} composer is visible, then run a fresh readiness check.`,
-    recheckCommand,
-    queryGuidance: `Run ${recheckCommand} after the visible composer is available.`,
-  }
-}
-
-function setupHandoffAction({
-  provider,
-  profile,
-  jobId,
-  status,
-}: {
-  provider: string
-  profile: ManagedProfileRecord
-  jobId: string
-  status: string
-}) {
-  return {
-    provider,
-    profile: {
-      slug: profile.slug,
-      id: profile.id,
-    },
-    jobId,
-    status,
-    message: `Tokenless opened or foregrounded ${provider} in the managed Chrome profile ${profile.slug}. Complete sign-in or verification until the ${provider} composer is visible.`,
-    recheckCommand: `tokenless profiles status --profile ${setupShellQuote(profile.slug)} --provider ${setupShellQuote(provider)} --json`,
-  }
-}
-
-function setupWaitingCompactOutput({
-  providers,
-  profile,
-  userActions,
-  readiness,
-  providerSummary,
-}: {
-  providers: readonly string[]
-  profile: ManagedProfileRecord
-  userActions: Record<string, any>
-  readiness: Record<string, SetupProviderReadiness>
-  providerSummary: ReturnType<typeof setupProviderSummary>
-}) {
-  const providerList = providers.join(', ')
-  const recheck = providers
-    .map((provider) => userActions[provider]?.recheckCommand)
-    .find((command): command is string => typeof command === 'string')
-  const resume = providers
-    .map((provider) => userActions[provider]?.resumeCommand)
-    .find((command): command is string => typeof command === 'string')
-  const classifications = providers
-    .map((provider) => `${provider}: ${readiness[provider]?.classification ?? 'unknown'}`)
-    .join('; ')
-  const pending = providers
-    .filter((provider) => readiness[provider]?.classification === 'action_required')
-    .map((provider) => {
-      const recheckCommand = userActions[provider]?.recheckCommand ?? `tokenless profiles status --profile ${setupShellQuote(profile.slug)} --provider ${setupShellQuote(provider)} --json`
-      const handoffJobId = userActions[provider]?.handoff?.jobId
-      return `${provider} (${handoffJobId ? `handoff job ${handoffJobId}; ` : ''}${recheckCommand})`
-    })
-    .join('; ')
-  return [
-    `Tokenless setup checked ${providerList} in profile ${profile.slug}.`,
-    `Provider summary: ${classifications}. Counts: ready ${providerSummary.counts.ready}, action_required ${providerSummary.counts.action_required}, failed ${providerSummary.counts.failed}.`,
-    'Use the Tokenless-managed Chrome window/tab opened or foregrounded by setup; complete sign-in or verification until the provider composer is visible.',
-    pending ? `Remaining provider actions: ${pending}.` : '',
-    recheck
-      ? `Previous check was inconclusive; run a fresh recheck: ${recheck}`
-      : `Then resume or inspect the same setup job: ${resume ?? `tokenless profiles status --profile ${setupShellQuote(profile.slug)} --provider ${setupShellQuote(providers[0] ?? 'chatgpt')} --json`}`,
-  ].filter(Boolean).join(' ')
-}
-
-function setupReadyCompactOutput({
+function setupReportedCompactOutput({
   providers,
   profile,
   readiness,
@@ -776,7 +634,7 @@ function setupReadyCompactOutput({
   const classifications = providers
     .map((provider) => `${provider}: ${readiness[provider]?.classification ?? 'unknown'}`)
     .join('; ')
-  return `Tokenless setup checked ${providers.join(', ')} in profile ${profile.slug}. Provider summary: ${classifications}. Counts: ready ${providerSummary.counts.ready}, action_required ${providerSummary.counts.action_required}, failed ${providerSummary.counts.failed}.`
+  return `Tokenless setup checked ${providers.join(', ')} once in profile ${profile.slug}. Provider summary: ${classifications}. Counts: authenticated ${providerSummary.counts.authenticated}, unauthenticated ${providerSummary.counts.unauthenticated}, unknown ${providerSummary.counts.unknown}, failed ${providerSummary.counts.failed}.`
 }
 
 function setupFailedCompactOutput({
@@ -784,13 +642,11 @@ function setupFailedCompactOutput({
   profile,
   readiness,
   providerSummary,
-  userActions = {},
 }: {
   providers: readonly string[]
   profile: ManagedProfileRecord
   readiness: Record<string, SetupProviderReadiness>
   providerSummary: ReturnType<typeof setupProviderSummary>
-  userActions?: Record<string, any>
 }) {
   const classifications = providers
     .map((provider) => {
@@ -798,22 +654,120 @@ function setupFailedCompactOutput({
       return `${provider}: ${result?.classification ?? 'unknown'}${result?.error?.code ? ` (${result.error.code})` : ''}`
     })
     .join('; ')
-  const pending = providers
-    .filter((provider) => readiness[provider]?.classification === 'action_required')
-    .map((provider) => {
-      const recheckCommand = userActions[provider]?.recheckCommand ?? `tokenless profiles status --profile ${setupShellQuote(profile.slug)} --provider ${setupShellQuote(provider)} --json`
-      const handoffJobId = userActions[provider]?.handoff?.jobId
-      return `${provider} (${handoffJobId ? `handoff job ${handoffJobId}; ` : ''}${recheckCommand})`
-    })
-    .join('; ')
-  return [
-    `Tokenless setup checked ${providers.join(', ')} in profile ${profile.slug}. Provider summary: ${classifications}. Counts: ready ${providerSummary.counts.ready}, action_required ${providerSummary.counts.action_required}, failed ${providerSummary.counts.failed}.`,
-    pending ? `Action required: ${pending}.` : '',
-  ].filter(Boolean).join(' ')
+  return `Tokenless setup checked ${providers.join(', ')} once in profile ${profile.slug}. Provider summary: ${classifications}. Counts: authenticated ${providerSummary.counts.authenticated}, unauthenticated ${providerSummary.counts.unauthenticated}, unknown ${providerSummary.counts.unknown}, failed ${providerSummary.counts.failed}.`
 }
 
-function setupShellQuote(value: string) {
-  return `'${value.replace(/'/g, `'\\''`)}'`
+async function setupCliVersionCheck(): Promise<SetupCliVersionCheck> {
+  const currentVersion = tokenlessPackageVersion()
+  const currentMajor = semanticVersionMajor(currentVersion)
+  const latest = await fetchTokenlessLatestVersion()
+  if (!latest.ok) {
+    return {
+      packageName: 'tokenless',
+      registryUrl: latest.registryUrl,
+      currentVersion,
+      currentMajor,
+      latestVersion: null,
+      latestMajor: null,
+      status: 'check_unavailable',
+      updateAvailable: null,
+      ok: false,
+      error: {
+        code: latest.code,
+        message: latest.message,
+        retryable: true,
+      },
+    }
+  }
+  const latestMajor = semanticVersionMajor(latest.latestVersion)
+  const comparison = compareSemanticVersions(currentVersion, latest.latestVersion)
+  const updateAvailable = comparison === null ? latest.latestVersion !== currentVersion : comparison < 0
+  return {
+    packageName: 'tokenless',
+    registryUrl: latest.registryUrl,
+    currentVersion,
+    currentMajor,
+    latestVersion: latest.latestVersion,
+    latestMajor,
+    status: updateAvailable ? 'update_available' : 'up_to_date',
+    updateAvailable,
+    ok: true,
+  }
+}
+
+function noteSetupCliVersion(check: SetupCliVersionCheck, presenter: SetupPresenter) {
+  if (check.status === 'check_unavailable') {
+    presenter.note(`Could not check npm latest tokenless version: ${check.error?.code ?? 'npm_registry_unavailable'}.`)
+  } else if (check.updateAvailable) {
+    presenter.note(`tokenless ${check.latestVersion} is available on npm; local CLI is ${check.currentVersion}.`)
+  } else {
+    presenter.success(`tokenless ${check.currentVersion} is up to date with npm.`)
+  }
+}
+
+function setupCliVersionCompact(check: SetupCliVersionCheck) {
+  if (check.status === 'check_unavailable') {
+    return `CLI: tokenless ${check.currentVersion}; npm latest check unavailable (${check.error?.code ?? 'npm_registry_unavailable'}, non-blocking).`
+  }
+  if (check.updateAvailable) {
+    return `CLI: tokenless ${check.currentVersion}; npm latest ${check.latestVersion} is available.`
+  }
+  return `CLI: tokenless ${check.currentVersion}; npm latest ${check.latestVersion} is up to date.`
+}
+
+function setupDaemonCompact(daemon: {
+  runningVersion: string | null
+  versionCompatible: boolean
+  reconciliation: { attempted: boolean; reason: string }
+}) {
+  const compatibility = daemon.versionCompatible ? 'major-compatible' : 'major-incompatible'
+  const recovery = daemon.reconciliation.attempted
+    ? ` Recovered ${daemon.reconciliation.reason} by restarting the same-home daemon.`
+    : ''
+  return `Daemon: ready on ${daemon.runningVersion ?? 'unknown'} (${compatibility}, semantic-major policy).${recovery}`
+}
+
+function compareSemanticVersions(left: string, right: string) {
+  const leftVersion = parseSemanticVersion(left)
+  const rightVersion = parseSemanticVersion(right)
+  if (!leftVersion || !rightVersion) return null
+  for (const key of ['major', 'minor', 'patch'] as const) {
+    const diff = leftVersion[key] - rightVersion[key]
+    if (diff !== 0) return diff
+  }
+  if (leftVersion.prerelease.length === 0 && rightVersion.prerelease.length > 0) return 1
+  if (leftVersion.prerelease.length > 0 && rightVersion.prerelease.length === 0) return -1
+  for (let index = 0; index < Math.max(leftVersion.prerelease.length, rightVersion.prerelease.length); index += 1) {
+    const leftIdentifier = leftVersion.prerelease[index]
+    const rightIdentifier = rightVersion.prerelease[index]
+    if (leftIdentifier === undefined) return -1
+    if (rightIdentifier === undefined) return 1
+    const diff = comparePrereleaseIdentifier(leftIdentifier, rightIdentifier)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+function parseSemanticVersion(value: string) {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value)
+  if (!match) return null
+  const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  if (![major, minor, patch].every(Number.isSafeInteger)) return null
+  return {
+    major,
+    minor,
+    patch,
+    prerelease: match[4] ? match[4].split('.') : [],
+  }
+}
+
+function comparePrereleaseIdentifier(left: string, right: string) {
+  const leftNumeric = /^(0|[1-9]\d*)$/.test(left)
+  const rightNumeric = /^(0|[1-9]\d*)$/.test(right)
+  if (leftNumeric && rightNumeric) return Number(left) - Number(right)
+  if (leftNumeric) return -1
+  if (rightNumeric) return 1
+  return left < right ? -1 : (left > right ? 1 : 0)
 }
 
 async function resolveBrowserUserDataDirForImport(
@@ -1819,7 +1773,7 @@ async function installCommand(args: CliArgs) {
       pid: provisioned.daemon.pid,
       executable: provisioned.installed.daemonExecutable,
     },
-    nextStep: 'Run "tokenless setup" to configure skills, a managed browser profile, preferred providers, and visible readiness.',
+    nextStep: 'Run "tokenless setup" to configure skills, a managed browser profile, preferred providers, and a one-time visible sign-in status report.',
   }, args)
 }
 
@@ -1840,6 +1794,8 @@ async function setupCommand(args: CliArgs) {
   try {
     presenter.welcome()
     const config = await presenter.withProgress('Reading config', () => readTokenlessConfig(homeDir))
+    const cliVersion = await presenter.withProgress('Checking npm version', setupCliVersionCheck)
+    noteSetupCliVersion(cliVersion, presenter)
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
     const skills = await ensureSetupSkills({ args, prompt, presenter })
     const installedBrowsers = await presenter.withProgress('Finding browsers', discoverSetupBrowsers)
@@ -1856,7 +1812,7 @@ async function setupCommand(args: CliArgs) {
         daemonUrl: configuredDaemonUrl,
       })
     })
-    const localRuntime = await presenter.withProgress('Local runtime', () => ensureDaemonReady({
+    const localRuntime = await presenter.withProgress('Local runtime', () => ensureSetupDaemonRunnable({
       homeDir,
       daemonUrl: configuredDaemonUrl,
       timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
@@ -1871,7 +1827,6 @@ async function setupCommand(args: CliArgs) {
     })
     const registry = new ManagedProfileRegistry(homeDir)
     const readiness: Record<string, SetupProviderReadiness> = {}
-    const userActions: Record<string, any> = {}
     let runner: Record<string, any> | null = null
 
     presenter.explain({
@@ -1887,11 +1842,9 @@ async function setupCommand(args: CliArgs) {
         )
       } catch (error) {
         recordSetupReadinessFailure({
-          profile,
           provider,
           failure: setupReadinessCaughtFailure(error),
           readiness,
-          userActions,
           presenter,
         })
         continue
@@ -1903,155 +1856,6 @@ async function setupCommand(args: CliArgs) {
         provider,
         result,
         readiness,
-        userActions,
-        presenter,
-      })
-    }
-
-    const actionableProviders = providers.filter((provider) => readiness[provider]?.classification === 'action_required')
-
-    for (const provider of actionableProviders) {
-      if (!prompt && provider !== actionableProviders[0]) break
-      let handoffResult: Awaited<ReturnType<typeof runSetupHandoffOpenCheck>>
-      try {
-        handoffResult = await presenter.withProgress(
-          `Opening ${provider} handoff`,
-          () => runSetupHandoffOpenCheck({
-            args,
-            homeDir,
-            profile,
-            provider,
-            quietStatus: setupTerminal.canPresent,
-          }),
-        )
-      } catch (error) {
-        recordSetupReadinessFailure({
-          profile,
-          provider,
-          failure: setupReadinessCaughtFailure(error),
-          readiness,
-          userActions,
-          presenter,
-        })
-        continue
-      }
-      runner = handoffResult.runner
-      const handoffFailure = setupReadinessTechnicalFailure(handoffResult)
-      if (handoffFailure) {
-        readiness[provider] = {
-          provider,
-          classification: 'failed',
-          auth: readiness[provider]?.auth ?? 'unknown',
-          status: handoffFailure.status,
-          jobId: handoffFailure.jobId,
-          error: setupReadinessErrorPayload(handoffFailure),
-        }
-        delete userActions[provider]
-        presenter.note(`${provider} handoff failed: ${handoffFailure.code}.`)
-        continue
-      }
-
-      const handoff = setupHandoffAction({
-        provider,
-        profile,
-        jobId: handoffResult.job.job_id,
-        status: handoffResult.waitResult?.status ?? 'unknown',
-      })
-      const currentReadiness = readiness[provider] ?? {
-        provider,
-        classification: 'action_required' as const,
-        auth: 'unknown' as const,
-        status: handoffResult.waitResult?.status ?? 'unknown',
-      }
-      readiness[provider] = {
-        ...currentReadiness,
-        handoff,
-        ...(handoffResult.waitResult?.blocker ? { blocker: handoffResult.waitResult.blocker } : {}),
-      }
-      userActions[provider] = {
-        ...(userActions[provider] ?? {}),
-        handoff,
-      }
-
-      if (!prompt) {
-        presenter.note(`${provider} handoff was opened in managed profile ${profile.slug}.`)
-        break
-      }
-
-      presenter.handover(
-        provider,
-        handoffResult.waitResult?.status === 'waiting_for_user'
-          ? setupReadinessHandoffDetail({ provider, profile, jobId: handoffResult.job.job_id })
-          : handoff.message,
-        'Finish in the Tokenless-managed Chrome window/tab, then press Enter here. Tokenless will submit a fresh readiness check.',
-      )
-      await prompt.pause(`After ${provider} is signed in and the composer is visible in profile ${profile.slug}, press Enter to recheck.`)
-      if (handoffResult.waitResult?.status === 'waiting_for_user') {
-        let resumed: Awaited<ReturnType<typeof waitForSetupJobAfterUser>>
-        try {
-          resumed = await presenter.withProgress(
-            `Waiting for ${provider} handoff`,
-            () => waitForSetupJobAfterUser({
-              homeDir,
-              daemonUrl: configuredDaemonUrl,
-              jobId: handoffResult.job.job_id,
-              timeoutMs: args.timeoutMs === undefined ? 600_000 : Number(args.timeoutMs),
-            }),
-          )
-        } catch (error) {
-          recordSetupReadinessFailure({
-            profile,
-            provider,
-            failure: {
-              ...setupReadinessCaughtFailure(error),
-              jobId: handoffResult.job.job_id,
-            },
-            readiness,
-            userActions,
-            presenter,
-          })
-          continue
-        }
-        const resumedFailure = setupReadinessTechnicalFailure({ ...handoffResult, waitResult: resumed })
-        if (resumedFailure) {
-          readiness[provider] = {
-            provider,
-            classification: 'failed',
-            auth: readiness[provider]?.auth ?? 'unknown',
-            status: resumedFailure.status,
-            jobId: resumedFailure.jobId,
-            error: setupReadinessErrorPayload(resumedFailure),
-          }
-          delete userActions[provider]
-          continue
-        }
-      }
-
-      let recheck: Awaited<ReturnType<typeof runSetupAuthCheck>>
-      try {
-        recheck = await presenter.withProgress(
-          `Re-checking ${provider} sign-in`,
-          () => runSetupAuthCheck({ args, homeDir, profile, provider, quietStatus: setupTerminal.canPresent }),
-        )
-      } catch (error) {
-        recordSetupReadinessFailure({
-          profile,
-          provider,
-          failure: setupReadinessCaughtFailure(error),
-          readiness,
-          userActions,
-          presenter,
-        })
-        continue
-      }
-      runner = recheck.runner
-      await recordSetupSweepResult({
-        registry,
-        profile,
-        provider,
-        result: recheck,
-        readiness,
-        userActions,
         presenter,
       })
     }
@@ -2059,22 +1863,32 @@ async function setupCommand(args: CliArgs) {
     const updatedProfile = await registry.resolveProfile(profile.slug)
     const providerSummary = setupProviderSummary(readiness)
     const status = providerSummary.status
-    const hasActionRequired = providerSummary.counts.action_required > 0
-    const waitingForUser = status === 'waiting_for_user'
     const failed = status === 'failed'
     const firstFailure = firstSetupFailure(readiness)
     if (failed) process.exitCode = 1
     presenter.summary(
       failed
         ? `Setup found technical failures for ${providerSummary.counts.failed} provider(s) in profile ${updatedProfile.slug}.`
-        : waitingForUser
-        ? `Setup is waiting for visible user action in profile ${updatedProfile.slug}.`
-        : `Setup is ready for ${providers.join(', ')} with profile ${updatedProfile.slug}.`,
+        : `Setup checked provider sign-in status once for profile ${updatedProfile.slug}.`,
     )
     printPayload({
       ok: !failed,
-      completed: status === 'ready',
+      completed: status === 'reported',
       status,
+      cli: {
+        packageName: cliVersion.packageName,
+        currentVersion: cliVersion.currentVersion,
+        currentMajor: cliVersion.currentMajor,
+        latestVersion: cliVersion.latestVersion,
+        latestMajor: cliVersion.latestMajor,
+        status: cliVersion.status,
+        updateAvailable: cliVersion.updateAvailable,
+        registry: {
+          ok: cliVersion.ok,
+          url: cliVersion.registryUrl,
+          ...(cliVersion.error === undefined ? {} : { error: cliVersion.error }),
+        },
+      },
       runtime: 'rust',
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
@@ -2089,21 +1903,29 @@ async function setupCommand(args: CliArgs) {
       summary: providerSummary,
       counts: providerSummary.counts,
       ...(firstFailure === null ? {} : { error: setupReadinessErrorPayload(firstFailure) }),
-      ...(hasActionRequired ? { waitingForUser: true, userActions } : {}),
       profile: publicManagedProfile(updatedProfile, await defaultProfileSlug(registry)),
       runner,
       daemon: {
         ready: true,
+        running: true,
+        status: 'running',
         url: configuredDaemonUrl,
         started: localRuntime.started,
         pid: localRuntime.pid,
-        version: localRuntime.body?.version,
+        version: localRuntime.runningVersion,
+        expectedVersion: localRuntime.expectedVersion,
+        expectedMajor: localRuntime.expectedMajor,
+        runningMajor: localRuntime.runningMajor,
+        versionCompatible: localRuntime.versionCompatible,
+        compatibility: {
+          ok: localRuntime.versionCompatible,
+          policy: localRuntime.compatibilityPolicy,
+        },
+        reconciliation: localRuntime.reconciliation,
       },
       compactOutput: failed
-        ? setupFailedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary, userActions })
-        : waitingForUser
-          ? setupWaitingCompactOutput({ providers, profile: updatedProfile, userActions, readiness, providerSummary })
-          : setupReadyCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary }),
+        ? `${setupFailedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)}`
+        : `${setupReportedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)}`,
     }, args)
   } finally {
     prompt?.close()
@@ -2116,7 +1938,6 @@ async function recordSetupSweepResult({
   provider,
   result,
   readiness,
-  userActions,
   presenter,
 }: {
   registry: ManagedProfileRegistry
@@ -2128,12 +1949,11 @@ async function recordSetupSweepResult({
     statusLog?: StatusEvent[]
   }
   readiness: Record<string, SetupProviderReadiness>
-  userActions: Record<string, any>
   presenter: SetupPresenter
 }) {
   const failure = setupReadinessTechnicalFailure(result)
   if (failure) {
-    recordSetupReadinessFailure({ profile, provider, failure, readiness, userActions, presenter })
+    recordSetupReadinessFailure({ provider, failure, readiness, presenter })
     return
   }
 
@@ -2152,82 +1972,30 @@ async function recordSetupSweepResult({
 
   const status = result.waitResult?.status ?? 'unknown'
   const blocker = result.waitResult?.blocker
-  if (observedAuth === 'authenticated') {
-    delete userActions[provider]
-    readiness[provider] = {
-      provider,
-      classification: 'ready',
-      auth: observedAuth,
-      status,
-      jobId: result.job.job_id,
-      ...(blocker ? { blocker } : {}),
-    }
-    presenter.success(`${provider} readiness is authenticated.`)
-    return
-  }
-
-  const userAction = status === 'waiting_for_user'
-    ? setupReadinessUserAction({
-        provider,
-        profile,
-        jobId: result.job.job_id,
-        blocker,
-      })
-    : setupReadinessFreshRecheckAction({
-        provider,
-        profile,
-        jobId: result.job.job_id,
-        reason: observedAuth === 'unauthenticated'
-          ? 'The setup auth sweep completed while the provider was signed out.'
-          : observedAuth === 'unknown'
-            ? 'The setup auth sweep completed but auth status was unknown.'
-            : 'The setup auth sweep completed without an auth status response.',
-      })
-  userActions[provider] = userAction
+  const auth = observedAuth ?? 'unknown'
   readiness[provider] = {
     provider,
-    classification: 'action_required',
-    auth: observedAuth ?? 'unknown',
+    classification: auth,
+    auth,
     status,
     jobId: result.job.job_id,
     ...(blocker ? { blocker } : {}),
-    userAction,
   }
-  presenter.note(`${provider} readiness requires visible user action in managed profile ${profile.slug}.`)
+  if (auth === 'authenticated') presenter.success(`${provider} is authenticated.`)
+  else presenter.note(`${provider} sign-in status: ${auth}.`)
 }
 
 function recordSetupReadinessFailure({
-  profile,
   provider,
   failure,
   readiness,
-  userActions,
   presenter,
 }: {
-  profile: ManagedProfileRecord
   provider: ProviderId
   failure: SetupTechnicalFailure
   readiness: Record<string, SetupProviderReadiness>
-  userActions: Record<string, any>
   presenter: SetupPresenter
 }) {
-  if (isSetupActionableReadinessFailure(failure)) {
-    const userAction = setupReadinessFailureUserAction({ provider, profile, failure })
-    userActions[provider] = userAction
-    readiness[provider] = {
-      provider,
-      classification: 'action_required',
-      auth: 'unknown',
-      status: failure.status,
-      jobId: failure.jobId,
-      userAction,
-      error: setupReadinessErrorPayload(failure),
-    }
-    presenter.note(`${provider} readiness needs visible sign-in in managed profile ${profile.slug}.`)
-    return
-  }
-
-  delete userActions[provider]
   readiness[provider] = {
     provider,
     classification: 'failed',
@@ -2424,9 +2192,6 @@ function createSetupPrompt() {
         throw usageError('setup_selection_invalid', 'Setup selection must be one of the displayed numbers.')
       }
       return choices[index]!.value
-    },
-    async pause(message: string) {
-      await terminal.question(`${message}\nPress Enter when finished: `)
     },
     close() {
       terminal.close()
@@ -2677,78 +2442,6 @@ async function runSetupAuthCheck({
       timeoutMs: args.timeoutMs === undefined ? 90_000 : Number(args.timeoutMs),
     })
   }
-
-async function runSetupHandoffOpenCheck({
-  args,
-  homeDir,
-  profile,
-  provider,
-  quietStatus = false,
-}: {
-  args: CliArgs
-  homeDir: string
-  profile: ManagedProfileRecord
-  provider: ProviderId
-  quietStatus?: boolean
-}) {
-  return await executeManagedPlaywrightJob({
-    args: {
-      ...args,
-      home: homeDir,
-      profile: profile.slug,
-      quiet: args.quiet === true || quietStatus,
-      browserVisibility: 'headed',
-    },
-    provider,
-    request: createManagedPlaywrightJobRequest({
-      provider,
-      target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
-      actions: [{ action: VISIBLE_ACTIONS.NAVIGATION_CHECK, payload: {} }],
-    }),
-    taskId: `setup:handoff:${provider}:${randomUUID()}`,
-    statusEventAction: 'setup.handoff',
-    noWait: false,
-    timeoutMs: args.timeoutMs === undefined ? 90_000 : Number(args.timeoutMs),
-  })
-}
-
-async function waitForSetupJobAfterUser({
-  homeDir,
-  daemonUrl: configuredDaemonUrl,
-  jobId,
-  timeoutMs,
-}: {
-  homeDir: string
-  daemonUrl: string
-  jobId: string
-  timeoutMs: number
-}) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const job = await getDaemonJob({ homeDir, daemonUrl: configuredDaemonUrl, jobId })
-    if (job.status !== 'waiting_for_user') {
-      return await waitDaemonJobResult({
-        homeDir,
-        daemonUrl: configuredDaemonUrl,
-        jobId,
-        timeoutMs: Math.max(1, deadline - Date.now()),
-      })
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500))
-  }
-  const job = await getDaemonJob({ homeDir, daemonUrl: configuredDaemonUrl, jobId })
-  return {
-    ok: null,
-    status: job.status,
-    job,
-    blocker: job.blocker_json,
-    userAction: {
-      message: 'Complete the visible provider verification or sign-in in the already-open managed browser.',
-      resumeCommand: `tokenless state --job-id ${jobId} --json`,
-      queryGuidance: 'Query the same job after completing the visible user action.',
-    },
-  }
-}
 
 async function provisionRuntime(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)

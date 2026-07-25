@@ -40,15 +40,17 @@ Jobs use explicit provider and profile identity. Unsupported controls, ambiguous
 `tokenless setup` is the interactive onboarding flow. It installs both agent skills, discovers supported browsers, selects providers, and offers two profile paths:
 
 - Import one existing Chrome or Brave profile with explicit consent. Only selected provider sign-in state is copied into a separate managed directory; the source remains unchanged.
-- Create a clean managed profile and sign in through the visible provider page.
+- Create a clean managed profile without requiring provider sign-in during setup.
 
-`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and ChatGPT, starts the runtime, and opens the provider when user action is required.
+`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and ChatGPT, checks the installed CLI against the latest npm release, reconciles the local daemon, checks each provider's visible sign-in status once, and reports the observed results without opening a sign-in handoff or retrying the check. Setup requires the running daemon to match the CLI semantic-version major and automatically restarts an authenticated same-home daemon when that compatibility check fails. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. Import, reset, and deletion require explicit commands and consent.
 
 Authentication checks fail closed: a provider-specific account control must be visible and successfully clicked. A composer or other generally available page control is not authentication evidence. Successful checks retain only the visible account display name and visible subscription evidence; absent or ambiguous plan evidence remains `null`. Grok derives that evidence from its visible model entitlements: all of `Auto`, `Expert`, and `Heavy` unavailable means `Free`, while any available entitlement means `SuperGrok`.
 
 `profiles status` runs this provider-page inspection and persists the observation. `profiles list` is a registry read: it reports the last saved observation and never refreshes a provider page implicitly.
+
+Normal prompt jobs do not run an authentication-status check. `prompt.input` and `prompt.submit` each wait up to 15 seconds for their visible control, so providers may expose usable free or anonymous prompt surfaces. A visibility timeout is distinct from a failure to type into or click an already visible control.
 
 ## Local control plane
 
@@ -102,4 +104,4 @@ Managed jobs transition through daemon states such as `queued`, `claimed`, `runn
 
 ## Current delivery status
 
-The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness handoff, and job APIs are implemented. Provider parity, file-upload acceptance across all four providers, and the public local API remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.
+The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, and job APIs are implemented. Provider parity, file-upload acceptance across all four providers, and the public local API remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.

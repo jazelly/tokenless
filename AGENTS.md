@@ -25,3 +25,11 @@ Never assume that the repository owns or controls an npm scope, package namespac
 ## Testing
 
 Use focused integration or browser E2E tests for behavior that crosses the Playwright runner, local runtime, or provider web sessions. Do not mock visible-session behavior when a browser proof is feasible.
+
+- Test only externally observable behavior through real system boundaries: the built CLI process, the packaged Rust daemon, the real filesystem, a real local Chromium/Playwright session, or a real provider website.
+- Do not add unit tests.
+- Do not introduce mocks, fakes, stubs, spies, synthetic fetch implementations, fake daemons, fake pages, fake locators, fake browser contexts, fake runners, fake process supervisors, or dependency-injected test doubles.
+- Do not test implementation shape by reading source files, test files, Markdown, or documentation and matching strings or regular expressions.
+- Provider DOM fixtures are allowed only when they are redacted, provenance-bound reductions of DOM genuinely captured from an authenticated visible provider session. Do not invent synthetic provider DOM and present it as provider evidence.
+- If an external integration cannot run safely by default, add an explicitly gated real integration or browser E2E test. Do not replace the unavailable integration with a simulation.
+- Assert commands, durable state, visible browser outcomes, and real protocol results rather than internal method calls or collaborator interactions.

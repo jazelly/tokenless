@@ -48,3 +48,9 @@ Profile 和 provider 使用不同且区分大小写的短选项：
 ## 补充说明
 
 项目目前处于内测阶段。后续计划发布关于 token 节省效果的具体评测数据，供大家参考。
+
+## 已知问题
+
+### Codex 的 sandbox policy 可能阻止 Tokenless 运行
+
+在 Codex 中，Agent 使用的 sandbox policy 可能会阻止 Tokenless 启动浏览器或执行必要的本地操作。在可信环境中，可以将 Codex 设置为 Full Access；也可以在 Codex 弹出授权询问时批准该操作，并选择今后允许相同操作，避免后续重复授权。

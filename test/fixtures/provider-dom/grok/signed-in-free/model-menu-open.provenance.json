@@ -11,7 +11,7 @@
   "artifactKind": "redacted-reduced-dom",
   "containsProviderJavaScript": false,
   "containsSyntheticBehavior": false,
-  "contentSha256": "9b91f8d0cacbaccaa5c878b6fc2442ddc9c8a1d26083ae6904520020f6c5cd71",
+  "contentSha256": "55ce1cb2ed166e74252e40f4f2f94f1fa8d66e81856d0665c01b49999a4aa66b",
   "evidenceSelectors": [
     { "capability": "model.inspect", "selector": "button#model-select-trigger[aria-label=\"Model select\"][aria-haspopup=\"menu\"]", "expectedCount": 1 },
     { "capability": "model.free-tier-unavailable", "selector": "[role=\"menuitem\"][data-radix-collection-item].text-secondary.opacity-75 span.font-semibold", "expectedCount": 3 },

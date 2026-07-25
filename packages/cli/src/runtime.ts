@@ -123,6 +123,27 @@ export type StopDaemonResult = {
   compactOutput: string
 }
 
+export type SetupDaemonReconciliation = {
+  attempted: boolean
+  reason: 'already_compatible' | 'major_mismatch' | 'version_unparseable'
+  stopped?: StopDaemonResult | undefined
+  previous?: {
+    version: string | null
+    major: number | null
+    pid: number | null
+  } | undefined
+}
+
+export type SetupDaemonReadyResult = Awaited<ReturnType<typeof ensureDaemonReady>> & {
+  expectedVersion: string
+  expectedMajor: number | null
+  runningVersion: string | null
+  runningMajor: number | null
+  versionCompatible: boolean
+  compatibilityPolicy: 'semantic-major'
+  reconciliation: SetupDaemonReconciliation
+}
+
 export type BridgeMarker = {
   path: string
   protocol: string
@@ -422,6 +443,45 @@ export async function ensureDaemonReady({
     }
   } finally {
     await releaseLock()
+  }
+}
+
+export async function ensureSetupDaemonRunnable({
+  homeDir = tokenlessHome(),
+  daemonUrl,
+  timeoutMs = envNumber('TOKENLESS_DAEMON_START_TIMEOUT_MS', DEFAULT_DAEMON_START_TIMEOUT_MS),
+}: Pick<EnsureDaemonOptions, 'homeDir' | 'daemonUrl' | 'timeoutMs'> = {}): Promise<SetupDaemonReadyResult> {
+  try {
+    return setupDaemonReadyResult(await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs }), {
+      attempted: false,
+      reason: 'already_compatible',
+    })
+  } catch (error) {
+    const caught = error as RuntimeError
+    if (caught.code !== 'daemon_version_mismatch') throw error
+
+    const verified = await probeDaemonReady({ homeDir, daemonUrl })
+    if (!verified.ok) throw error
+
+    const expectedVersion = tokenlessPackageVersion()
+    const runningVersion = typeof verified.body?.version === 'string' ? verified.body.version : null
+    const expectedMajor = semanticVersionMajor(expectedVersion)
+    const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
+    if (expectedMajor === null || runningMajor === expectedMajor) throw error
+
+    const previous = {
+      version: runningVersion,
+      major: runningMajor,
+      pid: daemonPidFromReady(verified),
+    }
+    const stopped = await stopDaemon({ homeDir, daemonUrl, timeoutMs })
+    const restarted = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs })
+    return setupDaemonReadyResult(restarted, {
+      attempted: true,
+      reason: runningMajor === null ? 'version_unparseable' : 'major_mismatch',
+      stopped,
+      previous,
+    })
   }
 }
 
@@ -731,7 +791,7 @@ export async function installRustRuntime({
   }
 }
 
-/** @deprecated Native Messaging host install is archived under legacy/. */
+/** @deprecated Native Messaging host install is removed; use managed Playwright setup. */
 export async function installNativeHost() {
   throw runtimeError(
     'legacy_native_host_removed',
@@ -1135,6 +1195,26 @@ function incompatibleRunningDaemonError(coherence: { code?: string; message?: st
     `${coherence.message ?? 'The running Tokenless daemon is incompatible.'} Tokenless left the daemon running. Run "tokenless daemon stop --json", then retry.`,
     false
   )
+}
+
+function setupDaemonReadyResult(
+  ready: Awaited<ReturnType<typeof ensureDaemonReady>>,
+  reconciliation: SetupDaemonReconciliation
+): SetupDaemonReadyResult {
+  const expectedVersion = tokenlessPackageVersion()
+  const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
+  const expectedMajor = semanticVersionMajor(expectedVersion)
+  const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
+  return {
+    ...ready,
+    expectedVersion,
+    expectedMajor,
+    runningVersion,
+    runningMajor,
+    versionCompatible: expectedMajor !== null && runningMajor !== null && runningMajor === expectedMajor,
+    compatibilityPolicy: 'semantic-major',
+    reconciliation,
+  }
 }
 
 function daemonPidFromReady(probe: DaemonReadyProbe) {

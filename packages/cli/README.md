@@ -10,7 +10,8 @@ Requires Node.js 22.13+ and a supported Chromium browser such as Google Chrome o
 npm install --global tokenless@latest
 ```
 
-Setup installs and verifies both required agent skills.
+Setup installs and verifies both required agent skills, checks the installed CLI
+against the latest npm release, and leaves a compatible local daemon running.
 
 ## Start
 
@@ -20,7 +21,10 @@ Setup installs and verifies both required agent skills.
 tokenless setup
 ```
 
-The interactive flow chooses a browser and providers, discovers existing Chrome or Brave profiles, asks for explicit copy consent, creates a separate managed profile, starts the local runtime, and checks provider sign-in.
+The interactive flow chooses a browser and providers, discovers existing Chrome
+or Brave profiles, asks for explicit copy consent, creates a separate managed
+profile, reconciles and verifies the local daemon, and checks provider sign-in.
+Daemon compatibility is based on the CLI and daemon semantic-version major.
 
 ### Start clean
 
@@ -28,7 +32,11 @@ The interactive flow chooses a browser and providers, discovers existing Chrome 
 tokenless setup --fresh
 ```
 
-This non-interactive path creates a clean managed `default` profile on a new installation or reuses the registered default, selects the first supported browser and ChatGPT when needed, starts the runtime, and opens the provider when user action is required. It does not import a local browser profile.
+This non-interactive path creates a clean managed `default` profile on a new
+installation or reuses the registered default, selects the first supported
+browser and ChatGPT when needed, verifies the local runtime, and reports the
+provider sign-in state once without opening a sign-in handoff. It does not
+import a local browser profile.
 
 Verify either path:
 

@@ -48,3 +48,9 @@ Run `tokenless provider-action --action capability.inspect --provider <provider>
 ## Current Status
 
 Tokenless is currently in private beta. We plan to publish detailed benchmarks of its token savings in the future.
+
+## Known Issues
+
+### Codex sandbox policies can prevent Tokenless from running
+
+In Codex, the sandbox policy applied to an agent may block Tokenless from launching a browser or performing required local operations. In a trusted environment, either enable Full Access or approve the operation when Codex asks for permission and choose to allow the same operation in the future.

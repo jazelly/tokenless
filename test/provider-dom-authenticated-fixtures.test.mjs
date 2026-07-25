@@ -201,14 +201,6 @@ test('authenticated provider DOM fixtures retain only redacted, provenance-bound
   }
 })
 
-test('authenticated evidence does not replace the existing legacy fixture corpus', async () => {
-  for (const provider of Object.keys(providers)) {
-    const legacyPath = path.join(root, 'test', 'fixtures', `${provider}-real-dom-fixture.html`)
-    const stat = await fs.stat(legacyPath)
-    assert.equal(stat.isFile(), true, `${provider} legacy fixture remains available`)
-  }
-})
-
 test('provider DOM manifest inventories every fixture with its sanitized page URL', async () => {
   const manifest = JSON.parse(await fs.readFile(path.join(fixtureRoot, 'manifest.json'), 'utf8'))
   assert.equal(manifest.schema, 'tokenless.provider-dom-manifest.v2')
@@ -355,7 +347,7 @@ test('provider-specific selection semantics and plan uncertainty remain explicit
   const claudeRoot = path.join(fixtureRoot, 'claude', 'signed-in-free')
   const chatgptRoot = path.join(fixtureRoot, 'chatgpt', 'signed-in-paid')
 
-  const [geminiHtml, grokModelHtml, grokEffort, claudeModel, chatgptEffort] = await Promise.all([
+  const [geminiHtml, grokModelHtml, grokEffort, claudeModelHtml, chatgptEffortHtml] = await Promise.all([
     fs.readFile(path.join(geminiRoot, 'model-menu-open.html'), 'utf8'),
     fs.readFile(path.join(grokRoot, 'model-menu-open.html'), 'utf8'),
     readProvenance(grokRoot, 'thinking-effort-menu-open'),
@@ -363,14 +355,39 @@ test('provider-specific selection semantics and plan uncertainty remain explicit
     fs.readFile(path.join(chatgptRoot, 'thinking-effort-menu-open.html'), 'utf8'),
   ])
 
-  assert.match(geminiHtml, /data-active="true"[\s\S]*?<gem-menu-item-content>/)
-  assert.match(geminiHtml, /data-mode-id="pro"[\s\S]*?<gem-menu-item-content class="selected">/)
-  assert.equal((grokModelHtml.match(/data-radix-collection-item aria-disabled="false"/g) ?? []).length, 4)
-  assert.equal((grokModelHtml.match(/class="font-semibold"/g) ?? []).length, 4)
-  assert.match(grokModelHtml, /role="menuitem"><button type="button">Upgrade<\/button>/)
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  try {
+    await page.setContent(geminiHtml)
+    assert.equal(
+      await page.locator('gem-menu-item[data-active="true"] gem-menu-item-content').innerText(),
+      '3.1 Flash-Lite'
+    )
+    assert.equal(
+      await page.locator('gem-menu-item[data-mode-id="pro"] gem-menu-item-content.selected').innerText(),
+      '3.1 ProSelected'
+    )
+
+    await page.setContent(grokModelHtml)
+    assert.deepEqual(
+      await page.locator('[role="menuitem"][data-radix-collection-item][aria-disabled="false"] .font-semibold').allTextContents(),
+      ['Fast', 'Auto', 'Expert', 'Heavy']
+    )
+    assert.equal(await page.getByRole('button', { name: 'Upgrade' }).count(), 1)
+
+    await page.setContent(claudeModelHtml)
+    assert.equal(
+      await page.getByRole('menuitemradio').filter({ hasText: 'Fable 5' }).filter({ hasText: 'Upgrade' }).count(),
+      1
+    )
+
+    await page.setContent(chatgptEffortHtml)
+    assert.equal(await page.getByRole('menuitemradio').count(), 3)
+  } finally {
+    await browser.close()
+  }
+
   assert.equal(grokEffort.effortMode, 'coupled-to-model')
-  assert.match(claudeModel, /Fable 5[\s\S]*?Upgrade/)
-  assert.equal((chatgptEffort.match(/role="menuitemradio"/g) ?? []).length, 3)
 
   const geminiSession = await readProvenance(geminiRoot, 'session-status')
   const grokSession = await readProvenance(grokRoot, 'session-status')

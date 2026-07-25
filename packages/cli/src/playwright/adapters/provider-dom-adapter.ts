@@ -10,6 +10,8 @@ import type { ProviderCapabilityId, ProviderConfig } from '../providers.js'
 import type { ProviderAdapter, VisibleAdapterContext } from './types.js'
 import type { FileChooser, Locator, Page } from 'playwright-core'
 
+const PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS = 15_000
+
 export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdapter {
   return {
     provider,
@@ -22,10 +24,16 @@ export function createDomProviderAdapter(provider: ProviderConfig): ProviderAdap
       const navigation = assertProviderUrlAllowed(provider, pageUrl)
       if (!navigation.ok && request.action !== VISIBLE_ACTIONS.NAVIGATION_CHECK) {
         if (trustedProviderSignInNavigation(provider, pageUrl)) {
+          if (request.action === VISIBLE_ACTIONS.AUTH_STATUS) {
+            return success(request, {
+              state: 'unauthenticated',
+              visibleProof: 'provider-sign-in-navigation',
+            })
+          }
           return failure(request, 'provider_sign_in_navigation', 'Provider sign-in navigation is visible and requires the user.', true)
         }
         return failure(request, 'unsupported_provider_navigation', 'The visible page is outside the approved provider origin.', false)
-        }
+      }
       if (request.action === VISIBLE_ACTIONS.CAPABILITY_INSPECT) return success(request, await inspectCapabilities(page, provider))
       if (request.action === VISIBLE_ACTIONS.AUTH_STATUS) return success(request, await inspectAuth(page, provider, context.signal))
       if (request.action === VISIBLE_ACTIONS.NAVIGATION_CHECK) return success(request, inspectNavigation(page, provider))
@@ -713,18 +721,25 @@ async function uploadFiles(page: Page, provider: ProviderConfig, value: unknown,
 
 async function inputPrompt(page: Page, provider: ProviderConfig, text: unknown) {
   if (typeof text !== 'string') throw new Error('Validated request payload unexpectedly lacked prompt text.')
-  if (provider.composerSettleMs > 0) await page.waitForTimeout(provider.composerSettleMs)
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const composer = await firstLocator(page, provider.composerSelectors)
-    if (composer && await writeExactPrompt(page, composer, text)) {
-      return {
-        visible: true as const,
-        inputProof: 'prompt-text-visible',
-      }
-    }
-    if (attempt < 11) await page.waitForTimeout(1000)
+  const composer = await waitForVisibleLocator(page, provider.composerSelectors, PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS)
+  if (!composer) {
+    throw tokenlessError(
+      'prompt_input_visibility_timeout',
+      `Timed out after ${PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS}ms waiting for a visible prompt input.`,
+      { retryable: true },
+    )
   }
-  throw new Error('No stable visible prompt input matched the requested text.')
+  if (!await writePrompt(page, composer, text)) {
+    throw tokenlessError(
+      'prompt_input_failed',
+      'The visible prompt input remained empty after input.',
+      { retryable: true },
+    )
+  }
+  return {
+    visible: true as const,
+    inputProof: 'prompt-text-visible',
+  }
 }
 
 async function clearPrompt(page: Page, provider: ProviderConfig) {
@@ -736,9 +751,23 @@ async function clearPrompt(page: Page, provider: ProviderConfig) {
 }
 
 async function submitPrompt(page: Page, provider: ProviderConfig) {
-  const button = await firstLocator(page, provider.submitSelectors)
-  if (!button) throw new Error('No visible submit control is available.')
-  await button.click({ timeout: 5000 })
+  const button = await waitForVisibleLocator(page, provider.submitSelectors, PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS)
+  if (!button) {
+    throw tokenlessError(
+      'prompt_submit_visibility_timeout',
+      `Timed out after ${PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS}ms waiting for a visible prompt submit control.`,
+      { retryable: true },
+    )
+  }
+  try {
+    await button.click({ timeout: 5000 })
+  } catch (error) {
+    throw tokenlessError(
+      'prompt_submit_failed',
+      'The visible prompt submit control could not be clicked.',
+      { retryable: true, cause: error },
+    )
+  }
   return {
     visible: true as const,
     submissionProof: 'visible-submit-clicked',
@@ -1152,6 +1181,18 @@ async function firstLocator(page: Page, selectors: readonly string[]): Promise<L
   return null
 }
 
+async function waitForVisibleLocator(page: Page, selectors: readonly string[], timeoutMs: number): Promise<Locator | null> {
+  if (selectors.length === 0) return null
+  const locator = page.locator(selectors.join(', ')).filter({ visible: true }).first()
+  try {
+    await locator.waitFor({ state: 'visible', timeout: timeoutMs })
+    return await firstLocator(page, selectors)
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') return null
+    throw error
+  }
+}
+
 async function latestLocator(page: Page, selectors: readonly string[]): Promise<Locator | null> {
   for (const selector of selectors) {
     const locator = page.locator(selector)
@@ -1165,23 +1206,25 @@ async function latestLocator(page: Page, selectors: readonly string[]): Promise<
   return null
 }
 
-async function composerHasExactText(locator: Locator, expected: string) {
+async function composerHasExpectedPresence(locator: Locator, expectEmpty: boolean) {
   try {
-    return await locator.evaluate((element, value) => {
+    return await locator.evaluate((element, shouldBeEmpty) => {
       const text = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
         ? element.value
-        : (element.textContent ?? '').replace(/\u00a0/g, ' ')
-      return text === value
-    }, expected)
+        : (element.textContent ?? '')
+      const hasVisibleText = text.replace(/[\s\u00a0\u200b-\u200d\u2060\ufeff]/gu, '').length > 0
+      return shouldBeEmpty ? !hasVisibleText : hasVisibleText
+    }, expectEmpty)
   } catch {
     return false
   }
 }
 
-async function writeExactPrompt(page: Page, composer: Locator, text: string) {
+async function writePrompt(page: Page, composer: Locator, text: string) {
+  const expectEmpty = text.length === 0
   try {
     await composer.fill(text, { timeout: 2000 })
-    if (await composerHasExactText(composer, text)) return true
+    if (await composerHasExpectedPresence(composer, expectEmpty)) return true
   } catch {
     // Hydration can replace a visible fallback composer while it is being filled.
   }
@@ -1190,7 +1233,7 @@ async function writeExactPrompt(page: Page, composer: Locator, text: string) {
     await composer.click({ timeout: 1000 })
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
     await page.keyboard.type(text)
-    return await composerHasExactText(composer, text)
+    return await composerHasExpectedPresence(composer, expectEmpty)
   } catch {
     return false
   }

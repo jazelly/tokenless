@@ -2,4 +2,4 @@
 "tokenless": patch
 ---
 
-Force setup provider sign-in handoff to open a headed managed browser window.
+Check each provider's setup sign-in status once and report it without opening a login handoff or retrying.
