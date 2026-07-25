@@ -77,7 +77,30 @@ import {
 import { tokenlessPackageVersion } from './platform-package.js'
 import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand } from './upgrade.js'
 
-type CliArgs = Record<string, any> & { attachFiles: string[]; files: string[] }
+const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
+
+type CliArgs = Record<string, any> & {
+  attachFiles: string[]
+  files: string[]
+  [CLI_ARG_FLAGS]?: Record<string, string[]>
+}
+type CliUsageDetails = {
+  command: string
+  usage: string[]
+  commonOptions: string[]
+  validOptions: string[]
+  invalidOptions?: string[] | undefined
+  validCommands?: string[] | undefined
+}
+type CommandContext = {
+  command: string
+  subcommand?: string | undefined
+}
+type CommandContract = CommandContext & {
+  usage: string[]
+  options: readonly string[]
+  subcommands?: readonly string[] | undefined
+}
 type StatusEvent = Record<string, any>
 type CliError = Error & {
   code?: string
@@ -86,6 +109,8 @@ type CliError = Error & {
   upstreamStatus?: number
   requestId?: string
   statusLog?: StatusEvent[]
+  usage?: CliUsageDetails
+  exitCode?: number
 }
 type StatusReporter = {
   events: StatusEvent[]
@@ -158,21 +183,59 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'blocker.check',
 ])
 const PRIORITY_VISIBLE_PROVIDER_ACTION_LIST = [...PRIORITY_VISIBLE_PROVIDER_ACTIONS].join(', ')
+const COMMAND_CONTRACTS = createCommandContracts()
+const TOP_LEVEL_COMMANDS = new Set(COMMAND_CONTRACTS.filter((contract) => !contract.command.includes(' ')).map((contract) => contract.command))
+const COMMAND_CONTRACT_BY_KEY = new Map(COMMAND_CONTRACTS.map((contract) => [commandContractKey(contract), contract]))
+const TOP_LEVEL_USAGE = [
+  'tokenless <command> [options]',
+  'tokenless run --provider <chatgpt|claude|gemini|grok> --prompt <text> --json',
+  'tokenless profiles <subcommand> [options]',
+  'tokenless daemon stop [--json]',
+  'tokenless help',
+]
 let args: CliArgs = { attachFiles: [], files: [], json: process.argv.includes('--json') }
 
 try {
   const argv = process.argv.slice(2)
   const versionRequested = argv.length === 1 && (argv[0] === '-V' || argv[0] === '--version')
+  const helpRequested = argv.length === 1 && (argv[0] === '-h' || argv[0] === '--help')
   let command: string
   if (versionRequested) {
     argv.shift()
     command = 'version'
+  } else if (helpRequested) {
+    argv.shift()
+    command = 'help'
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = command === 'profiles' || command === 'daemon' ? argv.shift() : undefined
-  args = parseArgs(argv)
-  assertCommandRoutingArguments(command, args)
+  const subcommand = (command === 'profiles' || command === 'daemon') && argv[0] && !argv[0].startsWith('-')
+    ? argv.shift()
+    : undefined
+  assertKnownTopLevelCommand(command)
+  args = parseArgs(argv, { command, subcommand })
+  if (helpRequested) {
+    printCommandHelp({ command: 'tokenless' })
+    process.exit(0)
+  }
+  if (args.help === true && !COMMAND_CONTRACT_BY_KEY.has(commandContractKey({ command, subcommand })) && validSubcommandsFor(command).length > 0) {
+    const unsupported = unsupportedArgumentFlags(args, new Set(['help']))
+    if (unsupported.length > 0) {
+      throw commandUsageError(
+        'invalid_option',
+        `${commandDisplayName({ command })} does not accept option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`,
+        { command },
+        unsupported,
+      )
+    }
+    printCommandHelp({ command })
+    process.exit(0)
+  }
+  assertCommandRoutingArguments(command, subcommand, args)
+  if (args.help === true) {
+    printCommandHelp({ command, subcommand })
+    process.exit(0)
+  }
   if (command === 'version') {
     console.log(tokenlessPackageVersion())
   } else if (command === 'profiles') {
@@ -239,14 +302,13 @@ try {
   if (cliError.requestId) payload.error.requestId = cliError.requestId
   if (typeof cliError.status === 'string' && cliError.status) payload.status = cliError.status
   if (Array.isArray(cliError.statusLog)) payload.statusLog = cliError.statusLog
+  if (cliError.usage) payload.error.usage = cliError.usage
   if (args.json) console.log(JSON.stringify(payload, null, 2))
-  else console.error(`${payload.error.code}: ${payload.error.message}`)
-  process.exit(1)
+  else console.error(formatCliError(payload, cliError.usage))
+  process.exit(cliError.exitCode ?? 1)
 }
 
 async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
-  assertProfilesCommandArguments(subcommand, args)
-
   if (subcommand === 'discover') {
     const browser = normalizeProfileImportBrowser(args.browser)
     const roots = await discoverChromiumProfiles({
@@ -1790,7 +1852,6 @@ async function cancelCommand(args: CliArgs) {
 }
 
 async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
-  assertDaemonCommandArguments(subcommand, args)
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
@@ -3038,8 +3099,81 @@ function assertNativeRequestSize(value: unknown) {
   )
 }
 
-function parseArgs(argv: string[]): CliArgs {
+function createCommandContracts(): CommandContract[] {
+  const visibleJobOptions = [
+    'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'browserVisibility',
+    'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
+    'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
+    'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface', 'noWait',
+  ] as const
+  const runOptions = [
+    ...visibleJobOptions, 'prompt', 'promptFile', 'projectRoot', 'context', 'contextFile',
+    'turnContextFile', 'files', 'attachFiles', 'action', 'longRunning',
+  ] as const
+  const providerInspectOptions = [
+    'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs',
+    'browserVisibility', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl',
+    'taskId', 'idempotencyKey', 'noWait',
+  ] as const
+  const providerConfigureOptions = [
+    ...providerInspectOptions, 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface',
+  ] as const
+
+  const contracts: CommandContract[] = [
+    { command: 'help', usage: ['tokenless help'], options: [] },
+    { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
+    { command: 'run', usage: ['tokenless run --provider <chatgpt|claude|gemini|grok> --prompt <text> --json'], options: runOptions },
+    { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
+    { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
+    { command: 'provider-controls', usage: ['tokenless provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
+    { command: 'inspect-provider-controls', usage: ['tokenless inspect-provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
+    { command: 'chatgpt-controls', usage: ['tokenless chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
+    { command: 'inspect-chatgpt-controls', usage: ['tokenless inspect-chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
+    { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
+    { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort'] },
+    { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
+    { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit'] },
+    { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit'] },
+    { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs'] },
+    { command: 'setup', usage: ['tokenless setup [--profile <slug>] (--defaults|--fresh|--import-browser-profile <key>) --json'], options: ['home', 'json', 'quiet', 'profile', 'browser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'refreshSkills', 'skipSkillInstall', 'setupDefaults', 'consentLocalProfileCopy'] },
+    { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] --json'], options: ['home', 'json', 'browser', 'browsers', 'daemonUrl', 'daemonStartTimeoutMs'] },
+    { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
+    { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
+    { command: 'config', usage: ['tokenless config [--preferred-providers <list>] [--browser <browser>] [--browser-visibility <mode>] [--daemon-url <url>] --json'], options: ['home', 'json', 'preferredProviders', 'browser', 'browserVisibility', 'daemonUrl'] },
+    { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
+    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'preferredProviders', 'setDefault'] },
+    { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
+    { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <browser>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
+    { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
+    { command: 'profiles', subcommand: 'reset', usage: ['tokenless profiles reset [--profile <slug>] [--preferred-providers <list>]'], options: ['home', 'profile', 'preferredProviders'] },
+    { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'profiles', subcommand: 'open', usage: ['tokenless profiles open [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
+    { command: 'profiles', subcommand: 'set-default', usage: ['tokenless profiles set-default --profile <slug> --json'], options: ['home', 'json', 'profile'] },
+    { command: 'profiles', subcommand: 'remove', usage: ['tokenless profiles remove --profile <slug> --confirm-delete --json'], options: ['home', 'json', 'profile', 'confirmDelete'] },
+    { command: 'daemon', subcommand: 'stop', usage: ['tokenless daemon stop [--daemon-url <loopback-url>] [--timeout-ms <ms>] --json'], options: ['home', 'json', 'daemonUrl', 'timeoutMs'] },
+  ]
+  return contracts.map((contract) => ({
+    ...contract,
+    options: [...new Set([...contract.options, 'help'])],
+  }))
+}
+
+function commandContractKey(context: CommandContext) {
+  return context.subcommand ? `${context.command} ${context.subcommand}` : context.command
+}
+
+function commandDisplayName(context: CommandContext) {
+  return context.command === 'tokenless' ? 'tokenless' : `tokenless ${commandContractKey(context)}`
+}
+
+function parseArgs(argv: string[], context: CommandContext): CliArgs {
   const parsed: CliArgs = { attachFiles: [], files: [] }
+  Object.defineProperty(parsed, CLI_ARG_FLAGS, {
+    value: {},
+    enumerable: false,
+  })
   const valueFlags: Record<string, string> = {
     '--prompt': 'prompt',
     '--prompt-file': 'promptFile',
@@ -3092,6 +3226,8 @@ function parseArgs(argv: string[]): CliArgs {
   }
   const booleanFlags: Record<string, string> = {
     '--include-text': 'includeText',
+    '--help': 'help',
+    '-h': 'help',
     '--json': 'json',
     '--quiet': 'quiet',
     '--no-open': 'noOpen',
@@ -3112,42 +3248,55 @@ function parseArgs(argv: string[]): CliArgs {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] as string
     if (arg === '--file') {
-      const value = requireFlagValue(argv, index, arg)
+      const value = requireFlagValue(argv, index, arg, context)
       parsed.files.push(value)
+      rememberArgFlag(parsed, 'files', arg)
       index += 1
       continue
     }
     if (arg === '--attach-file') {
-      const value = requireFlagValue(argv, index, arg)
+      const value = requireFlagValue(argv, index, arg, context)
       parsed.attachFiles.push(value)
+      rememberArgFlag(parsed, 'attachFiles', arg)
       index += 1
       continue
     }
     const key = valueFlags[arg]
     if (key) {
-      parsed[key] = requireFlagValue(argv, index, arg)
+      parsed[key] = requireFlagValue(argv, index, arg, context)
+      rememberArgFlag(parsed, key, arg)
       index += 1
       continue
     }
     const booleanKey = booleanFlags[arg]
     if (booleanKey) {
       parsed[booleanKey] = true
+      rememberArgFlag(parsed, booleanKey, arg)
       continue
     }
-    throw usageError(
+    throw commandUsageError(
       arg === '--no-daemon' ? 'daemon_only' : 'unknown_argument',
       arg === '--no-daemon'
         ? 'Tokenless run is daemon-only; --no-daemon and local task-page fallback remain removed.'
-        : `Unknown Tokenless argument: ${arg}`
+        : `Unknown Tokenless argument: ${arg}`,
+      context,
+      [arg]
     )
   }
   return parsed
 }
 
-function requireFlagValue(argv: string[], index: number, flag: string) {
+function rememberArgFlag(args: CliArgs, key: string, flag: string) {
+  const flags = args[CLI_ARG_FLAGS]
+  if (!flags) return
+  flags[key] ??= []
+  if (!flags[key]!.includes(flag)) flags[key]!.push(flag)
+}
+
+function requireFlagValue(argv: string[], index: number, flag: string, context: CommandContext) {
   const value = argv[index + 1]
   if (value === undefined || value.startsWith('--')) {
-    throw usageError('missing_argument_value', `${flag} requires a value.`)
+    throw commandUsageError('missing_argument_value', `${flag} requires a value.`, context, [flag])
   }
   return value
 }
@@ -3179,47 +3328,14 @@ function normalizeProvider(provider: unknown): ProviderId {
   return normalized as ProviderId
 }
 
-function assertProfilesCommandArguments(subcommand: string | undefined, args: CliArgs) {
-  const common = ['files', 'home', 'json', 'profile']
-  const byCommand: Record<string, string[]> = {
-    add: [...common, 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'preferredProviders', 'setDefault'],
-    clear: [...common, 'allProfiles'],
-    discover: ['files', 'browser', 'chromeUserDataDir', 'json'],
-    list: ['files', 'home', 'json'],
-    reset: [...common, 'preferredProviders'],
-    status: [...common, 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
-    open: [...common, 'daemonStartTimeoutMs', 'daemonUrl', 'provider', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs'],
-    'set-default': common,
-    remove: [...common, 'confirmDelete'],
-  }
-  if (subcommand === undefined || byCommand[subcommand] === undefined) {
-    throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, clear, discover, list, reset, status, open, set-default, or remove.')
-  }
-  if ((subcommand === 'clear' || subcommand === 'reset') && args.json === true) {
-    throw usageError('profile_command_json_unsupported', `Profiles ${subcommand} is a human maintenance command and does not accept --json.`)
-  }
-  assertOnlyArguments(args, new Set(byCommand[subcommand]), `profiles ${subcommand}`)
-}
-
-function assertDaemonCommandArguments(subcommand: string | undefined, args: CliArgs) {
-  if (subcommand === undefined || subcommand !== 'stop') {
-    throw usageError('daemon_command_invalid', 'Daemon subcommand must be stop.')
-  }
-  assertOnlyArguments(args, new Set(['home', 'daemonUrl', 'timeoutMs', 'json']), 'daemon stop')
-}
-
-function assertOnlyArguments(args: CliArgs, allowed: Set<string>, command: string) {
+function unsupportedArgumentFlags(args: CliArgs, allowed: Set<string>) {
+  const flags = args[CLI_ARG_FLAGS] ?? {}
   const unsupported = Object.entries(args)
     .filter(([key, value]) => !['attachFiles', 'files'].includes(key) && value !== undefined && !allowed.has(key))
-    .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`)
-  if (args.files.length > 0) unsupported.push('--file')
-  if (args.attachFiles.length > 0) unsupported.push('--attach-file')
-  if (unsupported.length > 0) {
-    throw usageError(
-      'admin_command_option_invalid',
-      `${command} does not accept option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`,
-    )
-  }
+    .flatMap(([key]) => flags[key] ?? [optionUsageLabel(key)])
+  if (args.files.length > 0 && !allowed.has('files')) unsupported.push(...(flags.files ?? ['--file']))
+  if (args.attachFiles.length > 0 && !allowed.has('attachFiles')) unsupported.push(...(flags.attachFiles ?? ['--attach-file']))
+  return [...new Set(unsupported)]
 }
 
 function strictPositiveInteger(value: unknown, flag: string) {
@@ -3237,76 +3353,54 @@ function requiredAdminValue(value: unknown, flag: string): string {
   return value
 }
 
-function assertCommandRoutingArguments(command: string, args: CliArgs) {
-  if (command !== 'run' && command !== 'provider-action' && args.attachFiles.length > 0) {
-    throw usageError(
-      'attachment_requires_visible_action',
-      '--attach-file is accepted only by tokenless run or provider-action --action file.upload.'
+function assertCommandRoutingArguments(command: string, subcommand: string | undefined, args: CliArgs) {
+  const context = { command, subcommand }
+  const contract = COMMAND_CONTRACT_BY_KEY.get(commandContractKey(context))
+  if (!contract) {
+    const validCommands = validSubcommandsFor(command)
+    throw commandUsageError(
+      validCommands.length > 0 ? `${command}_command_invalid` : 'unknown_command',
+      validCommands.length > 0
+        ? `${commandDisplayName({ command })} requires one of: ${validCommands.join(', ')}.`
+        : `Unknown Tokenless command: ${commandContractKey(context)}.`,
+      validCommands.length > 0 ? { command } : context,
+      [],
+      validCommands,
     )
   }
-  const profilesOnly = [
-    ['importChromeProfile', '--import-browser-profile'],
-    ['chromeUserDataDir', '--browser-user-data-dir'],
-    ['setDefault', '--set-default'],
-    ['confirmDelete', '--confirm-delete'],
-    ['consentLocalProfileCopy', '--consent-local-profile-copy'],
-    ['allProfiles', '--all'],
-  ] as const
-  const selectedProfilesOnly = profilesOnly.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag)
-  if (command !== 'profiles' && args.allProfiles === true) {
-    throw usageError('profiles_options_require_profiles_command', '--all is accepted only by the profiles command.')
-  }
-  if (command !== 'profiles' && command !== 'setup' && selectedProfilesOnly.length > 0) {
-    throw usageError(
-      'profiles_options_require_profiles_command',
-      `${selectedProfilesOnly.join(', ')} is accepted only by the profiles command.`,
-    )
-  }
-  const browserVisibilityCommands = new Set([
-    'run',
+  const inspectionCommands = new Set([
     'provider-status',
     'provider-auth-status',
-    'provider-action',
     'provider-controls',
     'inspect-provider-controls',
-    'provider-configure',
     'chatgpt-controls',
     'inspect-chatgpt-controls',
-    'chatgpt-configure',
-    'snapshot-dom',
-    'config',
-    'setup',
-    'resume',
   ])
-  if (args.browserVisibility !== undefined && command !== 'profiles' && !browserVisibilityCommands.has(command)) {
-    throw usageError(
-      'browser_visibility_command_invalid',
-      `--browser-visibility is not accepted by tokenless ${command}.`
+  const inspectionControlOptions = selectedArgumentFlags(args, [
+    'model',
+    'modelFallbacks',
+    'effort',
+    'thinkingEffort',
+    'chatSurface',
+  ])
+  if (inspectionCommands.has(command) && inspectionControlOptions.length > 0) {
+    const error = commandUsageError(
+      'controls_unsupported_for_action',
+      'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.',
+      context,
+      inspectionControlOptions,
     )
+    error.exitCode = 1
+    throw error
   }
-  const setupOnly = [
-    ['freshProfile', '--fresh'],
-    ['setupDefaults', '--defaults'],
-    ['reimportProfile', '--reimport-profile'],
-    ['refreshSkills', '--refresh-skills'],
-    ['skipSkillInstall', '--skip-skill-install'],
-  ] as const
-  const selectedSetupOnly = setupOnly.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag)
-  if (command !== 'setup' && selectedSetupOnly.length > 0) {
-    throw usageError('setup_options_require_setup', `${selectedSetupOnly.join(', ')} is accepted only by tokenless setup.`)
-  }
-  if (command === 'setup') {
-    const setupProviderScope = [
-      ['provider', '--provider'],
-      ['preferredProviders', '--preferred-providers'],
-    ] as const
-    const selectedSetupProviderScope = setupProviderScope.filter(([key]) => args[key] !== undefined).map(([, flag]) => flag)
-    if (selectedSetupProviderScope.length > 0) {
-      throw usageError(
-        'setup_provider_selection_unsupported',
-        `tokenless setup checks every supported visible provider; remove ${selectedSetupProviderScope.join(', ')}.`,
-      )
-    }
+  const unsupported = unsupportedArgumentFlags(args, new Set(contract.options))
+  if (unsupported.length > 0) {
+    throw commandUsageError(
+      'invalid_option',
+      `${commandDisplayName(context)} does not accept option${unsupported.length === 1 ? '' : 's'}: ${unsupported.join(', ')}.`,
+      context,
+      unsupported,
+    )
   }
   if (command === 'setup' && args.freshProfile === true) {
     if (args.importChromeProfile !== undefined) {
@@ -3316,8 +3410,13 @@ function assertCommandRoutingArguments(command: string, args: CliArgs) {
       throw usageError('setup_profile_choice_conflict', '--fresh cannot be combined with --reimport-profile.')
     }
   }
-  if (command === 'run') return
-  if (command === 'profiles') return
+}
+
+function selectedArgumentFlags(args: CliArgs, keys: string[]) {
+  const flags = args[CLI_ARG_FLAGS] ?? {}
+  return keys.flatMap((key) => (
+    args[key] === undefined ? [] : (flags[key] ?? [optionUsageLabel(key)])
+  ))
 }
 
 function assertVisibleRunArguments(args: CliArgs) {
@@ -3698,6 +3797,172 @@ function formatUsageGroup(title: string, description: string, sections: UsageSec
       ...section.commands.map((command) => `    ${command}`),
     ]),
   ].join('\n')
+}
+
+function assertKnownTopLevelCommand(command: string) {
+  if (TOP_LEVEL_COMMANDS.has(command)) return
+  throw commandUsageError(
+    'unknown_command',
+    `Unknown Tokenless command: ${command}.`,
+    { command: 'tokenless' },
+    [],
+    [...TOP_LEVEL_COMMANDS].sort(),
+  )
+}
+
+function commandUsageError(
+  code: string,
+  message: string,
+  context: CommandContext,
+  invalidOptions: string[] = [],
+  validCommands?: string[] | undefined,
+): CliError {
+  const error = usageError(code, message)
+  error.usage = usageDetailsForContext(context, invalidOptions, validCommands)
+  error.exitCode = code === 'daemon_only' ? 1 : 2
+  return error
+}
+
+function usageDetailsForContext(
+  context: CommandContext,
+  invalidOptions: string[] = [],
+  validCommands?: string[] | undefined,
+): CliUsageDetails {
+  const contract = COMMAND_CONTRACT_BY_KEY.get(commandContractKey(context))
+  const validSubcommands = validCommands ?? (contract ? [] : validSubcommandsFor(context.command))
+  const validOptions = contract
+    ? contract.options.map(optionUsageLabel)
+    : context.command === 'tokenless'
+      ? ['-h, --help', '--json']
+      : validSubcommands.length > 0
+        ? ['-h, --help']
+        : []
+  return {
+    command: commandDisplayName(context),
+    usage: contract?.usage ?? usageForMissingContract(context),
+    commonOptions: commonOptionsFor(contract?.options ?? (context.command === 'tokenless' || validSubcommands.length > 0 ? ['help', 'json'] : ['help'])),
+    validOptions,
+    ...(invalidOptions.length === 0 ? {} : { invalidOptions }),
+    ...(validSubcommands.length === 0 ? {} : { validCommands: validSubcommands }),
+  }
+}
+
+function usageForMissingContract(context: CommandContext) {
+  const subcommands = validSubcommandsFor(context.command)
+  if (subcommands.length > 0) {
+    return COMMAND_CONTRACTS
+      .filter((contract) => contract.command === context.command && contract.subcommand)
+      .flatMap((contract) => contract.usage)
+  }
+  return TOP_LEVEL_USAGE
+}
+
+function validSubcommandsFor(command: string) {
+  return [...new Set(COMMAND_CONTRACTS
+    .filter((contract) => contract.command === command && contract.subcommand)
+    .map((contract) => contract.subcommand!))]
+    .sort()
+}
+
+function commonOptionsFor(options: readonly string[]) {
+  const common = ['help', 'json', 'home', 'quiet', 'profile', 'provider'] as const
+  return common.filter((option) => options.includes(option)).map(optionUsageLabel)
+}
+
+function optionUsageLabel(option: string) {
+  return ({
+    action: '--action <action>',
+    allProfiles: '--all',
+    attachFiles: '--attach-file <path>',
+    browser: '--browser <browser>',
+    browsers: '--browsers <list>',
+    browserVisibility: '--browser-visibility <auto|headed|headless>',
+    bridgeTimeoutMs: '--bridge-timeout-ms <ms>',
+    cancelTimeoutMs: '--cancel-timeout-ms <ms>',
+    chatName: '--chat-name <name>',
+    chatSurface: '--chat-surface <surface>',
+    chromeUserDataDir: '--browser-user-data-dir <dir>',
+    confirmDelete: '--confirm-delete',
+    consentLocalProfileCopy: '--consent-local-profile-copy',
+    context: '--context <text>',
+    contextFile: '--context-file <path>',
+    daemonStartTimeoutMs: '--daemon-start-timeout-ms <ms>',
+    daemonUrl: '--daemon-url <url>',
+    effort: '--effort <label>',
+    files: '--file <path>',
+    freshProfile: '--fresh',
+    help: '-h, --help',
+    home: '--home <dir>',
+    idempotencyKey: '--idempotency-key <key>',
+    importChromeProfile: '--import-browser-profile <key>',
+    json: '--json',
+    jobId: '--job-id <job-id>',
+    label: '--label <name>',
+    limit: '--limit <n>',
+    longRunning: '--long-running',
+    model: '--model <label>',
+    modelFallbacks: '--model-fallback <label>',
+    noOpen: '--no-open',
+    noWait: '--no-wait',
+    output: '--output <path>',
+    preferredProviders: '--preferred-providers <list>',
+    profile: '-P, --profile <slug>',
+    projectInstructions: '--project-instructions <text>',
+    projectInstructionsFile: '--project-instructions-file <path>',
+    projectName: '--project-name <name>',
+    projectRoot: '--project-root <path>',
+    prompt: '--prompt <text>',
+    promptFile: '--prompt-file <path>',
+    provider: '-p, --provider <provider>',
+    quiet: '--quiet',
+    refreshSkills: '--refresh-skills',
+    reimportProfile: '--reimport-profile',
+    runnerHeartbeatTimeoutMs: '--runner-heartbeat-timeout-ms <ms>',
+    setDefault: '--set-default',
+    setupDefaults: '--defaults',
+    skipSkillInstall: '--skip-skill-install',
+    targetUrl: '--target-url <url>',
+    taskId: '--task-id <task-id>',
+    thinkingEffort: '--thinking-effort <label>',
+    timeoutMs: '--timeout-ms <ms>',
+    turnContextFile: '--turn-context-file <path>',
+    workspaceMode: '--workspace-mode <auto|native|conversation>',
+  } as Record<string, string>)[option] ?? `--${option.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`
+}
+
+function printCommandHelp(context: CommandContext) {
+  const details = usageDetailsForContext(context)
+  const optionLines = details.validOptions.filter((option) => !details.commonOptions.includes(option))
+  const lines = [
+    'Usage:',
+    ...details.usage.map((entry) => `  ${entry}`),
+    '',
+    'Common options:',
+    ...details.commonOptions.map((entry) => `  ${entry}`),
+  ]
+  if (optionLines.length > 0) {
+    lines.push('', 'Options:', ...optionLines.map((entry) => `  ${entry}`))
+  }
+  if (details.validCommands && details.validCommands.length > 0) {
+    lines.push('', 'Valid commands:', ...details.validCommands.map((entry) => `  ${entry}`))
+  }
+  console.error(lines.join('\n'))
+}
+
+function formatCliError(payload: Record<string, any>, usageDetails?: CliUsageDetails | undefined) {
+  const error = objectRecord(payload.error)
+  const lines = [`error: ${String(error.code || 'tokenless_cli_error')}: ${String(error.message || 'Tokenless CLI failed.')}`]
+  if (!usageDetails) return lines.join('\n')
+  lines.push('', 'Usage:', ...usageDetails.usage.map((entry) => `  ${entry}`), '', 'Common options:')
+  if (usageDetails.commonOptions.length > 0) {
+    lines.push(...usageDetails.commonOptions.map((entry) => `  ${entry}`))
+  } else {
+    lines.push('  (none)')
+  }
+  if (usageDetails.validCommands && usageDetails.validCommands.length > 0) {
+    lines.push('', 'Valid commands:', ...usageDetails.validCommands.map((entry) => `  ${entry}`))
+  }
+  return lines.join('\n')
 }
 
 function usageError(code: string, message: string): CliError {
