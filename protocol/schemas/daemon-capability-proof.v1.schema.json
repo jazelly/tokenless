@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tokenless.dev/protocol/schemas/daemon-capability-proof.v1.schema.json",
+  "title": "Tokenless daemon capability proof v1",
+  "type": "object",
+  "required": ["protocol", "algorithm", "signature"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "tokenless.daemon-capability-proof.v1"
+    },
+    "algorithm": {
+      "const": "hmac-sha256-length-prefixed-fields"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    }
+  },
+  "description": "The signed document is an exact ordered tuple of UTF-8 fields, each encoded as a 4-byte unsigned big-endian byte length followed by the field bytes. Fields are: capability proof protocol, ready challenge, readiness protocol, lifecycle protocol, server-issued shutdown challenge, health protocol, daemon protocol, package version, native protocol, daemon error protocol, health status, health ready boolean string, daemon home, daemon pid, daemon instance id, daemon binary sha256, newline-joined daemon accepts, newline-joined daemon emits, worker heartbeat protocol, worker session id, worker pid, worker observed_at, worker expires_at, newline-joined worker accepts, newline-joined worker emits. Absent worker fields are empty strings. Legacy ready/process proof fields and the capability proof signature are explicitly excluded to avoid recursive signing."
+}

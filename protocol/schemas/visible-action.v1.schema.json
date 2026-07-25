@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tokenless.dev/protocol/schemas/visible-action.v1.schema.json",
+  "title": "Tokenless visible action request v1",
+  "type": "object",
+  "required": ["protocol", "requestId", "provider", "action", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "tokenless.playwright.visible-action.v1"
+    },
+    "requestId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "provider": {
+      "$ref": "#/$defs/providerId"
+    },
+    "action": {
+      "enum": [
+        "auth.status",
+        "model.inspect",
+        "model.select",
+        "effort.inspect",
+        "effort.select",
+        "file.upload",
+        "prompt.input",
+        "prompt.clear",
+        "prompt.submit",
+        "response.read",
+        "snapshot.sanitized",
+        "navigation.check",
+        "blocker.check"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "auth.status",
+              "model.inspect",
+              "effort.inspect",
+              "prompt.clear",
+              "prompt.submit",
+              "response.read",
+              "snapshot.sanitized",
+              "navigation.check",
+              "blocker.check"
+            ]
+          }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/emptyPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": ["model.select", "effort.select"]
+          }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/selectionPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "prompt.input"
+          }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/promptInputPayload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "file.upload"
+          }
+        },
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/fileUploadPayload"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "providerId": {
+      "enum": ["chatgpt", "claude", "gemini", "grok"]
+    },
+    "emptyPayload": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "selectionPayload": {
+      "type": "object",
+      "required": ["label"],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "x-tokenless-maxUtf8Bytes": 512,
+          "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$"
+        }
+      }
+    },
+    "promptInputPayload": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 1048576,
+          "x-tokenless-maxUtf8Bytes": 1048576
+        }
+      }
+    },
+    "fileUploadPayload": {
+      "type": "object",
+      "required": ["attachments"],
+      "additionalProperties": false,
+      "properties": {
+        "attachments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/attachment"
+          }
+        }
+      }
+    },
+    "attachment": {
+      "type": "object",
+      "required": ["protocol", "bundleId", "attachmentId", "name", "type", "size", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "tokenless.visible-attachment.v1"
+        },
+        "bundleId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "attachmentId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "x-tokenless-maxUtf8Bytes": 255,
+          "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$"
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 536870912
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

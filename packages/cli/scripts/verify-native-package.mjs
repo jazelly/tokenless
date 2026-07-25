@@ -2,8 +2,12 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  NATIVE_BINARY_BUILD_INFO_PROTOCOL,
+  NATIVE_PLATFORM_PACKAGE_PROTOCOL,
+} from '../../../scripts/generated/protocol-constants.mjs'
 
-export const NATIVE_BINARY_BUILD_INFO_PROTOCOL = 'tokenless.native-binary-build-info.v1'
+export { NATIVE_BINARY_BUILD_INFO_PROTOCOL }
 
 const scriptPath = fileURLToPath(import.meta.url)
 const cliRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -19,7 +23,7 @@ export function verifyNativePackage(packageRoot = process.cwd()) {
     manifest.version !== cliManifest.version ||
     !Array.isArray(manifest.os) || manifest.os.length !== 1 ||
     !Array.isArray(manifest.cpu) || manifest.cpu.length !== 1 ||
-    manifest.tokenlessRuntime?.protocol !== 'tokenless.native-package.v1' ||
+    manifest.tokenlessRuntime?.protocol !== NATIVE_PLATFORM_PACKAGE_PROTOCOL ||
     manifest.tokenlessRuntime?.platform !== platform ||
     manifest.tokenlessRuntime?.arch !== arch
   ) {

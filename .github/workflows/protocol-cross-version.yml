@@ -1,0 +1,49 @@
+name: Protocol cross-version conformance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protocol-cross-version-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  published-artifacts:
+    name: ${{ matrix.artifact }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: linux-x64
+            runner: ubuntu-24.04
+          - artifact: linux-arm64
+            runner: ubuntu-24.04-arm
+          - artifact: darwin-x64
+            runner: macos-15-intel
+          - artifact: darwin-arm64
+            runner: macos-15
+          - artifact: win32-x64
+            runner: windows-2025
+          - artifact: win32-arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm run build
+      - name: Run published artifact conformance
+        run: node --test --test-concurrency=1 test/protocol-cross-version.e2e.mjs
+        env:
+          TOKENLESS_CROSS_VERSION_E2E: '1'
+          TOKENLESS_EXPECTED_ARTIFACT_KEY: ${{ matrix.artifact }}

@@ -23,6 +23,8 @@ import {
   submitManagedPlaywrightJob,
   validateChromeProfileDirectoryKey,
   type ManagedProfileRecord,
+  type ProviderAccessClass,
+  type ProviderAccountTier,
   type ProviderId,
   type VisibleAction,
 } from './playwright/index.js'
@@ -59,6 +61,7 @@ import {
   waitForExtensionBridge,
   writeTokenlessConfig,
 } from './index.js'
+import { DAEMON_TASK_STATE_PROTOCOL } from './generated/protocol-constants.js'
 import {
   inspectTokenlessSkills,
   installTokenlessSkills,
@@ -94,6 +97,7 @@ type SetupProviderReadiness = {
   provider: string
   classification: SetupProviderClassification
   auth: 'authenticated' | 'unauthenticated' | 'unknown'
+  access: ManagedAuthObservation['access']
   status: string
   jobId?: string | undefined
   blocker?: unknown
@@ -109,9 +113,11 @@ type SetupTechnicalFailure = {
 }
 type ManagedAuthObservation = {
   state: 'authenticated' | 'unauthenticated' | 'unknown'
+  access: ProviderAccessClass
   account?: {
     name: string | null
     subscription: string | null
+    tier: ProviderAccountTier
   }
 }
 type SetupCliVersionCheck = {
@@ -473,6 +479,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       ? await registry.updateProviderStatus(result.profile.slug, {
           provider,
           auth: authObservation.state,
+          access: authObservation.access,
           checkedAt: new Date().toISOString(),
           ...(authObservation.state === 'authenticated' && authObservation.account
             ? { account: authObservation.account }
@@ -519,10 +526,12 @@ function authObservationFromManagedResult(value: unknown): ManagedAuthObservatio
   if (!result || typeof result !== 'object') return null
   const state = (result as { state?: unknown }).state
   if (state !== 'authenticated' && state !== 'unauthenticated' && state !== 'unknown') return null
-  if (state !== 'authenticated') return { state }
+  const access = managedProviderAccess((result as { access?: unknown }).access, state)
+  if (state !== 'authenticated') return { state, access }
   const account = managedAuthAccount((result as { account?: unknown }).account)
   return {
     state,
+    access,
     ...(account ? { account } : {}),
   }
 }
@@ -532,7 +541,38 @@ function managedAuthAccount(value: unknown): ManagedAuthObservation['account'] |
   const name = managedAuthAccountValue((value as { name?: unknown }).name)
   const subscription = managedAuthAccountValue((value as { subscription?: unknown }).subscription)
   if (name === undefined || subscription === undefined) return null
-  return { name, subscription }
+  const tier = managedAuthAccountTier((value as { tier?: unknown }).tier)
+  return { name, subscription, tier }
+}
+
+function managedProviderAccess(
+  value: unknown,
+  state: ManagedAuthObservation['state'],
+): ManagedAuthObservation['access'] {
+  if (
+    value === 'guest' ||
+    value === 'sign_in_required' ||
+    value === 'signed_in_free' ||
+    value === 'signed_in_paid' ||
+    value === 'signed_in_unknown' ||
+    value === 'unknown'
+  ) return value
+  return state === 'authenticated' ? 'signed_in_unknown' : 'unknown'
+}
+
+function managedAuthAccountTier(value: unknown): NonNullable<ManagedAuthObservation['account']>['tier'] {
+  if (!value || typeof value !== 'object') return { class: 'signed_in_unknown', label: null }
+  const tierClass = (value as { class?: unknown }).class
+  if (
+    tierClass !== 'signed_in_free' &&
+    tierClass !== 'signed_in_paid' &&
+    tierClass !== 'signed_in_unknown'
+  ) return { class: 'signed_in_unknown', label: null }
+  const label = managedAuthAccountValue((value as { label?: unknown }).label)
+  return {
+    class: tierClass,
+    label: label === undefined ? null : label,
+  }
 }
 
 function managedAuthAccountValue(value: unknown): string | null | undefined {
@@ -599,6 +639,7 @@ function setupProviderSummary(readiness: Record<string, SetupProviderReadiness>)
     providers: Object.fromEntries(providers.map((provider) => [provider.provider, {
       classification: provider.classification,
       auth: provider.auth,
+      access: provider.access,
       status: provider.status,
       ...(provider.jobId === undefined ? {} : { jobId: provider.jobId }),
       ...(provider.error === undefined ? {} : { error: provider.error }),
@@ -717,14 +758,14 @@ function setupCliVersionCompact(check: SetupCliVersionCheck) {
 
 function setupDaemonCompact(daemon: {
   runningVersion: string | null
-  versionCompatible: boolean
+  protocolCompatible: boolean
   reconciliation: { attempted: boolean; reason: string }
 }) {
-  const compatibility = daemon.versionCompatible ? 'major-compatible' : 'major-incompatible'
+  const compatibility = daemon.protocolCompatible ? 'protocol-compatible' : 'protocol-incompatible'
   const recovery = daemon.reconciliation.attempted
     ? ` Recovered ${daemon.reconciliation.reason} by restarting the same-home daemon.`
     : ''
-  return `Daemon: ready on ${daemon.runningVersion ?? 'unknown'} (${compatibility}, semantic-major policy).${recovery}`
+  return `Daemon: ready on ${daemon.runningVersion ?? 'unknown'} (${compatibility}, signed protocol negotiation).${recovery}`
 }
 
 function compareSemanticVersions(left: string, right: string) {
@@ -840,8 +881,10 @@ function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string
       provider,
       {
         auth: status?.auth,
+        access: status?.access,
         username: status?.auth === 'authenticated' ? status.account?.name ?? null : null,
         subscription: status?.auth === 'authenticated' ? status.account?.subscription ?? null : null,
+        tier: status?.auth === 'authenticated' ? status.account?.tier ?? null : null,
         checkedAt: status?.checkedAt,
       },
     ])),
@@ -1583,7 +1626,7 @@ async function stateCommand(args: CliArgs) {
   const latest = jobs[0]!
   printPayload({
     ok: true,
-    protocol: 'tokenless.daemon-task-state.v1',
+    protocol: DAEMON_TASK_STATE_PROTOCOL,
     transport: 'daemon',
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
     taskId: requestedTaskId ?? latest.taskId,
@@ -1916,9 +1959,10 @@ async function setupCommand(args: CliArgs) {
         expectedVersion: localRuntime.expectedVersion,
         expectedMajor: localRuntime.expectedMajor,
         runningMajor: localRuntime.runningMajor,
+        protocolCompatible: localRuntime.protocolCompatible,
         versionCompatible: localRuntime.versionCompatible,
         compatibility: {
-          ok: localRuntime.versionCompatible,
+          ok: localRuntime.protocolCompatible,
           policy: localRuntime.compatibilityPolicy,
         },
         reconciliation: localRuntime.reconciliation,
@@ -1963,6 +2007,7 @@ async function recordSetupSweepResult({
     await registry.updateProviderStatus(profile.slug, {
       provider,
       auth: authObservation.state,
+      access: authObservation.access,
       checkedAt: new Date().toISOString(),
       ...(authObservation.state === 'authenticated' && authObservation.account
         ? { account: authObservation.account }
@@ -1977,12 +2022,13 @@ async function recordSetupSweepResult({
     provider,
     classification: auth,
     auth,
+    access: authObservation?.access ?? 'unknown',
     status,
     jobId: result.job.job_id,
     ...(blocker ? { blocker } : {}),
   }
-  if (auth === 'authenticated') presenter.success(`${provider} is authenticated.`)
-  else presenter.note(`${provider} sign-in status: ${auth}.`)
+  if (auth === 'authenticated') presenter.success(`${provider} is authenticated (${authObservation?.access ?? 'signed_in_unknown'}).`)
+  else presenter.note(`${provider} sign-in status: ${auth}; access: ${authObservation?.access ?? 'unknown'}.`)
 }
 
 function recordSetupReadinessFailure({
@@ -2000,6 +2046,7 @@ function recordSetupReadinessFailure({
     provider,
     classification: 'failed',
     auth: readiness[provider]?.auth ?? 'unknown',
+    access: readiness[provider]?.access ?? 'unknown',
     status: failure.status,
     jobId: failure.jobId,
     error: setupReadinessErrorPayload(failure),
@@ -2528,7 +2575,8 @@ async function doctorCommand(args: CliArgs) {
     const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
     const expectedMajor = semanticVersionMajor(expectedVersion)
     const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
-    const versionCompatible = expectedMajor !== null && runningMajor !== null && runningMajor === expectedMajor
+    const versionCompatible = runningVersion === expectedVersion
+    const protocolCompatible = ready.protocolCompatible === true
     const packagedHash = runtime.packaged.hash
     const runningHash = typeof ready.body?.running_binary_hash === 'string' ? ready.body.running_binary_hash : null
     const identityError = ready.body?.daemon_process_identity_error
@@ -2545,29 +2593,10 @@ async function doctorCommand(args: CliArgs) {
         runningVersion,
         expectedMajor,
         runningMajor,
+        protocolCompatible,
         versionCompatible,
         packagedHash,
         runningHash,
-      }
-    } else if (!versionCompatible) {
-      daemon = {
-        ok: false,
-        ready: true,
-        url: configuredDaemonUrl,
-        daemonLogPath,
-        daemonLogExists,
-        code: 'daemon_version_mismatch',
-        message: `Tokenless daemon reports version ${runningVersion ?? 'missing'}; expected semantic-version major ${expectedMajor ?? 'from tokenless@' + expectedVersion}.`,
-        homeDir: ready.actualHome,
-        expectedVersion,
-        runningVersion,
-        expectedMajor,
-        runningMajor,
-        versionCompatible,
-        packagedHash,
-        runningHash,
-        pid: ready.body?.pid ?? null,
-        processIdentity: identityError === undefined ? 'verified' : 'unverified',
       }
     } else if (identityError !== undefined) {
       daemon = {
@@ -2583,6 +2612,7 @@ async function doctorCommand(args: CliArgs) {
         runningVersion,
         expectedMajor,
         runningMajor,
+        protocolCompatible,
         versionCompatible,
         packagedHash,
         runningHash,
@@ -2603,6 +2633,7 @@ async function doctorCommand(args: CliArgs) {
         runningVersion,
         expectedMajor,
         runningMajor,
+        protocolCompatible,
         versionCompatible,
         packagedHash,
         runningHash,
@@ -2631,9 +2662,12 @@ async function doctorCommand(args: CliArgs) {
       const providers = Array.isArray(config.preferredProviders) ? config.preferredProviders : []
       const statuses = Object.fromEntries(providers.map((provider) => {
         const observed = profile.lastObservedAuth?.[provider as ProviderId]
+        const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
         return [provider, {
-          ok: observed?.auth === 'authenticated',
+          ok: access === 'guest' || access.startsWith('signed_in_'),
           auth: observed?.auth ?? 'unknown',
+          access,
+          tier: observed?.account?.tier ?? null,
           checkedAt: observed?.checkedAt ?? null,
         }]
       }))

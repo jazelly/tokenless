@@ -3,7 +3,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const NATIVE_PLATFORM_PACKAGE_PROTOCOL = 'tokenless.native-package.v1'
+import { NATIVE_PLATFORM_PACKAGE_PROTOCOL } from './generated/protocol-constants.js'
+
+export { NATIVE_PLATFORM_PACKAGE_PROTOCOL } from './generated/protocol-constants.js'
 
 export const NATIVE_PLATFORM_PACKAGES = Object.freeze({
   'darwin-arm64': 'tokenless-native-darwin-arm64',

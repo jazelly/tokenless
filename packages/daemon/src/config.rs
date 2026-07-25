@@ -1,3 +1,4 @@
+pub use crate::generated::protocol_constants::CONFIG_PROTOCOL;
 use crate::{DaemonError, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -6,7 +7,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use url::Host;
 
-pub const CONFIG_PROTOCOL: &str = "tokenless.config.v1";
 pub const CONFIG_FILE_NAME: &str = "config.json";
 
 const SUPPORTED_PROVIDERS: &[&str] = &["chatgpt", "claude", "gemini", "grok"];

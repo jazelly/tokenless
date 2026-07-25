@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { errorResponse, tokenlessError } from './errors.js'
+import { RUNNER_CHECKPOINT_PROTOCOL, USER_HANDOVER_PROTOCOL } from '../generated/protocol-constants.js'
 import { createProviderAdapterRegistry } from './adapters/index.js'
 import { PersistentContextManager } from './browser/context-manager.js'
 import type { ManagedBrowserLaunchTarget } from './browser/context-manager.js'
@@ -11,7 +12,7 @@ import {
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, VISIBLE_ACTION_PROTOCOL_VERSION_V1 } from './actions.js'
-import { inspectVisibleBlockers } from './adapters/provider-dom-adapter.js'
+import { resolveProviderSession } from './provider-session/index.js'
 import { createDaemonClient } from './daemon-client.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
 import { getProviderById, trustedProviderSignInNavigation } from './providers.js'
@@ -147,12 +148,6 @@ const RECONSTRUCTABLE_PRE_SUBMIT_ACTIONS = new Set<string>([
   VISIBLE_ACTIONS.PROMPT_INPUT,
   VISIBLE_ACTIONS.PROMPT_CLEAR,
 ])
-const AUTH_OPTIONAL_GATED_ACTIONS = new Set<string>([
-  VISIBLE_ACTIONS.PROMPT_INPUT,
-  VISIBLE_ACTIONS.PROMPT_CLEAR,
-])
-const RUNNER_CHECKPOINT_PROTOCOL = 'tokenless.playwright.runner-checkpoint.v1' as const
-
 export class ManagedPlaywrightRunnerService {
   private readonly profileRegistry: ManagedProfileSource
   private readonly daemonClient: ManagedDaemonClient
@@ -452,7 +447,7 @@ export class ManagedPlaywrightRunnerService {
           now: this.now,
         })
       }
-      const clearBlocker = async (ignoreAuth = false): Promise<number> => {
+      const clearBlocker = async (waitForGuestSurface = false): Promise<number> => {
         const cleared = await this.clearUserResolvableBlocker({
           managedContext,
           page,
@@ -467,7 +462,7 @@ export class ManagedPlaywrightRunnerService {
           isCanceled,
           renewalError,
           onAutoEscalated,
-          ignoreAuth,
+          waitForGuestSurface,
         })
         managedContext = cleared.managedContext
         page = cleared.page
@@ -499,7 +494,7 @@ export class ManagedPlaywrightRunnerService {
           action.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT &&
           action.action !== VISIBLE_ACTIONS.RESPONSE_READ
         ) {
-          await clearBlocker(AUTH_OPTIONAL_GATED_ACTIONS.has(action.action))
+          await clearBlocker(true)
         }
         await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('started', actionIndex, action, page, provider))
         const adapterContext = {
@@ -564,10 +559,10 @@ export class ManagedPlaywrightRunnerService {
     isCanceled: () => boolean
     renewalError: () => unknown
     onAutoEscalated: (context: ManagedBrowserContext) => void
-    ignoreAuth: boolean
+    waitForGuestSurface: boolean
   }): Promise<ClearBlockerResult> {
     throwIfStopped(options.signal, options.isCanceled, options.renewalError)
-    const initial = await visibleBlockerState(options.page, options.provider, options.ignoreAuth)
+    const initial = await visibleBlockerState(options.page, options.provider, options.waitForGuestSurface)
     if (!initial.blocked) {
       return { managedContext: options.managedContext, page: options.page, waitedMs: 0 }
     }
@@ -636,7 +631,7 @@ export class ManagedPlaywrightRunnerService {
     while (Date.now() <= deadline) {
       throwIfStopped(options.signal, options.isCanceled, options.renewalError)
       await delay(Math.min(this.userHandoverPollMs, Math.max(1, deadline - Date.now())), options.signal)
-      const latest = await visibleBlockerState(page, options.provider, options.ignoreAuth)
+      const latest = await visibleBlockerState(page, options.provider, options.waitForGuestSurface)
       if (latest.terminal) {
         throw tokenlessError(latest.primary.code, latest.primary.message, { retryable: latest.primary.retryable })
       }
@@ -1084,7 +1079,7 @@ function assertSafeJobId(jobId: string) {
 async function visibleBlockerState(
   page: Page,
   provider: NonNullable<ReturnType<typeof getProviderById>>,
-  ignoreAuth: boolean
+  waitForGuestSurface: boolean
 ) {
   const pageUrl = currentPageUrl(page)
   const parsedUrl = safeUrl(pageUrl)
@@ -1105,12 +1100,15 @@ async function visibleBlockerState(
       blockers: [],
     }
   }
-  const result = await inspectVisibleBlockers(page, provider)
-  const blockers = ignoreAuth
-    ? result.blockers.filter((blocker) => blocker.kind !== 'auth')
-    : result.blockers
-  const terminal = blockers.find((blocker) => blocker.kind === 'terminal')
-  const userResolvable = blockers.find((blocker) => blocker.userResolvable)
+  const resolution = await resolveProviderSession(page, provider, {
+    waitForReadyMs: waitForGuestSurface ? 15_000 : 0,
+  })
+  const decision = resolution.decision
+  const blockers = decision.kind === 'handoff' || decision.kind === 'terminal'
+    ? [decision.blocker]
+    : []
+  const terminal = decision.kind === 'terminal' ? decision.blocker : undefined
+  const userResolvable = decision.kind === 'handoff' ? decision.blocker : undefined
   return {
     blocked: Boolean(userResolvable || terminal),
     terminal: Boolean(terminal),
@@ -1151,7 +1149,7 @@ function blockerPayload(
 ) {
   const primary = blockers.find((blocker) => blocker.userResolvable) ?? blockers[0] ?? null
   return {
-    protocol: 'tokenless.playwright.user-handover.v1',
+    protocol: USER_HANDOVER_PROTOCOL,
     jobId: job.job_id,
     taskId: taskIdFromRequest(job.request_json),
     provider: job.provider,

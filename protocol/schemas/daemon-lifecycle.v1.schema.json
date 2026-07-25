@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tokenless.dev/protocol/schemas/daemon-lifecycle.v1.schema.json",
+  "title": "Tokenless daemon lifecycle v1",
+  "type": "object",
+  "required": ["protocol", "ready", "shutdown"],
+  "additionalProperties": false,
+  "properties": {
+    "protocol": {
+      "const": "tokenless.daemon-lifecycle.v1"
+    },
+    "ready": {
+      "type": "object",
+      "required": ["method", "path", "authentication", "proof_protocol"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "const": "GET"
+        },
+        "path": {
+          "const": "/ready"
+        },
+        "authentication": {
+          "const": "challenge-bound-hmac-control-token"
+        },
+        "proof_protocol": {
+          "const": "tokenless.daemon-capability-proof.v1"
+        }
+      }
+    },
+    "shutdown": {
+      "type": "object",
+      "required": ["method", "path", "authentication", "proof_protocol", "success_status", "error_protocol"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "const": "POST"
+        },
+        "path": {
+          "const": "/control/shutdown"
+        },
+        "authentication": {
+          "const": "challenge-bound-hmac-control-token"
+        },
+        "proof_protocol": {
+          "const": "tokenless.daemon-shutdown-proof.v1"
+        },
+        "success_status": {
+          "const": "shutting_down"
+        },
+        "error_protocol": {
+          "const": "tokenless.daemon.error.v1"
+        }
+      }
+    }
+  }
+}

@@ -5,6 +5,18 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+  RUNNER_CHECKPOINT_PROTOCOL,
+  RUNNER_HEARTBEAT_PROTOCOL,
+  RUNNER_HEARTBEAT_PROTOCOL_V1,
+  RUNNER_SESSION_PROTOCOL,
+  USER_HANDOVER_PROTOCOL,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
+} from '../generated/protocol-constants.js'
 import { tokenlessError } from './errors.js'
 import { withPrivateSqliteWriterLock } from './profiles/sqlite-lock.js'
 
@@ -44,7 +56,7 @@ type SpawnDetached = (command: string, args: readonly string[], options: {
 }) => Promise<{ pid: number }>
 
 type SupervisorSession = {
-  protocol: 'tokenless.playwright.runner-session.v1'
+  protocol: typeof RUNNER_SESSION_PROTOCOL
   sessionId: string
   pid: number
   startedAt: string
@@ -53,7 +65,17 @@ type SupervisorSession = {
 }
 
 type SupervisorHeartbeat = {
-  protocol: 'tokenless.playwright.runner-heartbeat.v1'
+  protocol: typeof RUNNER_HEARTBEAT_PROTOCOL
+  session_id: string
+  pid: number
+  observed_at: string
+  expires_at: string
+  accepts: string[]
+  emits: string[]
+}
+
+type LegacySupervisorHeartbeat = {
+  protocol: typeof RUNNER_HEARTBEAT_PROTOCOL_V1
   sessionId: string
   pid: number
   updatedAt: string
@@ -117,7 +139,7 @@ async function startRunnerSupervisorUnlocked(
   })
   const startedAt = (options.now ?? (() => new Date()))().toISOString()
   const session: SupervisorSession = {
-    protocol: 'tokenless.playwright.runner-session.v1',
+    protocol: RUNNER_SESSION_PROTOCOL,
     sessionId,
     pid: spawned.pid,
     startedAt,
@@ -201,25 +223,21 @@ async function runnerSupervisorStatusUnlocked(
       heartbeatAt: null,
     }
   }
-  let heartbeat: SupervisorHeartbeat | null
+  let heartbeat: SupervisorHeartbeat | LegacySupervisorHeartbeat | null
   try {
-    heartbeat = await readJson<SupervisorHeartbeat>(markers.heartbeatFile)
+    heartbeat = await readJson<SupervisorHeartbeat | LegacySupervisorHeartbeat>(markers.heartbeatFile)
   } catch (error) {
     if (!isMarkerMalformedError(error)) throw error
     heartbeat = null
   }
-  const heartbeatMatches = heartbeat !== null &&
-    heartbeat.protocol === 'tokenless.playwright.runner-heartbeat.v1' &&
-    heartbeat.sessionId === session.sessionId &&
-    heartbeat.pid === session.pid &&
-    isFreshHeartbeat(heartbeat.updatedAt, options)
-  const heartbeatAt = heartbeatMatches && heartbeat !== null ? heartbeat.updatedAt : null
+  const heartbeatObservedAt = matchingHeartbeatObservedAt(heartbeat, session, options)
+  const heartbeatMatches = heartbeatObservedAt !== null
   return {
     state: heartbeatMatches ? 'running' : 'unsafe',
     pid: session.pid,
     sessionId: session.sessionId,
     safeToStop: heartbeatMatches,
-    heartbeatAt,
+    heartbeatAt: heartbeatObservedAt,
   }
 }
 
@@ -251,25 +269,21 @@ async function runnerSupervisorStatusUnlockedReadOnly(
       heartbeatAt: null,
     }
   }
-  let heartbeat: SupervisorHeartbeat | null
+  let heartbeat: SupervisorHeartbeat | LegacySupervisorHeartbeat | null
   try {
-    heartbeat = await readJsonReadOnly<SupervisorHeartbeat>(markers.heartbeatFile)
+    heartbeat = await readJsonReadOnly<SupervisorHeartbeat | LegacySupervisorHeartbeat>(markers.heartbeatFile)
   } catch (error) {
     if (!isMarkerMalformedError(error)) throw error
     heartbeat = null
   }
-  const heartbeatMatches = heartbeat !== null &&
-    heartbeat.protocol === 'tokenless.playwright.runner-heartbeat.v1' &&
-    heartbeat.sessionId === session.sessionId &&
-    heartbeat.pid === session.pid &&
-    isFreshHeartbeat(heartbeat.updatedAt, options)
-  const heartbeatAt = heartbeatMatches && heartbeat !== null ? heartbeat.updatedAt : null
+  const heartbeatObservedAt = matchingHeartbeatObservedAt(heartbeat, session, options)
+  const heartbeatMatches = heartbeatObservedAt !== null
   return {
     state: heartbeatMatches ? 'running' : 'unsafe',
     pid: session.pid,
     sessionId: session.sessionId,
     safeToStop: heartbeatMatches,
-    heartbeatAt,
+    heartbeatAt: heartbeatObservedAt,
   }
 }
 
@@ -280,11 +294,16 @@ export async function writeRunnerHeartbeat(options: {
   now?: (() => Date) | undefined
 }) {
   const markers = await ensureRunnerMarkersDir(options.homeDir)
+  const observedAt = (options.now ?? (() => new Date()))()
+  const expiresAt = new Date(observedAt.getTime() + RUNNER_HEARTBEAT_FRESHNESS_MS)
   await writePrivateJson(markers.heartbeatFile, {
-    protocol: 'tokenless.playwright.runner-heartbeat.v1',
-    sessionId: options.sessionId,
+    protocol: RUNNER_HEARTBEAT_PROTOCOL,
+    session_id: options.sessionId,
     pid: options.pid ?? process.pid,
-    updatedAt: (options.now ?? (() => new Date()))().toISOString(),
+    observed_at: observedAt.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    accepts: runnerHeartbeatAccepts(),
+    emits: runnerHeartbeatEmits(),
   } satisfies SupervisorHeartbeat)
 }
 
@@ -567,13 +586,36 @@ function unsafeStatus(pid: number | null, sessionId: string | null): RunnerSuper
 }
 
 function isValidSession(session: SupervisorSession) {
-  return session.protocol === 'tokenless.playwright.runner-session.v1' &&
+  return session.protocol === RUNNER_SESSION_PROTOCOL &&
     typeof session.sessionId === 'string' &&
     /^[A-Za-z0-9._:-]{1,128}$/.test(session.sessionId) &&
     Number.isSafeInteger(session.pid) &&
     session.pid > 0 &&
     typeof session.startedAt === 'string' &&
     Number.isFinite(Date.parse(session.startedAt))
+}
+
+function matchingHeartbeatObservedAt(
+  heartbeat: SupervisorHeartbeat | LegacySupervisorHeartbeat | null,
+  session: SupervisorSession,
+  options: RunnerSupervisorOptions
+) {
+  if (!heartbeat || heartbeat.pid !== session.pid) return null
+  if (heartbeat.protocol === RUNNER_HEARTBEAT_PROTOCOL_V1) {
+    return heartbeat.sessionId === session.sessionId && isFreshHeartbeat(heartbeat.updatedAt, options)
+      ? heartbeat.updatedAt
+      : null
+  }
+  if (heartbeat.protocol !== RUNNER_HEARTBEAT_PROTOCOL) return null
+  if (
+    heartbeat.session_id !== session.sessionId ||
+    !isFreshHeartbeatV2(heartbeat, options) ||
+    !sameStringArray(heartbeat.accepts, runnerHeartbeatAccepts()) ||
+    !sameStringArray(heartbeat.emits, runnerHeartbeatEmits())
+  ) {
+    return null
+  }
+  return heartbeat.observed_at
 }
 
 function isFreshHeartbeat(updatedAt: string, options: RunnerSupervisorOptions) {
@@ -583,6 +625,44 @@ function isFreshHeartbeat(updatedAt: string, options: RunnerSupervisorOptions) {
   const ageMs = nowMs - updatedAtMs
   const timeoutMs = Math.max(1, Math.floor(options.heartbeatTimeoutMs ?? RUNNER_HEARTBEAT_FRESHNESS_MS))
   return ageMs >= 0 && ageMs <= timeoutMs
+}
+
+function isFreshHeartbeatV2(heartbeat: SupervisorHeartbeat, options: RunnerSupervisorOptions) {
+  const observedAtMs = Date.parse(heartbeat.observed_at)
+  const expiresAtMs = Date.parse(heartbeat.expires_at)
+  if (!Number.isFinite(observedAtMs) || !Number.isFinite(expiresAtMs)) return false
+  const nowMs = (options.now ?? (() => new Date()))().getTime()
+  const timeoutMs = Math.max(1, Math.floor(options.heartbeatTimeoutMs ?? RUNNER_HEARTBEAT_FRESHNESS_MS))
+  return observedAtMs <= nowMs &&
+    nowMs <= expiresAtMs &&
+    nowMs - observedAtMs <= timeoutMs
+}
+
+function runnerHeartbeatAccepts() {
+  return [
+    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+    VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+    VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+    VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
+  ]
+}
+
+function runnerHeartbeatEmits() {
+  return [
+    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+    VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+    VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+    VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
+    RUNNER_CHECKPOINT_PROTOCOL,
+    USER_HANDOVER_PROTOCOL,
+  ]
+}
+
+function sameStringArray(actual: unknown, expected: readonly string[]) {
+  return Array.isArray(actual) &&
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
 }
 
 function isMarkerPermissionError(error: unknown) {
