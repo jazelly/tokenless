@@ -143,20 +143,136 @@ test('CLI accepts distinct case-sensitive short options for profile and provider
 test('daemon stop accepts only daemon stop options and positive integer timeout', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-args-'))
   try {
-    for (const args of [
-      ['daemon', 'stop', '--home', homeDir, '--provider', 'chatgpt', '--json'],
-      ['daemon', 'stop', '--home', homeDir, '--timeout-ms', '1.5', '--json'],
+    for (const [args, expectedStatus, expectedCode] of [
+      [['daemon', 'stop', '--home', homeDir, '--provider', 'chatgpt', '--json'], 2, 'invalid_option'],
+      [['daemon', 'stop', '--home', homeDir, '--timeout-ms', '1.5', '--json'], 1, 'invalid_timeout'],
     ]) {
       const result = spawnSync(process.execPath, [cliEntry, ...args], {
         cwd: root,
         encoding: 'utf8',
       })
-      assert.equal(result.status, 1)
+      assert.equal(result.status, expectedStatus)
       const payload = JSON.parse(result.stdout)
       assert.equal(payload.ok, false)
+      assert.equal(payload.error.code, expectedCode)
     }
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('CLI rejects misspelled, unknown, and wrong-command options with usage before side effects', () => {
+  const humanInvalid = runCli(['run', '--all'])
+  assert.equal(humanInvalid.status, 2)
+  assert.equal(humanInvalid.stdout, '')
+  assert.match(humanInvalid.stderr, /^error: invalid_option: tokenless run does not accept option: --all\./)
+  assert.match(humanInvalid.stderr, /^Usage:$/m)
+  assert.match(humanInvalid.stderr, /^  tokenless run --provider/m)
+  assert.match(humanInvalid.stderr, /^Common options:$/m)
+  assert.match(humanInvalid.stderr, /^  -h, --help$/m)
+
+  const jsonInvalid = runCli(['run', '--all', '--json'])
+  assert.equal(jsonInvalid.status, 2)
+  assert.equal(jsonInvalid.stderr, '')
+  const jsonInvalidPayload = JSON.parse(jsonInvalid.stdout)
+  assert.equal(jsonInvalidPayload.error.code, 'invalid_option')
+  assert.deepEqual(jsonInvalidPayload.error.usage.invalidOptions, ['--all'])
+  assert.ok(jsonInvalidPayload.error.usage.usage.some((line) => line.startsWith('tokenless run ')))
+  assert.ok(jsonInvalidPayload.error.usage.commonOptions.includes('-h, --help'))
+
+  const misspelled = runCli(['run', '--profle', 'default', '--json'])
+  assert.equal(misspelled.status, 2)
+  const misspelledPayload = JSON.parse(misspelled.stdout)
+  assert.equal(misspelledPayload.error.code, 'unknown_argument')
+  assert.deepEqual(misspelledPayload.error.usage.invalidOptions, ['--profle'])
+  assert.ok(misspelledPayload.error.usage.commonOptions.includes('-h, --help'))
+
+  const unknownCommand = runCli(['frobnicate'])
+  assert.equal(unknownCommand.status, 2)
+  assert.equal(unknownCommand.stdout, '')
+  assert.match(unknownCommand.stderr, /^error: unknown_command: Unknown Tokenless command: frobnicate\./)
+  assert.match(unknownCommand.stderr, /^Usage:$/m)
+  assert.match(unknownCommand.stderr, /^Common options:$/m)
+  assert.match(unknownCommand.stderr, /^Valid commands:$/m)
+
+  const unknownCommandJson = runCli(['frobnicate', '--json'])
+  assert.equal(unknownCommandJson.status, 2)
+  assert.equal(unknownCommandJson.stderr, '')
+  const unknownCommandPayload = JSON.parse(unknownCommandJson.stdout)
+  assert.equal(unknownCommandPayload.error.code, 'unknown_command')
+  assert.ok(unknownCommandPayload.error.usage.usage.some((line) => line.includes('tokenless <command>')))
+  assert.ok(unknownCommandPayload.error.usage.commonOptions.includes('-h, --help'))
+  assert.ok(unknownCommandPayload.error.usage.validCommands.includes('run'))
+
+  const nestedCommand = runCli(['profiles', 'wat', '--json'])
+  assert.equal(nestedCommand.status, 2)
+  assert.equal(nestedCommand.stderr, '')
+  const nestedPayload = JSON.parse(nestedCommand.stdout)
+  assert.equal(nestedPayload.error.code, 'profiles_command_invalid')
+  assert.ok(nestedPayload.error.usage.usage.some((line) => line.startsWith('tokenless profiles list')))
+  assert.ok(nestedPayload.error.usage.commonOptions.includes('-h, --help'))
+  assert.ok(nestedPayload.error.usage.validCommands.includes('status'))
+
+  for (const args of [
+    ['help', '--profile', 'default'],
+    ['version', '--profile', 'default'],
+    ['run', '--all'],
+    ['provider-status', '--all'],
+    ['provider-auth-status', '--all'],
+    ['provider-action', '--all'],
+    ['provider-controls', '--all'],
+    ['inspect-provider-controls', '--all'],
+    ['provider-configure', '--all'],
+    ['chatgpt-controls', '--all'],
+    ['inspect-chatgpt-controls', '--all'],
+    ['chatgpt-configure', '--all'],
+    ['snapshot-dom', '--all'],
+    ['state', '--all'],
+    ['status', '--all'],
+    ['resume', '--all'],
+    ['cancel', '--all'],
+    ['setup', '--provider', 'chatgpt'],
+    ['install', '--provider', 'chatgpt'],
+    ['upgrade', '--provider', 'chatgpt'],
+    ['doctor', '--provider', 'chatgpt'],
+    ['config', '--provider', 'chatgpt'],
+    ['prompt', '--provider', 'chatgpt'],
+    ['profiles', 'add', '--action', 'prompt.submit'],
+    ['profiles', 'clear', '--action', 'prompt.submit'],
+    ['profiles', 'discover', '--profile', 'default'],
+    ['profiles', 'list', '--profile', 'default'],
+    ['profiles', 'reset', '--action', 'prompt.submit'],
+    ['profiles', 'status', '--all'],
+    ['profiles', 'open', '--all'],
+    ['profiles', 'set-default', '--provider', 'chatgpt'],
+    ['profiles', 'remove', '--provider', 'chatgpt'],
+    ['daemon', 'stop', '--provider', 'chatgpt'],
+  ]) {
+    const result = runCli(args)
+    assert.equal(result.status, 2, `${args.join(' ')}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`)
+    assert.equal(result.stdout, '')
+    assert.match(result.stderr, /^error: invalid_option:/, args.join(' '))
+    assert.match(result.stderr, /^Usage:$/m, args.join(' '))
+    assert.match(result.stderr, /^Common options:$/m, args.join(' '))
+    assert.match(result.stderr, /^  -h, --help$/m, args.join(' '))
+  }
+})
+
+test('CLI command help is a supported common option for commands and subcommands', () => {
+  for (const args of [
+    ['--help'],
+    ['run', '--help'],
+    ['profiles', '--help'],
+    ['profiles', 'status', '--help'],
+    ['daemon', '--help'],
+    ['daemon', 'stop', '--help'],
+  ]) {
+    const result = runCli(args)
+    assert.equal(result.status, 0, `${args.join(' ')}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`)
+    assert.equal(result.stdout, '')
+    assert.match(result.stderr, /^Usage:$/m)
+    assert.match(result.stderr, /^Common options:$/m)
+    assert.match(result.stderr, /^  -h, --help$/m)
   }
 })
 
@@ -345,8 +461,8 @@ test('CLI rejects removed local fallback routes before network access', () => {
     '--clean-profile',
     '--json',
   ], { cwd: root, encoding: 'utf8' })
-  assert.equal(compatibilityAlias.status, 1)
-  assert.equal(JSON.parse(compatibilityAlias.stdout).error.code, 'setup_options_require_setup')
+  assert.equal(compatibilityAlias.status, 2)
+  assert.equal(JSON.parse(compatibilityAlias.stdout).error.code, 'invalid_option')
 
   const removed = spawnSync(process.execPath, [
     cliEntry,
@@ -367,7 +483,11 @@ test('CLI rejects removed local fallback routes before network access', () => {
       '--json',
     ], { cwd: root, encoding: 'utf8' })
     assert.equal(result.status, 2)
-    assert.equal(result.stdout, '')
+    assert.equal(result.stderr, '')
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.error.code, 'unknown_command')
+    assert.ok(payload.error.usage.usage.some((line) => line.includes('tokenless <command>')))
+    assert.ok(payload.error.usage.commonOptions.includes('-h, --help'))
   }
 
   const removedFlag = spawnSync(process.execPath, [
@@ -379,7 +499,7 @@ test('CLI rejects removed local fallback routes before network access', () => {
     'hello',
     '--json',
   ], { cwd: root, encoding: 'utf8' })
-  assert.equal(removedFlag.status, 1)
+  assert.equal(removedFlag.status, 2)
   assert.equal(JSON.parse(removedFlag.stdout).error.code, 'unknown_argument')
 
   const removedProjectRouteFlag = spawnSync(process.execPath, [
@@ -391,12 +511,20 @@ test('CLI rejects removed local fallback routes before network access', () => {
     'hello',
     '--json',
   ], { cwd: root, encoding: 'utf8' })
-  assert.equal(removedProjectRouteFlag.status, 1)
+  assert.equal(removedProjectRouteFlag.status, 2)
   assert.equal(JSON.parse(removedProjectRouteFlag.stdout).error.code, 'unknown_argument')
 })
 
 function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(root, relativePath), 'utf8'))
+}
+
+function runCli(args, options = {}) {
+  return spawnSync(process.execPath, [cliEntry, ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    ...options,
+  })
 }
 
 function npmPack(directory, destination) {

@@ -68,6 +68,7 @@ These options are available where the command needs the corresponding runtime be
 
 | Option | Meaning |
 | --- | --- |
+| `-h`, `--help` | Show usage for the selected command or subcommand. |
 | `--json` | Write the final result as structured JSON. Live progress remains on stderr unless `--quiet` is used. |
 | `--quiet` | Suppress live status events. |
 | `--home <path>` | Use a non-default Tokenless state directory. |
@@ -89,9 +90,11 @@ Prints the concise built-in usage guide and the link to this reference.
 
 ```bash
 tokenless help
+tokenless run --help
+tokenless profiles status --help
 ```
 
-Tokenless does not currently expose per-command `--help`; use this document for the complete command inventory.
+Use `-h` or `--help` after any command or subcommand to print its accepted options before doing work.
 
 ### `tokenless --version`
 

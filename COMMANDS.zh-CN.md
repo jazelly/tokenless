@@ -68,6 +68,7 @@ Runtime browser 可选值为 `chrome`、`chrome-for-testing`、`chromium`、`edg
 
 | 选项 | 含义 |
 | --- | --- |
+| `-h`, `--help` | 显示所选命令或子命令的用法。 |
 | `--json` | 将最终结果输出为结构化 JSON。除非使用 `--quiet`，实时进度仍写入 stderr。 |
 | `--quiet` | 禁止输出实时状态事件。 |
 | `--home <path>` | 使用非默认的 Tokenless 状态目录。 |
@@ -89,9 +90,11 @@ Runtime browser 可选值为 `chrome`、`chrome-for-testing`、`chromium`、`edg
 
 ```bash
 tokenless help
+tokenless run --help
+tokenless profiles status --help
 ```
 
-Tokenless 当前不提供逐命令的 `--help`；完整命令清单以本文档为准。
+在任意命令或子命令后使用 `-h` 或 `--help`，可以在执行工作前打印其接受的选项。
 
 ### `tokenless --version`
 

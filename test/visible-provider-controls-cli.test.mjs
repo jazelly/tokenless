@@ -38,6 +38,7 @@ test('provider control commands validate generic model and effort labels while k
       {
         args: ['provider-controls', '--provider', 'gemini', '--model', 'Flash'],
         code: 'controls_unsupported_for_action',
+        usage: true,
       },
       {
         args: ['chatgpt-configure', '--provider', 'gemini', '--model', 'Flash'],
@@ -48,6 +49,11 @@ test('provider control commands validate generic model and effort labels while k
       assert.equal(completed.exitCode, 1, `${completed.stderr}\n${completed.stdout}`)
       const payload = JSON.parse(completed.stdout)
       assert.equal(payload.error.code, fixture.code)
+      if (fixture.usage) {
+        assert.deepEqual(payload.error.usage.invalidOptions, ['--model'])
+        assert.ok(payload.error.usage.usage.some((line) => line.startsWith('tokenless provider-controls ')))
+        assert.ok(payload.error.usage.commonOptions.includes('-h, --help'))
+      }
     }
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
