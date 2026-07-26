@@ -2,7 +2,7 @@
 
 Status: proposed | Priority: P0
 
-Depends on: existing managed Playwright, provider action protocol, fixture provenance, and profile lifecycle
+Depends on: [Provider Architecture and Registry](provider-architecture-and-registry.md), existing managed Playwright, provider action protocol, fixture provenance, and profile lifecycle
 
 ## Outcome
 
@@ -79,11 +79,15 @@ Exit: the candidate has an approved origin model, an evidence plan, and no unres
 
 ### Phase 1: Shared Registry Extraction
 
+- Follow the object model, capability composition, registry seam, TypeScript daemon negotiation, and phased migration defined in [Provider Architecture and Registry](provider-architecture-and-registry.md).
 - Replace duplicated provider allowlists with one typed provider registry consumed by config, runtime validation, profile handling, navigation, capture tooling, and tests.
-- Keep provider-specific selectors and behavior inside adapters.
+- Represent every provider as a concrete `BaseProvider` subclass.
+- Keep provider-specific selectors and behavior inside provider-owned capability implementations.
 - Make unsupported capabilities explicit data rather than scattered conditionals.
+- Remove provider-ID conditionals from shared runner, session, account, and action implementations.
+- Keep new provider knowledge in the TypeScript provider registry and out of removed runtime paths.
 
-Exit: adding a provider no longer requires manually synchronizing independent allowlists across the CLI, daemon-facing contracts, helpers, and test matrices.
+Exit: adding a provider requires one provider subclass and one registry entry, does not require shared production-logic changes, and no longer requires manually synchronizing independent allowlists across the CLI, daemon-facing contracts, helpers, and test matrices.
 
 ### Phase 2: First Chinese Provider Baseline
 

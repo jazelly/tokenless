@@ -26,6 +26,23 @@
 
 Never assume that the repository owns or controls an npm scope, package namespace, domain name, organization, registry namespace, or similarly reserved identifier. Before introducing or depending on a scoped package such as `@tokenless/*`, verify that the user controls that namespace or obtain the user's explicit confirmation. Treat an existing scoped package reference as a local workspace implementation detail, not proof that the namespace is available for publication.
 
+## Roadmap lifecycle
+
+The directory containing a roadmap is the source of truth for its lifecycle state:
+
+- `docs/roadmaps/*.md`, excluding `README.md`, contains active roadmaps. An active roadmap is a current product or engineering direction, even when its internal delivery status is still `proposed`.
+- `docs/roadmaps/backlog/*.md`, excluding `README.md`, contains accepted roadmap ideas that are intentionally not active yet.
+- `docs/roadmaps/archived/*.md`, excluding `README.md`, contains roadmaps that are completed, superseded, cancelled, or no longer planned.
+
+Keep `docs/roadmaps/README.md` synchronized with every roadmap addition, rename, move, or lifecycle change. Moving a roadmap between lifecycle directories must also:
+
+- update all repository links to the roadmap;
+- update its lifecycle or disposition note so it does not contradict its directory;
+- record a replacement roadmap when it was superseded; and
+- preserve historical content unless correcting an objective factual error.
+
+Do not use an additional `active/` directory. Root-level roadmap files are the active set. Do not leave roadmap documents outside these three lifecycle locations.
+
 ## Testing
 
 Use focused integration or browser E2E tests for behavior that crosses the Playwright runner, local runtime, or provider web sessions. Do not mock visible-session behavior when a browser proof is feasible.

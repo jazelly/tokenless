@@ -1,15 +1,42 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-07-25
+Status: active product direction | Last reviewed: 2026-07-26
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
 Roadmaps describe intended outcomes, sequencing, evidence, and acceptance criteria. They are not release promises, fixed dates, or compatibility guarantees. A capability becomes supported only after the implementation and real-boundary verification required by the relevant roadmap are complete.
 
-## Roadmap Set
+## Lifecycle and Directory Structure
+
+The roadmap's directory is the source of truth for its lifecycle:
+
+```text
+docs/roadmaps/
+├── README.md             # Index and lifecycle rules
+├── *.md                  # Active roadmaps
+├── backlog/
+│   ├── README.md         # Backlog index
+│   └── *.md              # Accepted but intentionally inactive roadmaps
+└── archived/
+    ├── README.md         # Archive index
+    └── *.md              # Completed, superseded, cancelled, or retired roadmaps
+```
+
+There is intentionally no `active/` directory. Every root-level Markdown file other than this index is active. An active roadmap can still have an internal delivery status such as `proposed`; lifecycle placement describes whether the direction is currently active, while the document status describes its delivery maturity.
+
+Move a roadmap to:
+
+- [`backlog/`](backlog/README.md) when the direction is accepted but intentionally not being pursued;
+- [`archived/`](archived/README.md) when it is completed, superseded, cancelled, or no longer planned; or
+- this directory's root when it becomes active.
+
+Every addition, rename, move, or lifecycle change must update this index, all repository links, and the roadmap's lifecycle or disposition note. A superseded roadmap must link to its replacement. Archived roadmaps retain their historical content.
+
+## Active Roadmaps
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
+| [Provider Architecture and Registry](provider-architecture-and-registry.md) | Establish one TypeScript provider registry and a clean `BaseProvider` plus capability-class seam so new providers do not require shared production-logic changes. | P0 |
 | [Provider Expansion and Parity](provider-expansion.md) | Add high-value Chinese AI web providers and keep all supported providers aligned on a reliable provider-neutral baseline. | P0 |
 | [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
@@ -17,6 +44,11 @@ Roadmaps describe intended outcomes, sequencing, evidence, and acceptance criter
 | [Project Knowledge Graph and Provider Mirroring](project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 
 Priority describes product importance, not a promise that all work proceeds serially.
+
+## Backlog and Archive
+
+- [Backlog](backlog/README.md): no roadmap is currently backlogged.
+- [Archive](archived/README.md): no roadmap is currently archived.
 
 ## How the Roadmaps Fit Together
 
@@ -42,11 +74,12 @@ flowchart LR
 
 The shared contracts should be built before provider-specific shortcuts:
 
-1. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
-2. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
-3. Expand provider coverage using the same visible-session and evidence requirements as the existing adapters.
-4. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
-5. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
+1. Establish the typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes.
+2. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
+3. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
+4. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.
+5. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
+6. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 
