@@ -28,8 +28,8 @@ or Brave profiles, asks for explicit copy consent, creates a separate managed
 profile, reconciles and verifies the local daemon, and checks provider sign-in.
 Ordinary daemon compatibility is based on authenticated protocol negotiation,
 not the CLI and daemon package-version major. Setup also reconciles the verified
-same-home daemon back to the exact packaged runtime when the running or installed
-executable is stale.
+same-home installed daemon runtime back to the exact packaged runtime for the
+next start without stopping a compatible running daemon.
 
 ### Start clean
 
@@ -124,7 +124,7 @@ tokenless run --browser-visibility headless --json
 
 ## Daemon Lifecycle
 
-Outside setup, the CLI reuses an authenticated running daemon when its signed `daemon_accepts` and `daemon_emits` capabilities negotiate the required control-plane and native protocols. Package versions and semantic-version majors are diagnostics only, so a different-major daemon remains reusable when the protocols overlap. During `tokenless setup`, Tokenless performs an exact reconciliation against the current packaged native runtime. It can also replace a protocol-incompatible daemon, but only after the challenge-bound ready proof, process proof, signed capability proof, canonical home, `tokenless.daemon-lifecycle.v1`, and `tokenless.daemon-shutdown-proof.v1` are all verified. Foreign, tampered, different-home, and legacy daemons without the signed lifecycle contract are left running. For an eligible daemon, setup uses the signed, short-lived, single-use server challenge to send a process-bound shutdown proof without transmitting the reusable control token, waits for the configured port listener to disappear, atomically refreshes the installed daemon, and restarts it on the same configured URL.
+Outside setup, the CLI reuses a running daemon after the legacy challenge-bound `tokenless.daemon-ready-proof.v1` validates for the requested Tokenless home and the daemon's `supported_protocols` overlap the CLI's daemon, job, and action protocols. Package versions and semantic-version majors are diagnostics only, so a different-major daemon remains reusable when the protocols overlap. Older daemons without `supported_protocols` use the narrow legacy fallback based on their existing daemon/native protocol fields. During `tokenless setup`, Tokenless may replace a same-home daemon only when verified protocol/native mismatch requires replacement. Version drift never stops a compatible daemon; setup may refresh a stale installed runtime in place for the next start. Foreign, different-home, and unverified listeners are left running.
 
 Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 
@@ -132,7 +132,7 @@ Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 tokenless daemon stop --json
 ```
 
-The command verifies the daemon identity before deriving a one-request shutdown proof; the reusable local control token never crosses HTTP. It never kills a process merely because it occupies the configured loopback port. If the listener is foreign, cannot be verified, or predates graceful shutdown support, Tokenless reports that manual action is required. The daemon binds the exact configured port and does not choose a fallback when that port is occupied.
+The command verifies `/ready` for the same Tokenless home immediately before sending the local control token to the bearer-authenticated shutdown endpoint. It never kills a process merely because it occupies the configured loopback port. If the listener is foreign, cannot be verified, or predates graceful shutdown support, Tokenless reports that manual action is required. The daemon binds the exact configured port and does not choose a fallback when that port is occupied.
 
 ## Managed Profiles
 

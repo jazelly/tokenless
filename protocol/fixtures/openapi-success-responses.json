@@ -13,9 +13,7 @@
         "status": "ok",
         "ready": true,
         "home_dir": "/tmp/tokenless",
-        "pid": 12345,
-        "instance_id": "AAAAAAAAAAAAAAAAAAAAAA",
-        "running_binary_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "pid": 12345
       }
     },
     {
@@ -31,37 +29,22 @@
         "ready": true,
         "home_dir": "/tmp/tokenless",
         "pid": 12345,
-        "instance_id": "AAAAAAAAAAAAAAAAAAAAAA",
-        "running_binary_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "ready_proof_protocol": "tokenless.daemon-ready-proof.v1",
         "ready_challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "ready_proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "daemon_process_proof_protocol": "tokenless.daemon-process-proof.v1",
-        "daemon_process_proof": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
-        "readiness_protocol": "tokenless.daemon-readiness.v2",
-        "daemon_lifecycle_protocol": "tokenless.daemon-lifecycle.v1",
-        "shutdown_challenge": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
-        "daemon_accepts": [
-          "tokenless.daemon.v1",
-          "tokenless.daemon-lifecycle.v1",
-          "tokenless.daemon-shutdown-proof.v1",
-          "tokenless.native.v1",
-          "tokenless.visible-attachment.v1"
-        ],
-        "daemon_emits": [
-          "tokenless.daemon.v1",
-          "tokenless.daemon-readiness.v2",
-          "tokenless.daemon-lifecycle.v1",
-          "tokenless.daemon-ready-proof.v1",
-          "tokenless.daemon-process-proof.v1",
-          "tokenless.daemon-capability-proof.v1",
-          "tokenless.daemon.error.v1",
-          "tokenless.native.v1",
-          "tokenless.native-binary-build-info.v1",
-          "tokenless.visible-attachment.v1"
-        ],
-        "capability_proof_protocol": "tokenless.daemon-capability-proof.v1",
-        "capability_proof": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        "supported_protocols": {
+          "daemon": [
+            "tokenless.daemon.v1"
+          ],
+          "job": [
+            "tokenless.playwright.job.v1",
+            "tokenless.playwright.job.v2"
+          ],
+          "action": [
+            "tokenless.playwright.visible-action.v1",
+            "tokenless.playwright.visible-action.v2"
+          ]
+        }
       }
     },
     {

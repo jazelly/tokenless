@@ -7,8 +7,14 @@
       "id": "tokenless.config.v1",
       "owner": "cli",
       "status": "active",
-      "accepts": ["cli", "daemon"],
-      "emits": ["cli", "daemon"],
+      "accepts": [
+        "cli",
+        "daemon"
+      ],
+      "emits": [
+        "cli",
+        "daemon"
+      ],
       "constants": {
         "rust": "CONFIG_PROTOCOL",
         "typescript": "TOKENLESS_CONFIG_PROTOCOL_VERSION"
@@ -18,9 +24,17 @@
       "id": "tokenless.daemon.v1",
       "owner": "daemon",
       "status": "active",
-      "accepts": ["cli", "daemon"],
-      "emits": ["cli", "daemon"],
-      "artifacts": ["protocol/openapi/tokenless.daemon.v1.openapi.json"],
+      "accepts": [
+        "cli",
+        "daemon"
+      ],
+      "emits": [
+        "cli",
+        "daemon"
+      ],
+      "artifacts": [
+        "protocol/openapi/tokenless.daemon.v1.openapi.json"
+      ],
       "constants": {
         "rust": "DAEMON_PROTOCOL",
         "typescript": "DAEMON_PROTOCOL"
@@ -30,8 +44,13 @@
       "id": "tokenless.daemon.error.v1",
       "owner": "daemon",
       "status": "active",
-      "accepts": ["cli", "daemon"],
-      "emits": ["daemon"],
+      "accepts": [
+        "cli",
+        "daemon"
+      ],
+      "emits": [
+        "daemon"
+      ],
       "artifacts": [
         "protocol/openapi/tokenless.daemon.v1.openapi.json",
         "protocol/schemas/daemon-error.v1.schema.json"
@@ -45,92 +64,30 @@
       "id": "tokenless.daemon-ready-proof.v1",
       "owner": "daemon",
       "status": "active",
-      "accepts": ["cli"],
-      "emits": ["daemon"],
-      "artifacts": ["protocol/openapi/tokenless.daemon.v1.openapi.json"],
+      "accepts": [
+        "cli"
+      ],
+      "emits": [
+        "daemon"
+      ],
+      "artifacts": [
+        "protocol/openapi/tokenless.daemon.v1.openapi.json"
+      ],
       "constants": {
         "rust": "DAEMON_READY_PROOF_PROTOCOL",
         "typescript": "DAEMON_READY_PROOF_PROTOCOL"
       }
     },
     {
-      "id": "tokenless.daemon-readiness.v2",
-      "owner": "daemon",
-      "status": "active",
-      "accepts": ["cli"],
-      "emits": ["daemon"],
-      "artifacts": [
-        "protocol/openapi/tokenless.daemon.v1.openapi.json",
-        "protocol/schemas/daemon-readiness.v2.schema.json"
-      ],
-      "constants": {
-        "rust": "DAEMON_READINESS_PROTOCOL",
-        "typescript": "DAEMON_READINESS_PROTOCOL"
-      }
-    },
-    {
-      "id": "tokenless.daemon-lifecycle.v1",
-      "owner": "daemon",
-      "status": "active",
-      "accepts": ["cli", "daemon"],
-      "emits": ["daemon"],
-      "artifacts": [
-        "protocol/openapi/tokenless.daemon.v1.openapi.json",
-        "protocol/schemas/daemon-lifecycle.v1.schema.json"
-      ],
-      "constants": {
-        "rust": "DAEMON_LIFECYCLE_PROTOCOL",
-        "typescript": "DAEMON_LIFECYCLE_PROTOCOL"
-      }
-    },
-    {
-      "id": "tokenless.daemon-shutdown-proof.v1",
-      "owner": "daemon",
-      "status": "active",
-      "accepts": ["daemon"],
-      "emits": ["cli"],
-      "artifacts": [
-        "protocol/openapi/tokenless.daemon.v1.openapi.json",
-        "protocol/schemas/daemon-shutdown-proof.v1.schema.json"
-      ],
-      "constants": {
-        "rust": "DAEMON_SHUTDOWN_PROOF_PROTOCOL",
-        "typescript": "DAEMON_SHUTDOWN_PROOF_PROTOCOL"
-      }
-    },
-    {
-      "id": "tokenless.daemon-capability-proof.v1",
-      "owner": "daemon",
-      "status": "active",
-      "accepts": ["cli"],
-      "emits": ["daemon"],
-      "artifacts": [
-        "protocol/openapi/tokenless.daemon.v1.openapi.json",
-        "protocol/schemas/daemon-capability-proof.v1.schema.json"
-      ],
-      "constants": {
-        "rust": "DAEMON_CAPABILITY_PROOF_PROTOCOL",
-        "typescript": "DAEMON_CAPABILITY_PROOF_PROTOCOL"
-      }
-    },
-    {
-      "id": "tokenless.daemon-process-proof.v1",
-      "owner": "daemon",
-      "status": "active",
-      "accepts": ["cli"],
-      "emits": ["daemon"],
-      "artifacts": ["protocol/openapi/tokenless.daemon.v1.openapi.json"],
-      "constants": {
-        "rust": "DAEMON_PROCESS_PROOF_PROTOCOL",
-        "typescript": "DAEMON_PROCESS_PROOF_PROTOCOL"
-      }
-    },
-    {
       "id": "tokenless.daemon-process.v1",
       "owner": "cli",
       "status": "active",
-      "accepts": ["cli"],
-      "emits": ["cli"],
+      "accepts": [
+        "cli"
+      ],
+      "emits": [
+        "cli"
+      ],
       "constants": {
         "typescript": "DAEMON_PROCESS_PROTOCOL"
       }
@@ -139,9 +96,16 @@
       "id": "tokenless.native.v1",
       "owner": "daemon",
       "status": "active",
-      "accepts": ["cli", "daemon"],
-      "emits": ["daemon"],
-      "artifacts": ["protocol/openapi/tokenless.daemon.v1.openapi.json"],
+      "accepts": [
+        "cli",
+        "daemon"
+      ],
+      "emits": [
+        "daemon"
+      ],
+      "artifacts": [
+        "protocol/openapi/tokenless.daemon.v1.openapi.json"
+      ],
       "constants": {
         "rust": "NATIVE_PROTOCOL",
         "typescript": "NATIVE_PROTOCOL"
@@ -151,8 +115,12 @@
       "id": "tokenless.native-binary-build-info.v1",
       "owner": "daemon",
       "status": "active",
-      "accepts": ["cli"],
-      "emits": ["daemon"],
+      "accepts": [
+        "cli"
+      ],
+      "emits": [
+        "daemon"
+      ],
       "constants": {
         "rust": "NATIVE_BINARY_BUILD_INFO_PROTOCOL",
         "typescript": "NATIVE_BINARY_BUILD_INFO_PROTOCOL",
@@ -163,8 +131,14 @@
       "id": "tokenless.extension-bridge-state.v1",
       "owner": "daemon",
       "status": "legacy",
-      "accepts": ["cli", "daemon"],
-      "emits": ["daemon", "cli"],
+      "accepts": [
+        "cli",
+        "daemon"
+      ],
+      "emits": [
+        "daemon",
+        "cli"
+      ],
       "constants": {
         "rust": "EXTENSION_BRIDGE_PROTOCOL",
         "typescript": "EXTENSION_BRIDGE_PROTOCOL"
@@ -174,9 +148,15 @@
       "id": "tokenless.playwright.job.v1",
       "owner": "cli",
       "status": "legacy-accepted",
-      "accepts": ["playwright-worker"],
-      "emits": ["playwright-worker"],
-      "artifacts": ["protocol/schemas/playwright-job.v1.schema.json"],
+      "accepts": [
+        "playwright-worker"
+      ],
+      "emits": [
+        "playwright-worker"
+      ],
+      "artifacts": [
+        "protocol/schemas/playwright-job.v1.schema.json"
+      ],
       "constants": {
         "rust": "PLAYWRIGHT_JOB_PROTOCOL_V1",
         "typescript": "MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1"
@@ -186,24 +166,39 @@
       "id": "tokenless.playwright.job.v2",
       "owner": "cli",
       "status": "active",
-      "accepts": ["playwright-worker"],
-      "emits": ["cli", "playwright-worker"],
-      "artifacts": ["protocol/schemas/playwright-job.v2.schema.json"],
+      "accepts": [
+        "playwright-worker"
+      ],
+      "emits": [
+        "cli",
+        "playwright-worker"
+      ],
+      "artifacts": [
+        "protocol/schemas/playwright-job.v2.schema.json"
+      ],
       "constants": {
         "rust": "PLAYWRIGHT_JOB_PROTOCOL_V2",
         "typescript": "MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2"
       },
       "aliases": {
-        "typescript": ["MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION"]
+        "typescript": [
+          "MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION"
+        ]
       }
     },
     {
       "id": "tokenless.playwright.visible-action.v1",
       "owner": "cli",
       "status": "legacy-accepted",
-      "accepts": ["playwright-worker"],
-      "emits": ["playwright-worker"],
-      "artifacts": ["protocol/schemas/visible-action.v1.schema.json"],
+      "accepts": [
+        "playwright-worker"
+      ],
+      "emits": [
+        "playwright-worker"
+      ],
+      "artifacts": [
+        "protocol/schemas/visible-action.v1.schema.json"
+      ],
       "constants": {
         "rust": "VISIBLE_ACTION_PROTOCOL_V1",
         "typescript": "VISIBLE_ACTION_PROTOCOL_VERSION_V1"
@@ -213,24 +208,42 @@
       "id": "tokenless.playwright.visible-action.v2",
       "owner": "cli",
       "status": "active",
-      "accepts": ["playwright-worker"],
-      "emits": ["cli", "playwright-worker"],
-      "artifacts": ["protocol/schemas/visible-action.v2.schema.json"],
+      "accepts": [
+        "playwright-worker"
+      ],
+      "emits": [
+        "cli",
+        "playwright-worker"
+      ],
+      "artifacts": [
+        "protocol/schemas/visible-action.v2.schema.json"
+      ],
       "constants": {
         "rust": "VISIBLE_ACTION_PROTOCOL_V2",
         "typescript": "VISIBLE_ACTION_PROTOCOL_VERSION_V2"
       },
       "aliases": {
-        "typescript": ["VISIBLE_ACTION_PROTOCOL_VERSION"]
+        "typescript": [
+          "VISIBLE_ACTION_PROTOCOL_VERSION"
+        ]
       }
     },
     {
       "id": "tokenless.visible-attachment.v1",
       "owner": "cli",
       "status": "active",
-      "accepts": ["cli", "playwright-worker", "daemon"],
-      "emits": ["cli", "playwright-worker"],
-      "artifacts": ["protocol/schemas/visible-action.v2.schema.json"],
+      "accepts": [
+        "cli",
+        "playwright-worker",
+        "daemon"
+      ],
+      "emits": [
+        "cli",
+        "playwright-worker"
+      ],
+      "artifacts": [
+        "protocol/schemas/visible-action.v2.schema.json"
+      ],
       "constants": {
         "rust": "VISIBLE_ATTACHMENT_PROTOCOL",
         "typescript": "VISIBLE_ATTACHMENT_PROTOCOL_VERSION"
@@ -240,8 +253,12 @@
       "id": "tokenless.native-package.v1",
       "owner": "cli",
       "status": "active",
-      "accepts": ["cli"],
-      "emits": ["cli"],
+      "accepts": [
+        "cli"
+      ],
+      "emits": [
+        "cli"
+      ],
       "constants": {
         "typescript": "NATIVE_PLATFORM_PACKAGE_PROTOCOL",
         "javascript": "NATIVE_PLATFORM_PACKAGE_PROTOCOL"
@@ -251,8 +268,12 @@
       "id": "tokenless.playwright.runner-checkpoint.v1",
       "owner": "playwright-worker",
       "status": "active",
-      "accepts": ["playwright-worker"],
-      "emits": ["playwright-worker"],
+      "accepts": [
+        "playwright-worker"
+      ],
+      "emits": [
+        "playwright-worker"
+      ],
       "constants": {
         "rust": "RUNNER_CHECKPOINT_PROTOCOL",
         "typescript": "RUNNER_CHECKPOINT_PROTOCOL"
@@ -262,8 +283,12 @@
       "id": "tokenless.playwright.runner-session.v1",
       "owner": "cli",
       "status": "active",
-      "accepts": ["cli"],
-      "emits": ["cli"],
+      "accepts": [
+        "cli"
+      ],
+      "emits": [
+        "cli"
+      ],
       "constants": {
         "typescript": "RUNNER_SESSION_PROTOCOL"
       }
@@ -271,37 +296,34 @@
     {
       "id": "tokenless.playwright.runner-heartbeat.v1",
       "owner": "cli",
-      "status": "legacy-accepted",
-      "accepts": ["cli"],
-      "emits": ["cli"],
-      "constants": {
-        "typescript": "RUNNER_HEARTBEAT_PROTOCOL_V1"
-      }
-    },
-    {
-      "id": "tokenless.playwright.runner-heartbeat.v2",
-      "owner": "cli",
       "status": "active",
-      "accepts": ["cli", "daemon"],
-      "emits": ["cli"],
-      "artifacts": [
-        "protocol/openapi/tokenless.daemon.v1.openapi.json",
-        "protocol/schemas/runner-heartbeat.v2.schema.json"
+      "accepts": [
+        "cli"
+      ],
+      "emits": [
+        "cli"
       ],
       "constants": {
-        "rust": "RUNNER_HEARTBEAT_PROTOCOL",
-        "typescript": "RUNNER_HEARTBEAT_PROTOCOL_V2"
+        "typescript": "RUNNER_HEARTBEAT_PROTOCOL_V1"
       },
       "aliases": {
-        "typescript": ["RUNNER_HEARTBEAT_PROTOCOL"]
+        "typescript": [
+          "RUNNER_HEARTBEAT_PROTOCOL"
+        ]
       }
     },
     {
       "id": "tokenless.playwright.user-handover.v1",
       "owner": "playwright-worker",
       "status": "active",
-      "accepts": ["cli", "daemon", "playwright-worker"],
-      "emits": ["playwright-worker"],
+      "accepts": [
+        "cli",
+        "daemon",
+        "playwright-worker"
+      ],
+      "emits": [
+        "playwright-worker"
+      ],
       "constants": {
         "rust": "USER_HANDOVER_PROTOCOL",
         "typescript": "USER_HANDOVER_PROTOCOL"
@@ -311,8 +333,12 @@
       "id": "tokenless.daemon-snapshot.v1",
       "owner": "cli",
       "status": "active",
-      "accepts": ["cli"],
-      "emits": ["cli"],
+      "accepts": [
+        "cli"
+      ],
+      "emits": [
+        "cli"
+      ],
       "constants": {
         "typescript": "DAEMON_SNAPSHOT_PROTOCOL"
       }
@@ -321,8 +347,12 @@
       "id": "tokenless.daemon-task-state.v1",
       "owner": "cli",
       "status": "active",
-      "accepts": ["cli"],
-      "emits": ["cli"],
+      "accepts": [
+        "cli"
+      ],
+      "emits": [
+        "cli"
+      ],
       "constants": {
         "typescript": "DAEMON_TASK_STATE_PROTOCOL"
       }
@@ -331,8 +361,12 @@
       "id": "tokenless.release-pending.v1",
       "owner": "release",
       "status": "active",
-      "accepts": ["release"],
-      "emits": ["release"],
+      "accepts": [
+        "release"
+      ],
+      "emits": [
+        "release"
+      ],
       "constants": {
         "typescript": "RELEASE_PENDING_PROTOCOL",
         "javascript": "RELEASE_PENDING_PROTOCOL"

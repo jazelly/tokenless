@@ -3,7 +3,7 @@
   "info": {
     "title": "Tokenless daemon HTTP API",
     "version": "1.0.0",
-    "description": "Composite local loopback control-plane API. Core job control is tokenless.daemon.v1; readiness, lifecycle, shutdown proof, errors, jobs, and actions are independently versioned and must be negotiated where applicable."
+    "description": "Composite local loopback control-plane API. Core job control is tokenless.daemon.v1. Readiness uses the legacy challenge-bound daemon-ready proof v1 plus advisory supported_protocols negotiation data."
   },
   "servers": [
     {
@@ -622,18 +622,12 @@
     "/control/shutdown": {
       "post": {
         "operationId": "shutdownDaemon",
-        "summary": "Request graceful daemon shutdown using a challenge-bound proof without transmitting the control token",
-        "security": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DaemonShutdownProofV1"
-              }
-            }
+        "summary": "Request graceful daemon shutdown using bearer authentication",
+        "security": [
+          {
+            "controlBearer": []
           }
-        },
+        ],
         "responses": {
           "200": {
             "description": "Shutdown accepted",
@@ -669,7 +663,7 @@
       "controlBearer": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Bearer token read from the daemon home control token file. /health and /ready are public challenge endpoints; /control/shutdown uses a dedicated challenge-bound HMAC request proof."
+        "description": "Bearer token read from the daemon home control token file. /health and /ready are public challenge endpoints; /control/shutdown uses bearer authentication after the CLI verifies /ready for the same home."
       }
     },
     "parameters": {
@@ -845,12 +839,19 @@
       },
       "DaemonErrorEnvelopeV1": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "additionalProperties": false,
         "properties": {
           "error": {
             "type": "object",
-            "required": ["protocol", "code", "message", "retryable"],
+            "required": [
+              "protocol",
+              "code",
+              "message",
+              "retryable"
+            ],
             "additionalProperties": false,
             "properties": {
               "protocol": {
@@ -877,12 +878,16 @@
       },
       "LegacyDaemonErrorEnvelope": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "additionalProperties": false,
         "properties": {
           "error": {
             "type": "object",
-            "required": ["message"],
+            "required": [
+              "message"
+            ],
             "additionalProperties": true,
             "properties": {
               "message": {
@@ -903,9 +908,7 @@
           "status",
           "ready",
           "home_dir",
-          "pid",
-          "instance_id",
-          "running_binary_hash"
+          "pid"
         ],
         "additionalProperties": false,
         "properties": {
@@ -935,14 +938,6 @@
           "pid": {
             "type": "integer",
             "minimum": 1
-          },
-          "instance_id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "running_binary_hash": {
-            "type": "string",
-            "pattern": "^[a-fA-F0-9]{64}$"
           }
         }
       },
@@ -957,20 +952,10 @@
           "ready",
           "home_dir",
           "pid",
-          "instance_id",
-          "running_binary_hash",
           "ready_proof_protocol",
           "ready_challenge",
           "ready_proof",
-          "daemon_process_proof_protocol",
-          "daemon_process_proof",
-          "readiness_protocol",
-          "daemon_lifecycle_protocol",
-          "shutdown_challenge",
-          "daemon_accepts",
-          "daemon_emits",
-          "capability_proof_protocol",
-          "capability_proof"
+          "supported_protocols"
         ],
         "additionalProperties": false,
         "properties": {
@@ -1001,14 +986,6 @@
             "type": "integer",
             "minimum": 1
           },
-          "instance_id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "running_binary_hash": {
-            "type": "string",
-            "pattern": "^[a-fA-F0-9]{64}$"
-          },
           "ready_proof_protocol": {
             "const": "tokenless.daemon-ready-proof.v1"
           },
@@ -1020,38 +997,8 @@
             "type": "string",
             "minLength": 1
           },
-          "daemon_process_proof_protocol": {
-            "const": "tokenless.daemon-process-proof.v1"
-          },
-          "daemon_process_proof": {
-            "type": "string",
-            "minLength": 1
-          },
-          "readiness_protocol": {
-            "const": "tokenless.daemon-readiness.v2"
-          },
-          "daemon_lifecycle_protocol": {
-            "const": "tokenless.daemon-lifecycle.v1"
-          },
-          "shutdown_challenge": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{43}$"
-          },
-          "daemon_accepts": {
-            "$ref": "#/components/schemas/ProtocolList"
-          },
-          "daemon_emits": {
-            "$ref": "#/components/schemas/ProtocolList"
-          },
-          "worker_capabilities": {
-            "$ref": "#/components/schemas/RunnerHeartbeatV2"
-          },
-          "capability_proof_protocol": {
-            "const": "tokenless.daemon-capability-proof.v1"
-          },
-          "capability_proof": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{43}$"
+          "supported_protocols": {
+            "$ref": "#/components/schemas/SupportedProtocols"
           }
         }
       },
@@ -1063,105 +1010,23 @@
         },
         "uniqueItems": true
       },
-      "DaemonLifecycleV1": {
-        "type": "object",
-        "required": ["protocol", "ready", "shutdown"],
-        "additionalProperties": false,
-        "properties": {
-          "protocol": {
-            "const": "tokenless.daemon-lifecycle.v1"
-          },
-          "ready": {
-            "type": "object",
-            "required": ["method", "path", "authentication", "proof_protocol"],
-            "additionalProperties": false,
-            "properties": {
-              "method": {
-                "const": "GET"
-              },
-              "path": {
-                "const": "/ready"
-              },
-              "authentication": {
-                "const": "challenge-bound-hmac-control-token"
-              },
-              "proof_protocol": {
-                "const": "tokenless.daemon-capability-proof.v1"
-              }
-            }
-          },
-          "shutdown": {
-            "type": "object",
-            "required": ["method", "path", "authentication", "proof_protocol", "success_status", "error_protocol"],
-            "additionalProperties": false,
-            "properties": {
-              "method": {
-                "const": "POST"
-              },
-              "path": {
-                "const": "/control/shutdown"
-              },
-              "authentication": {
-                "const": "challenge-bound-hmac-control-token"
-              },
-              "proof_protocol": {
-                "const": "tokenless.daemon-shutdown-proof.v1"
-              },
-              "success_status": {
-                "const": "shutting_down"
-              },
-              "error_protocol": {
-                "const": "tokenless.daemon.error.v1"
-              }
-            }
-          }
-        }
-      },
-      "RunnerHeartbeatV2": {
-        "type": "object",
-        "required": [
-          "protocol",
-          "session_id",
-          "pid",
-          "observed_at",
-          "expires_at",
-          "accepts",
-          "emits"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "protocol": {
-            "const": "tokenless.playwright.runner-heartbeat.v2"
-          },
-          "session_id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "pid": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "observed_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "expires_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "accepts": {
-            "$ref": "#/components/schemas/ProtocolList"
-          },
-          "emits": {
-            "$ref": "#/components/schemas/ProtocolList"
-          }
-        }
-      },
       "ExecutionBackend": {
-        "enum": ["legacy_extension", "playwright"]
+        "enum": [
+          "legacy_extension",
+          "playwright"
+        ]
       },
       "JobStatus": {
-        "enum": ["queued", "claimed", "running", "waiting_for_user", "succeeded", "failed", "canceled", "timed_out"]
+        "enum": [
+          "queued",
+          "claimed",
+          "running",
+          "waiting_for_user",
+          "succeeded",
+          "failed",
+          "canceled",
+          "timed_out"
+        ]
       },
       "JobView": {
         "type": "object",
@@ -1189,7 +1054,10 @@
             "$ref": "#/components/schemas/ExecutionBackend"
           },
           "profile_id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "provider": {
             "type": "string",
@@ -1249,7 +1117,10 @@
             "$ref": "#/components/schemas/ExecutionBackend"
           },
           "profile_id": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "provider": {
             "type": "string",
@@ -1280,7 +1151,11 @@
       },
       "CreateJobRequest": {
         "type": "object",
-        "required": ["provider", "action", "request_json"],
+        "required": [
+          "provider",
+          "action",
+          "request_json"
+        ],
         "additionalProperties": false,
         "properties": {
           "provider": {
@@ -1312,7 +1187,9 @@
       },
       "ClaimTokenRequest": {
         "type": "object",
-        "required": ["claim_token"],
+        "required": [
+          "claim_token"
+        ],
         "additionalProperties": false,
         "properties": {
           "claim_token": {
@@ -1323,7 +1200,9 @@
       },
       "CompleteJobRequest": {
         "type": "object",
-        "required": ["claim_token"],
+        "required": [
+          "claim_token"
+        ],
         "additionalProperties": false,
         "properties": {
           "claim_token": {
@@ -1335,22 +1214,32 @@
         },
         "oneOf": [
           {
-            "required": ["result_json"],
+            "required": [
+              "result_json"
+            ],
             "not": {
-              "required": ["error_json"]
+              "required": [
+                "error_json"
+              ]
             }
           },
           {
-            "required": ["error_json"],
+            "required": [
+              "error_json"
+            ],
             "not": {
-              "required": ["result_json"]
+              "required": [
+                "result_json"
+              ]
             }
           }
         ]
       },
       "ResumeJobRequest": {
         "type": "object",
-        "required": ["browser_visibility"],
+        "required": [
+          "browser_visibility"
+        ],
         "additionalProperties": false,
         "properties": {
           "browser_visibility": {
@@ -1360,7 +1249,10 @@
       },
       "WaitingForUserRequest": {
         "type": "object",
-        "required": ["claim_token", "blocker_json"],
+        "required": [
+          "claim_token",
+          "blocker_json"
+        ],
         "additionalProperties": false,
         "properties": {
           "claim_token": {
@@ -1372,7 +1264,10 @@
       },
       "CheckpointJobRequest": {
         "type": "object",
-        "required": ["claim_token", "checkpoint_json"],
+        "required": [
+          "claim_token",
+          "checkpoint_json"
+        ],
         "additionalProperties": false,
         "properties": {
           "claim_token": {
@@ -1384,7 +1279,11 @@
       },
       "ParkJobRequest": {
         "type": "object",
-        "required": ["claim_token", "blocker_json", "checkpoint_json"],
+        "required": [
+          "claim_token",
+          "blocker_json",
+          "checkpoint_json"
+        ],
         "additionalProperties": false,
         "properties": {
           "claim_token": {
@@ -1402,51 +1301,11 @@
           "reason": {}
         }
       },
-      "DaemonShutdownProofV1": {
-        "type": "object",
-        "required": [
-          "protocol",
-          "challenge",
-          "home_dir",
-          "pid",
-          "instance_id",
-          "running_binary_hash",
-          "proof"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "protocol": {
-            "const": "tokenless.daemon-shutdown-proof.v1"
-          },
-          "challenge": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{43}$"
-          },
-          "home_dir": {
-            "type": "string",
-            "minLength": 1
-          },
-          "pid": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "instance_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{22}$"
-          },
-          "running_binary_hash": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "proof": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{43}$"
-          }
-        }
-      },
       "ClaimNextResponse": {
         "type": "object",
-        "required": ["job"],
+        "required": [
+          "job"
+        ],
         "additionalProperties": false,
         "properties": {
           "job": {
@@ -1463,7 +1322,11 @@
       },
       "ShutdownResponse": {
         "type": "object",
-        "required": ["ok", "status", "pid"],
+        "required": [
+          "ok",
+          "status",
+          "pid"
+        ],
         "additionalProperties": false,
         "properties": {
           "ok": {
@@ -1475,6 +1338,26 @@
           "pid": {
             "type": "integer",
             "minimum": 1
+          }
+        }
+      },
+      "SupportedProtocols": {
+        "type": "object",
+        "required": [
+          "daemon",
+          "job",
+          "action"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "daemon": {
+            "$ref": "#/components/schemas/ProtocolList"
+          },
+          "job": {
+            "$ref": "#/components/schemas/ProtocolList"
+          },
+          "action": {
+            "$ref": "#/components/schemas/ProtocolList"
           }
         }
       }

@@ -2,4 +2,4 @@
 "tokenless": patch
 ---
 
-Negotiate explicit daemon protocols independently from package versions, and add `tokenless daemon stop` with capability-verified, challenge-bound graceful self-shutdown.
+Negotiate daemon reuse independently from package versions, and add `tokenless daemon stop` with same-home ready verification followed by bearer-authenticated graceful self-shutdown.

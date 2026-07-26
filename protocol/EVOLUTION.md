@@ -5,7 +5,7 @@
 Rules:
 
 - Protocol identifiers are immutable. Introduce a new `.vN` identifier for wire-incompatible changes.
-- A semantic change must bump the protocol that owns that semantic boundary. The daemon API is layered: core job control, readiness proofs, lifecycle control, error envelopes, jobs, and actions are independently versioned and negotiated. A parent/core identifier never implies support for an optional child protocol.
+- A semantic change must bump the protocol that owns that semantic boundary. The daemon API is layered: core job control, ready identity proof, supported protocol negotiation, bearer-authenticated control mutations, error envelopes, jobs, and actions are independently versioned where they have separate wire contracts. A parent/core identifier never implies support for an optional child protocol.
 - Adding an optional response field or a new independently optional endpoint may keep the current protocol identifier when existing consumers can safely ignore it.
 - Adding a required field, making an optional field required, or changing an existing field or endpoint's semantics requires a new protocol major identifier.
 - Removing or renaming a field or endpoint requires a new protocol major identifier. Keep the old artifact available while any supported consumer still negotiates it.
