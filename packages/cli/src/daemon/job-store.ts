@@ -461,6 +461,10 @@ export class JobStore {
     const serializedResume = stringifyJson(resumeJson)
     return this.transaction(() => {
       const job = this.getJobWithoutRecovery(jobId)
+      const checkpointPresent = this.exists(
+        'SELECT EXISTS (SELECT 1 FROM jobs WHERE job_id = ? AND checkpoint_json IS NOT NULL) AS present',
+        jobId
+      )
       if (job.execution_backend !== 'playwright') {
         throw invalidInput('only playwright jobs can be resumed with browser visibility')
       }
@@ -470,7 +474,7 @@ export class JobStore {
       ) {
         return job
       }
-      if (job.status !== 'waiting_for_user' || job.checkpoint_json === null || job.claim_expires_at_ms !== null) {
+      if (job.status !== 'waiting_for_user' || !checkpointPresent || job.claim_expires_at_ms !== null) {
         throw invalidJobState(job.job_id, 'parked playwright waiting_for_user', job.status)
       }
       const result = this.run(

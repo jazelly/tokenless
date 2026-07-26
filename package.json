@@ -15,6 +15,7 @@
     "release:version": "node scripts/release/version.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node dist/scripts/test-all.mjs",
+    "test:ts-daemon-conformance": "npm run build && node --test --test-concurrency=1 test/ts-daemon-conformance.test.mjs",
     "test:e2e:protocol-cross-version": "npm run build && node scripts/run-protocol-cross-version-e2e.mjs",
     "test:e2e": "npm run build && node --test --test-concurrency=1 test/live-setup-auth-report.e2e.mjs test/live-provider-guest-access.e2e.mjs test/live-managed-playwright-prompt-actions.e2e.mjs test/live-managed-playwright.e2e.mjs",
     "test:e2e:live-managed-playwright-m1": "npm run build && node --test --test-concurrency=1 test/live-managed-playwright-prompt-actions.e2e.mjs",
