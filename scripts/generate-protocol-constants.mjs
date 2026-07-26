@@ -266,17 +266,21 @@ async function validateOpenApiArtifact({ artifactPath, parsed }) {
   if (!isRecord(parsed.components?.securitySchemes?.controlBearer)) {
     throw new Error(`${artifactPath} must define controlBearer security scheme`)
   }
-  for (const publicPath of ['/health', '/ready', '/control/shutdown']) {
+  for (const publicPath of ['/health', '/ready']) {
     const operation = getSingleOperation(parsed.paths[publicPath], publicPath)
     if (JSON.stringify(operation.security) !== '[]') {
       throw new Error(`${artifactPath} ${publicPath} must explicitly opt out of bearer auth`)
     }
   }
-  for (const protectedPath of expectedPaths.filter((entry) => !['/health', '/ready', '/control/shutdown'].includes(entry))) {
+  for (const protectedPath of expectedPaths.filter((entry) => !['/health', '/ready'].includes(entry))) {
     const pathItem = parsed.paths[protectedPath]
     for (const [method, operation] of Object.entries(pathItem)) {
       if (!HTTP_METHODS.has(method)) continue
-      if (operation.security !== undefined) {
+      if (protectedPath === '/control/shutdown') {
+        if (JSON.stringify(operation.security) !== JSON.stringify([{ controlBearer: [] }])) {
+          throw new Error(`${artifactPath} ${method.toUpperCase()} ${protectedPath} must declare bearer auth`)
+        }
+      } else if (operation.security !== undefined) {
         throw new Error(`${artifactPath} ${method.toUpperCase()} ${protectedPath} must inherit root bearer auth`)
       }
     }

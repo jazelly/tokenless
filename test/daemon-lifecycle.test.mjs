@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash, createHmac, randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
@@ -14,7 +14,7 @@ const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const packageVersion = JSON.parse(fs.readFileSync(path.join(cliDir, 'package.json'), 'utf8')).version
 
-test('ensureDaemonReady installs the packaged daemon and reports the running version and process proof', async () => {
+test('ensureDaemonReady installs the packaged daemon and reports supported protocols', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-first-install-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   let pid
@@ -24,40 +24,33 @@ test('ensureDaemonReady installs the packaged daemon and reports the running ver
     pid = ready.pid
     assert.equal(ready.started, true)
     assert.equal(ready.identityVerified, true)
-    assert.equal(ready.processIdentityVerified, true)
-    assert.equal(ready.capabilityProofVerified, true)
     assert.equal(ready.body.version, packageVersion)
-    assert.equal(ready.body.daemon_process_proof_protocol, runtime.DAEMON_PROCESS_PROOF_PROTOCOL)
-    assert.equal(ready.body.daemon_process_identity_error, undefined)
-    assert.equal(ready.body.readiness_protocol, runtime.DAEMON_READINESS_PROTOCOL)
-    assert.equal(ready.body.daemon_lifecycle_protocol, runtime.DAEMON_LIFECYCLE_PROTOCOL)
-    assert.equal(ready.body.capability_proof_protocol, runtime.DAEMON_CAPABILITY_PROOF_PROTOCOL)
-    assert.equal(ready.body.worker_capabilities, undefined)
-    assert.deepEqual(ready.lifecycleCapabilities.daemonAccepts, [
-      runtime.DAEMON_PROTOCOL,
-      runtime.DAEMON_LIFECYCLE_PROTOCOL,
-      runtime.DAEMON_SHUTDOWN_PROOF_PROTOCOL,
-      runtime.NATIVE_PROTOCOL,
-      'tokenless.visible-attachment.v1',
-    ])
-    assert.equal(ready.lifecycleCapabilities.workerCapabilities, null)
+    assert.deepEqual(ready.supportedProtocols, {
+      daemon: [runtime.DAEMON_PROTOCOL],
+      job: [
+        runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+        runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+      ],
+      action: [
+        runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+        runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+      ],
+    })
     assert.equal(Number.isInteger(ready.body.pid), true)
     assert.equal(ready.body.pid, pid)
-    assert.match(ready.body.running_binary_hash, /^[0-9a-f]{64}$/)
     assert.equal(fs.existsSync(runtime.installedRustBinaryPath(homeDir)), true)
 
     const inspection = await runtime.inspectManagedRuntime(homeDir)
     assert.equal(inspection.ok, true)
     assert.equal(inspection.packaged.buildInfo.version, packageVersion)
     assert.equal(inspection.installed.matchesBundled, true)
-    assert.equal(ready.body.running_binary_hash, inspection.packaged.hash)
   } finally {
     if (pid) await stopPid(pid)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('concurrent ensureDaemonReady serializes one fresh daemon start under the lifecycle lock', async () => {
+test('concurrent ensureDaemonReady serializes one fresh daemon start under the daemon start lock', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-concurrent-lock-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const runtime = await importCli()
@@ -76,36 +69,6 @@ test('concurrent ensureDaemonReady serializes one fresh daemon start under the l
     assert.equal(fs.existsSync(lockPath), false)
   } finally {
     if (startedPid) await stopPid(startedPid)
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('running daemon reports the startup-frozen executable hash after its binary path is replaced', async () => {
-  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-frozen-hash-')))
-  const daemonUrl = `http://127.0.0.1:${await freePort()}`
-  let pid
-  try {
-    const runtime = await importCli()
-    const inspection = await runtime.inspectManagedRuntime(homeDir)
-    const binaryPath = path.join(homeDir, `tokenless-daemon-copy${process.platform === 'win32' ? '.exe' : ''}`)
-    fs.copyFileSync(inspection.packaged.path, binaryPath)
-    if (process.platform !== 'win32') fs.chmodSync(binaryPath, 0o755)
-    const startupHash = fileHash(binaryPath)
-    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, binaryPath, timeoutMs: 10_000 })
-    pid = ready.pid
-    assert.equal(ready.body.running_binary_hash, startupHash)
-
-    const replacement = `${binaryPath}.replacement`
-    fs.writeFileSync(replacement, Buffer.concat([fs.readFileSync(binaryPath), Buffer.from('\nreplacement\n')]))
-    if (process.platform !== 'win32') fs.chmodSync(replacement, 0o755)
-    fs.renameSync(replacement, binaryPath)
-    assert.notEqual(fileHash(binaryPath), startupHash)
-
-    const reprobe = await runtime.probeDaemonReady({ homeDir, daemonUrl })
-    assert.equal(reprobe.ok, true)
-    assert.equal(reprobe.body.running_binary_hash, startupHash)
-  } finally {
-    if (pid) await stopPid(pid)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -144,7 +107,7 @@ test('daemon stop is idempotent when no daemon is listening', async () => {
   }
 })
 
-test('daemon stop uses proof-authenticated self-shutdown for a verified daemon', async () => {
+test('daemon stop uses bearer-authenticated self-shutdown for a verified daemon', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-self-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   let pid
@@ -167,59 +130,40 @@ test('daemon stop uses proof-authenticated self-shutdown for a verified daemon',
   }
 })
 
-test('daemon shutdown proof rejects tampering and replay against a restarted process', async () => {
-  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-shutdown-proof-')))
+test('daemon shutdown endpoint uses bearer authentication', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-bearer-shutdown-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   let pid
   try {
     const runtime = await importCli()
-    const first = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    pid = first.pid
+    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
+    pid = ready.pid
     const controlToken = await runtime.readDaemonToken({ homeDir })
-    const staleRequest = daemonShutdownProofRequest(runtime, first, controlToken)
-    const tamperedRequest = {
-      ...staleRequest,
-      proof: Buffer.alloc(32, 0xa5).toString('base64url'),
-    }
-    const tampered = await fetch(`${daemonUrl}/control/shutdown`, {
+
+    const missing = await fetch(`${daemonUrl}/control/shutdown`, { method: 'POST' })
+    assert.equal(missing.status, 401)
+    const missingBody = await missing.json()
+    assert.equal(missingBody.error.protocol, runtime.DAEMON_ERROR_PROTOCOL)
+    assert.equal(missingBody.error.code, 'control_auth_missing')
+
+    const rejected = await fetch(`${daemonUrl}/control/shutdown`, {
       method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(tamperedRequest),
+      headers: { authorization: 'Bearer wrong-token' },
     })
-    assert.equal(tampered.status, 403)
-    const tamperedBody = await tampered.json()
-    assert.equal(tamperedBody.error.protocol, runtime.DAEMON_ERROR_PROTOCOL)
-    assert.equal(tamperedBody.error.code, 'daemon_shutdown_proof_rejected')
-    assert.equal(JSON.stringify(tamperedBody).includes(controlToken), false)
-    assert.equal(JSON.stringify(tamperedBody).includes(tamperedRequest.proof), false)
+    assert.equal(rejected.status, 403)
+    const rejectedBody = await rejected.json()
+    assert.equal(rejectedBody.error.protocol, runtime.DAEMON_ERROR_PROTOCOL)
+    assert.equal(rejectedBody.error.code, 'control_auth_rejected')
+    assert.equal(JSON.stringify(rejectedBody).includes(controlToken), false)
     assert.equal((await runtime.probeDaemonReady({ homeDir, daemonUrl })).ok, true)
 
-    const stopped = await runtime.stopDaemon({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    assert.equal(stopped.status, 'stopped')
-    assert.equal(await pidExited(pid), true)
-
-    const second = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    pid = second.pid
-    assert.notEqual(second.body.instance_id, first.body.instance_id)
-    const replayed = await fetch(`${daemonUrl}/control/shutdown`, {
+    const accepted = await fetch(`${daemonUrl}/control/shutdown`, {
       method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(staleRequest),
+      headers: { authorization: `Bearer ${controlToken}` },
     })
-    assert.equal(replayed.status, 403)
-    const replayedBody = await replayed.json()
-    assert.equal(replayedBody.error.protocol, runtime.DAEMON_ERROR_PROTOCOL)
-    assert.equal(replayedBody.error.code, 'daemon_shutdown_proof_rejected')
-    assert.equal((await runtime.probeDaemonReady({ homeDir, daemonUrl })).ok, true)
-
-    const finalStop = await runtime.stopDaemon({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    assert.equal(finalStop.status, 'stopped')
+    assert.equal(accepted.status, 200)
+    const acceptedBody = await accepted.json()
+    assert.equal(acceptedBody.status, 'shutting_down')
     assert.equal(await pidExited(pid), true)
     pid = undefined
   } finally {
@@ -272,7 +216,7 @@ test('doctor validates an existing managed profile registry without mutating hom
   }
 })
 
-test('ordinary daemon startup reuses a different-major daemon when its signed protocols are compatible', {
+test('ordinary daemon startup reuses a different-major daemon when supported protocols overlap', {
   timeout: 180_000,
 }, async (t) => {
   const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8', timeout: 10_000 })
@@ -319,23 +263,21 @@ test('ordinary daemon startup reuses a different-major daemon when its signed pr
     assert.equal(afterOrdinaryReuse.body.pid, pid)
 
     const ready = await runtime.ensureSetupDaemonRunnable({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    assert.equal(ready.reconciliation.attempted, true)
-    assert.equal(ready.reconciliation.reason, 'version_mismatch')
-    assert.deepEqual(ready.reconciliation.reasons, [
-      'version_mismatch',
-      'running_artifact_mismatch',
-      'installed_artifact_mismatch',
-    ])
+    assert.equal(ready.pid, pid)
+    assert.equal(ready.body.version, incompatibleVersion)
+    assert.equal(ready.reconciliation.action, 'refresh_installed_runtime')
+    assert.equal(ready.reconciliation.reason, 'installed_artifact_mismatch')
+    assert.deepEqual(ready.reconciliation.reasons, ['installed_artifact_mismatch'])
     assert.equal(ready.reconciliation.previous.version, incompatibleVersion)
     assert.equal(ready.reconciliation.previous.major, incompatibleMajor)
-    assert.equal(ready.reconciliation.stopped.status, 'stopped')
-    assert.equal(ready.runningVersion, packageVersion)
-    assert.equal(ready.runningMajor, semanticMajor(packageVersion))
+    assert.equal(ready.reconciliation.previous.pid, pid)
+    assert.equal(ready.reconciliation.stopped, undefined)
+    assert.equal(ready.runningVersion, incompatibleVersion)
+    assert.equal(ready.runningMajor, incompatibleMajor)
     assert.equal(ready.protocolCompatible, true)
-    assert.equal(ready.versionCompatible, true)
+    assert.equal(ready.versionCompatible, false)
     assert.equal(ready.compatibilityPolicy, 'protocol-negotiation')
-    assert.equal(await pidExited(pid), true)
-    pid = ready.pid
+    assert.equal(pidIsAlive(pid), true)
   } finally {
     if (pid) await stopPid(pid)
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -343,7 +285,7 @@ test('ordinary daemon startup reuses a different-major daemon when its signed pr
   }
 })
 
-test('setup safely replaces signed same-home daemons with incompatible daemon or native protocols', {
+test('setup safely replaces verified same-home daemons with incompatible protocols', {
   timeout: 300_000,
 }, async (t) => {
   const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8', timeout: 10_000 })
@@ -360,12 +302,6 @@ test('setup safely replaces signed same-home daemons with incompatible daemon or
       protocol: 'tokenless.daemon.v999',
       code: 'daemon_protocol_mismatch',
     },
-    {
-      name: 'native',
-      constant: 'NATIVE_PROTOCOL',
-      protocol: 'tokenless.native.v999',
-      code: 'native_protocol_mismatch',
-    },
   ]) {
     const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${fixture.name}-protocol-mismatch-home-`)))
     const crateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${fixture.name}-protocol-mismatch-src-`)))
@@ -380,8 +316,6 @@ test('setup safely replaces signed same-home daemons with incompatible daemon or
 
       const mismatch = await waitForProbeCode(runtime, homeDir, daemonUrl, fixture.code)
       assert.equal(mismatch.identityVerified, true)
-      assert.equal(mismatch.processIdentityVerified, true)
-      assert.equal(mismatch.capabilityProofVerified, true)
       assert.equal(mismatch.sameHomeVerified, true)
       assert.equal(mismatch.actualHome, homeDir)
       assert.equal(pidIsAlive(pid), true)
@@ -397,6 +331,7 @@ test('setup safely replaces signed same-home daemons with incompatible daemon or
 
       const ready = await runtime.ensureSetupDaemonRunnable({ homeDir, daemonUrl, timeoutMs: 10_000 })
       assert.equal(ready.reconciliation.attempted, true)
+      assert.equal(ready.reconciliation.action, 'restart_daemon')
       assert.equal(ready.reconciliation.reason, fixture.code)
       assert.equal(ready.reconciliation.reasons.includes(fixture.code), true)
       assert.equal(ready.reconciliation.stopped.status, 'stopped')
@@ -410,48 +345,46 @@ test('setup safely replaces signed same-home daemons with incompatible daemon or
   }
 })
 
-test('setup refuses to stop a protocol-mismatch daemon without the signed lifecycle capability', {
+test('setup refuses to stop a protocol-mismatch daemon from a different home', {
   timeout: 180_000,
 }, async (t) => {
   const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8', timeout: 10_000 })
   if (cargo.error || cargo.status !== 0) {
-    t.skip('cargo is required to build a real lifecycle-negative daemon fixture')
+    t.skip('cargo is required to build a real different-home daemon fixture')
     return
   }
 
-  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-unverified-lifecycle-home-')))
-  const crateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-unverified-lifecycle-src-')))
+  const requestedHomeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-different-home-requested-')))
+  const daemonHomeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-different-home-daemon-')))
+  const crateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-different-home-src-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   let pid
   try {
     const incompatibleBinary = buildDaemonFixture(crateDir, {
       constants: { DAEMON_PROTOCOL: 'tokenless.daemon.v999' },
-      omitLifecycleAdvertisement: true,
     })
-    const child = spawnDaemonFixture(incompatibleBinary, homeDir, daemonUrl)
+    const child = spawnDaemonFixture(incompatibleBinary, daemonHomeDir, daemonUrl)
     pid = child.pid
     const runtime = await importCli()
+    await waitForProbeCode(runtime, daemonHomeDir, daemonUrl, 'daemon_protocol_mismatch')
+    fs.mkdirSync(requestedHomeDir, { recursive: true, mode: 0o700 })
+    fs.copyFileSync(path.join(daemonHomeDir, 'daemon.token'), path.join(requestedHomeDir, 'daemon.token'))
 
-    const mismatch = await waitForProbeCode(runtime, homeDir, daemonUrl, 'daemon_protocol_mismatch')
+    const mismatch = await waitForProbeCode(runtime, requestedHomeDir, daemonUrl, 'daemon_home_mismatch')
     assert.equal(mismatch.identityVerified, true)
-    assert.equal(mismatch.processIdentityVerified, true)
-    assert.equal(mismatch.capabilityProofVerified, true)
-    assert.equal(mismatch.sameHomeVerified, true)
-    assert.equal(mismatch.lifecycleCapabilities.daemonAccepts.includes(runtime.DAEMON_LIFECYCLE_PROTOCOL), false)
-    assert.equal(mismatch.lifecycleCapabilities.daemonEmits.includes(runtime.DAEMON_LIFECYCLE_PROTOCOL), false)
 
     await assert.rejects(
-      runtime.ensureSetupDaemonRunnable({ homeDir, daemonUrl, timeoutMs: 10_000 }),
+      runtime.ensureSetupDaemonRunnable({ homeDir: requestedHomeDir, daemonUrl, timeoutMs: 10_000 }),
       (error) => {
-        assert.equal(error.code, 'daemon_shutdown_unverified')
-        assert.match(error.message, /does not advertise the signed tokenless\.daemon-lifecycle\.v1/)
+        assert.equal(error.code, 'daemon_home_mismatch')
         return true
       }
     )
     assert.equal(pidIsAlive(pid), true)
   } finally {
     if (pid) await stopPid(pid)
-    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(requestedHomeDir, { recursive: true, force: true })
+    fs.rmSync(daemonHomeDir, { recursive: true, force: true })
     fs.rmSync(crateDir, { recursive: true, force: true })
   }
 })
@@ -499,39 +432,30 @@ test('ordinary daemon startup reuses a same-major different-version daemon while
     const differentReady = await waitForReadyVersion(runtime, homeDir, daemonUrl, differentVersion)
     assert.equal(differentReady.ok, true)
     assert.equal(differentReady.actualHome, homeDir)
-    assert.equal(differentReady.body.running_binary_hash, staleInstalledHash)
 
     const ordinaryReady = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
     assert.equal(ordinaryReady.started, false)
     assert.equal(ordinaryReady.pid, pid)
     assert.equal(ordinaryReady.body.version, differentVersion)
-    assert.equal(ordinaryReady.body.running_binary_hash, staleInstalledHash)
 
     const ready = await runtime.ensureSetupDaemonRunnable({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    assert.equal(ready.reconciliation.attempted, true)
-    assert.equal(ready.reconciliation.reason, 'version_mismatch')
-    assert.deepEqual(ready.reconciliation.reasons, [
-      'version_mismatch',
-      'running_artifact_mismatch',
-      'installed_artifact_mismatch',
-    ])
+    assert.equal(ready.pid, pid)
+    assert.equal(ready.body.version, differentVersion)
+    assert.equal(ready.reconciliation.action, 'refresh_installed_runtime')
+    assert.equal(ready.reconciliation.reason, 'installed_artifact_mismatch')
+    assert.deepEqual(ready.reconciliation.reasons, ['installed_artifact_mismatch'])
     assert.equal(ready.reconciliation.previous.version, differentVersion)
     assert.equal(ready.reconciliation.previous.major, differentMajor)
     assert.equal(ready.reconciliation.previous.pid, pid)
-    assert.equal(ready.reconciliation.previous.runningBinaryHash, staleInstalledHash)
-    assert.equal(ready.reconciliation.previous.installedBinaryHash, staleInstalledHash)
-    assert.equal(ready.reconciliation.previous.packagedBinaryHash, currentInspection.packaged.hash)
-    assert.equal(ready.reconciliation.stopped.status, 'stopped')
+    assert.equal(ready.reconciliation.stopped, undefined)
     assert.deepEqual(ready.reconciliation.refreshed, [staleInstalledDaemon])
-    assert.equal(ready.runningVersion, packageVersion)
-    assert.equal(ready.runningMajor, semanticMajor(packageVersion))
+    assert.equal(ready.runningVersion, differentVersion)
+    assert.equal(ready.runningMajor, differentMajor)
     assert.equal(ready.protocolCompatible, true)
-    assert.equal(ready.versionCompatible, true)
+    assert.equal(ready.versionCompatible, false)
     assert.equal(ready.compatibilityPolicy, 'protocol-negotiation')
-    assert.equal(ready.body.running_binary_hash, currentInspection.packaged.hash)
     assert.equal(fileHash(staleInstalledDaemon), currentInspection.packaged.hash)
-    assert.equal(await pidExited(pid), true)
-    pid = ready.pid
+    assert.equal(pidIsAlive(pid), true)
   } finally {
     if (pid) await stopPid(pid)
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -559,7 +483,6 @@ function buildDaemonWithVersion(crateDir, version) {
 function buildDaemonFixture(crateDir, {
   version,
   constants = {},
-  omitLifecycleAdvertisement = false,
 } = {}) {
   fs.cpSync(path.join(root, 'packages/daemon'), crateDir, { recursive: true })
   const manifestPath = path.join(crateDir, 'Cargo.toml')
@@ -575,16 +498,6 @@ function buildDaemonFixture(crateDir, {
     generated = generated.replace(matcher, `pub const ${name}: &str = "${protocol}";`)
   }
   fs.writeFileSync(constantsPath, generated)
-  if (omitLifecycleAdvertisement) {
-    const sourcePath = path.join(crateDir, 'src/lib.rs')
-    let source = fs.readFileSync(sourcePath, 'utf8')
-    for (const functionName of ['daemon_accepts', 'daemon_emits']) {
-      const matcher = new RegExp(`(fn ${functionName}\\(\\) -> Vec<&'static str> \\{[\\s\\S]*?vec!\\[[\\s\\S]*?)        DAEMON_LIFECYCLE_PROTOCOL,\\n`)
-      assert.match(source, matcher)
-      source = source.replace(matcher, '$1')
-    }
-    fs.writeFileSync(sourcePath, source)
-  }
   const build = spawnSync('cargo', [
     'build',
     '--quiet',
@@ -714,36 +627,6 @@ function pidIsAlive(pid) {
 
 function fileHash(file) {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
-}
-
-function daemonShutdownProofRequest(runtime, ready, controlToken) {
-  const challenge = ready.body.shutdown_challenge
-  const fields = [
-    runtime.DAEMON_SHUTDOWN_PROOF_PROTOCOL,
-    challenge,
-    'POST',
-    '/control/shutdown',
-    ready.actualHome,
-    String(ready.body.pid),
-    ready.body.instance_id,
-    ready.body.running_binary_hash,
-  ]
-  const chunks = []
-  for (const field of fields) {
-    const value = Buffer.from(field, 'utf8')
-    const length = Buffer.allocUnsafe(4)
-    length.writeUInt32BE(value.length)
-    chunks.push(length, value)
-  }
-  return {
-    protocol: runtime.DAEMON_SHUTDOWN_PROOF_PROTOCOL,
-    challenge,
-    home_dir: ready.actualHome,
-    pid: ready.body.pid,
-    instance_id: ready.body.instance_id,
-    running_binary_hash: ready.body.running_binary_hash,
-    proof: createHmac('sha256', controlToken).update(Buffer.concat(chunks)).digest('base64url'),
-  }
 }
 
 function snapshotTree(rootDir) {

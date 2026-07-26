@@ -112,19 +112,14 @@ claimed job with `claim_token`. When no queued job matches, the daemon returns
 Missing bearer auth returns `401` JSON. Invalid bearer auth returns `403` JSON.
 Cancellation accepts an empty body or `{ "reason": <structured JSON> }` and
 atomically transitions a queued, claimed, or running job to `canceled`.
-`POST /control/shutdown` does not accept bearer authentication. It requires a
-closed `tokenless.daemon-shutdown-proof.v1` JSON request. Its HMAC-SHA256 input
-is the ordered 4-byte-length-prefixed tuple of protocol, the signed
-server-issued `shutdown_challenge` from `/ready`, `POST`,
-`/control/shutdown`, canonical home, pid, instance id, and the running binary
-SHA-256 from the verified response. Challenges expire after 10 seconds, are
-single-use, and are kept in a bounded 128-entry in-memory registry. A valid request returns
+`POST /control/shutdown` uses the same bearer authentication as other control
+mutations. The CLI verifies `/ready` with the challenge-bound same-home proof
+immediately before sending the token. A valid request returns
 `{ "ok": true, "status": "shutting_down", "pid": <pid> }` before the server
-gracefully exits. Invalid, tampered, or stale-instance proofs are rejected
-without stopping the daemon. The request body is limited to 4096 bytes.
+gracefully exits. Missing bearer auth returns `401`; invalid bearer auth returns
+`403`.
 
 Security note: this remains a loopback-only local control plane. The bearer
-token protects job data and mutations from unrelated local processes. Shutdown
-uses the request proof so the reusable token does not cross HTTP. Neither the
-token nor request proofs should be copied into logs, telemetry, or provider
+token protects job data and mutations from unrelated local processes. Neither
+the token nor ready proofs should be copied into logs, telemetry, or provider
 sessions.

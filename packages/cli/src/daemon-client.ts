@@ -1,11 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { createHmac } from 'node:crypto'
 
-import {
-  DAEMON_ERROR_PROTOCOL,
-  DAEMON_SHUTDOWN_PROOF_PROTOCOL,
-} from './generated/protocol-constants.js'
+import { DAEMON_ERROR_PROTOCOL } from './generated/protocol-constants.js'
 import { tokenlessHome } from './job-store.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
@@ -96,13 +92,6 @@ export type ShutdownDaemonOptions = {
   requestTimeoutMs?: number | undefined
   signal?: AbortSignal | undefined
   controlToken: string
-  identity: {
-    challenge: string
-    homeDir: string
-    pid: number
-    instanceId: string
-    runningBinaryHash: string
-  }
 }
 
 export type ShutdownDaemonResponse = {
@@ -310,40 +299,18 @@ export async function shutdownDaemon({
   requestTimeoutMs,
   signal,
   controlToken,
-  identity,
 }: ShutdownDaemonOptions) {
-  validateShutdownIdentity(identity)
   if (typeof controlToken !== 'string' || !controlToken) {
     throw daemonClientError(
-      'daemon_shutdown_proof_invalid',
-      'A non-empty daemon control token is required to create the shutdown proof.',
+      'daemon_shutdown_token_invalid',
+      'A non-empty daemon control token is required to stop the daemon.',
       false
     )
   }
-  const proof = createHmac('sha256', controlToken)
-    .update(lengthPrefixedMessage([
-      DAEMON_SHUTDOWN_PROOF_PROTOCOL,
-      identity.challenge,
-      'POST',
-      '/control/shutdown',
-      identity.homeDir,
-      String(identity.pid),
-      identity.instanceId,
-      identity.runningBinaryHash,
-    ]))
-    .digest('base64url')
   return daemonRequest<ShutdownDaemonResponse>({
     daemonUrl: explicitDaemonUrl,
     path: '/control/shutdown',
-    body: {
-      protocol: DAEMON_SHUTDOWN_PROOF_PROTOCOL,
-      challenge: identity.challenge,
-      home_dir: identity.homeDir,
-      pid: identity.pid,
-      instance_id: identity.instanceId,
-      running_binary_hash: identity.runningBinaryHash,
-      proof,
-    },
+    token: controlToken,
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -503,39 +470,6 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
-function validateShutdownIdentity(identity: ShutdownDaemonOptions['identity']) {
-  if (
-    !identity ||
-    typeof identity.challenge !== 'string' ||
-    !/^[A-Za-z0-9_-]{43}$/.test(identity.challenge) ||
-    typeof identity.homeDir !== 'string' ||
-    !identity.homeDir ||
-    !Number.isSafeInteger(identity.pid) ||
-    identity.pid <= 0 ||
-    typeof identity.instanceId !== 'string' ||
-    !/^[A-Za-z0-9_-]{22}$/.test(identity.instanceId) ||
-    typeof identity.runningBinaryHash !== 'string' ||
-    !/^[0-9a-f]{64}$/.test(identity.runningBinaryHash)
-  ) {
-    throw daemonClientError(
-      'daemon_shutdown_identity_invalid',
-      'Verified daemon process identity is required to create a shutdown proof.',
-      false
-    )
-  }
-}
-
-function lengthPrefixedMessage(fields: string[]) {
-  const chunks: Buffer[] = []
-  for (const field of fields) {
-    const value = Buffer.from(field, 'utf8')
-    const length = Buffer.allocUnsafe(4)
-    length.writeUInt32BE(value.length)
-    chunks.push(length, value)
-  }
-  return Buffer.concat(chunks)
 }
 
 async function daemonRequest<T>({

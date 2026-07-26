@@ -6,16 +6,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-  RUNNER_CHECKPOINT_PROTOCOL,
   RUNNER_HEARTBEAT_PROTOCOL,
   RUNNER_HEARTBEAT_PROTOCOL_V1,
   RUNNER_SESSION_PROTOCOL,
-  USER_HANDOVER_PROTOCOL,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from '../generated/protocol-constants.js'
 import { tokenlessError } from './errors.js'
 import { withPrivateSqliteWriterLock } from './profiles/sqlite-lock.js'
@@ -66,16 +59,6 @@ type SupervisorSession = {
 
 type SupervisorHeartbeat = {
   protocol: typeof RUNNER_HEARTBEAT_PROTOCOL
-  session_id: string
-  pid: number
-  observed_at: string
-  expires_at: string
-  accepts: string[]
-  emits: string[]
-}
-
-type LegacySupervisorHeartbeat = {
-  protocol: typeof RUNNER_HEARTBEAT_PROTOCOL_V1
   sessionId: string
   pid: number
   updatedAt: string
@@ -223,9 +206,9 @@ async function runnerSupervisorStatusUnlocked(
       heartbeatAt: null,
     }
   }
-  let heartbeat: SupervisorHeartbeat | LegacySupervisorHeartbeat | null
+  let heartbeat: SupervisorHeartbeat | null
   try {
-    heartbeat = await readJson<SupervisorHeartbeat | LegacySupervisorHeartbeat>(markers.heartbeatFile)
+    heartbeat = await readJson<SupervisorHeartbeat>(markers.heartbeatFile)
   } catch (error) {
     if (!isMarkerMalformedError(error)) throw error
     heartbeat = null
@@ -269,9 +252,9 @@ async function runnerSupervisorStatusUnlockedReadOnly(
       heartbeatAt: null,
     }
   }
-  let heartbeat: SupervisorHeartbeat | LegacySupervisorHeartbeat | null
+  let heartbeat: SupervisorHeartbeat | null
   try {
-    heartbeat = await readJsonReadOnly<SupervisorHeartbeat | LegacySupervisorHeartbeat>(markers.heartbeatFile)
+    heartbeat = await readJsonReadOnly<SupervisorHeartbeat>(markers.heartbeatFile)
   } catch (error) {
     if (!isMarkerMalformedError(error)) throw error
     heartbeat = null
@@ -294,16 +277,12 @@ export async function writeRunnerHeartbeat(options: {
   now?: (() => Date) | undefined
 }) {
   const markers = await ensureRunnerMarkersDir(options.homeDir)
-  const observedAt = (options.now ?? (() => new Date()))()
-  const expiresAt = new Date(observedAt.getTime() + RUNNER_HEARTBEAT_FRESHNESS_MS)
+  const updatedAt = (options.now ?? (() => new Date()))()
   await writePrivateJson(markers.heartbeatFile, {
     protocol: RUNNER_HEARTBEAT_PROTOCOL,
-    session_id: options.sessionId,
+    sessionId: options.sessionId,
     pid: options.pid ?? process.pid,
-    observed_at: observedAt.toISOString(),
-    expires_at: expiresAt.toISOString(),
-    accepts: runnerHeartbeatAccepts(),
-    emits: runnerHeartbeatEmits(),
+    updatedAt: updatedAt.toISOString(),
   } satisfies SupervisorHeartbeat)
 }
 
@@ -596,7 +575,7 @@ function isValidSession(session: SupervisorSession) {
 }
 
 function matchingHeartbeatObservedAt(
-  heartbeat: SupervisorHeartbeat | LegacySupervisorHeartbeat | null,
+  heartbeat: SupervisorHeartbeat | null,
   session: SupervisorSession,
   options: RunnerSupervisorOptions
 ) {
@@ -606,16 +585,7 @@ function matchingHeartbeatObservedAt(
       ? heartbeat.updatedAt
       : null
   }
-  if (heartbeat.protocol !== RUNNER_HEARTBEAT_PROTOCOL) return null
-  if (
-    heartbeat.session_id !== session.sessionId ||
-    !isFreshHeartbeatV2(heartbeat, options) ||
-    !sameStringArray(heartbeat.accepts, runnerHeartbeatAccepts()) ||
-    !sameStringArray(heartbeat.emits, runnerHeartbeatEmits())
-  ) {
-    return null
-  }
-  return heartbeat.observed_at
+  return null
 }
 
 function isFreshHeartbeat(updatedAt: string, options: RunnerSupervisorOptions) {
@@ -625,44 +595,6 @@ function isFreshHeartbeat(updatedAt: string, options: RunnerSupervisorOptions) {
   const ageMs = nowMs - updatedAtMs
   const timeoutMs = Math.max(1, Math.floor(options.heartbeatTimeoutMs ?? RUNNER_HEARTBEAT_FRESHNESS_MS))
   return ageMs >= 0 && ageMs <= timeoutMs
-}
-
-function isFreshHeartbeatV2(heartbeat: SupervisorHeartbeat, options: RunnerSupervisorOptions) {
-  const observedAtMs = Date.parse(heartbeat.observed_at)
-  const expiresAtMs = Date.parse(heartbeat.expires_at)
-  if (!Number.isFinite(observedAtMs) || !Number.isFinite(expiresAtMs)) return false
-  const nowMs = (options.now ?? (() => new Date()))().getTime()
-  const timeoutMs = Math.max(1, Math.floor(options.heartbeatTimeoutMs ?? RUNNER_HEARTBEAT_FRESHNESS_MS))
-  return observedAtMs <= nowMs &&
-    nowMs <= expiresAtMs &&
-    nowMs - observedAtMs <= timeoutMs
-}
-
-function runnerHeartbeatAccepts() {
-  return [
-    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-    VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-    VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-    VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
-  ]
-}
-
-function runnerHeartbeatEmits() {
-  return [
-    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-    VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-    VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-    VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
-    RUNNER_CHECKPOINT_PROTOCOL,
-    USER_HANDOVER_PROTOCOL,
-  ]
-}
-
-function sameStringArray(actual: unknown, expected: readonly string[]) {
-  return Array.isArray(actual) &&
-    actual.length === expected.length &&
-    actual.every((value, index) => value === expected[index])
 }
 
 function isMarkerPermissionError(error: unknown) {

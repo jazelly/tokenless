@@ -11,51 +11,45 @@ Package versions describe releases; protocol identifiers describe compatibility.
 - `openapi/tokenless.daemon.v1.openapi.json` defines the versioned local
   control-plane endpoints, authentication, requests, responses, status codes,
   and stable error envelope.
-- `schemas/*.schema.json` define non-HTTP messages and security-sensitive
-  readiness, lifecycle, worker, job, and visible-action payloads.
+- `schemas/*.schema.json` define non-HTTP job and visible-action payloads.
 - `EVOLUTION.md` defines compatibility and version-bump rules.
 
 Run `npm run protocol:generate` after changing registry constants. CI and
 `npm run lint` run `npm run protocol:check`, which rejects stale generated
 Rust, TypeScript, or JavaScript constants and invalid protocol artifacts.
 
-## Capability negotiation
+## Compatibility negotiation
 
-`GET /ready` retains the legacy challenge-bound ready and process proofs. A
-current daemon additionally returns:
+`GET /ready` retains the legacy challenge-bound
+`tokenless.daemon-ready-proof.v1` HMAC tuple unchanged for compatibility with
+published 0.2 clients and daemons. A current daemon also returns
+`supported_protocols` with exactly three arrays: `daemon`, `job`, and `action`.
+Current values include `tokenless.daemon.v1`, both managed job protocols, and
+both visible action protocols.
 
-- `tokenless.daemon-readiness.v2`
-- `tokenless.daemon-lifecycle.v1`
-- signed daemon `accepts` and `emits` protocol sets
-- a fresh worker capability record when a managed Playwright runner is alive
-- `tokenless.daemon-capability-proof.v1`, binding readiness state, canonical
-  home, process identity, lifecycle protocol, protocol sets, and worker
-  capability freshness to the local control token
+Threat model: Tokenless is a local-loopback control plane. After the unchanged
+same-home ready proof validates, the CLI treats `supported_protocols` from that
+same response as advisory negotiation data. The arrays have no separate
+signature and do not encode directionality or freshness. Older daemons without
+`supported_protocols` use a narrow legacy fallback based on their existing
+daemon/native protocol fields.
 
-Consumers must validate the proof before using advertised capabilities.
-Automatic replacement or shutdown additionally requires a canonical same-home
-match, a verified process proof, and the signed lifecycle v1 capability. The
-signed daemon `accepts` set must include
-`tokenless.daemon-shutdown-proof.v1`; the CLI then uses the signed,
-server-issued `shutdown_challenge` to send a challenge-bound HMAC request proof
-and never sends the reusable control token to `/control/shutdown`. Shutdown
-challenges expire after 10 seconds, are consumed atomically on successful
-verification, and are held in a bounded 128-entry per-process registry.
-Unauthenticated `/health` output is diagnostic only.
-
-`tokenless.daemon.v1` identifies the core job-control API. It does not imply
-support for readiness v2, lifecycle v1, shutdown proof v1, or any worker
-protocol. Those child contracts have independent identifiers and must be
-negotiated explicitly. This lets a semantic change bump the narrowest owning
-protocol without coupling it to npm, Cargo, or unrelated wire contracts.
+Setup may replace a mismatch daemon only after the ready proof validates and
+the canonical home matches. Shutdown uses the existing bearer-authenticated
+`/control/shutdown` endpoint; the CLI verifies `/ready` for the same home
+immediately before sending the bearer token. Unauthenticated `/health` output is
+diagnostic only.
 
 ## Compatibility and conformance
 
-Ordinary runtime reuse is based on compatible signed protocol capabilities, not
-the npm or Cargo semantic-version major. Setup may still reconcile exact package
-versions and binary hashes after identity and lifecycle authorization succeed.
+Ordinary runtime reuse is based on protocol overlap, not the npm or Cargo
+semantic-version major. Setup never stops a compatible same-home daemon for
+version drift; when only the installed daemon runtime is stale, setup refreshes
+that installed runtime for the next start and leaves the running daemon in
+place.
 
-The gated `test/protocol-cross-version.e2e.mjs` suite downloads integrity-pinned
-historical npm CLI and native packages and exercises real processes in both
-directions. `.github/workflows/protocol-cross-version.yml` runs the conformance
-matrix across supported operating-system and architecture packages.
+The gated `test/protocol-cross-version.e2e.mjs` suite downloads historical npm
+CLI and native packages using npm's package cache/integrity handling and
+exercises real processes in both directions. `.github/workflows/protocol-cross-version.yml`
+runs the conformance matrix across supported operating-system and architecture
+packages.

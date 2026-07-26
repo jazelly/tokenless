@@ -821,13 +821,16 @@ function setupCliVersionCompact(check: SetupCliVersionCheck) {
 function setupDaemonCompact(daemon: {
   runningVersion: string | null
   protocolCompatible: boolean
-  reconciliation: { attempted: boolean; reason: string }
+  reconciliation: { attempted: boolean; action?: string | undefined; reason: string }
 }) {
   const compatibility = daemon.protocolCompatible ? 'protocol-compatible' : 'protocol-incompatible'
-  const recovery = daemon.reconciliation.attempted
-    ? ` Recovered ${daemon.reconciliation.reason} by restarting the same-home daemon.`
-    : ''
-  return `Daemon: ready on ${daemon.runningVersion ?? 'unknown'} (${compatibility}, signed protocol negotiation).${recovery}`
+  let recovery = ''
+  if (daemon.reconciliation.action === 'restart_daemon') {
+    recovery = ` Recovered ${daemon.reconciliation.reason} by restarting the same-home daemon.`
+  } else if (daemon.reconciliation.action === 'refresh_installed_runtime') {
+    recovery = ' Refreshed the installed daemon runtime for the next start; the compatible running daemon was left in place.'
+  }
+  return `Daemon: ready on ${daemon.runningVersion ?? 'unknown'} (${compatibility}, supported protocol overlap).${recovery}`
 }
 
 function compareSemanticVersions(left: string, right: string) {
@@ -2639,8 +2642,6 @@ async function doctorCommand(args: CliArgs) {
     const versionCompatible = runningVersion === expectedVersion
     const protocolCompatible = ready.protocolCompatible === true
     const packagedHash = runtime.packaged.hash
-    const runningHash = typeof ready.body?.running_binary_hash === 'string' ? ready.body.running_binary_hash : null
-    const identityError = ready.body?.daemon_process_identity_error
     if (!ready.ok) {
       daemon = {
         ok: false,
@@ -2657,28 +2658,6 @@ async function doctorCommand(args: CliArgs) {
         protocolCompatible,
         versionCompatible,
         packagedHash,
-        runningHash,
-      }
-    } else if (identityError !== undefined) {
-      daemon = {
-        ok: false,
-        ready: true,
-        url: configuredDaemonUrl,
-        daemonLogPath,
-        daemonLogExists,
-        code: identityError.code ?? 'daemon_process_identity_unverified',
-        message: identityError.message ?? 'Tokenless daemon process identity could not be verified.',
-        homeDir: ready.actualHome,
-        expectedVersion,
-        runningVersion,
-        expectedMajor,
-        runningMajor,
-        protocolCompatible,
-        versionCompatible,
-        packagedHash,
-        runningHash,
-        pid: ready.body?.pid ?? null,
-        processIdentity: 'unverified',
       }
     } else {
       daemon = {
@@ -2697,9 +2676,7 @@ async function doctorCommand(args: CliArgs) {
         protocolCompatible,
         versionCompatible,
         packagedHash,
-        runningHash,
         pid: ready.body?.pid ?? null,
-        processIdentity: 'verified',
       }
     }
   } catch (error) {
