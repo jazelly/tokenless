@@ -8,8 +8,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
-  NATIVE_HOST_NAME,
-  nativeMessagingHostDirs,
   normalizeBrowserId,
   snapshotsDir,
   tokenlessHome,
@@ -24,12 +22,11 @@ import {
   EXTENSION_BRIDGE_PROTOCOL,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-  NATIVE_BINARY_BUILD_INFO_PROTOCOL,
   NATIVE_PROTOCOL,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
 } from './generated/protocol-constants.js'
-import { resolveNativePlatformPackage, tokenlessPackageVersion } from './platform-package.js'
+import { tokenlessPackageVersion } from './platform-package.js'
 
 export {
   DAEMON_ERROR_PROTOCOL,
@@ -40,7 +37,6 @@ export {
   EXTENSION_BRIDGE_PROTOCOL,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-  NATIVE_BINARY_BUILD_INFO_PROTOCOL,
   NATIVE_PROTOCOL,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
@@ -50,9 +46,7 @@ export const DAEMON_PID_FILE = 'daemon.pid.json'
 export const DAEMON_LOG_FILE = 'daemon.log'
 export const DAEMON_RUNTIME_KIND = 'typescript'
 
-const DAEMON_BINARY_NAME = 'tokenless-daemon'
 const DAEMON_ENTRY_NAME = 'daemon-entry.mjs'
-const NATIVE_HOST_BINARY_NAME = 'tokenless-native-host'
 const DEFAULT_BRIDGE_MAX_AGE_MS = 15_000
 const BRIDGE_CLOCK_TOLERANCE_MS = 5_000
 const DEFAULT_DAEMON_START_TIMEOUT_MS = 10_000
@@ -203,61 +197,8 @@ export type BridgeMarker = {
   raw: JsonRecord
 }
 
-export type InstallRustRuntimeOptions = {
-  homeDir?: string | undefined
-  packageRoot?: string | undefined
-  platform?: NodeJS.Platform | undefined
-  arch?: string | undefined
-}
-
-export function bundledRustBinaryPath(
-  name: string = DAEMON_BINARY_NAME,
-  packageRoot?: string,
-  platform: NodeJS.Platform = process.platform,
-  arch: string = process.arch
-) {
-  const nativeRoot = packageRoot ?? resolveNativePlatformPackage({ platform, arch }).root
-  return path.join(nativeRoot, 'bin', executableName(name, platform))
-}
-
-export function installedRustBinaryPath(
-  homeDir = tokenlessHome(),
-  name: string = DAEMON_BINARY_NAME,
-  platform: NodeJS.Platform = process.platform
-) {
-  return path.join(homeDir, 'bin', executableName(name, platform))
-}
-
 export function bundledTypeScriptDaemonEntryPath(packageRoot?: string) {
   return path.join(packageRoot ?? cliPackageRoot(), 'dist', 'src', 'daemon', DAEMON_ENTRY_NAME)
-}
-
-export async function resolveDaemonBinary({
-  homeDir = tokenlessHome(),
-  binaryPath,
-  bundledRoot,
-}: Pick<EnsureDaemonOptions, 'homeDir' | 'binaryPath' | 'bundledRoot'> = {}) {
-  const candidates = [
-    binaryPath,
-    installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME),
-  ].filter((candidate): candidate is string => Boolean(candidate))
-
-  for (const candidate of candidates) {
-    if (await isExecutable(candidate)) return path.resolve(candidate)
-  }
-  let bundledError: unknown
-  try {
-    const bundled = bundledRustBinaryPath(DAEMON_BINARY_NAME, bundledRoot)
-    candidates.push(bundled)
-    if (await isExecutable(bundled)) return path.resolve(bundled)
-  } catch (error) {
-    bundledError = error
-  }
-  throw runtimeError(
-    'daemon_binary_missing',
-    `Tokenless Rust daemon is not installed. Reinstall tokenless with optional dependencies enabled, then run "tokenless setup" or "tokenless doctor". Checked: ${candidates.join(', ')}${bundledError instanceof Error ? `. ${bundledError.message}` : ''}`,
-    false
-  )
 }
 
 export async function probeDaemonReady({
@@ -556,8 +497,8 @@ export async function ensureSetupDaemonRunnable({
   const inspection = await inspectManagedRuntime(homeDir)
   if (!inspection.packaged.ok || !inspection.packaged.hash) {
     throw runtimeError(
-      inspection.packaged.code ?? inspection.package.code ?? 'native_platform_package_missing',
-      inspection.packaged.error ?? inspection.package.error ?? 'Native platform package is unavailable.',
+      inspection.packaged.code ?? inspection.package.code ?? 'daemon_runtime_unavailable',
+      inspection.packaged.error ?? inspection.package.error ?? 'Packaged TypeScript daemon runtime is unavailable.',
       false
     )
   }
@@ -1041,108 +982,6 @@ export async function openProviderUrl(url: string, browser: ChromiumBrowser) {
   child.unref()
 }
 
-export async function installRustRuntime({
-  homeDir = tokenlessHome(),
-  packageRoot,
-  platform = process.platform,
-  arch = process.arch,
-}: InstallRustRuntimeOptions = {}) {
-  const binDir = path.join(homeDir, 'bin')
-  await fs.mkdir(binDir, { recursive: true, mode: 0o700 })
-  const daemonSource = bundledRustBinaryPath(DAEMON_BINARY_NAME, packageRoot, platform, arch)
-  const daemonExecutable = installedRustBinaryPath(homeDir, DAEMON_BINARY_NAME, platform)
-  await installExecutable(daemonSource, daemonExecutable)
-  return {
-    runtime: 'rust',
-    daemonExecutable,
-  }
-}
-
-/** @deprecated Native Messaging host install is removed; use managed Playwright setup. */
-export async function installNativeHost() {
-  throw runtimeError(
-    'legacy_native_host_removed',
-    'The Tokenless Native Messaging host is no longer installed. Use managed Playwright setup via "tokenless setup".',
-    false
-  )
-}
-
-export function windowsNativeHostRegistryCommands({
-  manifestPath,
-  browsers,
-}: {
-  manifestPath: string
-  browsers: string[]
-}) {
-  const roots: Record<string, string> = {
-    chrome: 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts',
-    'chrome-for-testing': 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts',
-    chromium: 'HKCU\\Software\\Chromium\\NativeMessagingHosts',
-    edge: 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts',
-    brave: 'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts',
-    arc: 'HKCU\\Software\\The Browser Company\\Arc\\NativeMessagingHosts',
-  }
-  const seen = new Set<string>()
-  const commands: string[][] = []
-  for (const browser of browsers) {
-    const browserId = normalizeBrowserId(browser)
-    const root = browserId ? roots[browserId] : undefined
-    if (!root) continue
-    const key = `${root}\\${NATIVE_HOST_NAME}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    commands.push(['reg.exe', 'ADD', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'])
-  }
-  return commands
-}
-
-export async function inspectNativeHostManifests({
-  homeDir = tokenlessHome(),
-  manifestHome,
-  browsers = ['chrome'],
-  platform = process.platform,
-}: {
-  homeDir?: string | undefined
-  manifestHome?: string | undefined
-  browsers?: string[] | undefined
-  platform?: NodeJS.Platform | undefined
-} = {}) {
-  const candidates = platform === 'win32'
-    ? [path.join(homeDir, 'native-messaging', `${NATIVE_HOST_NAME}.json`)]
-    : browsers.flatMap((browser) => {
-        const browserId = normalizeBrowserId(browser)
-        return browserId
-          ? nativeMessagingHostDirs(browserId, manifestHome, platform).map((dir) => path.join(dir, `${NATIVE_HOST_NAME}.json`))
-          : []
-      })
-  const uniqueCandidates = [...new Set(candidates)]
-  const manifests = []
-  for (const manifestPath of uniqueCandidates) {
-    try {
-      const payload = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as JsonRecord
-      const expectedHost = installedRustBinaryPath(homeDir, NATIVE_HOST_BINARY_NAME, platform)
-      const valid = payload.name === NATIVE_HOST_NAME &&
-        payload.type === 'stdio' &&
-        path.resolve(payload.path ?? '') === path.resolve(expectedHost) &&
-        Array.isArray(payload.allowed_origins) &&
-        payload.allowed_origins.length === 1 &&
-        /^chrome-extension:\/\/[a-p]{32}\/$/.test(payload.allowed_origins[0])
-      manifests.push({ path: manifestPath, ok: valid, manifest: payload })
-    } catch {
-      // Missing manifests are summarized through candidate and valid counts below.
-    }
-  }
-  return {
-    ok: manifests.some((entry) => entry.ok),
-    candidates: uniqueCandidates,
-    manifests,
-  }
-}
-
-export async function inspectRustBinaries(homeDir = tokenlessHome()) {
-  return inspectManagedRuntime(homeDir)
-}
-
 export async function inspectManagedRuntime(homeDir = tokenlessHome(), packageRoot?: string | undefined) {
   void homeDir
   const packageDir = packageRoot ?? cliPackageRoot()
@@ -1203,16 +1042,6 @@ export async function inspectManagedRuntime(homeDir = tokenlessHome(), packageRo
     },
     daemon: { ok: installedOk, path: daemon, hash: daemonHash, bundledHash: bundledDaemonHash, matchesBundled },
   } satisfies ManagedRuntimeInspection
-}
-
-export async function refreshInstalledRustBinaries({
-  homeDir = tokenlessHome(),
-  packageRoot,
-}: {
-  homeDir?: string | undefined
-  packageRoot?: string | undefined
-} = {}) {
-  return refreshInstalledManagedRuntime({ homeDir, packageRoot })
 }
 
 export async function refreshInstalledManagedRuntime({
@@ -1467,8 +1296,8 @@ async function reconcileSetupDaemon({
     const inspection = await inspectManagedRuntime(homeDir)
     if (!inspection.packaged.ok || !inspection.packaged.hash) {
       throw runtimeError(
-        inspection.packaged.code ?? inspection.package.code ?? 'native_platform_package_missing',
-        inspection.packaged.error ?? inspection.package.error ?? 'Native platform package is unavailable.',
+        inspection.packaged.code ?? inspection.package.code ?? 'daemon_runtime_unavailable',
+        inspection.packaged.error ?? inspection.package.error ?? 'Packaged TypeScript daemon runtime is unavailable.',
         false
       )
     }
@@ -1566,37 +1395,6 @@ function daemonPidFromReady(probe: DaemonReadyProbe) {
   return Number.isSafeInteger(pid) && pid > 0 ? pid as number : null
 }
 
-async function readNativeBinaryBuildInfo(binaryPath: string, expectedBinary: string) {
-  if (!(await isExecutable(binaryPath))) {
-    return failedBuildInfo('rust_binary_missing', `Native runtime executable is missing: ${binaryPath}`)
-  }
-  let result: Awaited<ReturnType<typeof execFileJson>>
-  try {
-    result = await execFileJson(binaryPath, ['--tokenless-build-info'])
-  } catch (error) {
-    return failedBuildInfo(
-      'rust_binary_build_info_failed',
-      error instanceof Error ? error.message : String(error)
-    )
-  }
-  const buildInfo = result.value
-  const expectedVersion = tokenlessPackageVersion()
-  const valid = isRecord(buildInfo) &&
-    buildInfo.protocol === NATIVE_BINARY_BUILD_INFO_PROTOCOL &&
-    buildInfo.binary === expectedBinary &&
-    buildInfo.version === expectedVersion &&
-    buildInfo.platform === process.platform &&
-    buildInfo.arch === process.arch
-  if (!valid) {
-    return failedBuildInfo(
-      'rust_binary_build_info_mismatch',
-      `Native runtime build info for ${binaryPath} does not match tokenless@${expectedVersion} on ${process.platform}-${process.arch}.`,
-      isRecord(buildInfo) ? buildInfo : null
-    )
-  }
-  return { ok: true, buildInfo: buildInfo as JsonRecord, error: null as string | null, code: undefined as string | undefined }
-}
-
 async function readTypeScriptDaemonBuildInfo(daemonEntryPath: string) {
   if (!(await isReadableFile(daemonEntryPath))) {
     return failedBuildInfo('typescript_daemon_entry_missing', `TypeScript daemon entry is missing: ${daemonEntryPath}`)
@@ -1613,8 +1411,8 @@ async function readTypeScriptDaemonBuildInfo(daemonEntryPath: string) {
   const buildInfo = result.value
   const expectedVersion = tokenlessPackageVersion()
   const valid = isRecord(buildInfo) &&
-    buildInfo.protocol === NATIVE_BINARY_BUILD_INFO_PROTOCOL &&
-    buildInfo.binary === DAEMON_BINARY_NAME &&
+    buildInfo.protocol === DAEMON_PROTOCOL &&
+    buildInfo.binary === 'tokenless-daemon' &&
     buildInfo.version === expectedVersion &&
     buildInfo.platform === process.platform &&
     buildInfo.arch === process.arch
@@ -1929,18 +1727,6 @@ async function canonicalPath(value: string) {
   return fs.realpath(resolved).catch(() => resolved)
 }
 
-async function installExecutable(source: string, destination: string) {
-  if (!(await isExecutable(source))) {
-    throw runtimeError('rust_binary_missing', `Packaged Rust binary is missing: ${source}`, false)
-  }
-  if (path.resolve(source) === path.resolve(destination)) return
-  await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
-  const temporary = `${destination}.${process.pid}.${Date.now()}.tmp`
-  await fs.copyFile(source, temporary)
-  if (process.platform !== 'win32') await fs.chmod(temporary, 0o755)
-  await fs.rename(temporary, destination)
-}
-
 async function isExecutable(file: string) {
   try {
     await fs.access(file, process.platform === 'win32' ? fsSync.constants.F_OK : fsSync.constants.X_OK)
@@ -1966,10 +1752,6 @@ async function assertDaemonEntryReadable(daemonEntryPath: string) {
     `TypeScript daemon entry is missing: ${daemonEntryPath}. Run npm run build:js before starting the daemon.`,
     false
   )
-}
-
-function executableName(name: string, platform: NodeJS.Platform = process.platform) {
-  return `${name}${platform === 'win32' ? '.exe' : ''}`
 }
 
 function cliPackageRoot() {
@@ -2114,19 +1896,6 @@ async function writeJsonAtomic(file: string, payload: unknown, mode: number) {
   await fs.rename(temporary, file)
 }
 
-async function execFile(command: string, args: string[]) {
-  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
-  let stderr = ''
-  child.stderr?.on('data', (chunk) => { stderr += chunk.toString('utf8') })
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once('error', reject)
-    child.once('close', (code) => resolve(code ?? 1))
-  })
-  if (exitCode !== 0) {
-    throw runtimeError('native_host_registry_failed', `${command} failed: ${stderr.trim()}`, false)
-  }
-}
-
 async function execFileJson(command: string, args: string[]) {
   const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
   let stdout = ''
@@ -2138,7 +1907,7 @@ async function execFileJson(command: string, args: string[]) {
     if (outputBytes > BUILD_INFO_OUTPUT_LIMIT_BYTES) {
       child.kill('SIGTERM')
       throw runtimeError(
-        'native_binary_build_info_too_large',
+        'daemon_runtime_build_info_too_large',
         `${command} --tokenless-build-info exceeded ${BUILD_INFO_OUTPUT_LIMIT_BYTES} bytes of output.`,
         false
       )
@@ -2165,7 +1934,7 @@ async function execFileJson(command: string, args: string[]) {
     const timer = setTimeout(() => {
       child.kill('SIGTERM')
       reject(runtimeError(
-        'native_binary_build_info_timeout',
+        'daemon_runtime_build_info_timeout',
         `${command} --tokenless-build-info did not exit within ${BUILD_INFO_TIMEOUT_MS} ms.`,
         false
       ))
@@ -2180,13 +1949,13 @@ async function execFileJson(command: string, args: string[]) {
   })
   if (streamError) throw streamError
   if (exitCode !== 0) {
-    throw runtimeError('native_binary_build_info_failed', `${command} failed: ${stderr.trim()}`, false)
+    throw runtimeError('daemon_runtime_build_info_failed', `${command} failed: ${stderr.trim()}`, false)
   }
   try {
     return { value: JSON.parse(stdout) as unknown }
   } catch (error) {
     throw runtimeError(
-      'native_binary_build_info_invalid',
+      'daemon_runtime_build_info_invalid',
       `${command} returned invalid build info JSON: ${error instanceof Error ? error.message : String(error)}`,
       false
     )

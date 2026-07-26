@@ -2,11 +2,11 @@
 
 Status: proposed | Priority: P0
 
-Depends on: Rust daemon job persistence, claim leases, managed profile lifecycle, runner supervision, and exact workspace/conversation identity
+Depends on: Local daemon job persistence, claim leases, managed profile lifecycle, embedded browser-runtime supervision, and exact workspace/conversation identity
 
 ## Outcome
 
-Every Tokenless invocation is durably admitted through the Rust daemon and executed under an explicit concurrency contract. Concurrent callers cannot duplicate a logically idempotent submission, race on one conversation, navigate another job's page, overwrite shared Project context, or overload a provider profile without bounded backpressure.
+Every Tokenless invocation is durably admitted through the local daemon and executed under an explicit concurrency contract. Concurrent callers cannot duplicate a logically idempotent submission, race on one conversation, navigate another job's page, overwrite shared Project context, or overload a provider profile without bounded backpressure.
 
 The scheduler should allow useful concurrency:
 
@@ -20,12 +20,12 @@ The scheduler should allow useful concurrency:
 
 As of 2026-07-25, the current source implements several important foundations:
 
-- `tokenless run` is daemon-only; each invocation creates a Rust-daemon job before visible provider work begins.
+- `tokenless run` is daemon-only; each invocation creates a local-daemon job before visible provider work begins.
 - Jobs, results, errors, blockers, checkpoints, timestamps, task metadata, backend, and profile scope are persisted in SQLite.
 - `claim-next` uses an atomic FIFO `UPDATE ... RETURNING` transaction scoped to execution backend and profile.
 - Claims have renewable leases; expired safe claims can be requeued, while ambiguous mutating outcomes fail closed.
-- Runner startup is serialized by a local writer lock and guarded by session, PID, and heartbeat identity.
-- One runner process can execute up to four managed profiles concurrently.
+- Embedded browser-runtime startup is owned by the daemon and guarded by profile/job identity.
+- The embedded browser runtime can execute multiple managed profiles under daemon-owned limits.
 - The scheduler allows at most one in-flight job per profile, regardless of provider, project, or conversation.
 - Each profile owns one persistent browser context. Its operations are also serialized by a profile lane.
 
@@ -210,25 +210,25 @@ Exit: two chats in one project can execute concurrently on separate pages while 
 
 - Add evidence-backed provider/profile concurrency caps.
 - Apply fair scheduling, dynamic rate-limit reduction, and capacity reservations.
-- Support additional runner processes only after daemon leases and profile ownership prevent the same persistent profile from opening in two processes.
+- Support additional browser-runtime workers only after daemon leases and profile ownership prevent the same persistent profile from opening in two workers.
 - Publish operational metrics without prompt, response, credential, or private path content.
 
 Exit: concurrency scales across profiles and supported providers without weakening isolation or recovery.
 
 ## Acceptance Criteria
 
-- Every visible provider job is created, persisted, claimed, checkpointed, and completed through the Rust daemon.
-- Concurrent runner startup results in one verified runner for one Tokenless home.
+- Every visible provider job is created, persisted, claimed, checkpointed, and completed through the local daemon.
+- Concurrent runtime startup results in one verified daemon-owned browser runtime for one Tokenless home.
 - Duplicate concurrent requests with one idempotency key result in one durable job and at most one visible submission.
 - Jobs for the same conversation are strictly serialized.
 - Jobs for different conversations never share an implicit page or navigate each other's page.
 - Different conversations in one Project can run concurrently only after the required workspace/context revision is active.
 - Each successful submission persists a validated canonical provider conversation URL.
-- Browser or runner restart can recover an exact conversation without relying on a page handle.
+- Browser-runtime restart can recover an exact conversation without relying on a page handle.
 - Queue growth is bounded and backpressure is visible before large attachment staging.
 - Lease fencing prevents stale workers from mutating durable state.
 - Cancellation, timeout, waiting-for-user, and shutdown release or retain lanes according to documented state transitions.
-- Focused integration and browser E2E tests launch concurrent built CLI processes against the real Rust daemon, real filesystem, real local Chromium, and gated real provider sessions. They assert durable jobs, exact page/conversation outcomes, and visible submissions without mocks or invented provider DOM.
+- Focused integration and browser E2E tests launch concurrent built CLI processes against the real local daemon, real filesystem, real local Chromium, and gated real provider sessions. They assert durable jobs, exact page/conversation outcomes, and visible submissions without mocks or invented provider DOM.
 
 ## Required Concurrency Proofs
 

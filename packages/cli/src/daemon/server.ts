@@ -7,7 +7,6 @@ import {
   DAEMON_READY_PROOF_PROTOCOL,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-  NATIVE_BINARY_BUILD_INFO_PROTOCOL,
   NATIVE_PROTOCOL,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
@@ -100,9 +99,9 @@ export function validateLoopbackHost(host: string) {
   if (!loopback) throw nonLoopbackBind(host)
 }
 
-export function nativeBinaryBuildInfo(binary: string) {
+export function daemonBuildInfo(binary: string) {
   return {
-    protocol: NATIVE_BINARY_BUILD_INFO_PROTOCOL,
+    protocol: DAEMON_PROTOCOL,
     binary,
     version: tokenlessPackageVersion(),
     platform: process.platform === 'darwin' ? 'darwin' : process.platform,

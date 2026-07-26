@@ -14,30 +14,12 @@ const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const tsDaemonEntry = path.join(cliDir, 'dist/src/daemon/daemon-entry.mjs')
-const executableSuffix = process.platform === 'win32' ? '.exe' : ''
-const nativeTuple = `${process.platform}-${process.arch}`
-const rustDaemon = path.join(cliDir, 'npm', `tokenless-native-${nativeTuple}`, 'bin', `tokenless-daemon${executableSuffix}`)
 const managedPlaywrightJobAction = 'visible_provider_actions'
 
 const createdChildren = new Set()
 
 test.after(async () => {
   await Promise.all([...createdChildren].map((child) => terminateChild(child)))
-})
-
-test('Rust and opt-in TS daemons share durable jobs through the same SQLite store', {
-  timeout: 120_000,
-}, async () => {
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-rust-interop-')
-  try {
-    await rustWritesTsAdvancesRustVerifies(homeDir)
-    await tsWritesRustAdvancesTsVerifies(homeDir)
-    assertUnixRestrictivePermissions(homeDir)
-  } finally {
-    await terminateChildrenForHome(homeDir)
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
 })
 
 test('TS daemon claim-next is atomic across independent real Node clients', {
@@ -438,90 +420,6 @@ test('TS daemon preserves Playwright state, recovers leases, filters summaries, 
   }
 })
 
-async function rustWritesTsAdvancesRustVerifies(homeDir) {
-  let rust = await startRustDaemon(homeDir)
-  const token = readControlToken(homeDir)
-  const jobId = randomUUID()
-  const claimToken = `rust-created-${randomUUID()}`
-  await daemonRequest(rust.url, token, 'POST', '/jobs', {
-    provider: 'chatgpt',
-    action: 'prompt.submit',
-    request_json: {
-      prompt: 'created by rust',
-      metadata: {
-        taskId: 'rust-origin-task',
-        projectName: 'conformance',
-      },
-    },
-    job_id: jobId,
-    claim_token: claimToken,
-  })
-  await shutdownDaemon(rust)
-  rust = null
-
-  let ts = await startTsDaemon(homeDir)
-  try {
-    const claimed = await daemonRequest(ts.url, token, 'POST', `/jobs/${encodeURIComponent(jobId)}/claim`, {
-      claim_token: claimToken,
-    })
-    assert.equal(claimed.status, 'claimed')
-    const completed = await daemonRequest(ts.url, token, 'POST', `/jobs/${encodeURIComponent(jobId)}/complete`, {
-      claim_token: claimToken,
-      result_json: { runtime: 'ts', step: 'advanced' },
-    })
-    assert.equal(completed.status, 'succeeded')
-  } finally {
-    await shutdownDaemon(ts).catch(() => undefined)
-  }
-
-  const verified = rustCli(homeDir, ['get', jobId])
-  assert.equal(verified.job_id, jobId)
-  assert.equal(verified.status, 'succeeded')
-  assert.deepEqual(verified.result_json, { runtime: 'ts', step: 'advanced' })
-}
-
-async function tsWritesRustAdvancesTsVerifies(homeDir) {
-  let ts = await startTsDaemon(homeDir)
-  const token = readControlToken(homeDir)
-  const jobId = randomUUID()
-  const claimToken = `ts-created-${randomUUID()}`
-  await daemonRequest(ts.url, token, 'POST', '/jobs', {
-    provider: 'claude',
-    action: 'prompt.submit',
-    request_json: {
-      prompt: 'created by ts',
-      taskId: 'ts-origin-task',
-      idempotencyKey: 'ts-origin-idempotency',
-    },
-    job_id: jobId,
-    claim_token: claimToken,
-  })
-  await shutdownDaemon(ts)
-  ts = null
-
-  const claimed = rustCli(homeDir, ['claim', jobId, '--claim-token', claimToken])
-  assert.equal(claimed.status, 'claimed')
-  const completed = rustCli(homeDir, [
-    'complete',
-    jobId,
-    '--claim-token',
-    claimToken,
-    '--result-json',
-    JSON.stringify({ runtime: 'rust', step: 'advanced' }),
-  ])
-  assert.equal(completed.status, 'succeeded')
-
-  ts = await startTsDaemon(homeDir)
-  try {
-    const verified = await daemonRequest(ts.url, token, 'GET', `/jobs/${encodeURIComponent(jobId)}`)
-    assert.equal(verified.job_id, jobId)
-    assert.equal(verified.status, 'succeeded')
-    assert.deepEqual(verified.result_json, { runtime: 'rust', step: 'advanced' })
-  } finally {
-    await shutdownDaemon(ts).catch(() => undefined)
-  }
-}
-
 async function verifyPlaywrightRestartResumeCancelAndAuth(homeDir) {
   let daemon = await startTsDaemon(homeDir)
   let token = readControlToken(homeDir)
@@ -717,24 +615,6 @@ async function startTsDaemon(homeDir) {
   return waitForDaemon(child, `http://127.0.0.1:${port}`, homeDir, 'TS')
 }
 
-async function startRustDaemon(homeDir) {
-  const port = await freePort()
-  const child = spawn(rustDaemon, [
-    '--home',
-    homeDir,
-    'serve',
-    '--host',
-    '127.0.0.1',
-    '--port',
-    String(port),
-  ], {
-    cwd: root,
-    env: { ...process.env, TOKENLESS_HOME: homeDir },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  return waitForDaemon(child, `http://127.0.0.1:${port}`, homeDir, 'Rust')
-}
-
 async function waitForDaemon(child, url, homeDir, label) {
   trackChild(child, homeDir)
   let stdout = ''
@@ -824,17 +704,6 @@ function lengthPrefixedMessage(fields) {
     length.writeUInt32BE(value.length)
     return [length, value]
   }))
-}
-
-function rustCli(homeDir, args) {
-  const result = spawnSync(rustDaemon, ['--home', homeDir, ...args], {
-    cwd: root,
-    env: { ...process.env, TOKENLESS_HOME: homeDir },
-    encoding: 'utf8',
-    timeout: 20_000,
-  })
-  assert.equal(result.status, 0, `rust daemon ${args.join(' ')} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`)
-  return JSON.parse(result.stdout)
 }
 
 async function importCli() {
@@ -1228,5 +1097,4 @@ function delay(ms) {
 
 function requireBuiltArtifacts() {
   assert.equal(fs.existsSync(tsDaemonEntry), true, `missing compiled TS daemon: ${tsDaemonEntry}`)
-  assert.equal(fs.existsSync(rustDaemon), true, `missing packaged Rust daemon: ${rustDaemon}`)
 }

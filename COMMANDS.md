@@ -76,7 +76,7 @@ These options are available where the command needs the corresponding runtime be
 | `--browser-visibility <auto\|headed\|headless>` | Choose the browser visibility policy. |
 | `--timeout-ms <ms>` | Override the command or job wait timeout. |
 | `--daemon-start-timeout-ms <ms>` | Override daemon startup waiting. |
-| `--runner-heartbeat-timeout-ms <ms>` | Override Playwright runner heartbeat waiting. |
+| `--runner-heartbeat-timeout-ms <ms>` | Accepted for compatibility; the embedded Playwright runtime ignores it. |
 | `--cancel-timeout-ms <ms>` | Override cancellation confirmation waiting. |
 | `--target-url <url>` | Start from a provider-approved URL on the selected provider domain. |
 
@@ -107,7 +107,7 @@ tokenless -V
 
 ### `tokenless install`
 
-Verifies the packaged Rust runtime, resolves the selected Chromium browser, saves the runtime configuration, and ensures that the local daemon is ready.
+Verifies the packaged TypeScript daemon runtime, resolves the selected Chromium browser, saves the runtime configuration, and ensures that the local daemon is ready.
 
 ```bash
 tokenless install --browser chrome --json
@@ -168,7 +168,7 @@ Main options:
 
 ### `tokenless doctor`
 
-Performs a read-only health report over Node.js, installed skills, packaged runtime, daemon identity and version, Playwright runner, browser, configuration, default managed profile, and cached provider readiness.
+Performs a read-only health report over Node.js, installed skills, packaged runtime, daemon identity and version, embedded Playwright runtime, browser, configuration, default managed profile, and cached provider readiness.
 
 ```bash
 tokenless doctor --json
@@ -304,7 +304,7 @@ tokenless profiles set-default -P work --json
 
 ### `tokenless profiles reset`
 
-Stops the Playwright runner and re-imports an imported managed profile from its recorded source.
+Quiesces the embedded Playwright runtime and re-imports an imported managed profile from its recorded source.
 
 ```bash
 tokenless profiles reset -P work
@@ -315,7 +315,7 @@ This is a human maintenance command and does not accept `--json`. It works only 
 
 ### `tokenless profiles clear`
 
-Stops the runner and deletes either one managed profile or every managed profile:
+Quiesces the embedded Playwright runtime and deletes either one managed profile or every managed profile:
 
 ```bash
 tokenless profiles clear -P work
@@ -375,7 +375,7 @@ Execution:
 
 - `--no-wait` submits and returns without waiting for the result.
 - `--long-running` uses the long-running wait budget and cannot be combined with `--no-wait`.
-- `--timeout-ms`, `--cancel-timeout-ms`, `--daemon-start-timeout-ms`, and `--runner-heartbeat-timeout-ms` override execution timing.
+- `--timeout-ms`, `--cancel-timeout-ms`, and `--daemon-start-timeout-ms` override execution timing. `--runner-heartbeat-timeout-ms` remains accepted for compatibility but no longer controls a standalone runner.
 - `--target-url <url>` selects an approved starting URL on the provider domain.
 
 Workspace modes:

@@ -5,7 +5,8 @@ import { DAEMON_ERROR_PROTOCOL } from './generated/protocol-constants.js'
 import { tokenlessHome } from './job-store.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
-export const MAX_NATIVE_MESSAGE_BYTES = 900 * 1024
+export const MAX_DAEMON_REQUEST_BYTES = 900 * 1024
+export const MAX_NATIVE_MESSAGE_BYTES = MAX_DAEMON_REQUEST_BYTES
 const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 5_000
 const DEFAULT_CANCEL_REQUEST_TIMEOUT_MS = 3_000
 
@@ -153,7 +154,7 @@ export async function createDaemonJob({
   jobId,
   claimToken,
 }: CreateDaemonJobOptions) {
-  assertNativeMessageSize({ provider, action, request_json: requestJson })
+  assertDaemonRequestSize({ provider, action, request_json: requestJson })
   const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonClaimedJob>({
     daemonUrl: explicitDaemonUrl,
@@ -650,7 +651,7 @@ function stripUndefined(value: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined))
 }
 
-function assertNativeMessageSize(value: unknown) {
+function assertDaemonRequestSize(value: unknown) {
   let serialized: string
   try {
     serialized = JSON.stringify(value)
@@ -658,7 +659,7 @@ function assertNativeMessageSize(value: unknown) {
     throw daemonClientError('invalid_daemon_request', 'Tokenless request must be JSON serializable.', false)
   }
   const bytes = Buffer.byteLength(serialized, 'utf8')
-  if (bytes > MAX_NATIVE_MESSAGE_BYTES) {
+  if (bytes > MAX_DAEMON_REQUEST_BYTES) {
     throw daemonClientError(
       'native_message_too_large',
       `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes. Attach fewer or smaller files.`,

@@ -3,7 +3,12 @@
   "$id": "https://tokenless.dev/protocol/registry.schema.json",
   "title": "Tokenless protocol registry",
   "type": "object",
-  "required": ["$schema", "registryProtocol", "generatedHeader", "protocols"],
+  "required": [
+    "$schema",
+    "registryProtocol",
+    "generatedHeader",
+    "protocols"
+  ],
   "additionalProperties": false,
   "properties": {
     "$schema": {
@@ -26,7 +31,12 @@
   },
   "$defs": {
     "component": {
-      "enum": ["cli", "daemon", "playwright-worker", "release"]
+      "enum": [
+        "cli",
+        "daemon",
+        "playwright-worker",
+        "release"
+      ]
     },
     "protocolId": {
       "type": "string",
@@ -52,10 +62,6 @@
       "minProperties": 1,
       "additionalProperties": false,
       "properties": {
-        "rust": {
-          "type": "string",
-          "pattern": "^[A-Z][A-Z0-9_]*$"
-        },
         "typescript": {
           "type": "string",
           "pattern": "^[A-Z][A-Z0-9_]*$"
@@ -70,9 +76,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "rust": {
-          "$ref": "#/$defs/constantList"
-        },
         "typescript": {
           "$ref": "#/$defs/constantList"
         },
@@ -91,7 +94,14 @@
     },
     "protocol": {
       "type": "object",
-      "required": ["id", "owner", "status", "accepts", "emits", "constants"],
+      "required": [
+        "id",
+        "owner",
+        "status",
+        "accepts",
+        "emits",
+        "constants"
+      ],
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -101,7 +111,11 @@
           "$ref": "#/$defs/component"
         },
         "status": {
-          "enum": ["active", "legacy", "legacy-accepted"]
+          "enum": [
+            "active",
+            "legacy",
+            "legacy-accepted"
+          ]
         },
         "accepts": {
           "$ref": "#/$defs/componentList"

@@ -4,6 +4,7 @@ import path from 'node:path'
 
 export {
   DEFAULT_DAEMON_URL,
+  MAX_DAEMON_REQUEST_BYTES,
   MAX_NATIVE_MESSAGE_BYTES,
   browserRuntimeStatus,
   cancelDaemonJob,
@@ -49,10 +50,7 @@ export {
 export {
   configPath,
   deriveTaskId,
-  NATIVE_HOST_NAME,
   normalizeBrowserId,
-  nativeMessagingHostDir,
-  nativeMessagingHostDirs,
   readTokenlessConfig,
   TOKENLESS_CONFIG_PROTOCOL_VERSION,
   tokenlessHome,
@@ -70,42 +68,23 @@ export {
   EXTENSION_BRIDGE_PROTOCOL,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-  NATIVE_BINARY_BUILD_INFO_PROTOCOL,
   NATIVE_PROTOCOL,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-  bundledRustBinaryPath,
   ensureDaemonReady,
   ensureSetupDaemonRunnable,
-  inspectNativeHostManifests,
-  inspectRustBinaries,
   inspectManagedRuntime,
-  installNativeHost,
-  installRustRuntime,
-  installedRustBinaryPath,
   openProviderUrl,
   persistDaemonSnapshot,
   probeDaemonReady,
   providerWakeUrl,
   readLiveBridgeMarker,
-  refreshInstalledRustBinaries,
   refreshInstalledManagedRuntime,
   resolveChromiumBrowser,
-  resolveDaemonBinary,
   semanticVersionMajor,
   stopDaemon,
   waitForExtensionBridge,
-  windowsNativeHostRegistryCommands,
 } from './runtime.js'
-
-export {
-  NATIVE_PLATFORM_PACKAGE_PROTOCOL,
-  NATIVE_PLATFORM_PACKAGES,
-  nativePlatformPackageName,
-  resolveNativePlatformPackage,
-} from './platform-package.js'
-
-export type { ResolveNativePlatformPackageOptions } from './platform-package.js'
 
 export {
   DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES,
@@ -134,7 +113,6 @@ export type {
   ChromiumBrowser,
   DaemonReadyProbe,
   EnsureDaemonOptions,
-  InstallRustRuntimeOptions,
   ManagedRuntimeInspection,
   StopDaemonResult,
 } from './runtime.js'

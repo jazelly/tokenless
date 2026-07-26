@@ -6,7 +6,6 @@ import { TOKENLESS_CONFIG_PROTOCOL_VERSION } from './generated/protocol-constant
 import type { BrowserVisibility } from './browser-visibility.js'
 
 export { TOKENLESS_CONFIG_PROTOCOL_VERSION } from './generated/protocol-constants.js'
-export const NATIVE_HOST_NAME = 'dev.tokenless.native_host'
 
 const SUPPORTED_PROVIDER_IDS = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok'])
 export const SUPPORTED_BROWSER_IDS = Object.freeze([
@@ -147,58 +146,6 @@ export async function writeTokenlessConfig({
   }
   await writeJsonAtomic(configPath(homeDir), config, 0o600)
   return config
-}
-
-export function nativeMessagingHostDir(
-  browser: string,
-  home = os.homedir(),
-  platform: NodeJS.Platform = process.platform
-) {
-  return nativeMessagingHostDirs(browser, home, platform)[0] ?? null
-}
-
-export function nativeMessagingHostDirs(
-  browser: string,
-  home = os.homedir(),
-  platform: NodeJS.Platform = process.platform
-) {
-  const browserId = normalizeBrowserId(browser)
-  if (!browserId) return []
-  if (browserId === 'profile') return [path.join(home, 'NativeMessagingHosts')]
-  if (platform === 'win32') return []
-
-  if (platform === 'darwin') {
-    const roots: Partial<Record<string, string[][]>> = {
-      chrome: [['Library', 'Application Support', 'Google', 'Chrome', 'NativeMessagingHosts']],
-      // Chrome for Testing 146+ uses ChromeForTesting. Older releases used
-      // Chrome's directory, so one install writes both compatibility manifests.
-      'chrome-for-testing': [
-        ['Library', 'Application Support', 'Google', 'ChromeForTesting', 'NativeMessagingHosts'],
-        ['Library', 'Application Support', 'Google', 'Chrome', 'NativeMessagingHosts'],
-      ],
-      chromium: [['Library', 'Application Support', 'Chromium', 'NativeMessagingHosts']],
-      edge: [['Library', 'Application Support', 'Microsoft Edge', 'NativeMessagingHosts']],
-      arc: [['Library', 'Application Support', 'Arc', 'User Data', 'NativeMessagingHosts']],
-      brave: [['Library', 'Application Support', 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts']],
-    }
-    return (roots[browserId] ?? []).map((segments) => path.join(home, ...segments))
-  }
-
-  if (platform === 'linux') {
-    const roots: Partial<Record<string, string[][]>> = {
-      chrome: [['.config', 'google-chrome', 'NativeMessagingHosts']],
-      'chrome-for-testing': [
-        ['.config', 'google-chrome-for-testing', 'NativeMessagingHosts'],
-        ['.config', 'google-chrome', 'NativeMessagingHosts'],
-      ],
-      chromium: [['.config', 'chromium', 'NativeMessagingHosts']],
-      edge: [['.config', 'microsoft-edge', 'NativeMessagingHosts']],
-      brave: [['.config', 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts']],
-    }
-    return (roots[browserId] ?? []).map((segments) => path.join(home, ...segments))
-  }
-
-  return []
 }
 
 function emptyTokenlessConfig(): TokenlessConfig {

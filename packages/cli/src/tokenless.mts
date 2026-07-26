@@ -16,8 +16,6 @@ import {
   providerHomeUrl,
   readManagedProfileRegistryReadOnly,
   resolveChromeProfile,
-  runnerSupervisorStatusReadOnly,
-  stopRunnerSupervisor,
   submitManagedPlaywrightJob,
   validateChromeProfileDirectoryKey,
   type ManagedProfileRecord,
@@ -29,6 +27,7 @@ import {
 
 import {
   DEFAULT_DAEMON_URL,
+  MAX_DAEMON_REQUEST_BYTES,
   MAX_NATIVE_MESSAGE_BYTES,
   buildTokenlessPrompt,
   browserRuntimeStatus,
@@ -582,16 +581,10 @@ async function quiesceBrowserRuntimeForProfileMutation({
   } catch (error) {
     if (shouldEnsureDaemonBeforeProfileMutationFallback(error)) {
       await ensureDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
-      try {
-        await quiesceBrowserRuntime({ homeDir, daemonUrl: configuredDaemonUrl })
-        return stoppedRunnerStatus()
-      } catch (retryError) {
-        if (!shouldUseRunnerSupervisorFallback(retryError)) throw retryError
-        return await stopRunnerSupervisor({ homeDir })
-      }
+      await quiesceBrowserRuntime({ homeDir, daemonUrl: configuredDaemonUrl })
+      return stoppedRunnerStatus()
     }
-    if (!shouldUseRunnerSupervisorFallback(error)) throw error
-    return await stopRunnerSupervisor({ homeDir })
+    throw error
   }
 }
 
@@ -660,22 +653,15 @@ async function doctorRunnerStatus({
         activeJobCount: status.activeJobCount,
       }
     } catch (error) {
-      if (!shouldUseRunnerSupervisorFallback(error)) {
-        return { ok: false, state: 'unknown', message: error instanceof Error ? error.message : String(error) }
-      }
+      return { ok: false, state: 'unknown', message: error instanceof Error ? error.message : String(error) }
     }
   }
-  try {
-    const status = await runnerSupervisorStatusReadOnly({ homeDir })
-    return { ok: status.state === 'running', ...status }
-  } catch (error) {
-    return { ok: false, state: 'unknown', message: error instanceof Error ? error.message : String(error) }
+  return {
+    ok: false,
+    ...stoppedRunnerStatus(),
+    runtime: 'embedded',
+    runtimeStatus: 'stopped',
   }
-}
-
-function shouldUseRunnerSupervisorFallback(error: unknown) {
-  const caught = error as CliError
-  return caught.status === 404 || caught.status === 405
 }
 
 function shouldEnsureDaemonBeforeProfileMutationFallback(error: unknown) {
@@ -3134,9 +3120,9 @@ function publicDaemonResult(result: Record<string, any> | null) {
   }
 }
 
-function assertNativeRequestSize(value: unknown) {
+function assertDaemonRequestSize(value: unknown) {
   const bytes = Buffer.byteLength(JSON.stringify(value), 'utf8')
-  if (bytes <= MAX_NATIVE_MESSAGE_BYTES) return
+  if (bytes <= MAX_DAEMON_REQUEST_BYTES) return
   throw usageError(
     'native_message_too_large',
     `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes. Attach fewer or smaller files.`

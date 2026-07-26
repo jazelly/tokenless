@@ -22,7 +22,7 @@ As AI agents are used in more scenarios, they consume an increasing number of to
 
 - **Automation layer**: Playwright, used to operate each AI provider's web interface
 - **Command-line tool**: A TypeScript CLI that serves as the user-facing entry point
-- **Local daemon**: A Rust daemon responsible for persistent local execution and state management
+- **Local daemon**: A TypeScript daemon responsible for persistent local execution and state management
 
 ## Command-Line Short Options
 
@@ -43,7 +43,7 @@ Run `tokenless provider-action --action capability.inspect --provider <provider>
 
 ## Implementation
 
-- A TypeScript CLI provides the user-facing interface, while a Rust daemon runs persistently on the user's machine and manages state.
+- A TypeScript CLI provides the user-facing interface, while a local TypeScript daemon runs persistently on the user's machine and manages state.
 - Routing is implemented through Skill Prompts. Users can define rules that assign different types of tasks to different AI services.
 - Playwright operates provider-visible controls and reports fixture-proven postconditions. File uploads distinguish selected files from visibly accepted attachments, while Workspace requests expose whether the provider used a native resource or a conversation fallback.
 - A provider catalog records guest, account-tier, selector, and capability policy; a separate provider-session state machine turns visible page evidence into guest, account, handoff, wait, or terminal outcomes.

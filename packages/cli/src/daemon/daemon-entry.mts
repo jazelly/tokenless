@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { nativeBinaryBuildInfo } from './server.js'
+import { daemonBuildInfo } from './server.js'
 import { startDaemon } from './lifecycle.js'
 
 async function main() {
   const args = process.argv.slice(2)
   if (args.length === 1 && args[0] === '--tokenless-build-info') {
-    console.log(JSON.stringify(nativeBinaryBuildInfo('tokenless-daemon')))
+    console.log(JSON.stringify(daemonBuildInfo('tokenless-daemon')))
     return
   }
   const options = parseArgs(args)

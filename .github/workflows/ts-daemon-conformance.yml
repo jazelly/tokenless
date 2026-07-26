@@ -30,6 +30,5 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
       - run: npm run test:ts-daemon-conformance

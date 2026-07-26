@@ -23,22 +23,13 @@
     "tokenless": "dist/src/tokenless.mjs"
   },
   "scripts": {
-    "build": "npm run build:js && npm run build:native",
+    "build": "npm run build:js",
     "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.chmodSync('dist/src/tokenless.mjs',0o755); fs.chmodSync('dist/src/daemon/daemon-entry.mjs',0o755)\"",
-    "build:native": "node scripts/build-rust-binaries.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build:js"
   },
   "dependencies": {
     "playwright-core": "^1.53.0"
-  },
-  "optionalDependencies": {
-    "tokenless-native-darwin-arm64": "0.3.0",
-    "tokenless-native-darwin-x64": "0.3.0",
-    "tokenless-native-linux-arm64": "0.3.0",
-    "tokenless-native-linux-x64": "0.3.0",
-    "tokenless-native-win32-arm64": "0.3.0",
-    "tokenless-native-win32-x64": "0.3.0"
   },
   "engines": {
     "node": ">=22.13.0"

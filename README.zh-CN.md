@@ -22,7 +22,7 @@ Tokenless 是一款面向所有 AI 用户、帮助降低 token 消耗的本地�
 
 - **自动化操作层**：Playwright，用于操作各 AI 服务商的网页版界面
 - **命令行工具**：基于 TypeScript 实现的 CLI，作为用户交互入口
-- **本地守护进程**：基于 Rust 实现的 Daemon，负责本地状态的持久化
+- **本地守护进程**：基于 TypeScript 实现的 Daemon，负责本地状态的持久化
 
 ## 命令行短选项
 
@@ -43,7 +43,7 @@ Profile 和 provider 使用不同且区分大小写的短选项：
 
 ## 实现要点
 
-- 前端通过 TypeScript 编写的 CLI 暴露给用户使用，本机由 Rust 编写的 Daemon 负责持久化运行与状态管理。
+- 前端通过 TypeScript 编写的 CLI 暴露给用户使用，本机由 TypeScript 编写的 Daemon 负责持久化运行与状态管理。
 - 分流逻辑基于 Skill Prompt 实现，用户可以自定义规则，指定不同类型的任务应由哪个 AI 服务处理。
 - Playwright 只操作 provider 的可见控件并报告 fixture 已证明的 postcondition。文件上传会区分“已选择”与“provider 已通过可见附件证明接受”，Workspace 请求也会明确返回原生资源或 conversation fallback。
 - Provider catalog 统一记录 guest、账号 tier、selector 和 capability 策略；独立的 provider-session state machine 根据可见页面证据裁决 guest、account、handoff、wait 或 terminal 结果。

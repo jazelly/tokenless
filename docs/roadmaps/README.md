@@ -12,7 +12,7 @@ Roadmaps describe intended outcomes, sequencing, evidence, and acceptance criter
 | --- | --- | --- |
 | [Provider Expansion and Parity](provider-expansion.md) | Add high-value Chinese AI web providers and keep all supported providers aligned on a reliable provider-neutral baseline. | P0 |
 | [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
-| [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the Rust daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
+| [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Agent Session Integrations](agent-session-integrations.md) | Bind Tokenless jobs to exact local agent sessions and working directories, with Codex as the first deep integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 
@@ -43,7 +43,7 @@ flowchart LR
 The shared contracts should be built before provider-specific shortcuts:
 
 1. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
-2. Make the Rust daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
+2. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
 3. Expand provider coverage using the same visible-session and evidence requirements as the existing adapters.
 4. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
 5. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
@@ -54,7 +54,7 @@ The shared contracts should be built before provider-specific shortcuts:
 - **Evidence before availability:** selectors or menu presence are not success. A capability is supported only when a real visible-session sequence proves the final outcome.
 - **Fail closed:** ambiguous identity, navigation, attachment state, workspace selection, or context delivery must return an explicit unavailable or unknown result.
 - **Exact identity over names:** use provider/profile/resource identifiers and agent/session/worktree identity. Human-readable project and chat names are metadata, not primary keys.
-- **Daemon-owned concurrency:** every invocation is durably admitted, deduplicated, scheduled, leased, checkpointed, and completed through the Rust daemon.
+- **Daemon-owned concurrency:** every invocation is durably admitted, deduplicated, scheduled, leased, checkpointed, and completed through the local daemon.
 - **Conversation single-writer:** one conversation accepts at most one mutating job at a time; unrelated conversations may run concurrently only within explicit profile and provider limits.
 - **Local-first and consent-based:** indexing, session binding, and staging happen locally. Upload only the bounded artifacts a user or authorized agent has approved.
 - **Provenance-preserving context:** every instruction and source must retain its origin, scope, freshness, and sharing policy.

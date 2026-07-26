@@ -76,7 +76,7 @@ Runtime browser 可选值为 `chrome`、`chrome-for-testing`、`chromium`、`edg
 | `--browser-visibility <auto\|headed\|headless>` | 选择浏览器可见性策略。 |
 | `--timeout-ms <ms>` | 覆盖命令或 job 的等待时间。 |
 | `--daemon-start-timeout-ms <ms>` | 覆盖 daemon 启动等待时间。 |
-| `--runner-heartbeat-timeout-ms <ms>` | 覆盖 Playwright runner heartbeat 等待时间。 |
+| `--runner-heartbeat-timeout-ms <ms>` | 为兼容保留；embedded Playwright runtime 会忽略它。 |
 | `--cancel-timeout-ms <ms>` | 覆盖取消确认等待时间。 |
 | `--target-url <url>` | 从所选 provider 域名下允许的 URL 开始执行。 |
 
@@ -107,7 +107,7 @@ tokenless -V
 
 ### `tokenless install`
 
-验证打包的 Rust runtime，解析所选 Chromium browser，保存 runtime 配置，并确保本地 daemon 已就绪。
+验证打包的 TypeScript daemon runtime，解析所选 Chromium browser，保存 runtime 配置，并确保本地 daemon 已就绪。
 
 ```bash
 tokenless install --browser chrome --json
@@ -168,7 +168,7 @@ tokenless setup \
 
 ### `tokenless doctor`
 
-只读检查 Node.js、已安装 skills、打包 runtime、daemon identity/version、Playwright runner、browser、配置、默认 managed profile，以及缓存的 provider readiness。
+只读检查 Node.js、已安装 skills、打包 runtime、daemon identity/version、embedded Playwright runtime、browser、配置、默认 managed profile，以及缓存的 provider readiness。
 
 ```bash
 tokenless doctor --json
@@ -206,7 +206,7 @@ tokenless config \
 
 ### `tokenless upgrade`
 
-执行受支持的 upgrade pipeline：更新全局 npm CLI、解析并验证已安装 CLI、刷新 agent skills、更新本地 runtime，并运行 doctor。
+执行受支持的 upgrade pipeline：更新全局 npm CLI、解析并验证已安装 CLI、刷新 agent skills、检查本地 TypeScript daemon runtime，并运行 doctor。
 
 ```bash
 tokenless upgrade
@@ -304,7 +304,7 @@ tokenless profiles set-default -P work --json
 
 ### `tokenless profiles reset`
 
-停止 Playwright runner，并从已记录来源重新导入 imported managed profile。
+让 embedded Playwright runtime quiesce，并从已记录来源重新导入 imported managed profile。
 
 ```bash
 tokenless profiles reset -P work
@@ -315,7 +315,7 @@ tokenless profiles reset -P work --preferred-providers chatgpt,claude
 
 ### `tokenless profiles clear`
 
-停止 runner，并删除一个或全部 managed profiles：
+让 embedded Playwright runtime quiesce，并删除一个或全部 managed profiles：
 
 ```bash
 tokenless profiles clear -P work
@@ -375,7 +375,7 @@ Identity 与 continuity：
 
 - `--no-wait` 提交后立即返回，不等待结果。
 - `--long-running` 使用 long-running wait budget，且不能与 `--no-wait` 同时使用。
-- `--timeout-ms`、`--cancel-timeout-ms`、`--daemon-start-timeout-ms` 和 `--runner-heartbeat-timeout-ms` 可覆盖执行时间。
+- `--timeout-ms`、`--cancel-timeout-ms` 和 `--daemon-start-timeout-ms` 可覆盖执行时间。`--runner-heartbeat-timeout-ms` 为兼容保留，但不再控制 standalone runner。
 - `--target-url <url>` 选择 provider 域名下允许的起始 URL。
 
 Workspace modes：

@@ -16,7 +16,7 @@ Package versions describe releases; protocol identifiers describe compatibility.
 
 Run `npm run protocol:generate` after changing registry constants. CI and
 `npm run lint` run `npm run protocol:check`, which rejects stale generated
-Rust, TypeScript, or JavaScript constants and invalid protocol artifacts.
+TypeScript or JavaScript constants and invalid protocol artifacts.
 
 ## Compatibility negotiation
 
@@ -42,14 +42,15 @@ diagnostic only.
 
 ## Compatibility and conformance
 
-Ordinary runtime reuse is based on protocol overlap, not the npm or Cargo
+Ordinary runtime reuse is based on protocol overlap, not the npm
 semantic-version major. Setup never stops a compatible same-home daemon for
 version drift; when only the installed daemon runtime is stale, setup refreshes
 that installed runtime for the next start and leaves the running daemon in
 place.
 
 The gated `test/protocol-cross-version.e2e.mjs` suite downloads historical npm
-CLI and native packages using npm's package cache/integrity handling and
-exercises real processes in both directions. `.github/workflows/protocol-cross-version.yml`
+CLI packages, plus historical native runtime packages when testing versions
+that published them, using npm's package cache/integrity handling and exercises
+real processes in both directions. `.github/workflows/protocol-cross-version.yml`
 runs the conformance matrix across supported operating-system and architecture
-packages.
+packages without requiring the removed implementation source or a non-Node toolchain.

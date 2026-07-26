@@ -8,7 +8,6 @@ import addFormats from 'ajv-formats'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const registryPath = path.join(root, 'protocol/registry.json')
 const registrySchemaPath = path.join(root, 'protocol/registry.schema.json')
-const rustOutputPath = path.join(root, 'packages/daemon/src/generated/protocol_constants.rs')
 const tsOutputPath = path.join(root, 'packages/cli/src/generated/protocol-constants.ts')
 const jsOutputPath = path.join(root, 'scripts/generated/protocol-constants.mjs')
 const REGISTRY_PROTOCOL = 'tokenless.protocol-registry.v1'
@@ -21,12 +20,10 @@ validateRegistrySchema(registry, registrySchema)
 validateRegistry(registry)
 await validateArtifacts(registry)
 
-const rustConstants = collectConstants(registry, 'rust')
 const tsConstants = collectConstants(registry, 'typescript')
 const jsConstants = collectConstants(registry, 'javascript')
 
 const outputs = [
-  [rustOutputPath, renderRust(registry.generatedHeader, rustConstants)],
   [tsOutputPath, renderTypeScript(registry.generatedHeader, tsConstants)],
   [jsOutputPath, renderJavaScript(registry.generatedHeader, jsConstants)],
 ]
@@ -74,7 +71,6 @@ function validateRegistry(value) {
 
   const ids = new Set()
   const constants = {
-    rust: new Set(),
     typescript: new Set(),
     javascript: new Set(),
   }
@@ -417,21 +413,6 @@ function collectConstants(value, language) {
     if (Boolean(left.aliasOf) !== Boolean(right.aliasOf)) return left.aliasOf ? 1 : -1
     return left.name.localeCompare(right.name)
   })
-}
-
-function renderRust(header, constants) {
-  const lines = [
-    `// ${header}`,
-    '',
-  ]
-  for (const constant of constants) {
-    if (constant.aliasOf) {
-      lines.push(`pub const ${constant.name}: &str = ${constant.aliasOf};`)
-    } else {
-      lines.push(`pub const ${constant.name}: &str = ${JSON.stringify(constant.value)};`)
-    }
-  }
-  return `${lines.join('\n')}\n`
 }
 
 function renderTypeScript(header, constants) {

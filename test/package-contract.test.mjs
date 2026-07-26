@@ -9,16 +9,6 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
-const executableSuffix = process.platform === 'win32' ? '.exe' : ''
-const nativeTuples = [
-  ['darwin', 'arm64'],
-  ['darwin', 'x64'],
-  ['linux', 'arm64'],
-  ['linux', 'x64'],
-  ['win32', 'arm64'],
-  ['win32', 'x64'],
-]
-
 test('workspace packages keep standalone product names', () => {
   const cli = readJson('packages/cli/package.json')
   assert.equal(cli.name, 'tokenless')
@@ -276,15 +266,13 @@ test('CLI command help is a supported common option for commands and subcommands
   }
 })
 
-test('universal CLI package contains JS only and declares exact platform runtime optionals', () => {
+test('universal CLI package contains the pure JS runtime without native optionals', () => {
   const pkg = readJson('packages/cli/package.json')
   assert.equal(pkg.dependencies['@tokenless/playwright'], undefined)
   assert.equal(typeof pkg.dependencies['playwright-core'], 'string')
   assert.equal(pkg.files.includes('dist/bin'), false)
-  assert.deepEqual(pkg.optionalDependencies, Object.fromEntries(
-    nativeTuples.map(([platform, arch]) => [`tokenless-native-${platform}-${arch}`, pkg.version])
-  ))
-  assert.equal(Object.values(pkg.optionalDependencies).some((version) => version.startsWith('workspace:')), false)
+  assert.equal(pkg.optionalDependencies, undefined)
+  assert.equal(pkg.scripts['build:native'], undefined)
   assert.equal(fs.existsSync(path.join(cliDir, 'dist/src/native-host.mjs')), false)
   assert.equal(fs.existsSync(path.join(cliDir, 'dist/src/direct')), false)
 
@@ -293,102 +281,64 @@ test('universal CLI package contains JS only and declares exact platform runtime
   const paths = pack.files.map((file) => file.path)
   assert.equal(paths.some((file) => file.startsWith('dist/bin/') || file.startsWith('npm/')), false)
   assert.ok(paths.includes('dist/src/tokenless.mjs'))
+  assert.ok(paths.includes('dist/src/daemon/daemon-entry.mjs'))
   assert.ok(paths.includes('dist/src/playwright/index.js'))
   assert.ok(paths.includes('dist/src/playwright/index.d.ts'))
-  assert.ok(paths.includes('dist/src/playwright/runner-entry.mjs'))
+  assert.equal(paths.includes('dist/src/playwright/runner-entry.mjs'), false)
   assert.ok(paths.includes('README.md'))
   assert.equal(paths.some((file) => /native-host\.mjs$/.test(file)), false)
   assert.equal(paths.some((file) => file.startsWith('dist/src/direct/')), false)
 })
 
-test('public manifests do not reference unpublished scoped Tokenless runtime packages', () => {
-  const publicManifests = [
-    readJson('packages/cli/package.json'),
-    ...nativeTuples.map(([platform, arch]) => readJson(`packages/cli/npm/tokenless-native-${platform}-${arch}/package.json`)),
-  ]
-  for (const manifest of publicManifests) {
-    for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
-      for (const packageName of Object.keys(manifest[field] ?? {})) {
-        assert.notEqual(packageName, '@tokenless/playwright')
-        assert.equal(packageName.startsWith('@tokenless/'), false, `${manifest.name} must not publish ${field}.${packageName}`)
-      }
+test('public manifests and lockfile do not reference unpublished scoped or native Tokenless packages', () => {
+  const manifest = readJson('packages/cli/package.json')
+  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+    for (const packageName of Object.keys(manifest[field] ?? {})) {
+      assert.notEqual(packageName, '@tokenless/playwright')
+      assert.equal(packageName.startsWith('@tokenless/'), false, `${manifest.name} must not publish ${field}.${packageName}`)
+      assert.equal(packageName.startsWith('tokenless-native-'), false, `${manifest.name} must not depend on ${packageName}`)
     }
   }
 
   const rootPackage = readJson('package.json')
   assert.equal(rootPackage.workspaces.includes('packages/playwright'), false)
+  assert.equal(rootPackage.workspaces.includes('packages/cli/npm/*'), false)
 
   const lock = readJson('package-lock.json')
+  assert.equal(lock.packages['packages/cli'].optionalDependencies, undefined)
   for (const [packagePath, entry] of Object.entries(lock.packages)) {
     assert.notEqual(entry.name, '@tokenless/playwright', `${packagePath} must not be a scoped Playwright package`)
     assert.equal(packagePath.includes('@tokenless/playwright'), false)
+    assert.equal(entry.name?.startsWith?.('tokenless-native-') ?? false, false, `${packagePath} must not be a native runtime package`)
+    assert.equal(packagePath.includes('tokenless-native-'), false)
     for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
       assert.equal(entry[field]?.['@tokenless/playwright'], undefined, `${packagePath} must not depend on @tokenless/playwright`)
+      for (const packageName of Object.keys(entry[field] ?? {})) {
+        assert.equal(packageName.startsWith('tokenless-native-'), false, `${packagePath} must not depend on ${packageName}`)
+      }
     }
   }
 })
 
-test('root lockfile records every optional native runtime without foreign-platform workspaces', () => {
-  const rootPackage = readJson('package.json')
-  const lock = readJson('package-lock.json')
-  const cliPackage = readJson('packages/cli/package.json')
-  assert.equal(rootPackage.workspaces.includes('packages/cli/npm/*'), false)
-  assert.deepEqual(lock.packages['packages/cli'].optionalDependencies, cliPackage.optionalDependencies)
-  for (const packageName of Object.keys(cliPackage.optionalDependencies)) {
-    const packageLockEntry = lock.packages[`packages/cli/node_modules/${packageName}`] ??
-      lock.packages[`node_modules/${packageName}`]
-    assert.equal(packageLockEntry?.optional, true)
-    assert.equal(packageLockEntry?.version, cliPackage.version)
-  }
-})
-
-test('native package verifier accepts the real current-platform daemon binary', () => {
-  const packageName = `tokenless-native-${process.platform}-${process.arch}`
-  const nativePackageDir = path.join(cliDir, 'npm', packageName)
-  const verifier = path.join(cliDir, 'scripts/verify-native-package.mjs')
-  const manifest = readJson(`packages/cli/npm/${packageName}/package.json`)
-  const executable = path.join(nativePackageDir, 'bin', `tokenless-daemon${executableSuffix}`)
-  const buildInfo = JSON.parse(execFileSync(executable, ['--tokenless-build-info'], {
-    encoding: 'utf8',
-    timeout: 5_000,
-  }))
-
-  assert.deepEqual(Object.keys(buildInfo).sort(), ['arch', 'binary', 'platform', 'protocol', 'version'])
-  assert.equal(buildInfo.binary, 'tokenless-daemon')
-  assert.equal(buildInfo.version, manifest.version)
-  assert.equal(buildInfo.platform, process.platform)
-  assert.equal(buildInfo.arch, process.arch)
-
-  const verified = spawnSync(process.execPath, [verifier], { cwd: nativePackageDir, encoding: 'utf8' })
-  assert.equal(verified.status, 0, verified.stderr)
-})
-
-test('current platform runtime and universal CLI truly pack, install, and expose executable artifacts', () => {
-  const packageName = `tokenless-native-${process.platform}-${process.arch}`
-  const nativePackageDir = path.join(cliDir, 'npm', packageName)
+test('pure JS CLI packs, installs, and exposes executable runtime artifacts', () => {
   const packDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-pack-tarballs-'))
   const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-pack-install-'))
   let universalTarball
-  let nativeTarball
   let playwrightCoreTarball
   try {
     const universalPack = npmPack(cliDir, packDir)
-    const nativePack = npmPack(nativePackageDir, packDir)
     const playwrightCorePack = npmPack(path.join(root, 'node_modules', 'playwright-core'), packDir)
     universalTarball = path.join(packDir, universalPack.filename)
-    nativeTarball = path.join(packDir, nativePack.filename)
     playwrightCoreTarball = path.join(packDir, playwrightCorePack.filename)
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.js'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/runner-entry.mjs'))
-    const nativePaths = nativePack.files.map((file) => file.path)
-    assert.ok(nativePaths.includes(`bin/tokenless-daemon${executableSuffix}`))
-    assert.equal(nativePaths.includes(`bin/tokenless-native-host${executableSuffix}`), false)
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/daemon-entry.mjs'))
+    assert.equal(universalPack.files.some((file) => file.path === 'dist/src/playwright/runner-entry.mjs'), false)
     assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/bin/')), false)
+    assert.equal(universalPack.files.some((file) => file.path.startsWith('npm/')), false)
 
     npmExecFileSync([
       'install',
       universalTarball,
-      nativeTarball,
       playwrightCoreTarball,
       '--prefix',
       installDir,
@@ -399,18 +349,19 @@ test('current platform runtime and universal CLI truly pack, install, and expose
     ])
 
     const installedCli = path.join(installDir, 'node_modules', 'tokenless')
-    const installedNative = path.join(installDir, 'node_modules', packageName)
-    const installedDaemon = path.join(installedNative, 'bin', `tokenless-daemon${executableSuffix}`)
+    const installedDaemonEntry = path.join(installedCli, 'dist', 'src', 'daemon', 'daemon-entry.mjs')
     assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'bin')), false)
     assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'src', 'playwright', 'index.js')), true)
-    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'src', 'playwright', 'runner-entry.mjs')), true)
+    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'src', 'playwright', 'runner-entry.mjs')), false)
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', '@tokenless', 'playwright')), false)
-    assert.equal(fs.existsSync(installedDaemon), true)
+    assert.equal(fs.existsSync(path.join(installDir, 'node_modules', 'tokenless-native-darwin-arm64')), false)
+    assert.equal(fs.existsSync(installedDaemonEntry), true)
 
-    const buildInfo = JSON.parse(execFileSync(installedDaemon, ['--tokenless-build-info'], {
+    const buildInfo = JSON.parse(execFileSync(process.execPath, [installedDaemonEntry, '--tokenless-build-info'], {
       encoding: 'utf8',
       timeout: 5_000,
     }))
+    assert.equal(buildInfo.protocol, 'tokenless.daemon.v1')
     assert.equal(buildInfo.binary, 'tokenless-daemon')
     assert.equal(buildInfo.version, readJson('packages/cli/package.json').version)
 
@@ -422,7 +373,6 @@ test('current platform runtime and universal CLI truly pack, install, and expose
     }
   } finally {
     if (universalTarball) fs.rmSync(universalTarball, { force: true })
-    if (nativeTarball) fs.rmSync(nativeTarball, { force: true })
     if (playwrightCoreTarball) fs.rmSync(playwrightCoreTarball, { force: true })
     fs.rmSync(packDir, { recursive: true, force: true })
     fs.rmSync(installDir, { recursive: true, force: true })
