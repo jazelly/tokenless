@@ -5,7 +5,10 @@ import {
   ManagedPlaywrightRunnerService,
 } from '../playwright/runner-service.js'
 import { isClaimRecoveryError } from '../playwright/errors.js'
+import { readTokenlessConfig } from '../job-store.js'
+import { resolveChromiumBrowser } from '../runtime.js'
 import type { JobStore } from './job-store.js'
+import type { ManagedBrowserLaunchTarget } from '../playwright/browser/context-manager.js'
 
 export const BROWSER_RUNTIME_CONTROL_PROTOCOL = 'tokenless.browser-runtime-control.v1' as const
 
@@ -69,7 +72,7 @@ export class BrowserRuntimeController {
       if (this.quiesceRequested) return this.status()
       if (this.state === 'quiescing') return this.status()
       if (this.runner && this.state === 'running') return this.status()
-      this.runner = this.createRunner()
+      this.runner = await this.createRunner()
       this.state = 'running'
       return this.status()
     })
@@ -120,10 +123,12 @@ export class BrowserRuntimeController {
     })
   }
 
-  private createRunner(): RunnerInstance {
+  private async createRunner(): Promise<RunnerInstance> {
+    const browser = await this.resolveBrowserLaunchTarget()
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
       daemonClient: createInProcessDaemonClient(this.store),
+      browser,
       recoverAbortedClaim: (job) => this.store.recoverActiveClaim(job.job_id, job.claim_token),
     })
     const abortController = new AbortController()
@@ -143,6 +148,29 @@ export class BrowserRuntimeController {
         void this.onFatalError?.(error)
       })
     return runner
+  }
+
+  private async resolveBrowserLaunchTarget(): Promise<ManagedBrowserLaunchTarget> {
+    let configuredBrowser: unknown
+    try {
+      configuredBrowser = (await readTokenlessConfig(this.store.homeDir)).browser ?? undefined
+    } catch {
+      configuredBrowser = undefined
+    }
+    if (configuredBrowser === undefined || configuredBrowser === null || configuredBrowser === '' || configuredBrowser === 'chrome') {
+      return { id: 'chrome' }
+    }
+    if (configuredBrowser === 'edge') {
+      return { id: 'edge' }
+    }
+    const resolved = await resolveChromiumBrowser(configuredBrowser)
+    if (resolved.browser === 'chrome' || resolved.browser === 'edge') {
+      return { id: resolved.browser }
+    }
+    return {
+      id: resolved.browser,
+      ...(resolved.playwrightExecutablePath ? { executablePath: resolved.playwrightExecutablePath } : {}),
+    }
   }
 
   private async settleRunner(runner: RunnerInstance) {

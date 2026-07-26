@@ -26,6 +26,8 @@ import {
 } from './errors.js'
 import { JobStore, publicView, withClaimToken, type ExecutionBackend, type JobStatus } from './job-store.js'
 
+const DAEMON_RUNTIME_KIND = 'typescript'
+
 export type DaemonServer = {
   close(): Promise<void>
   server: http.Server
@@ -306,6 +308,7 @@ function healthResponse(store: JobStore) {
     daemon_protocol: DAEMON_PROTOCOL,
     version: tokenlessPackageVersion(),
     native_protocol: NATIVE_PROTOCOL,
+    runtime_kind: DAEMON_RUNTIME_KIND,
     status: 'ok',
     ready: true,
     home_dir: store.homeDir,

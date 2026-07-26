@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -89,6 +90,52 @@ test('TS daemon claim-next is atomic across independent real Node clients', {
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
     await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('JobStore migrates minimal legacy SQLite schema across concurrent real process opens', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-job-store-legacy-migration-')
+  const jobId = randomUUID()
+  const barrierDir = fs.mkdtempSync(path.join(homeDir, 'migration-barrier-'))
+  const releaseMarker = path.join(barrierDir, 'release')
+  const readyMarkers = [
+    path.join(barrierDir, 'client-a.ready'),
+    path.join(barrierDir, 'client-b.ready'),
+  ]
+  try {
+    createMinimalLegacyJobStore(homeDir, jobId)
+    const clients = readyMarkers.map((readyMarker) => runJobStoreMigrationClient({
+      homeDir,
+      jobId,
+      readyMarker,
+      releaseMarker,
+    }))
+    try {
+      await Promise.all(readyMarkers.map((readyMarker) => waitForFile(readyMarker, 10_000)))
+      fs.writeFileSync(releaseMarker, `${Date.now()}\n`, { flag: 'wx' })
+      const results = await Promise.all(clients)
+      assert.equal(results.length, 2)
+      for (const result of results) {
+        assert.equal(result.job.job_id, jobId)
+        assert.equal(result.job.status, 'queued')
+        assert.equal(result.job.claim_expires_at_ms, null)
+        assert.deepEqual(result.job.checkpoint_json, null)
+        assert.deepEqual(result.job.resume_json, null)
+        assert.equal(result.count, 1)
+      }
+      assertMigratedJobColumns(homeDir)
+    } catch (error) {
+      if (!fs.existsSync(releaseMarker)) {
+        fs.writeFileSync(releaseMarker, `${Date.now()}\n`, { flag: 'wx' })
+      }
+      await Promise.allSettled(clients)
+      throw error
+    }
+  } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -1027,6 +1074,126 @@ function tempHome(prefix) {
 
 function readControlToken(homeDir) {
   return fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
+}
+
+function createMinimalLegacyJobStore(homeDir, jobId) {
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${randomBytes(32).toString('base64url')}\n`, { mode: 0o600 })
+  const databasePath = path.join(homeDir, 'tokenless.sqlite3')
+  const db = new DatabaseSync(databasePath)
+  try {
+    db.exec(`
+      CREATE TABLE jobs (
+        job_id TEXT PRIMARY KEY NOT NULL,
+        claim_token TEXT NOT NULL,
+        execution_backend TEXT NOT NULL DEFAULT 'legacy_extension',
+        profile_id TEXT,
+        provider TEXT NOT NULL,
+        action TEXT NOT NULL,
+        status TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        result_json TEXT,
+        error_json TEXT,
+        blocker_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `)
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO jobs (
+        job_id, claim_token, execution_backend, profile_id,
+        provider, action, status, request_json,
+        result_json, error_json, blocker_json, created_at, updated_at
+      ) VALUES (?, ?, 'legacy_extension', NULL, 'claude', 'prompt.submit', 'queued', ?, NULL, NULL, NULL, ?, ?)
+    `).run(jobId, `legacy-${randomUUID()}`, JSON.stringify({ prompt: 'legacy schema migration' }), now, now)
+  } finally {
+    db.close()
+  }
+}
+
+function runJobStoreMigrationClient({
+  homeDir,
+  jobId,
+  readyMarker,
+  releaseMarker,
+}) {
+  const child = spawn(process.execPath, [
+    '--input-type=module',
+    '-e',
+    jobStoreMigrationClientSource(),
+    cliDir,
+    homeDir,
+    jobId,
+    readyMarker,
+    releaseMarker,
+  ], {
+    cwd: root,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  createdChildren.add(child)
+  let stderr = ''
+  child.stderr.on('data', (chunk) => {
+    stderr += String(chunk)
+  })
+  return new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', (code) => {
+      createdChildren.delete(child)
+      if (code !== 0) {
+        reject(new Error(`JobStore migration client exited ${code}: ${stderr}`))
+        return
+      }
+      try {
+        const resultPath = `${readyMarker}.result.json`
+        resolve(JSON.parse(fs.readFileSync(resultPath, 'utf8')))
+      } catch (error) {
+        reject(error)
+      }
+    })
+  })
+}
+
+function jobStoreMigrationClientSource() {
+  return `
+    import fs from 'node:fs'
+    import path from 'node:path'
+    import { pathToFileURL } from 'node:url'
+
+    const [cliDir, homeDir, jobId, readyMarker, releaseMarker] = process.argv.slice(1)
+    fs.writeFileSync(readyMarker, 'ready\\n', { flag: 'wx' })
+    while (!fs.existsSync(releaseMarker)) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const { JobStore } = await import(pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href)
+    const store = await JobStore.open(homeDir)
+    try {
+      const job = store.getJob(jobId)
+      const count = store.listJobs().length
+      fs.writeFileSync(\`\${readyMarker}.result.json\`, JSON.stringify({ job, count }))
+    } finally {
+      store.close()
+    }
+  `
+}
+
+function assertMigratedJobColumns(homeDir) {
+  const db = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+  try {
+    const columns = new Set(db.prepare('PRAGMA table_info(jobs)').all().map((row) => String(row.name)))
+    for (const column of [
+      'checkpoint_json',
+      'resume_json',
+      'claim_expires_at',
+      'summary_task_id',
+      'summary_project_name',
+      'summary_chat_name',
+      'summary_idempotency_key',
+    ]) {
+      assert.equal(columns.has(column), true, `expected migrated jobs.${column}`)
+    }
+  } finally {
+    db.close()
+  }
 }
 
 function assertUnixRestrictivePermissions(homeDir) {

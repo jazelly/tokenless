@@ -78,43 +78,96 @@ test('published 0.2.0 CLI and daemon conform with the current control plane in b
     const oldPort = await freePort()
     const oldDaemonUrl = `http://127.0.0.1:${oldPort}`
     oldDaemon = startHistoricalDaemon(oldDaemonBinary, oldHome, oldRuntimeTemp, oldPort)
+    writeDaemonPidFile(oldHome, oldDaemon.pid, oldDaemonUrl)
 
-    const currentToOld = await waitForProbe(
+    const seededByOld = await waitForHistoricalProbe({
+      oldCliPackageDir,
+      homeDir: oldHome,
+      daemonUrl: oldDaemonUrl,
+      tempDir: oldRuntimeTemp,
+      mode: 'create-job',
+    }, oldDaemon, fixture.historicalVersion)
+    assert.equal(seededByOld.probe.ok, true, JSON.stringify(seededByOld.probe))
+    assert.equal(seededByOld.probe.body.version, fixture.historicalVersion)
+    assert.equal(seededByOld.created.status, 'queued', JSON.stringify(seededByOld.created))
+    assert.equal(
+      seededByOld.jobs.some((job) => job.job_id === seededByOld.created.job_id),
+      true,
+      'the historical daemon must durably store the helper-created job'
+    )
+
+    const currentToOld = await waitForLegacyProbe(
       () => current.probeDaemonReady({ homeDir: oldHome, daemonUrl: oldDaemonUrl, timeoutMs: 1_000 }),
       oldDaemon,
       fixture.historicalVersion
     )
-    assert.equal(currentToOld.ok, true, JSON.stringify(currentToOld))
+    assert.equal(currentToOld.ok, false, JSON.stringify(currentToOld))
+    assert.equal(currentToOld.code, 'daemon_runtime_kind_mismatch', JSON.stringify(currentToOld))
+    assert.equal(currentToOld.runtimeKind, 'legacy', JSON.stringify(currentToOld))
     assert.equal(currentToOld.identityVerified, true)
+    assert.equal(currentToOld.sameHomeVerified, true)
     assert.equal(currentToOld.body.version, fixture.historicalVersion)
     assert.equal(currentToOld.body.daemon_protocol, current.DAEMON_PROTOCOL)
     assert.equal(currentToOld.body.native_protocol, current.NATIVE_PROTOCOL)
-    assert.deepEqual(
-      await current.listDaemonJobs({ homeDir: oldHome, daemonUrl: oldDaemonUrl, requestTimeoutMs: 2_000 }),
-      [],
-      'the current authenticated client must read the historical daemon job endpoint'
+
+    const differentHome = fs.realpathSync(fs.mkdtempSync(path.join(temporaryRoot, 'different-home-')))
+    fs.copyFileSync(path.join(oldHome, 'daemon.token'), path.join(differentHome, 'daemon.token'))
+    const differentHomeProbe = await waitForProbeCode(
+      () => current.probeDaemonReady({ homeDir: differentHome, daemonUrl: oldDaemonUrl, timeoutMs: 1_000 }),
+      oldDaemon,
+      'daemon_home_mismatch'
     )
-    const currentSetupToOld = await current.ensureSetupDaemonRunnable({
+    assert.equal(differentHomeProbe.identityVerified, true)
+    await assert.rejects(
+      current.ensureDaemonReady({ homeDir: differentHome, daemonUrl: oldDaemonUrl, timeoutMs: 10_000 }),
+      (error) => {
+        assert.equal(error.code, 'daemon_home_mismatch')
+        return true
+      }
+    )
+    assert.equal(oldDaemon.exitCode, null, 'current ensure must not stop a different-home historical daemon')
+
+    const oldDaemonPid = oldDaemon.pid
+    const currentReplacement = await current.ensureDaemonReady({
       homeDir: oldHome,
       daemonUrl: oldDaemonUrl,
       timeoutMs: 10_000,
     })
-    assert.equal(currentSetupToOld.body.version, fixture.historicalVersion)
-    assert.equal(currentSetupToOld.versionCompatible, false)
-    assert.equal(currentSetupToOld.protocolCompatible, true)
-    assert.equal(currentSetupToOld.reconciliation.action, 'refresh_installed_runtime')
-    assert.equal(currentSetupToOld.reconciliation.reason, 'installed_artifact_mismatch')
-    assert.equal(oldDaemon.exitCode, null, 'current setup must not stop the historical compatible daemon')
+    currentDaemonPid = currentReplacement.pid
+    currentHome = oldHome
+    currentDaemonUrl = oldDaemonUrl
+    assert.equal(currentReplacement.started, true)
+    assert.notEqual(currentReplacement.pid, oldDaemonPid)
+    assert.equal(currentReplacement.runtimeKind, 'typescript')
+    assert.equal(currentReplacement.body.runtime_kind, 'typescript')
+    assert.equal(currentReplacement.protocolCompatible, true)
+    assert.equal(await waitForChildExit(oldDaemon, 10_000), true, 'current ensure must stop the same-home historical daemon')
+    oldDaemon = undefined
     const postSetupProbe = await current.probeDaemonReady({
       homeDir: oldHome,
       daemonUrl: oldDaemonUrl,
       timeoutMs: 1_000,
     })
     assert.equal(postSetupProbe.ok, true, JSON.stringify(postSetupProbe))
-    assert.equal(postSetupProbe.body.version, fixture.historicalVersion)
+    assert.equal(postSetupProbe.runtimeKind, 'typescript')
+    assert.equal(postSetupProbe.body.runtime_kind, 'typescript')
+    assert.equal(postSetupProbe.body.version, currentReplacement.body.version)
+    const jobsAfterReplacement = await current.listDaemonJobs({ homeDir: oldHome, daemonUrl: oldDaemonUrl, requestTimeoutMs: 2_000 })
+    assert.equal(
+      jobsAfterReplacement.some((job) => job.job_id === seededByOld.created.job_id),
+      true,
+      'the current TypeScript daemon must read durable jobs created by the historical daemon'
+    )
 
-    await stopOwnedChild(oldDaemon)
-    oldDaemon = undefined
+    const stoppedReplacement = await current.stopDaemon({
+      homeDir: oldHome,
+      daemonUrl: oldDaemonUrl,
+      timeoutMs: 10_000,
+    })
+    assert.equal(stoppedReplacement.status, 'stopped')
+    currentDaemonPid = undefined
+    currentHome = undefined
+    currentDaemonUrl = undefined
 
     currentHome = fs.realpathSync(fs.mkdtempSync(path.join(temporaryRoot, 'current-daemon-home-')))
     const oldCliTemp = fs.realpathSync(fs.mkdtempSync(path.join(temporaryRoot, 'old-cli-tmp-')))
@@ -262,21 +315,55 @@ function startHistoricalDaemon(binaryPath, homeDir, tempDir, port) {
   return child
 }
 
-async function waitForProbe(probe, child, expectedVersion) {
+function writeDaemonPidFile(homeDir, pid, daemonUrl) {
+  fs.writeFileSync(path.join(homeDir, 'daemon.pid.json'), `${JSON.stringify({
+    protocol: 'tokenless.daemon-process.v1',
+    pid,
+    homeDir,
+    daemonUrl,
+    binaryPath: 'published-legacy-daemon',
+    runtimeKind: 'legacy',
+    startedAt: new Date().toISOString(),
+  }, null, 2)}\n`, { mode: 0o600 })
+}
+
+async function waitForLegacyProbe(probe, child, expectedVersion) {
   const deadline = Date.now() + 20_000
   let last
   while (Date.now() < deadline) {
-    if (child.conformanceOutput?.error) {
-      assert.fail(`historical daemon could not start: ${formatChildOutput(child)}`)
-    }
-    if (child.exitCode !== null) {
-      assert.fail(`historical daemon exited ${child.exitCode}: ${formatChildOutput(child)}`)
-    }
+    assertChildRunning(child)
     last = await probe()
-    if (last.ok && last.body?.version === expectedVersion) return last
+    if (
+      last.code === 'daemon_runtime_kind_mismatch' &&
+      last.runtimeKind === 'legacy' &&
+      last.body?.version === expectedVersion
+    ) {
+      return last
+    }
     await delay(100)
   }
-  assert.fail(`historical daemon did not become compatible: ${JSON.stringify(last)}\n${formatChildOutput(child)}`)
+  assert.fail(`historical daemon did not become a verified legacy runtime: ${JSON.stringify(last)}\n${formatChildOutput(child)}`)
+}
+
+async function waitForProbeCode(probe, child, code) {
+  const deadline = Date.now() + 20_000
+  let last
+  while (Date.now() < deadline) {
+    assertChildRunning(child)
+    last = await probe()
+    if (last.code === code) return last
+    await delay(100)
+  }
+  assert.fail(`historical daemon did not report ${code}: ${JSON.stringify(last)}\n${formatChildOutput(child)}`)
+}
+
+function assertChildRunning(child) {
+  if (child.conformanceOutput?.error) {
+    assert.fail(`historical daemon could not start: ${formatChildOutput(child)}`)
+  }
+  if (child.exitCode !== null) {
+    assert.fail(`historical daemon exited ${child.exitCode}: ${formatChildOutput(child)}`)
+  }
 }
 
 async function freePort() {
@@ -306,6 +393,15 @@ async function stopOwnedChild(child) {
     true,
     `historical daemon did not exit: ${formatChildOutput(child)}`
   )
+}
+
+async function waitForChildExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return true
+  await Promise.race([
+    new Promise((resolve) => child.once('exit', resolve)),
+    delay(timeoutMs),
+  ])
+  return child.exitCode !== null || child.signalCode !== null
 }
 
 async function forceStopPid(pid) {
@@ -345,12 +441,13 @@ function npmCommand() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm'
 }
 
-function runHistoricalProbe({ oldCliPackageDir, homeDir, daemonUrl, tempDir }) {
+function runHistoricalProbe({ oldCliPackageDir, homeDir, daemonUrl, tempDir, mode }) {
   const result = spawnSync(process.execPath, [
     historicalProbeHelper,
     oldCliPackageDir,
     homeDir,
     daemonUrl,
+    ...(mode ? [mode] : []),
   ], {
     cwd: oldCliPackageDir,
     encoding: 'utf8',
@@ -360,6 +457,18 @@ function runHistoricalProbe({ oldCliPackageDir, homeDir, daemonUrl, tempDir }) {
   })
   assert.equal(result.status, 0, result.stderr || result.stdout)
   return JSON.parse(result.stdout)
+}
+
+async function waitForHistoricalProbe(options, child, expectedVersion) {
+  const deadline = Date.now() + 20_000
+  let last
+  while (Date.now() < deadline) {
+    assertChildRunning(child)
+    last = runHistoricalProbe(options)
+    if (last.probe?.ok && last.probe.body?.version === expectedVersion) return last
+    await delay(100)
+  }
+  assert.fail(`historical helper did not observe ready daemon ${expectedVersion}: ${JSON.stringify(last)}\n${formatChildOutput(child)}`)
 }
 
 function npmDownloadEnvironment(cacheDir, registry) {

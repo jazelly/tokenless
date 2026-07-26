@@ -734,9 +734,18 @@ export class JobStore {
   }
 
   private initialize() {
-    this.exec(`
+    this.execWithBusyRetry(`
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
+    `)
+    this.createBaseTables()
+    this.migrateJobsTable()
+    this.createIndexes()
+    restrictFilePermissionsSync(this.databasePath)
+  }
+
+  private createBaseTables() {
+    this.execWithBusyRetry(`
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY NOT NULL,
         claim_token TEXT NOT NULL,
@@ -787,6 +796,11 @@ export class JobStore {
         task_id TEXT NOT NULL CHECK (length(task_id) BETWEEN 1 AND 256),
         PRIMARY KEY (job_id, task_id)
       );
+    `)
+  }
+
+  private createIndexes() {
+    this.execWithBusyRetry(`
       CREATE INDEX IF NOT EXISTS jobs_status_created_at_idx
         ON jobs(status, created_at);
       CREATE INDEX IF NOT EXISTS jobs_provider_action_idx
@@ -798,7 +812,37 @@ export class JobStore {
       CREATE INDEX IF NOT EXISTS job_task_keys_task_id_idx
         ON job_task_keys(task_id, job_id);
     `)
-    restrictFilePermissionsSync(this.databasePath)
+  }
+
+  private migrateJobsTable() {
+    this.execWithBusyRetry('BEGIN IMMEDIATE')
+    try {
+      for (const [column, definition] of [
+        ['checkpoint_json', 'TEXT'],
+        ['resume_json', 'TEXT'],
+        ['claim_expires_at', 'INTEGER'],
+        ['summary_task_id', 'TEXT CHECK (summary_task_id IS NULL OR length(summary_task_id) <= 256)'],
+        ['summary_project_name', 'TEXT CHECK (summary_project_name IS NULL OR length(summary_project_name) <= 256)'],
+        ['summary_chat_name', 'TEXT CHECK (summary_chat_name IS NULL OR length(summary_chat_name) <= 256)'],
+        ['summary_idempotency_key', 'TEXT CHECK (summary_idempotency_key IS NULL OR length(summary_idempotency_key) <= 256)'],
+      ] as const) {
+        this.ensureJobsColumn(column, definition)
+      }
+      this.exec('COMMIT')
+    } catch (error) {
+      try {
+        this.exec('ROLLBACK')
+      } catch {
+        // The transaction may already have been closed by SQLite after an error.
+      }
+      throw error
+    }
+  }
+
+  private ensureJobsColumn(column: string, definition: string) {
+    const columns = new Set(this.all('PRAGMA table_info(jobs)').map((row) => String(row.name)))
+    if (columns.has(column)) return
+    this.exec(`ALTER TABLE jobs ADD COLUMN ${column} ${definition}`)
   }
 
   private getJobWithoutRecovery(jobId: string) {
@@ -862,6 +906,21 @@ export class JobStore {
     } catch (error) {
       throw sqliteError(error)
     }
+  }
+
+  private execWithBusyRetry(sql: string) {
+    let lastError: unknown
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        this.#db.exec(sql)
+        return
+      } catch (error) {
+        if (!isSqliteBusy(error)) throw sqliteError(error)
+        lastError = error
+        sleepSync(50)
+      }
+    }
+    throw sqliteError(lastError)
   }
 
   private run(sql: string, ...params: SQLInputValue[]) {
@@ -1230,6 +1289,17 @@ function jsonRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null
+}
+
+function isSqliteBusy(error: unknown) {
+  const candidate = error as { code?: unknown; errcode?: unknown; message?: unknown }
+  return candidate.code === 'ERR_SQLITE_ERROR' &&
+    (candidate.errcode === 5 || String(candidate.message ?? '').includes('database is locked'))
+}
+
+function sleepSync(ms: number) {
+  const buffer = new SharedArrayBuffer(4)
+  Atomics.wait(new Int32Array(buffer), 0, 0, ms)
 }
 
 function restrictFilePermissionsSync(filePath: string) {

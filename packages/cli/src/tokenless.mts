@@ -16,9 +16,7 @@ import {
   providerHomeUrl,
   readManagedProfileRegistryReadOnly,
   resolveChromeProfile,
-  runnerSupervisorStatus,
   runnerSupervisorStatusReadOnly,
-  startRunnerSupervisor,
   stopRunnerSupervisor,
   submitManagedPlaywrightJob,
   validateChromeProfileDirectoryKey,
@@ -33,6 +31,7 @@ import {
   DEFAULT_DAEMON_URL,
   MAX_NATIVE_MESSAGE_BYTES,
   buildTokenlessPrompt,
+  browserRuntimeStatus,
   quiesceBrowserRuntime,
   cancelDaemonJob,
   createDaemonJob,
@@ -611,6 +610,66 @@ function stoppedRunnerStatus() {
     sessionId: null,
     safeToStop: false,
     heartbeatAt: null,
+  }
+}
+
+async function embeddedRunnerStatus({
+  homeDir,
+  daemonUrl: configuredDaemonUrl,
+}: {
+  homeDir: string
+  daemonUrl: string
+}) {
+  const status = await browserRuntimeStatus({ homeDir, daemonUrl: configuredDaemonUrl })
+  return {
+    state: status.status === 'running' ? 'running' : 'stopped',
+    pid: status.pid,
+    sessionId: 'embedded',
+    safeToStop: false,
+    heartbeatAt: null,
+    started: false,
+    runtime: 'embedded',
+    runtimeStatus: status.status,
+    activeProfileCount: status.activeProfileCount,
+    activeJobCount: status.activeJobCount,
+  }
+}
+
+async function doctorRunnerStatus({
+  homeDir,
+  daemonUrl: configuredDaemonUrl,
+  daemonReady,
+}: {
+  homeDir: string
+  daemonUrl: string
+  daemonReady: boolean
+}) {
+  if (daemonReady) {
+    try {
+      const status = await browserRuntimeStatus({ homeDir, daemonUrl: configuredDaemonUrl })
+      return {
+        ok: status.status === 'running',
+        state: status.status === 'running' ? 'running' : 'stopped',
+        pid: status.pid,
+        sessionId: 'embedded',
+        safeToStop: false,
+        heartbeatAt: null,
+        runtime: 'embedded',
+        runtimeStatus: status.status,
+        activeProfileCount: status.activeProfileCount,
+        activeJobCount: status.activeJobCount,
+      }
+    } catch (error) {
+      if (!shouldUseRunnerSupervisorFallback(error)) {
+        return { ok: false, state: 'unknown', message: error instanceof Error ? error.message : String(error) }
+      }
+    }
+  }
+  try {
+    const status = await runnerSupervisorStatusReadOnly({ homeDir })
+    return { ok: status.state === 'running', ...status }
+  } catch (error) {
+    return { ok: false, state: 'unknown', message: error instanceof Error ? error.message : String(error) }
   }
 }
 
@@ -1398,31 +1457,9 @@ async function executeManagedPlaywrightJob({
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
   })
   await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
-  const injectedRunnerEntry = process.env.TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY
-  const browser = injectedRunnerEntry
-    ? {
-        browser: config.browser ?? 'chrome',
-        displayName: 'injected managed Playwright runner',
-        command: process.execPath,
-        argsPrefix: [],
-      }
-    : await resolveChromiumBrowser(config.browser ?? undefined)
-  const runner = await startRunnerSupervisor({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    browser: browser.browser,
-    ...(browser.browser === 'chrome' || browser.browser === 'edge'
-      ? {}
-      : { browserExecutablePath: browser.playwrightExecutablePath }),
-    ...(injectedRunnerEntry === undefined
-      ? {}
-      : { entryPath: injectedRunnerEntry }),
-    ...(args.runnerHeartbeatTimeoutMs === undefined
-      ? {}
-      : { heartbeatTimeoutMs: Number(args.runnerHeartbeatTimeoutMs) }),
-  })
+  const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: configuredDaemonUrl })
   statusReporter.report({
-    event: runner.started ? 'playwright_runner_started' : 'playwright_runner_ready',
+    event: 'playwright_runner_ready',
     status: runner.state,
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
     provider,
@@ -1804,27 +1841,7 @@ async function resumeCommand(args: CliArgs) {
   const profile = (await registry.listProfiles()).find((candidate) => candidate.id === existing.profile_id)
   if (!profile) throw usageError('resume_profile_not_found', 'The managed profile for this Tokenless job is not available.')
 
-  const injectedRunnerEntry = process.env.TOKENLESS_PLAYWRIGHT_RUNNER_ENTRY
-  const browser = injectedRunnerEntry
-    ? {
-        browser: config.browser ?? 'chrome',
-        displayName: 'injected managed Playwright runner',
-        command: process.execPath,
-        argsPrefix: [],
-      }
-    : await resolveChromiumBrowser(config.browser ?? undefined)
-  const runner = await startRunnerSupervisor({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    browser: browser.browser,
-    ...(browser.browser === 'chrome' || browser.browser === 'edge'
-      ? {}
-      : { browserExecutablePath: browser.playwrightExecutablePath }),
-    ...(injectedRunnerEntry === undefined ? {} : { entryPath: injectedRunnerEntry }),
-    ...(args.runnerHeartbeatTimeoutMs === undefined
-      ? {}
-      : { heartbeatTimeoutMs: Number(args.runnerHeartbeatTimeoutMs) }),
-  })
+  const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: configuredDaemonUrl })
   const resumed = await resumeDaemonJob({
     homeDir,
     daemonUrl: configuredDaemonUrl,
@@ -1926,7 +1943,7 @@ async function installCommand(args: CliArgs) {
   const provisioned = await provisionRuntime(args)
   printPayload({
     ok: true,
-    runtime: 'rust',
+    runtime: 'typescript',
     browser: provisioned.browser.browser,
     browsers: provisioned.browsers,
     daemon: {
@@ -2052,7 +2069,7 @@ async function setupCommand(args: CliArgs) {
           ...(cliVersion.error === undefined ? {} : { error: cliVersion.error }),
         },
       },
-      runtime: 'rust',
+      runtime: 'typescript',
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       skills,
@@ -2639,7 +2656,7 @@ async function provisionRuntime(args: CliArgs) {
     browsers: resolvedBrowsers,
     browser: await resolveChromiumBrowser(resolvedBrowsers[0]),
     installed: {
-      runtime: 'rust',
+      runtime: 'typescript',
       daemonExecutable: runtime.installed.path,
     },
     daemon,
@@ -2774,13 +2791,7 @@ async function doctorCommand(args: CliArgs) {
     managedProfile = { ok: false, message: error instanceof Error ? error.message : String(error) }
     providerReadiness = { ok: false, providers: {} }
   }
-  let runner: Record<string, any>
-  try {
-    const status = await runnerSupervisorStatusReadOnly({ homeDir })
-    runner = { ok: status.state === 'running', ...status }
-  } catch (error) {
-    runner = { ok: false, state: 'unknown', message: error instanceof Error ? error.message : String(error) }
-  }
+  const runner = await doctorRunnerStatus({ homeDir, daemonUrl: configuredDaemonUrl, daemonReady: daemon.ready === true })
   const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split('.').map(Number)
   const nodeOk = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13)
   const checks = {
@@ -2799,7 +2810,7 @@ async function doctorCommand(args: CliArgs) {
   const ok = Object.values(checks).every((check) => check.ok === true)
   printPayload({
     ok,
-    runtime: 'rust',
+    runtime: 'typescript',
     checks,
   }, args)
   if (!ok) process.exitCode = 1

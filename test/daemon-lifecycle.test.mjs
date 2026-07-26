@@ -25,6 +25,10 @@ test('ensureDaemonReady installs the packaged daemon and reports supported proto
     assert.equal(ready.started, true)
     assert.equal(ready.identityVerified, true)
     assert.equal(ready.body.version, packageVersion)
+    assert.equal(ready.runtimeKind, 'typescript')
+    assert.equal(ready.body.runtime_kind, 'typescript')
+    assert.equal(ready.binaryPath, process.execPath)
+    assert.equal(fs.existsSync(ready.daemonEntryPath), true)
     assert.deepEqual(ready.supportedProtocols, {
       daemon: [runtime.DAEMON_PROTOCOL],
       job: [
@@ -38,11 +42,13 @@ test('ensureDaemonReady installs the packaged daemon and reports supported proto
     })
     assert.equal(Number.isInteger(ready.body.pid), true)
     assert.equal(ready.body.pid, pid)
-    assert.equal(fs.existsSync(runtime.installedRustBinaryPath(homeDir)), true)
+    assert.equal(fs.existsSync(runtime.installedRustBinaryPath(homeDir)), false)
 
     const inspection = await runtime.inspectManagedRuntime(homeDir)
     assert.equal(inspection.ok, true)
     assert.equal(inspection.packaged.buildInfo.version, packageVersion)
+    assert.equal(inspection.packaged.path, ready.daemonEntryPath)
+    assert.equal(inspection.installed.path, ready.daemonEntryPath)
     assert.equal(inspection.installed.matchesBundled, true)
   } finally {
     if (pid) await stopPid(pid)
@@ -65,6 +71,7 @@ test('concurrent ensureDaemonReady serializes one fresh daemon start under the d
     assert.equal(started.length, 1)
     startedPid = started[0].pid
     assert.equal(results.every((result) => result.body.version === packageVersion), true)
+    assert.equal(results.every((result) => result.runtimeKind === 'typescript'), true)
     assert.equal(new Set(results.map((result) => result.pid)).size, 1)
     assert.equal(fs.existsSync(lockPath), false)
   } finally {
@@ -81,6 +88,7 @@ test('doctor is read-only for an uninitialized Tokenless home', () => {
     assert.equal(result.status, 1)
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.ok, false)
+    assert.equal(payload.runtime, 'typescript')
     assert.equal(payload.checks.daemon.ready, false)
     assert.equal(payload.checks.daemon.daemonLogPath, path.join(homeDir, 'daemon.log'))
     assert.equal(payload.checks.daemon.daemonLogExists, false)
@@ -172,6 +180,36 @@ test('daemon shutdown endpoint uses bearer authentication', async () => {
   }
 })
 
+test('doctor reports authenticated embedded browser runtime status for a ready TypeScript daemon', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-embedded-runtime-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  let pid
+  try {
+    const runtime = await importCli()
+    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
+    pid = ready.pid
+
+    const result = runCli(['doctor', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.runtime, 'typescript')
+    assert.equal(payload.checks.daemon.ready, true)
+    assert.equal(payload.checks.daemon.pid, pid)
+    assert.equal(payload.checks.runner.runtime, 'embedded')
+    assert.equal(payload.checks.runner.runtimeStatus, 'running')
+    assert.equal(payload.checks.runner.state, 'running')
+    assert.equal(payload.checks.runner.pid, pid)
+    assert.equal(payload.checks.runner.sessionId, 'embedded')
+    assert.equal(payload.checks.runner.safeToStop, false)
+    assert.equal(payload.checks.runner.heartbeatAt, null)
+    assert.equal(payload.checks.runner.activeProfileCount, 0)
+    assert.equal(payload.checks.runner.activeJobCount, 0)
+  } finally {
+    if (pid) await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('doctor validates an existing managed profile registry without mutating home markers', () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-existing-readonly-')))
   const browserDir = path.join(homeDir, 'browser')
@@ -216,7 +254,7 @@ test('doctor validates an existing managed profile registry without mutating hom
   }
 })
 
-test('ordinary daemon startup reuses a different-major daemon when supported protocols overlap', {
+test('ordinary daemon startup replaces a same-home legacy daemon when supported protocols overlap', {
   timeout: 180_000,
 }, async (t) => {
   const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8', timeout: 10_000 })
@@ -232,7 +270,6 @@ test('ordinary daemon startup reuses a different-major daemon when supported pro
   let pid
   try {
     const incompatibleVersion = differentMajorVersion(packageVersion)
-    const incompatibleMajor = semanticMajor(incompatibleVersion)
     const incompatibleBinary = buildDaemonWithVersion(crateDir, incompatibleVersion)
     const runtime = await importCli()
 
@@ -248,35 +285,113 @@ test('ordinary daemon startup reuses a different-major daemon when supported pro
     pid = child.pid
     assert.equal(Number.isInteger(pid), true)
     child.unref()
+    writeDaemonPidFile(homeDir, pid, daemonUrl)
 
-    const incompatible = await waitForReadyVersion(runtime, homeDir, daemonUrl, incompatibleVersion)
-    assert.equal(incompatible.ok, true)
+    const incompatible = await waitForLegacyReadyVersion(runtime, homeDir, daemonUrl, incompatibleVersion)
+    assert.equal(incompatible.ok, false)
+    assert.equal(incompatible.code, 'daemon_runtime_kind_mismatch')
+    assert.equal(incompatible.runtimeKind, 'legacy')
     assert.equal(incompatible.actualHome, homeDir)
 
     const ordinaryReady = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    assert.equal(ordinaryReady.started, false)
-    assert.equal(ordinaryReady.pid, pid)
+    assert.equal(ordinaryReady.started, true)
+    assert.notEqual(ordinaryReady.pid, pid)
+    assert.equal(await pidExited(pid), true)
+    pid = ordinaryReady.pid
     assert.equal(ordinaryReady.protocolCompatible, true)
-    assert.equal(ordinaryReady.body.version, incompatibleVersion)
+    assert.equal(ordinaryReady.runtimeKind, 'typescript')
+    assert.equal(ordinaryReady.body.runtime_kind, 'typescript')
+    assert.equal(ordinaryReady.body.version, packageVersion)
     assert.equal(pidIsAlive(pid), true)
-    const afterOrdinaryReuse = await waitForReadyVersion(runtime, homeDir, daemonUrl, incompatibleVersion)
-    assert.equal(afterOrdinaryReuse.body.pid, pid)
+    const afterOrdinaryStart = await waitForReadyVersion(runtime, homeDir, daemonUrl, packageVersion)
+    assert.equal(afterOrdinaryStart.body.pid, pid)
 
     const ready = await runtime.ensureSetupDaemonRunnable({ homeDir, daemonUrl, timeoutMs: 10_000 })
     assert.equal(ready.pid, pid)
-    assert.equal(ready.body.version, incompatibleVersion)
-    assert.equal(ready.reconciliation.action, 'refresh_installed_runtime')
-    assert.equal(ready.reconciliation.reason, 'installed_artifact_mismatch')
-    assert.deepEqual(ready.reconciliation.reasons, ['installed_artifact_mismatch'])
-    assert.equal(ready.reconciliation.previous.version, incompatibleVersion)
-    assert.equal(ready.reconciliation.previous.major, incompatibleMajor)
-    assert.equal(ready.reconciliation.previous.pid, pid)
+    assert.equal(ready.body.version, packageVersion)
+    assert.equal(ready.runtimeKind, 'typescript')
+    assert.equal(ready.reconciliation.action, 'none')
+    assert.equal(ready.reconciliation.reason, 'already_compatible')
+    assert.equal(ready.reconciliation.previous, undefined)
     assert.equal(ready.reconciliation.stopped, undefined)
-    assert.equal(ready.runningVersion, incompatibleVersion)
-    assert.equal(ready.runningMajor, incompatibleMajor)
+    assert.equal(ready.runningVersion, packageVersion)
+    assert.equal(ready.runningMajor, semanticMajor(packageVersion))
     assert.equal(ready.protocolCompatible, true)
-    assert.equal(ready.versionCompatible, false)
+    assert.equal(ready.versionCompatible, true)
     assert.equal(ready.compatibilityPolicy, 'protocol-negotiation')
+    assert.equal(pidIsAlive(pid), true)
+  } finally {
+    if (pid) await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(crateDir, { recursive: true, force: true })
+  }
+})
+
+test('ordinary daemon startup refuses to kill a same-home legacy daemon without a claimed pid', {
+  timeout: 180_000,
+}, async (t) => {
+  const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8', timeout: 10_000 })
+  if (cargo.error || cargo.status !== 0) {
+    t.skip('cargo is required to build a real compatible legacy daemon binary')
+    return
+  }
+
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-legacy-missing-pid-home-')))
+  const crateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-legacy-missing-pid-src-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  let pid
+  try {
+    const compatibleBinary = buildDaemonWithoutShutdown(crateDir, packageVersion, { omitReadyPid: true })
+    const child = spawnDaemonFixture(compatibleBinary, homeDir, daemonUrl)
+    pid = child.pid
+    const runtime = await importCli()
+    const legacyReady = await waitForLegacyReadyVersion(runtime, homeDir, daemonUrl, packageVersion)
+    assert.equal(legacyReady.runtimeKind, 'legacy')
+
+    await assert.rejects(
+      runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 }),
+      (error) => {
+        assert.equal(error.code, 'daemon_shutdown_unsupported')
+        return true
+      }
+    )
+    assert.equal(pidIsAlive(pid), true)
+  } finally {
+    if (pid) await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(crateDir, { recursive: true, force: true })
+  }
+})
+
+test('ordinary daemon startup refuses to kill a same-home legacy daemon with a mismatched claimed pid', {
+  timeout: 180_000,
+}, async (t) => {
+  const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8', timeout: 10_000 })
+  if (cargo.error || cargo.status !== 0) {
+    t.skip('cargo is required to build a real compatible legacy daemon binary')
+    return
+  }
+
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-legacy-mismatched-pid-home-')))
+  const crateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-legacy-mismatched-pid-src-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  let pid
+  try {
+    const compatibleBinary = buildDaemonWithoutShutdown(crateDir, packageVersion, { omitReadyPid: true })
+    const child = spawnDaemonFixture(compatibleBinary, homeDir, daemonUrl)
+    pid = child.pid
+    writeDaemonPidFile(homeDir, process.pid, daemonUrl)
+    const runtime = await importCli()
+    const legacyReady = await waitForLegacyReadyVersion(runtime, homeDir, daemonUrl, packageVersion)
+    assert.equal(legacyReady.runtimeKind, 'legacy')
+
+    await assert.rejects(
+      runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 }),
+      (error) => {
+        assert.equal(error.code, 'daemon_shutdown_unsupported')
+        return true
+      }
+    )
     assert.equal(pidIsAlive(pid), true)
   } finally {
     if (pid) await stopPid(pid)
@@ -389,35 +504,27 @@ test('setup refuses to stop a protocol-mismatch daemon from a different home', {
   }
 })
 
-test('ordinary daemon startup reuses a same-major different-version daemon while setup reconciles to the packaged daemon', {
+test('ordinary daemon startup refuses a different-home legacy daemon with compatible protocols', {
   timeout: 180_000,
 }, async (t) => {
   const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8', timeout: 10_000 })
   if (cargo.error || cargo.status !== 0) {
-    t.skip('cargo is required to build a real same-major daemon binary')
+    t.skip('cargo is required to build a real compatible legacy daemon binary')
     return
   }
 
-  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-setup-daemon-exact-reconcile-')))
-  const crateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-same-major-daemon-src-')))
+  const requestedHomeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-legacy-different-home-requested-')))
+  const daemonHomeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-legacy-different-home-daemon-')))
+  const crateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-compatible-legacy-daemon-src-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const port = new URL(daemonUrl).port
   let pid
   try {
-    const differentVersion = sameMajorDifferentVersion(packageVersion)
-    const differentMajor = semanticMajor(differentVersion)
-    const differentBinary = buildDaemonWithVersion(crateDir, differentVersion)
+    const compatibleBinary = buildDaemonWithVersion(crateDir, packageVersion)
     const runtime = await importCli()
-    const staleInstalledDaemon = runtime.installedRustBinaryPath(homeDir)
-    fs.mkdirSync(path.dirname(staleInstalledDaemon), { recursive: true, mode: 0o700 })
-    fs.copyFileSync(differentBinary, staleInstalledDaemon)
-    if (process.platform !== 'win32') fs.chmodSync(staleInstalledDaemon, 0o755)
-    const staleInstalledHash = fileHash(staleInstalledDaemon)
-    const currentInspection = await runtime.inspectManagedRuntime(homeDir)
-    assert.notEqual(staleInstalledHash, currentInspection.packaged.hash)
 
-    const child = spawn(differentBinary, [
-      '--home', homeDir,
+    const child = spawn(compatibleBinary, [
+      '--home', daemonHomeDir,
       'serve',
       '--host', '127.0.0.1',
       '--port', port,
@@ -429,36 +536,34 @@ test('ordinary daemon startup reuses a same-major different-version daemon while
     assert.equal(Number.isInteger(pid), true)
     child.unref()
 
-    const differentReady = await waitForReadyVersion(runtime, homeDir, daemonUrl, differentVersion)
-    assert.equal(differentReady.ok, true)
-    assert.equal(differentReady.actualHome, homeDir)
+    const legacyReady = await waitForLegacyReadyVersion(runtime, daemonHomeDir, daemonUrl, packageVersion)
+    assert.equal(legacyReady.ok, false)
+    assert.equal(legacyReady.code, 'daemon_runtime_kind_mismatch')
+    assert.equal(legacyReady.runtimeKind, 'legacy')
+    fs.mkdirSync(requestedHomeDir, { recursive: true, mode: 0o700 })
+    fs.copyFileSync(path.join(daemonHomeDir, 'daemon.token'), path.join(requestedHomeDir, 'daemon.token'))
 
-    const ordinaryReady = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    assert.equal(ordinaryReady.started, false)
-    assert.equal(ordinaryReady.pid, pid)
-    assert.equal(ordinaryReady.body.version, differentVersion)
-
-    const ready = await runtime.ensureSetupDaemonRunnable({ homeDir, daemonUrl, timeoutMs: 10_000 })
-    assert.equal(ready.pid, pid)
-    assert.equal(ready.body.version, differentVersion)
-    assert.equal(ready.reconciliation.action, 'refresh_installed_runtime')
-    assert.equal(ready.reconciliation.reason, 'installed_artifact_mismatch')
-    assert.deepEqual(ready.reconciliation.reasons, ['installed_artifact_mismatch'])
-    assert.equal(ready.reconciliation.previous.version, differentVersion)
-    assert.equal(ready.reconciliation.previous.major, differentMajor)
-    assert.equal(ready.reconciliation.previous.pid, pid)
-    assert.equal(ready.reconciliation.stopped, undefined)
-    assert.deepEqual(ready.reconciliation.refreshed, [staleInstalledDaemon])
-    assert.equal(ready.runningVersion, differentVersion)
-    assert.equal(ready.runningMajor, differentMajor)
-    assert.equal(ready.protocolCompatible, true)
-    assert.equal(ready.versionCompatible, false)
-    assert.equal(ready.compatibilityPolicy, 'protocol-negotiation')
-    assert.equal(fileHash(staleInstalledDaemon), currentInspection.packaged.hash)
+    const mismatch = await waitForProbeCode(runtime, requestedHomeDir, daemonUrl, 'daemon_home_mismatch')
+    assert.equal(mismatch.identityVerified, true)
+    await assert.rejects(
+      runtime.ensureDaemonReady({ homeDir: requestedHomeDir, daemonUrl, timeoutMs: 10_000 }),
+      (error) => {
+        assert.equal(error.code, 'daemon_home_mismatch')
+        return true
+      }
+    )
+    await assert.rejects(
+      runtime.ensureSetupDaemonRunnable({ homeDir: requestedHomeDir, daemonUrl, timeoutMs: 10_000 }),
+      (error) => {
+        assert.equal(error.code, 'daemon_home_mismatch')
+        return true
+      }
+    )
     assert.equal(pidIsAlive(pid), true)
   } finally {
     if (pid) await stopPid(pid)
-    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(requestedHomeDir, { recursive: true, force: true })
+    fs.rmSync(daemonHomeDir, { recursive: true, force: true })
     fs.rmSync(crateDir, { recursive: true, force: true })
   }
 })
@@ -480,9 +585,15 @@ function buildDaemonWithVersion(crateDir, version) {
   return buildDaemonFixture(crateDir, { version })
 }
 
+function buildDaemonWithoutShutdown(crateDir, version, options = {}) {
+  return buildDaemonFixture(crateDir, { version, disableShutdown: true, ...options })
+}
+
 function buildDaemonFixture(crateDir, {
   version,
   constants = {},
+  disableShutdown = false,
+  omitReadyPid = false,
 } = {}) {
   fs.cpSync(path.join(root, 'packages/daemon'), crateDir, { recursive: true })
   const manifestPath = path.join(crateDir, 'Cargo.toml')
@@ -498,6 +609,23 @@ function buildDaemonFixture(crateDir, {
     generated = generated.replace(matcher, `pub const ${name}: &str = "${protocol}";`)
   }
   fs.writeFileSync(constantsPath, generated)
+  if (disableShutdown) {
+    const libPath = path.join(crateDir, 'src/lib.rs')
+    const lib = fs.readFileSync(libPath, 'utf8')
+    const patched = lib.replace(
+      'http_router_with_shutdown(store, Some(shutdown_tx)),',
+      'http_router(store),'
+    )
+    assert.notEqual(patched, lib, 'expected daemon fixture to patch shutdown route')
+    fs.writeFileSync(libPath, patched)
+  }
+  if (omitReadyPid) {
+    const libPath = path.join(crateDir, 'src/lib.rs')
+    const lib = fs.readFileSync(libPath, 'utf8')
+    const patched = lib.replace('    pid: u32,\n', '    #[serde(skip_serializing)]\n    pid: u32,\n')
+    assert.notEqual(patched, lib, 'expected daemon fixture to omit ready pid')
+    fs.writeFileSync(libPath, patched)
+  }
   const build = spawnSync('cargo', [
     'build',
     '--quiet',
@@ -532,11 +660,16 @@ function spawnDaemonFixture(binary, homeDir, daemonUrl) {
   return child
 }
 
-function sameMajorDifferentVersion(version) {
-  const { major, minor, patch } = parseSemver(version)
-  if (patch > 0) return `${major}.${minor}.${patch - 1}`
-  if (minor > 0) return `${major}.${minor - 1}.0`
-  return `${major}.${minor + 1}.0`
+function writeDaemonPidFile(homeDir, pid, daemonUrl) {
+  fs.writeFileSync(path.join(homeDir, 'daemon.pid.json'), `${JSON.stringify({
+    protocol: 'tokenless.daemon-process.v1',
+    pid,
+    homeDir,
+    daemonUrl,
+    binaryPath: 'legacy-daemon-fixture',
+    runtimeKind: 'legacy',
+    startedAt: new Date().toISOString(),
+  }, null, 2)}\n`, { mode: 0o600 })
 }
 
 function differentMajorVersion(version) {
@@ -567,6 +700,23 @@ async function waitForReadyVersion(runtime, homeDir, daemonUrl, version) {
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   assert.fail(`daemon did not report version ${version}: ${JSON.stringify(last)}`)
+}
+
+async function waitForLegacyReadyVersion(runtime, homeDir, daemonUrl, version) {
+  const deadline = Date.now() + 10_000
+  let last
+  while (Date.now() < deadline) {
+    last = await runtime.probeDaemonReady({ homeDir, daemonUrl })
+    if (
+      last.code === 'daemon_runtime_kind_mismatch' &&
+      last.runtimeKind === 'legacy' &&
+      last.body?.version === version
+    ) {
+      return last
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  assert.fail(`legacy daemon did not report version ${version}: ${JSON.stringify(last)}`)
 }
 
 async function waitForProbeCode(runtime, homeDir, daemonUrl, code) {
