@@ -145,7 +145,7 @@ async function handleRequest(
     if (method === 'GET' && url.pathname === '/jobs') {
       const jobs = store.listJobs({
         status: optionalJobStatus(url.searchParams.get('status')),
-        execution_backend: optionalExecutionBackend(url.searchParams.get('execution_backend')),
+        execution_backend: optionalQueryExecutionBackend(url.searchParams.get('execution_backend')),
         profile_id: optionalQueryString(url.searchParams.get('profile_id')),
         provider: optionalQueryString(url.searchParams.get('provider')),
         task_id: optionalQueryString(url.searchParams.get('task_id')),
@@ -188,7 +188,7 @@ async function handleRequest(
     }
 
     if (method === 'POST' && url.pathname === '/control/jobs/claim-next') {
-      const executionBackend = optionalExecutionBackend(url.searchParams.get('execution_backend')) ?? 'legacy_extension'
+      const executionBackend = optionalQueryExecutionBackend(url.searchParams.get('execution_backend')) ?? 'legacy_extension'
       const job = store.claimNextJob(
         {
           provider: optionalQueryString(url.searchParams.get('provider')),
@@ -203,8 +203,13 @@ async function handleRequest(
 
     const controlJobRoute = matchControlJobRoute(url.pathname)
     if (controlJobRoute && method === 'POST') {
-      const rawBody = await readBody(request)
-      const body = rawBody ? parseJsonObject(rawBody) : {}
+      if (controlJobRoute.action === 'cancel') {
+        const rawBody = await readBody(request)
+        const body = rawBody ? parseJsonObject(rawBody) : {}
+        writeJson(response, 200, publicView(await store.cancelJob(controlJobRoute.jobId, body.reason)))
+        return
+      }
+      const body = await readJsonObject(request)
       if (controlJobRoute.action === 'running') {
         writeJson(response, 200, publicView(store.markRunning(controlJobRoute.jobId, requiredString(body.claim_token, 'claim_token'))))
         return
@@ -236,10 +241,6 @@ async function handleRequest(
       }
       if (controlJobRoute.action === 'renew') {
         writeJson(response, 200, publicView(store.renewClaim(controlJobRoute.jobId, requiredString(body.claim_token, 'claim_token'))))
-        return
-      }
-      if (controlJobRoute.action === 'cancel') {
-        writeJson(response, 200, publicView(await store.cancelJob(controlJobRoute.jobId, body.reason)))
         return
       }
     }
@@ -455,6 +456,14 @@ function optionalExecutionBackend(value: unknown) {
     throw invalidInput(`invalid execution_backend: ${String(value)}`)
   }
   return value as ExecutionBackend
+}
+
+function optionalQueryExecutionBackend(value: string | null) {
+  if (value === null) return undefined
+  if (value !== 'legacy_extension' && value !== 'playwright') {
+    throw invalidInput('query parameters are invalid: Failed to deserialize query string')
+  }
+  return value
 }
 
 async function closeServer(server: http.Server, store: JobStore) {
