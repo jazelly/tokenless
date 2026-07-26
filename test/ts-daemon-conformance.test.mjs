@@ -6,10 +6,12 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
+const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
+const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const tsDaemonEntry = path.join(cliDir, 'dist/src/daemon/daemon-entry.mjs')
 const executableSuffix = process.platform === 'win32' ? '.exe' : ''
 const nativeTuple = `${process.platform}-${process.arch}`
@@ -116,6 +118,221 @@ test('TS daemon embeds the managed Playwright scheduler without idle browser lau
     const failed = await waitForDaemonJobStatus(daemon.url, token, jobId, 'failed', 10_000)
     assert.equal(failed.error_json.code, 'invalid_playwright_job_request')
     assertProfileDirectoryEmpty(profile.directory)
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('TS daemon browser runtime control is authenticated, quiesces queued work, and wakes on later job creation', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-browser-runtime-control-')
+  const profileId = randomUUID()
+  const daemon = await startTsDaemon(homeDir)
+  try {
+    const token = readControlToken(homeDir)
+
+    const missingStatus = await fetch(`${daemon.url}/control/browser-runtime/status`)
+    assert.equal(missingStatus.status, 401)
+    const missingStatusBody = await missingStatus.json()
+    assert.equal(missingStatusBody.error.code, 'control_auth_missing')
+
+    const rejectedQuiesce = await fetch(`${daemon.url}/control/browser-runtime/quiesce`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer wrong-token' },
+    })
+    assert.equal(rejectedQuiesce.status, 403)
+    const rejectedQuiesceBody = await rejectedQuiesce.json()
+    assert.equal(rejectedQuiesceBody.error.code, 'control_auth_rejected')
+    assert.equal(JSON.stringify(rejectedQuiesceBody).includes(token), false)
+
+    const running = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
+    assert.equal(running.protocol, 'tokenless.browser-runtime-control.v1')
+    assert.equal(running.status, 'running')
+    assert.equal(running.pid, daemon.child.pid)
+    assert.equal(running.activeProfileCount, 0)
+    assert.equal(running.activeJobCount, 0)
+
+    const pausedJobId = randomUUID()
+    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: profileId,
+      job_id: pausedJobId,
+      request_json: { malformed: true },
+    })
+    const quiesced = await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    assert.equal(quiesced.status, 'quiesced')
+    assert.equal(quiesced.activeProfileCount, 0)
+    assert.equal(quiesced.activeJobCount, 0)
+
+    await delay(1_500)
+    const stillQueued = await daemonRequest(daemon.url, token, 'GET', `/jobs/${encodeURIComponent(pausedJobId)}`)
+    assert.equal(stillQueued.status, 'queued')
+    const profile = createReadyManagedProfile(homeDir, { profileId })
+    assertProfileDirectoryEmpty(profile.directory)
+
+    const wakeJobId = randomUUID()
+    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: profileId,
+      job_id: wakeJobId,
+      request_json: { malformed: true },
+    })
+    const failedPausedJob = await waitForDaemonJobStatus(daemon.url, token, pausedJobId, 'failed', 10_000)
+    assert.equal(failedPausedJob.error_json.code, 'invalid_playwright_job_request')
+    const failedWakeJob = await waitForDaemonJobStatus(daemon.url, token, wakeJobId, 'failed', 10_000)
+    assert.equal(failedWakeJob.error_json.code, 'invalid_playwright_job_request')
+    const awake = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
+    assert.equal(awake.status, 'running')
+    assertProfileDirectoryEmpty(profile.directory)
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('TS daemon browser runtime wakes from quiesced state when a parked job resumes', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-browser-runtime-resume-wake-')
+  const profileId = randomUUID()
+  const daemon = await startTsDaemon(homeDir)
+  try {
+    const token = readControlToken(homeDir)
+    const jobId = randomUUID()
+    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: profileId,
+      job_id: jobId,
+      request_json: { malformed: true },
+    })
+    const quiesced = await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    assert.equal(quiesced.status, 'quiesced')
+    const profile = createReadyManagedProfile(homeDir, { profileId })
+    const claimed = await daemonRequest(
+      daemon.url,
+      token,
+      'POST',
+      `/control/jobs/claim-next?execution_backend=playwright&profile_id=${encodeURIComponent(profile.id)}`
+    )
+    assert.equal(claimed.job.job_id, jobId)
+    const parked = await daemonRequest(daemon.url, token, 'POST', `/control/jobs/${encodeURIComponent(jobId)}/park`, {
+      claim_token: claimed.job.claim_token,
+      blocker_json: { reason: 'resume-test', browser: { windowOpen: false } },
+      checkpoint_json: { phase: 'resume-wake-test' },
+    })
+    assert.equal(parked.status, 'waiting_for_user')
+    assert.equal((await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')).status, 'quiesced')
+
+    const resumed = await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(jobId)}/resume`, {
+      browser_visibility: 'headed',
+    })
+    assert.equal(resumed.status, 'queued')
+    const failed = await waitForDaemonJobStatus(daemon.url, token, jobId, 'failed', 10_000)
+    assert.equal(failed.error_json.code, 'invalid_playwright_job_request')
+    assert.equal((await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')).status, 'running')
+    assertProfileDirectoryEmpty(profile.directory)
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('gated real browser quiesce settles an embedded-owned active claim before returning', {
+  timeout: 180_000,
+}, async (t) => {
+  if (process.env.TOKENLESS_RUN_ACTIVE_CLAIM_QUIESCE_E2E !== '1') {
+    t.skip('set TOKENLESS_RUN_ACTIVE_CLAIM_QUIESCE_E2E=1 to run real Chromium/provider active-claim quiesce proof')
+    return
+  }
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-active-claim-quiesce-')
+  const profile = createReadyManagedProfile(homeDir)
+  const daemon = await startTsDaemon(homeDir)
+  try {
+    const token = readControlToken(homeDir)
+    const playwright = await importPlaywright()
+    const jobId = randomUUID()
+    const request = playwright.createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
+      browserVisibility: 'headed',
+      taskId: `active-claim-quiesce:${jobId}`,
+      actions: [
+        { requestId: `${jobId}:auth`, action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} },
+      ],
+    })
+    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: profile.id,
+      job_id: jobId,
+      request_json: request,
+    })
+    const active = await waitForDaemonJobOneOf(daemon.url, token, jobId, ['running', 'waiting_for_user', 'succeeded', 'failed'], 90_000)
+    if (active.status !== 'running') {
+      t.skip(`real browser job reached ${active.status} before quiesce could observe a running claim`)
+      return
+    }
+    const quiesced = await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    assert.equal(quiesced.status, 'quiesced')
+    const latest = await daemonRequest(daemon.url, token, 'GET', `/jobs/${encodeURIComponent(jobId)}`)
+    assert.notEqual(latest.status, 'claimed')
+    assert.notEqual(latest.status, 'running')
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('profile removal quiesces the TS browser runtime while preserving the old runner JSON shape', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-profile-remove-quiesce-')
+  createReadyManagedProfile(homeDir)
+  const daemon = await startTsDaemon(homeDir)
+  try {
+    const runtime = await importCli()
+    await runtime.writeTokenlessConfig({ homeDir, daemonUrl: daemon.url })
+    const result = runCli([
+      'profiles',
+      'remove',
+      '--home',
+      homeDir,
+      '--profile',
+      'default',
+      '--confirm-delete',
+      '--json',
+    ])
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.ok, true)
+    assert.deepEqual(payload.runner, {
+      state: 'stopped',
+      pid: null,
+      sessionId: null,
+      safeToStop: false,
+      heartbeatAt: null,
+    })
+    assert.deepEqual(Object.keys(payload.runner).sort(), ['heartbeatAt', 'pid', 'safeToStop', 'sessionId', 'state'].sort())
+    const token = readControlToken(homeDir)
+    const status = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
+    assert.equal(status.status, 'quiesced')
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
     await terminateChildrenForHome(homeDir)
@@ -573,6 +790,23 @@ function rustCli(homeDir, args) {
   return JSON.parse(result.stdout)
 }
 
+async function importCli() {
+  return await import(`${pathToFileURL(cliIndex).href}?test=${Date.now()}-${Math.random()}`)
+}
+
+async function importPlaywright() {
+  return await import(`${pathToFileURL(path.join(cliDir, 'dist/src/playwright/index.js')).href}?test=${Date.now()}-${Math.random()}`)
+}
+
+function runCli(args) {
+  return spawnSync(process.execPath, [cliEntry, ...args], {
+    cwd: root,
+    env: { ...process.env },
+    encoding: 'utf8',
+    timeout: 30_000,
+  })
+}
+
 async function runNodeClaimClient({ homeDir, daemonUrl, readyMarker, releaseMarker }) {
   const script = `
 const { existsSync, readFileSync, writeFileSync } = await import('node:fs')
@@ -639,10 +873,10 @@ console.log(body)
   })
 }
 
-function createReadyManagedProfile(homeDir) {
+function createReadyManagedProfile(homeDir, options = {}) {
   const browserDir = path.join(homeDir, 'browser')
   const profilesRoot = path.join(browserDir, 'profiles')
-  const profileId = randomUUID()
+  const profileId = options.profileId ?? randomUUID()
   const profileDir = path.join(profilesRoot, profileId)
   fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 })
   const now = new Date().toISOString()
@@ -692,6 +926,18 @@ async function waitForDaemonJobStatus(daemonUrl, token, jobId, status, timeoutMs
     await delay(100)
   }
   throw new Error(`job ${jobId} did not reach ${status}; latest: ${JSON.stringify(latest)}`)
+}
+
+async function waitForDaemonJobOneOf(daemonUrl, token, jobId, statuses, timeoutMs) {
+  const expected = new Set(statuses)
+  const deadline = Date.now() + timeoutMs
+  let latest
+  while (Date.now() < deadline) {
+    latest = await daemonRequest(daemonUrl, token, 'GET', `/jobs/${encodeURIComponent(jobId)}`)
+    if (expected.has(latest.status)) return latest
+    await delay(100)
+  }
+  throw new Error(`job ${jobId} did not reach one of ${statuses.join(', ')}; latest: ${JSON.stringify(latest)}`)
 }
 
 function trackChild(child, homeDir) {

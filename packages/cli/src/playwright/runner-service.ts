@@ -1,6 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { errorResponse, tokenlessError } from './errors.js'
+import {
+  claimRecoveryError,
+  errorResponse,
+  isClaimRecoveryError,
+  tokenlessError,
+} from './errors.js'
 import { RUNNER_CHECKPOINT_PROTOCOL, USER_HANDOVER_PROTOCOL } from '../generated/protocol-constants.js'
 import { createProviderAdapterRegistry } from './adapters/index.js'
 import { PersistentContextManager } from './browser/context-manager.js'
@@ -46,6 +51,7 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   userHandoverPollMs?: number | undefined
   autoEscalatedCloseDelayMs?: number | undefined
   attachmentRootForJob?: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
+  recoverAbortedClaim?: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   cleanupAttachmentRoot?: boolean | undefined
   now?: (() => Date) | undefined
 }
@@ -162,6 +168,7 @@ export class ManagedPlaywrightRunnerService {
   private readonly userHandoverPollMs: number
   private readonly autoEscalatedCloseDelayMs: number
   private readonly attachmentRootForJob: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
+  private readonly recoverAbortedClaim: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   private readonly cleanupAttachmentRoot: boolean
   private readonly now: () => Date
   private readonly inFlightProfiles = new Set<string>()
@@ -187,12 +194,21 @@ export class ManagedPlaywrightRunnerService {
     this.attachmentRootForJob = options.attachmentRootForJob ?? (
       defaultAttachmentHomeDir ? (job) => defaultAttachmentRootForJob(defaultAttachmentHomeDir, job) : undefined
     )
+    this.recoverAbortedClaim = options.recoverAbortedClaim
     this.cleanupAttachmentRoot = options.cleanupAttachmentRoot ?? true
     this.now = options.now ?? (() => new Date())
   }
 
   stop() {
     this.stopped = true
+  }
+
+  activeJobCount() {
+    return this.inFlightJobs.size
+  }
+
+  activeProfileCount() {
+    return this.contextManager.activeProfileIds().length
   }
 
   async shutdown() {
@@ -209,7 +225,12 @@ export class ManagedPlaywrightRunnerService {
         }
       }
     } finally {
-      await Promise.allSettled([...this.inFlightJobs])
+      const results = await Promise.allSettled([...this.inFlightJobs])
+      const recoveryFailure = results.find((result) => (
+        result.status === 'rejected' &&
+        isManagedPlaywrightClaimRecoveryFailure(result.reason)
+      ))
+      if (recoveryFailure?.status === 'rejected') throw recoveryFailure.reason
     }
   }
 
@@ -245,7 +266,9 @@ export class ManagedPlaywrightRunnerService {
       this.inFlightProfiles.add(profile.id)
       const jobPromise = this.executeClaimedJob(profile, claimed.job, signal)
         .then(() => undefined)
-        .catch(() => undefined)
+        .catch((error) => {
+          if (isClaimRecoveryError(error)) throw error
+        })
         .finally(() => {
           this.inFlightProfiles.delete(profile.id)
           this.inFlightJobs.delete(jobPromise)
@@ -362,7 +385,8 @@ export class ManagedPlaywrightRunnerService {
       clearInterval(renewTimer)
       clearInterval(cancelTimer)
       controller.abort()
-      if (attachmentRoot && this.cleanupAttachmentRoot) {
+      const recoverClaim = outerSignal?.aborted && !terminalCompletion && !canceled && !renewError
+      if (attachmentRoot && this.cleanupAttachmentRoot && !recoverClaim) {
         await fs.rm(attachmentRoot, { recursive: true, force: true }).catch(() => undefined)
       }
       if ((terminalCompletion || canceled) && autoEscalatedBrowserContext) {
@@ -370,6 +394,13 @@ export class ManagedPlaywrightRunnerService {
           delayMs: this.autoEscalatedCloseDelayMs,
           browserContext: autoEscalatedBrowserContext,
         })
+      }
+      if (recoverClaim) {
+        try {
+          await this.recoverAbortedClaim?.(job)
+        } catch (error) {
+          throw claimRecoveryError(error)
+        }
       }
     }
   }
@@ -706,6 +737,10 @@ export function serializeRunnerError(error: unknown) {
     message: response.message,
     retryable: response.retryable,
   }
+}
+
+export function isManagedPlaywrightClaimRecoveryFailure(error: unknown) {
+  return isClaimRecoveryError(error)
 }
 
 class ParkedPlaywrightJob extends Error {

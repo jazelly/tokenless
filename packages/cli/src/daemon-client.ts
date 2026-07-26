@@ -100,6 +100,14 @@ export type ShutdownDaemonResponse = {
   pid?: number | undefined
 }
 
+export type BrowserRuntimeStatus = {
+  protocol: 'tokenless.browser-runtime-control.v1'
+  status: 'running' | 'quiescing' | 'quiesced' | 'stopped'
+  activeProfileCount: number
+  activeJobCount: number
+  pid: number
+}
+
 type DaemonError = Error & {
   code?: string
   retryable?: boolean
@@ -311,6 +319,39 @@ export async function shutdownDaemon({
     daemonUrl: explicitDaemonUrl,
     path: '/control/shutdown',
     token: controlToken,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function browserRuntimeStatus({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+}: DaemonClientOptions = {}) {
+  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<BrowserRuntimeStatus>({
+    daemonUrl: explicitDaemonUrl,
+    method: 'GET',
+    path: '/control/browser-runtime/status',
+    token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function quiesceBrowserRuntime({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+}: DaemonClientOptions = {}) {
+  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<BrowserRuntimeStatus>({
+    daemonUrl: explicitDaemonUrl,
+    path: '/control/browser-runtime/quiesce',
+    token,
     timeoutMs: requestTimeoutMs,
     signal,
   })

@@ -549,6 +549,79 @@ export class JobStore {
     throw invalidJobState(jobId, 'queued, claimed, running, or waiting_for_user', job.status)
   }
 
+  recoverActiveClaim(jobId: string, claimToken: string) {
+    const now = nowRfc3339()
+    return this.transaction(() => {
+      const row = this.get(
+        `SELECT
+          job_id, claim_token, execution_backend, profile_id,
+          provider, action, status, request_json, result_json, error_json,
+          blocker_json, checkpoint_json, resume_json,
+          created_at, updated_at, claim_expires_at
+         FROM jobs
+         WHERE job_id = ?`,
+        jobId
+      )
+      if (!row) return null
+      const job = rowToJob(row)
+      if (
+        job.claim_token !== claimToken ||
+        !ACTIVE_STATUSES.has(job.status)
+      ) {
+        return null
+      }
+      if (job.status === 'claimed' || job.status === 'running') {
+        const result = this.run(
+          `UPDATE jobs
+           SET status = 'queued', claim_token = ?, claim_expires_at = NULL,
+               blocker_json = NULL, resume_json = NULL, updated_at = ?
+           WHERE job_id = ?
+             AND claim_token = ?
+             AND status IN ('claimed', 'running')`,
+          generateSecretToken(),
+          now,
+          jobId,
+          claimToken
+        )
+        return result.changes === 1 ? this.getJobWithoutRecovery(jobId) : null
+      }
+      if (job.execution_backend === 'playwright' && row.checkpoint_json !== null) {
+        const result = this.run(
+          `UPDATE jobs
+           SET claim_token = ?, blocker_json = ?,
+               claim_expires_at = NULL, resume_json = NULL,
+               updated_at = ?
+           WHERE job_id = ?
+             AND claim_token = ?
+             AND status = 'waiting_for_user'
+             AND execution_backend = 'playwright'
+             AND checkpoint_json IS NOT NULL`,
+          generateSecretToken(),
+          stringifyJson(parkedResumeBlockerJson(job.blocker_json)),
+          now,
+          jobId,
+          claimToken
+        )
+        return result.changes === 1 ? this.getJobWithoutRecovery(jobId) : null
+      }
+      const errorJson = stringifyJson(expiredWaitingClaimErrorJson())
+      const result = this.run(
+        `UPDATE jobs
+         SET status = 'failed', error_json = ?, result_json = NULL,
+             blocker_json = NULL, checkpoint_json = NULL, resume_json = NULL,
+             claim_expires_at = NULL, updated_at = ?
+         WHERE job_id = ?
+           AND claim_token = ?
+           AND status = 'waiting_for_user'`,
+        errorJson,
+        now,
+        jobId,
+        claimToken
+      )
+      return result.changes === 1 ? this.getJobWithoutRecovery(jobId) : null
+    })
+  }
+
   requeueExpiredClaims() {
     return this.requeueExpiredClaimsAt(nowUnixMillis())
   }
@@ -645,11 +718,7 @@ export class JobStore {
 
   private failExpiredWaitingClaimsAt(nowMs: number) {
     const now = nowRfc3339()
-    const errorJson = stringifyJson({
-      code: 'playwright_user_handover_lease_lost',
-      message: 'The managed Playwright job lost its lease while waiting for user handover; retry from the same task state instead of replaying partial page actions.',
-      retryable: true,
-    })
+    const errorJson = stringifyJson(expiredWaitingClaimErrorJson())
     return this.run(
       `UPDATE jobs
        SET status = 'failed', error_json = ?, result_json = NULL,
@@ -1052,6 +1121,14 @@ function parkedResumeBlockerJson(blockerJson: unknown) {
     return { blocker: blockerJson, browser }
   }
   return { browser }
+}
+
+function expiredWaitingClaimErrorJson() {
+  return {
+    code: 'playwright_user_handover_lease_lost',
+    message: 'The managed Playwright job lost its lease while waiting for user handover; retry from the same task state instead of replaying partial page actions.',
+    retryable: true,
+  }
 }
 
 function validateJobBackendProfile(executionBackend: ExecutionBackend, profileId: string | null) {

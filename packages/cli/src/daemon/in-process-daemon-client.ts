@@ -1,6 +1,6 @@
 import { daemonErrorBody, toDaemonError } from './errors.js'
 import { JobStore, publicView, withClaimToken } from './job-store.js'
-import { tokenlessError } from '../playwright/errors.js'
+import { claimRecoveryError, tokenlessError } from '../playwright/errors.js'
 import type { Job } from './job-store.js'
 import type {
   CancelDaemonJobOptions,
@@ -35,16 +35,14 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       limit: options.limit,
     }).map(publicJobView)),
     getJob: (options) => inProcessDaemonRequest(options.signal, () => publicJobView(store.getJob(options.jobId))),
-    claimNextJob: (options) => inProcessDaemonRequest(options.signal, () => ({
-      job: nullableClaimedView(store.claimNextJob(
+    claimNextJob: (options) => inProcessClaimNextRequest(store, options.signal, () => store.claimNextJob(
         {
           provider: options.provider,
           action: options.action,
         },
         options.executionBackend,
         options.profileId ?? null
-      )),
-    })),
+    )),
     markJobRunning: (options) => claimRequest(options, () => publicJobView(store.markRunning(options.jobId, options.claimToken))),
     markJobWaitingForUser: (options) => waitingForUserRequest(options, () => publicJobView(
       store.markWaitingForUser(options.jobId, options.claimToken, options.blocker)
@@ -109,6 +107,32 @@ async function inProcessDaemonRequest<T>(signal: AbortSignal | undefined, operat
     const result = await operation()
     if (signal?.aborted) throw daemonRequestAbortedError()
     return result
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TokenlessPlaywrightError') throw error
+    throw daemonStoreError(error)
+  }
+}
+
+async function inProcessClaimNextRequest(
+  store: JobStore,
+  signal: AbortSignal | undefined,
+  operation: () => Job | null
+): Promise<{ job: DaemonClaimedJob | null }> {
+  if (signal?.aborted) throw daemonRequestAbortedError()
+  let job: Job | null = null
+  try {
+    job = operation()
+    if (signal?.aborted) {
+      if (job) {
+        try {
+          store.recoverActiveClaim(job.job_id, job.claim_token)
+        } catch (error) {
+          throw claimRecoveryError(error)
+        }
+      }
+      throw daemonRequestAbortedError()
+    }
+    return { job: nullableClaimedView(job) }
   } catch (error) {
     if (error instanceof Error && error.name === 'TokenlessPlaywrightError') throw error
     throw daemonStoreError(error)

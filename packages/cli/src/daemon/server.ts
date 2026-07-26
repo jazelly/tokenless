@@ -13,6 +13,7 @@ import {
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
 } from '../generated/protocol-constants.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
+import type { BrowserRuntimeController } from './browser-runtime-controller.js'
 import {
   controlAuthMissing,
   controlAuthRejected,
@@ -49,11 +50,13 @@ export async function serveHttp({
   store,
   host,
   port,
+  runtimeController,
   beforeClose,
 }: {
   store: JobStore
   host: string
   port: number
+  runtimeController?: BrowserRuntimeController | undefined
   beforeClose?: (() => Promise<void>) | undefined
 }) {
   validateLoopbackHost(host)
@@ -63,7 +66,7 @@ export async function serveHttp({
     return closePromise
   }
   const server = http.createServer((request, response) => {
-    void handleRequest(store, close, request, response)
+    void handleRequest(store, close, runtimeController, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -108,6 +111,7 @@ export function nativeBinaryBuildInfo(binary: string) {
 async function handleRequest(
   store: JobStore,
   closeDaemon: () => Promise<void>,
+  runtimeController: BrowserRuntimeController | undefined,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -134,6 +138,15 @@ async function handleRequest(
 
     requireControlAuth(store, request)
 
+    if (method === 'GET' && url.pathname === '/control/browser-runtime/status') {
+      writeJson(response, 200, browserRuntimeStatus(runtimeController))
+      return
+    }
+    if (method === 'POST' && url.pathname === '/control/browser-runtime/quiesce') {
+      writeJson(response, 200, await browserRuntimeQuiesce(runtimeController))
+      return
+    }
+
     if (method === 'POST' && url.pathname === '/jobs') {
       const body = await readJsonObject(request)
       const job = store.createJob({
@@ -145,6 +158,7 @@ async function handleRequest(
         job_id: optionalString(body.job_id) ?? undefined,
         claim_token: optionalString(body.claim_token) ?? undefined,
       })
+      if (job.execution_backend === 'playwright') await runtimeController?.wake()
       writeJson(response, 200, withClaimToken(job))
       return
     }
@@ -190,7 +204,9 @@ async function handleRequest(
         throw invalidInput('request body must be valid JSON: unknown field')
       }
       if (body.browser_visibility !== 'headed') throw invalidInput('request body must be valid JSON: invalid browser_visibility')
-      writeJson(response, 200, publicView(store.resumeJob(jobRoute.jobId, { browser_visibility: 'headed' })))
+      const job = store.resumeJob(jobRoute.jobId, { browser_visibility: 'headed' })
+      await runtimeController?.wake()
+      writeJson(response, 200, publicView(job))
       return
     }
 
@@ -268,6 +284,20 @@ async function handleRequest(
     }
     writeDaemonError(response, toDaemonError(error))
   }
+}
+
+function browserRuntimeStatus(runtimeController: BrowserRuntimeController | undefined) {
+  return runtimeController?.status() ?? {
+    protocol: 'tokenless.browser-runtime-control.v1',
+    status: 'stopped',
+    activeProfileCount: 0,
+    activeJobCount: 0,
+    pid: process.pid,
+  }
+}
+
+async function browserRuntimeQuiesce(runtimeController: BrowserRuntimeController | undefined) {
+  return await runtimeController?.quiesce() ?? browserRuntimeStatus(runtimeController)
 }
 
 function healthResponse(store: JobStore) {

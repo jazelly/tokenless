@@ -5,6 +5,7 @@ import path from 'node:path'
 export {
   DEFAULT_DAEMON_URL,
   MAX_NATIVE_MESSAGE_BYTES,
+  browserRuntimeStatus,
   cancelDaemonJob,
   claimNextDaemonJob,
   completeDaemonJob,
@@ -12,6 +13,7 @@ export {
   daemonUrl,
   getDaemonJob,
   listDaemonJobs,
+  quiesceBrowserRuntime,
   readDaemonToken,
   resumeDaemonJob,
   shutdownDaemon,
@@ -28,6 +30,7 @@ export type {
   DaemonJob,
   GetDaemonJobOptions,
   ListDaemonJobsOptions,
+  BrowserRuntimeStatus,
   ResumeDaemonJobOptions,
   ShutdownDaemonOptions,
   ShutdownDaemonResponse,

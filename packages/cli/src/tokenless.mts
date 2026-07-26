@@ -33,6 +33,7 @@ import {
   DEFAULT_DAEMON_URL,
   MAX_NATIVE_MESSAGE_BYTES,
   buildTokenlessPrompt,
+  quiesceBrowserRuntime,
   cancelDaemonJob,
   createDaemonJob,
   daemonUrl,
@@ -411,7 +412,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       )
     }
     const source = await resolveChromeProfile(record.import.source, record.import.profileDirectoryKey)
-    const runner = await stopRunnerSupervisor({ homeDir })
+    const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir, daemonUrl: config.daemonUrl ?? undefined })
     if (runner.state === 'unsafe') {
       throw usageError(
         'profile_reset_runner_unsafe',
@@ -465,7 +466,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const targets = clearAll
       ? await registry.listProfiles()
       : [await registry.resolveProfile(selectedSlug!)]
-    const runner = await stopRunnerSupervisor({ homeDir })
+    const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir })
     if (runner.state === 'unsafe') {
       throw usageError(
         'profile_clear_runner_unsafe',
@@ -509,7 +510,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       throw usageError('profile_delete_confirmation_required', 'Profile removal requires --confirm-delete.')
     }
     await registry.resolveProfile(slug)
-    const runner = await stopRunnerSupervisor({ homeDir })
+    const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir })
     const record = await registry.removeProfile(slug, { confirmDelete: true })
     printPayload({
       ok: true,
@@ -566,6 +567,61 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   }
 
   throw usageError('profiles_command_invalid', 'Profiles subcommand must be add, discover, list, status, open, set-default, or remove.')
+}
+
+async function quiesceBrowserRuntimeForProfileMutation({
+  homeDir,
+  daemonUrl: explicitDaemonUrl,
+}: {
+  homeDir: string
+  daemonUrl?: string | undefined
+}) {
+  const configuredDaemonUrl = daemonUrl(explicitDaemonUrl ?? await profileMutationConfiguredDaemonUrl(homeDir))
+  try {
+    await quiesceBrowserRuntime({ homeDir, daemonUrl: configuredDaemonUrl })
+    return stoppedRunnerStatus()
+  } catch (error) {
+    if (shouldEnsureDaemonBeforeProfileMutationFallback(error)) {
+      await ensureDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
+      try {
+        await quiesceBrowserRuntime({ homeDir, daemonUrl: configuredDaemonUrl })
+        return stoppedRunnerStatus()
+      } catch (retryError) {
+        if (!shouldUseRunnerSupervisorFallback(retryError)) throw retryError
+        return await stopRunnerSupervisor({ homeDir })
+      }
+    }
+    if (!shouldUseRunnerSupervisorFallback(error)) throw error
+    return await stopRunnerSupervisor({ homeDir })
+  }
+}
+
+async function profileMutationConfiguredDaemonUrl(homeDir: string) {
+  try {
+    return (await readTokenlessConfig(homeDir)).daemonUrl ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+function stoppedRunnerStatus() {
+  return {
+    state: 'stopped',
+    pid: null,
+    sessionId: null,
+    safeToStop: false,
+    heartbeatAt: null,
+  }
+}
+
+function shouldUseRunnerSupervisorFallback(error: unknown) {
+  const caught = error as CliError
+  return caught.status === 404 || caught.status === 405
+}
+
+function shouldEnsureDaemonBeforeProfileMutationFallback(error: unknown) {
+  const caught = error as CliError
+  return caught.code === 'daemon_unavailable' || caught.code === 'daemon_token_unavailable'
 }
 
 function authStateFromManagedResult(value: unknown): 'authenticated' | 'unauthenticated' | 'unknown' | null {
@@ -1910,7 +1966,7 @@ async function setupCommand(args: CliArgs) {
     const providers = selectSetupProviders({ presenter })
     await presenter.withProgress('Saving preferences', async () => {
       if (config.browser && config.browser !== browser.browser) {
-        await stopRunnerSupervisor({ homeDir })
+        await quiesceBrowserRuntimeForProfileMutation({ homeDir, daemonUrl: configuredDaemonUrl })
       }
       await writeTokenlessConfig({
         homeDir,
@@ -2185,7 +2241,7 @@ async function ensureSetupManagedProfile({
       requireSetupCopyAuthorization({ args, prompt })
       try {
         return await presenter.withProgress(`Re-importing ${source.name} into managed profile ${selected.slug}`, async () => {
-          await stopRunnerSupervisor({ homeDir })
+          await quiesceBrowserRuntimeForProfileMutation({ homeDir })
           await registry.updateLifecycle(selected.slug, 'importing')
           await importChromeProfile({
             sourceUserDataDir: source.userDataDir,
