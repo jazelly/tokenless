@@ -14,6 +14,7 @@ const tsDaemonEntry = path.join(cliDir, 'dist/src/daemon/daemon-entry.mjs')
 const executableSuffix = process.platform === 'win32' ? '.exe' : ''
 const nativeTuple = `${process.platform}-${process.arch}`
 const rustDaemon = path.join(cliDir, 'npm', `tokenless-native-${nativeTuple}`, 'bin', `tokenless-daemon${executableSuffix}`)
+const managedPlaywrightJobAction = 'visible_provider_actions'
 
 const createdChildren = new Set()
 
@@ -85,6 +86,75 @@ test('TS daemon claim-next is atomic across independent real Node clients', {
     assert.equal(typeof claimed[0].job.claim_token, 'string')
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('TS daemon embeds the managed Playwright scheduler without idle browser launch', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-embedded-scheduler-')
+  const profile = createReadyManagedProfile(homeDir)
+  const daemon = await startTsDaemon(homeDir)
+  try {
+    await delay(1_500)
+    assertProfileDirectoryEmpty(profile.directory)
+
+    const token = readControlToken(homeDir)
+    const jobId = randomUUID()
+    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: profile.id,
+      job_id: jobId,
+      request_json: { malformed: true },
+    })
+
+    const failed = await waitForDaemonJobStatus(daemon.url, token, jobId, 'failed', 10_000)
+    assert.equal(failed.error_json.code, 'invalid_playwright_job_request')
+    assertProfileDirectoryEmpty(profile.directory)
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('TS daemon closes when the embedded managed Playwright scheduler exits fatally', {
+  timeout: 30_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-embedded-scheduler-fatal-')
+  createOverlyPermissiveManagedProfileRegistry(homeDir)
+  const port = await freePort()
+  const url = `http://127.0.0.1:${port}`
+  const child = spawn(process.execPath, [
+    tsDaemonEntry,
+    '--home',
+    homeDir,
+    'serve',
+    '--host',
+    '127.0.0.1',
+    '--port',
+    String(port),
+  ], {
+    cwd: root,
+    env: { ...process.env, TOKENLESS_HOME: homeDir },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  trackChild(child, homeDir)
+  let stderr = ''
+  child.stderr?.on('data', (chunk) => {
+    stderr += chunk.toString('utf8')
+  })
+  try {
+    const exit = await waitForExitResult(child, 10_000)
+    assert.equal(exit.code, 1, `expected scheduler fatal exit; got ${JSON.stringify(exit)}\nstderr:\n${stderr}`)
+    await assert.rejects(fetch(`${url}/ready?challenge=${randomBytes(32).toString('base64url')}`))
+  } finally {
     await terminateChildrenForHome(homeDir)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -569,6 +639,61 @@ console.log(body)
   })
 }
 
+function createReadyManagedProfile(homeDir) {
+  const browserDir = path.join(homeDir, 'browser')
+  const profilesRoot = path.join(browserDir, 'profiles')
+  const profileId = randomUUID()
+  const profileDir = path.join(profilesRoot, profileId)
+  fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 })
+  const now = new Date().toISOString()
+  fs.writeFileSync(path.join(browserDir, 'profiles.json'), `${JSON.stringify({
+    version: 1,
+    defaultProfile: 'default',
+    profiles: {
+      default: {
+        slug: 'default',
+        id: profileId,
+        label: 'Default',
+        labelOrigin: 'slug',
+        directory: profileDir,
+        lifecycle: 'ready',
+        createdAt: now,
+        updatedAt: now,
+        lastObservedAuth: {},
+      },
+    },
+  }, null, 2)}\n`, { mode: 0o600 })
+  return { id: profileId, directory: profileDir }
+}
+
+function assertProfileDirectoryEmpty(profileDir) {
+  assert.deepEqual(fs.readdirSync(profileDir).sort(), [])
+}
+
+function createOverlyPermissiveManagedProfileRegistry(homeDir) {
+  const browserDir = path.join(homeDir, 'browser')
+  const profilesRoot = path.join(browserDir, 'profiles')
+  fs.mkdirSync(profilesRoot, { recursive: true, mode: 0o700 })
+  const registryPath = path.join(browserDir, 'profiles.json')
+  fs.writeFileSync(registryPath, `${JSON.stringify({
+    version: 1,
+    defaultProfile: null,
+    profiles: {},
+  }, null, 2)}\n`, { mode: 0o644 })
+  fs.chmodSync(registryPath, 0o644)
+}
+
+async function waitForDaemonJobStatus(daemonUrl, token, jobId, status, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let latest
+  while (Date.now() < deadline) {
+    latest = await daemonRequest(daemonUrl, token, 'GET', `/jobs/${encodeURIComponent(jobId)}`)
+    if (latest.status === status) return latest
+    await delay(100)
+  }
+  throw new Error(`job ${jobId} did not reach ${status}; latest: ${JSON.stringify(latest)}`)
+}
+
 function trackChild(child, homeDir) {
   child.tokenlessHome = homeDir
   createdChildren.add(child)
@@ -628,6 +753,23 @@ function waitForExit(child, timeoutMs) {
     const onExit = () => {
       clearTimeout(timeout)
       resolve()
+    }
+    child.once('exit', onExit)
+  })
+}
+
+function waitForExitResult(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode })
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.off('exit', onExit)
+      reject(new Error(`process ${child.pid} did not exit within ${timeoutMs} ms`))
+    }, timeoutMs)
+    const onExit = (code, signal) => {
+      clearTimeout(timeout)
+      resolve({ code, signal })
     }
     child.once('exit', onExit)
   })

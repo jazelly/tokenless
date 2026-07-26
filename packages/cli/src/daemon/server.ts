@@ -49,14 +49,21 @@ export async function serveHttp({
   store,
   host,
   port,
+  beforeClose,
 }: {
   store: JobStore
   host: string
   port: number
+  beforeClose?: (() => Promise<void>) | undefined
 }) {
   validateLoopbackHost(host)
+  let closePromise: Promise<void> | undefined
+  const close = () => {
+    closePromise ??= closeServer(server, store, beforeClose)
+    return closePromise
+  }
   const server = http.createServer((request, response) => {
-    void handleRequest(store, server, request, response)
+    void handleRequest(store, close, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -74,7 +81,7 @@ export async function serveHttp({
   return {
     server,
     store,
-    close: () => closeServer(server, store),
+    close,
   } satisfies DaemonServer
 }
 
@@ -100,7 +107,7 @@ export function nativeBinaryBuildInfo(binary: string) {
 
 async function handleRequest(
   store: JobStore,
-  server: http.Server,
+  closeDaemon: () => Promise<void>,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -248,7 +255,7 @@ async function handleRequest(
     if (method === 'POST' && url.pathname === '/control/shutdown') {
       writeJson(response, 200, { ok: true, status: 'shutting_down', pid: process.pid })
       setImmediate(() => {
-        void closeServer(server, store)
+        void closeDaemon()
       })
       return
     }
@@ -466,12 +473,20 @@ function optionalQueryExecutionBackend(value: string | null) {
   return value
 }
 
-async function closeServer(server: http.Server, store: JobStore) {
-  await new Promise<void>((resolve, reject) => {
+async function closeServer(
+  server: http.Server,
+  store: JobStore,
+  beforeClose: (() => Promise<void>) | undefined
+) {
+  const httpClose = new Promise<void>((resolve, reject) => {
     server.close((error) => {
       if (error) reject(error)
       else resolve()
     })
   }).catch(() => undefined)
+  const runtimeClose = beforeClose?.() ?? Promise.resolve()
+  const results = await Promise.allSettled([httpClose, runtimeClose])
   store.close()
+  const failed = results.find((result) => result.status === 'rejected')
+  if (failed?.status === 'rejected') throw failed.reason
 }
