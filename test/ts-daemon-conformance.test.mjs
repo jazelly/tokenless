@@ -15,7 +15,6 @@ const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const tsDaemonEntry = path.join(cliDir, 'dist/src/daemon/daemon-entry.mjs')
 const managedPlaywrightJobAction = 'visible_provider_actions'
-const supportedProviders = ['chatgpt', 'claude', 'gemini', 'grok', 'qwen']
 const legacyProviders = [
   ['chatgpt', 'https://chatgpt.com/'],
   ['claude', 'https://claude.ai/new'],
@@ -609,7 +608,7 @@ async function verifyPlaywrightRestartResumeCancelAndAuth(homeDir) {
   const readyBefore = await readyProbe(daemon.url, challenge)
   assert.equal(readyBefore.home_dir, homeDir)
   assert.equal(readyBefore.pid, daemon.child.pid)
-  assert.equal(readyBefore.ready_proof, readyProof(token, challenge, homeDir))
+  assert.equal(readyBefore.proof, readyProof(token, challenge, homeDir))
 
   const missingShutdown = await fetch(`${daemon.url}/control/shutdown`, { method: 'POST' })
   assert.equal(missingShutdown.status, 401)
@@ -618,7 +617,7 @@ async function verifyPlaywrightRestartResumeCancelAndAuth(homeDir) {
     headers: { authorization: 'Bearer not-the-token' },
   })
   assert.equal(rejectedShutdown.status, 403)
-  assert.equal((await readyProbe(daemon.url)).status, 'ok')
+  assert.equal((await readyProbe(daemon.url)).ready, true)
 
   const profileId = 'default-profile'
   const resumedJobId = randomUUID()
@@ -700,8 +699,8 @@ async function verifyPlaywrightRestartResumeCancelAndAuth(homeDir) {
   assert.equal(token, tokenBeforeRestart)
   assert.equal(readyAfter.home_dir, readyBefore.home_dir)
   assert.equal(readyAfter.pid, daemon.child.pid)
-  assert.equal(readyAfter.ready_proof, readyBefore.ready_proof)
-  assert.equal(readyAfter.ready_proof, readyProof(token, challenge, homeDir))
+  assert.equal(readyAfter.proof, readyBefore.proof)
+  assert.equal(readyAfter.proof, readyProof(token, challenge, homeDir))
 
   const resumed = await daemonRequest(daemon.url, token, 'POST', `/jobs/${resumedJobId}/resume`, {
     browser_visibility: 'headed',
@@ -821,7 +820,6 @@ async function waitForDaemon(child, url, homeDir, label) {
       assert.equal(ready.ready, true)
       assert.equal(ready.protocol, 'tokenless.daemon.v1')
       assert.equal(ready.home_dir, homeDir)
-      assert.deepEqual(ready.supported_providers, supportedProviders)
       return { child, url, homeDir, label }
     } catch (error) {
       lastError = error

@@ -312,7 +312,6 @@ async function validateOpenApiArtifact({ artifactPath, parsed }) {
   }
   if (!isRecord(parsed.paths)) throw new Error(`${artifactPath} must include paths`)
   const expectedPaths = [
-    '/health',
     '/ready',
     '/jobs',
     '/jobs/{job_id}',
@@ -337,13 +336,13 @@ async function validateOpenApiArtifact({ artifactPath, parsed }) {
   if (!isRecord(parsed.components?.securitySchemes?.controlBearer)) {
     throw new Error(`${artifactPath} must define controlBearer security scheme`)
   }
-  for (const publicPath of ['/health', '/ready']) {
+  for (const publicPath of ['/ready']) {
     const operation = getSingleOperation(parsed.paths[publicPath], publicPath)
     if (JSON.stringify(operation.security) !== '[]') {
       throw new Error(`${artifactPath} ${publicPath} must explicitly opt out of bearer auth`)
     }
   }
-  for (const protectedPath of expectedPaths.filter((entry) => !['/health', '/ready'].includes(entry))) {
+  for (const protectedPath of expectedPaths.filter((entry) => entry !== '/ready')) {
     const pathItem = parsed.paths[protectedPath]
     for (const [method, operation] of Object.entries(pathItem)) {
       if (!HTTP_METHODS.has(method)) continue

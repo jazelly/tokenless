@@ -80,7 +80,6 @@ export {
   probeDaemonReady,
   providerWakeUrl,
   readLiveBridgeMarker,
-  refreshInstalledManagedRuntime,
   resolveChromiumBrowser,
   semanticVersionMajor,
   stopDaemon,

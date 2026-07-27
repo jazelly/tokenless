@@ -1,5 +1,5 @@
-import { spawn, spawnSync } from 'node:child_process'
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import net from 'node:net'
@@ -21,6 +21,7 @@ import {
   EXTENSION_BRIDGE_PROTOCOL,
 } from './generated/protocol-constants.js'
 import { tokenlessPackageVersion } from './platform-package.js'
+import { daemonReadyProof } from './daemon/ready-proof.js'
 
 export {
   DAEMON_PROCESS_PROTOCOL,
@@ -39,7 +40,6 @@ export {
 export const EXTENSION_BRIDGE_FILE = 'extension-bridge.json'
 export const DAEMON_PID_FILE = 'daemon.pid.json'
 export const DAEMON_LOG_FILE = 'daemon.log'
-export const DAEMON_RUNTIME_KIND = 'typescript'
 
 const DAEMON_ENTRY_NAME = 'daemon-entry.mjs'
 const DEFAULT_BRIDGE_MAX_AGE_MS = 15_000
@@ -49,8 +49,6 @@ const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 5_000
 const MAX_TIMEOUT_MS = 2_147_483_647
 const BUILD_INFO_TIMEOUT_MS = 2_000
 const BUILD_INFO_OUTPUT_LIMIT_BYTES = 16_384
-const SETUP_DAEMON_RECONCILE_MAX_ATTEMPTS = 2
-const LEGACY_DAEMON_SUPPORTED_PROVIDERS = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok'])
 
 type RuntimeError = Error & {
   code?: string
@@ -59,23 +57,29 @@ type RuntimeError = Error & {
 }
 
 type JsonRecord = Record<string, any>
-type DaemonRuntimeKind = typeof DAEMON_RUNTIME_KIND | 'legacy' | 'unknown'
 
-export type DaemonReadyProbe = {
-  ok: boolean
+type DaemonReadyProbeBase = {
   reachable: boolean
   url: string
   expectedHome: string
+  body?: JsonRecord | undefined
+}
+
+export type DaemonReadyProbe = (DaemonReadyProbeBase & {
+  ok: true
+  reachable: true
+  actualHome: string
+  identityVerified: true
+  sameHomeVerified: true
+  body: JsonRecord
+}) | (DaemonReadyProbeBase & {
+  ok: false
   actualHome?: string | undefined
   identityVerified?: boolean | undefined
   sameHomeVerified?: boolean | undefined
-  protocolCompatible?: boolean | undefined
-  runtimeKind?: DaemonRuntimeKind | undefined
-  supportedProviders?: string[] | undefined
-  body?: JsonRecord | undefined
   code?: string | undefined
   message?: string | undefined
-}
+})
 
 export type ManagedRuntimeInspection = {
   ok: boolean
@@ -90,30 +94,13 @@ export type ManagedRuntimeInspection = {
     error?: string | null | undefined
     code?: string | undefined
   }
-  packaged: {
-    ok: boolean
-    path: string | null
-    hash: string | null
-    buildInfo: JsonRecord | null
-    error: string | null
-    code?: string | undefined
-  }
-  installed: {
-    ok: boolean
-    path: string
-    hash: string | null
-    executable: boolean
-    matchesBundled: boolean
-    buildInfo: JsonRecord | null
-    error: string | null
-    code?: string | undefined
-  }
   daemon: {
     ok: boolean
     path: string
-    hash: string | null
-    bundledHash: string | null
-    matchesBundled: boolean
+    executable: boolean
+    buildInfo: JsonRecord | null
+    error: string | null
+    code?: string | undefined
   }
 }
 
@@ -144,26 +131,6 @@ export type StopDaemonResult = {
   compactOutput: string
 }
 
-export type SetupDaemonReconciliation = {
-  attempted: boolean
-  action: 'none' | 'refresh_installed_runtime' | 'restart_daemon'
-  reason: SetupDaemonReconciliationReason
-  reasons?: SetupDaemonReconciliationReason[] | undefined
-  stopped?: StopDaemonResult | undefined
-  stops?: StopDaemonResult[] | undefined
-  refreshed?: string[] | undefined
-  previous?: {
-    version: string | null
-    major: number | null
-    pid: number | null
-  } | undefined
-}
-
-export type SetupDaemonReconciliationReason =
-  | 'already_compatible'
-  | 'daemon_protocol_mismatch'
-  | 'installed_artifact_mismatch'
-
 export type SetupDaemonReadyResult = Awaited<ReturnType<typeof ensureDaemonReady>> & {
   expectedVersion: string
   expectedMajor: number | null
@@ -172,7 +139,6 @@ export type SetupDaemonReadyResult = Awaited<ReturnType<typeof ensureDaemonReady
   protocolCompatible: boolean
   versionCompatible: boolean
   compatibilityPolicy: 'daemon-v1'
-  reconciliation: SetupDaemonReconciliation
 }
 
 export type BridgeMarker = {
@@ -195,13 +161,11 @@ export async function probeDaemonReady({
   homeDir = tokenlessHome(),
   timeoutMs = 750,
   daemonToken,
-  requiredProvider,
 }: {
   daemonUrl?: string | undefined
   homeDir?: string | undefined
   timeoutMs?: number | undefined
   daemonToken?: string | undefined
-  requiredProvider?: string | undefined
 } = {}): Promise<DaemonReadyProbe> {
   const url = normalizeDaemonUrl(daemonUrl)
   const expectedHome = await canonicalPath(homeDir)
@@ -306,6 +270,38 @@ export async function probeDaemonReady({
   }
   const sameHomeVerified = true
 
+  if (body.protocol !== DAEMON_PROTOCOL) {
+    return {
+      ok: false,
+      reachable: true,
+      url,
+      expectedHome,
+      actualHome,
+      identityVerified,
+      sameHomeVerified,
+      body,
+      code: 'daemon_protocol_mismatch',
+      message: `Tokenless daemon protocol is ${String(body.protocol ?? 'missing')}; expected ${DAEMON_PROTOCOL}.`,
+    }
+  }
+
+  const expectedVersion = tokenlessPackageVersion()
+  const runningVersion = typeof body.version === 'string' ? body.version : null
+  if (runningVersion !== expectedVersion) {
+    return {
+      ok: false,
+      reachable: true,
+      url,
+      expectedHome,
+      actualHome,
+      identityVerified,
+      sameHomeVerified,
+      body,
+      code: 'daemon_version_mismatch',
+      message: `Tokenless daemon version is ${runningVersion ?? 'missing'}; expected ${expectedVersion}.`,
+    }
+  }
+
   if (body.ready !== true) {
     return {
       ok: false,
@@ -321,62 +317,6 @@ export async function probeDaemonReady({
     }
   }
 
-  const protocolCompatibility = daemonProtocolCompatibility({
-    body,
-  })
-  if (!protocolCompatibility.ok) {
-    return {
-      ok: false,
-      reachable: true,
-      url,
-      expectedHome,
-      actualHome,
-      identityVerified,
-      sameHomeVerified,
-      protocolCompatible: false,
-      supportedProviders: supportedProvidersFromBody(body),
-      body,
-      code: protocolCompatibility.code,
-      message: protocolCompatibility.message,
-    }
-  }
-  const supportedProviders = supportedProvidersFromBody(body)
-  const runtimeKind = daemonRuntimeKindFromBody(body)
-  if (runtimeKind !== DAEMON_RUNTIME_KIND) {
-    return {
-      ok: false,
-      reachable: true,
-      url,
-      expectedHome,
-      actualHome,
-      identityVerified,
-      sameHomeVerified,
-      protocolCompatible: true,
-      runtimeKind,
-      supportedProviders,
-      body,
-      code: 'daemon_runtime_kind_mismatch',
-      message: `Tokenless daemon runtime is ${runtimeKind}; expected ${DAEMON_RUNTIME_KIND}.`,
-    }
-  }
-  if (requiredProvider && !supportedProviders.includes(requiredProvider)) {
-    return {
-      ok: false,
-      reachable: true,
-      url,
-      expectedHome,
-      actualHome,
-      identityVerified,
-      sameHomeVerified,
-      protocolCompatible: true,
-      runtimeKind,
-      supportedProviders,
-      body,
-      code: 'daemon_provider_unsupported',
-      message: `Tokenless daemon at ${url} does not advertise Playwright provider support for ${requiredProvider}.`,
-    }
-  }
-
   return {
     ok: true,
     reachable: true,
@@ -385,9 +325,6 @@ export async function probeDaemonReady({
     actualHome,
     identityVerified,
     sameHomeVerified,
-    protocolCompatible: true,
-    runtimeKind,
-    supportedProviders,
     body,
   }
 }
@@ -402,26 +339,26 @@ export async function ensureDaemonReady({
 }: EnsureDaemonOptions = {}) {
   assertLocalProviderSupport(requiredProvider)
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
-  const initial = await probeDaemonReady({ daemonUrl, homeDir, requiredProvider })
+  const initial = await probeDaemonReady({ daemonUrl, homeDir })
   if (initial.ok) {
     return { ...initial, started: false, binaryPath: null, pid: daemonPidFromReady(initial) ?? await readDaemonPid(homeDir) }
-  } else if (!shouldReplaceLegacyDaemon(initial) && !shouldReplaceProviderIncompatibleDaemon(initial)) {
+  } else if (!shouldReplaceVersionMismatchedDaemon(initial)) {
     assertNoDaemonIdentityConflict(initial)
   }
 
   const releaseLock = await acquireDaemonStartLock({ homeDir, timeoutMs })
   try {
-    const afterLock = await probeDaemonReady({ daemonUrl, homeDir, requiredProvider })
+    const afterLock = await probeDaemonReady({ daemonUrl, homeDir })
     if (afterLock.ok) {
       return { ...afterLock, started: false, binaryPath: null, pid: daemonPidFromReady(afterLock) ?? await readDaemonPid(homeDir) }
-    } else if (shouldReplaceLegacyDaemon(afterLock) || shouldReplaceProviderIncompatibleDaemon(afterLock)) {
+    } else if (shouldReplaceVersionMismatchedDaemon(afterLock)) {
       await stopDaemon({ homeDir, daemonUrl, timeoutMs })
     } else {
       assertNoDaemonIdentityConflict(afterLock)
     }
 
     const daemonEntryPath = binaryPath ?? bundledTypeScriptDaemonEntryPath(bundledRoot)
-    await assertDaemonEntryReadable(daemonEntryPath)
+    await assertDaemonEntryRunnable(daemonEntryPath)
     const parsedUrl = new URL(normalizeDaemonUrl(daemonUrl))
     const host = daemonBindHost(parsedUrl.hostname)
     const port = parsedUrl.port ? Number(parsedUrl.port) : 80
@@ -434,7 +371,6 @@ export async function ensureDaemonReady({
       daemonUrl: parsedUrl.origin,
       binaryPath: process.execPath,
       daemonEntryPath,
-      runtimeKind: DAEMON_RUNTIME_KIND,
       logPath,
       startedAt: new Date().toISOString(),
     }
@@ -442,9 +378,9 @@ export async function ensureDaemonReady({
 
     try {
       const deadline = Date.now() + timeoutMs
-      let lastProbe = afterLock
+      let lastProbe: DaemonReadyProbe = afterLock
       while (Date.now() < deadline) {
-        lastProbe = await probeDaemonReady({ daemonUrl, homeDir, requiredProvider })
+        lastProbe = await probeDaemonReady({ daemonUrl, homeDir })
         if (lastProbe.ok) {
           child.unref()
           return {
@@ -480,100 +416,15 @@ export async function ensureSetupDaemonRunnable({
   daemonUrl,
   timeoutMs = envNumber('TOKENLESS_DAEMON_START_TIMEOUT_MS', DEFAULT_DAEMON_START_TIMEOUT_MS),
 }: Pick<EnsureDaemonOptions, 'homeDir' | 'daemonUrl' | 'timeoutMs'> = {}): Promise<SetupDaemonReadyResult> {
-  let ready: Awaited<ReturnType<typeof ensureDaemonReady>>
-  try {
-    ready = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs })
-  } catch (error) {
-    const caught = error as RuntimeError
-    if (caught.code !== 'daemon_protocol_mismatch') throw error
-
-    const verified = await probeDaemonReady({ homeDir, daemonUrl })
-    if (
-      verified.code !== caught.code ||
-      verified.identityVerified !== true ||
-      verified.sameHomeVerified !== true
-    ) {
-      throw error
-    }
-
-    return restartSetupDaemon({
-      homeDir,
-      daemonUrl,
-      timeoutMs,
-      previous: protocolMismatchPreviousRuntime(verified),
-      reasons: [caught.code],
-    })
-  }
-
   const inspection = await inspectManagedRuntime(homeDir)
-  if (!inspection.packaged.ok || !inspection.packaged.hash) {
+  if (!inspection.daemon.ok) {
     throw runtimeError(
-      inspection.packaged.code ?? inspection.package.code ?? 'daemon_runtime_unavailable',
-      inspection.packaged.error ?? inspection.package.error ?? 'Packaged TypeScript daemon runtime is unavailable.',
+      inspection.daemon.code ?? inspection.package.code ?? 'daemon_runtime_unavailable',
+      inspection.daemon.error ?? inspection.package.error ?? 'Bundled TypeScript daemon runtime is unavailable.',
       false
     )
   }
-
-  const reasons = setupDaemonRuntimeDriftReasons(ready, inspection)
-  if (reasons.length === 0) {
-    return setupDaemonReadyResult(ready, {
-      attempted: false,
-      action: 'none',
-      reason: 'already_compatible',
-    })
-  }
-
-  let refreshed: string[]
-  try {
-    refreshed = await refreshInstalledManagedRuntime({ homeDir })
-  } catch (error) {
-    throw runtimeError(
-      'setup_installed_runtime_refresh_failed',
-      `Tokenless setup could not refresh the installed daemon runtime while leaving the compatible running daemon in place: ${error instanceof Error ? error.message : String(error)}`,
-      true
-    )
-  }
-  return setupDaemonReadyResult(ready, {
-    attempted: refreshed.length > 0,
-    action: 'refresh_installed_runtime',
-    reason: 'installed_artifact_mismatch',
-    reasons,
-    refreshed,
-    previous: setupDaemonPreviousRuntime(ready),
-  })
-}
-
-function protocolMismatchPreviousRuntime(
-  verified: DaemonReadyProbe
-): NonNullable<SetupDaemonReconciliation['previous']> {
-  const runningVersion = typeof verified.body?.version === 'string' ? verified.body.version : null
-  return {
-    version: runningVersion,
-    major: runningVersion === null ? null : semanticVersionMajor(runningVersion),
-    pid: daemonPidFromReady(verified),
-  }
-}
-
-async function restartSetupDaemon({
-  homeDir,
-  daemonUrl,
-  timeoutMs,
-  previous,
-  reasons,
-}: {
-  homeDir: string
-  daemonUrl?: string | undefined
-  timeoutMs: number
-  previous: NonNullable<SetupDaemonReconciliation['previous']>
-  reasons: SetupDaemonReconciliationReason[]
-}) {
-  return reconcileSetupDaemon({
-    homeDir,
-    daemonUrl,
-    timeoutMs,
-    previous,
-    reasons,
-  })
+  return setupDaemonReadyResult(await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs }))
 }
 
 export async function stopDaemon({
@@ -606,8 +457,7 @@ export async function stopDaemon({
     )
   })
   const ready = await probeDaemonReady({ homeDir, daemonUrl: url, daemonToken: token, timeoutMs: Math.min(stopTimeoutMs, 1_000) })
-  const verifiedStoppableMismatch = ready.code === 'daemon_protocol_mismatch' ||
-    ready.code === 'daemon_runtime_kind_mismatch'
+  const verifiedStoppableMismatch = !ready.ok && ready.code === 'daemon_version_mismatch'
   if (!ready.ok && !verifiedStoppableMismatch) {
     const stillReachable = await probeDaemonReachable(url, Math.min(stopTimeoutMs, 1_000))
     if (ready.code === 'daemon_unavailable' && !stillReachable.reachable) {
@@ -635,14 +485,6 @@ export async function stopDaemon({
   } catch (error) {
     const status = typeof (error as RuntimeError).status === 'number' ? (error as RuntimeError).status : undefined
     if (status === 404 || status === 405) {
-      const legacyStopped = await stopVerifiedLegacyDaemonWithoutControl({
-        ready,
-        homeDir: ready.actualHome ?? expectedHome,
-        url,
-        token,
-        stopTimeoutMs,
-      })
-      if (legacyStopped) return legacyStopped
       throw runtimeError(
         'daemon_shutdown_unsupported',
         `The verified daemon at ${url} does not support bearer-authenticated self-shutdown. Tokenless did not stop any process. Upgrade Tokenless or stop daemon pid ${daemonPidFromReady(ready) ?? '<unknown>'} manually.`,
@@ -679,117 +521,6 @@ export async function stopDaemon({
     response,
     compactOutput: `Tokenless daemon stopped at ${url}${pid === undefined ? '' : ` (pid ${pid})`}.`,
   }
-}
-
-async function stopVerifiedLegacyDaemonWithoutControl({
-  ready,
-  homeDir,
-  url,
-  token,
-  stopTimeoutMs,
-}: {
-  ready: DaemonReadyProbe
-  homeDir: string
-  url: string
-  token: string
-  stopTimeoutMs: number
-}): Promise<StopDaemonResult | null> {
-  if (!shouldReplaceLegacyDaemon(ready)) return null
-  const verified = await probeDaemonReady({
-    homeDir,
-    daemonUrl: url,
-    daemonToken: token,
-    timeoutMs: Math.min(stopTimeoutMs, 1_000),
-  })
-  if (!shouldReplaceLegacyDaemon(verified)) return null
-  const listenerPid = discoverLoopbackListenerPid(url)
-  if (listenerPid === null) return null
-  const claimedPid = daemonPidFromReady(verified) ?? await readDaemonPid(homeDir)
-  if (claimedPid === null || claimedPid !== listenerPid) return null
-  const finalVerified = await probeDaemonReady({
-    homeDir,
-    daemonUrl: url,
-    daemonToken: token,
-    timeoutMs: Math.min(stopTimeoutMs, 1_000),
-  })
-  if (!shouldReplaceLegacyDaemon(finalVerified)) return null
-  const finalClaimedPid = daemonPidFromReady(finalVerified) ?? await readDaemonPid(homeDir)
-  if (finalClaimedPid !== listenerPid) return null
-  try {
-    process.kill(listenerPid, 'SIGTERM')
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code !== 'ESRCH') throw error
-  }
-  let stopped = await waitForDaemonListenerGone(url, stopTimeoutMs)
-  if (!stopped && pidIsAlive(listenerPid)) {
-    try {
-      process.kill(listenerPid, 'SIGKILL')
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'ESRCH') throw error
-    }
-    stopped = await waitForDaemonListenerGone(url, stopTimeoutMs)
-  }
-  if (!stopped) {
-    throw runtimeError(
-      'daemon_shutdown_unconfirmed',
-      `The verified legacy daemon at ${url} was signaled, but the loopback listener was still reachable after ${stopTimeoutMs}ms. Stop daemon pid ${listenerPid} manually if needed.`,
-      true
-    )
-  }
-  await removePidIfOwned(homeDir, listenerPid)
-  return {
-    ok: true,
-    status: 'stopped',
-    url,
-    homeDir,
-    pid: listenerPid,
-    response: {
-      ok: true,
-      status: 'terminated_legacy_daemon',
-      pid: listenerPid,
-    },
-    compactOutput: `Tokenless legacy daemon stopped at ${url} (pid ${listenerPid}).`,
-  }
-}
-
-function discoverLoopbackListenerPid(url: string): number | null {
-  const parsed = new URL(url)
-  const port = parsed.port === ''
-    ? (parsed.protocol === 'https:' ? '443' : '80')
-    : parsed.port
-  if (process.platform === 'win32') return discoverWindowsLoopbackListenerPid(port)
-  const result = spawnSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fp'], {
-    encoding: 'utf8',
-    timeout: 2_000,
-    windowsHide: true,
-  })
-  if (result.status !== 0) return null
-  return uniqueLivePid([...result.stdout.matchAll(/^p(\d+)$/gm)].map((match) => Number(match[1])))
-}
-
-function discoverWindowsLoopbackListenerPid(port: string): number | null {
-  const result = spawnSync('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-Command',
-    `Get-NetTCPConnection -LocalPort ${port} -State Listen | Select-Object -ExpandProperty OwningProcess`,
-  ], {
-    encoding: 'utf8',
-    timeout: 2_000,
-    windowsHide: true,
-  })
-  if (result.status !== 0) return null
-  return uniqueLivePid(result.stdout.split(/\s+/).map((value) => Number(value)))
-}
-
-function uniqueLivePid(values: number[]): number | null {
-  const pids = [...new Set(values)]
-    .filter((pid): pid is number => Number.isSafeInteger(pid) && pid > 0 && pidIsAlive(pid))
-  if (pids.length !== 1) return null
-  const pid = pids[0]!
-  return Number.isSafeInteger(pid) && pid > 0 && pidIsAlive(pid) ? pid : null
 }
 
 export async function readLiveBridgeMarker({
@@ -931,7 +662,6 @@ export async function inspectManagedRuntime(homeDir = tokenlessHome(), packageRo
   const packageDir = packageRoot ?? cliPackageRoot()
   const daemon = bundledTypeScriptDaemonEntryPath(packageDir)
   const daemonExecutable = await isReadableFile(daemon)
-  const bundledDaemon: string | null = daemon
   const packageCheck: ManagedRuntimeInspection['package'] = {
     ok: true,
     name: 'tokenless',
@@ -942,76 +672,20 @@ export async function inspectManagedRuntime(homeDir = tokenlessHome(), packageRo
     manifestPath: path.join(packageDir, 'package.json'),
     error: null,
   }
-  const [daemonHash, bundledDaemonHash, packagedBuildInfo] = await Promise.all([
-    fileHash(daemon),
-    bundledDaemon ? fileHash(bundledDaemon) : null,
-    bundledDaemon ? readTypeScriptDaemonBuildInfo(bundledDaemon) : failedBuildInfo('typescript_daemon_entry_missing', 'TypeScript daemon entry is unavailable.'),
-  ])
-  const matchesBundled = Boolean(bundledDaemonHash) && daemonHash === bundledDaemonHash
-  const installedBuildInfo = matchesBundled && packagedBuildInfo.ok
-    ? {
-        ok: true,
-        buildInfo: packagedBuildInfo.buildInfo,
-        error: null as string | null,
-        code: undefined as string | undefined,
-      }
-    : failedBuildInfo(
-        daemonHash === null ? 'typescript_daemon_entry_missing' : 'typescript_daemon_entry_hash_mismatch',
-        daemonHash === null
-          ? `TypeScript daemon entry is missing: ${daemon}`
-          : 'TypeScript daemon entry hash does not match the verified packaged daemon; refusing to execute it.',
-      )
-  const packagedOk = packageCheck.ok && Boolean(bundledDaemon) && Boolean(bundledDaemonHash) && packagedBuildInfo.ok
-  const installedOk = daemonExecutable && Boolean(daemonHash) && matchesBundled && installedBuildInfo.ok
+  const buildInfo = await readTypeScriptDaemonBuildInfo(daemon)
+  const daemonOk = packageCheck.ok && daemonExecutable && buildInfo.ok
   return {
-    ok: packagedOk && installedOk,
+    ok: daemonOk,
     package: packageCheck,
-    packaged: {
-      ok: packagedOk,
-      path: bundledDaemon,
-      hash: bundledDaemonHash,
-      buildInfo: packagedBuildInfo.buildInfo,
-      error: packagedBuildInfo.error,
-      ...(packagedBuildInfo.code === undefined ? {} : { code: packagedBuildInfo.code }),
-    },
-    installed: {
-      ok: installedOk,
+    daemon: {
+      ok: daemonOk,
       path: daemon,
-      hash: daemonHash,
       executable: daemonExecutable,
-      matchesBundled,
-      buildInfo: installedBuildInfo.buildInfo,
-      error: installedBuildInfo.error,
-      ...(installedBuildInfo.code === undefined ? {} : { code: installedBuildInfo.code }),
+      buildInfo: buildInfo.buildInfo,
+      error: buildInfo.error,
+      ...(buildInfo.code === undefined ? {} : { code: buildInfo.code }),
     },
-    daemon: { ok: installedOk, path: daemon, hash: daemonHash, bundledHash: bundledDaemonHash, matchesBundled },
   } satisfies ManagedRuntimeInspection
-}
-
-export async function refreshInstalledManagedRuntime({
-  homeDir = tokenlessHome(),
-  packageRoot,
-}: {
-  homeDir?: string | undefined
-  packageRoot?: string | undefined
-} = {}) {
-  void homeDir
-  const source = bundledTypeScriptDaemonEntryPath(packageRoot)
-  const [sourceReadable, sourceBuildInfo] = await Promise.all([
-    isReadableFile(source),
-    readTypeScriptDaemonBuildInfo(source),
-  ])
-  if (!sourceReadable) {
-    throw runtimeError('typescript_daemon_entry_missing', `TypeScript daemon entry is missing: ${source}`, false)
-  }
-  if (!sourceBuildInfo.ok) {
-    throw runtimeError(
-      sourceBuildInfo.code ?? 'typescript_daemon_entry_invalid',
-      sourceBuildInfo.error ?? `TypeScript daemon entry has invalid build info: ${source}`,
-      false
-    )
-  }
-  return []
 }
 
 export async function persistDaemonSnapshot({
@@ -1173,8 +847,7 @@ function normalizeStopTimeoutMs(value: number | undefined) {
 }
 
 function setupDaemonReadyResult(
-  ready: Awaited<ReturnType<typeof ensureDaemonReady>>,
-  reconciliation: SetupDaemonReconciliation
+  ready: Awaited<ReturnType<typeof ensureDaemonReady>>
 ): SetupDaemonReadyResult {
   const expectedVersion = tokenlessPackageVersion()
   const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
@@ -1187,151 +860,10 @@ function setupDaemonReadyResult(
     expectedMajor,
     runningVersion,
     runningMajor,
-    protocolCompatible: ready.protocolCompatible === true,
+    protocolCompatible: ready.body?.protocol === DAEMON_PROTOCOL,
     versionCompatible,
     compatibilityPolicy: 'daemon-v1',
-    reconciliation,
   }
-}
-
-async function reconcileSetupDaemon({
-  homeDir,
-  daemonUrl,
-  timeoutMs,
-  previous,
-  reasons,
-}: {
-  homeDir: string
-  daemonUrl?: string | undefined
-  timeoutMs: number
-  previous: NonNullable<SetupDaemonReconciliation['previous']>
-  reasons: SetupDaemonReconciliationReason[]
-}) {
-  let accumulatedReasons = uniqueSetupDaemonReconciliationReasons(reasons)
-  const stops: StopDaemonResult[] = []
-  const refreshedPaths = new Set<string>()
-  let lastDriftReasons = accumulatedReasons
-
-  for (let attempt = 0; attempt < SETUP_DAEMON_RECONCILE_MAX_ATTEMPTS; attempt += 1) {
-    const stopped = await stopDaemon({ homeDir, daemonUrl, timeoutMs })
-    stops.push(stopped)
-    const refreshed = await refreshInstalledManagedRuntime({ homeDir })
-    for (const refreshedPath of refreshed) refreshedPaths.add(refreshedPath)
-
-    let restarted: Awaited<ReturnType<typeof ensureDaemonReady>>
-    try {
-      restarted = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs })
-    } catch (error) {
-      const racedReasons = await setupDaemonVerifiedMismatchReasons({
-        homeDir,
-        daemonUrl,
-        originalError: error,
-      })
-      if (racedReasons === null) throw error
-      lastDriftReasons = racedReasons
-      accumulatedReasons = uniqueSetupDaemonReconciliationReasons([
-        ...accumulatedReasons,
-        ...racedReasons,
-      ])
-      if (attempt + 1 < SETUP_DAEMON_RECONCILE_MAX_ATTEMPTS) continue
-      throw setupDaemonReconciliationFailedError({ homeDir, daemonUrl, reasons: lastDriftReasons })
-    }
-
-    const inspection = await inspectManagedRuntime(homeDir)
-    if (!inspection.packaged.ok || !inspection.packaged.hash) {
-      throw runtimeError(
-        inspection.packaged.code ?? inspection.package.code ?? 'daemon_runtime_unavailable',
-        inspection.packaged.error ?? inspection.package.error ?? 'Packaged TypeScript daemon runtime is unavailable.',
-        false
-      )
-    }
-
-    const driftReasons = setupDaemonRuntimeDriftReasons(restarted, inspection)
-    if (driftReasons.length === 0) {
-      return setupDaemonReadyResult(restarted, {
-        attempted: true,
-        action: 'restart_daemon',
-        reason: accumulatedReasons[0] ?? 'daemon_protocol_mismatch',
-        reasons: accumulatedReasons,
-        stopped: stops[stops.length - 1],
-        ...(stops.length > 1 ? { stops } : {}),
-        refreshed: [...refreshedPaths],
-        previous,
-      })
-    }
-
-    lastDriftReasons = driftReasons
-    accumulatedReasons = uniqueSetupDaemonReconciliationReasons([
-      ...accumulatedReasons,
-      ...driftReasons,
-    ])
-  }
-
-  throw setupDaemonReconciliationFailedError({ homeDir, daemonUrl, reasons: lastDriftReasons })
-}
-
-function setupDaemonRuntimeDriftReasons(
-  _ready: Awaited<ReturnType<typeof ensureDaemonReady>>,
-  inspection: ManagedRuntimeInspection
-): SetupDaemonReconciliationReason[] {
-  const reasons: SetupDaemonReconciliationReason[] = []
-  if (!inspection.installed.executable || !inspection.installed.matchesBundled) reasons.push('installed_artifact_mismatch')
-  return reasons
-}
-
-function setupDaemonPreviousRuntime(
-  ready: Awaited<ReturnType<typeof ensureDaemonReady>>
-): NonNullable<SetupDaemonReconciliation['previous']> {
-  const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
-  return {
-    version: runningVersion,
-    major: runningVersion === null ? null : semanticVersionMajor(runningVersion),
-    pid: daemonPidFromReady(ready),
-  }
-}
-
-async function setupDaemonVerifiedMismatchReasons({
-  homeDir,
-  daemonUrl,
-  originalError,
-}: {
-  homeDir: string
-  daemonUrl?: string | undefined
-  originalError: unknown
-}) {
-  const caught = originalError as RuntimeError
-  if (caught.code !== 'daemon_protocol_mismatch') return null
-  const verified = await probeDaemonReady({ homeDir, daemonUrl })
-  if (
-    verified.code !== caught.code ||
-    verified.identityVerified !== true ||
-    verified.sameHomeVerified !== true
-  ) {
-    return null
-  }
-  return [caught.code] satisfies SetupDaemonReconciliationReason[]
-}
-
-function uniqueSetupDaemonReconciliationReasons(reasons: SetupDaemonReconciliationReason[]) {
-  return [...new Set(reasons)]
-}
-
-function setupDaemonReconciliationFailedError({
-  homeDir,
-  daemonUrl,
-  reasons,
-}: {
-  homeDir: string
-  daemonUrl?: string | undefined
-  reasons: SetupDaemonReconciliationReason[]
-}) {
-  const url = normalizeDaemonUrl(daemonUrl)
-  const reasonText = reasons.length ? reasons.join(', ') : 'unknown drift'
-  return runtimeError(
-    'setup_daemon_reconcile_unverified',
-    `Tokenless setup restarted the same-home daemon at ${url}, but exact runtime drift remained after ${SETUP_DAEMON_RECONCILE_MAX_ATTEMPTS} reconciliation attempts for ${homeDir}: ${reasonText}. Stop the daemon and rerun "tokenless setup".`,
-    true
-  )
 }
 
 function daemonPidFromReady(probe: DaemonReadyProbe) {
@@ -1462,6 +994,7 @@ function pidIsAlive(pid: number) {
 
 function assertNoDaemonIdentityConflict(probe: DaemonReadyProbe) {
   if (!probe.reachable) return
+  if (probe.ok) return
   throw runtimeError(
     probe.code ?? 'daemon_not_ready',
     probe.message ?? `Daemon at ${probe.url} is reachable but cannot be used.`,
@@ -1469,18 +1002,11 @@ function assertNoDaemonIdentityConflict(probe: DaemonReadyProbe) {
   )
 }
 
-function shouldReplaceLegacyDaemon(probe: DaemonReadyProbe) {
-  return probe.code === 'daemon_runtime_kind_mismatch' &&
+function shouldReplaceVersionMismatchedDaemon(probe: DaemonReadyProbe) {
+  return !probe.ok &&
+    probe.code === 'daemon_version_mismatch' &&
     probe.identityVerified === true &&
-    probe.sameHomeVerified === true &&
-    probe.runtimeKind === 'legacy'
-}
-
-function shouldReplaceProviderIncompatibleDaemon(probe: DaemonReadyProbe) {
-  return probe.code === 'daemon_provider_unsupported' &&
-    probe.identityVerified === true &&
-    probe.sameHomeVerified === true &&
-    probe.runtimeKind === DAEMON_RUNTIME_KIND
+    probe.sameHomeVerified === true
 }
 
 function assertLocalProviderSupport(requiredProvider: string | undefined) {
@@ -1548,24 +1074,16 @@ function readyHomeFromBody(body: JsonRecord) {
 
 function validateDaemonReadyProof(body: JsonRecord, challenge: string, token: string) {
   if (
-    body.protocol !== DAEMON_PROTOCOL ||
-    body.ready_challenge !== challenge ||
     typeof body.home_dir !== 'string' ||
-    typeof body.ready_proof !== 'string'
+    typeof body.proof !== 'string'
   ) {
     return {
       code: 'daemon_ready_proof_missing',
       message: 'Tokenless daemon /ready did not return a complete challenge-bound identity proof. Reinstall Tokenless.',
     }
   }
-  const actualProof = Buffer.from(body.ready_proof)
-  const expectedProof = Buffer.from(createHmac('sha256', token)
-    .update(daemonReadyProofMessage([
-      DAEMON_PROTOCOL,
-      challenge,
-      body.home_dir,
-    ]))
-    .digest('base64url'))
+  const actualProof = Buffer.from(body.proof)
+  const expectedProof = Buffer.from(daemonReadyProof(token, challenge, body.home_dir))
   if (actualProof.length !== expectedProof.length || !timingSafeEqual(actualProof, expectedProof)) {
     return {
       code: 'daemon_ready_proof_mismatch',
@@ -1573,50 +1091,6 @@ function validateDaemonReadyProof(body: JsonRecord, challenge: string, token: st
     }
   }
   return null
-}
-
-function daemonProtocolCompatibility({
-  body,
-}: {
-  body: JsonRecord
-}): { ok: true } | { ok: false; code: 'daemon_protocol_mismatch'; message: string } {
-  if (body.protocol !== DAEMON_PROTOCOL) {
-    return {
-      ok: false,
-      code: 'daemon_protocol_mismatch',
-      message: `Tokenless daemon protocol is ${String(body.protocol ?? 'missing')}; expected ${DAEMON_PROTOCOL}.`,
-    }
-  }
-  return { ok: true }
-}
-
-function supportedProvidersFromBody(body: JsonRecord) {
-  if (body.supported_providers === undefined) return [...LEGACY_DAEMON_SUPPORTED_PROVIDERS]
-  const values = stringArray(body.supported_providers)
-  return values ? [...new Set(values)] : []
-}
-
-function daemonRuntimeKindFromBody(body: JsonRecord): DaemonRuntimeKind {
-  if (body.runtime_kind === undefined || body.runtime_kind === null) return 'legacy'
-  if (body.runtime_kind === DAEMON_RUNTIME_KIND) return DAEMON_RUNTIME_KIND
-  return 'unknown'
-}
-
-function stringArray(value: unknown) {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? value as string[]
-    : null
-}
-
-function daemonReadyProofMessage(fields: string[]) {
-  const chunks: Buffer[] = []
-  for (const field of fields) {
-    const value = Buffer.from(field, 'utf8')
-    const length = Buffer.allocUnsafe(4)
-    length.writeUInt32BE(value.length)
-    chunks.push(length, value)
-  }
-  return Buffer.concat(chunks)
 }
 
 function daemonBindHost(hostname: string) {
@@ -1648,11 +1122,12 @@ async function isReadableFile(file: string) {
   }
 }
 
-async function assertDaemonEntryReadable(daemonEntryPath: string) {
-  if (await isReadableFile(daemonEntryPath)) return
+async function assertDaemonEntryRunnable(daemonEntryPath: string) {
+  const buildInfo = await readTypeScriptDaemonBuildInfo(daemonEntryPath)
+  if (buildInfo.ok) return
   throw runtimeError(
-    'typescript_daemon_entry_missing',
-    `TypeScript daemon entry is missing: ${daemonEntryPath}. Run npm run build:js before starting the daemon.`,
+    buildInfo.code ?? 'typescript_daemon_entry_invalid',
+    buildInfo.error ?? `TypeScript daemon entry is invalid: ${daemonEntryPath}`,
     false
   )
 }
@@ -1753,15 +1228,6 @@ async function findOnPath(names: string[]) {
     }
   }
   return null
-}
-
-async function fileHash(file: string) {
-  try {
-    const contents = await fs.readFile(file)
-    return createHash('sha256').update(contents).digest('hex')
-  } catch {
-    return null
-  }
 }
 
 function unwrapSnapshot(result: unknown): JsonRecord | null {

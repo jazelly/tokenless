@@ -8,7 +8,6 @@ import type { BrowserVisibility } from '../browser-visibility.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331' as const
 const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 5_000
-const LEGACY_DAEMON_SUPPORTED_PROVIDERS = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok'])
 
 export type DaemonJobStatus = 'queued' | 'claimed' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
 export type DaemonExecutionBackend = 'legacy_extension' | 'playwright'
@@ -45,7 +44,6 @@ export type DaemonClientOptions = {
 
 export type DaemonReadyResponse = Record<string, unknown> & {
   ready: true
-  supported_providers: string[]
 }
 
 export type DaemonReadyOptions = DaemonClientOptions
@@ -180,20 +178,7 @@ export async function daemonReady(options: DaemonReadyOptions = {}) {
   return {
     ...body,
     ready: true as const,
-    supported_providers: supportedProvidersFromReadyBody(body),
   } satisfies DaemonReadyResponse
-}
-
-export function daemonAdvertisesProvider(body: unknown, provider: string) {
-  return supportedProvidersFromReadyBody(body).includes(provider)
-}
-
-export function supportedProvidersFromReadyBody(body: unknown) {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return []
-  const value = (body as { supported_providers?: unknown }).supported_providers
-  if (value === undefined) return [...LEGACY_DAEMON_SUPPORTED_PROVIDERS]
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) return []
-  return [...new Set(value)]
 }
 
 export async function createDaemonJob({

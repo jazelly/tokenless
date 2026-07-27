@@ -32,8 +32,7 @@ do not negotiate as independent CLI-daemon peer protocols.
 
 Threat model: Tokenless is a local-loopback control plane. After the
 same-home ready proof validates, the CLI may send the daemon control token to
-bearer-authenticated daemon.v1 routes. Unauthenticated `/health` output is
-diagnostic only.
+bearer-authenticated daemon.v1 routes.
 
 Setup may replace a mismatch daemon only after the ready proof validates and
 the canonical home matches. Shutdown uses the existing bearer-authenticated
@@ -42,11 +41,10 @@ immediately before sending the bearer token.
 
 ## Compatibility and conformance
 
-Ordinary runtime reuse is based on daemon.v1 compatibility, not the npm
-semantic-version major. Setup never stops a compatible same-home daemon for
-version drift; when only the installed daemon runtime is stale, setup refreshes
-that installed runtime for the next start and leaves the running daemon in
-place.
+Ordinary runtime reuse requires the current daemon.v1 contract and the current
+Tokenless package version. A proof-verified same-home daemon with a different
+package version may be gracefully stopped and replaced; foreign or unverified
+listeners are left untouched.
 
 Historical 0.2 cross-version compatibility is not supported by this clean-break
 daemon.v1 boundary. Current conformance checks verify the OpenAPI artifact,

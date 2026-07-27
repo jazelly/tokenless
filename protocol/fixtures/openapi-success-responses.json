@@ -2,40 +2,16 @@
   "openapi": "protocol/openapi/tokenless.daemon.v1.openapi.json",
   "cases": [
     {
-      "name": "health",
-      "schema": "#/components/schemas/HealthResponse",
-      "valid": true,
-      "data": {
-        "protocol": "tokenless.daemon.v1",
-        "version": "0.3.0",
-        "runtime_kind": "typescript",
-        "status": "ok",
-        "ready": true,
-        "home_dir": "/tmp/tokenless",
-        "pid": 12345
-      }
-    },
-    {
       "name": "ready",
       "schema": "#/components/schemas/ReadyResponse",
       "valid": true,
       "data": {
         "protocol": "tokenless.daemon.v1",
         "version": "0.3.0",
-        "runtime_kind": "typescript",
-        "status": "ok",
         "ready": true,
         "home_dir": "/tmp/tokenless",
         "pid": 12345,
-        "ready_challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "ready_proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "supported_providers": [
-          "chatgpt",
-          "claude",
-          "gemini",
-          "grok",
-          "qwen"
-        ]
+        "proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
       }
     },
     {

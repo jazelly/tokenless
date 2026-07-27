@@ -16,28 +16,6 @@
     }
   ],
   "paths": {
-    "/health": {
-      "get": {
-        "operationId": "getHealth",
-        "summary": "Read daemon health without auth",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "Daemon health",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        }
-      }
-    },
     "/ready": {
       "get": {
         "operationId": "getReady",
@@ -717,7 +695,7 @@
       "controlBearer": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Bearer token read from the daemon home control token file. /health and /ready are public challenge endpoints; /control/shutdown uses bearer authentication after the CLI verifies /ready for the same home."
+        "description": "Bearer token read from the daemon home control token file. /ready is a public challenge endpoint; /control/shutdown uses bearer authentication after the CLI verifies /ready for the same home."
       }
     },
     "parameters": {
@@ -952,58 +930,15 @@
           }
         }
       },
-      "HealthResponse": {
-        "type": "object",
-        "required": [
-          "protocol",
-          "version",
-          "runtime_kind",
-          "status",
-          "ready",
-          "home_dir",
-          "pid"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "protocol": {
-            "const": "tokenless.daemon.v1"
-          },
-          "version": {
-            "type": "string",
-            "minLength": 1
-          },
-          "runtime_kind": {
-            "const": "typescript"
-          },
-          "status": {
-            "const": "ok"
-          },
-          "ready": {
-            "const": true
-          },
-          "home_dir": {
-            "type": "string",
-            "minLength": 1
-          },
-          "pid": {
-            "type": "integer",
-            "minimum": 1
-          }
-        }
-      },
       "ReadyResponse": {
         "type": "object",
         "required": [
           "protocol",
           "version",
-          "runtime_kind",
-          "status",
           "ready",
           "home_dir",
           "pid",
-          "ready_challenge",
-          "ready_proof",
-          "supported_providers"
+          "proof"
         ],
         "additionalProperties": false,
         "properties": {
@@ -1013,12 +948,6 @@
           "version": {
             "type": "string",
             "minLength": 1
-          },
-          "runtime_kind": {
-            "const": "typescript"
-          },
-          "status": {
-            "const": "ok"
           },
           "ready": {
             "const": true
@@ -1031,26 +960,11 @@
             "type": "integer",
             "minimum": 1
           },
-          "ready_challenge": {
+          "proof": {
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{43}$"
-          },
-          "ready_proof": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{43}$"
-          },
-          "supported_providers": {
-            "$ref": "#/components/schemas/SupportedProviders"
           }
         }
-      },
-      "SupportedProviders": {
-        "type": "array",
-        "items": {
-          "type": "string",
-          "minLength": 1
-        },
-        "uniqueItems": true
       },
       "BrowserRuntimeStatus": {
         "type": "object",

@@ -923,16 +923,9 @@ function setupCliVersionCompact(check: SetupCliVersionCheck) {
 function setupDaemonCompact(daemon: {
   runningVersion: string | null
   protocolCompatible: boolean
-  reconciliation: { attempted: boolean; action?: string | undefined; reason: string }
 }) {
   const compatibility = daemon.protocolCompatible ? 'protocol-compatible' : 'protocol-incompatible'
-  let recovery = ''
-  if (daemon.reconciliation.action === 'restart_daemon') {
-    recovery = ` Recovered ${daemon.reconciliation.reason} by restarting the same-home daemon.`
-  } else if (daemon.reconciliation.action === 'refresh_installed_runtime') {
-    recovery = ' Refreshed the installed daemon runtime for the next start; the compatible running daemon was left in place.'
-  }
-  return `Daemon: ready on ${daemon.runningVersion ?? 'unknown'} (${compatibility}, supported protocol overlap).${recovery}`
+  return `Daemon: ready on ${daemon.runningVersion ?? 'unknown'} (${compatibility}, current package version).`
 }
 
 function compareSemanticVersions(left: string, right: string) {
@@ -2090,7 +2083,6 @@ async function setupCommand(args: CliArgs) {
           ok: localRuntime.protocolCompatible,
           policy: localRuntime.compatibilityPolicy,
         },
-        reconciliation: localRuntime.reconciliation,
       },
       compactOutput: failed
         ? `${setupFailedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)}`
@@ -2638,7 +2630,7 @@ async function provisionRuntime(args: CliArgs) {
     browser: await resolveChromiumBrowser(resolvedBrowsers[0]),
     installed: {
       runtime: 'typescript',
-      daemonExecutable: runtime.installed.path,
+      daemonExecutable: runtime.daemon.path,
     },
     daemon,
     daemonUrl: configuredDaemonUrl,
@@ -2694,8 +2686,7 @@ async function doctorCommand(args: CliArgs) {
     const expectedMajor = semanticVersionMajor(expectedVersion)
     const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
     const versionCompatible = runningVersion === expectedVersion
-    const protocolCompatible = ready.protocolCompatible === true
-    const packagedHash = runtime.packaged.hash
+    const protocolCompatible = ready.body?.protocol === 'tokenless.daemon.v1'
     if (!ready.ok) {
       daemon = {
         ok: false,
@@ -2711,7 +2702,6 @@ async function doctorCommand(args: CliArgs) {
         runningMajor,
         protocolCompatible,
         versionCompatible,
-        packagedHash,
       }
     } else {
       daemon = {
@@ -2728,7 +2718,6 @@ async function doctorCommand(args: CliArgs) {
         runningMajor,
         protocolCompatible,
         versionCompatible,
-        packagedHash,
         pid: ready.body?.pid ?? null,
       }
     }

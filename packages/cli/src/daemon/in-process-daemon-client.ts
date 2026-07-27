@@ -20,7 +20,6 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
   return {
     ready: (options = {}) => inProcessDaemonRequest(options.signal, () => ({
       ready: true as const,
-      supported_providers: supportedProviders(),
     })),
     createJob: (options) => inProcessDaemonRequest(options.signal, () => {
       if (options.executionBackend === 'playwright' && !supportedProviderSet().has(options.provider)) {

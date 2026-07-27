@@ -1,4 +1,3 @@
-import { createHmac } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import net from 'node:net'
 
@@ -7,6 +6,11 @@ import {
 } from '../generated/protocol-constants.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
 import { listProviderInstances } from '../providers/registry.js'
+import {
+  daemonReadyProof,
+  isCanonicalReadyChallenge,
+  READY_CHALLENGE_BYTES,
+} from './ready-proof.js'
 import type { BrowserRuntimeController } from './browser-runtime-controller.js'
 import {
   controlAuthMissing,
@@ -20,16 +24,12 @@ import {
 } from './errors.js'
 import { JobStore, publicView, withClaimToken, type ExecutionBackend, type JobStatus } from './job-store.js'
 
-const DAEMON_RUNTIME_KIND = 'typescript'
-
 export type DaemonServer = {
   close(): Promise<void>
   server: http.Server
   store: JobStore
 }
 
-const READY_CHALLENGE_BYTES = 32
-const READY_CHALLENGE_BASE64URL_CHARS = 43
 const MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024
 const BODY_LIMIT_EXCEEDED_MESSAGE = 'Failed to buffer the request body: length limit exceeded'
 
@@ -114,19 +114,16 @@ async function handleRequest(
   try {
     const url = new URL(request.url || '/', 'http://127.0.0.1')
     const method = request.method || 'GET'
-    if (method === 'GET' && url.pathname === '/health') {
-      writeJson(response, 200, healthResponse(store))
-      return
-    }
     if (method === 'GET' && url.pathname === '/ready') {
       const challenge = url.searchParams.get('challenge') ?? ''
       validateReadyChallenge(challenge)
-      const health = healthResponse(store)
       writeJson(response, 200, {
-        ...health,
-        ready_challenge: challenge,
-        ready_proof: daemonReadyProof(store, challenge, health.home_dir),
-        supported_providers: supportedProviders(),
+        protocol: DAEMON_PROTOCOL,
+        version: tokenlessPackageVersion(),
+        ready: true,
+        home_dir: store.homeDir,
+        pid: process.pid,
+        proof: daemonReadyProof(store.controlToken(), challenge, store.homeDir),
       })
       return
     }
@@ -300,18 +297,6 @@ async function browserRuntimeQuiesce(runtimeController: BrowserRuntimeController
   return await runtimeController?.quiesce() ?? browserRuntimeStatus(runtimeController)
 }
 
-function healthResponse(store: JobStore) {
-  return {
-    protocol: DAEMON_PROTOCOL,
-    version: tokenlessPackageVersion(),
-    runtime_kind: DAEMON_RUNTIME_KIND,
-    status: 'ok',
-    ready: true,
-    home_dir: store.homeDir,
-    pid: process.pid,
-  }
-}
-
 function supportedProviders() {
   return listProviderInstances()
     .filter((provider) => provider.descriptor.stage !== 'disabled')
@@ -397,38 +382,9 @@ function writeDaemonError(response: ServerResponse, error: DaemonError) {
 }
 
 function validateReadyChallenge(challenge: string) {
-  if (challenge.length !== READY_CHALLENGE_BASE64URL_CHARS) {
+  if (!isCanonicalReadyChallenge(challenge)) {
     throw invalidInput(`challenge must be canonical unpadded base64url encoding of ${READY_CHALLENGE_BYTES} bytes`)
   }
-  let decoded: Buffer
-  try {
-    decoded = Buffer.from(challenge, 'base64url')
-  } catch {
-    decoded = Buffer.alloc(0)
-  }
-  if (decoded.length !== READY_CHALLENGE_BYTES || decoded.toString('base64url') !== challenge) {
-    throw invalidInput(`challenge must be canonical unpadded base64url encoding of ${READY_CHALLENGE_BYTES} bytes`)
-  }
-}
-
-function daemonReadyProof(store: JobStore, challenge: string, canonicalHome: string) {
-  validateReadyChallenge(challenge)
-  return createHmac('sha256', store.controlToken())
-    .update(lengthPrefixedMessage([
-      DAEMON_PROTOCOL,
-      challenge,
-      canonicalHome,
-    ]))
-    .digest('base64url')
-}
-
-function lengthPrefixedMessage(fields: string[]) {
-  return Buffer.concat(fields.flatMap((field) => {
-    const value = Buffer.from(field, 'utf8')
-    const length = Buffer.allocUnsafe(4)
-    length.writeUInt32BE(value.length)
-    return [length, value]
-  }))
 }
 
 function matchJobRoute(pathname: string) {

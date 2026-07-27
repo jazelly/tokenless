@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -13,7 +14,6 @@ const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const packageVersion = JSON.parse(fs.readFileSync(path.join(cliDir, 'package.json'), 'utf8')).version
-const supportedProviders = ['chatgpt', 'claude', 'gemini', 'grok', 'qwen']
 
 test('ensureDaemonReady installs the packaged daemon and reports daemon v1 readiness', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-first-install-')))
@@ -25,24 +25,18 @@ test('ensureDaemonReady installs the packaged daemon and reports daemon v1 readi
     pid = ready.pid
     assert.equal(ready.started, true)
     assert.equal(ready.identityVerified, true)
-    assert.equal(ready.protocolCompatible, true)
     assert.equal(ready.body.protocol, runtime.DAEMON_PROTOCOL)
     assert.equal(ready.body.version, packageVersion)
-    assert.equal(ready.runtimeKind, 'typescript')
-    assert.equal(ready.body.runtime_kind, 'typescript')
     assert.equal(ready.binaryPath, process.execPath)
     assert.equal(fs.existsSync(ready.daemonEntryPath), true)
-    assert.deepEqual(ready.supportedProviders, supportedProviders)
-    assert.deepEqual(ready.body.supported_providers, supportedProviders)
+    assert.equal(typeof ready.body.proof, 'string')
     assert.equal(Number.isInteger(ready.body.pid), true)
     assert.equal(ready.body.pid, pid)
     const inspection = await runtime.inspectManagedRuntime(homeDir)
     assert.equal(inspection.ok, true)
-    assert.equal(inspection.packaged.buildInfo.version, packageVersion)
-    assert.equal(inspection.packaged.buildInfo.protocol, runtime.DAEMON_PROTOCOL)
-    assert.equal(inspection.packaged.path, ready.daemonEntryPath)
-    assert.equal(inspection.installed.path, ready.daemonEntryPath)
-    assert.equal(inspection.installed.matchesBundled, true)
+    assert.equal(inspection.daemon.buildInfo.version, packageVersion)
+    assert.equal(inspection.daemon.buildInfo.protocol, runtime.DAEMON_PROTOCOL)
+    assert.equal(inspection.daemon.path, ready.daemonEntryPath)
   } finally {
     if (pid) await stopPid(pid)
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -57,8 +51,7 @@ test('ensureDaemonReady never restarts a healthy daemon for a provider absent fr
   try {
     const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000, requiredProvider: 'chatgpt' })
     pid = ready.pid
-    assert.equal(ready.runtimeKind, 'typescript')
-    assert.deepEqual(ready.supportedProviders, supportedProviders)
+    assert.equal(ready.body.version, packageVersion)
 
     await assert.rejects(
       runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000, requiredProvider: 'not-a-provider' }),
@@ -113,12 +106,68 @@ test('concurrent ensureDaemonReady serializes one fresh daemon start under the d
     assert.equal(started.length, 1)
     startedPid = started[0].pid
     assert.equal(results.every((result) => result.body.version === packageVersion), true)
-    assert.equal(results.every((result) => result.runtimeKind === 'typescript'), true)
     assert.equal(new Set(results.map((result) => result.pid)).size, 1)
     assert.equal(fs.existsSync(lockPath), false)
   } finally {
     if (startedPid) await stopPid(startedPid)
     fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('ensureDaemonReady gracefully replaces a proof-verified same-home version mismatch', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-version-replace-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const token = 'same-home-version-mismatch-token'
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), `${token}\n`, { mode: 0o600 })
+  const fake = await startReadyOnlyDaemon({
+    homeDir,
+    daemonUrl,
+    token,
+    version: '0.2.0',
+  })
+  let pid
+  try {
+    const runtime = await importCli()
+    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
+    pid = ready.pid
+    assert.equal(fake.shutdownCount, 1)
+    assert.notEqual(pid, fake.pid)
+    assert.equal(ready.started, true)
+    assert.equal(ready.body.version, packageVersion)
+    assert.equal(ready.body.protocol, runtime.DAEMON_PROTOCOL)
+  } finally {
+    await fake.close()
+    if (pid) await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('ensureDaemonReady does not stop a foreign listener with an unverified proof', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-foreign-listener-')))
+  const foreignHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-foreign-home-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), 'requested-home-token\n', { mode: 0o600 })
+  const fake = await startReadyOnlyDaemon({
+    homeDir: foreignHome,
+    daemonUrl,
+    token: 'foreign-home-token',
+    version: packageVersion,
+  })
+  try {
+    const runtime = await importCli()
+    await assert.rejects(
+      runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 1_000 }),
+      (error) => {
+        assert.equal(error.code, 'daemon_ready_proof_mismatch')
+        return true
+      }
+    )
+    assert.equal(fake.shutdownCount, 0)
+    assert.equal(await tcpReachable(daemonUrl), true)
+  } finally {
+    await fake.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(foreignHome, { recursive: true, force: true })
   }
 })
 
@@ -321,6 +370,99 @@ async function freePort() {
   return port
 }
 
+async function startReadyOnlyDaemon({ homeDir, daemonUrl, token, version }) {
+  const url = new URL(daemonUrl)
+  let shutdownCount = 0
+  let closed = false
+  const server = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url || '/', daemonUrl)
+    if (request.method === 'GET' && requestUrl.pathname === '/ready') {
+      const challenge = requestUrl.searchParams.get('challenge') ?? ''
+      writeJson(response, 200, {
+        protocol: 'tokenless.daemon.v1',
+        version,
+        ready: true,
+        home_dir: homeDir,
+        pid: process.pid,
+        proof: readyProof(token, challenge, homeDir),
+      })
+      return
+    }
+    if (request.method === 'POST' && requestUrl.pathname === '/control/shutdown') {
+      if (request.headers.authorization !== `Bearer ${token}`) {
+        writeJson(response, 403, { error: { message: 'forbidden' } })
+        return
+      }
+      shutdownCount += 1
+      writeJson(response, 200, { ok: true, status: 'shutting_down', pid: process.pid })
+      setImmediate(() => {
+        void closeServer()
+      })
+      return
+    }
+    writeJson(response, 404, { error: { message: 'not found' } })
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(Number(url.port), url.hostname, resolve)
+  })
+  return {
+    pid: process.pid,
+    get shutdownCount() {
+      return shutdownCount
+    },
+    close: closeServer,
+  }
+
+  function closeServer() {
+    if (closed) return Promise.resolve()
+    closed = true
+    return new Promise((resolve) => server.close(() => resolve()))
+  }
+}
+
+function writeJson(response, status, body) {
+  const payload = JSON.stringify(body)
+  response.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(payload),
+  })
+  response.end(payload)
+}
+
+function readyProof(token, challenge, homeDir) {
+  return createHmac('sha256', token)
+    .update(lengthPrefixedMessage([
+      'tokenless.daemon.v1',
+      challenge,
+      homeDir,
+    ]))
+    .digest('base64url')
+}
+
+function lengthPrefixedMessage(fields) {
+  return Buffer.concat(fields.flatMap((field) => {
+    const value = Buffer.from(field, 'utf8')
+    const length = Buffer.allocUnsafe(4)
+    length.writeUInt32BE(value.length)
+    return [length, value]
+  }))
+}
+
+async function tcpReachable(daemonUrl) {
+  const url = new URL(daemonUrl)
+  return await new Promise((resolve) => {
+    const socket = net.createConnection({ host: url.hostname, port: Number(url.port) })
+    const done = (reachable) => {
+      socket.destroy()
+      resolve(reachable)
+    }
+    socket.setTimeout(500, () => done(false))
+    socket.once('connect', () => done(true))
+    socket.once('error', () => done(false))
+  })
+}
+
 async function stopPid(pid) {
   try {
     process.kill(pid, 'SIGTERM')
@@ -352,10 +494,6 @@ function pidIsAlive(pid) {
   } catch {
     return false
   }
-}
-
-function fileHash(file) {
-  return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
 function snapshotTree(rootDir) {

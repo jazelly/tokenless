@@ -39,6 +39,7 @@ Every addition, rename, move, or lifecycle change must update this index, all re
 | [Provider Expansion and Parity](provider-expansion.md) | Add high-value Chinese AI web providers and keep all supported providers aligned on a reliable provider-neutral baseline. | P0 |
 | [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
+| [Daemon Fastify HTTP API](daemon-fastify-http-api.md) | Replace the bare Node HTTP dispatcher with a compatible Fastify control plane and support durable asynchronous job polling for trusted local callers. | P1 |
 | [Agent Session Integrations](agent-session-integrations.md) | Bind Tokenless jobs to exact local agent sessions and working directories, with Codex as the first deep integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 
@@ -53,6 +54,8 @@ Priority describes product importance, not a promise that all work proceeds seri
 
 ```mermaid
 flowchart LR
+  Caller["Trusted local caller<br/>HTTP create + polling"]
+  API["Fastify daemon API<br/>auth + schemas + job reads"]
   Session["Agent session binding<br/>session id + working directory"]
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
   Context["Context envelope<br/>provenance + policy + limits"]
@@ -61,7 +64,9 @@ flowchart LR
   Workspace["Provider workspace mirror<br/>Project or conversation"]
   Task["Web-agent task<br/>exact session and project context"]
 
-  Session --> Scheduler
+  Caller --> API
+  Session --> API
+  API --> Scheduler
   Scheduler --> Context
   Graph --> Context
   Context --> Provider
@@ -75,10 +80,11 @@ The shared contracts should be built before provider-specific shortcuts:
 
 1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap.
 2. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
-3. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
-4. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.
-5. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
-6. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
+3. Replace the daemon's manual HTTP dispatcher with a compatible Fastify API and make polling the explicit asynchronous caller contract.
+4. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
+5. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.
+6. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
+7. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 
