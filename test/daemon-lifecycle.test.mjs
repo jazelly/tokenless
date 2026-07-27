@@ -15,7 +15,7 @@ const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const packageVersion = JSON.parse(fs.readFileSync(path.join(cliDir, 'package.json'), 'utf8')).version
 const supportedProviders = ['chatgpt', 'claude', 'gemini', 'grok', 'qwen']
 
-test('ensureDaemonReady installs the packaged daemon and reports supported protocols', async () => {
+test('ensureDaemonReady installs the packaged daemon and reports daemon v1 readiness', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-first-install-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   let pid
@@ -25,24 +25,13 @@ test('ensureDaemonReady installs the packaged daemon and reports supported proto
     pid = ready.pid
     assert.equal(ready.started, true)
     assert.equal(ready.identityVerified, true)
+    assert.equal(ready.protocolCompatible, true)
+    assert.equal(ready.body.protocol, runtime.DAEMON_PROTOCOL)
     assert.equal(ready.body.version, packageVersion)
     assert.equal(ready.runtimeKind, 'typescript')
     assert.equal(ready.body.runtime_kind, 'typescript')
     assert.equal(ready.binaryPath, process.execPath)
     assert.equal(fs.existsSync(ready.daemonEntryPath), true)
-    assert.deepEqual(ready.supportedProtocols, {
-      daemon: [runtime.DAEMON_PROTOCOL],
-      job: [
-        runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-        runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-        runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
-      ],
-      action: [
-        runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-        runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-        runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V3,
-      ],
-    })
     assert.deepEqual(ready.supportedProviders, supportedProviders)
     assert.deepEqual(ready.body.supported_providers, supportedProviders)
     assert.equal(Number.isInteger(ready.body.pid), true)
@@ -204,7 +193,7 @@ test('daemon shutdown endpoint uses bearer authentication', async () => {
     const missing = await fetch(`${daemonUrl}/control/shutdown`, { method: 'POST' })
     assert.equal(missing.status, 401)
     const missingBody = await missing.json()
-    assert.equal(missingBody.error.protocol, runtime.DAEMON_ERROR_PROTOCOL)
+    assert.equal(missingBody.error.protocol, runtime.DAEMON_PROTOCOL)
     assert.equal(missingBody.error.code, 'control_auth_missing')
 
     const rejected = await fetch(`${daemonUrl}/control/shutdown`, {
@@ -213,7 +202,7 @@ test('daemon shutdown endpoint uses bearer authentication', async () => {
     })
     assert.equal(rejected.status, 403)
     const rejectedBody = await rejected.json()
-    assert.equal(rejectedBody.error.protocol, runtime.DAEMON_ERROR_PROTOCOL)
+    assert.equal(rejectedBody.error.protocol, runtime.DAEMON_PROTOCOL)
     assert.equal(rejectedBody.error.code, 'control_auth_rejected')
     assert.equal(JSON.stringify(rejectedBody).includes(controlToken), false)
     assert.equal((await runtime.probeDaemonReady({ homeDir, daemonUrl })).ok, true)

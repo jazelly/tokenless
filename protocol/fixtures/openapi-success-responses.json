@@ -7,9 +7,8 @@
       "valid": true,
       "data": {
         "protocol": "tokenless.daemon.v1",
-        "daemon_protocol": "tokenless.daemon.v1",
         "version": "0.3.0",
-        "native_protocol": "tokenless.native.v1",
+        "runtime_kind": "typescript",
         "status": "ok",
         "ready": true,
         "home_dir": "/tmp/tokenless",
@@ -22,31 +21,14 @@
       "valid": true,
       "data": {
         "protocol": "tokenless.daemon.v1",
-        "daemon_protocol": "tokenless.daemon.v1",
         "version": "0.3.0",
-        "native_protocol": "tokenless.native.v1",
+        "runtime_kind": "typescript",
         "status": "ok",
         "ready": true,
         "home_dir": "/tmp/tokenless",
         "pid": 12345,
-        "ready_proof_protocol": "tokenless.daemon-ready-proof.v1",
         "ready_challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "ready_proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "supported_protocols": {
-          "daemon": [
-            "tokenless.daemon.v1"
-          ],
-          "job": [
-            "tokenless.playwright.job.v1",
-            "tokenless.playwright.job.v2",
-            "tokenless.playwright.job.v3"
-          ],
-          "action": [
-            "tokenless.playwright.visible-action.v1",
-            "tokenless.playwright.visible-action.v2",
-            "tokenless.playwright.visible-action.v3"
-          ]
-        },
         "supported_providers": [
           "chatgpt",
           "claude",
@@ -54,6 +36,37 @@
           "grok",
           "qwen"
         ]
+      }
+    },
+    {
+      "name": "ready malformed proof",
+      "schema": "#/components/schemas/ReadyResponse",
+      "valid": false,
+      "data": {
+        "protocol": "tokenless.daemon.v1",
+        "version": "0.3.0",
+        "runtime_kind": "typescript",
+        "status": "ok",
+        "ready": true,
+        "home_dir": "/tmp/tokenless",
+        "pid": 12345,
+        "ready_challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "ready_proof": "not-a-canonical-32-byte-base64url-proof",
+        "supported_providers": [
+          "chatgpt"
+        ]
+      }
+    },
+    {
+      "name": "browser-runtime-status",
+      "schema": "#/components/schemas/BrowserRuntimeStatus",
+      "valid": true,
+      "data": {
+        "protocol": "tokenless.daemon.v1",
+        "status": "running",
+        "activeProfileCount": 1,
+        "activeJobCount": 2,
+        "pid": 12345
       }
     },
     {

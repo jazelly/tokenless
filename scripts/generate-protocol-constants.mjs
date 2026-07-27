@@ -69,6 +69,8 @@ function validateRegistry(value) {
     throw new Error('protocol registry must include protocols')
   }
 
+  validateCanonicalDaemonWireApi(value.protocols)
+
   const ids = new Set()
   const constants = {
     typescript: new Set(),
@@ -79,6 +81,7 @@ function validateRegistry(value) {
     requireString(protocol, 'id')
     requireString(protocol, 'owner')
     requireString(protocol, 'status')
+    requireString(protocol, 'category')
     requireStringArray(protocol, 'accepts')
     requireStringArray(protocol, 'emits')
     if (ids.has(protocol.id)) throw new Error(`duplicate protocol id ${protocol.id}`)
@@ -118,6 +121,32 @@ function validateRegistry(value) {
       }
     }
   }
+}
+
+function validateCanonicalDaemonWireApi(protocols) {
+  const activeWireApis = protocols.filter((protocol) => protocol.category === 'wire-api' && protocol.status === 'active')
+  if (activeWireApis.length !== 1) {
+    throw new Error(`registry must declare exactly one active wire-api protocol, found ${activeWireApis.length}`)
+  }
+
+  const [protocol] = activeWireApis
+  const expected = {
+    id: 'tokenless.daemon.v1',
+    owner: 'daemon',
+    accepts: ['cli', 'daemon'],
+    emits: ['cli', 'daemon'],
+    artifacts: ['protocol/openapi/tokenless.daemon.v1.openapi.json'],
+  }
+
+  if (protocol.id !== expected.id) {
+    throw new Error(`active wire-api protocol must be ${expected.id}, found ${protocol.id}`)
+  }
+  if (protocol.owner !== expected.owner) {
+    throw new Error(`${expected.id} must be owned by ${expected.owner}`)
+  }
+  requireExactStringSet(protocol, 'accepts', expected.accepts)
+  requireExactStringSet(protocol, 'emits', expected.emits)
+  requireExactStringSet(protocol, 'artifacts', expected.artifacts)
 }
 
 async function validateArtifacts(registry) {
@@ -307,6 +336,8 @@ async function validateOpenApiArtifact({ artifactPath, parsed }) {
     '/jobs/{job_id}/claim',
     '/jobs/{job_id}/complete',
     '/jobs/{job_id}/resume',
+    '/control/browser-runtime/status',
+    '/control/browser-runtime/quiesce',
     '/control/jobs/claim-next',
     '/control/jobs/{job_id}/checkpoint',
     '/control/jobs/{job_id}/park',
@@ -521,6 +552,15 @@ function requireString(record, key) {
 function requireStringArray(record, key) {
   if (!Array.isArray(record[key]) || record[key].some((item) => typeof item !== 'string' || !item.trim())) {
     throw new Error(`protocol entry ${record.id ?? '(unknown)'} must include string array ${key}`)
+  }
+}
+
+function requireExactStringSet(record, key, expected) {
+  requireStringArray(record, key)
+  const actual = [...record[key]].sort()
+  const normalizedExpected = [...expected].sort()
+  if (JSON.stringify(actual) !== JSON.stringify(normalizedExpected)) {
+    throw new Error(`${record.id ?? '(unknown)'} must declare ${key} exactly as ${normalizedExpected.join(', ')}`)
   }
 }
 

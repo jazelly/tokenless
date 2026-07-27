@@ -15,36 +15,22 @@ import {
 import { daemonUrl as normalizeDaemonUrl, readDaemonToken, shutdownDaemon } from './daemon-client.js'
 import { getProviderInstanceById, getProviderInstanceForUrl, listProviderDescriptors } from './providers/registry.js'
 import {
-  DAEMON_ERROR_PROTOCOL,
   DAEMON_PROCESS_PROTOCOL,
   DAEMON_PROTOCOL,
-  DAEMON_READY_PROOF_PROTOCOL,
   DAEMON_SNAPSHOT_PROTOCOL,
   EXTENSION_BRIDGE_PROTOCOL,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
-  NATIVE_PROTOCOL,
-  VISIBLE_ACTION_PROTOCOL_VERSION,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
 } from './generated/protocol-constants.js'
 import { tokenlessPackageVersion } from './platform-package.js'
 
 export {
-  DAEMON_ERROR_PROTOCOL,
   DAEMON_PROCESS_PROTOCOL,
   DAEMON_PROTOCOL,
-  DAEMON_READY_PROOF_PROTOCOL,
   DAEMON_SNAPSHOT_PROTOCOL,
   EXTENSION_BRIDGE_PROTOCOL,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
-  NATIVE_PROTOCOL,
   VISIBLE_ACTION_PROTOCOL_VERSION,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
@@ -85,17 +71,10 @@ export type DaemonReadyProbe = {
   sameHomeVerified?: boolean | undefined
   protocolCompatible?: boolean | undefined
   runtimeKind?: DaemonRuntimeKind | undefined
-  supportedProtocols?: SupportedProtocols | undefined
   supportedProviders?: string[] | undefined
   body?: JsonRecord | undefined
   code?: string | undefined
   message?: string | undefined
-}
-
-export type SupportedProtocols = {
-  daemon: string[]
-  job: string[]
-  action: string[]
 }
 
 export type ManagedRuntimeInspection = {
@@ -183,7 +162,6 @@ export type SetupDaemonReconciliation = {
 export type SetupDaemonReconciliationReason =
   | 'already_compatible'
   | 'daemon_protocol_mismatch'
-  | 'native_protocol_mismatch'
   | 'installed_artifact_mismatch'
 
 export type SetupDaemonReadyResult = Awaited<ReturnType<typeof ensureDaemonReady>> & {
@@ -193,7 +171,7 @@ export type SetupDaemonReadyResult = Awaited<ReturnType<typeof ensureDaemonReady
   runningMajor: number | null
   protocolCompatible: boolean
   versionCompatible: boolean
-  compatibilityPolicy: 'protocol-negotiation'
+  compatibilityPolicy: 'daemon-v1'
   reconciliation: SetupDaemonReconciliation
 }
 
@@ -356,7 +334,6 @@ export async function probeDaemonReady({
       identityVerified,
       sameHomeVerified,
       protocolCompatible: false,
-      supportedProtocols: protocolCompatibility.supportedProtocols,
       supportedProviders: supportedProvidersFromBody(body),
       body,
       code: protocolCompatibility.code,
@@ -376,7 +353,6 @@ export async function probeDaemonReady({
       sameHomeVerified,
       protocolCompatible: true,
       runtimeKind,
-      supportedProtocols: protocolCompatibility.supportedProtocols,
       supportedProviders,
       body,
       code: 'daemon_runtime_kind_mismatch',
@@ -394,7 +370,6 @@ export async function probeDaemonReady({
       sameHomeVerified,
       protocolCompatible: true,
       runtimeKind,
-      supportedProtocols: protocolCompatibility.supportedProtocols,
       supportedProviders,
       body,
       code: 'daemon_provider_unsupported',
@@ -412,7 +387,6 @@ export async function probeDaemonReady({
     sameHomeVerified,
     protocolCompatible: true,
     runtimeKind,
-    supportedProtocols: protocolCompatibility.supportedProtocols,
     supportedProviders,
     body,
   }
@@ -511,7 +485,7 @@ export async function ensureSetupDaemonRunnable({
     ready = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs })
   } catch (error) {
     const caught = error as RuntimeError
-    if (caught.code !== 'daemon_protocol_mismatch' && caught.code !== 'native_protocol_mismatch') throw error
+    if (caught.code !== 'daemon_protocol_mismatch') throw error
 
     const verified = await probeDaemonReady({ homeDir, daemonUrl })
     if (
@@ -633,7 +607,6 @@ export async function stopDaemon({
   })
   const ready = await probeDaemonReady({ homeDir, daemonUrl: url, daemonToken: token, timeoutMs: Math.min(stopTimeoutMs, 1_000) })
   const verifiedStoppableMismatch = ready.code === 'daemon_protocol_mismatch' ||
-    ready.code === 'native_protocol_mismatch' ||
     ready.code === 'daemon_runtime_kind_mismatch'
   if (!ready.ok && !verifiedStoppableMismatch) {
     const stillReachable = await probeDaemonReachable(url, Math.min(stopTimeoutMs, 1_000))
@@ -1216,7 +1189,7 @@ function setupDaemonReadyResult(
     runningMajor,
     protocolCompatible: ready.protocolCompatible === true,
     versionCompatible,
-    compatibilityPolicy: 'protocol-negotiation',
+    compatibilityPolicy: 'daemon-v1',
     reconciliation,
   }
 }
@@ -1327,7 +1300,7 @@ async function setupDaemonVerifiedMismatchReasons({
   originalError: unknown
 }) {
   const caught = originalError as RuntimeError
-  if (caught.code !== 'daemon_protocol_mismatch' && caught.code !== 'native_protocol_mismatch') return null
+  if (caught.code !== 'daemon_protocol_mismatch') return null
   const verified = await probeDaemonReady({ homeDir, daemonUrl })
   if (
     verified.code !== caught.code ||
@@ -1575,10 +1548,8 @@ function readyHomeFromBody(body: JsonRecord) {
 
 function validateDaemonReadyProof(body: JsonRecord, challenge: string, token: string) {
   if (
-    body.ready_proof_protocol !== DAEMON_READY_PROOF_PROTOCOL ||
+    body.protocol !== DAEMON_PROTOCOL ||
     body.ready_challenge !== challenge ||
-    typeof body.daemon_protocol !== 'string' ||
-    typeof body.native_protocol !== 'string' ||
     typeof body.home_dir !== 'string' ||
     typeof body.ready_proof !== 'string'
   ) {
@@ -1601,10 +1572,8 @@ function validateDaemonReadyProof(body: JsonRecord, challenge: string, token: st
   }
   const expectedProof = createHmac('sha256', token)
     .update(daemonReadyProofMessage([
-      DAEMON_READY_PROOF_PROTOCOL,
+      DAEMON_PROTOCOL,
       challenge,
-      body.daemon_protocol,
-      body.native_protocol,
       body.home_dir,
     ]))
     .digest()
@@ -1621,70 +1590,15 @@ function daemonProtocolCompatibility({
   body,
 }: {
   body: JsonRecord
-}): { ok: true; supportedProtocols?: SupportedProtocols | undefined } | { ok: false; code: 'daemon_protocol_mismatch' | 'native_protocol_mismatch'; message: string; supportedProtocols?: SupportedProtocols | undefined } {
-  const supportedProtocols = supportedProtocolsFromBody(body)
-  if (!supportedProtocols) {
-    if (body.daemon_protocol !== DAEMON_PROTOCOL) {
-      return {
-        ok: false,
-        code: 'daemon_protocol_mismatch',
-        message: `Legacy Tokenless daemon protocol is ${String(body.daemon_protocol ?? 'missing')}; expected ${DAEMON_PROTOCOL}.`,
-      }
-    }
-    if (body.native_protocol !== NATIVE_PROTOCOL) {
-      return {
-        ok: false,
-        code: 'native_protocol_mismatch',
-        message: `Legacy Tokenless native protocol is ${String(body.native_protocol ?? 'missing')}; expected ${NATIVE_PROTOCOL}.`,
-      }
-    }
-    return { ok: true }
-  }
-
-  if (!supportedProtocols.daemon.includes(DAEMON_PROTOCOL)) {
+}): { ok: true } | { ok: false; code: 'daemon_protocol_mismatch'; message: string } {
+  if (body.protocol !== DAEMON_PROTOCOL) {
     return {
       ok: false,
       code: 'daemon_protocol_mismatch',
-      supportedProtocols,
-      message: `Tokenless daemon at ${String(body.home_dir ?? 'unknown home')} does not negotiate the required ${DAEMON_PROTOCOL} control-plane protocol.`,
+      message: `Tokenless daemon protocol is ${String(body.protocol ?? 'missing')}; expected ${DAEMON_PROTOCOL}.`,
     }
   }
-  if (!hasOverlap(supportedProtocols.job, [
-    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
-  ])) {
-    return {
-      ok: false,
-      code: 'daemon_protocol_mismatch',
-      supportedProtocols,
-      message: `Tokenless daemon at ${String(body.home_dir ?? 'unknown home')} has no overlapping managed job protocol.`,
-    }
-  }
-  if (!hasOverlap(supportedProtocols.action, [
-    VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-    VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-    VISIBLE_ACTION_PROTOCOL_VERSION_V3,
-  ])) {
-    return {
-      ok: false,
-      code: 'daemon_protocol_mismatch',
-      supportedProtocols,
-      message: `Tokenless daemon at ${String(body.home_dir ?? 'unknown home')} has no overlapping visible action protocol.`,
-    }
-  }
-  return { ok: true, supportedProtocols }
-}
-
-function supportedProtocolsFromBody(body: JsonRecord): SupportedProtocols | undefined {
-  if (body.supported_protocols === undefined) return undefined
-  if (!isRecord(body.supported_protocols)) return { daemon: [], job: [], action: [] }
-  const supported = body.supported_protocols
-  return {
-    daemon: stringArray(supported.daemon) ?? [],
-    job: stringArray(supported.job) ?? [],
-    action: stringArray(supported.action) ?? [],
-  }
+  return { ok: true }
 }
 
 function supportedProvidersFromBody(body: JsonRecord) {
@@ -1697,10 +1611,6 @@ function daemonRuntimeKindFromBody(body: JsonRecord): DaemonRuntimeKind {
   if (body.runtime_kind === undefined || body.runtime_kind === null) return 'legacy'
   if (body.runtime_kind === DAEMON_RUNTIME_KIND) return DAEMON_RUNTIME_KIND
   return 'unknown'
-}
-
-function hasOverlap(actual: readonly string[], expected: readonly string[]) {
-  return actual.some((value) => expected.includes(value))
 }
 
 function stringArray(value: unknown) {

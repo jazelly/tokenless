@@ -1,16 +1,13 @@
 // Generated from protocol/registry.json. Do not edit by hand.
 
-export const DAEMON_ERROR_PROTOCOL = "tokenless.daemon.error.v1" as const
 export const DAEMON_PROCESS_PROTOCOL = "tokenless.daemon-process.v1" as const
 export const DAEMON_PROTOCOL = "tokenless.daemon.v1" as const
-export const DAEMON_READY_PROOF_PROTOCOL = "tokenless.daemon-ready-proof.v1" as const
 export const DAEMON_SNAPSHOT_PROTOCOL = "tokenless.daemon-snapshot.v1" as const
 export const DAEMON_TASK_STATE_PROTOCOL = "tokenless.daemon-task-state.v1" as const
 export const EXTENSION_BRIDGE_PROTOCOL = "tokenless.extension-bridge-state.v1" as const
 export const MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 = "tokenless.playwright.job.v1" as const
 export const MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2 = "tokenless.playwright.job.v2" as const
 export const MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3 = "tokenless.playwright.job.v3" as const
-export const NATIVE_PROTOCOL = "tokenless.native.v1" as const
 export const RELEASE_PENDING_PROTOCOL = "tokenless.release-pending.v1" as const
 export const RUNNER_CHECKPOINT_PROTOCOL_V1 = "tokenless.playwright.runner-checkpoint.v1" as const
 export const RUNNER_CHECKPOINT_PROTOCOL_V2 = "tokenless.playwright.runner-checkpoint.v2" as const

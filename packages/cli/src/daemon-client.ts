@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { DAEMON_ERROR_PROTOCOL } from './generated/protocol-constants.js'
+import { DAEMON_PROTOCOL } from './generated/protocol-constants.js'
 import { tokenlessHome } from './job-store.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
@@ -102,7 +102,7 @@ export type ShutdownDaemonResponse = {
 }
 
 export type BrowserRuntimeStatus = {
-  protocol: 'tokenless.browser-runtime-control.v1'
+  protocol: typeof DAEMON_PROTOCOL
   status: 'running' | 'quiescing' | 'quiesced' | 'stopped'
   activeProfileCount: number
   activeJobCount: number
@@ -603,7 +603,7 @@ function daemonServerErrorFromBody(body: unknown) {
   const message = typeof envelope.message === 'string' && envelope.message.trim() ? envelope.message : null
   if (!message) return null
   if (
-    envelope.protocol === DAEMON_ERROR_PROTOCOL &&
+    envelope.protocol === DAEMON_PROTOCOL &&
     typeof envelope.code === 'string' &&
     envelope.code.trim() &&
     typeof envelope.retryable === 'boolean'

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { DAEMON_ERROR_PROTOCOL } from '../generated/protocol-constants.js'
+import { DAEMON_PROTOCOL } from '../generated/protocol-constants.js'
 import { tokenlessError } from './errors.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 
@@ -427,7 +427,7 @@ function daemonServerErrorFromBody(body: unknown) {
   const message = typeof envelope.message === 'string' && envelope.message.trim() ? envelope.message : null
   if (!message) return null
   if (
-    envelope.protocol === DAEMON_ERROR_PROTOCOL &&
+    envelope.protocol === DAEMON_PROTOCOL &&
     typeof envelope.code === 'string' &&
     envelope.code.trim() &&
     typeof envelope.retryable === 'boolean'

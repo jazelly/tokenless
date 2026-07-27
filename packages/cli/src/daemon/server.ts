@@ -4,14 +4,6 @@ import net from 'node:net'
 
 import {
   DAEMON_PROTOCOL,
-  DAEMON_READY_PROOF_PROTOCOL,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
-  NATIVE_PROTOCOL,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
 } from '../generated/protocol-constants.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
 import { listProviderInstances } from '../providers/registry.js'
@@ -132,10 +124,8 @@ async function handleRequest(
       const health = healthResponse(store)
       writeJson(response, 200, {
         ...health,
-        ready_proof_protocol: DAEMON_READY_PROOF_PROTOCOL,
         ready_challenge: challenge,
         ready_proof: daemonReadyProof(store, challenge, health.home_dir),
-        supported_protocols: supportedProtocols(),
         supported_providers: supportedProviders(),
       })
       return
@@ -298,7 +288,7 @@ async function handleRequest(
 
 function browserRuntimeStatus(runtimeController: BrowserRuntimeController | undefined) {
   return runtimeController?.status() ?? {
-    protocol: 'tokenless.browser-runtime-control.v1',
+    protocol: DAEMON_PROTOCOL,
     status: 'stopped',
     activeProfileCount: 0,
     activeJobCount: 0,
@@ -313,30 +303,12 @@ async function browserRuntimeQuiesce(runtimeController: BrowserRuntimeController
 function healthResponse(store: JobStore) {
   return {
     protocol: DAEMON_PROTOCOL,
-    daemon_protocol: DAEMON_PROTOCOL,
     version: tokenlessPackageVersion(),
-    native_protocol: NATIVE_PROTOCOL,
     runtime_kind: DAEMON_RUNTIME_KIND,
     status: 'ok',
     ready: true,
     home_dir: store.homeDir,
     pid: process.pid,
-  }
-}
-
-function supportedProtocols() {
-  return {
-    daemon: [DAEMON_PROTOCOL],
-    job: [
-      MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-      MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
-      MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
-    ],
-    action: [
-      VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-      VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-      VISIBLE_ACTION_PROTOCOL_VERSION_V3,
-    ],
   }
 }
 
@@ -443,10 +415,8 @@ function daemonReadyProof(store: JobStore, challenge: string, canonicalHome: str
   validateReadyChallenge(challenge)
   return createHmac('sha256', store.controlToken())
     .update(lengthPrefixedMessage([
-      DAEMON_READY_PROOF_PROTOCOL,
-      challenge,
       DAEMON_PROTOCOL,
-      NATIVE_PROTOCOL,
+      challenge,
       canonicalHome,
     ]))
     .digest('base64url')

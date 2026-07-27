@@ -57,6 +57,14 @@
       },
       "uniqueItems": true
     },
+    "category": {
+      "enum": [
+        "wire-api",
+        "internal-payload",
+        "local-metadata",
+        "release-metadata"
+      ]
+    },
     "constantMap": {
       "type": "object",
       "minProperties": 1,
@@ -98,6 +106,7 @@
         "id",
         "owner",
         "status",
+        "category",
         "accepts",
         "emits",
         "constants"
@@ -116,6 +125,9 @@
             "legacy",
             "legacy-accepted"
           ]
+        },
+        "category": {
+          "$ref": "#/$defs/category"
         },
         "accepts": {
           "$ref": "#/$defs/componentList"

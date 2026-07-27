@@ -360,7 +360,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     assert.equal(JSON.stringify(rejectedQuiesceBody).includes(token), false)
 
     const running = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
-    assert.equal(running.protocol, 'tokenless.browser-runtime-control.v1')
+    assert.equal(running.protocol, 'tokenless.daemon.v1')
     assert.equal(running.status, 'running')
     assert.equal(running.pid, daemon.child.pid)
     assert.equal(running.activeProfileCount, 0)
@@ -819,18 +819,9 @@ async function waitForDaemon(child, url, homeDir, label) {
     try {
       const ready = await readyProbe(url)
       assert.equal(ready.ready, true)
+      assert.equal(ready.protocol, 'tokenless.daemon.v1')
       assert.equal(ready.home_dir, homeDir)
       assert.deepEqual(ready.supported_providers, supportedProviders)
-      assert.deepEqual(ready.supported_protocols.job, [
-        'tokenless.playwright.job.v1',
-        'tokenless.playwright.job.v2',
-        'tokenless.playwright.job.v3',
-      ])
-      assert.deepEqual(ready.supported_protocols.action, [
-        'tokenless.playwright.visible-action.v1',
-        'tokenless.playwright.visible-action.v2',
-        'tokenless.playwright.visible-action.v3',
-      ])
       return { child, url, homeDir, label }
     } catch (error) {
       lastError = error
@@ -880,10 +871,8 @@ async function readyProbe(daemonUrl, challenge = randomBytes(32).toString('base6
 function readyProof(token, challenge, homeDir) {
   return createHmac('sha256', token)
     .update(lengthPrefixedMessage([
-      'tokenless.daemon-ready-proof.v1',
-      challenge,
       'tokenless.daemon.v1',
-      'tokenless.native.v1',
+      challenge,
       homeDir,
     ]))
     .digest('base64url')

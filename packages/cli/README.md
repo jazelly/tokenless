@@ -26,7 +26,7 @@ tokenless setup
 The interactive flow chooses a browser and providers, discovers existing Chrome
 or Brave profiles, asks for explicit copy consent, creates a separate managed
 profile, reconciles and verifies the local daemon, and checks provider sign-in.
-Ordinary daemon compatibility is based on authenticated protocol negotiation,
+Ordinary daemon compatibility is based on daemon.v1 authenticated readiness,
 not the CLI and daemon package-version major. Setup also reconciles the verified
 same-home installed daemon runtime back to the exact packaged runtime for the
 next start without stopping a compatible running daemon.
@@ -124,7 +124,7 @@ tokenless run --browser-visibility headless --json
 
 ## Daemon Lifecycle
 
-Outside setup, the CLI reuses a running daemon after the legacy challenge-bound `tokenless.daemon-ready-proof.v1` validates for the requested Tokenless home and the daemon's `supported_protocols` overlap the CLI's daemon, job, and action protocols. Package versions and semantic-version majors are diagnostics only, so a different-major daemon remains reusable when the protocols overlap. Older daemons without `supported_protocols` use the narrow legacy fallback based on their existing daemon/native protocol fields. During `tokenless setup`, Tokenless may replace a same-home daemon only when verified protocol/native mismatch requires replacement. Version drift never stops a compatible daemon; setup may refresh a stale installed runtime in place for the next start. Foreign, different-home, and unverified listeners are left running.
+Outside setup, the CLI reuses a running daemon after `/ready` proves the requested Tokenless home and declares `protocol: "tokenless.daemon.v1"`. Package versions and semantic-version majors are diagnostics only, so a different-major daemon remains reusable when daemon.v1 readiness is compatible. Job, action, browser runtime, proof, and error shapes are daemon.v1 schemas or internal/persisted payload contracts; they are not independently negotiated CLI-daemon protocols. During `tokenless setup`, Tokenless may replace a same-home daemon only when a verified daemon.v1 mismatch requires replacement. Version drift never stops a compatible daemon; setup may refresh a stale installed runtime in place for the next start. Foreign, different-home, and unverified listeners are left running.
 
 Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 
