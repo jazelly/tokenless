@@ -1,5 +1,3 @@
-import { DAEMON_PROTOCOL } from '../generated/protocol-constants.js'
-
 export type JobStatus =
   | 'queued'
   | 'claimed'
@@ -188,7 +186,6 @@ export function daemonErrorCodeRetryable(error: DaemonError) {
 export function daemonErrorBody(error: DaemonError) {
   const { code, retryable } = daemonErrorCodeRetryable(error)
   const envelope: Record<string, unknown> = {
-    protocol: DAEMON_PROTOCOL,
     code,
     message: error.message,
     retryable,

@@ -1,9 +1,7 @@
 import { BaseProvider } from './base-provider.js'
-import { PromptCapability } from './capabilities/prompt.js'
 import { waitForVisibleLocator } from './dom-locators.js'
 import {
   DEFAULT_CHOICE_AVAILABILITY,
-  createBaseProviderCapabilities,
   defineDescriptor,
   defineProvider,
   providerCapabilities,
@@ -11,6 +9,7 @@ import {
 import { MenuTextAccountInspector } from './account-inspectors.js'
 import { tokenlessError } from '../playwright/errors.js'
 import type { Locator, Page } from 'playwright-core'
+import type { ProviderExecutionContext } from './execution-context.js'
 import type { ProviderDomDefinition } from './provider-definition.js'
 
 const QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS = 15_000
@@ -22,6 +21,9 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       label: 'Qwen / 千问',
       stage: 'experimental',
       setupOrder: 4,
+      protocolCompatibility: Object.freeze({
+        legacyRequests: false,
+      }),
       navigation: Object.freeze({
         homeUrl: 'https://www.qianwen.com/',
         origins: Object.freeze(['https://www.qianwen.com']),
@@ -70,26 +72,21 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
       capabilities: providerCapabilities(),
     })
-    super(provider, {
-      ...createBaseProviderCapabilities(provider),
-      prompt: new QwenPromptCapability(provider),
-    })
+    super(provider)
   }
-}
 
-class QwenPromptCapability extends PromptCapability {
-  async input(page: Page, text: string) {
+  protected override async inputPrompt(page: Page, text: string, _context: ProviderExecutionContext) {
     const deadline = Date.now() + QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS
     let composerObserved = false
     do {
       const composer = await waitForVisibleLocator(
         page,
-        this.provider.composerSelectors,
+        this.definition.composerSelectors,
         Math.max(1, deadline - Date.now()),
       )
       if (!composer) break
       composerObserved = true
-      if (await writeQwenPrompt(page, composer, this.provider, text, deadline)) {
+      if (await writeQwenPrompt(page, composer, this.definition, text, deadline)) {
         return {
           visible: true as const,
           inputProof: 'prompt-text-visible',
@@ -112,14 +109,6 @@ class QwenPromptCapability extends PromptCapability {
       'The visible prompt input remained empty after input.',
       { retryable: true },
     )
-  }
-
-  async clear(page: Page) {
-    await this.input(page, '')
-    return {
-      visible: true as const,
-      inputProof: 'empty' as const,
-    }
   }
 }
 

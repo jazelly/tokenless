@@ -2,11 +2,11 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeBrowserVisibility } from './browser-visibility.js'
-import { TOKENLESS_CONFIG_PROTOCOL_VERSION } from './generated/protocol-constants.js'
+import { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 import { providerRegistry } from './providers/registry.js'
 import type { BrowserVisibility } from './browser-visibility.js'
 
-export { TOKENLESS_CONFIG_PROTOCOL_VERSION } from './generated/protocol-constants.js'
+export { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 
 export const SUPPORTED_BROWSER_IDS = Object.freeze([
   'chrome',
@@ -21,7 +21,7 @@ export const SUPPORTED_BROWSER_IDS = Object.freeze([
 type JsonRecord = Record<string, unknown>
 
 export type TokenlessConfig = {
-  protocol: typeof TOKENLESS_CONFIG_PROTOCOL_VERSION
+  protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
   preferredProviders: string[]
   browser: string | null
@@ -91,7 +91,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
       `Cannot read Tokenless config at ${file}: ${error instanceof Error ? error.message : String(error)}`
     )
   }
-  if (!isJsonRecord(payload) || payload.protocol !== TOKENLESS_CONFIG_PROTOCOL_VERSION) {
+  if (!isJsonRecord(payload) || payload.protocol !== TOKENLESS_CONFIG_SCHEMA_ID) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
   if (payload.preferredProviders !== undefined && !Array.isArray(payload.preferredProviders)) {
@@ -107,7 +107,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
   return {
-    protocol: TOKENLESS_CONFIG_PROTOCOL_VERSION,
+    protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
     preferredProviders: normalizeProviderList(payload.preferredProviders),
     browser: normalizeBrowserId(payload.browser),
@@ -133,7 +133,7 @@ export async function writeTokenlessConfig({
   await fs.chmod(homeDir, 0o700).catch(() => undefined)
   const current = await readTokenlessConfig(homeDir)
   const config: TokenlessConfig = {
-    protocol: TOKENLESS_CONFIG_PROTOCOL_VERSION,
+    protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: new Date().toISOString(),
     preferredProviders: preferredProviders === undefined
       ? current.preferredProviders
@@ -150,7 +150,7 @@ export async function writeTokenlessConfig({
 
 function emptyTokenlessConfig(): TokenlessConfig {
   return {
-    protocol: TOKENLESS_CONFIG_PROTOCOL_VERSION,
+    protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
     preferredProviders: [],
     browser: null,

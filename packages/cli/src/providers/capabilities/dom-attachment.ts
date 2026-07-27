@@ -10,7 +10,7 @@ import {
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import { TokenlessPlaywrightError, tokenlessError } from '../../playwright/errors.js'
 import { VISIBLE_ACTIONS } from '../contracts.js'
-import { VISIBLE_ATTACHMENT_PROTOCOL_VERSION, validateAttachmentInput } from '../../playwright/actions.js'
+import { VISIBLE_ATTACHMENT_SCHEMA_ID, validateAttachmentInput } from '../../playwright/actions.js'
 import type { FileChooser, Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
 import type { VisibleActionRequest } from '../contracts.js'
@@ -27,7 +27,6 @@ export class DomAttachmentCapability implements ProviderActionCapability<Attachm
 
   constructor(provider: ProviderDomDefinition) {
     this.provider = provider
-    Object.freeze(this)
   }
 
   async execute(
@@ -92,7 +91,7 @@ async function uploadFiles(
     acceptance: accepted ? 'accepted' as const : 'selected' as const,
     visibleProof: acceptedProof ?? selectedProof,
     attachments: attachments.map((attachment) => ({
-      protocol: VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
+      protocol: VISIBLE_ATTACHMENT_SCHEMA_ID,
       bundleId: attachment.bundleId,
       attachmentId: attachment.attachmentId,
       name: basename(attachment.name),

@@ -3,7 +3,7 @@
   "info": {
     "title": "Tokenless daemon HTTP API",
     "version": "1.0.0",
-    "description": "Local loopback daemon HTTP API governed by tokenless.daemon.v1. Every daemon route, readiness proof, error envelope, job payload, and browser runtime control response belongs to this OpenAPI contract; in-process TypeScript runtime modules do not negotiate separate wire protocols."
+    "description": "Local loopback daemon HTTP API. Every daemon route, readiness proof, error envelope, job payload, and browser runtime control response belongs to this OpenAPI contract."
   },
   "servers": [
     {
@@ -526,16 +526,12 @@
           "error": {
             "type": "object",
             "required": [
-              "protocol",
               "code",
               "message",
               "retryable"
             ],
             "additionalProperties": false,
             "properties": {
-              "protocol": {
-                "const": "tokenless.daemon.v1"
-              },
               "code": {
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9_]{0,127}$"
@@ -558,7 +554,6 @@
       "ReadyResponse": {
         "type": "object",
         "required": [
-          "protocol",
           "version",
           "ready",
           "home_dir",
@@ -567,9 +562,6 @@
         ],
         "additionalProperties": false,
         "properties": {
-          "protocol": {
-            "const": "tokenless.daemon.v1"
-          },
           "version": {
             "type": "string",
             "minLength": 1
@@ -594,7 +586,6 @@
       "BrowserRuntimeStatus": {
         "type": "object",
         "required": [
-          "protocol",
           "status",
           "activeProfileCount",
           "activeJobCount",
@@ -602,9 +593,6 @@
         ],
         "additionalProperties": false,
         "properties": {
-          "protocol": {
-            "const": "tokenless.daemon.v1"
-          },
           "status": {
             "enum": [
               "running",

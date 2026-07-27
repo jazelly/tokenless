@@ -40,15 +40,15 @@ The implementation differs from some proposed filenames below, but preserves the
 - `packages/cli/src/providers/capability-set.ts` owns capability composition and dispatch;
 - `packages/cli/src/providers/action-catalog.ts` is the exhaustive action lifecycle source;
 - `packages/cli/src/providers/navigation-policy.ts` is the shared URL classifier;
-- `packages/cli/src/providers/capabilities/` contains mandatory and optional capability implementations;
+- `packages/cli/src/providers/capabilities/` contains shared mandatory-operation helpers and optional capability implementations;
 - each provider is a concrete `BaseProvider` subclass in its own module; and
 - `packages/cli/src/playwright/runner-service.ts` orchestrates jobs through provider methods without owning selectors.
 
 | Acceptance criterion | Completed implementation or evidence |
 | --- | --- |
 | Concrete provider subclasses | ChatGPT, Claude, Gemini, Grok, and Qwen are concrete `BaseProvider` subclasses. |
-| Mandatory execution skeleton | `BaseProvider` requires session, prompt, and response capabilities and owns dispatch through `ProviderCapabilitySet`. |
-| Optional capability composition | Model, effort, attachment, workspace, image, and diagnostics are explicit capability objects with machine-readable unavailable or unknown states. |
+| Mandatory execution skeleton | `BaseProvider` owns session, prompt, and response Template Methods with protected default hooks and runtime child-class dispatch. |
+| Optional capability composition | Model, effort, attachment, workspace, image, and diagnostics are keyed structural capability slots dispatched through `ProviderCapabilitySet`, with machine-readable unavailable or unknown states. |
 | Runner/provider boundary | The runner resolves providers through the registry and does not read provider selector tables. |
 | No shared provider-ID branching | Concrete behavior is owned by provider modules and provider-owned inspector or choice-policy classes. |
 | One production registration list | `providers/registry.ts` constructs the complete provider set once. |

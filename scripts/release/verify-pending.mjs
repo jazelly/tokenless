@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { RELEASE_PENDING_PROTOCOL } from '../generated/protocol-constants.mjs'
+import { RELEASE_PENDING_SCHEMA_ID } from './pending-schema.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const pendingPath = path.join(root, '.changeset', 'publish-pending.json')
@@ -13,7 +13,7 @@ if (!fs.existsSync(pendingPath)) {
 }
 
 const pending = readJson(pendingPath)
-if (pending.protocol !== RELEASE_PENDING_PROTOCOL || pending.package !== 'tokenless') {
+if (pending.protocol !== RELEASE_PENDING_SCHEMA_ID || pending.package !== 'tokenless') {
   throw new Error('Invalid Tokenless release marker.')
 }
 if (typeof pending.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(pending.version)) {

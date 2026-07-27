@@ -7,7 +7,7 @@ HTTP surface and kept the small built-in Node HTTP server. Adding Fastify would
 increase the protocol and dependency surface without serving a current product
 need. This document is preserved as historical design context only.
 
-Depends on: Local daemon job persistence, claim leases, the existing `tokenless.daemon.v1` wire contract, and embedded browser-runtime supervision
+Depends on: Local daemon job persistence, claim leases, the Tokenless Daemon API v1 OpenAPI contract, and embedded browser-runtime supervision
 
 ## Outcome
 
@@ -29,7 +29,7 @@ Fastify replaces the bare `node:http` routing implementation. It does not replac
 - Use Fastify for daemon routing, request lifecycle, schema integration, authentication hooks, and graceful shutdown.
 - Keep ordinary HTTP request/response semantics for job creation and polling.
 - Treat SQLite job state as the durable source of truth.
-- Keep the existing daemon protocol, endpoint paths, status codes, authentication, and error envelopes compatible during the migration.
+- Keep the existing daemon API paths, status codes, authentication, and error envelopes compatible during the migration.
 - Report provider work coarsely as `running`; do not claim token-level, percentage, or partial-response progress.
 - Return the provider response only after the job reaches `succeeded`.
 - Do not add SSE, WebSocket, DOM response streaming, provider-network interception, or provider-specific streaming adapters in this roadmap.
@@ -56,7 +56,7 @@ The missing piece is not asynchronous execution. It is a maintainable HTTP imple
 
 `POST /jobs` retains its existing request and response semantics for protocol compatibility. The migration does not change the successful response from `200` to `202`, rename fields, introduce a new path prefix, or remove the claim token required by existing producer and worker flows.
 
-A future caller-specific facade may adopt `202 Accepted` and omit internal ownership material, but it must be introduced as a separate versioned contract rather than silently changing `tokenless.daemon.v1`.
+A future caller-specific facade may adopt `202 Accepted` and omit internal ownership material, but it must be introduced through an explicit Tokenless Daemon API revision rather than silently changing existing responses.
 
 ### Job Read
 
@@ -125,7 +125,7 @@ Domain rules remain outside Fastify handlers. `JobStore` continues to enforce st
 
 ### Validation and Errors
 
-Fastify schemas should reject malformed transport shapes and prevent accidental response-field disclosure. Existing domain validators remain responsible for protocol semantics that require stable Tokenless error codes.
+Fastify schemas should reject malformed transport shapes and prevent accidental response-field disclosure. Existing domain validators remain responsible for semantics that require stable Tokenless error codes.
 
 The server must normalize:
 
@@ -138,13 +138,13 @@ The server must normalize:
 - missing jobs; and
 - unexpected internal failures
 
-into the existing status codes and `tokenless.daemon.error.v1` envelope where the current protocol requires it. Fastify default error payloads must not leak through compatibility routes.
+into the existing status codes and documented error envelope. Fastify default error payloads must not leak through compatibility routes.
 
-### Protocol Source of Truth
+### API Source of Truth
 
-`protocol/openapi/tokenless.daemon.v1.openapi.json` remains the implemented HTTP contract. Fastify route schemas and serializers must stay aligned with it.
+`api/tokenless-daemon-api.openapi.json` remains the implemented HTTP contract. Fastify route schemas and serializers must stay aligned with it.
 
-The migration must not add fields to closed response schemas, change readiness proof inputs, expand the closed `supported_protocols` object, or alter authentication meaning. Any later caller-specific API or richer progress resource requires an explicit protocol decision under `protocol/EVOLUTION.md`.
+This archived roadmap predates the clean-break OpenAPI simplification. Any later caller-specific API or richer progress resource requires an explicit Tokenless Daemon API revision.
 
 ## Security Boundary
 
@@ -200,7 +200,7 @@ Exit: a trusted local caller can implement the full asynchronous flow from publi
 ## Acceptance Criteria
 
 - The daemon HTTP implementation uses Fastify and no longer contains a manual method-and-path dispatcher.
-- Existing `tokenless.daemon.v1` clients continue to operate without request or response changes.
+- Existing Tokenless Daemon API v1 clients continue to operate without request or response changes.
 - `POST /jobs` durably creates a job and returns before visible provider completion.
 - `GET /jobs/{job_id}` returns the latest durable state throughout execution.
 - Polling observes `waiting_for_user` blockers and every terminal outcome.

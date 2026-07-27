@@ -1,7 +1,6 @@
 import { BaseProvider } from './base-provider.js'
 import {
   DEFAULT_CHOICE_AVAILABILITY,
-  createBaseProviderCapabilities,
   defineDescriptor,
   defineProvider,
   providerCapabilities,
@@ -15,6 +14,9 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
       label: 'Claude',
       stage: 'supported',
       setupOrder: 1,
+      protocolCompatibility: Object.freeze({
+        legacyRequests: true,
+      }),
       navigation: Object.freeze({
         homeUrl: 'https://claude.ai/new',
         origins: Object.freeze(['https://claude.ai']),
@@ -95,6 +97,6 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
       capabilities: providerCapabilities(),
     })
-    super(provider, createBaseProviderCapabilities(provider))
+    super(provider)
   }
 }

@@ -12,8 +12,9 @@ Requires Node.js 22.13+ and a supported Chromium browser such as Google Chrome o
 npm install --global tokenless@latest
 ```
 
-Setup installs and verifies both required agent skills, checks the installed CLI
-against the latest npm release, and leaves a compatible local daemon running.
+Tokenless must be installed globally before setup or agent use. Setup always
+upserts and verifies both required global agent skills, checks the installed CLI
+against the latest npm release, and leaves the matching local daemon running.
 
 ## Start
 
@@ -26,10 +27,9 @@ tokenless setup
 The interactive flow chooses a browser and providers, discovers existing Chrome
 or Brave profiles, asks for explicit copy consent, creates a separate managed
 profile, reconciles and verifies the local daemon, and checks provider sign-in.
-Ordinary daemon compatibility is based on daemon.v1 authenticated readiness,
-not the CLI and daemon package-version major. Setup also reconciles the verified
-same-home installed daemon runtime back to the exact packaged runtime for the
-next start without stopping a compatible running daemon.
+Ordinary daemon compatibility is based on authenticated same-home readiness and
+the exact package version expected by the CLI. Setup also reconciles the verified
+same-home installed daemon runtime back to the exact packaged runtime when needed.
 
 ### Start clean
 
@@ -47,12 +47,6 @@ Verify either path:
 
 ```bash
 tokenless doctor --json
-```
-
-Without a global install:
-
-```bash
-npx tokenless@latest setup
 ```
 
 System-wide installer:
@@ -124,7 +118,7 @@ tokenless run --browser-visibility headless --json
 
 ## Daemon Lifecycle
 
-Outside setup, the CLI reuses a running daemon after `/ready` proves the requested Tokenless home and declares `protocol: "tokenless.daemon.v1"`. Package versions and semantic-version majors are diagnostics only, so a different-major daemon remains reusable when daemon.v1 readiness is compatible. Job, action, browser runtime, proof, and error shapes are daemon.v1 schemas or internal/persisted payload contracts; they are not independently negotiated CLI-daemon protocols. During `tokenless setup`, Tokenless may replace a same-home daemon only when a verified daemon.v1 mismatch requires replacement. Version drift never stops a compatible daemon; setup may refresh a stale installed runtime in place for the next start. Foreign, different-home, and unverified listeners are left running.
+Outside setup, the CLI reuses a running daemon after `/ready` proves the requested Tokenless home and reports the exact package version expected by the CLI. The CLI-daemon contract is the Tokenless Daemon API v1 OpenAPI document in `api/tokenless-daemon-api.openapi.json`; API version is recorded in OpenAPI `info.version`. Job, action, and local recovery payloads keep their own internal schema IDs only where persisted validation needs them. During `tokenless setup`, Tokenless may replace a same-home daemon only when the ready proof is valid and the running package version differs. Foreign, different-home, and unverified listeners are left running.
 
 Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 

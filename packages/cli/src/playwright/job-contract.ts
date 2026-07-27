@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
-} from '../generated/protocol-constants.js'
+  MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+} from '../schema-ids.js'
 import {
   VISIBLE_ACTIONS,
-  VISIBLE_ACTION_PROTOCOL_VERSION,
+  VISIBLE_ACTION_SCHEMA_ID,
   createVisibleActionRequest,
   validateVisibleActionRequest,
 } from './actions.js'
@@ -16,8 +16,8 @@ import type { VisibleActionRequest, VisibleActionWireRequest } from './actions.j
 import type { ProviderId, ProviderInstance } from '../providers/registry.js'
 
 export {
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
-} from '../generated/protocol-constants.js'
+  MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+} from '../schema-ids.js'
 export const MANAGED_PLAYWRIGHT_JOB_ACTION = 'visible_provider_actions' as const
 export const PLAYWRIGHT_EXECUTION_BACKEND = 'playwright' as const
 
@@ -27,7 +27,7 @@ export type ManagedPlaywrightSafeTarget = {
 }
 
 export type ManagedPlaywrightJobRequest = {
-  protocol: typeof MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION
+  protocol: typeof MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID
   provider: ProviderId
   target: ManagedPlaywrightSafeTarget
   taskId: string | null
@@ -67,7 +67,7 @@ export function createManagedPlaywrightJobRequest(
     })
   })
   return validateManagedPlaywrightJobRequest({
-    protocol: MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+    protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
     provider: provider.id,
     target,
     taskId: validateTaskId(input.taskId ?? null),
@@ -81,7 +81,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     throw tokenlessError('invalid_playwright_job_request', 'Managed Playwright job request must be an object.')
   }
   requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'], 'invalid_playwright_job_request')
-  if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION) {
+  if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
     throw tokenlessError('invalid_playwright_job_protocol', 'Managed Playwright job protocol version is not supported.')
   }
   const provider = getProviderInstanceById(input.provider)
@@ -94,7 +94,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   }
   const actions = input.actions.map((action) => validateVisibleActionRequest(action))
   for (const action of actions) {
-    if (action.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION) {
+    if (action.protocol !== VISIBLE_ACTION_SCHEMA_ID) {
       throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright job v3 requires visible action v3.')
     }
     if (action.provider !== provider.id) {
@@ -105,7 +105,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     }
   }
   return {
-    protocol: MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+    protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
     provider: provider.id,
     target,
     taskId,

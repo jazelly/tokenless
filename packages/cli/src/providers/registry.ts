@@ -176,6 +176,9 @@ function validateProviderDescriptor(descriptor: ProviderDescriptor<ProviderId>) 
   if (!Number.isSafeInteger(descriptor.setupOrder) || descriptor.setupOrder < 0) {
     throw new Error(`Provider ${descriptor.id} setup order is invalid.`)
   }
+  if (descriptor.protocolCompatibility?.legacyRequests !== true && descriptor.protocolCompatibility?.legacyRequests !== false) {
+    throw new Error(`Provider ${descriptor.id} protocol compatibility policy is invalid.`)
+  }
   if (descriptor.controls?.chatSurface !== true && descriptor.controls?.chatSurface !== false) {
     throw new Error(`Provider ${descriptor.id} controls policy is invalid.`)
   }

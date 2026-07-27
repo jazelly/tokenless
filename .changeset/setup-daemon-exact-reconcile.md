@@ -2,4 +2,4 @@
 "tokenless": patch
 ---
 
-Make ordinary daemon reuse depend on verified ready identity plus supported protocol overlap instead of package-version majors, and let `tokenless setup` reconcile protocol mismatches or installed-runtime drift only after same-home verification.
+Make ordinary daemon reuse depend on verified ready identity plus the exact package version, and let `tokenless setup` reconcile same-home version drift only after proof verification.

@@ -1,7 +1,5 @@
 import { PROVIDER_CAPABILITIES } from './provider-identity.js'
-import { PromptCapability } from './capabilities/prompt.js'
-import { ResponseCapability } from './capabilities/response.js'
-import { ConversationContinueCapability, ProviderSessionCapability } from './capabilities/session.js'
+import { ConversationContinueCapability } from './capabilities/session.js'
 import { DomAttachmentCapability } from './capabilities/dom-attachment.js'
 import { DomChoiceCapability } from './capabilities/dom-choice.js'
 import { ConversationWorkspaceCapability } from './capabilities/workspace.js'
@@ -10,8 +8,10 @@ import { UnsupportedImageGenerationCapability } from './capabilities/image-gener
 import { DefaultChoiceAvailability } from './choice-availability.js'
 import { ProviderNavigationPolicy } from './navigation-policy.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
-import type { BaseProviderCapabilities } from './base-provider.js'
 import type { Locator, Page } from 'playwright-core'
+import type { InspectableProviderActionCapability, ProviderCapability } from './capability-set.js'
+import type { ImageGenerationCapability } from './capabilities/image-generation.js'
+import type { VisibleAction } from './contracts.js'
 import type { ProviderCapabilityId, ProviderId, ProviderStage } from './provider-identity.js'
 import type { ProviderNavigationDefinition } from './navigation-policy.js'
 
@@ -36,6 +36,9 @@ export type ProviderDescriptor<TId extends string = string> = Readonly<{
   label: string
   stage: ProviderStage
   setupOrder: number
+  protocolCompatibility: Readonly<{
+    legacyRequests: boolean
+  }>
   navigation: ProviderNavigationDefinition
   profileImport: Readonly<{
     cookieDomains: readonly string[]
@@ -125,31 +128,80 @@ export type ProviderDomDefinition<TId extends ProviderId = ProviderId> = Provide
 
 export const DEFAULT_CHOICE_AVAILABILITY = new DefaultChoiceAvailability() satisfies ProviderChoiceAvailabilityPolicy
 
-export function createBaseProviderCapabilities(provider: ProviderDomDefinition): BaseProviderCapabilities {
-  return {
-    session: new ProviderSessionCapability(provider),
-    prompt: new PromptCapability(provider),
-    response: new ResponseCapability(provider),
-    optional: [
-      new DomAttachmentCapability(provider),
-      new ConversationWorkspaceCapability(provider),
-      new ConversationContinueCapability(provider),
-      new DomChoiceCapability(provider, {
-        capability: PROVIDER_CAPABILITIES.MODEL_CHOICE,
-        kind: 'model',
-        inspectAction: VISIBLE_ACTIONS.MODEL_INSPECT,
-        selectAction: VISIBLE_ACTIONS.MODEL_SELECT,
-      }),
-      new DomChoiceCapability(provider, {
-        capability: PROVIDER_CAPABILITIES.EFFORT_CHOICE,
-        kind: 'effort',
-        inspectAction: VISIBLE_ACTIONS.EFFORT_INSPECT,
-        selectAction: VISIBLE_ACTIONS.EFFORT_SELECT,
-      }),
-      new DiagnosticsCapability(provider),
-      new UnsupportedImageGenerationCapability(provider),
-    ],
+type CapabilityWithId<Id extends ProviderCapabilityId, Capability extends ProviderCapability> =
+  Omit<Capability, 'capability'> & Readonly<{ capability: Id }>
+
+type ActionCapabilityWithId<Id extends ProviderCapabilityId, Action extends VisibleAction> =
+  CapabilityWithId<Id, InspectableProviderActionCapability<Action>>
+
+export type ProviderOptionalCapabilities = Readonly<{
+  fileUpload: ActionCapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.FILE_UPLOAD,
+    typeof VISIBLE_ACTIONS.FILE_UPLOAD
+  >
+  workspace: ActionCapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.WORKSPACE_ENSURE,
+    typeof VISIBLE_ACTIONS.WORKSPACE_ENSURE
+  >
+  conversationContinue: CapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE,
+    ProviderCapability
+  >
+  modelChoice: ActionCapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.MODEL_CHOICE,
+    typeof VISIBLE_ACTIONS.MODEL_INSPECT | typeof VISIBLE_ACTIONS.MODEL_SELECT
+  >
+  effortChoice: ActionCapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.EFFORT_CHOICE,
+    typeof VISIBLE_ACTIONS.EFFORT_INSPECT | typeof VISIBLE_ACTIONS.EFFORT_SELECT
+  >
+  diagnostics: ActionCapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.DIAGNOSTICS,
+    typeof VISIBLE_ACTIONS.NAVIGATION_CHECK | typeof VISIBLE_ACTIONS.SNAPSHOT_SANITIZED
+  >
+  imageGeneration: CapabilityWithId<
+    typeof PROVIDER_CAPABILITIES.IMAGE_GENERATION,
+    ImageGenerationCapability
+  >
+}>
+
+export type ProviderOptionalCapabilityOverrides = Partial<ProviderOptionalCapabilities>
+
+const OPTIONAL_CAPABILITY_ORDER: readonly (keyof ProviderOptionalCapabilities)[] = Object.freeze([
+  'fileUpload',
+  'workspace',
+  'conversationContinue',
+  'modelChoice',
+  'effortChoice',
+  'diagnostics',
+  'imageGeneration',
+])
+
+export function createProviderOptionalCapabilities(
+  provider: ProviderDomDefinition,
+  overrides: ProviderOptionalCapabilityOverrides = {},
+): readonly ProviderCapability[] {
+  const capabilities: ProviderOptionalCapabilities = {
+    fileUpload: new DomAttachmentCapability(provider),
+    workspace: new ConversationWorkspaceCapability(provider),
+    conversationContinue: new ConversationContinueCapability(provider),
+    modelChoice: new DomChoiceCapability(provider, {
+      capability: PROVIDER_CAPABILITIES.MODEL_CHOICE,
+      kind: 'model',
+      inspectAction: VISIBLE_ACTIONS.MODEL_INSPECT,
+      selectAction: VISIBLE_ACTIONS.MODEL_SELECT,
+    }),
+    effortChoice: new DomChoiceCapability(provider, {
+      capability: PROVIDER_CAPABILITIES.EFFORT_CHOICE,
+      kind: 'effort',
+      inspectAction: VISIBLE_ACTIONS.EFFORT_INSPECT,
+      selectAction: VISIBLE_ACTIONS.EFFORT_SELECT,
+    }),
+    diagnostics: new DiagnosticsCapability(provider),
+    imageGeneration: new UnsupportedImageGenerationCapability(provider),
+    ...overrides,
   }
+  return OPTIONAL_CAPABILITY_ORDER.map((key) => capabilities[key])
 }
 
 export function providerCapabilities(): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {

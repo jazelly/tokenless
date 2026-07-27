@@ -21,7 +21,6 @@ export class DiagnosticsCapability implements ProviderActionCapability<Diagnosti
 
   constructor(provider: ProviderDomDefinition) {
     this.provider = provider
-    Object.freeze(this)
   }
 
   async execute(

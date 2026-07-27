@@ -34,6 +34,8 @@ export type Job = {
   claim_token: string
   execution_backend: ExecutionBackend
   profile_id: string | null
+  agent_kind: string | null
+  agent_session_id: string | null
   provider: string
   action: string
   status: JobStatus
@@ -57,8 +59,30 @@ export type CreateJobInput = {
   request_json: unknown
   execution_backend?: ExecutionBackend | undefined
   profile_id?: string | null | undefined
+  agent_kind?: string | null | undefined
+  agent_session_id?: string | null | undefined
   job_id?: string | undefined
   claim_token?: string | undefined
+}
+
+export type AgentRecipient = {
+  agent_kind: string
+  agent_session_id: string
+}
+
+export type ReplaySummary = {
+  job_id: string
+  provider: string
+  action: string
+  status: Extract<JobStatus, 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'>
+  task_id: string | null
+  updated_at: string
+  reported_at: string
+  preview: {
+    kind: 'result' | 'error' | 'blocker' | 'none'
+    text: string | null
+    truncated: boolean
+  }
 }
 
 export type ListJobsInput = {
@@ -81,6 +105,9 @@ const DEFAULT_CLAIM_LEASE_MS = 30_000
 const SECRET_TOKEN_BYTES = 32
 const SUMMARY_SCALAR_CHARS = 256
 const PROFILE_ID_CHARS = 128
+const AGENT_KIND_CHARS = 128
+const AGENT_SESSION_ID_CHARS = 256
+const REPLAY_PREVIEW_CHARS = 512
 const MAX_VISIBLE_ATTACHMENTS = 100
 const MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES = 512 * 1024 * 1024
 const ACTIVE_STATUSES = new Set<JobStatus>(['claimed', 'running', 'waiting_for_user'])
@@ -163,6 +190,7 @@ export class JobStore {
     const executionBackend = input.execution_backend ?? 'playwright'
     assertExecutionBackend(executionBackend)
     const profileId = validateJobBackendProfile(executionBackend, input.profile_id ?? null)
+    const recipient = normalizeOptionalAgentRecipient(input.agent_kind, input.agent_session_id)
     const jobId = input.job_id === undefined
       ? randomUUID()
       : normalizeNonempty(input.job_id, 'job_id')
@@ -176,19 +204,21 @@ export class JobStore {
     this.transaction(() => {
       this.run(
         `INSERT INTO jobs (
-          job_id, claim_token, execution_backend, profile_id,
+          job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
           provider, action, status, request_json,
           result_json, error_json, blocker_json, created_at, updated_at,
           summary_task_id, summary_project_name, summary_chat_name,
           summary_idempotency_key
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?,
           ?, ?, ?, ?
         )`,
         jobId,
         claimToken,
         executionBackend,
         profileId,
+        recipient?.agent_kind ?? null,
+        recipient?.agent_session_id ?? null,
         provider,
         action,
         'queued',
@@ -208,6 +238,91 @@ export class JobStore {
     return this.getJob(jobId)
   }
 
+  drainReplaySummaries(recipientInput: AgentRecipient, requestedLimit?: number) {
+    const recipient = normalizeAgentRecipient(recipientInput)
+    const limit = clampLimit(requestedLimit, 100, 200)
+    this.requeueExpiredClaims()
+    return this.transaction(() => {
+      const rows = this.all(
+        `SELECT
+          job_id, provider, action, status, summary_task_id, updated_at,
+          result_json, error_json, blocker_json
+         FROM jobs
+         WHERE agent_kind = ?
+           AND agent_session_id = ?
+           AND (
+             replay_reported_job_updated_at IS NULL
+             OR replay_reported_job_updated_at != updated_at
+           )
+           AND (
+             status IN ('succeeded', 'failed', 'canceled', 'timed_out')
+             OR (status = 'waiting_for_user' AND claim_expires_at IS NULL)
+           )
+         ORDER BY updated_at ASC, job_id ASC
+         LIMIT ?`,
+        recipient.agent_kind,
+        recipient.agent_session_id,
+        limit
+      )
+      if (rows.length === 0) return [] satisfies ReplaySummary[]
+      const reportedAt = nowRfc3339()
+      const summaries: ReplaySummary[] = []
+      for (const row of rows) {
+        const result = this.run(
+          `UPDATE jobs
+           SET replay_reported_at = ?, replay_reported_job_updated_at = ?
+           WHERE job_id = ?
+             AND agent_kind = ?
+             AND agent_session_id = ?
+             AND updated_at = ?
+             AND (
+               replay_reported_job_updated_at IS NULL
+               OR replay_reported_job_updated_at != updated_at
+             )`,
+          reportedAt,
+          String(row.updated_at),
+          String(row.job_id),
+          recipient.agent_kind,
+          recipient.agent_session_id,
+          String(row.updated_at)
+        )
+        if (result.changes !== 1) continue
+        summaries.push(rowToReplaySummary(row, reportedAt))
+      }
+      return summaries
+    })
+  }
+
+  markJobReported(jobId: string, recipientInput: AgentRecipient) {
+    const recipient = normalizeAgentRecipient(recipientInput)
+    this.requeueExpiredClaims()
+    const reportedAt = nowRfc3339()
+    const result = this.run(
+      `UPDATE jobs
+       SET replay_reported_at = ?, replay_reported_job_updated_at = updated_at
+       WHERE job_id = ?
+         AND agent_kind = ?
+         AND agent_session_id = ?
+         AND (
+           replay_reported_job_updated_at IS NULL
+           OR replay_reported_job_updated_at != updated_at
+         )
+         AND (
+           status IN ('succeeded', 'failed', 'canceled', 'timed_out')
+           OR status = 'waiting_for_user'
+         )`,
+      reportedAt,
+      normalizeNonempty(jobId, 'job_id'),
+      recipient.agent_kind,
+      recipient.agent_session_id
+    )
+    const job = this.getJobWithoutRecovery(jobId)
+    return {
+      job,
+      reported: result.changes === 1,
+    }
+  }
+
   listJobs(query: ListJobsInput = {}) {
     this.requeueExpiredClaims()
     if (query.status !== undefined) assertJobStatus(query.status)
@@ -219,6 +334,7 @@ export class JobStore {
 
     let sql = `SELECT
       jobs.job_id, jobs.claim_token, jobs.execution_backend, jobs.profile_id,
+      jobs.agent_kind, jobs.agent_session_id,
       jobs.provider, jobs.action, jobs.status, jobs.request_json, jobs.result_json,
       jobs.error_json, jobs.blocker_json, jobs.checkpoint_json, jobs.resume_json,
       jobs.created_at, jobs.updated_at, jobs.claim_expires_at
@@ -306,7 +422,7 @@ export class JobStore {
          LIMIT 1
        )
        RETURNING
-         job_id, claim_token, execution_backend, profile_id,
+         job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
          provider, action, status, request_json, result_json, error_json,
          blocker_json, checkpoint_json, resume_json,
          created_at, updated_at, claim_expires_at`,
@@ -553,7 +669,7 @@ export class JobStore {
     return this.transaction(() => {
       const row = this.get(
         `SELECT
-          job_id, claim_token, execution_backend, profile_id,
+          job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
           provider, action, status, request_json, result_json, error_json,
           blocker_json, checkpoint_json, resume_json,
           created_at, updated_at, claim_expires_at
@@ -754,6 +870,12 @@ export class JobStore {
         profile_id TEXT CHECK (
           profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 128
         ),
+        agent_kind TEXT CHECK (
+          agent_kind IS NULL OR length(agent_kind) BETWEEN 1 AND 128
+        ),
+        agent_session_id TEXT CHECK (
+          agent_session_id IS NULL OR length(agent_session_id) BETWEEN 1 AND 256
+        ),
         provider TEXT NOT NULL,
         action TEXT NOT NULL,
         status TEXT NOT NULL CHECK (
@@ -788,6 +910,12 @@ export class JobStore {
         ),
         summary_idempotency_key TEXT CHECK (
           summary_idempotency_key IS NULL OR length(summary_idempotency_key) <= 256
+        ),
+        replay_reported_at TEXT,
+        replay_reported_job_updated_at TEXT,
+        CHECK (
+          (agent_kind IS NULL AND agent_session_id IS NULL)
+          OR (agent_kind IS NOT NULL AND agent_session_id IS NOT NULL)
         )
       );
       CREATE TABLE IF NOT EXISTS job_task_keys (
@@ -810,6 +938,8 @@ export class JobStore {
         ON jobs(execution_backend, profile_id, status, created_at, job_id);
       CREATE INDEX IF NOT EXISTS job_task_keys_task_id_idx
         ON job_task_keys(task_id, job_id);
+      CREATE INDEX IF NOT EXISTS jobs_replay_recipient_idx
+        ON jobs(agent_kind, agent_session_id, replay_reported_job_updated_at, updated_at, job_id);
     `)
   }
 
@@ -824,6 +954,10 @@ export class JobStore {
         ['summary_project_name', 'TEXT CHECK (summary_project_name IS NULL OR length(summary_project_name) <= 256)'],
         ['summary_chat_name', 'TEXT CHECK (summary_chat_name IS NULL OR length(summary_chat_name) <= 256)'],
         ['summary_idempotency_key', 'TEXT CHECK (summary_idempotency_key IS NULL OR length(summary_idempotency_key) <= 256)'],
+        ['agent_kind', 'TEXT CHECK (agent_kind IS NULL OR length(agent_kind) BETWEEN 1 AND 128)'],
+        ['agent_session_id', 'TEXT CHECK (agent_session_id IS NULL OR length(agent_session_id) BETWEEN 1 AND 256)'],
+        ['replay_reported_at', 'TEXT'],
+        ['replay_reported_job_updated_at', 'TEXT'],
       ] as const) {
         this.ensureJobsColumn(column, definition)
       }
@@ -847,7 +981,7 @@ export class JobStore {
   private getJobWithoutRecovery(jobId: string) {
     const row = this.get(
       `SELECT
-        job_id, claim_token, execution_backend, profile_id,
+        job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
         provider, action, status, request_json, result_json, error_json,
         blocker_json, checkpoint_json, resume_json,
         created_at, updated_at, claim_expires_at
@@ -973,6 +1107,8 @@ export function publicView(job: Job): JobView {
     job_id: job.job_id,
     execution_backend: job.execution_backend,
     profile_id: job.profile_id,
+    agent_kind: job.agent_kind,
+    agent_session_id: job.agent_session_id,
     provider: job.provider,
     action: job.action,
     status: job.status,
@@ -991,6 +1127,8 @@ export function withClaimToken(job: Job): JobWithClaimToken {
     claim_token: job.claim_token,
     execution_backend: job.execution_backend,
     profile_id: job.profile_id,
+    agent_kind: job.agent_kind,
+    agent_session_id: job.agent_session_id,
     provider: job.provider,
     action: job.action,
     status: job.status,
@@ -1059,6 +1197,8 @@ function rowToJob(row: Record<string, unknown>): Job {
     claim_token: String(row.claim_token),
     execution_backend: executionBackend,
     profile_id: nullableString(row.profile_id),
+    agent_kind: nullableString(row.agent_kind),
+    agent_session_id: nullableString(row.agent_session_id),
     provider: String(row.provider),
     action: String(row.action),
     status,
@@ -1071,6 +1211,43 @@ function rowToJob(row: Record<string, unknown>): Job {
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     claim_expires_at_ms: nullableNumber(row.claim_expires_at),
+  }
+}
+
+function rowToReplaySummary(row: Record<string, unknown>, reportedAt: string): ReplaySummary {
+  const status = String(row.status)
+  assertJobStatus(status)
+  if (
+    status !== 'waiting_for_user' &&
+    status !== 'succeeded' &&
+    status !== 'failed' &&
+    status !== 'canceled' &&
+    status !== 'timed_out'
+  ) {
+    throw invalidJobState(String(row.job_id), 'waiting_for_user or terminal', status)
+  }
+  const previewSource = row.result_json !== null && row.result_json !== undefined
+    ? { kind: 'result' as const, value: row.result_json }
+    : row.error_json !== null && row.error_json !== undefined
+      ? { kind: 'error' as const, value: row.error_json }
+      : row.blocker_json !== null && row.blocker_json !== undefined
+        ? { kind: 'blocker' as const, value: row.blocker_json }
+        : { kind: 'none' as const, value: null }
+  const rawText = previewSource.value === null ? null : String(previewSource.value)
+  const textCharacters = rawText === null ? [] : Array.from(rawText)
+  return {
+    job_id: String(row.job_id),
+    provider: String(row.provider),
+    action: String(row.action),
+    status,
+    task_id: nullableString(row.summary_task_id),
+    updated_at: String(row.updated_at),
+    reported_at: reportedAt,
+    preview: {
+      kind: previewSource.kind,
+      text: rawText === null ? null : textCharacters.slice(0, REPLAY_PREVIEW_CHARS).join(''),
+      truncated: textCharacters.length > REPLAY_PREVIEW_CHARS,
+    },
   }
 }
 
@@ -1231,6 +1408,37 @@ function normalizeProfileId(value: string, field: string) {
     throw invalidInput(`${field} must be at most ${PROFILE_ID_CHARS} characters`)
   }
   return normalized
+}
+
+function normalizeOptionalAgentRecipient(
+  agentKind: string | null | undefined,
+  agentSessionId: string | null | undefined
+) {
+  const kindPresent = agentKind !== undefined && agentKind !== null
+  const sessionPresent = agentSessionId !== undefined && agentSessionId !== null
+  if (kindPresent !== sessionPresent) {
+    throw invalidInput('agent_kind and agent_session_id must be provided together')
+  }
+  if (!kindPresent || !sessionPresent) return null
+  return normalizeAgentRecipient({
+    agent_kind: agentKind,
+    agent_session_id: agentSessionId,
+  })
+}
+
+function normalizeAgentRecipient(recipient: AgentRecipient): AgentRecipient {
+  const agentKind = normalizeNonempty(String(recipient.agent_kind ?? ''), 'agent_kind')
+  const agentSessionId = normalizeNonempty(String(recipient.agent_session_id ?? ''), 'agent_session_id')
+  if (Array.from(agentKind).length > AGENT_KIND_CHARS) {
+    throw invalidInput(`agent_kind must be at most ${AGENT_KIND_CHARS} characters`)
+  }
+  if (Array.from(agentSessionId).length > AGENT_SESSION_ID_CHARS) {
+    throw invalidInput(`agent_session_id must be at most ${AGENT_SESSION_ID_CHARS} characters`)
+  }
+  return {
+    agent_kind: agentKind,
+    agent_session_id: agentSessionId,
+  }
 }
 
 function boundedNonemptySummaryValue(value: unknown) {

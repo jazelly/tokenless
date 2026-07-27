@@ -6,17 +6,17 @@ import {
   isClaimRecoveryError,
   tokenlessError,
 } from './errors.js'
-import { RUNNER_CHECKPOINT_PROTOCOL, USER_HANDOVER_PROTOCOL } from '../generated/protocol-constants.js'
+import { RUNNER_CHECKPOINT_SCHEMA_ID, USER_HANDOVER_SCHEMA_ID } from '../schema-ids.js'
 import { PersistentContextManager } from './browser/context-manager.js'
 import type { ManagedBrowserLaunchTarget } from './browser/context-manager.js'
 import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+  MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
   PLAYWRIGHT_EXECUTION_BACKEND,
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
 import { getVisibleActionLifecycle } from '../providers/action-catalog.js'
-import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, isVisibleActionProtocolVersion } from './actions.js'
+import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersion } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
 import { getProviderInstanceById } from '../providers/registry.js'
 import type {
@@ -62,7 +62,7 @@ export type ManagedPlaywrightRunnerIteration =
   | { claimed: true, jobId: string, status: 'succeeded' | 'failed' | 'canceled' | 'waiting_for_user' }
 
 export type ManagedPlaywrightJobResult = {
-  protocol: typeof MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION
+  protocol: typeof MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID
   provider: string
   responses: readonly VisibleActionResponse[]
 }
@@ -86,7 +86,7 @@ type RunnerSubmittedActionCheckpoint = {
 }
 
 type RunnerCheckpoint = {
-  protocol: typeof RUNNER_CHECKPOINT_PROTOCOL
+  protocol: typeof RUNNER_CHECKPOINT_SCHEMA_ID
   jobId: string
   profileId: string | null
   provider: string
@@ -526,7 +526,7 @@ export class ManagedPlaywrightRunnerService {
       return state.responses
     })
     return {
-      protocol: MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
+      protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
       provider: request.provider,
       responses,
     }
@@ -726,7 +726,7 @@ function validateRunnerCheckpoint(
   request: ManagedPlaywrightJobRequest
 ): RunnerCheckpoint | null {
   if (value === null || value === undefined) return null
-  if (!isPlainRecord(value) || value.protocol !== RUNNER_CHECKPOINT_PROTOCOL) {
+  if (!isPlainRecord(value) || value.protocol !== RUNNER_CHECKPOINT_SCHEMA_ID) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint is invalid.')
   }
   const expectedKeys = ['protocol', 'jobId', 'profileId', 'provider', 'targetUrl', 'browserVisibility', 'actionCursor', 'responses', 'preparation', 'submitted', 'phase']
@@ -776,7 +776,7 @@ function validateRunnerCheckpoint(
     )
   }
   return {
-    protocol: RUNNER_CHECKPOINT_PROTOCOL,
+    protocol: RUNNER_CHECKPOINT_SCHEMA_ID,
     jobId: job.job_id,
     profileId: profile.id,
     provider: request.provider,
@@ -906,7 +906,7 @@ function buildRunnerCheckpoint(
   phase: RunnerCheckpointPhase
 ): RunnerCheckpoint {
   return {
-    protocol: RUNNER_CHECKPOINT_PROTOCOL,
+    protocol: RUNNER_CHECKPOINT_SCHEMA_ID,
     jobId: job.job_id,
     profileId: profile.id,
     provider: request.provider,
@@ -1139,7 +1139,7 @@ function blockerPayload(
 ) {
   const primary = blockers.find((blocker) => blocker.userResolvable) ?? blockers[0] ?? null
   return {
-    protocol: USER_HANDOVER_PROTOCOL,
+    protocol: USER_HANDOVER_SCHEMA_ID,
     jobId: job.job_id,
     taskId: taskIdFromRequest(job.request_json),
     provider: job.provider,

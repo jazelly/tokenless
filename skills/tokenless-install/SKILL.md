@@ -23,13 +23,22 @@ Use this workflow only for the maintenance task the user explicitly requested; i
    npm install --global tokenless@latest
    ```
 
-3. Verify the installation:
+   After installation, invoke only the global `tokenless` command. Never run the
+   Tokenless CLI through `npx tokenless` or `npx tokenless@latest`.
+
+3. Reconcile the global skills and matching local daemon:
+
+   ```bash
+   tokenless install --json
+   ```
+
+4. Verify the installation:
 
    ```bash
    tokenless doctor --json
    ```
 
-Report success only when `doctor` exits successfully and returns `ok: true`. Summarize skill, browser, managed profile, daemon, worker, and provider readiness without exposing account identity or authentication data. If verification reports that no managed profile exists, report that the CLI installation completed but provider readiness is pending user-run profile initialization. Do not start that workflow for the user.
+Report success only when `install` confirms `skills.upserted: true` and a ready matching daemon, then `doctor` exits successfully and returns `ok: true`. Summarize skill, browser, managed profile, daemon, worker, and provider readiness without exposing account identity or authentication data. If verification reports that no managed profile exists, report that the CLI installation completed but provider readiness is pending user-run profile initialization. Do not start that workflow for the user.
 
 ## User handoff
 
@@ -59,9 +68,10 @@ The command owns this order:
 
 1. Install `tokenless@latest` globally with npm.
 2. Resolve and verify the installed package, version, binary declaration, and exact CLI entrypoint before handing off to new code.
-3. Refresh both GitHub-backed Tokenless agent skills.
-4. Use that verified new CLI to reconcile the packaged daemon and local runtime.
-5. Use the same new CLI to run the final read-only `doctor --json` check.
+3. Use that verified new CLI's shared maintenance reconciler to upsert both
+   GitHub-backed Tokenless agent skills globally and reconcile the matching
+   packaged daemon runtime.
+4. Use the same new CLI to run the final read-only `doctor --json` check.
 
 Do not initialize, import, reset, or replace a managed profile before or after an upgrade. If the returned doctor result identifies a profile or provider problem, report it as a user-run follow-up. Upgrade does not sign in to providers or alter managed profiles.
 

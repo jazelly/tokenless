@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { RELEASE_PENDING_PROTOCOL } from '../generated/protocol-constants.mjs'
+import { RELEASE_PENDING_SCHEMA_ID } from './pending-schema.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -32,7 +32,7 @@ export function runReleaseVersion(root) {
   updatePackageLock(path.join(root, 'package-lock.json'), cliPackage, version)
 
   writeJson(pendingPath, {
-    protocol: RELEASE_PENDING_PROTOCOL,
+    protocol: RELEASE_PENDING_SCHEMA_ID,
     package: cliPackage.name,
     version,
   })

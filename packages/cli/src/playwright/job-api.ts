@@ -26,6 +26,8 @@ export type ManagedPlaywrightJobApiOptions = {
 export type SubmitManagedPlaywrightJobOptions = ManagedPlaywrightJobApiOptions & {
   profileId: string
   request: ManagedPlaywrightJobRequest | CreateManagedPlaywrightJobRequestInput
+  agentKind?: string | undefined
+  agentSessionId?: string | undefined
   jobId?: string | undefined
 }
 
@@ -57,6 +59,8 @@ export async function submitManagedPlaywrightJob(options: SubmitManagedPlaywrigh
     requestJson: request,
     executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
     profileId: options.profileId,
+    agentKind: options.agentKind,
+    agentSessionId: options.agentSessionId,
     jobId: options.jobId,
   })
 }

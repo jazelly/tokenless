@@ -19,7 +19,6 @@ export class ConversationWorkspaceCapability implements ProviderActionCapability
 
   constructor(provider: ProviderDomDefinition) {
     this.provider = provider
-    Object.freeze(this)
   }
 
   async execute(

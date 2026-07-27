@@ -3,9 +3,9 @@ import fs from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 
-import { VISIBLE_ATTACHMENT_PROTOCOL_VERSION } from './generated/protocol-constants.js'
+import { VISIBLE_ATTACHMENT_SCHEMA_ID as VISIBLE_ATTACHMENT_SCHEMA_ID_VALUE } from './schema-ids.js'
 
-export const VISIBLE_ATTACHMENT_PROTOCOL = VISIBLE_ATTACHMENT_PROTOCOL_VERSION
+export const VISIBLE_ATTACHMENT_SCHEMA_ID = VISIBLE_ATTACHMENT_SCHEMA_ID_VALUE
 export const VISIBLE_ATTACHMENT_DIRECTORY = 'attachments' as const
 export const DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES = 512 * 1024 * 1024
 export const DEFAULT_VISIBLE_ATTACHMENT_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000
@@ -25,7 +25,7 @@ type BigIntFileStat = {
 }
 
 export type VisibleAttachmentDescriptor = {
-  protocol: typeof VISIBLE_ATTACHMENT_PROTOCOL
+  protocol: typeof VISIBLE_ATTACHMENT_SCHEMA_ID
   bundleId: string
   attachmentId: string
   name: string
@@ -81,8 +81,8 @@ export function validateVisibleAttachmentDescriptor(value: unknown): VisibleAtta
       throw new TypeError(`Visible attachment descriptor contains unsupported field: ${key}.`)
     }
   }
-  if (descriptor.protocol !== VISIBLE_ATTACHMENT_PROTOCOL) {
-    throw new TypeError(`Visible attachment descriptor protocol must be ${VISIBLE_ATTACHMENT_PROTOCOL}.`)
+  if (descriptor.protocol !== VISIBLE_ATTACHMENT_SCHEMA_ID) {
+    throw new TypeError(`Visible attachment descriptor protocol must be ${VISIBLE_ATTACHMENT_SCHEMA_ID}.`)
   }
   const bundleId = validateSafeId(descriptor.bundleId, 'bundleId')
   const attachmentId = validateSafeId(descriptor.attachmentId, 'attachmentId')
@@ -93,7 +93,7 @@ export function validateVisibleAttachmentDescriptor(value: unknown): VisibleAtta
     throw new TypeError('Visible attachment descriptor sha256 must be 64 lowercase hexadecimal characters.')
   }
   return {
-    protocol: VISIBLE_ATTACHMENT_PROTOCOL,
+    protocol: VISIBLE_ATTACHMENT_SCHEMA_ID,
     bundleId,
     attachmentId,
     name,
@@ -180,7 +180,7 @@ export async function stageVisibleAttachment({
     await verifyOpenedDestinationIdentity({ destination, root, handle: destinationHandle, expectedSize: size })
     staged = true
     return validateVisibleAttachmentDescriptor({
-      protocol: VISIBLE_ATTACHMENT_PROTOCOL,
+      protocol: VISIBLE_ATTACHMENT_SCHEMA_ID,
       bundleId,
       attachmentId,
       name: displayName,

@@ -7,7 +7,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI today
 1. The `tokenless` CLI handles setup, profile management, job submission, state, cancellation, and diagnostics.
 2. The local TypeScript daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
 3. The Playwright worker claims managed-web jobs and runs them in persistent managed browser profiles.
-4. The provider catalog declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, and Grok.
+4. The provider registry declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, and Qwen.
 5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
 7. A public local API is planned as a second interface to the same application and job contracts.
@@ -39,12 +39,12 @@ Jobs use explicit provider and profile identity. Unsupported controls, ambiguous
 
 ## Setup and profiles
 
-`tokenless setup` is the interactive onboarding flow. It installs both agent skills, discovers supported browsers, selects providers, and offers two profile paths:
+`tokenless setup` is the interactive onboarding flow. It invokes the shared maintenance reconciler to upsert both global agent skills and align the daemon with the installed `tokenless` package version, then discovers supported browsers, selects providers, and offers two profile paths:
 
 - Import one existing Chrome or Brave profile with explicit consent. Only selected provider sign-in state is copied into a separate managed directory; the source remains unchanged.
 - Create a clean managed profile without requiring provider sign-in during setup.
 
-`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and ChatGPT, checks the installed CLI against the latest npm release, reconciles the local daemon, checks each provider's visible sign-in status once, and reports the observed results without opening a sign-in handoff or retrying the check. Ordinary daemon startup uses daemon.v1 readiness: package versions and semantic-version majors remain diagnostics, while compatibility comes from the same-home ready proof and `protocol: "tokenless.daemon.v1"` on `/ready`. Job, action, browser runtime, proof, and error shapes are schemas inside daemon.v1 or internal/persisted payload contracts; they are not independent CLI-daemon peer protocols. Setup may replace a daemon only when a verified same-home daemon.v1 mismatch requires replacement. Version drift never stops a compatible daemon; setup may refresh a stale installed runtime in place for the next start. Foreign, different-home, and unverified listeners remain untouched. Shutdown verifies `/ready` for the same home immediately before sending the bearer token to `/control/shutdown`; Tokenless never kills a process merely because it occupies the configured loopback port. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
+`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and ChatGPT, checks the installed CLI against the latest npm release, runs the same skills-and-daemon maintenance reconciler used by the verified new CLI during `tokenless upgrade`, checks each provider's visible sign-in status once, and reports the observed results without opening a sign-in handoff or retrying the check. Ordinary daemon startup uses the Tokenless Daemon API v1 OpenAPI contract: readiness comes from the same-home proof and exact package version on `/ready`, with API version recorded only in OpenAPI `info.version`. Job, action, and local recovery payloads keep internal schema IDs where persisted validation needs them; they are not negotiated across the CLI-daemon boundary. Setup may replace a daemon only when a verified same-home daemon reports a different package version. Foreign, different-home, and unverified listeners remain untouched. Shutdown verifies `/ready` for the same home immediately before sending the bearer token to `/control/shutdown`; Tokenless never kills a process merely because it occupies the configured loopback port. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. Import, reset, and deletion require explicit commands and consent.
 
@@ -56,9 +56,22 @@ Successful account observations retain only the visible account display name, su
 
 Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT and Gemini may proceed in guest mode. Claude and Grok hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
 
-## Provider catalog and session state machine
+## Provider architecture and session state machine
 
-Provider-specific policy lives in `packages/cli/src/playwright/providers.ts`. Observation, account classification, decisions, and resolution live under `packages/cli/src/playwright/provider-session/`. The runner consumes normalized decisions; the DOM adapter no longer owns a second authentication/blocker state machine.
+`packages/cli/src/providers/registry.ts` is the single production registration point for providers. Each entry is a concrete `BaseProvider` subclass with one provider-owned definition. Shared CLI, daemon, setup, profile, and Playwright code resolves providers through that registry instead of maintaining provider allowlists or branching on concrete provider IDs.
+
+`BaseProvider` owns the public execution template and the invariant ordering for navigation validation, authentication, blocker checks, prompt operations, response observation, and normalized failures. Its protected TypeScript hooks provide the shared DOM implementation and use normal dynamic dispatch, so a provider subclass overrides only behavior that differs. The runner calls the stable public provider contract and does not select child-class methods itself.
+
+Optional behavior is composed through typed structural capability slots. File upload, model and effort selection, workspace handling, diagnostics, conversation continuation, and image generation can be replaced independently without widening the mandatory base-class contract. A capability object must satisfy the relevant TypeScript interface; it does not need to inherit from a framework class.
+
+Adding a provider therefore normally requires:
+
+1. one provider definition backed by real visible-session evidence;
+2. one `BaseProvider` subclass, with protected hook overrides only for genuine differences;
+3. typed optional capability overrides only when the provider differs from the shared defaults; and
+4. one registry entry.
+
+Observation, account classification, decisions, and resolution live under `packages/cli/src/playwright/provider-session/`. The runner consumes normalized decisions; provider-owned code remains the only place for provider-specific visible-page behavior.
 
 | Provider | Guest policy | Account-name strategy | Plan strategy |
 | --- | --- | --- | --- |
@@ -66,6 +79,7 @@ Provider-specific policy lives in `packages/cli/src/playwright/providers.ts`. Ob
 | Claude | Sign-in required | Visible account control text | `Free`; paid `Pro`, `Max`, `Team`, or `Enterprise` |
 | Gemini | Supported | Google account ARIA label | Unknown until reliable visible plan evidence is available |
 | Grok | Sign-in required | Visible account control text | Derived from visible model entitlements as `Free` or `SuperGrok` |
+| Qwen | Supported | Visible account control text when signed in | Unknown until reliable visible plan evidence is available |
 
 The provider-session machine is intentionally separate from the daemon job state machine:
 
@@ -95,7 +109,7 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 
 ## Capability and Workspace strategy
 
-Visible action protocol v2 adds `capability.inspect` and `workspace.ensure`; the worker continues accepting stored v1 requests for legacy actions. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every supported provider.
+The current visible-action schema includes `capability.inspect` and `workspace.ensure`. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every supported provider.
 
 Subscription labels are diagnostic evidence, not authorization. Runtime decisions prefer an enabled visible control, then an explicit disabled, upgrade, or plan-limit state, and otherwise report `unknown`. Missing selectors never prove that a subscription lacks a capability.
 
@@ -126,4 +140,4 @@ Managed jobs transition through daemon states such as `queued`, `claimed`, `runn
 
 ## Current delivery status
 
-The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, and job APIs are implemented. Provider parity, file-upload acceptance across all four providers, and the public local API remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.
+The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, and job APIs are implemented. Provider parity, file-upload acceptance across all supported providers, and the public local API remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.

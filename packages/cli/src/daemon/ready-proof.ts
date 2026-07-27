@@ -1,7 +1,5 @@
 import { createHmac } from 'node:crypto'
 
-import { DAEMON_PROTOCOL } from '../generated/protocol-constants.js'
-
 export const READY_CHALLENGE_BYTES = 32
 export const READY_CHALLENGE_BASE64URL_CHARS = 43
 
@@ -24,7 +22,6 @@ export function daemonReadyProof(token: string, challenge: string, canonicalHome
 
 export function daemonReadyProofMessage(challenge: string, canonicalHome: string) {
   return lengthPrefixedMessage([
-    DAEMON_PROTOCOL,
     challenge,
     canonicalHome,
   ])

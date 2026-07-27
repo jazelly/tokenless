@@ -104,7 +104,7 @@ Exit: the candidate has an approved origin model, an evidence plan, and no unres
 - Follow the object model, capability composition, registry seam, TypeScript daemon negotiation, and phased migration defined in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md).
 - Replace duplicated provider allowlists with one typed provider registry consumed by config, runtime validation, profile handling, navigation, capture tooling, and tests.
 - Represent every provider as a concrete `BaseProvider` subclass.
-- Keep provider-specific selectors and behavior inside provider-owned capability implementations.
+- Keep provider-specific selectors and behavior inside provider-owned subclasses and optional capability implementations.
 - Make unsupported capabilities explicit data rather than scattered conditionals.
 - Remove provider-ID conditionals from shared runner, session, account, and action implementations.
 - Keep new provider knowledge in the TypeScript provider registry and out of removed runtime paths.

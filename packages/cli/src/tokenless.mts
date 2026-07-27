@@ -35,11 +35,12 @@ import {
   createDaemonJob,
   daemonUrl,
   deriveTaskId,
+  drainDaemonReplay,
   ensureDaemonReady,
-  ensureSetupDaemonRunnable,
   getDaemonJob,
   inspectManagedRuntime,
   listDaemonJobs,
+  markDaemonJobReported,
   normalizeBrowserId,
   normalizeBrowserVisibility,
   openProviderUrl,
@@ -57,11 +58,12 @@ import {
   waitDaemonJobResult,
   writeTokenlessConfig,
 } from './index.js'
-import { DAEMON_TASK_STATE_PROTOCOL } from './generated/protocol-constants.js'
+import { DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
 import {
   inspectTokenlessSkills,
-  installTokenlessSkills,
 } from './setup-workflow.js'
+import { reconcileTokenlessMaintenance } from './maintenance.js'
+import { DaemonRuntimeState } from './daemon/runtime-state.js'
 import { fetchTokenlessLatestVersion } from './npm-registry.js'
 import {
   SETUP_MANAGED_PROFILE_DISCLOSURE,
@@ -186,6 +188,7 @@ const COMMAND_CONTRACT_BY_KEY = new Map(COMMAND_CONTRACTS.map((contract) => [com
 const TOP_LEVEL_USAGE = [
   'tokenless <command> [options]',
   `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
+  'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless daemon stop [--json]',
   'tokenless help',
@@ -241,6 +244,8 @@ try {
     await daemonCommand(subcommand, args)
   } else if (command === 'run') {
     await runCommand(args)
+  } else if (command === 'replay') {
+    await replayCommand(args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
     await providerStatusCommand(args)
   } else if (command === 'provider-action') {
@@ -578,8 +583,8 @@ async function quiesceBrowserRuntimeForProfileMutation({
     return stoppedRunnerStatus()
   } catch (error) {
     if (shouldEnsureDaemonBeforeProfileMutationFallback(error)) {
-      await ensureDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
-      await quiesceBrowserRuntime({ homeDir, daemonUrl: configuredDaemonUrl })
+      const daemon = await ensureDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
+      await quiesceBrowserRuntime({ homeDir, daemonUrl: daemon.url })
       return stoppedRunnerStatus()
     }
     throw error
@@ -919,10 +924,8 @@ function setupCliVersionCompact(check: SetupCliVersionCheck) {
 
 function setupDaemonCompact(daemon: {
   runningVersion: string | null
-  protocolCompatible: boolean
 }) {
-  const compatibility = daemon.protocolCompatible ? 'protocol-compatible' : 'protocol-incompatible'
-  return `Daemon: ready on ${daemon.runningVersion ?? 'unknown'} (${compatibility}, current package version).`
+  return `Daemon: ready on tokenless ${daemon.runningVersion ?? 'unknown'} (exact package version required).`
 }
 
 function compareSemanticVersions(left: string, right: string) {
@@ -1052,6 +1055,35 @@ async function runCommand(args: CliArgs) {
   assertVisibleRunArguments(args)
   const prompt = await promptFromArgs(args)
   await executeDaemonJob({ args, action: args.action || 'submit_and_read', prompt })
+}
+
+async function replayCommand(args: CliArgs) {
+  const recipient = agentRecipientFromArgs(args, true)
+  const homeDir = tokenlessHome(args.home)
+  const config = await readTokenlessConfig(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const daemon = await ensureDaemonReady({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+  })
+  const replay = await drainDaemonReplay({
+    homeDir,
+    daemonUrl: daemon.url,
+    agentKind: recipient.agentKind,
+    agentSessionId: recipient.agentSessionId,
+    limit: args.limit === undefined ? undefined : strictPositiveInteger(args.limit, '--limit'),
+  })
+  printPayload({
+    ok: true,
+    transport: 'daemon',
+    agent: {
+      kind: recipient.agentKind,
+      sessionId: recipient.agentSessionId,
+    },
+    count: replay.jobs.length,
+    jobs: replay.jobs,
+  }, args)
 }
 
 async function chatGptControlsCommand(args: CliArgs) {
@@ -1427,15 +1459,16 @@ async function executeManagedPlaywrightJob({
     timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
     requiredProvider: provider,
   })
+  const actualDaemonUrl = daemon.url
   statusReporter.report({
     event: daemon.started ? 'daemon_started' : 'daemon_ready',
     status: 'ready',
-    daemonUrl: configuredDaemonUrl,
+    daemonUrl: actualDaemonUrl,
     daemonPid: daemon.pid,
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
   })
   await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
-  const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: configuredDaemonUrl })
+  const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: actualDaemonUrl })
   statusReporter.report({
     event: 'playwright_runner_ready',
     status: runner.state,
@@ -1444,9 +1477,10 @@ async function executeManagedPlaywrightJob({
     action: statusEventAction,
   })
   const job = await submitManagedPlaywrightJob({
-    daemonUrl: configuredDaemonUrl,
+    daemonUrl: actualDaemonUrl,
     homeDir,
     profileId: profile.id,
+    ...agentRecipientFromArgs(args),
     request: {
       ...request,
       taskId: taskId ?? null,
@@ -1475,11 +1509,12 @@ async function executeManagedPlaywrightJob({
       }), null)
     : await waitForJobWithInterruptCancellation({
         homeDir,
-        daemonUrl: configuredDaemonUrl,
+        daemonUrl: actualDaemonUrl,
         jobId: job.job_id,
         timeoutMs: timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
         cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
         statusReporter,
+        ...agentRecipientFromArgs(args),
       })
   return {
     profile,
@@ -1621,10 +1656,10 @@ async function managedProviderTargetUrl({
     return parsed.toString()
   }
   if ((workspaceMode === 'auto' || workspaceMode === 'conversation') && taskId) {
-    await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
+    const daemon = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
     const mapped = await mappedDaemonTarget({
       homeDir,
-      daemonUrl,
+      daemonUrl: daemon.url,
       provider,
       profileId,
       taskId,
@@ -1660,11 +1695,12 @@ async function stateCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  await ensureDaemonReady({
+  const daemon = await ensureDaemonReady({
     homeDir,
     daemonUrl: configuredDaemonUrl,
     timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
   })
+  const actualDaemonUrl = daemon.url
   const requestedTaskId = args.taskId || args.idempotencyKey || (args.jobId ? undefined : deriveTaskId({
     projectName: args.projectName || process.env.TOKENLESS_PROJECT_NAME,
     chatName: args.chatName || process.env.TOKENLESS_CHAT_NAME,
@@ -1678,13 +1714,13 @@ async function stateCommand(args: CliArgs) {
   const provider = providerValue ? normalizeProvider(providerValue) : undefined
   const registry = new ManagedProfileRegistry(homeDir)
   const daemonJobs = args.jobId
-    ? [await getDaemonJob({ daemonUrl: configuredDaemonUrl, homeDir, jobId: args.jobId })]
+    ? [await getDaemonJob({ daemonUrl: actualDaemonUrl, homeDir, jobId: args.jobId })]
     : null
   const profile = daemonJobs
     ? await resolveProfileForDaemonJob(registry, daemonJobs[0]!, args.profile)
     : await registry.resolveProfile(args.profile)
   const listedDaemonJobs = daemonJobs ?? await listDaemonJobs({
-        daemonUrl: configuredDaemonUrl,
+        daemonUrl: actualDaemonUrl,
         homeDir,
         taskId: requestedTaskId,
         provider,
@@ -1709,9 +1745,22 @@ async function stateCommand(args: CliArgs) {
     )
   }
   const latest = jobs[0]!
+  const recipient = agentRecipientFromArgs(args)
+  if (recipient.agentKind !== undefined && recipient.agentSessionId !== undefined) {
+    const displayedJobIds = new Set(jobs.map((job) => job.jobId))
+    await Promise.all(listedDaemonJobs
+      .filter((job) => displayedJobIds.has(job.job_id) && isReplayActionableStatus(job.status))
+      .map((job) => markDaemonJobReported({
+        homeDir,
+        daemonUrl: actualDaemonUrl,
+        jobId: job.job_id,
+        agentKind: recipient.agentKind!,
+        agentSessionId: recipient.agentSessionId!,
+      })))
+  }
   printPayload({
     ok: true,
-    protocol: DAEMON_TASK_STATE_PROTOCOL,
+    protocol: DAEMON_TASK_STATE_SCHEMA_ID,
     transport: 'daemon',
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
     taskId: requestedTaskId ?? latest.taskId,
@@ -1755,12 +1804,13 @@ async function resumeCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  await ensureDaemonReady({
+  const daemon = await ensureDaemonReady({
     homeDir,
     daemonUrl: configuredDaemonUrl,
     timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
   })
-  const existing = await getDaemonJob({ homeDir, daemonUrl: configuredDaemonUrl, jobId: args.jobId })
+  const actualDaemonUrl = daemon.url
+  const existing = await getDaemonJob({ homeDir, daemonUrl: actualDaemonUrl, jobId: args.jobId })
   if (existing.execution_backend !== PLAYWRIGHT_EXECUTION_BACKEND || !existing.profile_id) {
     throw usageError('invalid_resume_job', 'tokenless resume accepts only a managed Playwright job with a profile.')
   }
@@ -1768,10 +1818,10 @@ async function resumeCommand(args: CliArgs) {
   const profile = (await registry.listProfiles()).find((candidate) => candidate.id === existing.profile_id)
   if (!profile) throw usageError('resume_profile_not_found', 'The managed profile for this Tokenless job is not available.')
 
-  const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: configuredDaemonUrl })
+  const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: actualDaemonUrl })
   const resumed = await resumeDaemonJob({
     homeDir,
-    daemonUrl: configuredDaemonUrl,
+    daemonUrl: actualDaemonUrl,
     jobId: args.jobId,
     browserVisibility: 'headed',
   })
@@ -1786,11 +1836,12 @@ async function resumeCommand(args: CliArgs) {
   })
   const result = await waitForJobWithInterruptCancellation({
     homeDir,
-    daemonUrl: configuredDaemonUrl,
+    daemonUrl: actualDaemonUrl,
     jobId: resumed.job_id,
     timeoutMs: args.timeoutMs === undefined ? DEFAULT_RUN_TIMEOUT_MS : Number(args.timeoutMs),
     cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
     statusReporter,
+    ...agentRecipientFromArgs(args),
   })
   if (result?.status === 'waiting_for_user') {
     printPayload(waitingForUserPayload({
@@ -1825,16 +1876,17 @@ async function cancelCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-  await ensureDaemonReady({
+  const daemon = await ensureDaemonReady({
     homeDir,
     daemonUrl: configuredDaemonUrl,
     timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
   })
+  const actualDaemonUrl = daemon.url
   let job: Record<string, any>
   try {
     job = await cancelDaemonJob({
       homeDir,
-      daemonUrl: configuredDaemonUrl,
+      daemonUrl: actualDaemonUrl,
       jobId: args.jobId,
       reason: { code: 'user_requested' },
       requestTimeoutMs: optionalNumber(args.cancelTimeoutMs),
@@ -1844,6 +1896,16 @@ async function cancelCommand(args: CliArgs) {
   }
   if (job.status !== 'canceled') {
     throw cancelFailure(args.jobId, new Error(`daemon returned status ${String(job.status)}`))
+  }
+  const recipient = agentRecipientFromArgs(args)
+  if (recipient.agentKind !== undefined && recipient.agentSessionId !== undefined) {
+    await markDaemonJobReported({
+      homeDir,
+      daemonUrl: actualDaemonUrl,
+      jobId: job.job_id,
+      agentKind: recipient.agentKind,
+      agentSessionId: recipient.agentSessionId,
+    })
   }
   printPayload({
     ok: true,
@@ -1871,12 +1933,13 @@ async function installCommand(args: CliArgs) {
   printPayload({
     ok: true,
     runtime: 'typescript',
+    skills: provisioned.skills,
     browser: provisioned.browser.browser,
     browsers: provisioned.browsers,
     daemon: {
       ready: true,
       started: provisioned.daemon.started,
-      url: provisioned.daemonUrl,
+      url: provisioned.daemon.url,
       pid: provisioned.daemon.pid,
       executable: provisioned.installed.daemonExecutable,
     },
@@ -1904,7 +1967,14 @@ async function setupCommand(args: CliArgs) {
     const cliVersion = await presenter.withProgress('Checking npm version', setupCliVersionCheck)
     noteSetupCliVersion(cliVersion, presenter)
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
-    const skills = await ensureSetupSkills({ args, prompt, presenter })
+    const maintenance = await reconcileTokenlessMaintenance({
+      homeDir,
+      daemonUrl: configuredDaemonUrl,
+      daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+      runStep: (_phase, label, task) => presenter.withProgress(label, task),
+    })
+    const skills = maintenance.skills
+    const localRuntime = maintenance.daemon
     const installedBrowsers = await presenter.withProgress('Finding browsers', discoverSetupBrowsers)
     const browser = await selectSetupBrowser({ args, config, installedBrowsers, prompt, presenter })
     const providers = selectSetupProviders({ presenter })
@@ -1919,11 +1989,6 @@ async function setupCommand(args: CliArgs) {
         daemonUrl: configuredDaemonUrl,
       })
     })
-    const localRuntime = await presenter.withProgress('Local runtime', () => ensureSetupDaemonRunnable({
-      homeDir,
-      daemonUrl: configuredDaemonUrl,
-      timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-    }))
     const profile = await ensureSetupManagedProfile({
       args,
       homeDir,
@@ -2016,18 +2081,17 @@ async function setupCommand(args: CliArgs) {
         ready: true,
         running: true,
         status: 'running',
-        url: configuredDaemonUrl,
+        url: localRuntime.url,
         started: localRuntime.started,
         pid: localRuntime.pid,
         version: localRuntime.runningVersion,
         expectedVersion: localRuntime.expectedVersion,
         expectedMajor: localRuntime.expectedMajor,
         runningMajor: localRuntime.runningMajor,
-        protocolCompatible: localRuntime.protocolCompatible,
         versionCompatible: localRuntime.versionCompatible,
         compatibility: {
-          ok: localRuntime.protocolCompatible,
-          policy: localRuntime.compatibilityPolicy,
+          ok: localRuntime.versionCompatible,
+          policy: 'exact_package_version',
         },
       },
       compactOutput: failed
@@ -2309,53 +2373,6 @@ function createSetupPrompt() {
   }
 }
 
-async function ensureSetupSkills({
-  args,
-  prompt,
-  presenter,
-}: {
-  args: CliArgs
-  prompt: ReturnType<typeof createSetupPrompt> | null
-  presenter: SetupPresenter
-}) {
-  const skillHome = process.env.TOKENLESS_SETUP_SKILL_HOME
-  let check = await presenter.withProgress('Checking Tokenless agent skills', () => inspectTokenlessSkills(skillHome))
-  let installed = false
-  const refresh = args.refreshSkills === true || (!check.ok && args.skipSkillInstall !== true)
-  if (refresh) {
-    const approved = prompt
-      ? await prompt.confirm(
-          check.ok
-            ? 'Refresh the Tokenless agent skills from github.com/jazelly/tokenless?'
-            : 'Install the Tokenless agent skills from github.com/jazelly/tokenless?',
-          !check.ok
-        )
-      : true
-    if (!approved) {
-      throw usageError('tokenless_skill_install_required', 'Tokenless setup requires the tokenless and tokenless-install skills.')
-    }
-    const result = await presenter.withProgress(
-      'Installing and verifying Tokenless agent skills from GitHub',
-      () => installTokenlessSkills({ ...(skillHome ? { home: skillHome } : {}) }),
-    )
-    check = result.check
-    installed = true
-  }
-  if (!check.ok) {
-    throw usageError(
-      'tokenless_skill_install_required',
-      'Tokenless setup could not verify tokenless and tokenless-install from github.com/jazelly/tokenless.'
-    )
-  }
-  return {
-    ok: true,
-    source: check.source,
-    installed,
-    checked: true,
-    manifests: Object.values(check.skills).map((skill) => skill.manifest),
-  }
-}
-
 async function discoverSetupBrowsers() {
   const installed: Awaited<ReturnType<typeof resolveChromiumBrowser>>[] = []
   const candidates = process.env.TOKENLESS_BROWSER_EXECUTABLE
@@ -2549,6 +2566,12 @@ async function runSetupAuthCheck({
 async function provisionRuntime(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const maintenance = await reconcileTokenlessMaintenance({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+  })
   const requestedBrowsers = args.browsers === undefined
     ? [args.browser ?? config.browser ?? undefined]
     : parseList(args.browsers)
@@ -2557,29 +2580,24 @@ async function provisionRuntime(args: CliArgs) {
     const browser = await resolveChromiumBrowser(requested)
     if (!resolvedBrowsers.includes(browser.browser)) resolvedBrowsers.push(browser.browser)
   }
-  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   await writeTokenlessConfig({
     homeDir,
     browser: resolvedBrowsers[0],
     daemonUrl: configuredDaemonUrl,
   })
-  const daemon = await ensureDaemonReady({
-    homeDir,
-    daemonUrl: configuredDaemonUrl,
-    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
   const runtime = await inspectManagedRuntime(homeDir)
   return {
     homeDir,
     config,
+    skills: maintenance.skills,
     browsers: resolvedBrowsers,
     browser: await resolveChromiumBrowser(resolvedBrowsers[0]),
     installed: {
       runtime: 'typescript',
       daemonExecutable: runtime.daemon.path,
     },
-    daemon,
-    daemonUrl: configuredDaemonUrl,
+    daemon: maintenance.daemon,
+    daemonUrl: maintenance.daemon.url,
   }
 }
 
@@ -2622,22 +2640,36 @@ async function doctorCommand(args: CliArgs) {
   let daemon: Record<string, any>
   const daemonLogPath = path.join(homeDir, 'daemon.log')
   const daemonLogExists = await fileExists(daemonLogPath)
+  const runtimeEndpoint = await DaemonRuntimeState.readEndpointIfExists(homeDir)
+  const daemonProbeUrls = [...new Set([
+    runtimeEndpoint?.origin,
+    configuredDaemonUrl,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0))]
+  let daemonStatusUrl = configuredDaemonUrl
   try {
-    const ready = await probeDaemonReady({
-      homeDir,
-      daemonUrl: configuredDaemonUrl,
-    })
+    let ready: Awaited<ReturnType<typeof probeDaemonReady>> | null = null
+    for (const candidateUrl of daemonProbeUrls) {
+      const candidate = await probeDaemonReady({
+        homeDir,
+        daemonUrl: candidateUrl,
+      })
+      ready = candidate
+      if (candidate.ok) break
+    }
+    if (!ready) {
+      ready = await probeDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
+    }
+    daemonStatusUrl = ready.ok ? ready.url : configuredDaemonUrl
     const expectedVersion = tokenlessPackageVersion()
     const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
     const expectedMajor = semanticVersionMajor(expectedVersion)
     const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
     const versionCompatible = runningVersion === expectedVersion
-    const protocolCompatible = ready.body?.protocol === 'tokenless.daemon.v1'
     if (!ready.ok) {
       daemon = {
         ok: false,
         ready: false,
-        url: configuredDaemonUrl,
+        url: ready.url,
         daemonLogPath,
         daemonLogExists,
         code: ready.code,
@@ -2646,23 +2678,20 @@ async function doctorCommand(args: CliArgs) {
         runningVersion,
         expectedMajor,
         runningMajor,
-        protocolCompatible,
         versionCompatible,
       }
     } else {
       daemon = {
         ok: true,
         ready: true,
-        url: configuredDaemonUrl,
+        url: ready.url,
         daemonLogPath,
         daemonLogExists,
         homeDir: ready.actualHome,
-        daemonProtocol: ready.body?.protocol,
         expectedVersion,
         runningVersion,
         expectedMajor,
         runningMajor,
-        protocolCompatible,
         versionCompatible,
         pid: ready.body?.pid ?? null,
       }
@@ -2706,7 +2735,7 @@ async function doctorCommand(args: CliArgs) {
     managedProfile = { ok: false, message: error instanceof Error ? error.message : String(error) }
     providerReadiness = { ok: false, providers: {} }
   }
-  const runner = await doctorRunnerStatus({ homeDir, daemonUrl: configuredDaemonUrl, daemonReady: daemon.ready === true })
+  const runner = await doctorRunnerStatus({ homeDir, daemonUrl: daemonStatusUrl, daemonReady: daemon.ready === true })
   const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split('.').map(Number)
   const nodeOk = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13)
   const checks = {
@@ -2962,6 +2991,8 @@ async function waitForJobWithInterruptCancellation({
   timeoutMs,
   cancelTimeoutMs,
   statusReporter,
+  agentKind,
+  agentSessionId,
 }: Record<string, any>) {
   let interrupted = false
   let interruptReject: ((error: Error) => void) | undefined
@@ -3001,6 +3032,8 @@ async function waitForJobWithInterruptCancellation({
       jobId,
       timeoutMs,
       signal: waitAbort.signal,
+      agentKind,
+      agentSessionId,
       onStatus: (event) => statusReporter.report(event),
     }).then(
       (result) => interrupted ? neverSettles : result,
@@ -3064,6 +3097,7 @@ function createCommandContracts(): CommandContract[] {
     'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface', 'noWait',
+    'agentKind', 'agentSessionId',
   ] as const
   const runOptions = [
     ...visibleJobOptions, 'prompt', 'promptFile', 'projectRoot', 'context', 'contextFile',
@@ -3072,7 +3106,7 @@ function createCommandContracts(): CommandContract[] {
   const providerInspectOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs',
     'browserVisibility', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl',
-    'taskId', 'idempotencyKey', 'noWait',
+    'taskId', 'idempotencyKey', 'noWait', 'agentKind', 'agentSessionId',
   ] as const
   const providerConfigureOptions = [
     ...providerInspectOptions, 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface',
@@ -3082,6 +3116,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'help', usage: ['tokenless help'], options: [] },
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
     { command: 'run', usage: [`tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`], options: runOptions },
+    { command: 'replay', usage: ['tokenless replay --agent-kind <kind> --agent-session-id <id> [--limit <count>] --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs', 'agentKind', 'agentSessionId', 'limit'] },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-controls', usage: ['tokenless provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -3092,11 +3127,11 @@ function createCommandContracts(): CommandContract[] {
     { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
     { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
-    { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit'] },
-    { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit'] },
-    { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs'] },
-    { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs'] },
-    { command: 'setup', usage: ['tokenless setup [--profile <slug>] (--defaults|--fresh|--import-browser-profile <key>) --json'], options: ['home', 'json', 'quiet', 'profile', 'browser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'refreshSkills', 'skipSkillInstall', 'setupDefaults', 'consentLocalProfileCopy'] },
+    { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
+    { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
+    { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
+    { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
+    { command: 'setup', usage: ['tokenless setup [--profile <slug>] (--defaults|--fresh|--import-browser-profile <key>) --json'], options: ['home', 'json', 'quiet', 'profile', 'browser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] --json'], options: ['home', 'json', 'browser', 'browsers', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
@@ -3163,6 +3198,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--conversation-key': 'idempotencyKey',
     '--task-id': 'taskId',
     '--job-id': 'jobId',
+    '--agent-kind': 'agentKind',
+    '--agent-session-id': 'agentSessionId',
     '--limit': 'limit',
     '--browser': 'browser',
     '--browser-visibility': 'browserVisibility',
@@ -3199,8 +3236,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '-f': 'freshProfile',
     '--clean-profile': 'freshProfile',
     '--reimport-profile': 'reimportProfile',
-    '--refresh-skills': 'refreshSkills',
-    '--skip-skill-install': 'skipSkillInstall',
     '--defaults': 'setupDefaults',
     '--all': 'allProfiles',
   }
@@ -3277,6 +3312,54 @@ function requiredBrowserVisibility(value: unknown) {
     throw usageError('invalid_browser_visibility', '--browser-visibility must be auto, headed, or headless.')
   }
   return visibility
+}
+
+function agentRecipientFromArgs(
+  args: CliArgs,
+  required: true
+): { agentKind: string; agentSessionId: string }
+function agentRecipientFromArgs(
+  args: CliArgs,
+  required?: false
+): { agentKind?: string; agentSessionId?: string }
+function agentRecipientFromArgs(
+  args: CliArgs,
+  required = false
+): { agentKind?: string; agentSessionId?: string } {
+  const rawKind = args.agentKind ?? process.env.TOKENLESS_AGENT_KIND
+  const rawSessionId = args.agentSessionId ?? process.env.TOKENLESS_AGENT_SESSION_ID
+  if (rawKind === undefined && rawSessionId === undefined) {
+    if (required) {
+      throw usageError(
+        'missing_agent_recipient',
+        'Agent replay requires --agent-kind and --agent-session-id, or TOKENLESS_AGENT_KIND and TOKENLESS_AGENT_SESSION_ID.'
+      )
+    }
+    return {}
+  }
+  if (rawKind === undefined || rawSessionId === undefined) {
+    throw usageError(
+      'incomplete_agent_recipient',
+      '--agent-kind and --agent-session-id must be provided together.'
+    )
+  }
+  const agentKind = String(rawKind).trim()
+  const agentSessionId = String(rawSessionId).trim()
+  if (!agentKind || Array.from(agentKind).length > 128) {
+    throw usageError('invalid_agent_kind', '--agent-kind must be a non-empty string of at most 128 characters.')
+  }
+  if (!agentSessionId || Array.from(agentSessionId).length > 256) {
+    throw usageError('invalid_agent_session_id', '--agent-session-id must be a non-empty string of at most 256 characters.')
+  }
+  return { agentKind, agentSessionId }
+}
+
+function isReplayActionableStatus(status: string) {
+  return status === 'waiting_for_user' ||
+    status === 'succeeded' ||
+    status === 'failed' ||
+    status === 'canceled' ||
+    status === 'timed_out'
 }
 
 function normalizeProvider(provider: unknown): ProviderId {
@@ -3742,7 +3825,7 @@ function usage() {
       description: 'Automate setup, profile import, or profile re-import.',
       commands: [
         'tokenless setup --profile <slug> --browser <browser> (--fresh|-f|--import-browser-profile <key> --consent-local-profile-copy) --json',
-        'tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy [--refresh-skills]',
+        'tokenless setup --profile <slug> --reimport-profile --import-browser-profile <key> --consent-local-profile-copy',
       ],
     },
     {
@@ -3921,12 +4004,10 @@ function optionUsageLabel(option: string) {
     promptFile: '--prompt-file <path>',
     provider: '-p, --provider <provider>',
     quiet: '--quiet',
-    refreshSkills: '--refresh-skills',
     reimportProfile: '--reimport-profile',
     runnerHeartbeatTimeoutMs: '--runner-heartbeat-timeout-ms <ms>',
     setDefault: '--set-default',
     setupDefaults: '--defaults',
-    skipSkillInstall: '--skip-skill-install',
     targetUrl: '--target-url <url>',
     taskId: '--task-id <task-id>',
     thinkingEffort: '--thinking-effort <label>',

@@ -1,6 +1,5 @@
 import { BaseProvider } from './base-provider.js'
 import {
-  createBaseProviderCapabilities,
   defineDescriptor,
   defineProvider,
   providerCapabilities,
@@ -15,6 +14,9 @@ export class GrokProvider extends BaseProvider<'grok'> {
       label: 'Grok',
       stage: 'supported',
       setupOrder: 3,
+      protocolCompatibility: Object.freeze({
+        legacyRequests: true,
+      }),
       navigation: Object.freeze({
         homeUrl: 'https://grok.com/',
         origins: Object.freeze(['https://grok.com']),
@@ -87,6 +89,6 @@ export class GrokProvider extends BaseProvider<'grok'> {
       choiceAvailability: new GrokChoiceAvailability(),
       capabilities: providerCapabilities(),
     })
-    super(provider, createBaseProviderCapabilities(provider))
+    super(provider)
   }
 }

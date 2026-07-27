@@ -6,7 +6,6 @@ import path from 'node:path'
 
 import { tokenlessHome } from './job-store.js'
 import { tokenlessPackageVersion } from './platform-package.js'
-import { installTokenlessSkills } from './setup-workflow.js'
 
 type UpgradeArgs = Record<string, any> & { files?: string[]; attachFiles?: string[] }
 
@@ -37,7 +36,6 @@ type UpgradeDependencies = {
       maxOutputBytes?: number
     }
   ) => Promise<UpgradeProcessResult>
-  installSkills: () => Promise<unknown>
   onProgress?: (event: UpgradeProgressEvent) => void
   lockDir?: string
 }
@@ -82,9 +80,6 @@ export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partia
   const homeDir = tokenlessHome(args.home)
   const deps: UpgradeDependencies = {
     runProcess: runBoundedProcess,
-    installSkills: () => installTokenlessSkills({
-      ...(process.env.TOKENLESS_SETUP_SKILL_HOME ? { home: process.env.TOKENLESS_SETUP_SKILL_HOME } : {}),
-    }),
     ...dependencies,
   }
   await fs.mkdir(homeDir, { recursive: true })
@@ -116,10 +111,6 @@ export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partia
     result.cli.afterVersion = resolved.version
 
     emitUpgradeProgress(deps, 'skills', 'started')
-    const skills = await runSkillsRefresh(deps)
-    result.phases.skills = skills
-    emitUpgradeProgress(deps, 'skills', skills.ok ? 'succeeded' : 'failed', skills)
-
     emitUpgradeProgress(deps, 'runtimeInstall', 'started')
     const runtimeInstall = await runNewCliJsonPhase({
       deps,
@@ -128,7 +119,10 @@ export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partia
       args,
       timeoutMs: NEW_CLI_INSTALL_TIMEOUT_MS,
     })
+    const skills = skillPhaseFromMaintenance(runtimeInstall)
+    result.phases.skills = skills
     result.phases.runtimeInstall = runtimeInstall
+    emitUpgradeProgress(deps, 'skills', skills.ok ? 'succeeded' : 'failed', skills)
     emitUpgradeProgress(deps, 'runtimeInstall', runtimeInstall.ok ? 'succeeded' : 'failed', runtimeInstall)
 
     emitUpgradeProgress(deps, 'doctor', 'started')
@@ -501,22 +495,6 @@ async function resolveVerifiedGlobalTokenless(deps: UpgradeDependencies): Promis
   }
 }
 
-async function runSkillsRefresh(deps: UpgradeDependencies): Promise<PhaseResult> {
-  try {
-    const result = await deps.installSkills()
-    return {
-      ok: true,
-      result,
-    }
-  } catch (error) {
-    return failedPhase(
-      String((error as any)?.code ?? 'tokenless_skill_refresh_failed'),
-      (error as Error).message || 'Tokenless skill refresh failed.',
-      true,
-    )
-  }
-}
-
 async function runNewCliJsonPhase({
   deps,
   entrypoint,
@@ -575,6 +553,28 @@ async function runNewCliJsonPhase({
     args: reportedArgs,
     exitCode: processResult.exitCode,
     payload: sanitizeReportedValue(parsed.value),
+  }
+}
+
+function skillPhaseFromMaintenance(maintenance: PhaseResult): PhaseResult {
+  if (!maintenance.ok) {
+    return failedPhase(
+      'tokenless_skill_upsert_unconfirmed',
+      'The verified new CLI maintenance command failed before global Tokenless skills could be confirmed.',
+      true,
+    )
+  }
+  const skills = maintenance.payload?.skills
+  if (!skills || skills.ok !== true || skills.upserted !== true) {
+    return failedPhase(
+      'tokenless_skill_upsert_unconfirmed',
+      'The verified new CLI maintenance result did not confirm global Tokenless skill upsert.',
+      true,
+    )
+  }
+  return {
+    ok: true,
+    result: sanitizeReportedValue(skills),
   }
 }
 

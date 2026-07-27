@@ -4,64 +4,48 @@ import { inspectProviderBlockers, resolveProviderSession } from '../../playwrigh
 import { firstVisibleLocator } from '../dom-locators.js'
 import { VISIBLE_ACTIONS } from '../contracts.js'
 import type { Page } from 'playwright-core'
-import type { ProviderActionCapability, ProviderCapability } from '../capability-set.js'
-import type { VisibleActionRequest } from '../contracts.js'
+import type { ProviderCapability } from '../capability-set.js'
 import type { AuthStatusResult, BlockerCheckResult, ProviderCapabilityInspection } from '../../playwright/actions.js'
 import type { ProviderDomDefinition } from '../provider-definition.js'
 import type { ProviderSessionResolution } from '../../playwright/provider-session/types.js'
-import type { ProviderExecutionContext } from '../execution-context.js'
 
-export class ProviderSessionCapability implements ProviderActionCapability<typeof VISIBLE_ACTIONS.BLOCKER_CHECK> {
-  readonly capability = PROVIDER_CAPABILITIES.CAPABILITY_INSPECT
-  readonly actions = Object.freeze([VISIBLE_ACTIONS.BLOCKER_CHECK])
-  protected readonly provider: ProviderDomDefinition
-
-  constructor(provider: ProviderDomDefinition) {
-    this.provider = provider
-    Object.freeze(this)
-  }
-
-  resolve(
-    page: Page,
-    {
-      waitForReadyMs = 0,
-      signal,
+export function resolveDomProviderSession(
+  provider: ProviderDomDefinition,
+  page: Page,
+  {
+    waitForReadyMs = 0,
+    signal,
   }: {
-      waitForReadyMs?: number
-      signal?: AbortSignal
-    } = {},
-  ): Promise<ProviderSessionResolution> {
-    return resolveProviderSession(page, this.provider, {
-      waitForReadyMs,
-      ...(signal === undefined ? {} : { signal }),
-    })
-  }
+    waitForReadyMs?: number
+    signal?: AbortSignal
+  } = {},
+): Promise<ProviderSessionResolution> {
+  return resolveProviderSession(page, provider, {
+    waitForReadyMs,
+    ...(signal === undefined ? {} : { signal }),
+  })
+}
 
-  inspectAccount(page: Page, signal: AbortSignal | undefined): Promise<AuthStatusResult> {
-    return inspectProviderAccountSession(page, this.provider, signal)
-  }
+export function inspectDomProviderAccount(
+  provider: ProviderDomDefinition,
+  page: Page,
+  signal: AbortSignal | undefined,
+): Promise<AuthStatusResult> {
+  return inspectProviderAccountSession(page, provider, signal)
+}
 
-  inspectBlockers(page: Page) {
-    return inspectProviderBlockers(page, this.provider)
-  }
+export function inspectDomProviderBlockers(provider: ProviderDomDefinition, page: Page): Promise<BlockerCheckResult> {
+  return inspectProviderBlockers(page, provider)
+}
 
-  async execute(
-    page: Page,
-    _request: Extract<VisibleActionRequest, { action: typeof VISIBLE_ACTIONS.BLOCKER_CHECK }>,
-    _context: ProviderExecutionContext,
-  ): Promise<BlockerCheckResult> {
-    return await this.inspectBlockers(page)
-  }
+export async function hasVisibleDomComposer(provider: ProviderDomDefinition, page: Page) {
+  return await firstVisibleLocator(page, provider.composerSelectors, 100) !== null
+}
 
-  async inspect(_page: Page): Promise<ProviderCapabilityInspection> {
-    return {
-      ...this.provider.capabilities[PROVIDER_CAPABILITIES.CAPABILITY_INSPECT],
-      actions: [VISIBLE_ACTIONS.CAPABILITY_INSPECT, VISIBLE_ACTIONS.BLOCKER_CHECK],
-    }
-  }
-
-  async hasVisibleComposer(page: Page) {
-    return await firstVisibleLocator(page, this.provider.composerSelectors, 100) !== null
+export async function inspectProviderWorkflowCapability(provider: ProviderDomDefinition): Promise<ProviderCapabilityInspection> {
+  return {
+    ...provider.capabilities[PROVIDER_CAPABILITIES.CAPABILITY_INSPECT],
+    actions: [VISIBLE_ACTIONS.CAPABILITY_INSPECT, VISIBLE_ACTIONS.BLOCKER_CHECK],
   }
 }
 
@@ -71,7 +55,6 @@ export class ConversationContinueCapability implements ProviderCapability {
 
   constructor(provider: ProviderDomDefinition) {
     this.provider = provider
-    Object.freeze(this)
   }
 
   async inspect(page: Page): Promise<ProviderCapabilityInspection> {

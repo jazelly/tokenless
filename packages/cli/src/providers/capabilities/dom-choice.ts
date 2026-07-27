@@ -1,31 +1,43 @@
 import { firstVisibleLocator } from '../dom-locators.js'
+import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import type { Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
 import type { VisibleAction, VisibleActionRequest } from '../contracts.js'
 import type { ProviderExecutionContext } from '../execution-context.js'
-import type { ProviderCapabilityId } from '../provider-identity.js'
 import type { ProviderDomDefinition } from '../provider-definition.js'
 import type { Choice, ChoiceInspectResult, ChoiceSelectResult, ProviderCapabilityInspection } from '../../playwright/actions.js'
 
 type ChoiceKind = 'model' | 'effort'
 type DomChoiceAction = Extract<VisibleAction, 'model.inspect' | 'model.select' | 'effort.inspect' | 'effort.select'>
 
-export class DomChoiceCapability implements ProviderActionCapability<DomChoiceAction> {
-  readonly capability: ProviderCapabilityId
-  readonly actions: readonly DomChoiceAction[]
+type DomChoiceOptions =
+  | Readonly<{
+    capability: typeof PROVIDER_CAPABILITIES.MODEL_CHOICE
+    kind: 'model'
+    inspectAction: 'model.inspect'
+    selectAction: 'model.select'
+  }>
+  | Readonly<{
+    capability: typeof PROVIDER_CAPABILITIES.EFFORT_CHOICE
+    kind: 'effort'
+    inspectAction: 'effort.inspect'
+    selectAction: 'effort.select'
+  }>
+
+type ActionsFor<Options extends DomChoiceOptions> = Options['inspectAction'] | Options['selectAction']
+
+export class DomChoiceCapability<Options extends DomChoiceOptions = DomChoiceOptions>
+  implements ProviderActionCapability<ActionsFor<Options>> {
+  readonly capability: Options['capability']
+  readonly actions: readonly ActionsFor<Options>[]
   private readonly provider: ProviderDomDefinition
   private readonly kind: ChoiceKind
-  private readonly inspectAction: DomChoiceAction
-  private readonly selectAction: DomChoiceAction
+  private readonly inspectAction: Options['inspectAction']
+  private readonly selectAction: Options['selectAction']
 
   constructor(
     provider: ProviderDomDefinition,
-    options: {
-      readonly capability: ProviderCapabilityId
-      readonly kind: ChoiceKind
-      readonly inspectAction: DomChoiceAction
-      readonly selectAction: DomChoiceAction
-    },
+    options: Options,
   ) {
     this.provider = provider
     this.capability = options.capability
@@ -33,7 +45,6 @@ export class DomChoiceCapability implements ProviderActionCapability<DomChoiceAc
     this.inspectAction = options.inspectAction
     this.selectAction = options.selectAction
     this.actions = Object.freeze([options.inspectAction, options.selectAction])
-    Object.freeze(this)
   }
 
   async execute(
@@ -43,6 +54,9 @@ export class DomChoiceCapability implements ProviderActionCapability<DomChoiceAc
   ): Promise<ChoiceInspectResult | ChoiceSelectResult> {
     if (request.action === this.inspectAction) return await inspectChoices(page, this.provider, this.kind)
     if (request.action === this.selectAction) {
+      if (!('label' in request.payload) || typeof request.payload.label !== 'string') {
+        throw new Error('Validated choice request unexpectedly lacked a label.')
+      }
       return await selectChoice(page, this.provider, this.kind, request.payload.label)
     }
     throw new Error(`Provider choice capability ${this.capability} received unsupported action: ${request.action}`)

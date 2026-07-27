@@ -55,7 +55,6 @@ export class UnsupportedImageGenerationCapability implements ImageGenerationCapa
 
   constructor(provider: ProviderDomDefinition) {
     this.provider = provider
-    Object.freeze(this)
   }
 
   async inspect(_page: Page, _context?: ProviderExecutionContext): Promise<ProviderCapabilityInspection & ImageGenerationInspection> {

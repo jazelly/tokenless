@@ -1,13 +1,13 @@
 import {
-  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
-  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
-} from '../generated/protocol-constants.js'
+  VISIBLE_ACTION_SCHEMA_ID_V3,
+  VISIBLE_ATTACHMENT_SCHEMA_ID,
+} from '../schema-ids.js'
 import type { ProviderId } from './provider-identity.js'
 
-export type VisibleActionProtocolVersion = typeof VISIBLE_ACTION_PROTOCOL_VERSION_V3
+export type VisibleActionProtocolVersion = typeof VISIBLE_ACTION_SCHEMA_ID_V3
 
 export function isVisibleActionProtocolVersion(value: unknown): value is VisibleActionProtocolVersion {
-  return value === VISIBLE_ACTION_PROTOCOL_VERSION_V3
+  return value === VISIBLE_ACTION_SCHEMA_ID_V3
 }
 
 export const VISIBLE_ACTIONS = Object.freeze({
@@ -50,7 +50,7 @@ export type ProviderActionObservation = Readonly<{
 }>
 
 export type AttachmentInput = {
-  protocol: typeof VISIBLE_ATTACHMENT_PROTOCOL_VERSION
+  protocol: typeof VISIBLE_ATTACHMENT_SCHEMA_ID
   bundleId: string
   attachmentId: string
   name: string

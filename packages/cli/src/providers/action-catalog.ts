@@ -1,4 +1,4 @@
-import { VISIBLE_ATTACHMENT_PROTOCOL_VERSION } from '../generated/protocol-constants.js'
+import { VISIBLE_ATTACHMENT_SCHEMA_ID } from '../schema-ids.js'
 import { tokenlessError } from '../playwright/errors.js'
 import { PROVIDER_CAPABILITIES } from './provider-identity.js'
 import { VISIBLE_ACTIONS } from './contracts.js'
@@ -196,7 +196,7 @@ export function validateVisibleActionPayload<Action extends VisibleAction>(
 export function validateAttachmentInput(input: unknown): AttachmentInput {
   if (!isPlainRecord(input)) throw tokenlessError('invalid_visible_attachment', 'Attachment descriptor must be an object.')
   requireExactKeys(input, ['protocol', 'bundleId', 'attachmentId', 'name', 'type', 'size', 'sha256'], 'invalid_visible_attachment')
-  if (input.protocol !== VISIBLE_ATTACHMENT_PROTOCOL_VERSION) {
+  if (input.protocol !== VISIBLE_ATTACHMENT_SCHEMA_ID) {
     throw tokenlessError('invalid_visible_attachment', 'Attachment protocol is invalid.')
   }
   if (typeof input.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.bundleId)) {

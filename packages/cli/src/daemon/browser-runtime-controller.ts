@@ -4,7 +4,6 @@ import { createInProcessDaemonClient } from './in-process-daemon-client.js'
 import {
   ManagedPlaywrightRunnerService,
 } from '../playwright/runner-service.js'
-import { DAEMON_PROTOCOL } from '../generated/protocol-constants.js'
 import { isClaimRecoveryError } from '../playwright/errors.js'
 import { readTokenlessConfig } from '../job-store.js'
 import { resolveChromiumBrowser } from '../runtime.js'
@@ -14,7 +13,6 @@ import type { ManagedBrowserLaunchTarget } from '../playwright/browser/context-m
 export type BrowserRuntimeState = 'running' | 'quiescing' | 'quiesced' | 'stopped'
 
 export type BrowserRuntimeStatus = {
-  protocol: typeof DAEMON_PROTOCOL
   status: BrowserRuntimeState
   activeProfileCount: number
   activeJobCount: number
@@ -50,7 +48,6 @@ export class BrowserRuntimeController {
   status(): BrowserRuntimeStatus {
     const runner = this.runner
     return {
-      protocol: DAEMON_PROTOCOL,
       status: this.state,
       activeProfileCount: runner?.service.activeProfileCount() ?? 0,
       activeJobCount: runner?.service.activeJobCount() ?? 0,

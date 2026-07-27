@@ -5,7 +5,7 @@ description: Route shareable Q&A, analysis, review, research, writing, and file-
 
 # Tokenless agent workflow
 
-Use `tokenless` as the entrypoint. Do not reproduce provider-specific Playwright or DOM work yourself.
+Require the globally installed `tokenless` command on `PATH` and use it as the entrypoint. Never invoke Tokenless through `npx tokenless` or `npx tokenless@latest`. Do not reproduce provider-specific Playwright or DOM work yourself.
 
 Tokenless sends visible jobs through its authenticated local TypeScript daemon and Playwright worker into a user-configured persistent managed Chromium profile. Keep provider authentication opaque inside that profile, operate only visible page controls, and use only documented Tokenless CLI or local API surfaces.
 

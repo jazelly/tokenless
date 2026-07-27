@@ -1,12 +1,11 @@
 {
-  "openapi": "protocol/openapi/tokenless.daemon.v1.openapi.json",
+  "openapi": "api/tokenless-daemon-api.openapi.json",
   "cases": [
     {
       "name": "ready",
       "schema": "#/components/schemas/ReadyResponse",
       "valid": true,
       "data": {
-        "protocol": "tokenless.daemon.v1",
         "version": "0.3.0",
         "ready": true,
         "home_dir": "/tmp/tokenless",
@@ -19,7 +18,6 @@
       "schema": "#/components/schemas/BrowserRuntimeStatus",
       "valid": true,
       "data": {
-        "protocol": "tokenless.daemon.v1",
         "status": "running",
         "activeProfileCount": 1,
         "activeJobCount": 2,
@@ -38,7 +36,7 @@
         "action": "visible_provider_actions",
         "status": "queued",
         "request_json": {
-          "protocol": "tokenless.playwright.job.v3"
+          "taskId": "task-1"
         },
         "result_json": null,
         "error_json": null,

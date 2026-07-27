@@ -110,7 +110,7 @@ tokenless -V
 
 ### `tokenless install`
 
-验证打包的 TypeScript daemon runtime，解析所选 Chromium browser，保存 runtime 配置，并确保本地 daemon 已就绪。
+Upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，解析所选 Chromium browser，保存 runtime 配置，并确保本地 daemon 与已安装 CLI 版本一致。
 
 ```bash
 tokenless install --browser chrome --json
@@ -127,7 +127,7 @@ tokenless install --browsers chrome,brave --json
 
 ### `tokenless setup`
 
-执行完整 onboarding：验证 agent skills 与已安装 CLI 版本、选择浏览器、保存 provider preferences、确保 daemon 就绪、创建或选择 managed profile，并对所有支持的 provider 各执行一次实时登录检查。
+执行完整 onboarding：无条件 upsert 全局 Tokenless agent skills，通过共享 maintenance 模块将 daemon 对齐已安装 CLI 版本、选择浏览器、保存 provider preferences、创建或选择 managed profile，并对所有支持的 provider 各执行一次实时登录检查。
 
 交互式 setup：
 
@@ -164,9 +164,6 @@ tokenless setup \
 - `--reimport-profile` 从指定来源替换已存在的 imported managed profile。
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
-- `--refresh-skills` 重新安装 Tokenless agent skills。
-- `--skip-skill-install` 跳过 skill 安装。
-
 `setup` 会检查所有支持的 providers，因此不接受 `--provider` 或 `--preferred-providers`。`--fresh` 不能与 profile import 或 re-import 同时使用。
 
 ### `tokenless doctor`
@@ -209,7 +206,7 @@ tokenless config \
 
 ### `tokenless upgrade`
 
-执行受支持的 upgrade pipeline：更新全局 npm CLI、解析并验证已安装 CLI、刷新 agent skills、检查本地 TypeScript daemon runtime，并运行 doctor。
+执行受支持的 upgrade pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来 upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。
 
 ```bash
 tokenless upgrade

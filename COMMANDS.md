@@ -110,7 +110,7 @@ tokenless -V
 
 ### `tokenless install`
 
-Verifies the packaged TypeScript daemon runtime, resolves the selected Chromium browser, saves the runtime configuration, and ensures that the local daemon is ready.
+Upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, resolves the selected Chromium browser, saves the runtime configuration, and ensures that the local daemon matches the installed CLI version.
 
 ```bash
 tokenless install --browser chrome --json
@@ -127,7 +127,7 @@ This command does not configure a managed profile or check provider sign-in. Run
 
 ### `tokenless setup`
 
-Runs the complete onboarding flow: verifies agent skills and the installed CLI version, chooses a browser, saves provider preferences, ensures the daemon is ready, creates or selects a managed profile, and performs one live sign-in check for every supported provider.
+Runs the complete onboarding flow: unconditionally upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version through the shared maintenance module, chooses a browser, saves provider preferences, creates or selects a managed profile, and performs one live sign-in check for every supported provider.
 
 Interactive setup:
 
@@ -164,9 +164,6 @@ Main options:
 - `--reimport-profile` replaces an existing imported managed profile from a selected source.
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
-- `--refresh-skills` reinstalls the Tokenless agent skills.
-- `--skip-skill-install` skips skill installation.
-
 `setup` checks all supported providers; it does not accept `--provider` or `--preferred-providers`. `--fresh` cannot be combined with profile import or re-import.
 
 ### `tokenless doctor`
@@ -209,7 +206,7 @@ Configurable values:
 
 ### `tokenless upgrade`
 
-Runs the supported upgrade pipeline: update the global npm CLI, resolve and verify the installed CLI, refresh agent skills, update the local runtime, and run doctor.
+Runs the supported upgrade pipeline: update the global npm CLI, resolve and verify the installed CLI, invoke that new CLI's shared maintenance module to upsert global agent skills and reconcile the matching daemon, then run doctor.
 
 ```bash
 tokenless upgrade

@@ -5,9 +5,9 @@ description: Route shareable Q&A, analysis, review, research, writing, and file-
 
 # Tokenless agent workflow
 
-Use `tokenless` as the entrypoint. Do not reproduce provider-specific Playwright or DOM work yourself.
+Require the globally installed `tokenless` command on `PATH` and use it as the entrypoint. Never invoke Tokenless through `npx tokenless` or `npx tokenless@latest`. Do not reproduce provider-specific Playwright or DOM work yourself.
 
-Tokenless sends visible jobs through its authenticated local Rust daemon and Playwright worker into a user-configured persistent managed Chromium profile. Keep provider authentication opaque inside that profile, operate only visible page controls, and use only documented Tokenless CLI or local API surfaces.
+Tokenless sends visible jobs through its authenticated local TypeScript daemon and Playwright worker into a user-configured persistent managed Chromium profile. Keep provider authentication opaque inside that profile, operate only visible page controls, and use only documented Tokenless CLI or local API surfaces.
 
 Do not initiate installation, onboarding, profile creation, or profile import before provider work. Use `tokenless-install` only when the user explicitly asks for installation, upgrade, repair, or integrity verification.
 
@@ -79,7 +79,7 @@ Use `profiles open` only for headed browser handoff. It always opens a visible b
 tokenless state --task-id "<returned taskId>" --json
 ```
 
-Use `latest.status`, `latest.state`, `latest.result`, `latest.error`, and `jobs` as the source of truth. State comes from the authenticated Rust daemon, not a local task-page or JSON fallback.
+Use `latest.status`, `latest.state`, `latest.result`, `latest.error`, and `jobs` as the source of truth. State comes from the authenticated local TypeScript daemon, not a local task-page or JSON fallback.
 
 Cancel only through daemon-confirmed cancellation:
 

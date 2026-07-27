@@ -1,7 +1,6 @@
 import { BaseProvider } from './base-provider.js'
 import {
   DEFAULT_CHOICE_AVAILABILITY,
-  createBaseProviderCapabilities,
   defineDescriptor,
   defineProvider,
   providerCapabilities,
@@ -15,6 +14,9 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       label: 'Gemini',
       stage: 'supported',
       setupOrder: 2,
+      protocolCompatibility: Object.freeze({
+        legacyRequests: true,
+      }),
       navigation: Object.freeze({
         homeUrl: 'https://gemini.google.com/app',
         origins: Object.freeze(['https://gemini.google.com']),
@@ -96,6 +98,6 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
       capabilities: providerCapabilities(),
     })
-    super(provider, createBaseProviderCapabilities(provider))
+    super(provider)
   }
 }

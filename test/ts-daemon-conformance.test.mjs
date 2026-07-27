@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -83,7 +84,156 @@ test('TS daemon rejects unsupported Playwright providers', {
   }
 })
 
-test('built Playwright validators enforce the current registry-backed protocol', {
+test('agent replay drains each durable job once, survives restart, and keeps full job state queryable', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-agent-replay-')
+  let daemon = await startTsDaemon(homeDir)
+  const agentA = { agent_kind: 'codex', agent_session_id: `session-a-${randomUUID()}` }
+  const agentB = { agent_kind: 'codex', agent_session_id: `session-b-${randomUUID()}` }
+  const jobA = randomUUID()
+  const jobB = randomUUID()
+  const unaddressedJob = randomUUID()
+  try {
+    const token = readControlToken(homeDir)
+    await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    for (const [jobId, recipient] of [
+      [jobA, agentA],
+      [jobB, agentB],
+      [unaddressedJob, null],
+    ]) {
+      await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+        provider: 'chatgpt',
+        action: managedPlaywrightJobAction,
+        execution_backend: 'playwright',
+        profile_id: randomUUID(),
+        job_id: jobId,
+        ...(recipient ?? {}),
+        request_json: {
+          malformed: true,
+          taskId: `task-${jobId}`,
+        },
+      })
+      await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(jobId)}/cancel`, {
+        reason: { code: 'replay_test', detail: 'x'.repeat(2_000) },
+      })
+    }
+
+    const isolated = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', {
+      agent_kind: agentA.agent_kind,
+      agent_session_id: agentB.agent_session_id,
+    })
+    assert.deepEqual(isolated.jobs, [])
+
+    const cliReplay = runCli([
+      'replay',
+      '--home',
+      homeDir,
+      '--agent-kind',
+      agentA.agent_kind,
+      '--agent-session-id',
+      agentA.agent_session_id,
+      '--json',
+    ])
+    assert.equal(cliReplay.status, 0, cliReplay.stderr || cliReplay.stdout)
+    const cliPayload = JSON.parse(cliReplay.stdout)
+    assert.equal(cliPayload.ok, true)
+    assert.equal(cliPayload.count, 1)
+    assert.equal(cliPayload.jobs[0].job_id, jobA)
+    assert.equal(cliPayload.jobs[0].status, 'canceled')
+    assert.equal(cliPayload.jobs[0].task_id, `task-${jobA}`)
+    assert.equal(cliPayload.jobs[0].preview.kind, 'error')
+    assert.equal(cliPayload.jobs[0].preview.text.length <= 512, true)
+    assert.equal(Object.hasOwn(cliPayload.jobs[0], 'request_json'), false)
+
+    const emptySecondDrain = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentA)
+    assert.deepEqual(emptySecondDrain.jobs, [])
+
+    await shutdownDaemon(daemon)
+    daemon = await startTsDaemon(homeDir)
+    const restartedToken = readControlToken(homeDir)
+    const emptyAfterRestart = await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', agentA)
+    assert.deepEqual(emptyAfterRestart.jobs, [])
+
+    const fullJob = await daemonRequest(
+      daemon.url,
+      restartedToken,
+      'GET',
+      `/jobs/${encodeURIComponent(jobA)}`
+    )
+    assert.equal(fullJob.job_id, jobA)
+    assert.equal(fullJob.status, 'canceled')
+    assert.equal(fullJob.error_json.reason.detail.length, 2_000)
+
+    const otherAgent = await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', agentB)
+    assert.deepEqual(otherAgent.jobs.map((job) => job.job_id), [jobB])
+    assert.equal(otherAgent.jobs.some((job) => job.job_id === unaddressedJob), false)
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('daemon startup reconciles an expired running lease before becoming ready', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-startup-recovery-')
+  let daemon = await startTsDaemon(homeDir)
+  const jobId = randomUUID()
+  try {
+    const token = readControlToken(homeDir)
+    await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: randomUUID(),
+      job_id: jobId,
+      request_json: { malformed: true },
+    })
+    await shutdownDaemon(daemon)
+
+    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+    try {
+      database.prepare(
+        `UPDATE jobs
+         SET status = 'running', claim_token = ?, claim_expires_at = ?, updated_at = ?
+         WHERE job_id = ?`
+      ).run(`stale-${randomUUID()}`, 1, new Date(0).toISOString(), jobId)
+    } finally {
+      database.close()
+    }
+
+    daemon = await startTsDaemon(homeDir)
+    const restartedToken = readControlToken(homeDir)
+    const recovered = await daemonRequest(
+      daemon.url,
+      restartedToken,
+      'GET',
+      `/jobs/${encodeURIComponent(jobId)}`
+    )
+    assert.equal(recovered.status, 'queued')
+    const recoveredDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+    try {
+      const row = recoveredDatabase.prepare(
+        'SELECT status, claim_expires_at FROM jobs WHERE job_id = ?'
+      ).get(jobId)
+      assert.equal(row.status, 'queued')
+      assert.equal(row.claim_expires_at, null)
+    } finally {
+      recoveredDatabase.close()
+    }
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('built Playwright validators enforce the current internal schema IDs', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -102,23 +252,23 @@ test('built Playwright validators enforce the current registry-backed protocol',
       },
     ],
   })
-  assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION)
-  assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3)
+  assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID)
+  assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3)
   assert.equal(created.provider, 'qwen')
   assert.equal(created.target.url, 'https://www.qianwen.com/')
   assert.equal(created.actions[0].provider, 'qwen')
-  assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_PROTOCOL_VERSION)
-  assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V3)
+  assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID)
+  assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID_V3)
 
   const v3Validated = playwright.validateManagedPlaywrightJobRequest({
-    protocol: runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
+    protocol: runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
     provider: 'qwen',
     target: { kind: 'provider_home', url: 'https://www.qianwen.com/' },
     taskId: 'v3-explicit-qwen-provider',
     browserVisibility: 'headless',
     actions: [
       {
-        protocol: runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V3,
+        protocol: runtime.VISIBLE_ACTION_SCHEMA_ID_V3,
         requestId: 'v3-explicit-action',
         provider: 'qwen',
         action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
@@ -131,14 +281,14 @@ test('built Playwright validators enforce the current registry-backed protocol',
 
   assert.throws(
     () => playwright.validateManagedPlaywrightJobRequest({
-      protocol: runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
+      protocol: runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
       provider: 'future-ai',
       target: { kind: 'provider_home', url: 'https://future.example/' },
       taskId: 'registry-rejects-unknown-provider',
       browserVisibility: 'headless',
       actions: [
         {
-          protocol: runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V3,
+          protocol: runtime.VISIBLE_ACTION_SCHEMA_ID_V3,
           requestId: 'unknown-provider-action',
           provider: 'future-ai',
           action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
@@ -178,7 +328,7 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     assert.equal(JSON.stringify(rejectedQuiesceBody).includes(token), false)
 
     const running = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
-    assert.equal(running.protocol, 'tokenless.daemon.v1')
+    assert.equal(Object.hasOwn(running, 'protocol'), false)
     assert.equal(running.status, 'running')
     assert.equal(running.pid, daemon.child.pid)
     assert.equal(running.activeProfileCount, 0)
@@ -396,7 +546,7 @@ async function waitForDaemon(child, url, homeDir, label) {
     try {
       const ready = await readyProbe(url)
       assert.equal(ready.ready, true)
-      assert.equal(ready.protocol, 'tokenless.daemon.v1')
+      assert.equal(Object.hasOwn(ready, 'protocol'), false)
       assert.equal(ready.home_dir, homeDir)
       return { child, url, homeDir, label }
     } catch (error) {
@@ -447,7 +597,6 @@ async function readyProbe(daemonUrl, challenge = randomBytes(32).toString('base6
 function readyProof(token, challenge, homeDir) {
   return createHmac('sha256', token)
     .update(lengthPrefixedMessage([
-      'tokenless.daemon.v1',
       challenge,
       homeDir,
     ]))

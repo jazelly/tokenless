@@ -361,7 +361,7 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
       encoding: 'utf8',
       timeout: 5_000,
     }))
-    assert.equal(buildInfo.protocol, 'tokenless.daemon.v1')
+    assert.equal(Object.hasOwn(buildInfo, 'protocol'), false)
     assert.equal(buildInfo.binary, 'tokenless-daemon')
     assert.equal(buildInfo.version, readJson('packages/cli/package.json').version)
 

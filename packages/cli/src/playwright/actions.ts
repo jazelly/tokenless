@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import {
-  VISIBLE_ACTION_PROTOCOL_VERSION,
-  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
-} from '../generated/protocol-constants.js'
+  VISIBLE_ACTION_SCHEMA_ID,
+  VISIBLE_ATTACHMENT_SCHEMA_ID,
+} from '../schema-ids.js'
 import {
   isVisibleAction,
   validateVisibleActionPayload,
@@ -20,9 +20,9 @@ import type {
 } from '../providers/registry.js'
 
 export {
-  VISIBLE_ACTION_PROTOCOL_VERSION,
-  VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
-} from '../generated/protocol-constants.js'
+  VISIBLE_ACTION_SCHEMA_ID,
+  VISIBLE_ATTACHMENT_SCHEMA_ID,
+} from '../schema-ids.js'
 export { validateAttachmentInput } from '../providers/action-catalog.js'
 export { VISIBLE_ACTIONS, isVisibleActionProtocolVersion } from '../providers/contracts.js'
 export type {
@@ -156,7 +156,7 @@ export type FileUploadResult = {
   acceptance: 'selected' | 'accepted'
   visibleProof: string
   attachments: readonly {
-    protocol: typeof VISIBLE_ATTACHMENT_PROTOCOL_VERSION
+    protocol: typeof VISIBLE_ATTACHMENT_SCHEMA_ID
     bundleId: string
     attachmentId: string
     name: string
@@ -314,7 +314,7 @@ export function createVisibleActionRequest(
   input: Omit<Partial<VisibleActionWireRequest>, 'protocol'> & Record<string, unknown>
 ): VisibleActionRequest {
   return validateVisibleActionRequest({
-    protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+    protocol: VISIBLE_ACTION_SCHEMA_ID,
     requestId: typeof input.requestId === 'string' ? input.requestId : randomUUID(),
     provider: input.provider,
     action: input.action,

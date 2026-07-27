@@ -32,7 +32,6 @@ test('live setup checks provider auth once and reports without handoff or retry'
     'setup',
     '--profile', profileSlug,
     '--home', homeDir,
-    '--skip-skill-install',
     '--timeout-ms', '90000',
     '--json',
   ])
@@ -43,6 +42,8 @@ test('live setup checks provider auth once and reports without handoff or retry'
   assert.equal(payload.ok, true)
   assert.equal(payload.completed, true)
   assert.equal(payload.status, 'reported')
+  assert.equal(payload.skills.ok, true)
+  assert.equal(payload.skills.upserted, true)
   assert.equal(payload.cli.packageName, 'tokenless')
   assert.equal(payload.cli.currentVersion, packageVersion)
   assert.match(payload.cli.status, /^(up_to_date|update_available|check_unavailable)$/)

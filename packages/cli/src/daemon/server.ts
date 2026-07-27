@@ -1,9 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import net from 'node:net'
 
-import {
-  DAEMON_PROTOCOL,
-} from '../generated/protocol-constants.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
 import { listProviderInstances } from '../providers/registry.js'
 import {
@@ -25,9 +22,13 @@ import {
 import { JobStore, publicView, type ExecutionBackend, type JobStatus } from './job-store.js'
 
 export type DaemonServer = {
+  activate(): void
   close(): Promise<void>
   server: http.Server
   store: JobStore
+  host: string
+  port: number
+  origin: string
 }
 
 const MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024
@@ -56,13 +57,17 @@ export async function serveHttp({
   beforeClose?: (() => Promise<void>) | undefined
 }) {
   validateLoopbackHost(host)
+  let active = false
+  const activate = () => {
+    active = true
+  }
   let closePromise: Promise<void> | undefined
   const close = () => {
     closePromise ??= closeServer(server, store, beforeClose)
     return closePromise
   }
   const server = http.createServer((request, response) => {
-    void handleRequest(store, close, runtimeController, request, response)
+    void handleRequest(store, close, () => active, runtimeController, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -78,8 +83,12 @@ export async function serveHttp({
     server.listen(port, host)
   })
   return {
+    activate,
     server,
     store,
+    host,
+    port: serverPort(server, port),
+    origin: serverOrigin(host, serverPort(server, port)),
     close,
   } satisfies DaemonServer
 }
@@ -96,7 +105,6 @@ export function validateLoopbackHost(host: string) {
 
 export function daemonBuildInfo(binary: string) {
   return {
-    protocol: DAEMON_PROTOCOL,
     binary,
     version: tokenlessPackageVersion(),
     platform: process.platform === 'darwin' ? 'darwin' : process.platform,
@@ -104,9 +112,21 @@ export function daemonBuildInfo(binary: string) {
   }
 }
 
+function serverPort(server: http.Server, requestedPort: number) {
+  const address = server.address()
+  if (address && typeof address !== 'string') return address.port
+  return requestedPort
+}
+
+function serverOrigin(host: string, port: number) {
+  const normalizedHost = host === '::1' || host === '[::1]' ? '[::1]' : host
+  return `http://${normalizedHost}:${port}`
+}
+
 async function handleRequest(
   store: JobStore,
   closeDaemon: () => Promise<void>,
+  isActive: () => boolean,
   runtimeController: BrowserRuntimeController | undefined,
   request: IncomingMessage,
   response: ServerResponse
@@ -117,13 +137,24 @@ async function handleRequest(
     if (method === 'GET' && url.pathname === '/ready') {
       const challenge = url.searchParams.get('challenge') ?? ''
       validateReadyChallenge(challenge)
-      writeJson(response, 200, {
-        protocol: DAEMON_PROTOCOL,
+      const active = isActive()
+      writeJson(response, active ? 200 : 503, {
         version: tokenlessPackageVersion(),
-        ready: true,
+        ready: active,
         home_dir: store.homeDir,
         pid: process.pid,
         proof: daemonReadyProof(store.controlToken(), challenge, store.homeDir),
+      })
+      return
+    }
+
+    if (!isActive()) {
+      writeJson(response, 503, {
+        error: {
+          code: 'daemon_starting',
+          message: 'Tokenless daemon startup is not complete.',
+          retryable: true,
+        },
       })
       return
     }
@@ -152,6 +183,8 @@ async function handleRequest(
         request_json: requireField(body, 'request_json'),
         execution_backend: executionBackend,
         profile_id: optionalString(body.profile_id),
+        agent_kind: optionalString(body.agent_kind),
+        agent_session_id: optionalString(body.agent_session_id),
         job_id: optionalString(body.job_id) ?? undefined,
       })
       if (job.execution_backend === 'playwright') await runtimeController?.wake()
@@ -169,6 +202,16 @@ async function handleRequest(
         limit: optionalLimit(url.searchParams.get('limit')),
       })
       writeJson(response, 200, jobs.map(publicView))
+      return
+    }
+
+    if (method === 'POST' && url.pathname === '/replay/drain') {
+      const body = await readJsonObject(request)
+      const summaries = store.drainReplaySummaries({
+        agent_kind: requiredString(body.agent_kind, 'agent_kind'),
+        agent_session_id: requiredString(body.agent_session_id, 'agent_session_id'),
+      }, optionalBodyLimit(body.limit))
+      writeJson(response, 200, { jobs: summaries })
       return
     }
 
@@ -194,6 +237,18 @@ async function handleRequest(
       writeJson(response, 200, publicView(await store.cancelJob(jobRoute.jobId, body.reason)))
       return
     }
+    if (jobRoute && method === 'POST' && jobRoute.action === 'report') {
+      const body = await readJsonObject(request)
+      const result = store.markJobReported(jobRoute.jobId, {
+        agent_kind: requiredString(body.agent_kind, 'agent_kind'),
+        agent_session_id: requiredString(body.agent_session_id, 'agent_session_id'),
+      })
+      writeJson(response, 200, {
+        reported: result.reported,
+        job: publicView(result.job),
+      })
+      return
+    }
 
     if (method === 'POST' && url.pathname === '/control/shutdown') {
       writeJson(response, 200, { ok: true, status: 'shutting_down', pid: process.pid })
@@ -215,7 +270,6 @@ async function handleRequest(
 
 function browserRuntimeStatus(runtimeController: BrowserRuntimeController | undefined) {
   return runtimeController?.status() ?? {
-    protocol: DAEMON_PROTOCOL,
     status: 'stopped',
     activeProfileCount: 0,
     activeJobCount: 0,
@@ -321,7 +375,7 @@ function matchJobRoute(pathname: string) {
   const match = /^\/jobs\/([^/]+)(?:\/([^/]+))?$/.exec(pathname)
   if (!match) return null
   const action = match[2] ?? null
-  if (action !== null && !['resume', 'cancel'].includes(action)) return null
+  if (action !== null && !['resume', 'cancel', 'report'].includes(action)) return null
   return { jobId: decodeURIComponent(match[1] || ''), action }
 }
 
@@ -355,6 +409,14 @@ function optionalLimit(value: string | null) {
     throw invalidInput('query parameters are invalid: Failed to deserialize query string')
   }
   return parsed > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(parsed)
+}
+
+function optionalBodyLimit(value: unknown) {
+  if (value === undefined || value === null) return undefined
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw invalidInput('limit must be a positive integer')
+  }
+  return Number(value)
 }
 
 function optionalJobStatus(value: string | null) {

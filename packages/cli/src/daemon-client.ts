@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { DAEMON_PROTOCOL } from './generated/protocol-constants.js'
 import { tokenlessHome } from './job-store.js'
+import { DaemonRuntimeState } from './daemon/runtime-state.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
 export const MAX_DAEMON_REQUEST_BYTES = 900 * 1024
@@ -22,6 +22,8 @@ export type DaemonJob = {
   job_id: string
   execution_backend?: 'playwright'
   profile_id?: string | null
+  agent_kind?: string | null
+  agent_session_id?: string | null
   provider: string
   action: string
   status: DaemonJobStatus
@@ -39,8 +41,36 @@ export type CreateDaemonJobOptions = DaemonClientOptions & {
   requestJson?: unknown
   executionBackend?: 'playwright' | undefined
   profileId?: string | undefined
+  agentKind?: string | undefined
+  agentSessionId?: string | undefined
   jobId?: string | undefined
 }
+
+export type AgentRecipientOptions = {
+  agentKind: string
+  agentSessionId: string
+}
+
+export type DaemonReplaySummary = {
+  job_id: string
+  provider: string
+  action: string
+  status: 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
+  task_id: string | null
+  updated_at: string
+  reported_at: string
+  preview: {
+    kind: 'result' | 'error' | 'blocker' | 'none'
+    text: string | null
+    truncated: boolean
+  }
+}
+
+export type DrainDaemonReplayOptions = DaemonClientOptions & AgentRecipientOptions & {
+  limit?: number | undefined
+}
+
+export type MarkDaemonJobReportedOptions = GetDaemonJobOptions & AgentRecipientOptions
 
 export type GetDaemonJobOptions = DaemonClientOptions & {
   jobId: string
@@ -68,6 +98,8 @@ export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
   pollMs?: number | undefined
   heartbeatMs?: number | undefined
   onStatus?: ((event: Record<string, unknown>) => unknown) | undefined
+  agentKind?: string | undefined
+  agentSessionId?: string | undefined
 }
 
 export type ShutdownDaemonOptions = {
@@ -84,7 +116,6 @@ export type ShutdownDaemonResponse = {
 }
 
 export type BrowserRuntimeStatus = {
-  protocol: typeof DAEMON_PROTOCOL
   status: 'running' | 'quiescing' | 'quiesced' | 'stopped'
   activeProfileCount: number
   activeJobCount: number
@@ -133,12 +164,21 @@ export async function createDaemonJob({
   requestJson = {},
   executionBackend,
   profileId,
+  agentKind,
+  agentSessionId,
   jobId,
 }: CreateDaemonJobOptions) {
-  assertDaemonRequestSize({ provider, action, request_json: requestJson })
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  assertAgentRecipientPair(agentKind, agentSessionId)
+  assertDaemonRequestSize({
+    provider,
+    action,
+    request_json: requestJson,
+    agent_kind: agentKind,
+    agent_session_id: agentSessionId,
+  })
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
-    daemonUrl: explicitDaemonUrl,
+    daemonUrl: daemon.daemonUrl,
     path: '/jobs',
     body: {
       provider,
@@ -146,9 +186,60 @@ export async function createDaemonJob({
       request_json: requestJson,
       execution_backend: executionBackend,
       profile_id: profileId,
+      agent_kind: agentKind,
+      agent_session_id: agentSessionId,
       job_id: jobId,
     },
-    token,
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function drainDaemonReplay({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  agentKind,
+  agentSessionId,
+  limit,
+}: DrainDaemonReplayOptions) {
+  assertAgentRecipientPair(agentKind, agentSessionId)
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<{ jobs: DaemonReplaySummary[] }>({
+    daemonUrl: daemon.daemonUrl,
+    path: '/replay/drain',
+    body: {
+      agent_kind: agentKind,
+      agent_session_id: agentSessionId,
+      limit,
+    },
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function markDaemonJobReported({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  jobId,
+  agentKind,
+  agentSessionId,
+}: MarkDaemonJobReportedOptions) {
+  assertAgentRecipientPair(agentKind, agentSessionId)
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<{ reported: boolean; job: DaemonJob }>({
+    daemonUrl: daemon.daemonUrl,
+    path: `/jobs/${encodeURIComponent(jobId)}/report`,
+    body: {
+      agent_kind: agentKind,
+      agent_session_id: agentSessionId,
+    },
+    token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -166,7 +257,7 @@ export async function listDaemonJobs({
   taskId,
   limit = 100,
 }: ListDaemonJobsOptions = {}) {
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   const query = new URLSearchParams()
   if (status) query.set('status', status)
   if (executionBackend) query.set('execution_backend', executionBackend)
@@ -175,10 +266,10 @@ export async function listDaemonJobs({
   if (taskId) query.set('task_id', taskId)
   query.set('limit', String(Math.max(1, Math.min(1000, Number(limit) || 100))))
   return daemonRequest<DaemonJob[]>({
-    daemonUrl: explicitDaemonUrl,
+    daemonUrl: daemon.daemonUrl,
     method: 'GET',
     path: `/jobs?${query.toString()}`,
-    token,
+    token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -191,12 +282,12 @@ export async function getDaemonJob({
   signal,
   jobId,
 }: GetDaemonJobOptions) {
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
-    daemonUrl: explicitDaemonUrl,
+    daemonUrl: daemon.daemonUrl,
     method: 'GET',
     path: `/jobs/${encodeURIComponent(jobId)}`,
-    token,
+    token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -210,12 +301,12 @@ export async function cancelDaemonJob({
   jobId,
   reason,
 }: CancelDaemonJobOptions) {
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
-    daemonUrl: explicitDaemonUrl,
+    daemonUrl: daemon.daemonUrl,
     path: `/jobs/${encodeURIComponent(jobId)}/cancel`,
     ...(reason === undefined ? {} : { body: { reason } }),
-    token,
+    token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -249,12 +340,12 @@ export async function browserRuntimeStatus({
   requestTimeoutMs,
   signal,
 }: DaemonClientOptions = {}) {
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<BrowserRuntimeStatus>({
-    daemonUrl: explicitDaemonUrl,
+    daemonUrl: daemon.daemonUrl,
     method: 'GET',
     path: '/control/browser-runtime/status',
-    token,
+    token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -266,11 +357,11 @@ export async function quiesceBrowserRuntime({
   requestTimeoutMs,
   signal,
 }: DaemonClientOptions = {}) {
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<BrowserRuntimeStatus>({
-    daemonUrl: explicitDaemonUrl,
+    daemonUrl: daemon.daemonUrl,
     path: '/control/browser-runtime/quiesce',
-    token,
+    token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -291,12 +382,12 @@ export async function resumeDaemonJob({
       false
     )
   }
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
-    daemonUrl: explicitDaemonUrl,
+    daemonUrl: daemon.daemonUrl,
     path: `/jobs/${encodeURIComponent(jobId)}/resume`,
     body: { browser_visibility: browserVisibility },
-    token,
+    token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
   })
@@ -312,7 +403,10 @@ export async function waitDaemonJobResult({
   pollMs = 250,
   heartbeatMs = 30000,
   onStatus,
+  agentKind,
+  agentSessionId,
 }: WaitDaemonJobResultOptions) {
+  assertAgentRecipientPair(agentKind, agentSessionId)
   const startedAt = Date.now()
   let lastStatus: string | undefined
   let lastHeartbeatAt = startedAt
@@ -342,6 +436,15 @@ export async function waitDaemonJobResult({
       })
     }
     if (job.status === 'succeeded') {
+      await markOutcomeReportedIfAddressed({
+        daemonUrl: explicitDaemonUrl,
+        homeDir,
+        requestTimeoutMs,
+        signal,
+        jobId,
+        agentKind,
+        agentSessionId,
+      })
       return {
         ok: true,
         status: job.status,
@@ -351,6 +454,15 @@ export async function waitDaemonJobResult({
       }
     }
     if (job.status === 'failed' || job.status === 'canceled' || job.status === 'timed_out') {
+      await markOutcomeReportedIfAddressed({
+        daemonUrl: explicitDaemonUrl,
+        homeDir,
+        requestTimeoutMs,
+        signal,
+        jobId,
+        agentKind,
+        agentSessionId,
+      })
       return {
         ok: false,
         status: job.status,
@@ -363,6 +475,15 @@ export async function waitDaemonJobResult({
       }
     }
     if (job.status === 'waiting_for_user') {
+      await markOutcomeReportedIfAddressed({
+        daemonUrl: explicitDaemonUrl,
+        homeDir,
+        requestTimeoutMs,
+        signal,
+        jobId,
+        agentKind,
+        agentSessionId,
+      })
       return {
         ok: null,
         status: job.status,
@@ -397,6 +518,38 @@ export async function waitDaemonJobResult({
     `Timed out waiting for daemon job ${jobId}; cancellation was confirmed.`,
     true
   )
+}
+
+async function markOutcomeReportedIfAddressed({
+  agentKind,
+  agentSessionId,
+  ...options
+}: GetDaemonJobOptions & {
+  agentKind?: string | undefined
+  agentSessionId?: string | undefined
+}) {
+  if (agentKind === undefined || agentSessionId === undefined) return
+  await markDaemonJobReported({
+    ...options,
+    agentKind,
+    agentSessionId,
+  })
+}
+
+function assertAgentRecipientPair(agentKind: string | undefined, agentSessionId: string | undefined) {
+  if ((agentKind === undefined) !== (agentSessionId === undefined)) {
+    throw daemonClientError(
+      'agent_recipient_incomplete',
+      'agentKind and agentSessionId must be provided together.',
+      false
+    )
+  }
+  if (agentKind !== undefined && agentKind.trim() === '') {
+    throw daemonClientError('agent_kind_invalid', 'agentKind must be a non-empty string.', false)
+  }
+  if (agentSessionId !== undefined && agentSessionId.trim() === '') {
+    throw daemonClientError('agent_session_id_invalid', 'agentSessionId must be a non-empty string.', false)
+  }
 }
 
 function userHandoverAction(job: DaemonJob) {
@@ -517,9 +670,8 @@ function daemonServerErrorFromBody(body: unknown) {
   if (!body || typeof body !== 'object') return null
   const error = (body as { error?: unknown }).error
   if (!error || typeof error !== 'object') return null
-  const envelope = error as { protocol?: unknown; code?: unknown; message?: unknown; retryable?: unknown; details?: unknown }
+  const envelope = error as { code?: unknown; message?: unknown; retryable?: unknown; details?: unknown }
   if (
-    envelope.protocol === DAEMON_PROTOCOL &&
     typeof envelope.code === 'string' &&
     envelope.code.trim() &&
     typeof envelope.message === 'string' &&
@@ -667,27 +819,51 @@ function errorText(error: unknown) {
   return error instanceof Error && error.message ? error.message : String(error)
 }
 
-async function authenticatedDaemonToken({
+async function authenticatedDaemonAccess({
   daemonUrl: explicitDaemonUrl,
   homeDir = tokenlessHome(),
   requestTimeoutMs,
 }: DaemonClientOptions) {
   const token = await readDaemonToken({ homeDir })
   const { probeDaemonReady } = await import('./runtime.js')
-  const ready = await probeDaemonReady({
-    daemonUrl: explicitDaemonUrl,
-    homeDir,
-    daemonToken: token,
-    timeoutMs: Math.min(normalizedTimeoutMs(requestTimeoutMs), 1_000),
-  })
-  if (!ready.ok) {
-    throw daemonClientError(
-      ready.code ?? 'daemon_identity_unverified',
-      ready.message ?? 'Tokenless daemon identity could not be verified; refusing to send its control token.',
-      ready.code === 'daemon_unavailable'
-    )
+  const timeoutMs = Math.min(normalizedTimeoutMs(requestTimeoutMs), 1_000)
+  let lastReady: Awaited<ReturnType<typeof probeDaemonReady>> | null = null
+  for (const candidateUrl of await daemonEndpointCandidates({ explicitDaemonUrl, homeDir })) {
+    const ready = await probeDaemonReady({
+      daemonUrl: candidateUrl,
+      homeDir,
+      daemonToken: token,
+      timeoutMs,
+    })
+    lastReady = ready
+    if (ready.ok) return { token, daemonUrl: ready.url }
   }
-  return token
+  const failedReady = lastReady && !lastReady.ok ? lastReady : null
+  throw daemonClientError(
+    failedReady?.code ?? 'daemon_identity_unverified',
+    failedReady?.message ?? 'Tokenless daemon identity could not be verified; refusing to send its control token.',
+    failedReady?.code === 'daemon_unavailable'
+  )
+}
+
+async function daemonEndpointCandidates({
+  explicitDaemonUrl,
+  homeDir,
+}: {
+  explicitDaemonUrl?: string | undefined
+  homeDir: string
+}) {
+  const preferredUrl = daemonUrl(explicitDaemonUrl)
+  const urls: string[] = []
+  const state = await DaemonRuntimeState.openIfExists(homeDir)
+  try {
+    const endpoint = state?.endpoint()
+    if (endpoint?.origin) urls.push(endpoint.origin)
+  } finally {
+    state?.close()
+  }
+  urls.push(preferredUrl)
+  return [...new Set(urls)]
 }
 
 function combinedRequestSignal(timeoutMs: number | undefined, signal?: AbortSignal) {
