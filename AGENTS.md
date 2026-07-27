@@ -47,6 +47,7 @@ Do not use an additional `active/` directory. Root-level roadmap files are the a
 
 Use focused integration or browser E2E tests for behavior that crosses the Playwright runner, local runtime, or provider web sessions. Do not mock visible-session behavior when a browser proof is feasible.
 
+- Keep browser E2E coverage focused on representative core user workflows. Do not make rare failure-injection scenarios, such as abrupt process death or crash/restart recovery, part of the default browser E2E acceptance bar. Add browser coverage for such edge cases only when they are an explicit product requirement, a reproduced regression, or they materially change visible browser behavior; otherwise prefer focused real-boundary integration coverage.
 - Test only externally observable behavior through real system boundaries: the built CLI process, the packaged TypeScript daemon, the real filesystem, a real local Chromium/Playwright session, or a real provider website.
 - Do not add unit tests.
 - Do not introduce mocks, fakes, stubs, spies, synthetic fetch implementations, fake daemons, fake pages, fake locators, fake browser contexts, fake runners, fake process supervisors, or dependency-injected test doubles.
