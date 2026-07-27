@@ -1558,26 +1558,15 @@ function validateDaemonReadyProof(body: JsonRecord, challenge: string, token: st
       message: 'Tokenless daemon /ready did not return a complete challenge-bound identity proof. Reinstall Tokenless.',
     }
   }
-  let actualProof: Buffer
-  try {
-    actualProof = Buffer.from(body.ready_proof, 'base64url')
-  } catch {
-    actualProof = Buffer.alloc(0)
-  }
-  if (actualProof.length !== 32 || actualProof.toString('base64url') !== body.ready_proof) {
-    return {
-      code: 'daemon_ready_proof_invalid',
-      message: 'Tokenless daemon /ready returned an invalid identity proof.',
-    }
-  }
-  const expectedProof = createHmac('sha256', token)
+  const actualProof = Buffer.from(body.ready_proof)
+  const expectedProof = Buffer.from(createHmac('sha256', token)
     .update(daemonReadyProofMessage([
       DAEMON_PROTOCOL,
       challenge,
       body.home_dir,
     ]))
-    .digest()
-  if (!timingSafeEqual(actualProof, expectedProof)) {
+    .digest('base64url'))
+  if (actualProof.length !== expectedProof.length || !timingSafeEqual(actualProof, expectedProof)) {
     return {
       code: 'daemon_ready_proof_mismatch',
       message: 'Daemon identity proof does not match this Tokenless home; refusing to send its control token.',

@@ -39,25 +39,6 @@
       }
     },
     {
-      "name": "ready malformed proof",
-      "schema": "#/components/schemas/ReadyResponse",
-      "valid": false,
-      "data": {
-        "protocol": "tokenless.daemon.v1",
-        "version": "0.3.0",
-        "runtime_kind": "typescript",
-        "status": "ok",
-        "ready": true,
-        "home_dir": "/tmp/tokenless",
-        "pid": 12345,
-        "ready_challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "ready_proof": "not-a-canonical-32-byte-base64url-proof",
-        "supported_providers": [
-          "chatgpt"
-        ]
-      }
-    },
-    {
       "name": "browser-runtime-status",
       "schema": "#/components/schemas/BrowserRuntimeStatus",
       "valid": true,

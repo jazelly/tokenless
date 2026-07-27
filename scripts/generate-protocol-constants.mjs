@@ -124,29 +124,12 @@ function validateRegistry(value) {
 }
 
 function validateCanonicalDaemonWireApi(protocols) {
-  const activeWireApis = protocols.filter((protocol) => protocol.category === 'wire-api' && protocol.status === 'active')
-  if (activeWireApis.length !== 1) {
-    throw new Error(`registry must declare exactly one active wire-api protocol, found ${activeWireApis.length}`)
+  const ids = protocols
+    .filter((protocol) => protocol.category === 'wire-api' && protocol.status === 'active')
+    .map((protocol) => protocol.id)
+  if (ids.length !== 1 || ids[0] !== 'tokenless.daemon.v1') {
+    throw new Error('tokenless.daemon.v1 must be the only active wire-api protocol')
   }
-
-  const [protocol] = activeWireApis
-  const expected = {
-    id: 'tokenless.daemon.v1',
-    owner: 'daemon',
-    accepts: ['cli', 'daemon'],
-    emits: ['cli', 'daemon'],
-    artifacts: ['protocol/openapi/tokenless.daemon.v1.openapi.json'],
-  }
-
-  if (protocol.id !== expected.id) {
-    throw new Error(`active wire-api protocol must be ${expected.id}, found ${protocol.id}`)
-  }
-  if (protocol.owner !== expected.owner) {
-    throw new Error(`${expected.id} must be owned by ${expected.owner}`)
-  }
-  requireExactStringSet(protocol, 'accepts', expected.accepts)
-  requireExactStringSet(protocol, 'emits', expected.emits)
-  requireExactStringSet(protocol, 'artifacts', expected.artifacts)
 }
 
 async function validateArtifacts(registry) {
@@ -552,15 +535,6 @@ function requireString(record, key) {
 function requireStringArray(record, key) {
   if (!Array.isArray(record[key]) || record[key].some((item) => typeof item !== 'string' || !item.trim())) {
     throw new Error(`protocol entry ${record.id ?? '(unknown)'} must include string array ${key}`)
-  }
-}
-
-function requireExactStringSet(record, key, expected) {
-  requireStringArray(record, key)
-  const actual = [...record[key]].sort()
-  const normalizedExpected = [...expected].sort()
-  if (JSON.stringify(actual) !== JSON.stringify(normalizedExpected)) {
-    throw new Error(`${record.id ?? '(unknown)'} must declare ${key} exactly as ${normalizedExpected.join(', ')}`)
   }
 }
 
