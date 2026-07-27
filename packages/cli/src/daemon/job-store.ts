@@ -50,8 +50,11 @@ export type Job = {
   claim_expires_at_ms: number | null
 }
 
-export type JobView = Omit<Job, 'claim_token' | 'checkpoint_json' | 'resume_json' | 'claim_expires_at_ms'>
-export type JobWithClaimToken = Omit<Job, 'claim_expires_at_ms'>
+export type JobView = Omit<
+  Job,
+  'claim_token' | 'checkpoint_json' | 'resume_json' | 'claim_expires_at_ms' | 'agent_kind' | 'agent_session_id'
+>
+export type JobWithClaimToken = Omit<Job, 'claim_expires_at_ms' | 'agent_kind' | 'agent_session_id'>
 
 export type CreateJobInput = {
   provider: string
@@ -78,11 +81,10 @@ export type ReplaySummary = {
   task_id: string | null
   updated_at: string
   reported_at: string
-  preview: {
-    kind: 'result' | 'error' | 'blocker' | 'none'
-    text: string | null
-    truncated: boolean
-  }
+  outcome_kind: 'result' | 'error' | 'blocker' | 'none'
+  has_result: boolean
+  has_error: boolean
+  has_blocker: boolean
 }
 
 export type ListJobsInput = {
@@ -107,7 +109,6 @@ const SUMMARY_SCALAR_CHARS = 256
 const PROFILE_ID_CHARS = 128
 const AGENT_KIND_CHARS = 128
 const AGENT_SESSION_ID_CHARS = 256
-const REPLAY_PREVIEW_CHARS = 512
 const MAX_VISIBLE_ATTACHMENTS = 100
 const MAX_VISIBLE_ATTACHMENT_REQUEST_BYTES = 512 * 1024 * 1024
 const ACTIVE_STATUSES = new Set<JobStatus>(['claimed', 'running', 'waiting_for_user'])
@@ -246,13 +247,14 @@ export class JobStore {
       const rows = this.all(
         `SELECT
           job_id, provider, action, status, summary_task_id, updated_at,
-          result_json, error_json, blocker_json
+          outcome_revision, result_json, error_json, blocker_json
          FROM jobs
          WHERE agent_kind = ?
            AND agent_session_id = ?
+           AND outcome_revision > 0
            AND (
-             replay_reported_job_updated_at IS NULL
-             OR replay_reported_job_updated_at != updated_at
+             reported_outcome_revision IS NULL
+             OR reported_outcome_revision != outcome_revision
            )
            AND (
              status IN ('succeeded', 'failed', 'canceled', 'timed_out')
@@ -270,21 +272,21 @@ export class JobStore {
       for (const row of rows) {
         const result = this.run(
           `UPDATE jobs
-           SET replay_reported_at = ?, replay_reported_job_updated_at = ?
+           SET replay_reported_at = ?, reported_outcome_revision = ?
            WHERE job_id = ?
              AND agent_kind = ?
              AND agent_session_id = ?
-             AND updated_at = ?
+             AND outcome_revision = ?
              AND (
-               replay_reported_job_updated_at IS NULL
-               OR replay_reported_job_updated_at != updated_at
+               reported_outcome_revision IS NULL
+               OR reported_outcome_revision != outcome_revision
              )`,
           reportedAt,
-          String(row.updated_at),
+          Number(row.outcome_revision),
           String(row.job_id),
           recipient.agent_kind,
           recipient.agent_session_id,
-          String(row.updated_at)
+          Number(row.outcome_revision)
         )
         if (result.changes !== 1) continue
         summaries.push(rowToReplaySummary(row, reportedAt))
@@ -296,31 +298,58 @@ export class JobStore {
   markJobReported(jobId: string, recipientInput: AgentRecipient) {
     const recipient = normalizeAgentRecipient(recipientInput)
     this.requeueExpiredClaims()
-    const reportedAt = nowRfc3339()
-    const result = this.run(
-      `UPDATE jobs
-       SET replay_reported_at = ?, replay_reported_job_updated_at = updated_at
-       WHERE job_id = ?
-         AND agent_kind = ?
-         AND agent_session_id = ?
-         AND (
-           replay_reported_job_updated_at IS NULL
-           OR replay_reported_job_updated_at != updated_at
-         )
-         AND (
-           status IN ('succeeded', 'failed', 'canceled', 'timed_out')
-           OR status = 'waiting_for_user'
-         )`,
-      reportedAt,
-      normalizeNonempty(jobId, 'job_id'),
-      recipient.agent_kind,
-      recipient.agent_session_id
-    )
-    const job = this.getJobWithoutRecovery(jobId)
-    return {
-      job,
-      reported: result.changes === 1,
-    }
+    const normalizedJobId = normalizeNonempty(jobId, 'job_id')
+    return this.transaction(() => {
+      const row = this.get(
+        `SELECT agent_kind, agent_session_id, outcome_revision, reported_outcome_revision,
+                status, claim_expires_at
+         FROM jobs
+         WHERE job_id = ?`,
+        normalizedJobId
+      )
+      if (!row) throw jobNotFound(normalizedJobId)
+      if (
+        row.agent_kind !== recipient.agent_kind ||
+        row.agent_session_id !== recipient.agent_session_id
+      ) {
+        throw jobNotFound(normalizedJobId)
+      }
+      const outcomeRevision = Number(row.outcome_revision)
+      const reportable = outcomeRevision > 0 && (
+        row.status === 'succeeded' ||
+        row.status === 'failed' ||
+        row.status === 'canceled' ||
+        row.status === 'timed_out' ||
+        row.status === 'waiting_for_user'
+      )
+      if (!reportable || Number(row.reported_outcome_revision) === outcomeRevision) {
+        return {
+          job: this.getJobWithoutRecovery(normalizedJobId),
+          reported: false,
+        }
+      }
+      const result = this.run(
+        `UPDATE jobs
+         SET replay_reported_at = ?, reported_outcome_revision = outcome_revision
+         WHERE job_id = ?
+           AND agent_kind = ?
+           AND agent_session_id = ?
+           AND outcome_revision = ?
+           AND (
+             reported_outcome_revision IS NULL
+             OR reported_outcome_revision != outcome_revision
+           )`,
+        nowRfc3339(),
+        normalizedJobId,
+        recipient.agent_kind,
+        recipient.agent_session_id,
+        outcomeRevision
+      )
+      return {
+        job: this.getJobWithoutRecovery(normalizedJobId),
+        reported: result.changes === 1,
+      }
+    })
   }
 
   listJobs(query: ListJobsInput = {}) {
@@ -491,7 +520,8 @@ export class JobStore {
     const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
     const result = this.run(
       `UPDATE jobs
-       SET status = ?, blocker_json = ?, claim_expires_at = ?, updated_at = ?
+       SET status = ?, blocker_json = ?, claim_expires_at = ?, updated_at = ?,
+           outcome_revision = outcome_revision + 1
        WHERE job_id = ?
          AND claim_token = ?
          AND status = 'running'
@@ -543,7 +573,8 @@ export class JobStore {
       `UPDATE jobs
        SET status = ?, claim_token = ?, blocker_json = ?,
            checkpoint_json = ?, resume_json = NULL,
-           claim_expires_at = NULL, updated_at = ?
+           claim_expires_at = NULL, updated_at = ?,
+           outcome_revision = outcome_revision + 1
        WHERE job_id = ?
          AND claim_token = ?
          AND execution_backend = 'playwright'
@@ -623,7 +654,8 @@ export class JobStore {
       `UPDATE jobs
        SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL,
            checkpoint_json = NULL, resume_json = NULL,
-           updated_at = ?, claim_expires_at = NULL
+           updated_at = ?, claim_expires_at = NULL,
+           outcome_revision = outcome_revision + 1
        WHERE job_id = ?
          AND claim_token = ?
          AND status IN ('claimed', 'running', 'waiting_for_user')
@@ -649,7 +681,8 @@ export class JobStore {
       `UPDATE jobs
        SET status = ?, result_json = NULL, error_json = ?, blocker_json = NULL,
            checkpoint_json = NULL, resume_json = NULL,
-           updated_at = ?, claim_expires_at = NULL
+           updated_at = ?, claim_expires_at = NULL,
+           outcome_revision = outcome_revision + 1
        WHERE job_id = ? AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')`,
       'canceled',
       errorJson,
@@ -705,7 +738,7 @@ export class JobStore {
           `UPDATE jobs
            SET claim_token = ?, blocker_json = ?,
                claim_expires_at = NULL, resume_json = NULL,
-               updated_at = ?
+               updated_at = ?, outcome_revision = outcome_revision + 1
            WHERE job_id = ?
              AND claim_token = ?
              AND status = 'waiting_for_user'
@@ -724,7 +757,8 @@ export class JobStore {
         `UPDATE jobs
          SET status = 'failed', error_json = ?, result_json = NULL,
              blocker_json = NULL, checkpoint_json = NULL, resume_json = NULL,
-             claim_expires_at = NULL, updated_at = ?
+             claim_expires_at = NULL, updated_at = ?,
+             outcome_revision = outcome_revision + 1
          WHERE job_id = ?
            AND claim_token = ?
            AND status = 'waiting_for_user'`,
@@ -813,7 +847,7 @@ export class JobStore {
           `UPDATE jobs
            SET claim_token = ?, blocker_json = ?,
                claim_expires_at = NULL, resume_json = NULL,
-               updated_at = ?
+               updated_at = ?, outcome_revision = outcome_revision + 1
            WHERE job_id = ?
              AND status = 'waiting_for_user'
              AND execution_backend = 'playwright'
@@ -838,7 +872,8 @@ export class JobStore {
       `UPDATE jobs
        SET status = 'failed', error_json = ?, result_json = NULL,
            blocker_json = NULL, checkpoint_json = NULL, resume_json = NULL,
-           claim_expires_at = NULL, updated_at = ?
+           claim_expires_at = NULL, updated_at = ?,
+           outcome_revision = outcome_revision + 1
        WHERE status = 'waiting_for_user'
          AND (execution_backend != 'playwright' OR checkpoint_json IS NULL)
          AND (claim_expires_at IS NULL OR claim_expires_at <= ?)`,
@@ -912,7 +947,10 @@ export class JobStore {
           summary_idempotency_key IS NULL OR length(summary_idempotency_key) <= 256
         ),
         replay_reported_at TEXT,
-        replay_reported_job_updated_at TEXT,
+        outcome_revision INTEGER NOT NULL DEFAULT 0 CHECK (outcome_revision >= 0),
+        reported_outcome_revision INTEGER CHECK (
+          reported_outcome_revision IS NULL OR reported_outcome_revision >= 0
+        ),
         CHECK (
           (agent_kind IS NULL AND agent_session_id IS NULL)
           OR (agent_kind IS NOT NULL AND agent_session_id IS NOT NULL)
@@ -938,8 +976,8 @@ export class JobStore {
         ON jobs(execution_backend, profile_id, status, created_at, job_id);
       CREATE INDEX IF NOT EXISTS job_task_keys_task_id_idx
         ON job_task_keys(task_id, job_id);
-      CREATE INDEX IF NOT EXISTS jobs_replay_recipient_idx
-        ON jobs(agent_kind, agent_session_id, replay_reported_job_updated_at, updated_at, job_id);
+      CREATE INDEX IF NOT EXISTS jobs_replay_outcome_recipient_idx
+        ON jobs(agent_kind, agent_session_id, reported_outcome_revision, outcome_revision, updated_at, job_id);
     `)
   }
 
@@ -957,9 +995,29 @@ export class JobStore {
         ['agent_kind', 'TEXT CHECK (agent_kind IS NULL OR length(agent_kind) BETWEEN 1 AND 128)'],
         ['agent_session_id', 'TEXT CHECK (agent_session_id IS NULL OR length(agent_session_id) BETWEEN 1 AND 256)'],
         ['replay_reported_at', 'TEXT'],
-        ['replay_reported_job_updated_at', 'TEXT'],
+        ['outcome_revision', 'INTEGER NOT NULL DEFAULT 0 CHECK (outcome_revision >= 0)'],
+        ['reported_outcome_revision', 'INTEGER CHECK (reported_outcome_revision IS NULL OR reported_outcome_revision >= 0)'],
       ] as const) {
         this.ensureJobsColumn(column, definition)
+      }
+      this.exec(`
+        UPDATE jobs
+        SET outcome_revision = 1
+        WHERE outcome_revision = 0
+          AND (
+            status IN ('succeeded', 'failed', 'canceled', 'timed_out')
+            OR status = 'waiting_for_user'
+          )
+      `)
+      const columns = new Set(this.all('PRAGMA table_info(jobs)').map((row) => String(row.name)))
+      if (columns.has('replay_reported_job_updated_at')) {
+        this.exec(`
+          UPDATE jobs
+          SET reported_outcome_revision = outcome_revision
+          WHERE reported_outcome_revision IS NULL
+            AND outcome_revision > 0
+            AND replay_reported_job_updated_at = updated_at
+        `)
       }
       this.exec('COMMIT')
     } catch (error) {
@@ -1107,8 +1165,6 @@ export function publicView(job: Job): JobView {
     job_id: job.job_id,
     execution_backend: job.execution_backend,
     profile_id: job.profile_id,
-    agent_kind: job.agent_kind,
-    agent_session_id: job.agent_session_id,
     provider: job.provider,
     action: job.action,
     status: job.status,
@@ -1127,8 +1183,6 @@ export function withClaimToken(job: Job): JobWithClaimToken {
     claim_token: job.claim_token,
     execution_backend: job.execution_backend,
     profile_id: job.profile_id,
-    agent_kind: job.agent_kind,
-    agent_session_id: job.agent_session_id,
     provider: job.provider,
     action: job.action,
     status: job.status,
@@ -1226,15 +1280,9 @@ function rowToReplaySummary(row: Record<string, unknown>, reportedAt: string): R
   ) {
     throw invalidJobState(String(row.job_id), 'waiting_for_user or terminal', status)
   }
-  const previewSource = row.result_json !== null && row.result_json !== undefined
-    ? { kind: 'result' as const, value: row.result_json }
-    : row.error_json !== null && row.error_json !== undefined
-      ? { kind: 'error' as const, value: row.error_json }
-      : row.blocker_json !== null && row.blocker_json !== undefined
-        ? { kind: 'blocker' as const, value: row.blocker_json }
-        : { kind: 'none' as const, value: null }
-  const rawText = previewSource.value === null ? null : String(previewSource.value)
-  const textCharacters = rawText === null ? [] : Array.from(rawText)
+  const hasResult = row.result_json !== null && row.result_json !== undefined
+  const hasError = row.error_json !== null && row.error_json !== undefined
+  const hasBlocker = row.blocker_json !== null && row.blocker_json !== undefined
   return {
     job_id: String(row.job_id),
     provider: String(row.provider),
@@ -1243,11 +1291,10 @@ function rowToReplaySummary(row: Record<string, unknown>, reportedAt: string): R
     task_id: nullableString(row.summary_task_id),
     updated_at: String(row.updated_at),
     reported_at: reportedAt,
-    preview: {
-      kind: previewSource.kind,
-      text: rawText === null ? null : textCharacters.slice(0, REPLAY_PREVIEW_CHARS).join(''),
-      truncated: textCharacters.length > REPLAY_PREVIEW_CHARS,
-    },
+    outcome_kind: hasResult ? 'result' : hasError ? 'error' : hasBlocker ? 'blocker' : 'none',
+    has_result: hasResult,
+    has_error: hasError,
+    has_blocker: hasBlocker,
   }
 }
 

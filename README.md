@@ -15,6 +15,7 @@ As AI agents are used in more scenarios, they consume an increasing number of to
 - **Intelligent task routing**: Customizable Skill Prompts let users define which types of tasks should be handled by which AI service, enabling flexible and controlled routing strategies.
 - **Multiple AI services**: Tokenless supports the web versions of ChatGPT, Claude, Grok, and Gemini. Qwen / 千问 is available as an experimental guest-session provider.
 - **Fully local operation**: All automation runs locally, with no third-party relays and no collection of user data.
+- **Crash-tolerant local jobs**: The CLI starts the daemon only when needed, discovers its actual loopback port from SQLite, restores leased/checkpointed work after restart, and lets addressed agents drain each unseen outcome summary once while retaining full job results.
 - **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity across the supported providers. Qwen's experimental baseline currently covers prompt submission, response reading, and same-task conversation continuation; unproven optional capabilities remain unavailable or unknown.
 - **Explicit guest and sign-in routing**: ChatGPT and Gemini can run through visible guest sessions, as can the experimental Qwen integration. Claude and Grok hand the existing job to the user for sign-in before Tokenless enters task content.
 
@@ -43,7 +44,7 @@ Run `tokenless provider-action --action capability.inspect --provider <provider>
 
 ## Implementation
 
-- A TypeScript CLI provides the user-facing interface, while a local TypeScript daemon runs persistently on the user's machine and manages state.
+- A TypeScript CLI provides the user-facing interface, while an on-demand local TypeScript daemon manages durable SQLite state. The configured URL is a preferred loopback origin; the actual port may advance when occupied and is recorded in SQLite.
 - Routing is implemented through Skill Prompts. Users can define rules that assign different types of tasks to different AI services.
 - Playwright operates provider-visible controls and reports fixture-proven postconditions. File uploads distinguish selected files from visibly accepted attachments, while Workspace requests expose whether the provider used a native resource or a conversation fallback.
 - One typed provider registry records identity, navigation, guest, account-tier, selector, and capability policy. Every provider is a concrete `BaseProvider` subclass, while a provider-session state machine turns visible page evidence into guest, account, handoff, wait, or terminal outcomes.

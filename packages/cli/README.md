@@ -118,7 +118,7 @@ tokenless run --browser-visibility headless --json
 
 ## Daemon Lifecycle
 
-Outside setup, the CLI reuses a running daemon after `/ready` proves the requested Tokenless home and reports the exact package version expected by the CLI. The CLI-daemon contract is the Tokenless Daemon API v1 OpenAPI document in `api/tokenless-daemon-api.openapi.json`; API version is recorded in OpenAPI `info.version`. Job, action, and local recovery payloads keep their own internal schema IDs only where persisted validation needs them. During `tokenless setup`, Tokenless may replace a same-home daemon only when the ready proof is valid and the running package version differs. Foreign, different-home, and unverified listeners are left running.
+Outside setup, the CLI reuses a running daemon after `/ready` proves the requested Tokenless home and reports the exact package version expected by the CLI. If no verified daemon is reachable, the CLI starts one on demand through a SQLite startup election. `config.json` stores only the preferred loopback URL; if its port is occupied, the daemon scans upward for a free port and records the actual runtime endpoint in SQLite without rewriting user configuration. The CLI-daemon contract is the Tokenless Daemon API v1 OpenAPI document in `api/tokenless-daemon-api.openapi.json`; API version is recorded in OpenAPI `info.version`. Job, action, and local recovery payloads keep their own internal schema IDs only where persisted validation needs them. During `tokenless setup`, Tokenless may replace a same-home daemon only when the ready proof is valid and the running package version differs. Foreign, different-home, and unverified listeners are left running.
 
 Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 
@@ -126,7 +126,16 @@ Stop a compatible daemon through its authenticated graceful-shutdown endpoint:
 tokenless daemon stop --json
 ```
 
-The command verifies `/ready` for the same Tokenless home immediately before sending the local control token to the bearer-authenticated shutdown endpoint. It never kills a process merely because it occupies the configured loopback port. If the listener is foreign, cannot be verified, or predates graceful shutdown support, Tokenless reports that manual action is required. The daemon binds the exact configured port and does not choose a fallback when that port is occupied.
+The command discovers the actual endpoint from SQLite, verifies `/ready` for the same Tokenless home immediately before sending the local control token to the bearer-authenticated shutdown endpoint, and never kills a process merely because it occupies the preferred loopback port. If the listener is foreign, cannot be verified, or predates graceful shutdown support, Tokenless reports that manual action is required.
+
+Address detached work to an agent session and drain unseen outcome summaries after that agent restarts:
+
+```bash
+tokenless run --agent-kind codex --agent-session-id <stable-session-id> --no-wait ...
+tokenless replay --agent-kind codex --agent-session-id <stable-session-id> --json
+```
+
+Replay marks each SQLite outcome revision as reported before returning it. The summary is not retried and contains no raw result, error, or blocker content; complete job state remains available with `tokenless state --job-id <job-id> --json`.
 
 ## Managed Profiles
 
@@ -156,7 +165,7 @@ For Grok, the model menu is the subscription evidence: when `Auto`, `Expert`, an
 
 ## Local API
 
-The planned local API will expose the same daemon jobs and provider-neutral action contract as the CLI. Authentication, request schemas, and compatibility guarantees are under active development; the daemon's HTTP endpoints remain an internal control plane.
+The authenticated loopback daemon API exposes durable jobs, replay receipts, runtime controls, and the provider-neutral action contract used by the CLI. Its OpenAPI 3.1 contract is `api/tokenless-daemon-api.openapi.json`. The bearer token remains a trusted-local-backend secret and must never be exposed to browser JavaScript.
 
 ## Browser Boundary
 

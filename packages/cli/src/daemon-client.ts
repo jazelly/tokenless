@@ -22,8 +22,6 @@ export type DaemonJob = {
   job_id: string
   execution_backend?: 'playwright'
   profile_id?: string | null
-  agent_kind?: string | null
-  agent_session_id?: string | null
   provider: string
   action: string
   status: DaemonJobStatus
@@ -59,11 +57,10 @@ export type DaemonReplaySummary = {
   task_id: string | null
   updated_at: string
   reported_at: string
-  preview: {
-    kind: 'result' | 'error' | 'blocker' | 'none'
-    text: string | null
-    truncated: boolean
-  }
+  outcome_kind: 'result' | 'error' | 'blocker' | 'none'
+  has_result: boolean
+  has_error: boolean
+  has_blocker: boolean
 }
 
 export type DrainDaemonReplayOptions = DaemonClientOptions & AgentRecipientOptions & {

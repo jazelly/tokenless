@@ -44,6 +44,8 @@ Include only the request, explicit shareable context, and intentionally selected
 tokenless run \
   --profile "<managed-profile>" \
   --provider chatgpt \
+  --agent-kind "<agent kind>" \
+  --agent-session-id "<stable agent session id>" \
   --project-name "<agent project name>" \
   --chat-name "<agent task name>" \
   --project-root "/absolute/path/to/project" \
@@ -84,6 +86,29 @@ If a run fails with `prompt_input_visibility_timeout` or `prompt_submit_visibili
 If sign-in, CAPTCHA, plan limits, consent, or confirmation requires the user, state the completed work, exact visible action, and next verification in the user's preferred language. Never request credentials or browser state.
 
 Use `profiles open` only for headed browser handoff. It always opens a visible browser window.
+
+## Recover after an agent restart
+
+Keep one stable `agent kind` and `agent session id` for the lifetime of an agent session. Pass both flags on addressed jobs, or set `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID` so `run`, `state`, `resume`, `cancel`, and replay use the same recipient.
+
+After the agent process restarts, drain previously unseen outcome summaries once:
+
+```bash
+tokenless replay \
+  --agent-kind "<agent kind>" \
+  --agent-session-id "<stable agent session id>" \
+  --json
+```
+
+Tokenless probes or starts its local daemon on demand. Replay is deliberately at-most-once per actionable outcome revision: SQLite marks the revision reported before the CLI returns it, without waiting for an agent acknowledgement. Never expect the same revision to be proactively reported again. A later parked or terminal revision of the same job may be reported once as a new outcome.
+
+Replay contains only job identity, status, timestamps, and result/error/blocker availability flags. It never contains the full outcome. Retrieve durable full state only when useful:
+
+```bash
+tokenless state --job-id "<jobId>" --json
+```
+
+The full job remains in SQLite even after its summary is reported. If a replay response was lost, query a known `jobId` or `taskId`; do not create a replacement job solely to recover the result. Attached commands with the same agent identity record delivery at the CLI boundary automatically, so already returned outcomes do not later appear as unseen replay.
 
 ## Query daemon-backed state
 

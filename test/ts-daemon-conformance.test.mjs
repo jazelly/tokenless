@@ -92,12 +92,50 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
   let daemon = await startTsDaemon(homeDir)
   const agentA = { agent_kind: 'codex', agent_session_id: `session-a-${randomUUID()}` }
   const agentB = { agent_kind: 'codex', agent_session_id: `session-b-${randomUUID()}` }
+  const agentC = { agent_kind: 'codex', agent_session_id: `session-c-${randomUUID()}` }
+  const agentD = { agent_kind: 'codex', agent_session_id: `session-d-${randomUUID()}` }
+  const agentE = { agent_kind: 'codex', agent_session_id: `session-e-${randomUUID()}` }
   const jobA = randomUUID()
   const jobB = randomUUID()
+  const jobC = randomUUID()
+  const jobD = randomUUID()
+  const jobE = randomUUID()
   const unaddressedJob = randomUUID()
   try {
     const token = readControlToken(homeDir)
     await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    for (const invalidRecipient of [
+      { agent_kind: null },
+      { agent_kind: null, agent_session_id: null },
+    ]) {
+      const response = await fetch(`${daemon.url}/jobs`, {
+        method: 'POST',
+        headers: jsonHeaders(token),
+        body: JSON.stringify({
+          provider: 'chatgpt',
+          action: managedPlaywrightJobAction,
+          execution_backend: 'playwright',
+          profile_id: randomUUID(),
+          request_json: { malformed: true },
+          ...invalidRecipient,
+        }),
+      })
+      assert.equal(response.status, 400)
+      assert.equal((await response.json()).error.code, 'invalid_input')
+    }
+    for (const invalidLimit of [null, 201]) {
+      const invalidReplayLimit = await fetch(`${daemon.url}/replay/drain`, {
+        method: 'POST',
+        headers: jsonHeaders(token),
+        body: JSON.stringify({
+          ...agentA,
+          limit: invalidLimit,
+        }),
+      })
+      assert.equal(invalidReplayLimit.status, 400)
+      assert.equal((await invalidReplayLimit.json()).error.code, 'invalid_input')
+    }
+
     for (const [jobId, recipient] of [
       [jobA, agentA],
       [jobB, agentB],
@@ -122,9 +160,138 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
 
     const isolated = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', {
       agent_kind: agentA.agent_kind,
-      agent_session_id: agentB.agent_session_id,
+      agent_session_id: `unknown-${randomUUID()}`,
     })
     assert.deepEqual(isolated.jobs, [])
+
+    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: randomUUID(),
+      job_id: jobC,
+      ...agentC,
+      request_json: { malformed: true, taskId: `task-${jobC}` },
+    })
+    const waitingDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+    try {
+      waitingDatabase.prepare(
+        `UPDATE jobs
+         SET status = 'waiting_for_user', blocker_json = ?, checkpoint_json = ?,
+             claim_expires_at = NULL, updated_at = ?,
+             outcome_revision = outcome_revision + 1
+         WHERE job_id = ?`
+      ).run(
+        JSON.stringify({ code: 'user_action_required' }),
+        JSON.stringify({ cursor: 'durable-checkpoint' }),
+        new Date(1_000).toISOString(),
+        jobC
+      )
+    } finally {
+      waitingDatabase.close()
+    }
+    const waitingReplay = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentC)
+    assert.deepEqual(waitingReplay.jobs.map((job) => [job.job_id, job.status]), [[jobC, 'waiting_for_user']])
+    const sameTimestampDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+    try {
+      sameTimestampDatabase.prepare(
+        `UPDATE jobs
+         SET status = 'canceled', error_json = ?, blocker_json = NULL, checkpoint_json = NULL,
+             outcome_revision = outcome_revision + 1
+         WHERE job_id = ?`
+      ).run(JSON.stringify({ code: 'job_canceled', reason: { code: 'after_waiting_report' } }), jobC)
+    } finally {
+      sameTimestampDatabase.close()
+    }
+    const finalRevisionReplay = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentC)
+    assert.deepEqual(finalRevisionReplay.jobs.map((job) => [job.job_id, job.status]), [[jobC, 'canceled']])
+    assert.equal(finalRevisionReplay.jobs[0].updated_at, waitingReplay.jobs[0].updated_at)
+    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentC)).jobs, [])
+
+    const createdJobD = await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: randomUUID(),
+      job_id: jobD,
+      ...agentD,
+      request_json: { malformed: true },
+    })
+    assert.equal(Object.hasOwn(createdJobD, 'agent_kind'), false)
+    assert.equal(Object.hasOwn(createdJobD, 'agent_session_id'), false)
+    await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(jobD)}/cancel`)
+    const mismatchedReceipt = await fetch(`${daemon.url}/jobs/${encodeURIComponent(jobD)}/report`, {
+      method: 'POST',
+      headers: jsonHeaders(token),
+      body: JSON.stringify({
+        agent_kind: agentD.agent_kind,
+        agent_session_id: `wrong-${randomUUID()}`,
+      }),
+    })
+    assert.equal(mismatchedReceipt.status, 404)
+    const mismatchedReceiptBody = await mismatchedReceipt.json()
+    assert.equal(mismatchedReceiptBody.error.code, 'job_not_found')
+    assert.equal(Object.hasOwn(mismatchedReceiptBody, 'job'), false)
+    const runtime = await importCli()
+    const firstReceipt = await runtime.markDaemonJobReported({
+      homeDir,
+      daemonUrl: daemon.url,
+      jobId: jobD,
+      agentKind: agentD.agent_kind,
+      agentSessionId: agentD.agent_session_id,
+    })
+    assert.equal(firstReceipt.reported, true)
+    const repeatedReceipt = await runtime.markDaemonJobReported({
+      homeDir,
+      daemonUrl: daemon.url,
+      jobId: jobD,
+      agentKind: agentD.agent_kind,
+      agentSessionId: agentD.agent_session_id,
+    })
+    assert.equal(repeatedReceipt.reported, false)
+    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentD)).jobs, [])
+
+    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: randomUUID(),
+      job_id: jobE,
+      ...agentE,
+      request_json: { malformed: true },
+    })
+    const activeWaitingDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+    try {
+      activeWaitingDatabase.prepare(
+        `UPDATE jobs
+         SET status = 'waiting_for_user', blocker_json = ?,
+             claim_expires_at = ?, outcome_revision = outcome_revision + 1
+         WHERE job_id = ?`
+      ).run(
+        JSON.stringify({ code: 'active_user_handover' }),
+        Date.now() + 60_000,
+        jobE
+      )
+    } finally {
+      activeWaitingDatabase.close()
+    }
+    const activeWaitingReceipt = await runtime.markDaemonJobReported({
+      homeDir,
+      daemonUrl: daemon.url,
+      jobId: jobE,
+      agentKind: agentE.agent_kind,
+      agentSessionId: agentE.agent_session_id,
+    })
+    assert.equal(activeWaitingReceipt.reported, true)
+    const repeatedActiveWaitingReceipt = await runtime.markDaemonJobReported({
+      homeDir,
+      daemonUrl: daemon.url,
+      jobId: jobE,
+      agentKind: agentE.agent_kind,
+      agentSessionId: agentE.agent_session_id,
+    })
+    assert.equal(repeatedActiveWaitingReceipt.reported, false)
+    assert.deepEqual((await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentE)).jobs, [])
 
     const cliReplay = runCli([
       'replay',
@@ -143,8 +310,9 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
     assert.equal(cliPayload.jobs[0].job_id, jobA)
     assert.equal(cliPayload.jobs[0].status, 'canceled')
     assert.equal(cliPayload.jobs[0].task_id, `task-${jobA}`)
-    assert.equal(cliPayload.jobs[0].preview.kind, 'error')
-    assert.equal(cliPayload.jobs[0].preview.text.length <= 512, true)
+    assert.equal(cliPayload.jobs[0].outcome_kind, 'error')
+    assert.equal(cliPayload.jobs[0].has_error, true)
+    assert.equal(Object.hasOwn(cliPayload.jobs[0], 'preview'), false)
     assert.equal(Object.hasOwn(cliPayload.jobs[0], 'request_json'), false)
 
     const emptySecondDrain = await daemonRequest(daemon.url, token, 'POST', '/replay/drain', agentA)
@@ -165,6 +333,8 @@ test('agent replay drains each durable job once, survives restart, and keeps ful
     assert.equal(fullJob.job_id, jobA)
     assert.equal(fullJob.status, 'canceled')
     assert.equal(fullJob.error_json.reason.detail.length, 2_000)
+    assert.equal(Object.hasOwn(fullJob, 'agent_kind'), false)
+    assert.equal(Object.hasOwn(fullJob, 'agent_session_id'), false)
 
     const otherAgent = await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', agentB)
     assert.deepEqual(otherAgent.jobs.map((job) => job.job_id), [jobB])
@@ -225,6 +395,128 @@ test('daemon startup reconciles an expired running lease before becoming ready',
       assert.equal(row.claim_expires_at, null)
     } finally {
       recoveredDatabase.close()
+    }
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('replay migration initializes durable outcome revisions and preserves an existing receipt', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-replay-migration-')
+  let daemon = await startTsDaemon(homeDir)
+  const recipient = { agent_kind: 'codex', agent_session_id: `migration-${randomUUID()}` }
+  const replayableJobId = randomUUID()
+  const alreadyReportedJobId = randomUUID()
+  const activeWaitingJobId = randomUUID()
+  const activeWaitingReportedJobId = randomUUID()
+  try {
+    const token = readControlToken(homeDir)
+    await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
+    for (const jobId of [replayableJobId, alreadyReportedJobId]) {
+      await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+        provider: 'chatgpt',
+        action: managedPlaywrightJobAction,
+        execution_backend: 'playwright',
+        profile_id: randomUUID(),
+        job_id: jobId,
+        ...recipient,
+        request_json: { malformed: true },
+      })
+      await daemonRequest(daemon.url, token, 'POST', `/jobs/${encodeURIComponent(jobId)}/cancel`)
+    }
+    for (const jobId of [activeWaitingJobId, activeWaitingReportedJobId]) {
+      await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+        provider: 'chatgpt',
+        action: managedPlaywrightJobAction,
+        execution_backend: 'playwright',
+        profile_id: randomUUID(),
+        job_id: jobId,
+        ...recipient,
+        request_json: { malformed: true },
+      })
+    }
+    await shutdownDaemon(daemon)
+
+    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+    try {
+      database.exec('ALTER TABLE jobs ADD COLUMN replay_reported_job_updated_at TEXT')
+      database.prepare(
+        `UPDATE jobs
+         SET outcome_revision = 0, reported_outcome_revision = NULL,
+             replay_reported_at = NULL, replay_reported_job_updated_at = NULL
+         WHERE job_id = ?`
+      ).run(replayableJobId)
+      database.prepare(
+        `UPDATE jobs
+         SET outcome_revision = 0, reported_outcome_revision = NULL,
+             replay_reported_at = updated_at, replay_reported_job_updated_at = updated_at
+         WHERE job_id = ?`
+      ).run(alreadyReportedJobId)
+      database.prepare(
+        `UPDATE jobs
+         SET status = 'waiting_for_user', blocker_json = ?, claim_expires_at = ?,
+             outcome_revision = 0, reported_outcome_revision = NULL,
+             replay_reported_at = NULL, replay_reported_job_updated_at = NULL
+         WHERE job_id = ?`
+      ).run(
+        JSON.stringify({ code: 'legacy_active_waiting' }),
+        Date.now() + 60_000,
+        activeWaitingJobId
+      )
+      database.prepare(
+        `UPDATE jobs
+         SET status = 'waiting_for_user', blocker_json = ?, claim_expires_at = ?,
+             outcome_revision = 0, reported_outcome_revision = NULL,
+             replay_reported_at = updated_at, replay_reported_job_updated_at = updated_at
+         WHERE job_id = ?`
+      ).run(
+        JSON.stringify({ code: 'legacy_active_waiting_reported' }),
+        Date.now() + 60_000,
+        activeWaitingReportedJobId
+      )
+    } finally {
+      database.close()
+    }
+
+    daemon = await startTsDaemon(homeDir)
+    const restartedToken = readControlToken(homeDir)
+    const replay = await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', recipient)
+    assert.deepEqual(replay.jobs.map((job) => job.job_id), [replayableJobId])
+    assert.deepEqual((await daemonRequest(daemon.url, restartedToken, 'POST', '/replay/drain', recipient)).jobs, [])
+    const runtime = await importCli()
+    const migratedActiveReceipt = await runtime.markDaemonJobReported({
+      homeDir,
+      daemonUrl: daemon.url,
+      jobId: activeWaitingJobId,
+      agentKind: recipient.agent_kind,
+      agentSessionId: recipient.agent_session_id,
+    })
+    assert.equal(migratedActiveReceipt.reported, true)
+    const migratedExistingReceipt = await runtime.markDaemonJobReported({
+      homeDir,
+      daemonUrl: daemon.url,
+      jobId: activeWaitingReportedJobId,
+      agentKind: recipient.agent_kind,
+      agentSessionId: recipient.agent_session_id,
+    })
+    assert.equal(migratedExistingReceipt.reported, false)
+    const migratedDatabase = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+    try {
+      const rows = migratedDatabase.prepare(
+        `SELECT job_id, outcome_revision, reported_outcome_revision
+         FROM jobs
+         WHERE job_id IN (?, ?)
+         ORDER BY job_id`
+      ).all(activeWaitingJobId, activeWaitingReportedJobId)
+      assert.equal(rows.every((row) => row.outcome_revision === 1), true)
+      assert.equal(rows.every((row) => row.reported_outcome_revision === 1), true)
+    } finally {
+      migratedDatabase.close()
     }
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)

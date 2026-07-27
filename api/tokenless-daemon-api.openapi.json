@@ -7,7 +7,8 @@
   },
   "servers": [
     {
-      "url": "http://127.0.0.1:7331"
+      "url": "http://127.0.0.1:7331",
+      "description": "Preferred loopback origin. The daemon may bind a higher free port and records the actual origin in local SQLite runtime state."
     }
   ],
   "security": [
@@ -357,6 +358,95 @@
           }
         }
       }
+    },
+    "/jobs/{job_id}/report": {
+      "post": {
+        "operationId": "reportJobOutcome",
+        "summary": "Mark one addressed job outcome revision as reported",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/job_id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRecipientRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent report receipt and public job view",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobReportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/replay/drain": {
+      "post": {
+        "operationId": "drainAgentReplay",
+        "summary": "Atomically report pending outcome summaries for one agent recipient",
+        "description": "Eligible outcome revisions are marked reported in SQLite before this response is returned. A lost response is not replayed automatically; full job state remains queryable by job ID.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplayDrainRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Newly reported outcome summaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDrainResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -696,6 +786,14 @@
           "request_json"
         ],
         "additionalProperties": false,
+        "dependentRequired": {
+          "agent_kind": [
+            "agent_session_id"
+          ],
+          "agent_session_id": [
+            "agent_kind"
+          ]
+        },
         "properties": {
           "provider": {
             "type": "string",
@@ -714,9 +812,169 @@
             "minLength": 1,
             "maxLength": 128
           },
+          "agent_kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "agent_session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
           "job_id": {
             "type": "string",
             "minLength": 1
+          }
+        }
+      },
+      "AgentRecipientRequest": {
+        "type": "object",
+        "required": [
+          "agent_kind",
+          "agent_session_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "agent_kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "agent_session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "ReplayDrainRequest": {
+        "type": "object",
+        "required": [
+          "agent_kind",
+          "agent_session_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "agent_kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "agent_session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 100
+          }
+        }
+      },
+      "ReplaySummary": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "provider",
+          "action",
+          "status",
+          "task_id",
+          "updated_at",
+          "reported_at",
+          "outcome_kind",
+          "has_result",
+          "has_error",
+          "has_blocker"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "waiting_for_user",
+              "succeeded",
+              "failed",
+              "canceled",
+              "timed_out"
+            ]
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reported_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "outcome_kind": {
+            "enum": [
+              "result",
+              "error",
+              "blocker",
+              "none"
+            ]
+          },
+          "has_result": {
+            "type": "boolean"
+          },
+          "has_error": {
+            "type": "boolean"
+          },
+          "has_blocker": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ReplayDrainResponse": {
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/ReplaySummary"
+            }
+          }
+        }
+      },
+      "JobReportResponse": {
+        "type": "object",
+        "required": [
+          "reported",
+          "job"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reported": {
+            "type": "boolean"
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobView"
           }
         }
       },

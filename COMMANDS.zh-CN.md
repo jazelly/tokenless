@@ -25,6 +25,7 @@
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
+| `tokenless replay` | 为一个 agent recipient 报告此前未见过的 daemon outcome 摘要。 | 否 |
 | `tokenless state` | 查询 daemon 中持久化的 job 状态。 | 否 |
 | `tokenless resume` | 使用 headed browser 恢复等待用户操作的 job。 | 是 |
 | `tokenless cancel` | 取消 daemon job，并确认其已进入 canceled 状态。 | 否 |
@@ -75,7 +76,9 @@ Runtime browser 可选值为 `chrome`、`chrome-for-testing`、`chromium`、`edg
 | `--json` | 将最终结果输出为结构化 JSON。除非使用 `--quiet`，实时进度仍写入 stderr。 |
 | `--quiet` | 禁止输出实时状态事件。 |
 | `--home <path>` | 使用非默认的 Tokenless 状态目录。 |
-| `--daemon-url <url>` | 使用指定的 loopback daemon URL。 |
+| `--daemon-url <url>` | 设置首选 loopback daemon URL。若其端口被占用，Tokenless 可顺延到下一个空闲端口，并把实际 endpoint 记录到 SQLite。 |
+| `--agent-kind <kind>` | 将 job 或 replay drain 定向到显式 agent kind；必须与 `--agent-session-id` 同时使用。 |
+| `--agent-session-id <id>` | 将 job 或 replay drain 定向到显式 agent session；必须与 `--agent-kind` 同时使用。 |
 | `--browser-visibility <auto\|headed\|headless>` | 选择浏览器可见性策略。 |
 | `--timeout-ms <ms>` | 覆盖命令或 job 的等待时间。 |
 | `--daemon-start-timeout-ms <ms>` | 覆盖 daemon 启动等待时间。 |
@@ -204,6 +207,8 @@ tokenless config \
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
+`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
+
 ### `tokenless upgrade`
 
 执行受支持的 upgrade pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来 upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。
@@ -225,7 +230,7 @@ tokenless daemon stop --json
 
 选项：`--home`、`--daemon-url`、`--timeout-ms` 和 `--json`。
 
-该命令不会因为某个未验证或不兼容的进程占用了配置端口，就直接杀掉该进程。
+该命令会从 SQLite 发现实际 endpoint，也不会因为某个未验证或不兼容的进程占用了首选端口，就直接杀掉该进程。
 
 ## Managed Profiles
 
@@ -370,6 +375,7 @@ Identity 与 continuity：
 - `--project-name <name>` 和 `--chat-name <name>` 会参与推导 task identity。
 - `--workspace-mode <auto|native|conversation>` 显式请求 Workspace 处理，并要求同时提供 `--project-name`。
 - `--project-instructions <text>` 或 `--project-instructions-file <path>` 提供可选 Workspace instructions。
+- `--agent-kind <kind>` 和 `--agent-session-id <id>` 将 job 定向到一个 agent recipient。两者必须同时提供，也可通过 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
 
 执行控制：
 
@@ -383,6 +389,23 @@ Workspace modes：
 - `auto` 优先使用已经证明可用的原生 provider workspace，否则返回明确的 conversation fallback。
 - `native` 强制要求原生 workspace，不允许 fallback。
 - `conversation` 强制使用 conversation-scoped continuity。
+
+### `tokenless replay`
+
+原子报告尚未送达给一个显式 agent recipient 的 outcome 摘要：
+
+```bash
+tokenless replay \
+  --agent-kind codex \
+  --agent-session-id "<stable-session-id>" \
+  --json
+```
+
+该命令会按需探测或启动本地 daemon。SQLite 会在返回响应前把每个 actionable outcome revision 标为已报告，因此同一 revision 永不再次主动报告——即使本次 CLI 响应丢失。同一 job 后续进入新的 parked 或 terminal revision 时，会作为新的 outcome 再报告一次。
+
+Replay 只包含 allowlist metadata，以及 `has_result`、`has_error`、`has_blocker` 标志；不会包含原始 result、error 或 blocker 内容。需要时使用 `tokenless state --job-id "<jobId>" --json` 读取持久化的完整 job。不要仅仅因为漏掉 replay 响应就提交替代 job。
+
+主要选项：`--agent-kind`、`--agent-session-id`、`--limit`、`--daemon-url`、`--daemon-start-timeout-ms`、`--home` 和 `--json`。两个 identity 参数也可由 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
 
 ### `tokenless state`
 

@@ -172,6 +172,24 @@ async function handleRequest(
 
     if (method === 'POST' && url.pathname === '/jobs') {
       const body = await readJsonObject(request)
+      const createJobFields = new Set([
+        'provider',
+        'action',
+        'request_json',
+        'execution_backend',
+        'profile_id',
+        'agent_kind',
+        'agent_session_id',
+        'job_id',
+      ])
+      if (Object.keys(body).some((key) => !createJobFields.has(key))) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
+      const hasAgentKind = Object.hasOwn(body, 'agent_kind')
+      const hasAgentSessionId = Object.hasOwn(body, 'agent_session_id')
+      if (hasAgentKind !== hasAgentSessionId) {
+        throw invalidInput('agent_kind and agent_session_id must be provided together')
+      }
       const provider = requiredString(body.provider, 'provider')
       const executionBackend = optionalExecutionBackend(body.execution_backend)
       if (executionBackend === 'playwright' && !supportedProviderSet().has(provider)) {
@@ -183,8 +201,8 @@ async function handleRequest(
         request_json: requireField(body, 'request_json'),
         execution_backend: executionBackend,
         profile_id: optionalString(body.profile_id),
-        agent_kind: optionalString(body.agent_kind),
-        agent_session_id: optionalString(body.agent_session_id),
+        agent_kind: hasAgentKind ? requiredString(body.agent_kind, 'agent_kind') : undefined,
+        agent_session_id: hasAgentSessionId ? requiredString(body.agent_session_id, 'agent_session_id') : undefined,
         job_id: optionalString(body.job_id) ?? undefined,
       })
       if (job.execution_backend === 'playwright') await runtimeController?.wake()
@@ -207,6 +225,9 @@ async function handleRequest(
 
     if (method === 'POST' && url.pathname === '/replay/drain') {
       const body = await readJsonObject(request)
+      if (Object.keys(body).some((key) => key !== 'agent_kind' && key !== 'agent_session_id' && key !== 'limit')) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
       const summaries = store.drainReplaySummaries({
         agent_kind: requiredString(body.agent_kind, 'agent_kind'),
         agent_session_id: requiredString(body.agent_session_id, 'agent_session_id'),
@@ -239,6 +260,9 @@ async function handleRequest(
     }
     if (jobRoute && method === 'POST' && jobRoute.action === 'report') {
       const body = await readJsonObject(request)
+      if (Object.keys(body).some((key) => key !== 'agent_kind' && key !== 'agent_session_id')) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
       const result = store.markJobReported(jobRoute.jobId, {
         agent_kind: requiredString(body.agent_kind, 'agent_kind'),
         agent_session_id: requiredString(body.agent_session_id, 'agent_session_id'),
@@ -412,9 +436,9 @@ function optionalLimit(value: string | null) {
 }
 
 function optionalBodyLimit(value: unknown) {
-  if (value === undefined || value === null) return undefined
-  if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw invalidInput('limit must be a positive integer')
+  if (value === undefined) return undefined
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 200) {
+    throw invalidInput('limit must be an integer between 1 and 200')
   }
   return Number(value)
 }

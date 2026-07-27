@@ -15,6 +15,7 @@ Tokenless 是一款面向所有 AI 用户、帮助降低 token 消耗的本地�
 - **智能任务分流**：通过可自定义的 Skill Prompt，用户可以自行设定“什么类型的任务适合交给哪个 AI 处理”，实现灵活、可控的分流策略。
 - **多 AI 服务支持**：目前支持 ChatGPT、Claude、Grok、Gemini 四家网页版 AI 服务；Qwen / 千问现作为实验性 Guest-session provider 提供。
 - **完全本地运行**：所有自动化流程均在本地执行，不经第三方转发，也不收集用户数据。
+- **可恢复的本地 Jobs**：CLI 只在需要时启动 daemon，从 SQLite 发现其实际 loopback 端口，在重启后恢复 lease/checkpoint work，并允许指定 agent 对每个未见 outcome 摘要只 drain 一次，同时保留完整 job result。
 - **Provider-neutral 可见工作流**：在已支持的 provider 中统一完成提示词、完整性校验后的文件选择和对话延续。Qwen 的实验性 baseline 当前覆盖 prompt 提交、response 读取和同一 task 的对话延续；尚未证明的可选 capability 会保持 unavailable 或 unknown。
 - **明确的 Guest 与登录路由**：ChatGPT 和 Gemini 可通过可见 Guest session 执行，实验性 Qwen 集成也支持该路径；Claude 和 Grok 会在 Tokenless 输入任务内容前，将同一个 job handoff 给用户登录。
 
@@ -43,7 +44,7 @@ Profile 和 provider 使用不同且区分大小写的短选项：
 
 ## 实现要点
 
-- 前端通过 TypeScript 编写的 CLI 暴露给用户使用，本机由 TypeScript 编写的 Daemon 负责持久化运行与状态管理。
+- 前端通过 TypeScript 编写的 CLI 暴露给用户使用，本机按需运行的 TypeScript Daemon 负责管理持久化 SQLite 状态。配置 URL 是首选 loopback origin；端口被占用时实际端口可以顺延，并记录到 SQLite。
 - 分流逻辑基于 Skill Prompt 实现，用户可以自定义规则，指定不同类型的任务应由哪个 AI 服务处理。
 - Playwright 只操作 provider 的可见控件并报告 fixture 已证明的 postcondition。文件上传会区分“已选择”与“provider 已通过可见附件证明接受”，Workspace 请求也会明确返回原生资源或 conversation fallback。
 - 单一 typed provider registry 统一记录 identity、navigation、guest、账号 tier、selector 和 capability 策略。每家 provider 都是具体的 `BaseProvider` 子类；独立的 provider-session state machine 根据可见页面证据裁决 guest、account、handoff、wait 或 terminal 结果。

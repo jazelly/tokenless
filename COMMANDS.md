@@ -25,6 +25,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
+| `tokenless replay` | Report previously unseen daemon outcome summaries for one agent recipient. | None |
 | `tokenless state` | Inspect durable daemon job state. | None |
 | `tokenless resume` | Resume a job waiting for user action in a headed browser. | Yes |
 | `tokenless cancel` | Cancel a daemon job and confirm its canceled state. | None |
@@ -75,7 +76,9 @@ These options are available where the command needs the corresponding runtime be
 | `--json` | Write the final result as structured JSON. Live progress remains on stderr unless `--quiet` is used. |
 | `--quiet` | Suppress live status events. |
 | `--home <path>` | Use a non-default Tokenless state directory. |
-| `--daemon-url <url>` | Use a specific loopback daemon URL. |
+| `--daemon-url <url>` | Set the preferred loopback daemon URL. If its port is occupied, Tokenless may bind the next free port and records the actual endpoint in SQLite. |
+| `--agent-kind <kind>` | Address a job or replay drain to an explicit agent kind; use with `--agent-session-id`. |
+| `--agent-session-id <id>` | Address a job or replay drain to an explicit agent session; use with `--agent-kind`. |
 | `--browser-visibility <auto\|headed\|headless>` | Choose the browser visibility policy. |
 | `--timeout-ms <ms>` | Override the command or job wait timeout. |
 | `--daemon-start-timeout-ms <ms>` | Override daemon startup waiting. |
@@ -204,6 +207,8 @@ Configurable values:
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
+`daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
+
 ### `tokenless upgrade`
 
 Runs the supported upgrade pipeline: update the global npm CLI, resolve and verify the installed CLI, invoke that new CLI's shared maintenance module to upsert global agent skills and reconcile the matching daemon, then run doctor.
@@ -225,7 +230,7 @@ tokenless daemon stop --json
 
 Options: `--home`, `--daemon-url`, `--timeout-ms`, and `--json`.
 
-The command does not kill an unverified or incompatible process merely because it occupies the configured port.
+The command discovers the actual endpoint from SQLite and does not kill an unverified or incompatible process merely because it occupies the preferred port.
 
 ## Managed Profiles
 
@@ -370,6 +375,7 @@ Identity and continuity:
 - `--project-name <name>` and `--chat-name <name>` contribute to derived task identity.
 - `--workspace-mode <auto|native|conversation>` explicitly requests Workspace handling and requires `--project-name`.
 - `--project-instructions <text>` or `--project-instructions-file <path>` supplies optional Workspace instructions.
+- `--agent-kind <kind>` and `--agent-session-id <id>` address the job to one agent recipient. Both are required together; the same values may come from `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID`.
 
 Execution:
 
@@ -383,6 +389,23 @@ Workspace modes:
 - `auto` prefers a proven native provider workspace and otherwise returns an explicit conversation fallback.
 - `native` requires a native workspace and fails instead of falling back.
 - `conversation` requires conversation-scoped continuity.
+
+### `tokenless replay`
+
+Atomically reports outcome summaries that have not yet been delivered to one explicit agent recipient:
+
+```bash
+tokenless replay \
+  --agent-kind codex \
+  --agent-session-id "<stable-session-id>" \
+  --json
+```
+
+The command probes or starts the local daemon on demand. SQLite marks each actionable outcome revision as reported before the response is returned, so the same revision is never proactively reported again—even if the CLI response is lost. A later parked or terminal revision of the same job is a new outcome and may be reported once.
+
+Replay contains only allowlisted metadata and `has_result`, `has_error`, and `has_blocker` flags. It does not include raw result, error, or blocker content. Use `tokenless state --job-id "<jobId>" --json` to retrieve the durable full job whenever needed. Do not submit a replacement job solely because a replay response was missed.
+
+Main options: `--agent-kind`, `--agent-session-id`, `--limit`, `--daemon-url`, `--daemon-start-timeout-ms`, `--home`, and `--json`. The two identity flags may instead be supplied by `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID`.
 
 ### `tokenless state`
 
