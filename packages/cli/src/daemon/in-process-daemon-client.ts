@@ -1,48 +1,15 @@
-import { daemonErrorBody, invalidInput, toDaemonError } from './errors.js'
+import { daemonErrorBody, toDaemonError } from './errors.js'
 import { JobStore, publicView, withClaimToken } from './job-store.js'
 import { claimRecoveryError, tokenlessError } from '../playwright/errors.js'
-import { listProviderInstances } from '../providers/registry.js'
 import type { Job } from './job-store.js'
 import type {
-  CancelDaemonJobOptions,
-  CheckpointDaemonJobOptions,
-  ClaimLifecycleDaemonJobOptions,
-  CompleteDaemonJobOptions,
   DaemonClaimedJob,
   DaemonJob,
   ManagedDaemonClient,
-  ParkDaemonJobOptions,
-  ResumeDaemonJobOptions,
-  WaitingForUserDaemonJobOptions,
 } from '../playwright/daemon-client.js'
 
 export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClient {
   return {
-    ready: (options = {}) => inProcessDaemonRequest(options.signal, () => ({
-      ready: true as const,
-    })),
-    createJob: (options) => inProcessDaemonRequest(options.signal, () => {
-      if (options.executionBackend === 'playwright' && !supportedProviderSet().has(options.provider)) {
-        throw invalidInput(`unsupported playwright provider: ${options.provider}`)
-      }
-      return claimedView(store.createJob({
-        provider: options.provider,
-        action: options.action,
-        request_json: options.requestJson,
-        execution_backend: options.executionBackend,
-        profile_id: options.profileId,
-        job_id: options.jobId,
-        claim_token: options.claimToken,
-      }))
-    }),
-    listJobs: (options = {}) => inProcessDaemonRequest(options.signal, () => store.listJobs({
-      status: options.status,
-      execution_backend: options.executionBackend,
-      profile_id: options.profileId,
-      provider: options.provider,
-      task_id: options.taskId,
-      limit: options.limit,
-    }).map(publicJobView)),
     getJob: (options) => inProcessDaemonRequest(options.signal, () => publicJobView(store.getJob(options.jobId))),
     claimNextJob: (options) => inProcessClaimNextRequest(store, options.signal, () => store.claimNextJob(
         {
@@ -62,9 +29,6 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
     parkJob: (options) => parkRequest(options, () => publicJobView(
       store.parkJob(options.jobId, options.claimToken, options.blocker, options.checkpoint)
     )),
-    resumeJob: (options) => resumeRequest(options, () => publicJobView(
-      store.resumeJob(options.jobId, { browser_visibility: options.browserVisibility })
-    )),
     renewJobClaim: (options) => claimRequest(options, () => publicJobView(store.renewClaim(options.jobId, options.claimToken))),
     completeJob: (options) => completeRequest(options, () => {
       const hasResult = options.result !== undefined && options.result !== null
@@ -78,19 +42,14 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
         hasResult ? { result_json: options.result } : { error_json: options.error }
       ))
     }),
-    cancelJob: (options) => cancelRequest(options, async () => publicJobView(await store.cancelJob(options.jobId, options.reason))),
   }
 }
 
-function supportedProviders() {
-  return listProviderInstances()
-    .filter((provider) => provider.descriptor.stage !== 'disabled')
-    .map((provider) => String(provider.id))
-}
-
-function supportedProviderSet() {
-  return new Set(supportedProviders())
-}
+type ClaimLifecycleDaemonJobOptions = Parameters<ManagedDaemonClient['markJobRunning']>[0]
+type WaitingForUserDaemonJobOptions = Parameters<ManagedDaemonClient['markJobWaitingForUser']>[0]
+type CheckpointDaemonJobOptions = Parameters<ManagedDaemonClient['checkpointJob']>[0]
+type ParkDaemonJobOptions = Parameters<ManagedDaemonClient['parkJob']>[0]
+type CompleteDaemonJobOptions = Parameters<ManagedDaemonClient['completeJob']>[0]
 
 function claimRequest<T>(options: ClaimLifecycleDaemonJobOptions, operation: () => T): Promise<T> {
   return inProcessDaemonRequest(options.signal, operation)
@@ -108,15 +67,7 @@ function parkRequest<T>(options: ParkDaemonJobOptions, operation: () => T): Prom
   return inProcessDaemonRequest(options.signal, operation)
 }
 
-function resumeRequest<T>(options: ResumeDaemonJobOptions, operation: () => T): Promise<T> {
-  return inProcessDaemonRequest(options.signal, operation)
-}
-
 function completeRequest<T>(options: CompleteDaemonJobOptions, operation: () => T): Promise<T> {
-  return inProcessDaemonRequest(options.signal, operation)
-}
-
-function cancelRequest<T>(options: CancelDaemonJobOptions, operation: () => T | Promise<T>): Promise<T> {
   return inProcessDaemonRequest(options.signal, operation)
 }
 

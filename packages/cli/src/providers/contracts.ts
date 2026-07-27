@@ -1,20 +1,13 @@
 import {
-  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
   VISIBLE_ACTION_PROTOCOL_VERSION_V3,
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from '../generated/protocol-constants.js'
 import type { ProviderId } from './provider-identity.js'
 
-export type VisibleActionProtocolVersion =
-  | typeof VISIBLE_ACTION_PROTOCOL_VERSION_V1
-  | typeof VISIBLE_ACTION_PROTOCOL_VERSION_V2
-  | typeof VISIBLE_ACTION_PROTOCOL_VERSION_V3
+export type VisibleActionProtocolVersion = typeof VISIBLE_ACTION_PROTOCOL_VERSION_V3
 
 export function isVisibleActionProtocolVersion(value: unknown): value is VisibleActionProtocolVersion {
-  return value === VISIBLE_ACTION_PROTOCOL_VERSION_V1 ||
-    value === VISIBLE_ACTION_PROTOCOL_VERSION_V2 ||
-    value === VISIBLE_ACTION_PROTOCOL_VERSION_V3
+  return value === VISIBLE_ACTION_PROTOCOL_VERSION_V3
 }
 
 export const VISIBLE_ACTIONS = Object.freeze({

@@ -22,4 +22,5 @@ An archived roadmap may return to the parent directory only when the direction i
 
 | Roadmap | Disposition |
 | --- | --- |
+| [Daemon Fastify HTTP API](daemon-fastify-http-api.md) | Cancelled 2026-07-27 after the daemon v1 clean break kept the smaller built-in HTTP server and moved worker coordination in-process. |
 | [Provider Architecture and Registry](provider-architecture-and-registry.md) | Completed 2026-07-27 after the OOP provider seam, single registry, daemon negotiation, compatibility cleanup, and first new-provider proof were accepted. |

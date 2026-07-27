@@ -15,9 +15,6 @@ export class GrokProvider extends BaseProvider<'grok'> {
       label: 'Grok',
       stage: 'supported',
       setupOrder: 3,
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: Object.freeze({
         homeUrl: 'https://grok.com/',
         origins: Object.freeze(['https://grok.com']),

@@ -28,5 +28,5 @@ Rules:
 - Default-value changes are protocol changes when an omitted field would produce a different externally observable behavior.
 - Auth and status enum changes are protocol changes unless the current artifact explicitly reserves an extensible enum value space and consumers already handle unknown values.
 - Protocol versions are independent from npm package versions. A package release may contain no protocol change, and a protocol version may remain stable across many package releases.
-- The daemon error contract is the daemon.v1 OpenAPI error envelope; clients preserve its stable `code`, `retryable`, and `details` fields while retaining a legacy message-only fallback when needed.
+- The daemon error contract is the single daemon.v1 OpenAPI error envelope with stable `code`, `message`, `retryable`, and optional `details` fields.
 - Narrow prerelease exception: while a protocol version has not been released to real users and the project explicitly decides on a coordinated reset, a clean-break change may update that unreleased `.vN` identifier in place. Do not use this exception after external users or independently deployed consumers exist.

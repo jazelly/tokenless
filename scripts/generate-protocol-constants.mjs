@@ -191,57 +191,6 @@ function validateJsonSchemaArtifacts(schemaArtifacts) {
 }
 
 function validateJsonSchemaFixtures(ajv) {
-  const jobV2 = ajv.getSchema('https://tokenless.dev/protocol/schemas/playwright-job.v2.schema.json')
-  if (!jobV2) throw new Error('playwright-job.v2 fixture schema is not registered')
-  const multibyteOverLimitJob = {
-    protocol: 'tokenless.playwright.job.v2',
-    provider: 'chatgpt',
-    target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
-    taskId: '你'.repeat(86),
-    browserVisibility: 'auto',
-    actions: [
-      {
-        protocol: 'tokenless.playwright.visible-action.v2',
-        requestId: 'fixture-1',
-        provider: 'chatgpt',
-        action: 'auth.status',
-        payload: {},
-      },
-    ],
-  }
-  if (jobV2(multibyteOverLimitJob)) {
-    throw new Error('playwright-job.v2 fixture must reject taskId values over 256 UTF-8 bytes')
-  }
-  const targetInvariantCases = [
-    ['provider host mismatch', { provider: 'claude', target: { kind: 'provider_home', url: 'https://chatgpt.com/' } }],
-    ['target credentials', { provider: 'chatgpt', target: { kind: 'provider_home', url: 'https://user@chatgpt.com/' } }],
-    ['target query', { provider: 'chatgpt', target: { kind: 'provider_home', url: 'https://chatgpt.com/?q=1' } }],
-    ['target fragment', { provider: 'chatgpt', target: { kind: 'provider_home', url: 'https://chatgpt.com/#frag' } }],
-  ]
-  for (const [name, override] of targetInvariantCases) {
-    const invalidJob = {
-      ...multibyteOverLimitJob,
-      taskId: null,
-      ...override,
-    }
-    if (jobV2(invalidJob)) {
-      throw new Error(`playwright-job.v2 fixture must reject ${name}`)
-    }
-  }
-
-  const actionV2 = ajv.getSchema('https://tokenless.dev/protocol/schemas/visible-action.v2.schema.json')
-  if (!actionV2) throw new Error('visible-action.v2 fixture schema is not registered')
-  const controlCharacterLabel = {
-    protocol: 'tokenless.playwright.visible-action.v2',
-    requestId: 'fixture-2',
-    provider: 'chatgpt',
-    action: 'model.select',
-    payload: { label: 'bad\u0007label' },
-  }
-  if (actionV2(controlCharacterLabel)) {
-    throw new Error('visible-action.v2 fixture must reject C0/DEL characters in selection labels')
-  }
-
   const jobV3 = ajv.getSchema('https://tokenless.dev/protocol/schemas/playwright-job.v3.schema.json')
   if (!jobV3) throw new Error('playwright-job.v3 fixture schema is not registered')
   const validGenericJob = {
@@ -263,16 +212,19 @@ function validateJsonSchemaFixtures(ajv) {
   if (!jobV3(validGenericJob)) {
     throw new Error(`playwright-job.v3 fixture must accept generic provider syntax and safe HTTPS targets: ${JSON.stringify(jobV3.errors)}`)
   }
+  if (jobV3({ ...validGenericJob, taskId: '你'.repeat(86) })) {
+    throw new Error('playwright-job.v3 fixture must reject taskId values over 256 UTF-8 bytes')
+  }
   const genericSafetyCases = [
     ['bad provider syntax', { provider: 'Future_AI' }],
     ['target credentials', { target: { kind: 'provider_home', url: 'https://user@future.example/' } }],
     ['target query', { target: { kind: 'provider_home', url: 'https://future.example/?q=1' } }],
     ['target fragment', { target: { kind: 'provider_home', url: 'https://future.example/#frag' } }],
     ['ip-like target', { target: { kind: 'provider_home', url: 'https://127.0.0.1/' } }],
-    ['v2 action in v3 job', {
+    ['wrong action protocol', {
       actions: [
         {
-          protocol: 'tokenless.playwright.visible-action.v2',
+          protocol: 'wrong.protocol',
           requestId: 'fixture-4',
           provider: 'future-ai',
           action: 'auth.status',
@@ -315,18 +267,10 @@ async function validateOpenApiArtifact({ artifactPath, parsed }) {
     '/ready',
     '/jobs',
     '/jobs/{job_id}',
-    '/jobs/{job_id}/claim',
-    '/jobs/{job_id}/complete',
     '/jobs/{job_id}/resume',
+    '/jobs/{job_id}/cancel',
     '/control/browser-runtime/status',
     '/control/browser-runtime/quiesce',
-    '/control/jobs/claim-next',
-    '/control/jobs/{job_id}/checkpoint',
-    '/control/jobs/{job_id}/park',
-    '/control/jobs/{job_id}/running',
-    '/control/jobs/{job_id}/waiting-for-user',
-    '/control/jobs/{job_id}/renew',
-    '/control/jobs/{job_id}/cancel',
     '/control/shutdown',
   ]
   const actualPaths = Object.keys(parsed.paths).sort()

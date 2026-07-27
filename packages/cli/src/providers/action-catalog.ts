@@ -25,7 +25,6 @@ export type VisibleActionLifecycle = {
 
 export type VisibleActionCatalogDefinition<Action extends VisibleAction = VisibleAction> = {
   readonly action: Action
-  readonly legacyProtocol: boolean
   readonly lifecycle: VisibleActionLifecycle
   readonly requiredCapabilities: readonly ProviderCapabilityId[]
   validatePayload(payload: Record<string, unknown>): VisibleActionPayloadForAction<Action>
@@ -76,105 +75,90 @@ const responseReadLifecycle = Object.freeze({
 export const VISIBLE_ACTION_CATALOG = Object.freeze({
   [VISIBLE_ACTIONS.CAPABILITY_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.CAPABILITY_INSPECT,
-    legacyProtocol: false,
     lifecycle: gatedReadOnly,
     requiredCapabilities: [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.AUTH_STATUS]: defineAction({
     action: VISIBLE_ACTIONS.AUTH_STATUS,
-    legacyProtocol: true,
     lifecycle: immediateReadOnly,
     requiredCapabilities: [],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.MODEL_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.MODEL_INSPECT,
-    legacyProtocol: true,
     lifecycle: gatedReadOnly,
     requiredCapabilities: [],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.MODEL_SELECT]: defineAction({
     action: VISIBLE_ACTIONS.MODEL_SELECT,
-    legacyProtocol: true,
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [],
     validatePayload: validateSelectionPayload,
   }),
   [VISIBLE_ACTIONS.EFFORT_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.EFFORT_INSPECT,
-    legacyProtocol: true,
     lifecycle: gatedReadOnly,
     requiredCapabilities: [],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.EFFORT_SELECT]: defineAction({
     action: VISIBLE_ACTIONS.EFFORT_SELECT,
-    legacyProtocol: true,
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [],
     validatePayload: validateSelectionPayload,
   }),
   [VISIBLE_ACTIONS.FILE_UPLOAD]: defineAction({
     action: VISIBLE_ACTIONS.FILE_UPLOAD,
-    legacyProtocol: true,
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.FILE_UPLOAD],
     validatePayload: validateFileUploadPayload,
   }),
   [VISIBLE_ACTIONS.WORKSPACE_ENSURE]: defineAction({
     action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
-    legacyProtocol: false,
     lifecycle: gatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.WORKSPACE_ENSURE],
     validatePayload: validateWorkspaceEnsurePayload,
   }),
   [VISIBLE_ACTIONS.PROMPT_INPUT]: defineAction({
     action: VISIBLE_ACTIONS.PROMPT_INPUT,
-    legacyProtocol: true,
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE],
     validatePayload: validatePromptInputPayload,
   }),
   [VISIBLE_ACTIONS.PROMPT_CLEAR]: defineAction({
     action: VISIBLE_ACTIONS.PROMPT_CLEAR,
-    legacyProtocol: true,
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.PROMPT_SUBMIT]: defineAction({
     action: VISIBLE_ACTIONS.PROMPT_SUBMIT,
-    legacyProtocol: true,
     lifecycle: submitLifecycle,
     requiredCapabilities: [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.RESPONSE_READ]: defineAction({
     action: VISIBLE_ACTIONS.RESPONSE_READ,
-    legacyProtocol: true,
     lifecycle: responseReadLifecycle,
     requiredCapabilities: [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.SNAPSHOT_SANITIZED]: defineAction({
     action: VISIBLE_ACTIONS.SNAPSHOT_SANITIZED,
-    legacyProtocol: true,
     lifecycle: immediateReadOnly,
     requiredCapabilities: [],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.NAVIGATION_CHECK]: defineAction({
     action: VISIBLE_ACTIONS.NAVIGATION_CHECK,
-    legacyProtocol: true,
     lifecycle: gatedReadOnly,
     requiredCapabilities: [],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.BLOCKER_CHECK]: defineAction({
     action: VISIBLE_ACTIONS.BLOCKER_CHECK,
-    legacyProtocol: true,
     lifecycle: immediateReadOnly,
     requiredCapabilities: [],
     validatePayload: validateEmptyPayload,
@@ -190,10 +174,6 @@ export function listVisibleActions(): readonly VisibleAction[] {
 
 export function isVisibleAction(value: unknown): value is VisibleAction {
   return typeof value === 'string' && ACTION_SET.has(value)
-}
-
-export function isVisibleActionSupportedByLegacyProtocol(action: VisibleAction): boolean {
-  return VISIBLE_ACTION_CATALOG[action].legacyProtocol
 }
 
 export function getVisibleActionCatalogDefinition<Action extends VisibleAction>(

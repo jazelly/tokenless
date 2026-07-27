@@ -13,6 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
+const cliPlaywrightIndex = path.join(cliDir, 'dist/src/playwright/index.js')
 const packageVersion = JSON.parse(fs.readFileSync(path.join(cliDir, 'package.json'), 'utf8')).version
 
 test('ensureDaemonReady installs the packaged daemon and reports daemon v1 readiness', async () => {
@@ -71,21 +72,20 @@ test('ensureDaemonReady never restarts a healthy daemon for a provider absent fr
   }
 })
 
-test('built client preserves native message size compatibility contract', async () => {
+test('built client rejects oversized daemon requests', async () => {
   const runtime = await importCli()
-  assert.equal(runtime.MAX_NATIVE_MESSAGE_BYTES, runtime.MAX_DAEMON_REQUEST_BYTES)
   await assert.rejects(
     runtime.createDaemonJob({
       daemonUrl: 'http://127.0.0.1:9',
       provider: 'chatgpt',
       action: 'prompt.submit',
       requestJson: {
-        prompt: 'x'.repeat(runtime.MAX_NATIVE_MESSAGE_BYTES + 1),
+        prompt: 'x'.repeat(runtime.MAX_DAEMON_REQUEST_BYTES + 1),
       },
     }),
     (error) => {
-      assert.equal(error.code, 'native_message_too_large')
-      assert.match(error.message, new RegExp(`keep it below ${runtime.MAX_NATIVE_MESSAGE_BYTES} bytes`))
+      assert.equal(error.code, 'daemon_request_too_large')
+      assert.match(error.message, new RegExp(`keep it below ${runtime.MAX_DAEMON_REQUEST_BYTES} bytes`))
       return true
     }
   )
@@ -164,6 +164,65 @@ test('ensureDaemonReady does not stop a foreign listener with an unverified proo
     )
     assert.equal(fake.shutdownCount, 0)
     assert.equal(await tcpReachable(daemonUrl), true)
+  } finally {
+    await fake.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(foreignHome, { recursive: true, force: true })
+  }
+})
+
+test('playwright daemon client verifies /ready before sending the bearer token', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-client-ready-auth-')))
+  const foreignHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-client-foreign-home-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), 'requested-home-token\n', { mode: 0o600 })
+  const fake = await startReadyOnlyDaemon({
+    homeDir: foreignHome,
+    daemonUrl,
+    token: 'foreign-home-token',
+    version: packageVersion,
+  })
+  try {
+    const playwright = await importPlaywright()
+    const runtime = await importCli()
+    await assert.rejects(
+      runtime.createDaemonJob({
+        homeDir,
+        daemonUrl,
+        provider: 'chatgpt',
+        action: 'visible_provider_actions',
+        requestJson: {},
+        executionBackend: 'playwright',
+        profileId: 'default',
+      }),
+      (error) => {
+        assert.equal(error.code, 'daemon_ready_proof_mismatch')
+        return true
+      }
+    )
+    assert.deepEqual(fake.readyAuthorizationHeaders, [undefined])
+
+    await assert.rejects(
+      playwright.submitManagedPlaywrightJob({
+        homeDir,
+        daemonUrl,
+        profileId: 'default',
+        request: {
+          provider: 'chatgpt',
+          browserVisibility: 'headed',
+          taskId: 'ready-auth-test',
+          actions: [
+            { requestId: 'ready-auth-test:auth', action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} },
+          ],
+        },
+      }),
+      (error) => {
+        assert.equal(error.code, 'daemon_ready_proof_mismatch')
+        return true
+      }
+    )
+    assert.deepEqual(fake.readyAuthorizationHeaders, [undefined, undefined])
+    assert.deepEqual(fake.jobAuthorizationHeaders, [])
   } finally {
     await fake.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -358,6 +417,10 @@ async function importCli() {
   return await import(`${pathToFileURL(cliIndex).href}?daemon_lifecycle=${Date.now()}_${Math.random()}`)
 }
 
+async function importPlaywright() {
+  return await import(`${pathToFileURL(cliPlaywrightIndex).href}?daemon_lifecycle=${Date.now()}_${Math.random()}`)
+}
+
 async function freePort() {
   const server = net.createServer()
   await new Promise((resolve, reject) => {
@@ -374,9 +437,12 @@ async function startReadyOnlyDaemon({ homeDir, daemonUrl, token, version }) {
   const url = new URL(daemonUrl)
   let shutdownCount = 0
   let closed = false
+  const readyAuthorizationHeaders = []
+  const jobAuthorizationHeaders = []
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url || '/', daemonUrl)
     if (request.method === 'GET' && requestUrl.pathname === '/ready') {
+      readyAuthorizationHeaders.push(request.headers.authorization)
       const challenge = requestUrl.searchParams.get('challenge') ?? ''
       writeJson(response, 200, {
         protocol: 'tokenless.daemon.v1',
@@ -386,6 +452,11 @@ async function startReadyOnlyDaemon({ homeDir, daemonUrl, token, version }) {
         pid: process.pid,
         proof: readyProof(token, challenge, homeDir),
       })
+      return
+    }
+    if (request.method === 'POST' && requestUrl.pathname === '/jobs') {
+      jobAuthorizationHeaders.push(request.headers.authorization)
+      writeJson(response, 200, { ok: true })
       return
     }
     if (request.method === 'POST' && requestUrl.pathname === '/control/shutdown') {
@@ -410,6 +481,12 @@ async function startReadyOnlyDaemon({ homeDir, daemonUrl, token, version }) {
     pid: process.pid,
     get shutdownCount() {
       return shutdownCount
+    },
+    get readyAuthorizationHeaders() {
+      return readyAuthorizationHeaders
+    },
+    get jobAuthorizationHeaders() {
+      return jobAuthorizationHeaders
     },
     close: closeServer,
   }

@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
 } from '../generated/protocol-constants.js'
 import {
   VISIBLE_ACTIONS,
@@ -19,8 +17,6 @@ import type { ProviderId, ProviderInstance } from '../providers/registry.js'
 
 export {
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
 } from '../generated/protocol-constants.js'
 export const MANAGED_PLAYWRIGHT_JOB_ACTION = 'visible_provider_actions' as const
 export const PLAYWRIGHT_EXECUTION_BACKEND = 'playwright' as const
@@ -84,30 +80,21 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   if (!isPlainRecord(input)) {
     throw tokenlessError('invalid_playwright_job_request', 'Managed Playwright job request must be an object.')
   }
-  if (input.protocol === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1) {
-    requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'actions'], 'invalid_playwright_job_request')
-  } else {
-    requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'], 'invalid_playwright_job_request')
-  }
-  if (!isManagedPlaywrightJobProtocolVersion(input.protocol)) {
+  requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'], 'invalid_playwright_job_request')
+  if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION) {
     throw tokenlessError('invalid_playwright_job_protocol', 'Managed Playwright job protocol version is not supported.')
   }
   const provider = getProviderInstanceById(input.provider)
   if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
-  if (isLegacyManagedPlaywrightJobProtocol(input.protocol) && !provider.descriptor.protocolCompatibility.legacyRequests) {
-    throw tokenlessError('invalid_playwright_job_protocol', 'Managed Playwright job provider does not accept legacy job protocols.')
-  }
   const target = validateSafeTarget(input.target, provider)
   const taskId = validateTaskId(input.taskId)
-  const browserVisibility = input.protocol === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1
-    ? 'headed'
-    : validateJobBrowserVisibility(input.browserVisibility)
+  const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
   if (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 100) {
     throw tokenlessError('invalid_playwright_job_actions', 'Managed Playwright job requires one to one hundred actions.')
   }
   const actions = input.actions.map((action) => validateVisibleActionRequest(action))
   for (const action of actions) {
-    if (input.protocol === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION && action.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION) {
+    if (action.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION) {
       throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright job v3 requires visible action v3.')
     }
     if (action.provider !== provider.id) {
@@ -157,17 +144,6 @@ function validateSafeTarget(input: unknown, provider: ProviderInstance): Managed
     kind: 'provider_home',
     url: parsed.toString(),
   }
-}
-
-function isManagedPlaywrightJobProtocolVersion(value: unknown) {
-  return value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION ||
-    value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 ||
-    value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2
-}
-
-function isLegacyManagedPlaywrightJobProtocol(value: unknown) {
-  return value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 ||
-    value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2
 }
 
 function isVisibleActionRequestLike(value: unknown): value is VisibleActionRequest {

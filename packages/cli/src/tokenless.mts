@@ -28,7 +28,6 @@ import {
 import {
   DEFAULT_DAEMON_URL,
   MAX_DAEMON_REQUEST_BYTES,
-  MAX_NATIVE_MESSAGE_BYTES,
   buildTokenlessPrompt,
   browserRuntimeStatus,
   quiesceBrowserRuntime,
@@ -47,7 +46,6 @@ import {
   persistDaemonSnapshot,
   probeDaemonReady,
   providerWakeUrl,
-  readLiveBridgeMarker,
   readTokenlessConfig,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
@@ -57,7 +55,6 @@ import {
   stopDaemon,
   tokenlessHome,
   waitDaemonJobResult,
-  waitForExtensionBridge,
   writeTokenlessConfig,
 } from './index.js'
 import { DAEMON_TASK_STATE_PROTOCOL } from './generated/protocol-constants.js'
@@ -1659,57 +1656,6 @@ function visibleRequestId(value: string) {
   return randomUUID()
 }
 
-async function prepareExtensionBridge({
-  args,
-  homeDir,
-  provider,
-  targetUrl,
-  selectedBrowser,
-  statusReporter,
-}: Record<string, any>) {
-  const existing = await readLiveBridgeMarker({ homeDir })
-  if (existing) {
-    statusReporter.report({
-      event: 'bridge_ready',
-      status: 'ready',
-      provider,
-      bridgeSession: existing.sessionId,
-    })
-    return { marker: existing, browser: normalizeBrowserId(selectedBrowser), opened: false }
-  }
-
-  statusReporter.report({ event: 'bridge_missing', status: 'not_ready', provider })
-  if (args.noOpen) {
-    throw usageError(
-      'extension_bridge_unavailable',
-      'No live Tokenless runtime bridge is connected. Remove --no-open so Tokenless can open the selected provider page, or run "tokenless setup" and "tokenless doctor --json".'
-    )
-  }
-
-  const browser = await resolveChromiumBrowser(selectedBrowser)
-  await openProviderUrl(targetUrl, browser)
-  statusReporter.report({
-    event: 'provider_opened',
-    status: 'waiting_for_bridge',
-    provider,
-    browser: browser.browser,
-    providerUrl: targetUrl,
-  })
-  await writeTokenlessConfig({ homeDir, browser: browser.browser })
-  const marker = await waitForExtensionBridge({
-    homeDir,
-    timeoutMs: args.bridgeTimeoutMs === undefined ? undefined : Number(args.bridgeTimeoutMs),
-  })
-  statusReporter.report({
-    event: 'bridge_ready',
-    status: 'ready',
-    provider,
-    browser: browser.browser,
-    bridgeSession: marker.sessionId,
-  })
-  return { marker, browser: browser.browser, opened: true }
-}
-
 async function stateCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
@@ -2889,7 +2835,7 @@ function publicDaemonJobState(job: Record<string, any>) {
   return {
     jobId: job.job_id,
     taskId: daemonTaskId(job),
-    backend: job.execution_backend ?? 'legacy_extension',
+    backend: job.execution_backend ?? 'playwright',
     profile: job.profile_id === undefined || job.profile_id === null
       ? null
       : { id: job.profile_id },
@@ -3107,8 +3053,8 @@ function assertDaemonRequestSize(value: unknown) {
   const bytes = Buffer.byteLength(JSON.stringify(value), 'utf8')
   if (bytes <= MAX_DAEMON_REQUEST_BYTES) return
   throw usageError(
-    'native_message_too_large',
-    `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes. Attach fewer or smaller files.`
+    'daemon_request_too_large',
+    `Tokenless request is ${bytes} bytes; keep it below ${MAX_DAEMON_REQUEST_BYTES} bytes. Attach fewer or smaller files.`
   )
 }
 

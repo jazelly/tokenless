@@ -13,8 +13,8 @@ describe compatibility at their declared boundary.
 - `openapi/tokenless.daemon.v1.openapi.json` defines the versioned local
   control-plane endpoints, authentication, requests, responses, status codes,
   readiness proof, browser runtime control routes, and stable error envelope.
-- `schemas/*.schema.json` define internal or persisted non-HTTP payload shapes,
-  such as Playwright job and visible-action payloads.
+- `schemas/*.schema.json` define the current internal Playwright job and
+  visible-action payloads.
 - `EVOLUTION.md` defines compatibility and version-bump rules.
 
 Run `npm run protocol:generate` after changing registry constants. CI and
@@ -46,7 +46,7 @@ Tokenless package version. A proof-verified same-home daemon with a different
 package version may be gracefully stopped and replaced; foreign or unverified
 listeners are left untouched.
 
-Historical 0.2 cross-version compatibility is not supported by this clean-break
-daemon.v1 boundary. Current conformance checks verify the OpenAPI artifact,
-readiness proof, protocol constants, and safe handling of mismatched or
-incompatible daemons.
+There are no historical CLI-daemon, job, action, checkpoint, native-host, or
+extension-bridge compatibility paths. Current conformance checks verify the
+OpenAPI artifact, readiness proof, protocol constants, embedded runner behavior,
+and safe handling of mismatched daemons.

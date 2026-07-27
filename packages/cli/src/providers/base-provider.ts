@@ -70,10 +70,6 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
     return this.responseCapability.observeCursor(page)
   }
 
-  observeCompletion(page: Page, baseline: number) {
-    return this.responseCapability.observeCompletion(page, baseline)
-  }
-
   inspectCapabilities(page: Page) {
     return this.providerCapabilities.inspectAll(page).then((capabilities) => ({
       visibleProof: 'provider-capability-registry',
@@ -108,10 +104,6 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
   ): Promise<ProviderActionObservation> {
     if (request.action === VISIBLE_ACTIONS.RESPONSE_READ) return this.responseCapability.observeAction(page, preparation)
     throw new Error(`Provider action observation is not supported for action: ${request.action}`)
-  }
-
-  legacyResponsePreparationFromBaseline(baseline: number): ProviderActionPreparation {
-    return this.responseCapability.legacyPreparationFromBaseline(baseline)
   }
 
   async executeAction(

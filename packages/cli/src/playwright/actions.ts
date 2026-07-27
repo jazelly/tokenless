@@ -1,14 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import {
   VISIBLE_ACTION_PROTOCOL_VERSION,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from '../generated/protocol-constants.js'
 import {
   isVisibleAction,
-  isVisibleActionSupportedByLegacyProtocol,
   validateVisibleActionPayload,
 } from '../providers/action-catalog.js'
 import { VISIBLE_ACTIONS, isVisibleActionProtocolVersion } from '../providers/contracts.js'
@@ -25,9 +21,6 @@ import type {
 
 export {
   VISIBLE_ACTION_PROTOCOL_VERSION,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from '../generated/protocol-constants.js'
 export { validateAttachmentInput } from '../providers/action-catalog.js'
@@ -347,12 +340,6 @@ export function validateVisibleActionRequest(input: unknown): VisibleActionReque
   if (!isVisibleAction(input.action)) {
     throw tokenlessError('unknown_visible_action', 'Visible action is not supported.')
   }
-  if (input.protocol === VISIBLE_ACTION_PROTOCOL_VERSION_V1 && !isVisibleActionSupportedByLegacyProtocol(input.action)) {
-    throw tokenlessError('invalid_visible_action_protocol', 'Visible action requires visible action protocol v2.')
-  }
-  if (isLegacyVisibleActionProtocol(input.protocol) && !provider.protocolCompatibility.legacyRequests) {
-    throw tokenlessError('invalid_visible_action_protocol', 'Visible action provider does not accept legacy action protocols.')
-  }
   if (!isPlainRecord(input.payload)) {
     throw tokenlessError('invalid_visible_action_payload', 'Visible action payload must be an object.')
   }
@@ -365,10 +352,6 @@ export function validateVisibleActionRequest(input: unknown): VisibleActionReque
     action,
     payload,
   } as VisibleActionRequest
-}
-
-function isLegacyVisibleActionProtocol(protocol: unknown) {
-  return protocol === VISIBLE_ACTION_PROTOCOL_VERSION_V1 || protocol === VISIBLE_ACTION_PROTOCOL_VERSION_V2
 }
 
 function requireExactKeys(record: Record<string, unknown>, keys: readonly string[], code: string) {

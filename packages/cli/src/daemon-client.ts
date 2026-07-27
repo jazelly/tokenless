@@ -6,7 +6,6 @@ import { tokenlessHome } from './job-store.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
 export const MAX_DAEMON_REQUEST_BYTES = 900 * 1024
-export const MAX_NATIVE_MESSAGE_BYTES = MAX_DAEMON_REQUEST_BYTES
 const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 5_000
 const DEFAULT_CANCEL_REQUEST_TIMEOUT_MS = 3_000
 
@@ -17,13 +16,15 @@ export type DaemonClientOptions = {
   signal?: AbortSignal | undefined
 }
 
+export type DaemonJobStatus = 'queued' | 'claimed' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
+
 export type DaemonJob = {
   job_id: string
-  execution_backend?: 'legacy_extension' | 'playwright'
+  execution_backend?: 'playwright'
   profile_id?: string | null
   provider: string
   action: string
-  status: string
+  status: DaemonJobStatus
   request_json: unknown
   result_json: unknown | null
   error_json: unknown | null
@@ -32,25 +33,13 @@ export type DaemonJob = {
   updated_at: string
 }
 
-export type DaemonClaimedJob = DaemonJob & {
-  claim_token: string
-}
-
 export type CreateDaemonJobOptions = DaemonClientOptions & {
   provider: string
   action: string
   requestJson?: unknown
-  executionBackend?: 'legacy_extension' | 'playwright' | undefined
+  executionBackend?: 'playwright' | undefined
   profileId?: string | undefined
   jobId?: string | undefined
-  claimToken?: string | undefined
-}
-
-export type ClaimNextDaemonJobOptions = DaemonClientOptions & {
-  provider?: string | undefined
-  action?: string | undefined
-  executionBackend?: 'legacy_extension' | 'playwright' | undefined
-  profileId?: string | undefined
 }
 
 export type GetDaemonJobOptions = DaemonClientOptions & {
@@ -59,7 +48,7 @@ export type GetDaemonJobOptions = DaemonClientOptions & {
 
 export type ListDaemonJobsOptions = DaemonClientOptions & {
   status?: string | undefined
-  executionBackend?: 'legacy_extension' | 'playwright' | undefined
+  executionBackend?: 'playwright' | undefined
   profileId?: string | undefined
   provider?: string | undefined
   taskId?: string | undefined
@@ -72,13 +61,6 @@ export type CancelDaemonJobOptions = GetDaemonJobOptions & {
 
 export type ResumeDaemonJobOptions = GetDaemonJobOptions & {
   browserVisibility: 'headed'
-}
-
-export type CompleteDaemonJobOptions = DaemonClientOptions & {
-  jobId: string
-  claimToken: string
-  result?: unknown
-  error?: unknown
 }
 
 export type WaitDaemonJobResultOptions = GetDaemonJobOptions & {
@@ -152,11 +134,10 @@ export async function createDaemonJob({
   executionBackend,
   profileId,
   jobId,
-  claimToken,
 }: CreateDaemonJobOptions) {
   assertDaemonRequestSize({ provider, action, request_json: requestJson })
   const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
-  return daemonRequest<DaemonClaimedJob>({
+  return daemonRequest<DaemonJob>({
     daemonUrl: explicitDaemonUrl,
     path: '/jobs',
     body: {
@@ -166,7 +147,6 @@ export async function createDaemonJob({
       execution_backend: executionBackend,
       profile_id: profileId,
       job_id: jobId,
-      claim_token: claimToken,
     },
     token,
     timeoutMs: requestTimeoutMs,
@@ -222,68 +202,6 @@ export async function getDaemonJob({
   })
 }
 
-export async function claimNextDaemonJob({
-  daemonUrl: explicitDaemonUrl,
-  homeDir,
-  requestTimeoutMs,
-  signal,
-  provider,
-  action,
-  executionBackend,
-  profileId,
-}: ClaimNextDaemonJobOptions = {}) {
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
-  const query = new URLSearchParams()
-  if (executionBackend) query.set('execution_backend', executionBackend)
-  if (profileId) query.set('profile_id', profileId)
-  if (provider) query.set('provider', provider)
-  if (action) query.set('action', action)
-  const suffix = query.size > 0 ? `?${query.toString()}` : ''
-
-  return daemonRequest<{ job: DaemonClaimedJob | null }>({
-    daemonUrl: explicitDaemonUrl,
-    path: `/control/jobs/claim-next${suffix}`,
-    token,
-    timeoutMs: requestTimeoutMs,
-    signal,
-  })
-}
-
-export async function completeDaemonJob({
-  daemonUrl: explicitDaemonUrl,
-  homeDir,
-  requestTimeoutMs,
-  signal,
-  jobId,
-  claimToken,
-  result,
-  error,
-}: CompleteDaemonJobOptions) {
-  const hasResult = result !== undefined
-  const hasError = error !== undefined
-  if (hasResult === hasError) {
-    throw daemonClientError(
-      'invalid_daemon_completion',
-      'Pass exactly one of result or error when completing a daemon job.',
-      false
-    )
-  }
-
-  const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
-  return daemonRequest<DaemonJob>({
-    daemonUrl: explicitDaemonUrl,
-    path: `/jobs/${encodeURIComponent(jobId)}/complete`,
-    body: {
-      claim_token: claimToken,
-      result_json: hasResult ? result : undefined,
-      error_json: hasError ? error : undefined,
-    },
-    token,
-    timeoutMs: requestTimeoutMs,
-    signal,
-  })
-}
-
 export async function cancelDaemonJob({
   daemonUrl: explicitDaemonUrl,
   homeDir,
@@ -295,7 +213,7 @@ export async function cancelDaemonJob({
   const token = await authenticatedDaemonToken({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<DaemonJob>({
     daemonUrl: explicitDaemonUrl,
-    path: `/control/jobs/${encodeURIComponent(jobId)}/cancel`,
+    path: `/jobs/${encodeURIComponent(jobId)}/cancel`,
     ...(reason === undefined ? {} : { body: { reason } }),
     token,
     timeoutMs: requestTimeoutMs,
@@ -600,22 +518,22 @@ function daemonServerErrorFromBody(body: unknown) {
   const error = (body as { error?: unknown }).error
   if (!error || typeof error !== 'object') return null
   const envelope = error as { protocol?: unknown; code?: unknown; message?: unknown; retryable?: unknown; details?: unknown }
-  const message = typeof envelope.message === 'string' && envelope.message.trim() ? envelope.message : null
-  if (!message) return null
   if (
     envelope.protocol === DAEMON_PROTOCOL &&
     typeof envelope.code === 'string' &&
     envelope.code.trim() &&
+    typeof envelope.message === 'string' &&
+    envelope.message.trim() &&
     typeof envelope.retryable === 'boolean'
   ) {
     return {
       code: envelope.code,
-      message,
+      message: envelope.message,
       retryable: envelope.retryable,
       details: envelope.details,
     }
   }
-  return { code: undefined, message, retryable: undefined, details: undefined }
+  return null
 }
 
 function daemonClientError(code: string, message: string, retryable: boolean, status?: number, details?: unknown) {
@@ -661,8 +579,8 @@ function assertDaemonRequestSize(value: unknown) {
   const bytes = Buffer.byteLength(serialized, 'utf8')
   if (bytes > MAX_DAEMON_REQUEST_BYTES) {
     throw daemonClientError(
-      'native_message_too_large',
-      `Tokenless request is ${bytes} bytes; keep it below ${MAX_NATIVE_MESSAGE_BYTES} bytes. Attach fewer or smaller files.`,
+      'daemon_request_too_large',
+      `Tokenless request is ${bytes} bytes; keep it below ${MAX_DAEMON_REQUEST_BYTES} bytes. Attach fewer or smaller files.`,
       false
     )
   }

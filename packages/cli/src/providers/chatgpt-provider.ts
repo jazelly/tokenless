@@ -15,9 +15,6 @@ export class ChatGptProvider extends BaseProvider<'chatgpt'> {
       label: 'ChatGPT',
       stage: 'supported',
       setupOrder: 0,
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: Object.freeze({
         homeUrl: 'https://chatgpt.com/',
         origins: Object.freeze(['https://chatgpt.com', 'https://chat.openai.com']),

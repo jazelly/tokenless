@@ -6,7 +6,7 @@ import {
   isClaimRecoveryError,
   tokenlessError,
 } from './errors.js'
-import { RUNNER_CHECKPOINT_PROTOCOL, RUNNER_CHECKPOINT_PROTOCOL_V1, USER_HANDOVER_PROTOCOL } from '../generated/protocol-constants.js'
+import { RUNNER_CHECKPOINT_PROTOCOL, USER_HANDOVER_PROTOCOL } from '../generated/protocol-constants.js'
 import { PersistentContextManager } from './browser/context-manager.js'
 import type { ManagedBrowserLaunchTarget } from './browser/context-manager.js'
 import {
@@ -17,7 +17,6 @@ import {
 } from './job-contract.js'
 import { getVisibleActionLifecycle } from '../providers/action-catalog.js'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, isVisibleActionProtocolVersion } from './actions.js'
-import { createDaemonClient } from './daemon-client.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
 import { getProviderInstanceById } from '../providers/registry.js'
 import type {
@@ -37,7 +36,7 @@ import type { BrowserContext, Page } from 'playwright-core'
 export type ManagedPlaywrightRunnerServiceOptions = {
   homeDir?: string | undefined
   profileRegistry?: ManagedProfileSource | undefined
-  daemonClient?: ManagedDaemonClient | undefined
+  daemonClient: ManagedDaemonClient
   contextManager?: PersistentContextManagerType | undefined
   browser?: ManagedBrowserLaunchTarget | undefined
   pollIdleMs?: number | undefined
@@ -146,7 +145,7 @@ export class ManagedPlaywrightRunnerService {
 
   constructor(options: ManagedPlaywrightRunnerServiceOptions) {
     this.profileRegistry = options.profileRegistry ?? new ManagedProfileRegistry(options.homeDir)
-    this.daemonClient = options.daemonClient ?? createDaemonClient()
+    this.daemonClient = options.daemonClient
     this.contextManager = options.contextManager ?? new PersistentContextManager({
       ...(options.browser ? { browser: options.browser } : {}),
     })
@@ -727,13 +726,10 @@ function validateRunnerCheckpoint(
   request: ManagedPlaywrightJobRequest
 ): RunnerCheckpoint | null {
   if (value === null || value === undefined) return null
-  if (!isPlainRecord(value) || (value.protocol !== RUNNER_CHECKPOINT_PROTOCOL && value.protocol !== RUNNER_CHECKPOINT_PROTOCOL_V1)) {
+  if (!isPlainRecord(value) || value.protocol !== RUNNER_CHECKPOINT_PROTOCOL) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint is invalid.')
   }
-  const legacy = value.protocol === RUNNER_CHECKPOINT_PROTOCOL_V1
-  const expectedKeys = legacy
-    ? ['protocol', 'jobId', 'profileId', 'provider', 'targetUrl', 'browserVisibility', 'actionCursor', 'responses', 'responseBaseline', 'submitted', 'phase']
-    : ['protocol', 'jobId', 'profileId', 'provider', 'targetUrl', 'browserVisibility', 'actionCursor', 'responses', 'preparation', 'submitted', 'phase']
+  const expectedKeys = ['protocol', 'jobId', 'profileId', 'provider', 'targetUrl', 'browserVisibility', 'actionCursor', 'responses', 'preparation', 'submitted', 'phase']
   if (!hasExactKeys(value, expectedKeys)) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint fields are invalid.')
   }
@@ -757,12 +753,8 @@ function validateRunnerCheckpoint(
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint responses are invalid.')
   }
   const responses = value.responses.map((response, index) => validateCheckpointResponse(response, request.actions[index], index))
-  const preparation = legacy
-    ? legacyResponsePreparation(value.responseBaseline, provider, true)
-    : validateCheckpointPreparation(value.preparation, provider)
-  const submitted = legacy
-    ? validateLegacySubmittedCheckpoint(value.submitted, request, provider)
-    : validateSubmittedCheckpoint(value.submitted, request, provider)
+  const preparation = validateCheckpointPreparation(value.preparation, provider)
+  const submitted = validateSubmittedCheckpoint(value.submitted, request, provider)
   const phase = validateCheckpointPhase(value.phase, request)
   if (phase.state === 'started' && phase.mutating) {
     throw tokenlessError(
@@ -854,36 +846,6 @@ function validateSubmittedCheckpoint(
   }
 }
 
-function validateLegacySubmittedCheckpoint(
-  value: unknown,
-  request: ManagedPlaywrightJobRequest,
-  provider: RunnerProvider
-): RunnerSubmittedActionCheckpoint | null {
-  if (value === null) return null
-  if (!isPlainRecord(value)) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint is invalid.')
-  }
-  if (!hasExactKeys(value, ['actionIndex', 'requestId', 'providerUrl', 'responseBaseline'])) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint fields are invalid.')
-  }
-  const rawActionIndex = value.actionIndex
-  const actionIndex = typeof rawActionIndex === 'number' && Number.isInteger(rawActionIndex) ? rawActionIndex : -1
-  const action = request.actions[actionIndex]
-  if (!action || action.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT || value.requestId !== action.requestId) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint does not match the job action.')
-  }
-  if (typeof value.providerUrl !== 'string') {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint URL is invalid.')
-  }
-  return {
-    actionIndex,
-    requestId: action.requestId,
-    providerUrl: validateProviderUrl(value.providerUrl, provider),
-    preparation: legacyResponsePreparation(value.responseBaseline, provider, false) ??
-      failInvalidCheckpoint('Managed Playwright runner submit checkpoint baseline is invalid.'),
-  }
-}
-
 function validateCheckpointPreparation(value: unknown, provider: RunnerProvider): ProviderActionPreparation | null {
   if (value === null) return null
   try {
@@ -891,22 +853,6 @@ function validateCheckpointPreparation(value: unknown, provider: RunnerProvider)
   } catch {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint preparation is invalid.')
   }
-}
-
-function legacyResponsePreparation(value: unknown, provider: RunnerProvider, allowNull: boolean): ProviderActionPreparation | null {
-  if (value === null && allowNull) return null
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint response baseline is invalid.')
-  }
-  try {
-    return provider.validatePreparation(provider.legacyResponsePreparationFromBaseline(value), { action: VISIBLE_ACTIONS.RESPONSE_READ })
-  } catch {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint preparation is invalid.')
-  }
-}
-
-function failInvalidCheckpoint(message: string): never {
-  throw tokenlessError('invalid_playwright_runner_checkpoint', message)
 }
 
 function validateCheckpointPhase(value: unknown, request: ManagedPlaywrightJobRequest): RunnerCheckpointPhase {

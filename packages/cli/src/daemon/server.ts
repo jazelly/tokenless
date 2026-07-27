@@ -22,7 +22,7 @@ import {
   toDaemonError,
   type DaemonError,
 } from './errors.js'
-import { JobStore, publicView, withClaimToken, type ExecutionBackend, type JobStatus } from './job-store.js'
+import { JobStore, publicView, type ExecutionBackend, type JobStatus } from './job-store.js'
 
 export type DaemonServer = {
   close(): Promise<void>
@@ -153,10 +153,9 @@ async function handleRequest(
         execution_backend: executionBackend,
         profile_id: optionalString(body.profile_id),
         job_id: optionalString(body.job_id) ?? undefined,
-        claim_token: optionalString(body.claim_token) ?? undefined,
       })
       if (job.execution_backend === 'playwright') await runtimeController?.wake()
-      writeJson(response, 200, withClaimToken(job))
+      writeJson(response, 200, publicView(job))
       return
     }
 
@@ -178,23 +177,6 @@ async function handleRequest(
       writeJson(response, 200, publicView(store.getJob(jobRoute.jobId)))
       return
     }
-    if (jobRoute && method === 'POST' && jobRoute.action === 'claim') {
-      const body = await readJsonObject(request)
-      writeJson(response, 200, publicView(store.claimJob(jobRoute.jobId, requiredString(body.claim_token, 'claim_token'))))
-      return
-    }
-    if (jobRoute && method === 'POST' && jobRoute.action === 'complete') {
-      const body = await readJsonObject(request)
-      const hasResult = body.result_json !== undefined && body.result_json !== null
-      const hasError = body.error_json !== undefined && body.error_json !== null
-      if (hasResult === hasError) throw invalidInput('pass exactly one of result_json or error_json')
-      const claimToken = requiredString(body.claim_token, 'claim_token')
-      const job = hasResult
-        ? store.completeJob(jobRoute.jobId, claimToken, { result_json: body.result_json })
-        : store.completeJob(jobRoute.jobId, claimToken, { error_json: body.error_json })
-      writeJson(response, 200, publicView(job))
-      return
-    }
     if (jobRoute && method === 'POST' && jobRoute.action === 'resume') {
       const body = await readJsonObject(request)
       if (Object.keys(body).some((key) => key !== 'browser_visibility')) {
@@ -206,63 +188,11 @@ async function handleRequest(
       writeJson(response, 200, publicView(job))
       return
     }
-
-    if (method === 'POST' && url.pathname === '/control/jobs/claim-next') {
-      const executionBackend = optionalQueryExecutionBackend(url.searchParams.get('execution_backend')) ?? 'legacy_extension'
-      const job = store.claimNextJob(
-        {
-          provider: optionalQueryString(url.searchParams.get('provider')),
-          action: optionalQueryString(url.searchParams.get('action')),
-        },
-        executionBackend,
-        optionalQueryString(url.searchParams.get('profile_id')) ?? null
-      )
-      writeJson(response, 200, { job: job ? withClaimToken(job) : null })
+    if (jobRoute && method === 'POST' && jobRoute.action === 'cancel') {
+      const rawBody = await readBody(request)
+      const body = rawBody ? parseJsonObject(rawBody) : {}
+      writeJson(response, 200, publicView(await store.cancelJob(jobRoute.jobId, body.reason)))
       return
-    }
-
-    const controlJobRoute = matchControlJobRoute(url.pathname)
-    if (controlJobRoute && method === 'POST') {
-      if (controlJobRoute.action === 'cancel') {
-        const rawBody = await readBody(request)
-        const body = rawBody ? parseJsonObject(rawBody) : {}
-        writeJson(response, 200, publicView(await store.cancelJob(controlJobRoute.jobId, body.reason)))
-        return
-      }
-      const body = await readJsonObject(request)
-      if (controlJobRoute.action === 'running') {
-        writeJson(response, 200, publicView(store.markRunning(controlJobRoute.jobId, requiredString(body.claim_token, 'claim_token'))))
-        return
-      }
-      if (controlJobRoute.action === 'waiting-for-user') {
-        writeJson(response, 200, publicView(store.markWaitingForUser(
-          controlJobRoute.jobId,
-          requiredString(body.claim_token, 'claim_token'),
-          requireField(body, 'blocker_json')
-        )))
-        return
-      }
-      if (controlJobRoute.action === 'checkpoint') {
-        writeJson(response, 200, publicView(store.checkpointJob(
-          controlJobRoute.jobId,
-          requiredString(body.claim_token, 'claim_token'),
-          requireField(body, 'checkpoint_json')
-        )))
-        return
-      }
-      if (controlJobRoute.action === 'park') {
-        writeJson(response, 200, publicView(store.parkJob(
-          controlJobRoute.jobId,
-          requiredString(body.claim_token, 'claim_token'),
-          requireField(body, 'blocker_json'),
-          requireField(body, 'checkpoint_json')
-        )))
-        return
-      }
-      if (controlJobRoute.action === 'renew') {
-        writeJson(response, 200, publicView(store.renewClaim(controlJobRoute.jobId, requiredString(body.claim_token, 'claim_token'))))
-        return
-      }
     }
 
     if (method === 'POST' && url.pathname === '/control/shutdown') {
@@ -391,15 +321,7 @@ function matchJobRoute(pathname: string) {
   const match = /^\/jobs\/([^/]+)(?:\/([^/]+))?$/.exec(pathname)
   if (!match) return null
   const action = match[2] ?? null
-  if (action !== null && !['claim', 'complete', 'resume'].includes(action)) return null
-  return { jobId: decodeURIComponent(match[1] || ''), action }
-}
-
-function matchControlJobRoute(pathname: string) {
-  const match = /^\/control\/jobs\/([^/]+)\/([^/]+)$/.exec(pathname)
-  if (!match) return null
-  const action = match[2] ?? ''
-  if (!['checkpoint', 'park', 'running', 'waiting-for-user', 'renew', 'cancel'].includes(action)) return null
+  if (action !== null && !['resume', 'cancel'].includes(action)) return null
   return { jobId: decodeURIComponent(match[1] || ''), action }
 }
 
@@ -444,7 +366,7 @@ function optionalJobStatus(value: string | null) {
 
 function optionalExecutionBackend(value: unknown) {
   if (value === undefined || value === null) return undefined
-  if (value !== 'legacy_extension' && value !== 'playwright') {
+  if (value !== 'playwright') {
     throw invalidInput(`invalid execution_backend: ${String(value)}`)
   }
   return value as ExecutionBackend
@@ -452,7 +374,7 @@ function optionalExecutionBackend(value: unknown) {
 
 function optionalQueryExecutionBackend(value: string | null) {
   if (value === null) return undefined
-  if (value !== 'legacy_extension' && value !== 'playwright') {
+  if (value !== 'playwright') {
     throw invalidInput('query parameters are invalid: Failed to deserialize query string')
   }
   return value

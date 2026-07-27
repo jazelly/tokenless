@@ -1,6 +1,11 @@
 # Daemon Fastify HTTP API
 
-Status: proposed | Priority: P1
+Status: cancelled | Priority: P1
+
+Disposition: cancelled after the daemon v1 clean break removed the remote-worker
+HTTP surface and kept the small built-in Node HTTP server. Adding Fastify would
+increase the protocol and dependency surface without serving a current product
+need. This document is preserved as historical design context only.
 
 Depends on: Local daemon job persistence, claim leases, the existing `tokenless.daemon.v1` wire contract, and embedded browser-runtime supervision
 
@@ -247,4 +252,3 @@ Provider browser E2E coverage is not required solely to prove the Fastify transp
 - A hosted web application authentication model
 - A new job database or queue implementation
 - Changes to provider action execution or completion detection
-

@@ -27,7 +27,7 @@ import {
 
 export type { JobStatus } from './errors.js'
 
-export type ExecutionBackend = 'legacy_extension' | 'playwright'
+export type ExecutionBackend = 'playwright'
 
 export type Job = {
   job_id: string
@@ -94,7 +94,7 @@ const JOB_STATUSES = new Set<JobStatus>([
   'canceled',
   'timed_out',
 ])
-const EXECUTION_BACKENDS = new Set<ExecutionBackend>(['legacy_extension', 'playwright'])
+const EXECUTION_BACKENDS = new Set<ExecutionBackend>(['playwright'])
 
 type RequestSummaryMetadata = {
   task_id: string | null
@@ -160,7 +160,7 @@ export class JobStore {
   createJob(input: CreateJobInput) {
     const provider = normalizeNonempty(String(input.provider ?? ''), 'provider')
     const action = normalizeNonempty(String(input.action ?? ''), 'action')
-    const executionBackend = input.execution_backend ?? 'legacy_extension'
+    const executionBackend = input.execution_backend ?? 'playwright'
     assertExecutionBackend(executionBackend)
     const profileId = validateJobBackendProfile(executionBackend, input.profile_id ?? null)
     const jobId = input.job_id === undefined
@@ -213,7 +213,6 @@ export class JobStore {
     if (query.status !== undefined) assertJobStatus(query.status)
     if (query.execution_backend !== undefined) assertExecutionBackend(query.execution_backend)
     const profileId = query.profile_id === undefined ? undefined : normalizeProfileId(query.profile_id, 'profile_id')
-    validateFilterBackendProfile(query.execution_backend, profileId)
     const provider = query.provider === undefined ? undefined : normalizeNonempty(query.provider, 'provider')
     const taskId = query.task_id === undefined ? undefined : normalizeSummaryFilter(query.task_id, 'task_id')
     const limit = clampLimit(query.limit, 100, 1000)
@@ -280,7 +279,7 @@ export class JobStore {
 
   claimNextJob(
     query: ClaimNextInput = {},
-    executionBackend: ExecutionBackend = 'legacy_extension',
+    executionBackend: ExecutionBackend = 'playwright',
     profileIdInput: string | null = null
   ) {
     const nowMs = nowUnixMillis()
@@ -749,8 +748,8 @@ export class JobStore {
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY NOT NULL,
         claim_token TEXT NOT NULL,
-        execution_backend TEXT NOT NULL DEFAULT 'legacy_extension' CHECK (
-          execution_backend IN ('legacy_extension', 'playwright')
+        execution_backend TEXT NOT NULL DEFAULT 'playwright' CHECK (
+          execution_backend = 'playwright'
         ),
         profile_id TEXT CHECK (
           profile_id IS NULL OR length(profile_id) BETWEEN 1 AND 128
@@ -1191,27 +1190,14 @@ function expiredWaitingClaimErrorJson() {
 }
 
 function validateJobBackendProfile(executionBackend: ExecutionBackend, profileId: string | null) {
+  assertExecutionBackend(executionBackend)
   const normalized = profileId === null ? null : normalizeProfileId(profileId, 'profile_id')
-  if (executionBackend === 'legacy_extension') {
-    if (normalized !== null) throw invalidInput('legacy_extension jobs must not set profile_id')
-    return null
-  }
   if (normalized === null) throw invalidInput('playwright jobs require profile_id')
   return normalized
 }
 
-function validateFilterBackendProfile(executionBackend: ExecutionBackend | undefined, profileId: string | undefined) {
-  if (executionBackend === 'legacy_extension' && profileId !== undefined) {
-    throw invalidInput('legacy_extension filters must not set profile_id')
-  }
-}
-
 function validateClaimBackendProfile(executionBackend: ExecutionBackend, profileId: string | null) {
   assertExecutionBackend(executionBackend)
-  if (executionBackend === 'legacy_extension') {
-    if (profileId !== null) throw invalidInput('legacy_extension claims must not set profile_id')
-    return
-  }
   if (profileId === null) throw invalidInput('playwright claims require profile_id')
 }
 

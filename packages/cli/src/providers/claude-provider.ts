@@ -15,9 +15,6 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
       label: 'Claude',
       stage: 'supported',
       setupOrder: 1,
-      protocolCompatibility: Object.freeze({
-        legacyRequests: true,
-      }),
       navigation: Object.freeze({
         homeUrl: 'https://claude.ai/new',
         origins: Object.freeze(['https://claude.ai']),

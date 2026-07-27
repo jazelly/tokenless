@@ -32,10 +32,6 @@ export class ResponseCapability implements ProviderActionCapability<typeof VISIB
     return this.createPreparation(await countVisibleLocators(page, this.provider.answerSelectors))
   }
 
-  legacyPreparationFromBaseline(baseline: number): ProviderActionPreparation<typeof VISIBLE_ACTIONS.RESPONSE_READ> {
-    return this.createPreparation(validateBaseline(baseline))
-  }
-
   captureCursor(page: Page) {
     return this.prepareCursor(page)
   }
@@ -53,10 +49,6 @@ export class ResponseCapability implements ProviderActionCapability<typeof VISIB
     return {
       state: observation.answerCount > baseline && !observation.busy ? 'ready' as const : 'pending' as const,
     }
-  }
-
-  async observeCompletion(page: Page, baseline: number) {
-    return (await this.observeAction(page, this.legacyPreparationFromBaseline(baseline))).state === 'ready'
   }
 
   validatePreparation(preparation: unknown) {

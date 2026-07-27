@@ -39,7 +39,6 @@ Every addition, rename, move, or lifecycle change must update this index, all re
 | [Provider Expansion and Parity](provider-expansion.md) | Add high-value Chinese AI web providers and keep all supported providers aligned on a reliable provider-neutral baseline. | P0 |
 | [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
-| [Daemon Fastify HTTP API](daemon-fastify-http-api.md) | Replace the bare Node HTTP dispatcher with a compatible Fastify control plane and support durable asynchronous job polling for trusted local callers. | P1 |
 | [Agent Session Integrations](agent-session-integrations.md) | Bind Tokenless jobs to exact local agent sessions and working directories, with Codex as the first deep integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 
@@ -48,7 +47,7 @@ Priority describes product importance, not a promise that all work proceeds seri
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): Provider Architecture and Registry was completed on 2026-07-27.
+- [Archive](archived/README.md): Provider Architecture and Registry was completed and the Daemon Fastify HTTP API direction was cancelled on 2026-07-27.
 
 ## How the Roadmaps Fit Together
 

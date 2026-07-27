@@ -5,11 +5,8 @@ import path from 'node:path'
 export {
   DEFAULT_DAEMON_URL,
   MAX_DAEMON_REQUEST_BYTES,
-  MAX_NATIVE_MESSAGE_BYTES,
   browserRuntimeStatus,
   cancelDaemonJob,
-  claimNextDaemonJob,
-  completeDaemonJob,
   createDaemonJob,
   daemonUrl,
   getDaemonJob,
@@ -22,11 +19,8 @@ export {
 } from './daemon-client.js'
 
 export type {
-  ClaimNextDaemonJobOptions,
   CancelDaemonJobOptions,
-  CompleteDaemonJobOptions,
   CreateDaemonJobOptions,
-  DaemonClaimedJob,
   DaemonClientOptions,
   DaemonJob,
   GetDaemonJobOptions,
@@ -62,15 +56,9 @@ export {
   DAEMON_PID_FILE,
   DAEMON_PROCESS_PROTOCOL,
   DAEMON_PROTOCOL,
-  EXTENSION_BRIDGE_FILE,
-  EXTENSION_BRIDGE_PROTOCOL,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
   VISIBLE_ACTION_PROTOCOL_VERSION,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
   VISIBLE_ACTION_PROTOCOL_VERSION_V3,
   ensureDaemonReady,
   ensureSetupDaemonRunnable,
@@ -79,11 +67,9 @@ export {
   persistDaemonSnapshot,
   probeDaemonReady,
   providerWakeUrl,
-  readLiveBridgeMarker,
   resolveChromiumBrowser,
   semanticVersionMajor,
   stopDaemon,
-  waitForExtensionBridge,
 } from './runtime.js'
 
 export {
@@ -109,7 +95,6 @@ export type {
 } from './visible-attachments.js'
 
 export type {
-  BridgeMarker,
   ChromiumBrowser,
   DaemonReadyProbe,
   EnsureDaemonOptions,

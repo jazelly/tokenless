@@ -27,25 +27,22 @@
       }
     },
     {
-      "name": "job-with-claim-token",
-      "schema": "#/components/schemas/JobWithClaimToken",
+      "name": "job-view",
+      "schema": "#/components/schemas/JobView",
       "valid": true,
       "data": {
         "job_id": "job-1",
-        "claim_token": "claim-1",
         "execution_backend": "playwright",
         "profile_id": "work",
         "provider": "chatgpt",
         "action": "visible_provider_actions",
         "status": "queued",
         "request_json": {
-          "protocol": "tokenless.playwright.job.v2"
+          "protocol": "tokenless.playwright.job.v3"
         },
         "result_json": null,
         "error_json": null,
         "blocker_json": null,
-        "checkpoint_json": null,
-        "resume_json": null,
         "created_at": "2026-07-26T00:00:00Z",
         "updated_at": "2026-07-26T00:00:00Z"
       }

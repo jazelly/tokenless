@@ -18,7 +18,6 @@ import {
   DAEMON_PROCESS_PROTOCOL,
   DAEMON_PROTOCOL,
   DAEMON_SNAPSHOT_PROTOCOL,
-  EXTENSION_BRIDGE_PROTOCOL,
 } from './generated/protocol-constants.js'
 import { tokenlessPackageVersion } from './platform-package.js'
 import { daemonReadyProof } from './daemon/ready-proof.js'
@@ -27,23 +26,15 @@ export {
   DAEMON_PROCESS_PROTOCOL,
   DAEMON_PROTOCOL,
   DAEMON_SNAPSHOT_PROTOCOL,
-  EXTENSION_BRIDGE_PROTOCOL,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
-  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
   VISIBLE_ACTION_PROTOCOL_VERSION,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V1,
-  VISIBLE_ACTION_PROTOCOL_VERSION_V2,
   VISIBLE_ACTION_PROTOCOL_VERSION_V3,
 } from './generated/protocol-constants.js'
-export const EXTENSION_BRIDGE_FILE = 'extension-bridge.json'
 export const DAEMON_PID_FILE = 'daemon.pid.json'
 export const DAEMON_LOG_FILE = 'daemon.log'
 
 const DAEMON_ENTRY_NAME = 'daemon-entry.mjs'
-const DEFAULT_BRIDGE_MAX_AGE_MS = 15_000
-const BRIDGE_CLOCK_TOLERANCE_MS = 5_000
 const DEFAULT_DAEMON_START_TIMEOUT_MS = 10_000
 const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 5_000
 const MAX_TIMEOUT_MS = 2_147_483_647
@@ -139,17 +130,6 @@ export type SetupDaemonReadyResult = Awaited<ReturnType<typeof ensureDaemonReady
   protocolCompatible: boolean
   versionCompatible: boolean
   compatibilityPolicy: 'daemon-v1'
-}
-
-export type BridgeMarker = {
-  path: string
-  protocol: string
-  pid: number
-  sessionId: string
-  connectedAt: string
-  heartbeatAt: string
-  heartbeatAgeMs: number
-  raw: JsonRecord
 }
 
 export function bundledTypeScriptDaemonEntryPath(packageRoot?: string) {
@@ -523,53 +503,6 @@ export async function stopDaemon({
   }
 }
 
-export async function readLiveBridgeMarker({
-  homeDir = tokenlessHome(),
-  maxAgeMs = envNumber('TOKENLESS_BRIDGE_MAX_AGE_MS', DEFAULT_BRIDGE_MAX_AGE_MS),
-}: {
-  homeDir?: string | undefined
-  maxAgeMs?: number | undefined
-} = {}): Promise<BridgeMarker | null> {
-  const candidates = [
-    path.join(homeDir, EXTENSION_BRIDGE_FILE),
-  ]
-  for (const markerPath of candidates) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(await fs.readFile(markerPath, 'utf8')) as unknown
-    } catch {
-      continue
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
-    const payload = parsed as JsonRecord
-    const marker = normalizeBridgeMarker(markerPath, payload, maxAgeMs)
-    if (marker) return marker
-  }
-  return null
-}
-
-export async function waitForExtensionBridge({
-  homeDir = tokenlessHome(),
-  timeoutMs = envNumber('TOKENLESS_BRIDGE_TIMEOUT_MS', 15_000),
-  pollMs = 100,
-}: {
-  homeDir?: string | undefined
-  timeoutMs?: number | undefined
-  pollMs?: number | undefined
-} = {}) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const marker = await readLiveBridgeMarker({ homeDir })
-    if (marker) return marker
-    await delay(pollMs)
-  }
-  throw runtimeError(
-    'extension_bridge_timeout',
-    `Tokenless opened the provider page, but the local runtime bridge did not become ready within ${timeoutMs} ms. Run "tokenless doctor --json", then rerun "tokenless setup".`,
-    true
-  )
-}
-
 export function providerWakeUrl(provider: unknown, targetUrl?: unknown) {
   const providerId = typeof provider === 'string' ? provider.trim().toLowerCase() : ''
   const providerInstance = getProviderInstanceById(providerId)
@@ -928,56 +861,6 @@ async function acquireDaemonStartLock({ homeDir, timeoutMs }: { homeDir: string;
     `Timed out waiting for another Tokenless daemon startup in ${homeDir}.`,
     true
   )
-}
-
-function normalizeBridgeMarker(markerPath: string, payload: JsonRecord, maxAgeMs: number): BridgeMarker | null {
-  const expectedKeys = ['connectedAt', 'heartbeatAt', 'pid', 'protocol', 'sessionId']
-  const actualKeys = Object.keys(payload).sort()
-  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
-    return null
-  }
-  if (payload.protocol !== EXTENSION_BRIDGE_PROTOCOL) return null
-  const pid = payload.pid
-  const sessionId = payload.sessionId
-  const connectedMs = strictIsoTimestampMs(payload.connectedAt)
-  const heartbeatMs = strictIsoTimestampMs(payload.heartbeatAt)
-  if (
-    !Number.isInteger(pid) ||
-    (pid as number) <= 0 ||
-    (pid as number) > 2_147_483_647 ||
-    typeof sessionId !== 'string' ||
-    !sessionId.trim() ||
-    connectedMs === null ||
-    heartbeatMs === null
-  ) {
-    return null
-  }
-  const now = Date.now()
-  if (
-    connectedMs > now + BRIDGE_CLOCK_TOLERANCE_MS ||
-    heartbeatMs > now + BRIDGE_CLOCK_TOLERANCE_MS ||
-    connectedMs > heartbeatMs + BRIDGE_CLOCK_TOLERANCE_MS
-  ) {
-    return null
-  }
-  const heartbeatAgeMs = Math.max(0, now - heartbeatMs)
-  if (heartbeatAgeMs > maxAgeMs || !pidIsAlive(pid)) return null
-  return {
-    path: markerPath,
-    protocol: EXTENSION_BRIDGE_PROTOCOL,
-    pid,
-    sessionId,
-    connectedAt: new Date(connectedMs).toISOString(),
-    heartbeatAt: new Date(heartbeatMs).toISOString(),
-    heartbeatAgeMs,
-    raw: payload,
-  }
-}
-
-function strictIsoTimestampMs(value: unknown) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value ? parsed : null
 }
 
 function pidIsAlive(pid: number) {

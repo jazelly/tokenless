@@ -22,9 +22,6 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       label: 'Qwen / 千问',
       stage: 'experimental',
       setupOrder: 4,
-      protocolCompatibility: Object.freeze({
-        legacyRequests: false,
-      }),
       navigation: Object.freeze({
         homeUrl: 'https://www.qianwen.com/',
         origins: Object.freeze(['https://www.qianwen.com']),

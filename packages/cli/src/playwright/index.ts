@@ -1,7 +1,6 @@
 export * from './actions.js'
 export * from '../browser-visibility.js'
 export * from './browser/context-manager.js'
-export * from './daemon-client.js'
 export * from './errors.js'
 export * from './job-api.js'
 export * from './job-contract.js'

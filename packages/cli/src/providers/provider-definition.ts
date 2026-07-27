@@ -36,9 +36,6 @@ export type ProviderDescriptor<TId extends string = string> = Readonly<{
   label: string
   stage: ProviderStage
   setupOrder: number
-  protocolCompatibility: Readonly<{
-    legacyRequests: boolean
-  }>
   navigation: ProviderNavigationDefinition
   profileImport: Readonly<{
     cookieDomains: readonly string[]
