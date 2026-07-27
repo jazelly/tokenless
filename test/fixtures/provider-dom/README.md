@@ -1,6 +1,6 @@
 # Provider DOM Fixtures
 
-This directory stores redacted, reduced DOM evidence captured from visible, authenticated provider pages. It covers ChatGPT, Claude, Gemini, and Grok without retaining cookies, browser storage, tokens, account email addresses, chat content, or private route identifiers.
+This directory stores redacted, reduced DOM evidence captured from visible provider pages. It covers authenticated ChatGPT, Claude, Gemini, and Grok sessions plus the public Qwen guest surface without retaining cookies, browser storage, tokens, account email addresses, chat content, or private route identifiers.
 
 The hierarchy is:
 
@@ -33,3 +33,8 @@ Grok has two retained model-menu variants:
 
 - `signed-in-unknown/model-menu-open` preserves an older DOM variant whose reduced artifact did not expose a reliable disabled-state signal.
 - `signed-in-free/model-menu-open` records the current Free-account contract: `Auto`, `Expert`, and `Heavy` use Grok's visible `text-secondary opacity-75` unavailable styling while `Fast` remains available.
+
+Qwen retains two guest-session fixtures captured on 2026-07-26:
+
+- `signed-out-guest/composer-idle` proves the public composer, sign-in invitation, and submit control.
+- `signed-out-guest/response-complete` proves a visibly complete response, same-origin conversation continuation, and the absence of the observed streaming-state class.

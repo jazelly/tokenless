@@ -7,11 +7,14 @@ import {
   DAEMON_READY_PROOF_PROTOCOL,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
   NATIVE_PROTOCOL,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
 } from '../generated/protocol-constants.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
+import { listProviderInstances } from '../providers/registry.js'
 import type { BrowserRuntimeController } from './browser-runtime-controller.js'
 import {
   controlAuthMissing,
@@ -133,6 +136,7 @@ async function handleRequest(
         ready_challenge: challenge,
         ready_proof: daemonReadyProof(store, challenge, health.home_dir),
         supported_protocols: supportedProtocols(),
+        supported_providers: supportedProviders(),
       })
       return
     }
@@ -150,11 +154,16 @@ async function handleRequest(
 
     if (method === 'POST' && url.pathname === '/jobs') {
       const body = await readJsonObject(request)
+      const provider = requiredString(body.provider, 'provider')
+      const executionBackend = optionalExecutionBackend(body.execution_backend)
+      if (executionBackend === 'playwright' && !supportedProviderSet().has(provider)) {
+        throw invalidInput(`unsupported playwright provider: ${provider}`)
+      }
       const job = store.createJob({
-        provider: requiredString(body.provider, 'provider'),
+        provider,
         action: requiredString(body.action, 'action'),
         request_json: requireField(body, 'request_json'),
-        execution_backend: optionalExecutionBackend(body.execution_backend),
+        execution_backend: executionBackend,
         profile_id: optionalString(body.profile_id),
         job_id: optionalString(body.job_id) ?? undefined,
         claim_token: optionalString(body.claim_token) ?? undefined,
@@ -318,9 +327,27 @@ function healthResponse(store: JobStore) {
 function supportedProtocols() {
   return {
     daemon: [DAEMON_PROTOCOL],
-    job: [MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1, MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2],
-    action: [VISIBLE_ACTION_PROTOCOL_VERSION_V1, VISIBLE_ACTION_PROTOCOL_VERSION_V2],
+    job: [
+      MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+      MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+      MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
+    ],
+    action: [
+      VISIBLE_ACTION_PROTOCOL_VERSION_V1,
+      VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+      VISIBLE_ACTION_PROTOCOL_VERSION_V3,
+    ],
   }
+}
+
+function supportedProviders() {
+  return listProviderInstances()
+    .filter((provider) => provider.descriptor.stage !== 'disabled')
+    .map((provider) => String(provider.id))
+}
+
+function supportedProviderSet() {
+  return new Set(supportedProviders())
 }
 
 function requireControlAuth(store: JobStore, request: IncomingMessage) {

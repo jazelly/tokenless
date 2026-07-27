@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-07-26
+Status: active product direction | Last reviewed: 2026-07-27
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -36,7 +36,6 @@ Every addition, rename, move, or lifecycle change must update this index, all re
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
-| [Provider Architecture and Registry](provider-architecture-and-registry.md) | Establish one TypeScript provider registry and a clean `BaseProvider` plus capability-class seam so new providers do not require shared production-logic changes. | P0 |
 | [Provider Expansion and Parity](provider-expansion.md) | Add high-value Chinese AI web providers and keep all supported providers aligned on a reliable provider-neutral baseline. | P0 |
 | [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
@@ -48,7 +47,7 @@ Priority describes product importance, not a promise that all work proceeds seri
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): no roadmap is currently archived.
+- [Archive](archived/README.md): Provider Architecture and Registry was completed on 2026-07-27.
 
 ## How the Roadmaps Fit Together
 
@@ -74,7 +73,7 @@ flowchart LR
 
 The shared contracts should be built before provider-specific shortcuts:
 
-1. Establish the typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes.
+1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap.
 2. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
 3. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
 4. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.

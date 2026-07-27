@@ -1,11 +1,11 @@
-import type { ProviderConfig } from '../providers.js'
+import type { ProviderDomDefinition } from '../../providers/provider-definition.js'
 import type {
   ProviderSessionDecision,
   ProviderSessionObservation,
 } from './types.js'
 
 export function decideProviderSession(
-  provider: ProviderConfig,
+  provider: ProviderDomDefinition,
   observation: ProviderSessionObservation,
 ): ProviderSessionDecision {
   const terminal = observation.blockers.find((blocker) => blocker.kind === 'terminal')
@@ -89,7 +89,7 @@ export function decideProviderSession(
 }
 
 export function providerSignInRequiredBlocker(
-  provider: ProviderConfig,
+  provider: ProviderDomDefinition,
   observation: ProviderSessionObservation,
   visibleProof = 'provider-access-policy',
 ) {

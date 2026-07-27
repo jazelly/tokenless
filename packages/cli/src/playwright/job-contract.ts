@@ -3,6 +3,7 @@ import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
 } from '../generated/protocol-constants.js'
 import {
   VISIBLE_ACTIONS,
@@ -11,14 +12,15 @@ import {
   validateVisibleActionRequest,
 } from './actions.js'
 import { tokenlessError } from './errors.js'
-import { getProviderById } from './providers.js'
+import { getProviderInstanceById } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
-import type { VisibleActionRequest } from './actions.js'
-import type { ProviderId } from './providers.js'
+import type { VisibleActionRequest, VisibleActionWireRequest } from './actions.js'
+import type { ProviderId, ProviderInstance } from '../providers/registry.js'
 
 export {
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
 } from '../generated/protocol-constants.js'
 export const MANAGED_PLAYWRIGHT_JOB_ACTION = 'visible_provider_actions' as const
 export const PLAYWRIGHT_EXECUTION_BACKEND = 'playwright' as const
@@ -42,7 +44,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   target?: Partial<ManagedPlaywrightSafeTarget> | undefined
   taskId?: string | null | undefined
   browserVisibility?: unknown
-  actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionRequest>, 'protocol' | 'provider'> & {
+  actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
     requestId?: string | undefined
   }))[]
 }
@@ -52,12 +54,12 @@ const CORE_ACTIONS = new Set<string>(Object.values(VISIBLE_ACTIONS))
 export function createManagedPlaywrightJobRequest(
   input: CreateManagedPlaywrightJobRequestInput
 ): ManagedPlaywrightJobRequest {
-  const provider = getProviderById(input.provider)
+  const provider = getProviderInstanceById(input.provider)
   if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
   const target = validateSafeTarget({
     kind: input.target?.kind ?? 'provider_home',
-    url: input.target?.url ?? provider.homeUrl,
-  }, provider.id)
+    url: input.target?.url ?? provider.descriptor.navigation.homeUrl,
+  }, provider)
   const actions = input.actions.map((action) => {
     if (isVisibleActionRequestLike(action)) {
       return validateVisibleActionRequest(action)
@@ -87,12 +89,15 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   } else {
     requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'], 'invalid_playwright_job_request')
   }
-  if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION && input.protocol !== MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1) {
+  if (!isManagedPlaywrightJobProtocolVersion(input.protocol)) {
     throw tokenlessError('invalid_playwright_job_protocol', 'Managed Playwright job protocol version is not supported.')
   }
-  const provider = getProviderById(input.provider)
+  const provider = getProviderInstanceById(input.provider)
   if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
-  const target = validateSafeTarget(input.target, provider.id)
+  if (isLegacyManagedPlaywrightJobProtocol(input.protocol) && !provider.descriptor.protocolCompatibility.legacyRequests) {
+    throw tokenlessError('invalid_playwright_job_protocol', 'Managed Playwright job provider does not accept legacy job protocols.')
+  }
+  const target = validateSafeTarget(input.target, provider)
   const taskId = validateTaskId(input.taskId)
   const browserVisibility = input.protocol === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1
     ? 'headed'
@@ -102,6 +107,9 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   }
   const actions = input.actions.map((action) => validateVisibleActionRequest(action))
   for (const action of actions) {
+    if (input.protocol === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION && action.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION) {
+      throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright job v3 requires visible action v3.')
+    }
     if (action.provider !== provider.id) {
       throw tokenlessError('invalid_playwright_job_provider', 'All visible actions must target the job provider.')
     }
@@ -119,7 +127,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   }
 }
 
-function validateSafeTarget(input: unknown, providerId: ProviderId): ManagedPlaywrightSafeTarget {
+function validateSafeTarget(input: unknown, provider: ProviderInstance): ManagedPlaywrightSafeTarget {
   if (!isPlainRecord(input)) {
     throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target must be an object.')
   }
@@ -130,6 +138,9 @@ function validateSafeTarget(input: unknown, providerId: ProviderId): ManagedPlay
   if (typeof input.url !== 'string') {
     throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target URL is invalid.')
   }
+  if (Buffer.byteLength(input.url, 'utf8') > 2048) {
+    throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target URL is too large.')
+  }
   let parsed: URL
   try {
     parsed = new URL(input.url)
@@ -139,15 +150,24 @@ function validateSafeTarget(input: unknown, providerId: ProviderId): ManagedPlay
   if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash || parsed.search) {
     throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target must be a public HTTPS provider URL without credentials, query, or fragment.')
   }
-  const provider = getProviderById(providerId)
-  const host = parsed.hostname.toLowerCase()
-  if (!provider || !provider.hosts.some((allowed) => host === allowed)) {
+  if (!provider.navigation.canonicalTarget(input.url)) {
     throw tokenlessError('invalid_playwright_job_target', 'Managed Playwright job target host is not owned by the provider.')
   }
   return {
     kind: 'provider_home',
     url: parsed.toString(),
   }
+}
+
+function isManagedPlaywrightJobProtocolVersion(value: unknown) {
+  return value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION ||
+    value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 ||
+    value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2
+}
+
+function isLegacyManagedPlaywrightJobProtocol(value: unknown) {
+  return value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 ||
+    value === MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2
 }
 
 function isVisibleActionRequestLike(value: unknown): value is VisibleActionRequest {

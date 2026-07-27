@@ -1,0 +1,328 @@
+import { VISIBLE_ATTACHMENT_PROTOCOL_VERSION } from '../generated/protocol-constants.js'
+import { tokenlessError } from '../playwright/errors.js'
+import { PROVIDER_CAPABILITIES } from './provider-identity.js'
+import { VISIBLE_ACTIONS } from './contracts.js'
+import type { ProviderCapabilityId } from './provider-identity.js'
+import type {
+  AttachmentInput,
+  EmptyVisibleActionPayload,
+  FileUploadPayload,
+  PromptInputPayload,
+  VisibleAction,
+  VisibleActionPayloadForAction,
+  VisibleSelectionPayload,
+  WorkspaceEnsurePayload,
+} from './contracts.js'
+
+export type VisibleActionCompletion = 'immediate' | 'records_submission' | 'reads_response'
+
+export type VisibleActionLifecycle = {
+  readonly gated: boolean
+  readonly mutating: boolean
+  readonly reconstructablePreSubmit: boolean
+  readonly completion: VisibleActionCompletion
+}
+
+export type VisibleActionCatalogDefinition<Action extends VisibleAction = VisibleAction> = {
+  readonly action: Action
+  readonly legacyProtocol: boolean
+  readonly lifecycle: VisibleActionLifecycle
+  readonly requiredCapabilities: readonly ProviderCapabilityId[]
+  validatePayload(payload: Record<string, unknown>): VisibleActionPayloadForAction<Action>
+}
+
+const immediateReadOnly = Object.freeze({
+  gated: false,
+  mutating: false,
+  reconstructablePreSubmit: false,
+  completion: 'immediate',
+} satisfies VisibleActionLifecycle)
+
+const gatedReadOnly = Object.freeze({
+  gated: true,
+  mutating: false,
+  reconstructablePreSubmit: false,
+  completion: 'immediate',
+} satisfies VisibleActionLifecycle)
+
+const gatedMutation = Object.freeze({
+  gated: true,
+  mutating: true,
+  reconstructablePreSubmit: false,
+  completion: 'immediate',
+} satisfies VisibleActionLifecycle)
+
+const reconstructableGatedMutation = Object.freeze({
+  gated: true,
+  mutating: true,
+  reconstructablePreSubmit: true,
+  completion: 'immediate',
+} satisfies VisibleActionLifecycle)
+
+const submitLifecycle = Object.freeze({
+  gated: true,
+  mutating: true,
+  reconstructablePreSubmit: false,
+  completion: 'records_submission',
+} satisfies VisibleActionLifecycle)
+
+const responseReadLifecycle = Object.freeze({
+  gated: true,
+  mutating: false,
+  reconstructablePreSubmit: false,
+  completion: 'reads_response',
+} satisfies VisibleActionLifecycle)
+
+export const VISIBLE_ACTION_CATALOG = Object.freeze({
+  [VISIBLE_ACTIONS.CAPABILITY_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.CAPABILITY_INSPECT,
+    legacyProtocol: false,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.AUTH_STATUS]: defineAction({
+    action: VISIBLE_ACTIONS.AUTH_STATUS,
+    legacyProtocol: true,
+    lifecycle: immediateReadOnly,
+    requiredCapabilities: [],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.MODEL_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.MODEL_INSPECT,
+    legacyProtocol: true,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.MODEL_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.MODEL_SELECT,
+    legacyProtocol: true,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [],
+    validatePayload: validateSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.EFFORT_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.EFFORT_INSPECT,
+    legacyProtocol: true,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.EFFORT_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.EFFORT_SELECT,
+    legacyProtocol: true,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [],
+    validatePayload: validateSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.FILE_UPLOAD]: defineAction({
+    action: VISIBLE_ACTIONS.FILE_UPLOAD,
+    legacyProtocol: true,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.FILE_UPLOAD],
+    validatePayload: validateFileUploadPayload,
+  }),
+  [VISIBLE_ACTIONS.WORKSPACE_ENSURE]: defineAction({
+    action: VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+    legacyProtocol: false,
+    lifecycle: gatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.WORKSPACE_ENSURE],
+    validatePayload: validateWorkspaceEnsurePayload,
+  }),
+  [VISIBLE_ACTIONS.PROMPT_INPUT]: defineAction({
+    action: VISIBLE_ACTIONS.PROMPT_INPUT,
+    legacyProtocol: true,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE],
+    validatePayload: validatePromptInputPayload,
+  }),
+  [VISIBLE_ACTIONS.PROMPT_CLEAR]: defineAction({
+    action: VISIBLE_ACTIONS.PROMPT_CLEAR,
+    legacyProtocol: true,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.PROMPT_SUBMIT]: defineAction({
+    action: VISIBLE_ACTIONS.PROMPT_SUBMIT,
+    legacyProtocol: true,
+    lifecycle: submitLifecycle,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.RESPONSE_READ]: defineAction({
+    action: VISIBLE_ACTIONS.RESPONSE_READ,
+    legacyProtocol: true,
+    lifecycle: responseReadLifecycle,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.SNAPSHOT_SANITIZED]: defineAction({
+    action: VISIBLE_ACTIONS.SNAPSHOT_SANITIZED,
+    legacyProtocol: true,
+    lifecycle: immediateReadOnly,
+    requiredCapabilities: [],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.NAVIGATION_CHECK]: defineAction({
+    action: VISIBLE_ACTIONS.NAVIGATION_CHECK,
+    legacyProtocol: true,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.BLOCKER_CHECK]: defineAction({
+    action: VISIBLE_ACTIONS.BLOCKER_CHECK,
+    legacyProtocol: true,
+    lifecycle: immediateReadOnly,
+    requiredCapabilities: [],
+    validatePayload: validateEmptyPayload,
+  }),
+} satisfies { readonly [Action in VisibleAction]: VisibleActionCatalogDefinition<Action> })
+
+const ACTIONS = Object.freeze(Object.keys(VISIBLE_ACTION_CATALOG)) as readonly VisibleAction[]
+const ACTION_SET = new Set<string>(ACTIONS)
+
+export function listVisibleActions(): readonly VisibleAction[] {
+  return ACTIONS
+}
+
+export function isVisibleAction(value: unknown): value is VisibleAction {
+  return typeof value === 'string' && ACTION_SET.has(value)
+}
+
+export function isVisibleActionSupportedByLegacyProtocol(action: VisibleAction): boolean {
+  return VISIBLE_ACTION_CATALOG[action].legacyProtocol
+}
+
+export function getVisibleActionCatalogDefinition<Action extends VisibleAction>(
+  action: Action
+): VisibleActionCatalogDefinition<Action> {
+  return VISIBLE_ACTION_CATALOG[action] as VisibleActionCatalogDefinition<Action>
+}
+
+export function getVisibleActionLifecycle(action: VisibleAction): VisibleActionLifecycle {
+  return VISIBLE_ACTION_CATALOG[action].lifecycle
+}
+
+export function validateVisibleActionPayload<Action extends VisibleAction>(
+  action: Action,
+  payload: Record<string, unknown>
+): VisibleActionPayloadForAction<Action> {
+  return getVisibleActionCatalogDefinition(action).validatePayload(payload)
+}
+
+export function validateAttachmentInput(input: unknown): AttachmentInput {
+  if (!isPlainRecord(input)) throw tokenlessError('invalid_visible_attachment', 'Attachment descriptor must be an object.')
+  requireExactKeys(input, ['protocol', 'bundleId', 'attachmentId', 'name', 'type', 'size', 'sha256'], 'invalid_visible_attachment')
+  if (input.protocol !== VISIBLE_ATTACHMENT_PROTOCOL_VERSION) {
+    throw tokenlessError('invalid_visible_attachment', 'Attachment protocol is invalid.')
+  }
+  if (typeof input.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.bundleId)) {
+    throw tokenlessError('invalid_visible_attachment', 'Attachment bundle id is invalid.')
+  }
+  if (typeof input.attachmentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.attachmentId)) {
+    throw tokenlessError('invalid_visible_attachment', 'Attachment id is invalid.')
+  }
+  if (typeof input.name !== 'string' || input.name.length < 1 || Buffer.byteLength(input.name, 'utf8') > 255 || /[/\\\u0000-\u001f\u007f]/.test(input.name)) {
+    throw tokenlessError('invalid_visible_attachment', 'Attachment name is invalid.')
+  }
+  if (typeof input.type !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$/.test(input.type)) {
+    throw tokenlessError('invalid_visible_attachment', 'Attachment media type is invalid.')
+  }
+  if (typeof input.size !== 'number' || !Number.isSafeInteger(input.size) || input.size < 0 || input.size > 512 * 1024 * 1024) {
+    throw tokenlessError('invalid_visible_attachment', 'Attachment size is invalid.')
+  }
+  if (typeof input.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sha256)) {
+    throw tokenlessError('invalid_visible_attachment', 'Attachment sha256 is invalid.')
+  }
+  return input as AttachmentInput
+}
+
+function defineAction<Action extends VisibleAction>(
+  definition: VisibleActionCatalogDefinition<Action>
+): VisibleActionCatalogDefinition<Action> {
+  return Object.freeze(definition)
+}
+
+function validateEmptyPayload(payload: Record<string, unknown>): EmptyVisibleActionPayload {
+  requireExactKeys(payload, [], 'invalid_visible_action_payload')
+  return payload as EmptyVisibleActionPayload
+}
+
+function validateSelectionPayload(payload: Record<string, unknown>): VisibleSelectionPayload {
+  requireExactKeys(payload, ['label'], 'invalid_visible_action_payload')
+  validateVisibleLabel(payload.label)
+  return payload as VisibleSelectionPayload
+}
+
+function validateFileUploadPayload(payload: Record<string, unknown>): FileUploadPayload {
+  requireExactKeys(payload, ['attachments'], 'invalid_visible_action_payload')
+  if (!Array.isArray(payload.attachments) || payload.attachments.length < 1 || payload.attachments.length > 100) {
+    throw tokenlessError('invalid_visible_attachment', 'File upload requires one to one hundred attachments.')
+  }
+  for (const attachment of payload.attachments) validateAttachmentInput(attachment)
+  return payload as FileUploadPayload
+}
+
+function validateWorkspaceEnsurePayload(payload: Record<string, unknown>): WorkspaceEnsurePayload {
+  const keys = Object.keys(payload)
+  const expected = new Set(['name', 'mode', 'instructions'])
+  if (
+    (keys.length !== 2 && keys.length !== 3) ||
+    !keys.every((key) => expected.has(key)) ||
+    !Object.hasOwn(payload, 'name') ||
+    !Object.hasOwn(payload, 'mode')
+  ) {
+    throw tokenlessError('invalid_visible_action_payload', 'Expected exact keys: name, mode, optional instructions.')
+  }
+  validateWorkspaceText(payload.name, 'invalid_visible_workspace_name', 'Workspace name is invalid or too large.')
+  if (payload.mode !== 'auto' && payload.mode !== 'native' && payload.mode !== 'conversation') {
+    throw tokenlessError('invalid_visible_workspace_mode', 'Workspace ensure mode is invalid.')
+  }
+  if (Object.hasOwn(payload, 'instructions')) {
+    validateWorkspaceText(payload.instructions, 'invalid_visible_workspace_instructions', 'Workspace instructions are invalid or too large.')
+  }
+  return payload as WorkspaceEnsurePayload
+}
+
+function validatePromptInputPayload(payload: Record<string, unknown>): PromptInputPayload {
+  requireExactKeys(payload, ['text'], 'invalid_visible_action_payload')
+  if (typeof payload.text !== 'string' || Buffer.byteLength(payload.text, 'utf8') > 1024 * 1024) {
+    throw tokenlessError('invalid_visible_prompt', 'Prompt text is invalid or too large.')
+  }
+  return payload as PromptInputPayload
+}
+
+function validateWorkspaceText(value: unknown, code: string, message: string) {
+  if (
+    typeof value !== 'string' ||
+    !/\S/u.test(value) ||
+    Buffer.byteLength(value, 'utf8') > 32 * 1024 ||
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)
+  ) {
+    throw tokenlessError(code, message)
+  }
+}
+
+function validateVisibleLabel(value: unknown) {
+  if (typeof value !== 'string' || !/\S/u.test(value) || Buffer.byteLength(value, 'utf8') > 512) {
+    throw tokenlessError('invalid_visible_label', 'Visible selection label is invalid.')
+  }
+  if (/[\u0000-\u001f\u007f]/.test(value)) {
+    throw tokenlessError('invalid_visible_label', 'Visible selection label contains control characters.')
+  }
+}
+
+function requireExactKeys(record: Record<string, unknown>, keys: readonly string[], code: string) {
+  const expected = new Set(keys)
+  const actual = Object.keys(record)
+  if (actual.length !== expected.size || actual.some((key) => !expected.has(key))) {
+    throw tokenlessError(code, `Expected exact keys: ${keys.join(', ') || '(none)'}.`)
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}

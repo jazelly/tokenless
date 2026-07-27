@@ -1,6 +1,6 @@
 # Tokenless CLI
 
-`tokenless` gives agents provider-neutral CLI access to visible ChatGPT, Claude, Gemini, and Grok sessions. A local daemon, Playwright worker, and persistent managed browser profiles handle execution. A public local API is planned but is not a compatibility surface yet.
+`tokenless` gives agents provider-neutral CLI access to visible ChatGPT, Claude, Gemini, and Grok sessions. Qwen / 千问 is also available as an experimental guest-session provider. A local daemon, Playwright worker, and persistent managed browser profiles handle execution. A public local API is planned but is not a compatibility surface yet.
 
 Complete command inventory: [English](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) | [中文](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md)
 
@@ -90,7 +90,7 @@ The shared Playwright action contract covers:
 - prompt submission, correlated response reading, and visible citations;
 - fail-closed navigation checks and sanitized structural snapshots.
 
-Four-provider parity and end-to-end upload acceptance are still being completed. Unsupported or unverified actions fail explicitly.
+Four-provider parity and end-to-end upload acceptance are still being completed. Qwen's experimental baseline covers guest prompt submission, response reading, and same-task conversation continuation; its unproven optional capabilities fail explicitly as unavailable or unknown.
 
 `--project-name` continues to provide task identity only unless `--workspace-mode` is present. `auto` prefers a fixture-proven native Project and otherwise reports a conversation fallback, `native` fails when native creation is unverified or unavailable, and `conversation` requires the conversation strategy. Repeated `auto` or `conversation` runs with the same provider, profile, and task identity reuse only a trusted successful conversation URL.
 
@@ -156,7 +156,7 @@ tokenless profiles clear --profile work
 
 `profiles status` performs one live provider-page observation and does not enforce login, open a handoff, or retry after the user signs in. It reports both authentication and normalized access (`guest`, `sign_in_required`, `signed_in_free`, `signed_in_paid`, `signed_in_unknown`, or `unknown`) and saves the observation in the managed profile registry. `profiles list` reads that saved observation and does not open provider pages or refresh status ad hoc. Authenticated observations may also report the visible provider username, subscription label, and normalized tier. Ambiguous plan evidence remains `null`/`signed_in_unknown`.
 
-ChatGPT and Gemini can execute prompt jobs through a visible guest composer. Claude and Grok require an authenticated account; a signed-out task job enters durable `waiting_for_user` before Tokenless writes or submits the prompt. Plan labels are diagnostic only—visible enabled or disabled controls remain the capability authority.
+ChatGPT and Gemini can execute prompt jobs through a visible guest composer, as can the experimental Qwen integration. Claude and Grok require an authenticated account; a signed-out task job enters durable `waiting_for_user` before Tokenless writes or submits the prompt. Plan labels are diagnostic only—visible enabled or disabled controls remain the capability authority.
 
 For Grok, the model menu is the subscription evidence: when `Auto`, `Expert`, and `Heavy` are all visibly unavailable, the saved subscription is `Free`; otherwise it is `SuperGrok`. Tokenless intentionally does not distinguish paid SuperGrok tiers.
 
@@ -176,6 +176,7 @@ The planned local API will expose the same daemon jobs and provider-neutral acti
 ## Roadmap
 
 - Complete Playwright parity for ChatGPT, Claude, Gemini, and Grok.
+- Promote Qwen from experimental only after the complete live account-state and capability matrix is proven.
 - Finish seamless files, model controls, citations, and long-running work.
 - Add provider workspaces, files, plugins, connectors, and tools when they are available through visible pages.
 - Add image and broader multimodal workflows.

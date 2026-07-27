@@ -16,6 +16,7 @@ const expectedAccess = {
   claude: 'sign_in_required',
   gemini: 'guest',
   grok: 'sign_in_required',
+  qwen: 'guest',
 }
 
 test('fresh real managed browser follows the signed-out provider access matrix', {

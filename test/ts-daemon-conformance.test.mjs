@@ -15,6 +15,13 @@ const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const tsDaemonEntry = path.join(cliDir, 'dist/src/daemon/daemon-entry.mjs')
 const managedPlaywrightJobAction = 'visible_provider_actions'
+const supportedProviders = ['chatgpt', 'claude', 'gemini', 'grok', 'qwen']
+const legacyProviders = [
+  ['chatgpt', 'https://chatgpt.com/'],
+  ['claude', 'https://claude.ai/new'],
+  ['gemini', 'https://gemini.google.com/app'],
+  ['grok', 'https://grok.com/'],
+]
 
 const createdChildren = new Set()
 
@@ -152,6 +159,180 @@ test('TS daemon embeds the managed Playwright scheduler without idle browser lau
     await terminateChildrenForHome(homeDir)
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
+})
+
+test('TS daemon rejects unsupported Playwright providers and preserves legacy jobs', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-provider-negotiation-')
+  const daemon = await startTsDaemon(homeDir)
+  try {
+    const token = readControlToken(homeDir)
+    const rejected = await fetch(`${daemon.url}/jobs`, {
+      method: 'POST',
+      headers: jsonHeaders(token),
+      body: JSON.stringify({
+        provider: 'not-a-provider',
+        action: managedPlaywrightJobAction,
+        execution_backend: 'playwright',
+        profile_id: randomUUID(),
+        job_id: randomUUID(),
+        request_json: { malformed: true },
+      }),
+    })
+    assert.equal(rejected.status, 400)
+    const rejectedBody = await rejected.json()
+    assert.equal(rejectedBody.error.code, 'invalid_input')
+    assert.match(rejectedBody.error.message, /unsupported playwright provider: not-a-provider/)
+
+    const legacyJobId = randomUUID()
+    const legacy = await daemonRequest(daemon.url, token, 'POST', '/jobs', {
+      provider: 'not-a-provider',
+      action: 'prompt.submit',
+      job_id: legacyJobId,
+      request_json: { prompt: 'legacy extension compatibility' },
+    })
+    assert.equal(legacy.job_id, legacyJobId)
+    assert.equal(legacy.provider, 'not-a-provider')
+    assert.equal(legacy.execution_backend, 'legacy_extension')
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('built Playwright validators preserve legacy providers and enforce v3 registry membership', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const playwright = await importPlaywright()
+  const runtime = await importCli()
+  const legacyProtocols = [
+    [runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1, runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V1],
+    [runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2, runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V2],
+  ]
+  for (const [jobProtocol, actionProtocol] of legacyProtocols) {
+    for (const [provider, homeUrl] of legacyProviders) {
+      const validated = playwright.validateManagedPlaywrightJobRequest({
+        protocol: jobProtocol,
+        provider,
+        target: { kind: 'provider_home', url: homeUrl },
+        taskId: `legacy-${jobProtocol}-${provider}`,
+        ...(jobProtocol === runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 ? {} : { browserVisibility: 'headless' }),
+        actions: [
+          {
+            protocol: actionProtocol,
+            requestId: `legacy-${actionProtocol}-${provider}`,
+            provider,
+            action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+            payload: {},
+          },
+        ],
+      })
+      assert.equal(validated.provider, provider)
+      assert.equal(validated.target.url, homeUrl)
+    }
+    assert.throws(
+      () => playwright.validateManagedPlaywrightJobRequest({
+        protocol: jobProtocol,
+        provider: 'qwen',
+        target: { kind: 'provider_home', url: 'https://www.qianwen.com/' },
+        taskId: `legacy-${jobProtocol}-qwen`,
+        ...(jobProtocol === runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1 ? {} : { browserVisibility: 'headless' }),
+        actions: [
+          {
+            protocol: actionProtocol,
+            requestId: `legacy-${actionProtocol}-qwen`,
+            provider: 'qwen',
+            action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+            payload: {},
+          },
+        ],
+      }),
+      (error) => {
+        assert.equal(error.code, 'invalid_playwright_job_protocol')
+        return true
+      }
+    )
+    assert.throws(
+      () => playwright.validateVisibleActionRequest({
+        protocol: actionProtocol,
+        requestId: `legacy-action-policy-${actionProtocol}`,
+        provider: 'qwen',
+        action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+        payload: {},
+      }),
+      (error) => {
+        assert.equal(error.code, 'invalid_visible_action_protocol')
+        return true
+      }
+    )
+  }
+
+  const created = playwright.createManagedPlaywrightJobRequest({
+    provider: 'qwen',
+    target: { kind: 'provider_home', url: 'https://www.qianwen.com/' },
+    taskId: 'v3-qwen-provider',
+    browserVisibility: 'headless',
+    actions: [
+      {
+        requestId: 'v3-action',
+        action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+        payload: {},
+      },
+    ],
+  })
+  assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION)
+  assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3)
+  assert.equal(created.provider, 'qwen')
+  assert.equal(created.target.url, 'https://www.qianwen.com/')
+  assert.equal(created.actions[0].provider, 'qwen')
+  assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_PROTOCOL_VERSION)
+  assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V3)
+
+  const v3Validated = playwright.validateManagedPlaywrightJobRequest({
+    protocol: runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
+    provider: 'qwen',
+    target: { kind: 'provider_home', url: 'https://www.qianwen.com/' },
+    taskId: 'v3-explicit-qwen-provider',
+    browserVisibility: 'headless',
+    actions: [
+      {
+        protocol: runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V3,
+        requestId: 'v3-explicit-action',
+        provider: 'qwen',
+        action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+        payload: {},
+      },
+    ],
+  })
+  assert.equal(v3Validated.provider, 'qwen')
+  assert.equal(v3Validated.actions[0].provider, 'qwen')
+
+  assert.throws(
+    () => playwright.validateManagedPlaywrightJobRequest({
+      protocol: runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
+      provider: 'future-ai',
+      target: { kind: 'provider_home', url: 'https://future.example/' },
+      taskId: 'registry-rejects-unknown-provider',
+      browserVisibility: 'headless',
+      actions: [
+        {
+          protocol: runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V3,
+          requestId: 'unknown-provider-action',
+          provider: 'future-ai',
+          action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+          payload: {},
+        },
+      ],
+    }),
+    (error) => {
+      assert.equal(error.code, 'unknown_playwright_job_provider')
+      return true
+    }
+  )
 })
 
 test('TS daemon browser runtime control is authenticated, quiesces queued work, and wakes on later job creation', {
@@ -639,6 +820,17 @@ async function waitForDaemon(child, url, homeDir, label) {
       const ready = await readyProbe(url)
       assert.equal(ready.ready, true)
       assert.equal(ready.home_dir, homeDir)
+      assert.deepEqual(ready.supported_providers, supportedProviders)
+      assert.deepEqual(ready.supported_protocols.job, [
+        'tokenless.playwright.job.v1',
+        'tokenless.playwright.job.v2',
+        'tokenless.playwright.job.v3',
+      ])
+      assert.deepEqual(ready.supported_protocols.action, [
+        'tokenless.playwright.visible-action.v1',
+        'tokenless.playwright.visible-action.v2',
+        'tokenless.playwright.visible-action.v3',
+      ])
       return { child, url, homeDir, label }
     } catch (error) {
       lastError = error

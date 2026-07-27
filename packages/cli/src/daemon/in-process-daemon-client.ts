@@ -1,6 +1,7 @@
-import { daemonErrorBody, toDaemonError } from './errors.js'
+import { daemonErrorBody, invalidInput, toDaemonError } from './errors.js'
 import { JobStore, publicView, withClaimToken } from './job-store.js'
 import { claimRecoveryError, tokenlessError } from '../playwright/errors.js'
+import { listProviderInstances } from '../providers/registry.js'
 import type { Job } from './job-store.js'
 import type {
   CancelDaemonJobOptions,
@@ -17,15 +18,24 @@ import type {
 
 export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClient {
   return {
-    createJob: (options) => inProcessDaemonRequest(options.signal, () => claimedView(store.createJob({
-      provider: options.provider,
-      action: options.action,
-      request_json: options.requestJson,
-      execution_backend: options.executionBackend,
-      profile_id: options.profileId,
-      job_id: options.jobId,
-      claim_token: options.claimToken,
-    }))),
+    ready: (options = {}) => inProcessDaemonRequest(options.signal, () => ({
+      ready: true as const,
+      supported_providers: supportedProviders(),
+    })),
+    createJob: (options) => inProcessDaemonRequest(options.signal, () => {
+      if (options.executionBackend === 'playwright' && !supportedProviderSet().has(options.provider)) {
+        throw invalidInput(`unsupported playwright provider: ${options.provider}`)
+      }
+      return claimedView(store.createJob({
+        provider: options.provider,
+        action: options.action,
+        request_json: options.requestJson,
+        execution_backend: options.executionBackend,
+        profile_id: options.profileId,
+        job_id: options.jobId,
+        claim_token: options.claimToken,
+      }))
+    }),
     listJobs: (options = {}) => inProcessDaemonRequest(options.signal, () => store.listJobs({
       status: options.status,
       execution_backend: options.executionBackend,
@@ -71,6 +81,16 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
     }),
     cancelJob: (options) => cancelRequest(options, async () => publicJobView(await store.cancelJob(options.jobId, options.reason))),
   }
+}
+
+function supportedProviders() {
+  return listProviderInstances()
+    .filter((provider) => provider.descriptor.stage !== 'disabled')
+    .map((provider) => String(provider.id))
+}
+
+function supportedProviderSet() {
+  return new Set(supportedProviders())
 }
 
 function claimRequest<T>(options: ClaimLifecycleDaemonJobOptions, operation: () => T): Promise<T> {

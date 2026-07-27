@@ -6,8 +6,7 @@ import {
   isClaimRecoveryError,
   tokenlessError,
 } from './errors.js'
-import { RUNNER_CHECKPOINT_PROTOCOL, USER_HANDOVER_PROTOCOL } from '../generated/protocol-constants.js'
-import { createProviderAdapterRegistry } from './adapters/index.js'
+import { RUNNER_CHECKPOINT_PROTOCOL, RUNNER_CHECKPOINT_PROTOCOL_V1, USER_HANDOVER_PROTOCOL } from '../generated/protocol-constants.js'
 import { PersistentContextManager } from './browser/context-manager.js'
 import type { ManagedBrowserLaunchTarget } from './browser/context-manager.js'
 import {
@@ -16,12 +15,11 @@ import {
   PLAYWRIGHT_EXECUTION_BACKEND,
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
-import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, VISIBLE_ACTION_PROTOCOL_VERSION_V1 } from './actions.js'
-import { resolveProviderSession } from './provider-session/index.js'
+import { getVisibleActionLifecycle } from '../providers/action-catalog.js'
+import { VISIBLE_ACTIONS, VISIBLE_ACTION_PROTOCOL_VERSION, isVisibleActionProtocolVersion } from './actions.js'
 import { createDaemonClient } from './daemon-client.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
-import { getProviderById, trustedProviderSignInNavigation } from './providers.js'
-import type { ProviderAdapterRegistry } from './adapters/index.js'
+import { getProviderInstanceById } from '../providers/registry.js'
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
@@ -33,6 +31,7 @@ import type { BrowserVisibility } from '../browser-visibility.js'
 import type { VisibleAction, VisibleActionRequest } from './actions.js'
 import type { VisibleActionResponse } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
+import type { ProviderActionPreparation } from '../providers/contracts.js'
 import type { BrowserContext, Page } from 'playwright-core'
 
 export type ManagedPlaywrightRunnerServiceOptions = {
@@ -41,7 +40,6 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   daemonClient?: ManagedDaemonClient | undefined
   contextManager?: PersistentContextManagerType | undefined
   browser?: ManagedBrowserLaunchTarget | undefined
-  adapterRegistry?: ProviderAdapterRegistry | undefined
   pollIdleMs?: number | undefined
   renewIntervalMs?: number | undefined
   cancelPollMs?: number | undefined
@@ -85,7 +83,7 @@ type RunnerSubmittedActionCheckpoint = {
   actionIndex: number
   requestId: string
   providerUrl: string
-  responseBaseline: number
+  preparation: ProviderActionPreparation
 }
 
 type RunnerCheckpoint = {
@@ -97,7 +95,7 @@ type RunnerCheckpoint = {
   browserVisibility: BrowserVisibility
   actionCursor: number
   responses: readonly VisibleActionResponse[]
-  responseBaseline: number | null
+  preparation: ProviderActionPreparation | null
   submitted: RunnerSubmittedActionCheckpoint | null
   phase: RunnerCheckpointPhase
 }
@@ -105,7 +103,7 @@ type RunnerCheckpoint = {
 type RunnerExecutionState = {
   actionCursor: number
   responses: VisibleActionResponse[]
-  responseBaseline: number | null
+  preparation: ProviderActionPreparation | null
   submitted: RunnerSubmittedActionCheckpoint | null
 }
 
@@ -114,6 +112,8 @@ type ClearBlockerResult = {
   page: Page
   waitedMs: number
 }
+
+type RunnerProvider = NonNullable<ReturnType<typeof getProviderInstanceById>>
 
 const DEFAULT_RENEW_INTERVAL_MS = 10_000
 const DEFAULT_CANCEL_POLL_MS = 500
@@ -124,41 +124,10 @@ const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
 const DEFAULT_AUTO_ESCALATED_CLOSE_DELAY_MS = 30_000
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
-const GATED_ACTIONS = new Set<string>([
-  VISIBLE_ACTIONS.CAPABILITY_INSPECT,
-  VISIBLE_ACTIONS.NAVIGATION_CHECK,
-  VISIBLE_ACTIONS.MODEL_INSPECT,
-  VISIBLE_ACTIONS.MODEL_SELECT,
-  VISIBLE_ACTIONS.EFFORT_INSPECT,
-  VISIBLE_ACTIONS.EFFORT_SELECT,
-  VISIBLE_ACTIONS.FILE_UPLOAD,
-  VISIBLE_ACTIONS.WORKSPACE_ENSURE,
-  VISIBLE_ACTIONS.PROMPT_INPUT,
-  VISIBLE_ACTIONS.PROMPT_CLEAR,
-  VISIBLE_ACTIONS.PROMPT_SUBMIT,
-  VISIBLE_ACTIONS.RESPONSE_READ,
-])
-const MUTATING_ACTIONS = new Set<string>([
-  VISIBLE_ACTIONS.MODEL_SELECT,
-  VISIBLE_ACTIONS.EFFORT_SELECT,
-  VISIBLE_ACTIONS.FILE_UPLOAD,
-  VISIBLE_ACTIONS.WORKSPACE_ENSURE,
-  VISIBLE_ACTIONS.PROMPT_INPUT,
-  VISIBLE_ACTIONS.PROMPT_CLEAR,
-  VISIBLE_ACTIONS.PROMPT_SUBMIT,
-])
-const RECONSTRUCTABLE_PRE_SUBMIT_ACTIONS = new Set<string>([
-  VISIBLE_ACTIONS.MODEL_SELECT,
-  VISIBLE_ACTIONS.EFFORT_SELECT,
-  VISIBLE_ACTIONS.FILE_UPLOAD,
-  VISIBLE_ACTIONS.PROMPT_INPUT,
-  VISIBLE_ACTIONS.PROMPT_CLEAR,
-])
 export class ManagedPlaywrightRunnerService {
   private readonly profileRegistry: ManagedProfileSource
   private readonly daemonClient: ManagedDaemonClient
   private readonly contextManager: PersistentContextManagerType
-  private readonly adapterRegistry: ProviderAdapterRegistry
   private readonly pollIdleMs: number
   private readonly renewIntervalMs: number
   private readonly cancelPollMs: number
@@ -181,7 +150,6 @@ export class ManagedPlaywrightRunnerService {
     this.contextManager = options.contextManager ?? new PersistentContextManager({
       ...(options.browser ? { browser: options.browser } : {}),
     })
-    this.adapterRegistry = options.adapterRegistry ?? createProviderAdapterRegistry()
     this.pollIdleMs = normalizedPositiveInteger(options.pollIdleMs, DEFAULT_POLL_IDLE_MS)
     this.renewIntervalMs = normalizedPositiveInteger(options.renewIntervalMs, DEFAULT_RENEW_INTERVAL_MS)
     this.cancelPollMs = normalizedPositiveInteger(options.cancelPollMs, DEFAULT_CANCEL_POLL_MS)
@@ -461,16 +429,16 @@ export class ManagedPlaywrightRunnerService {
     const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (initialManagedContext) => {
       let managedContext = initialManagedContext
       let page = await managedContext.page()
-      const provider = getProviderById(request.provider)
+      const provider = getProviderInstanceById(request.provider)
       if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
       const state = executionStateFromCheckpoint(restoredCheckpoint)
       const startUrl = state.submitted?.providerUrl ?? request.target.url
       await navigateToTarget(page, startUrl, signal, request.actions.some((action) => action.action === VISIBLE_ACTIONS.NAVIGATION_CHECK))
       if (restoredCheckpoint && !state.submitted) {
         await reconstructCompletedPreSubmitActions(page, {
+          provider,
           request,
           actionCursor: state.actionCursor,
-          adapterRegistry: this.adapterRegistry,
           profile,
           job,
           attachmentRoot,
@@ -502,16 +470,17 @@ export class ManagedPlaywrightRunnerService {
       for (let actionIndex = state.actionCursor; actionIndex < request.actions.length; actionIndex += 1) {
         const action = request.actions[actionIndex]
         if (!action) throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner action cursor is invalid.')
+        const lifecycle = getVisibleActionLifecycle(action.action)
         throwIfStopped(signal, isCanceled, renewalError)
-        if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+        if (lifecycle.completion === 'records_submission') {
           await clearBlocker(true)
-          state.responseBaseline = await countVisibleAnswers(page, provider.answerSelectors)
+          state.preparation = await provider.prepareAction(page, action)
         }
-        if (action.action === VISIBLE_ACTIONS.RESPONSE_READ && state.responseBaseline !== null) {
-          await this.waitForNewResponseReady(() => page, {
-            answerSelectors: provider.answerSelectors,
-            busySelectors: provider.busySelectors,
-            baseline: state.responseBaseline,
+        if (lifecycle.completion === 'reads_response' && state.preparation !== null) {
+          await this.waitForPreparedActionReady(() => page, {
+            provider,
+            action,
+            preparation: state.preparation,
             timeoutMs: this.responseWaitTimeoutMs,
             pollMs: this.responseWaitPollMs,
             signal,
@@ -521,35 +490,37 @@ export class ManagedPlaywrightRunnerService {
           })
         }
         if (
-          GATED_ACTIONS.has(action.action) &&
-          action.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT &&
-          action.action !== VISIBLE_ACTIONS.RESPONSE_READ
+          lifecycle.gated &&
+          lifecycle.completion !== 'records_submission' &&
+          lifecycle.completion !== 'reads_response'
         ) {
           await clearBlocker(true)
         }
         await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('started', actionIndex, action, page, provider))
-        const adapterContext = {
+        const providerContext = {
           profileId: profile.id,
           operationId: job.job_id,
           signal,
           now: this.now,
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),
         }
-        const response = await this.adapterRegistry.execute(page, action, adapterContext)
+        const response = await provider.executeAction(page, action, providerContext)
         if (!response.ok) {
           throw tokenlessError(response.error.code, response.error.message, { retryable: response.error.retryable })
         }
-        assertNativeWorkspaceAvailable(action, response)
         state.responses.push(response)
-        if (action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) {
+        if (lifecycle.completion === 'records_submission') {
+          if (!state.preparation) {
+            throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner did not prepare prompt submission completion.')
+          }
           state.submitted = {
             actionIndex,
             requestId: action.requestId,
             providerUrl: validatedCurrentProviderUrl(page, provider, request.target.url),
-            responseBaseline: state.responseBaseline ?? 0,
+            preparation: state.preparation,
           }
         }
-        if (action.action === VISIBLE_ACTIONS.RESPONSE_READ) state.responseBaseline = null
+        if (lifecycle.completion === 'reads_response') state.preparation = null
         state.actionCursor = actionIndex + 1
         await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('completed', actionIndex, action, page, provider))
       }
@@ -583,7 +554,7 @@ export class ManagedPlaywrightRunnerService {
     job: DaemonClaimedJob
     request: ManagedPlaywrightJobRequest
     claimBrowserVisibility: BrowserVisibility
-    provider: NonNullable<ReturnType<typeof getProviderById>>
+    provider: RunnerProvider
     state: RunnerExecutionState
     attachmentRoot: string | undefined
     signal: AbortSignal
@@ -635,9 +606,9 @@ export class ManagedPlaywrightRunnerService {
       await navigateToTarget(page, url, options.signal, true)
       if (!options.state.submitted) {
         await reconstructCompletedPreSubmitActions(page, {
+          provider: options.provider,
           request: options.request,
           actionCursor: options.state.actionCursor,
-          adapterRegistry: this.adapterRegistry,
           profile: options.profile,
           job: options.job,
           attachmentRoot: options.attachmentRoot,
@@ -688,12 +659,12 @@ export class ManagedPlaywrightRunnerService {
     )
   }
 
-  private async waitForNewResponseReady(
+  private async waitForPreparedActionReady(
     getPage: () => Page,
     options: {
-      answerSelectors: readonly string[]
-      busySelectors: readonly string[]
-      baseline: number
+      provider: RunnerProvider
+      action: VisibleActionRequest
+      preparation: ProviderActionPreparation
       timeoutMs: number
       pollMs: number
       signal: AbortSignal
@@ -708,26 +679,11 @@ export class ManagedPlaywrightRunnerService {
       const waitedMs = await options.clearBlocker()
       deadline += waitedMs
       const page = getPage()
-      const answerCount = await countVisibleAnswers(page, options.answerSelectors)
-      const busy = await hasVisibleBusyIndicator(page, options.busySelectors)
-      if (answerCount > options.baseline && !busy) return
+      if ((await options.provider.observeAction(page, options.action, options.preparation)).state === 'ready') return
       await delay(Math.min(options.pollMs, Math.max(1, deadline - Date.now())), options.signal)
     }
     throw tokenlessError('playwright_response_timeout', 'Timed out waiting for a new visible provider response.', { retryable: true })
   }
-}
-
-function assertNativeWorkspaceAvailable(action: VisibleActionRequest, response: VisibleActionResponse) {
-  if (action.action !== VISIBLE_ACTIONS.WORKSPACE_ENSURE || action.payload.mode !== 'native') return
-  const result = response.ok && isPlainRecord(response.result) ? response.result : null
-  if (result?.availability === 'available') return
-  throw tokenlessError(
-    'native_workspace_unavailable',
-    typeof result?.reason === 'string' && result.reason
-      ? `Native workspace creation is unavailable: ${result.reason}.`
-      : 'Native workspace creation is unavailable.',
-    { retryable: false }
-  )
 }
 
 export function serializeRunnerError(error: unknown) {
@@ -771,9 +727,18 @@ function validateRunnerCheckpoint(
   request: ManagedPlaywrightJobRequest
 ): RunnerCheckpoint | null {
   if (value === null || value === undefined) return null
-  if (!isPlainRecord(value) || value.protocol !== RUNNER_CHECKPOINT_PROTOCOL) {
+  if (!isPlainRecord(value) || (value.protocol !== RUNNER_CHECKPOINT_PROTOCOL && value.protocol !== RUNNER_CHECKPOINT_PROTOCOL_V1)) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint is invalid.')
   }
+  const legacy = value.protocol === RUNNER_CHECKPOINT_PROTOCOL_V1
+  const expectedKeys = legacy
+    ? ['protocol', 'jobId', 'profileId', 'provider', 'targetUrl', 'browserVisibility', 'actionCursor', 'responses', 'responseBaseline', 'submitted', 'phase']
+    : ['protocol', 'jobId', 'profileId', 'provider', 'targetUrl', 'browserVisibility', 'actionCursor', 'responses', 'preparation', 'submitted', 'phase']
+  if (!hasExactKeys(value, expectedKeys)) {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint fields are invalid.')
+  }
+  const provider = getProviderInstanceById(request.provider)
+  if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
   const rawActionCursor = value.actionCursor
   if (typeof rawActionCursor !== 'number' || !Number.isInteger(rawActionCursor) || rawActionCursor < 0 || rawActionCursor > request.actions.length) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint cursor is invalid.')
@@ -792,12 +757,12 @@ function validateRunnerCheckpoint(
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint responses are invalid.')
   }
   const responses = value.responses.map((response, index) => validateCheckpointResponse(response, request.actions[index], index))
-  const rawResponseBaseline = value.responseBaseline
-  if (rawResponseBaseline !== null && (typeof rawResponseBaseline !== 'number' || !Number.isInteger(rawResponseBaseline) || rawResponseBaseline < 0)) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint response baseline is invalid.')
-  }
-  const responseBaseline = rawResponseBaseline as number | null
-  const submitted = validateSubmittedCheckpoint(value.submitted, request)
+  const preparation = legacy
+    ? legacyResponsePreparation(value.responseBaseline, provider, true)
+    : validateCheckpointPreparation(value.preparation, provider)
+  const submitted = legacy
+    ? validateLegacySubmittedCheckpoint(value.submitted, request, provider)
+    : validateSubmittedCheckpoint(value.submitted, request, provider)
   const phase = validateCheckpointPhase(value.phase, request)
   if (phase.state === 'started' && phase.mutating) {
     throw tokenlessError(
@@ -827,7 +792,7 @@ function validateRunnerCheckpoint(
     browserVisibility: request.browserVisibility,
     actionCursor,
     responses,
-    responseBaseline,
+    preparation,
     submitted,
     phase,
   }
@@ -841,7 +806,7 @@ function validateCheckpointResponse(
   if (
     !action ||
     !isPlainRecord(value) ||
-    (value.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION && value.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION_V1) ||
+    !isVisibleActionProtocolVersion(value.protocol) ||
     value.ok !== true
   ) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint response is invalid.')
@@ -855,10 +820,17 @@ function validateCheckpointResponse(
   return value as VisibleActionResponse
 }
 
-function validateSubmittedCheckpoint(value: unknown, request: ManagedPlaywrightJobRequest): RunnerSubmittedActionCheckpoint | null {
+function validateSubmittedCheckpoint(
+  value: unknown,
+  request: ManagedPlaywrightJobRequest,
+  provider: RunnerProvider
+): RunnerSubmittedActionCheckpoint | null {
   if (value === null) return null
   if (!isPlainRecord(value)) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint is invalid.')
+  }
+  if (!hasExactKeys(value, ['actionIndex', 'requestId', 'providerUrl', 'preparation'])) {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint fields are invalid.')
   }
   const rawActionIndex = value.actionIndex
   const actionIndex = typeof rawActionIndex === 'number' && Number.isInteger(rawActionIndex) ? rawActionIndex : -1
@@ -869,20 +841,72 @@ function validateSubmittedCheckpoint(value: unknown, request: ManagedPlaywrightJ
   if (typeof value.providerUrl !== 'string') {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint URL is invalid.')
   }
-  const provider = getProviderById(request.provider)
-  if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
   const providerUrl = validateProviderUrl(value.providerUrl, provider)
-  const rawResponseBaseline = value.responseBaseline
-  if (typeof rawResponseBaseline !== 'number' || !Number.isInteger(rawResponseBaseline) || rawResponseBaseline < 0) {
-    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint baseline is invalid.')
+  const preparation = validateCheckpointPreparation(value.preparation, provider)
+  if (!preparation) {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint preparation is invalid.')
   }
-  const responseBaseline = rawResponseBaseline as number
   return {
     actionIndex,
     requestId: action.requestId,
     providerUrl,
-    responseBaseline,
+    preparation,
   }
+}
+
+function validateLegacySubmittedCheckpoint(
+  value: unknown,
+  request: ManagedPlaywrightJobRequest,
+  provider: RunnerProvider
+): RunnerSubmittedActionCheckpoint | null {
+  if (value === null) return null
+  if (!isPlainRecord(value)) {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint is invalid.')
+  }
+  if (!hasExactKeys(value, ['actionIndex', 'requestId', 'providerUrl', 'responseBaseline'])) {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint fields are invalid.')
+  }
+  const rawActionIndex = value.actionIndex
+  const actionIndex = typeof rawActionIndex === 'number' && Number.isInteger(rawActionIndex) ? rawActionIndex : -1
+  const action = request.actions[actionIndex]
+  if (!action || action.action !== VISIBLE_ACTIONS.PROMPT_SUBMIT || value.requestId !== action.requestId) {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint does not match the job action.')
+  }
+  if (typeof value.providerUrl !== 'string') {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner submit checkpoint URL is invalid.')
+  }
+  return {
+    actionIndex,
+    requestId: action.requestId,
+    providerUrl: validateProviderUrl(value.providerUrl, provider),
+    preparation: legacyResponsePreparation(value.responseBaseline, provider, false) ??
+      failInvalidCheckpoint('Managed Playwright runner submit checkpoint baseline is invalid.'),
+  }
+}
+
+function validateCheckpointPreparation(value: unknown, provider: RunnerProvider): ProviderActionPreparation | null {
+  if (value === null) return null
+  try {
+    return provider.validatePreparation(value as ProviderActionPreparation, { action: VISIBLE_ACTIONS.RESPONSE_READ })
+  } catch {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint preparation is invalid.')
+  }
+}
+
+function legacyResponsePreparation(value: unknown, provider: RunnerProvider, allowNull: boolean): ProviderActionPreparation | null {
+  if (value === null && allowNull) return null
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint response baseline is invalid.')
+  }
+  try {
+    return provider.validatePreparation(provider.legacyResponsePreparationFromBaseline(value), { action: VISIBLE_ACTIONS.RESPONSE_READ })
+  } catch {
+    throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint preparation is invalid.')
+  }
+}
+
+function failInvalidCheckpoint(message: string): never {
+  throw tokenlessError('invalid_playwright_runner_checkpoint', message)
 }
 
 function validateCheckpointPhase(value: unknown, request: ManagedPlaywrightJobRequest): RunnerCheckpointPhase {
@@ -917,13 +941,13 @@ function executionStateFromCheckpoint(checkpoint: RunnerCheckpoint | null): Runn
     ? {
       actionCursor: checkpoint.actionCursor,
       responses: [...checkpoint.responses],
-      responseBaseline: checkpoint.submitted ? checkpoint.submitted.responseBaseline : checkpoint.responseBaseline,
+      preparation: checkpoint.submitted ? checkpoint.submitted.preparation : checkpoint.preparation,
       submitted: checkpoint.submitted,
     }
     : {
       actionCursor: 0,
       responses: [],
-      responseBaseline: null,
+      preparation: null,
       submitted: null,
     }
 }
@@ -944,7 +968,7 @@ function buildRunnerCheckpoint(
     browserVisibility: request.browserVisibility,
     actionCursor: state.actionCursor,
     responses: state.responses,
-    responseBaseline: state.responseBaseline,
+    preparation: state.preparation,
     submitted: state.submitted,
     phase,
   }
@@ -955,14 +979,14 @@ function checkpointPhaseForAction(
   actionIndex: number,
   action: VisibleActionRequest,
   page: Page,
-  provider: NonNullable<ReturnType<typeof getProviderById>>
+  provider: RunnerProvider
 ): RunnerCheckpointPhase {
   return {
     state,
     actionIndex,
     requestId: action.requestId,
     action: action.action,
-    mutating: MUTATING_ACTIONS.has(action.action),
+    mutating: getVisibleActionLifecycle(action.action).mutating,
     providerUrl: maybeProviderUrl(page, provider),
   }
 }
@@ -970,9 +994,9 @@ function checkpointPhaseForAction(
 async function reconstructCompletedPreSubmitActions(
   page: Page,
   options: {
+    provider: RunnerProvider
     request: ManagedPlaywrightJobRequest
     actionCursor: number
-    adapterRegistry: ProviderAdapterRegistry
     profile: ManagedBrowserProfile
     job: DaemonClaimedJob
     attachmentRoot: string | undefined
@@ -990,8 +1014,8 @@ async function reconstructCompletedPreSubmitActions(
         { retryable: false }
       )
     }
-    if (!RECONSTRUCTABLE_PRE_SUBMIT_ACTIONS.has(action.action)) continue
-    const response = await options.adapterRegistry.execute(page, action, {
+    if (!getVisibleActionLifecycle(action.action).reconstructablePreSubmit) continue
+    const response = await options.provider.executeAction(page, action, {
       profileId: options.profile.id,
       operationId: options.job.job_id,
       signal: options.signal,
@@ -1006,16 +1030,14 @@ async function reconstructCompletedPreSubmitActions(
 
 function trustedSwitchUrl(
   page: Page,
-  provider: NonNullable<ReturnType<typeof getProviderById>>,
+  provider: RunnerProvider,
   fallbackUrl: string
 ) {
   const pageUrl = currentPageUrl(page)
   if (!pageUrl) return validateProviderUrl(fallbackUrl, provider)
-  const parsed = safeUrl(pageUrl)
-  if (parsed && isProviderApprovedUrl(parsed, provider) && isSafeHttpsNavigationUrl(parsed)) {
-    return parsed.toString()
-  }
-  if (trustedProviderSignInNavigation(provider, pageUrl)) {
+  const classification = provider.navigation.classify(pageUrl)
+  if (classification.kind === 'approved') return classification.target.href
+  if (classification.kind === 'trusted_sign_in') {
     return validateProviderUrl(fallbackUrl, provider)
   }
   throw tokenlessError('unsupported_provider_navigation', 'Cannot resume managed Playwright job from an unsafe provider URL.', { retryable: false })
@@ -1023,32 +1045,26 @@ function trustedSwitchUrl(
 
 function validatedCurrentProviderUrl(
   page: Page,
-  provider: NonNullable<ReturnType<typeof getProviderById>>,
+  provider: RunnerProvider,
   fallbackUrl: string
 ) {
   const providerUrl = maybeProviderUrl(page, provider)
   return providerUrl ?? validateProviderUrl(fallbackUrl, provider)
 }
 
-function maybeProviderUrl(page: Page, provider: NonNullable<ReturnType<typeof getProviderById>>) {
+function maybeProviderUrl(page: Page, provider: RunnerProvider) {
   const pageUrl = currentPageUrl(page)
   if (!pageUrl) return null
-  const parsed = safeUrl(pageUrl)
-  return parsed && isProviderApprovedUrl(parsed, provider) && isSafeHttpsNavigationUrl(parsed)
-    ? parsed.toString()
-    : null
+  const classification = provider.navigation.classify(pageUrl)
+  return classification.kind === 'approved' ? classification.target.href : null
 }
 
-function validateProviderUrl(value: string, provider: NonNullable<ReturnType<typeof getProviderById>>) {
-  const parsed = safeUrl(value)
-  if (!parsed || !isProviderApprovedUrl(parsed, provider) || !isSafeHttpsNavigationUrl(parsed)) {
+function validateProviderUrl(value: string, provider: RunnerProvider) {
+  const target = provider.navigation.canonicalTarget(value)
+  if (!target) {
     throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner checkpoint URL is not a trusted provider URL.')
   }
-  return parsed.toString()
-}
-
-function isSafeHttpsNavigationUrl(url: URL) {
-  return url.protocol === 'https:' && !url.username && !url.password
+  return target.href
 }
 
 async function bringToFront(page: Page) {
@@ -1113,12 +1129,12 @@ function assertSafeJobId(jobId: string) {
 
 async function visibleBlockerState(
   page: Page,
-  provider: NonNullable<ReturnType<typeof getProviderById>>,
+  provider: RunnerProvider,
   waitForGuestSurface: boolean
 ) {
   const pageUrl = currentPageUrl(page)
-  const parsedUrl = safeUrl(pageUrl)
-  const navigationBlocker = blockerFromNavigationUrl(parsedUrl, provider)
+  const classification = provider.navigation.classify(pageUrl)
+  const navigationBlocker = blockerFromNavigationClassification(classification, provider)
   if (navigationBlocker) {
     return {
       blocked: true,
@@ -1127,7 +1143,7 @@ async function visibleBlockerState(
       blockers: [navigationBlocker],
     }
   }
-  if (!parsedUrl || !isProviderApprovedUrl(parsedUrl, provider) || typeof (page as { evaluate?: unknown }).evaluate !== 'function') {
+  if (classification.kind !== 'approved' || typeof (page as { evaluate?: unknown }).evaluate !== 'function') {
     return {
       blocked: false,
       terminal: false,
@@ -1135,7 +1151,7 @@ async function visibleBlockerState(
       blockers: [],
     }
   }
-  const resolution = await resolveProviderSession(page, provider, {
+  const resolution = await provider.resolveSession(page, {
     waitForReadyMs: waitForGuestSurface ? 15_000 : 0,
   })
   const decision = resolution.decision
@@ -1154,23 +1170,16 @@ async function visibleBlockerState(
 
 async function hasStableComposer(
   page: Page,
-  provider: NonNullable<ReturnType<typeof getProviderById>>,
+  provider: RunnerProvider,
   pollMs: number,
   signal: AbortSignal,
   isCanceled: () => boolean,
   renewalError: () => unknown
 ) {
-  if (!await anyVisibleComposer(page, provider)) return false
+  if (!await provider.hasVisibleComposer(page)) return false
   await delay(Math.min(Math.max(pollMs, 50), 500), signal)
   throwIfStopped(signal, isCanceled, renewalError)
-  return await anyVisibleComposer(page, provider)
-}
-
-async function anyVisibleComposer(page: Page, provider: NonNullable<ReturnType<typeof getProviderById>>) {
-  for (const selector of provider.composerSelectors) {
-    if (await page.locator(selector).first().isVisible({ timeout: 100 }).catch(() => false)) return true
-  }
-  return false
+  return await provider.hasVisibleComposer(page)
 }
 
 function blockerPayload(
@@ -1206,7 +1215,7 @@ function taskIdFromRequest(value: unknown) {
   return typeof record.taskId === 'string' ? record.taskId : null
 }
 
-function fallbackBlocker(page: Page, provider: NonNullable<ReturnType<typeof getProviderById>>): VisibleBlocker {
+function fallbackBlocker(page: Page, provider: RunnerProvider): VisibleBlocker {
   const pageUrl = currentPageUrl(page)
   return {
     kind: 'auth',
@@ -1216,14 +1225,15 @@ function fallbackBlocker(page: Page, provider: NonNullable<ReturnType<typeof get
     retryable: true,
     visibleProof: 'visible-page-state',
     provider: provider.id,
-    url: sanitizeBlockerOrigin(pageUrl),
+    url: sanitizedNavigationOrigin(provider, pageUrl),
   }
 }
 
-function blockerFromNavigationUrl(url: URL | null, provider: NonNullable<ReturnType<typeof getProviderById>>): VisibleBlocker | null {
-  if (!url || isProviderApprovedUrl(url, provider)) return null
-  const signInNavigation = trustedProviderSignInNavigation(provider, url.toString())
-  if (!signInNavigation) return null
+function blockerFromNavigationClassification(
+  classification: ReturnType<RunnerProvider['navigation']['classify']>,
+  provider: RunnerProvider
+): VisibleBlocker | null {
+  if (classification.kind !== 'trusted_sign_in') return null
   return {
     kind: 'auth',
     code: 'provider_sign_in_navigation',
@@ -1232,14 +1242,9 @@ function blockerFromNavigationUrl(url: URL | null, provider: NonNullable<ReturnT
     retryable: true,
     visibleProof: 'visible-provider-sign-in-navigation',
     provider: provider.id,
-    url: signInNavigation.origin,
+    url: classification.origin,
     family: 'provider_sign_in',
   }
-}
-
-function isProviderApprovedUrl(url: URL, provider: NonNullable<ReturnType<typeof getProviderById>>) {
-  const host = url.hostname.toLowerCase()
-  return provider.hosts.some((allowedHost) => host === allowedHost)
 }
 
 function currentPageUrl(page: Page) {
@@ -1252,44 +1257,21 @@ function currentPageUrl(page: Page) {
   }
 }
 
-function safeUrl(value: string) {
-  try {
-    return new URL(value)
-  } catch {
-    return null
-  }
-}
-
-function sanitizeBlockerOrigin(value: string) {
-  const url = safeUrl(value)
-  return url?.origin ?? ''
+function sanitizedNavigationOrigin(provider: RunnerProvider, value: string) {
+  const classification = provider.navigation.classify(value)
+  if (classification.kind === 'approved') return classification.target.origin
+  if (classification.kind === 'trusted_sign_in') return classification.origin
+  return ''
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-async function countVisibleAnswers(page: Page, selectors: readonly string[]) {
-  let total = 0
-  for (const selector of selectors) {
-    const locator = page.locator(selector)
-    const count = await locator.count()
-    for (let index = 0; index < count; index += 1) {
-      if (await locator.nth(index).isVisible({ timeout: 50 }).catch(() => false)) total += 1
-    }
-  }
-  return total
-}
-
-async function hasVisibleBusyIndicator(page: Page, selectors: readonly string[]) {
-  for (const selector of selectors) {
-    const locator = page.locator(selector)
-    const count = await locator.count()
-    for (let index = 0; index < count; index += 1) {
-      if (await locator.nth(index).isVisible({ timeout: 50 }).catch(() => false)) return true
-    }
-  }
-  return false
+function hasExactKeys(input: Record<string, unknown>, keys: readonly string[]) {
+  const actual = Object.keys(input).sort()
+  const expected = [...keys].sort()
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index])
 }
 
 function normalizedPositiveInteger(value: number | undefined, fallback: number) {

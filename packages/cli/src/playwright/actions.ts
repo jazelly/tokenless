@@ -3,10 +3,17 @@ import {
   VISIBLE_ACTION_PROTOCOL_VERSION,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from '../generated/protocol-constants.js'
+import {
+  isVisibleAction,
+  isVisibleActionSupportedByLegacyProtocol,
+  validateVisibleActionPayload,
+} from '../providers/action-catalog.js'
+import { VISIBLE_ACTIONS, isVisibleActionProtocolVersion } from '../providers/contracts.js'
 import { tokenlessError } from './errors.js'
-import { getProviderById } from './providers.js'
+import { getProviderDescriptorById } from '../providers/registry.js'
 import type {
   ProviderAccessClass,
   ProviderAccountTier,
@@ -14,50 +21,42 @@ import type {
   ProviderCapabilityResourceKind,
   ProviderCapabilityStability,
   ProviderId,
-} from './providers.js'
+} from '../providers/registry.js'
 
 export {
   VISIBLE_ACTION_PROTOCOL_VERSION,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
   VISIBLE_ATTACHMENT_PROTOCOL_VERSION,
 } from '../generated/protocol-constants.js'
+export { validateAttachmentInput } from '../providers/action-catalog.js'
+export { VISIBLE_ACTIONS, isVisibleActionProtocolVersion } from '../providers/contracts.js'
+export type {
+  AttachmentInput,
+  EmptyVisibleActionPayload,
+  FileUploadActionRequest,
+  FileUploadPayload,
+  PromptInputActionRequest,
+  PromptInputPayload,
+  VisibleAction,
+  VisibleActionPayloadForAction,
+  VisibleActionProtocolVersion,
+  VisibleActionRequest,
+  VisibleActionRequestForAction,
+  VisibleActionWireRequest,
+  VisibleSelectionPayload,
+  WorkspaceEnsureActionRequest,
+  WorkspaceEnsurePayload,
+} from '../providers/contracts.js'
 
-export type VisibleActionProtocolVersion =
-  | typeof VISIBLE_ACTION_PROTOCOL_VERSION_V1
-  | typeof VISIBLE_ACTION_PROTOCOL_VERSION_V2
-
-export function isVisibleActionProtocolVersion(value: unknown): value is VisibleActionProtocolVersion {
-  return value === VISIBLE_ACTION_PROTOCOL_VERSION_V1 || value === VISIBLE_ACTION_PROTOCOL_VERSION_V2
-}
-
-export const VISIBLE_ACTIONS = Object.freeze({
-  CAPABILITY_INSPECT: 'capability.inspect',
-  AUTH_STATUS: 'auth.status',
-  MODEL_INSPECT: 'model.inspect',
-  MODEL_SELECT: 'model.select',
-  EFFORT_INSPECT: 'effort.inspect',
-  EFFORT_SELECT: 'effort.select',
-  FILE_UPLOAD: 'file.upload',
-  WORKSPACE_ENSURE: 'workspace.ensure',
-  PROMPT_INPUT: 'prompt.input',
-  PROMPT_CLEAR: 'prompt.clear',
-  PROMPT_SUBMIT: 'prompt.submit',
-  RESPONSE_READ: 'response.read',
-  SNAPSHOT_SANITIZED: 'snapshot.sanitized',
-  NAVIGATION_CHECK: 'navigation.check',
-  BLOCKER_CHECK: 'blocker.check',
-})
-
-export type VisibleAction = typeof VISIBLE_ACTIONS[keyof typeof VISIBLE_ACTIONS]
-
-export type VisibleActionRequest = {
-  protocol: VisibleActionProtocolVersion
-  requestId: string
-  provider: ProviderId
-  action: VisibleAction
-  payload: Record<string, unknown>
-}
+import type {
+  AttachmentInput,
+  VisibleAction,
+  VisibleActionProtocolVersion,
+  VisibleActionRequest,
+  VisibleActionWireRequest,
+} from '../providers/contracts.js'
 
 export type VisibleActionError = {
   code: string
@@ -110,11 +109,21 @@ export type ProviderCapabilityInspection = {
   availability: 'available' | 'unavailable' | 'unknown'
   visibleProof: string
   reason: string | null
+  actions?: readonly VisibleAction[]
   native: {
     resourceKind: ProviderCapabilityResourceKind | null
     availability: 'available' | 'unavailable' | 'unknown'
     visibleProof: string | null
     reason: string | null
+    identity?: {
+      provider: ProviderId
+      canonicalUrl: string | null
+    } | null
+    updateInstructions?: {
+      availability: 'available' | 'unavailable' | 'unknown'
+      visibleProof: string | null
+      reason: string | null
+    }
   }
   fallback: {
     resourceKind: ProviderCapabilityResourceKind | null
@@ -167,11 +176,33 @@ export type FileUploadResult = {
 
 export type WorkspaceEnsureResult = {
   mode: 'conversation'
-  requestedMode: 'auto' | 'conversation'
+  requestedMode: 'auto' | 'native' | 'conversation'
   name: string
+  identity: {
+    provider: ProviderId
+    name: string
+    canonicalUrl: string | null
+  }
   resource: {
     kind: 'conversation' | null
     native: false
+  }
+  native: {
+    resourceKind: 'project'
+    availability: 'unavailable'
+    canonicalUrl: string | null
+    visibleProof: string | null
+    reason: string
+    updateInstructions: {
+      availability: 'unavailable'
+      visibleProof: string | null
+      reason: string
+    }
+  }
+  updateInstructions: {
+    availability: 'unavailable'
+    visibleProof: string | null
+    reason: string
   }
   availability: 'available' | 'unavailable'
   visibleProof: string
@@ -284,54 +315,10 @@ export type VisibleActionResult = (
   | NavigationCheckResult
   | BlockerCheckResult
 ) & VisibleActionResultBase
-
-export type AttachmentInput = {
-  protocol: typeof VISIBLE_ATTACHMENT_PROTOCOL_VERSION
-  bundleId: string
-  attachmentId: string
-  name: string
-  type: string
-  size: number
-  sha256: string
-}
-
-const ACTIONS = Object.freeze(Object.values(VISIBLE_ACTIONS)) as readonly VisibleAction[]
-const ACTION_SET = new Set<string>(ACTIONS)
-const LEGACY_V1_ACTIONS = new Set<string>([
-  VISIBLE_ACTIONS.AUTH_STATUS,
-  VISIBLE_ACTIONS.MODEL_INSPECT,
-  VISIBLE_ACTIONS.MODEL_SELECT,
-  VISIBLE_ACTIONS.EFFORT_INSPECT,
-  VISIBLE_ACTIONS.EFFORT_SELECT,
-  VISIBLE_ACTIONS.FILE_UPLOAD,
-  VISIBLE_ACTIONS.PROMPT_INPUT,
-  VISIBLE_ACTIONS.PROMPT_CLEAR,
-  VISIBLE_ACTIONS.PROMPT_SUBMIT,
-  VISIBLE_ACTIONS.RESPONSE_READ,
-  VISIBLE_ACTIONS.SNAPSHOT_SANITIZED,
-  VISIBLE_ACTIONS.NAVIGATION_CHECK,
-  VISIBLE_ACTIONS.BLOCKER_CHECK,
-])
-const EMPTY_PAYLOAD_ACTIONS = new Set<VisibleAction>([
-  VISIBLE_ACTIONS.CAPABILITY_INSPECT,
-  VISIBLE_ACTIONS.AUTH_STATUS,
-  VISIBLE_ACTIONS.MODEL_INSPECT,
-  VISIBLE_ACTIONS.EFFORT_INSPECT,
-  VISIBLE_ACTIONS.PROMPT_CLEAR,
-  VISIBLE_ACTIONS.PROMPT_SUBMIT,
-  VISIBLE_ACTIONS.RESPONSE_READ,
-  VISIBLE_ACTIONS.SNAPSHOT_SANITIZED,
-  VISIBLE_ACTIONS.NAVIGATION_CHECK,
-  VISIBLE_ACTIONS.BLOCKER_CHECK,
-])
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
-const LABEL_MAX_BYTES = 512
-const PROMPT_MAX_BYTES = 1024 * 1024
-const WORKSPACE_TEXT_MAX_BYTES = 32 * 1024
-const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
 export function createVisibleActionRequest(
-  input: Omit<Partial<VisibleActionRequest>, 'protocol'> & Record<string, unknown>
+  input: Omit<Partial<VisibleActionWireRequest>, 'protocol'> & Record<string, unknown>
 ): VisibleActionRequest {
   return validateVisibleActionRequest({
     protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
@@ -353,126 +340,35 @@ export function validateVisibleActionRequest(input: unknown): VisibleActionReque
   if (typeof input.requestId !== 'string' || !REQUEST_ID_PATTERN.test(input.requestId)) {
     throw tokenlessError('invalid_visible_action_request_id', 'Visible action request id is invalid.')
   }
-  const provider = getProviderById(input.provider)
+  const provider = getProviderDescriptorById(input.provider)
   if (!provider) {
     throw tokenlessError('unknown_visible_provider', 'Visible action provider is not supported.')
   }
-  if (typeof input.action !== 'string' || !ACTION_SET.has(input.action)) {
+  if (!isVisibleAction(input.action)) {
     throw tokenlessError('unknown_visible_action', 'Visible action is not supported.')
   }
-  if (input.protocol === VISIBLE_ACTION_PROTOCOL_VERSION_V1 && !LEGACY_V1_ACTIONS.has(input.action)) {
+  if (input.protocol === VISIBLE_ACTION_PROTOCOL_VERSION_V1 && !isVisibleActionSupportedByLegacyProtocol(input.action)) {
     throw tokenlessError('invalid_visible_action_protocol', 'Visible action requires visible action protocol v2.')
+  }
+  if (isLegacyVisibleActionProtocol(input.protocol) && !provider.protocolCompatibility.legacyRequests) {
+    throw tokenlessError('invalid_visible_action_protocol', 'Visible action provider does not accept legacy action protocols.')
   }
   if (!isPlainRecord(input.payload)) {
     throw tokenlessError('invalid_visible_action_payload', 'Visible action payload must be an object.')
   }
-  validatePayload(input.action as VisibleAction, input.payload)
+  const action = input.action
+  const payload = validateVisibleActionPayload(action, input.payload)
   return {
     protocol: input.protocol,
     requestId: input.requestId,
     provider: provider.id,
-    action: input.action as VisibleAction,
-    payload: input.payload,
-  }
+    action,
+    payload,
+  } as VisibleActionRequest
 }
 
-export function validateAttachmentInput(input: unknown): AttachmentInput {
-  if (!isPlainRecord(input)) throw tokenlessError('invalid_visible_attachment', 'Attachment descriptor must be an object.')
-  requireExactKeys(input, ['protocol', 'bundleId', 'attachmentId', 'name', 'type', 'size', 'sha256'], 'invalid_visible_attachment')
-  if (input.protocol !== VISIBLE_ATTACHMENT_PROTOCOL_VERSION) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment protocol is invalid.')
-  }
-  if (typeof input.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.bundleId)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment bundle id is invalid.')
-  }
-  if (typeof input.attachmentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.attachmentId)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment id is invalid.')
-  }
-  if (typeof input.name !== 'string' || input.name.length < 1 || Buffer.byteLength(input.name, 'utf8') > 255 || /[/\\\u0000-\u001f\u007f]/.test(input.name)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment name is invalid.')
-  }
-  if (typeof input.type !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$/.test(input.type)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment media type is invalid.')
-  }
-  if (typeof input.size !== 'number' || !Number.isSafeInteger(input.size) || input.size < 0 || input.size > 512 * 1024 * 1024) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment size is invalid.')
-  }
-  if (typeof input.sha256 !== 'string' || !SHA256_PATTERN.test(input.sha256)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment sha256 is invalid.')
-  }
-  return input as AttachmentInput
-}
-
-function validatePayload(action: VisibleAction, payload: Record<string, unknown>) {
-  if (EMPTY_PAYLOAD_ACTIONS.has(action)) {
-    requireExactKeys(payload, [], 'invalid_visible_action_payload')
-    return
-  }
-  if (action === VISIBLE_ACTIONS.MODEL_SELECT || action === VISIBLE_ACTIONS.EFFORT_SELECT) {
-    requireExactKeys(payload, ['label'], 'invalid_visible_action_payload')
-    validateVisibleLabel(payload.label)
-    return
-  }
-  if (action === VISIBLE_ACTIONS.WORKSPACE_ENSURE) {
-    validateWorkspaceEnsurePayload(payload)
-    return
-  }
-  if (action === VISIBLE_ACTIONS.PROMPT_INPUT) {
-    requireExactKeys(payload, ['text'], 'invalid_visible_action_payload')
-    if (typeof payload.text !== 'string' || Buffer.byteLength(payload.text, 'utf8') > PROMPT_MAX_BYTES) {
-      throw tokenlessError('invalid_visible_prompt', 'Prompt text is invalid or too large.')
-    }
-    return
-  }
-  if (action === VISIBLE_ACTIONS.FILE_UPLOAD) {
-    requireExactKeys(payload, ['attachments'], 'invalid_visible_action_payload')
-    if (!Array.isArray(payload.attachments) || payload.attachments.length < 1 || payload.attachments.length > 100) {
-      throw tokenlessError('invalid_visible_attachment', 'File upload requires one to one hundred attachments.')
-    }
-    for (const attachment of payload.attachments) validateAttachmentInput(attachment)
-    return
-  }
-  throw tokenlessError('unknown_visible_action', 'Visible action is not supported.')
-}
-
-function validateWorkspaceEnsurePayload(payload: Record<string, unknown>) {
-  const keys = Object.keys(payload)
-  const expected = new Set(['name', 'mode', 'instructions'])
-  if (
-    (keys.length !== 2 && keys.length !== 3) ||
-    !keys.every((key) => expected.has(key)) ||
-    !Object.hasOwn(payload, 'name') ||
-    !Object.hasOwn(payload, 'mode')
-  ) {
-    throw tokenlessError('invalid_visible_action_payload', 'Expected exact keys: name, mode, optional instructions.')
-  }
-  validateWorkspaceText(payload.name, 'invalid_visible_workspace_name', 'Workspace name is invalid or too large.')
-  if (payload.mode !== 'auto' && payload.mode !== 'native' && payload.mode !== 'conversation') {
-    throw tokenlessError('invalid_visible_workspace_mode', 'Workspace ensure mode is invalid.')
-  }
-  if (Object.hasOwn(payload, 'instructions')) {
-    validateWorkspaceText(payload.instructions, 'invalid_visible_workspace_instructions', 'Workspace instructions are invalid or too large.')
-  }
-}
-
-function validateWorkspaceText(value: unknown, code: string, message: string) {
-  if (
-    typeof value !== 'string' ||
-    !/\S/u.test(value) ||
-    Buffer.byteLength(value, 'utf8') > WORKSPACE_TEXT_MAX_BYTES ||
-    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)
-  ) {
-    throw tokenlessError(code, message)
-  }
-}
-
-function validateVisibleLabel(value: unknown) {
-  if (typeof value !== 'string' || !/\S/u.test(value) || Buffer.byteLength(value, 'utf8') > LABEL_MAX_BYTES) {
-    throw tokenlessError('invalid_visible_label', 'Visible selection label is invalid.')
-  }
-  if (/[\u0000-\u001f\u007f]/.test(value)) {
-    throw tokenlessError('invalid_visible_label', 'Visible selection label contains control characters.')
-  }
+function isLegacyVisibleActionProtocol(protocol: unknown) {
+  return protocol === VISIBLE_ACTION_PROTOCOL_VERSION_V1 || protocol === VISIBLE_ACTION_PROTOCOL_VERSION_V2
 }
 
 function requireExactKeys(record: Record<string, unknown>, keys: readonly string[], code: string) {

@@ -49,7 +49,10 @@ chatgpt
 claude
 gemini
 grok
+qwen
 ```
+
+ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问目前为 experimental：其 Guest-session prompt、response 与同一 task 对话延续 baseline 已得到证明，尚未证明的可选 capability 保持 unavailable 或 unknown。
 
 Runtime browser 可选值为 `chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc` 和 `brave`。本地 profile import 当前只支持 Chrome 与 Brave。
 

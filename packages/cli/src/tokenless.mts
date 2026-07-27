@@ -11,9 +11,9 @@ import {
   ManagedProfileRegistry,
   createManagedPlaywrightJobRequest,
   discoverChromiumProfiles,
+  getProviderDescriptorById,
   importChromeProfile,
-  listProviders,
-  providerHomeUrl,
+  listProviderDescriptors,
   readManagedProfileRegistryReadOnly,
   resolveChromeProfile,
   submitManagedPlaywrightJob,
@@ -182,12 +182,13 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'blocker.check',
 ])
 const PRIORITY_VISIBLE_PROVIDER_ACTION_LIST = [...PRIORITY_VISIBLE_PROVIDER_ACTIONS].join(', ')
+const VISIBLE_PROVIDER_USAGE = `<${supportedVisibleProviderIds().join('|') || 'provider'}>`
 const COMMAND_CONTRACTS = createCommandContracts()
 const TOP_LEVEL_COMMANDS = new Set(COMMAND_CONTRACTS.filter((contract) => !contract.command.includes(' ')).map((contract) => contract.command))
 const COMMAND_CONTRACT_BY_KEY = new Map(COMMAND_CONTRACTS.map((contract) => [commandContractKey(contract), contract]))
 const TOP_LEVEL_USAGE = [
   'tokenless <command> [options]',
-  'tokenless run --provider <chatgpt|claude|gemini|grok> --prompt <text> --json',
+  `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
   'tokenless profiles <subcommand> [options]',
   'tokenless daemon stop [--json]',
   'tokenless help',
@@ -519,7 +520,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   }
 
   if (subcommand === 'status' || subcommand === 'open') {
-    const provider = normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER || 'chatgpt')
+    const provider = normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER || defaultVisibleProviderId())
     const visibleAction = subcommand === 'status' ? VISIBLE_ACTIONS.AUTH_STATUS : VISIBLE_ACTIONS.NAVIGATION_CHECK
     const result = await executeManagedPlaywrightJob({
       args: subcommand === 'open' ? { ...args, browserVisibility: 'headed' } : args,
@@ -1254,7 +1255,7 @@ async function executeDaemonJob({
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
   const provider = normalizeProvider(
-    args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || 'chatgpt'
+    args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || defaultVisibleProviderId()
   )
   const providerControls = visibleAction ? {} : resolveProviderControls({ args, provider, action })
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
@@ -1434,6 +1435,7 @@ async function executeManagedPlaywrightJob({
     homeDir,
     daemonUrl: configuredDaemonUrl,
     timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+    requiredProvider: provider,
   })
   statusReporter.report({
     event: daemon.started ? 'daemon_started' : 'daemon_ready',
@@ -1629,7 +1631,7 @@ async function managedProviderTargetUrl({
     return parsed.toString()
   }
   if ((workspaceMode === 'auto' || workspaceMode === 'conversation') && taskId) {
-    await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs })
+    await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
     const mapped = await mappedDaemonTarget({
       homeDir,
       daemonUrl,
@@ -1639,7 +1641,7 @@ async function managedProviderTargetUrl({
     })
     if (mapped) return mapped
   }
-  const candidate = providerHomeUrl(provider as any)
+  const candidate = requireProviderHomeUrl(provider)
   const parsed = new URL(candidate)
   parsed.search = ''
   parsed.hash = ''
@@ -1647,7 +1649,7 @@ async function managedProviderTargetUrl({
 }
 
 function managedProviderExplicitTargetUrl(provider: string, targetUrl: unknown) {
-  const candidate = targetUrl === undefined ? providerHomeUrl(provider as any) : providerWakeUrl(provider, targetUrl)
+  const candidate = targetUrl === undefined ? requireProviderHomeUrl(provider) : providerWakeUrl(provider, targetUrl)
   const parsed = new URL(candidate)
   parsed.search = ''
   parsed.hash = ''
@@ -1733,7 +1735,7 @@ async function stateCommand(args: CliArgs) {
       throw usageError('missing_task_id', 'Usage: tokenless state requires --task-id, --job-id, or --profile.')
     }
   }
-  const providerValue = args.provider || process.env.TOKENLESS_PROVIDER || (args.jobId ? undefined : config.preferredProviders[0] || 'chatgpt')
+  const providerValue = args.provider || process.env.TOKENLESS_PROVIDER || (args.jobId ? undefined : config.preferredProviders[0] || defaultVisibleProviderId())
   const provider = providerValue ? normalizeProvider(providerValue) : undefined
   const registry = new ManagedProfileRegistry(homeDir)
   const daemonJobs = args.jobId
@@ -2482,18 +2484,11 @@ function selectSetupProviders({
 }
 
 function setupVisibleProviders(): ProviderId[] {
-  const providerIds = listProviders().map((provider) => normalizeProvider(provider.id))
-  return requireSetupProviders(providerIds.sort((left, right) => setupProviderSortKey(left) - setupProviderSortKey(right)))
-}
-
-function setupProviderSortKey(provider: ProviderId) {
-  const order: Record<ProviderId, number> = {
-    chatgpt: 0,
-    claude: 1,
-    gemini: 2,
-    grok: 3,
-  }
-  return order[provider]
+  const providerIds = listProviderDescriptors()
+    .filter((provider) => provider.stage !== 'disabled')
+    .sort((left, right) => left.setupOrder - right.setupOrder)
+    .map((provider) => provider.id)
+  return requireSetupProviders(providerIds)
 }
 
 function requireSetupProviders(providers: ProviderId[]) {
@@ -3152,7 +3147,7 @@ function createCommandContracts(): CommandContract[] {
   const contracts: CommandContract[] = [
     { command: 'help', usage: ['tokenless help'], options: [] },
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
-    { command: 'run', usage: ['tokenless run --provider <chatgpt|claude|gemini|grok> --prompt <text> --json'], options: runOptions },
+    { command: 'run', usage: [`tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`], options: runOptions },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-controls', usage: ['tokenless provider-controls --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -3352,10 +3347,56 @@ function requiredBrowserVisibility(value: unknown) {
 
 function normalizeProvider(provider: unknown): ProviderId {
   const normalized = String(provider).trim().toLowerCase()
-  if (!['chatgpt', 'claude', 'gemini', 'grok'].includes(normalized)) {
-    throw usageError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini, grok.')
+  const resolved = getProviderDescriptorById(normalized)
+  if (!resolved || resolved.stage === 'disabled') {
+    throw usageError('unsupported_provider', `Provider must be one of: ${supportedVisibleProviderList()}.`)
   }
-  return normalized as ProviderId
+  return resolved.id
+}
+
+function requireProviderHomeUrl(provider: unknown) {
+  const descriptor = getProviderDescriptorById(String(provider).trim().toLowerCase())
+  if (!descriptor || descriptor.stage === 'disabled') {
+    throw usageError('unsupported_provider', `Provider must be one of: ${supportedVisibleProviderList()}.`)
+  }
+  return descriptor.navigation.homeUrl
+}
+
+function supportedVisibleProviderList() {
+  return supportedVisibleProviderIds().join(', ')
+}
+
+function supportedVisibleProviderIds() {
+  return listProviderDescriptors()
+    .filter((provider) => provider.stage !== 'disabled')
+    .sort((left, right) => left.setupOrder - right.setupOrder)
+    .map((provider) => provider.id)
+}
+
+function defaultVisibleProviderId(): ProviderId {
+  const provider = supportedVisibleProviderIds()[0]
+  if (!provider) {
+    throw usageError('provider_required', 'Tokenless requires at least one enabled visible provider.')
+  }
+  return provider
+}
+
+function requireLegacyChatGptProviderId(): ProviderId {
+  const candidates = listProviderDescriptors().filter((provider) => (
+    provider.stage !== 'disabled' && provider.controls.chatSurface
+  ))
+  if (candidates.length !== 1) {
+    throw usageError(
+      'chatgpt_controls_unsupported',
+      'ChatGPT compatibility commands require exactly one enabled provider that owns the chat surface.'
+    )
+  }
+  return candidates[0]!.id
+}
+
+function providerSupportsChatSurface(providerId: string) {
+  const descriptor = getProviderDescriptorById(providerId)
+  return descriptor?.stage !== 'disabled' && descriptor?.controls.chatSurface === true
 }
 
 function unsupportedArgumentFlags(args: CliArgs, allowed: Set<string>) {
@@ -3460,10 +3501,11 @@ function assertVisibleRunArguments(args: CliArgs) {
 }
 
 function requiredChatGptProvider(args: CliArgs) {
-  if (args.provider !== undefined && normalizeProvider(args.provider) !== 'chatgpt') {
+  const legacyProvider = requireLegacyChatGptProviderId()
+  if (args.provider !== undefined && normalizeProvider(args.provider) !== legacyProvider) {
     throw usageError('chatgpt_controls_unsupported', 'ChatGPT controls require --provider chatgpt or no provider argument.')
   }
-  return 'chatgpt'
+  return legacyProvider
 }
 
 function assertProviderConfigureArguments(args: CliArgs, command: string) {
@@ -3508,7 +3550,7 @@ function resolveProviderControls({
       'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
     )
   }
-  if (provider !== 'chatgpt' && hasRequestedChatGptControl) {
+  if (!providerSupportsChatSurface(provider) && hasRequestedChatGptControl) {
     throw usageError(
       'chatgpt_controls_unsupported',
       '--chat-surface is available only for ChatGPT.'
@@ -3531,7 +3573,7 @@ function resolveProviderControls({
     ? undefined
     : normalizeVisibleModelLabel(effortValue, '--effort', 'invalid_effort')
 
-  if (provider !== 'chatgpt') {
+  if (!providerSupportsChatSurface(provider)) {
     return { model, modelFallbacks, effort }
   }
 
@@ -3706,7 +3748,7 @@ function usage() {
       title: 'Run',
       description: 'Send work through a visible AI provider.',
       commands: [
-        'tokenless run --provider <chatgpt|claude|gemini|grok> --prompt <text> --json',
+        `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
       ],
     },
     {
@@ -3730,9 +3772,9 @@ function usage() {
       title: 'Provider',
       description: 'Manage AI providers and their visible controls.',
       commands: [
-        'tokenless provider-status --profile <slug> --provider <chatgpt|claude|gemini|grok> --json',
-        'tokenless provider-controls --profile <slug> --provider <chatgpt|claude|gemini|grok> --json',
-        'tokenless provider-configure --profile <slug> --provider <chatgpt|claude|gemini|grok> [--model <exact-visible-model>] [--effort <exact-visible-effort>] --json',
+        `tokenless provider-status --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --json`,
+        `tokenless provider-controls --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --json`,
+        `tokenless provider-configure --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} [--model <exact-visible-model>] [--effort <exact-visible-effort>] --json`,
       ],
     },
     {
@@ -3752,9 +3794,9 @@ function usage() {
       description: 'Customize, inspect, resume, or cancel jobs.',
       commands: [
         'tokenless run --profile <slug> --provider chatgpt --project-name <agent-project> --workspace-mode <auto|native|conversation> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
-        'tokenless run --profile <slug> --provider <chatgpt|claude|gemini|grok> --model <exact-visible-model> --prompt <text> --json',
+        `tokenless run --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --model <exact-visible-model> --prompt <text> --json`,
         'tokenless run --provider chatgpt --model <visible-model> --effort <instant|medium|high|extra_high|pro> --prompt <text> --json',
-        'tokenless run --provider <chatgpt|claude|gemini|grok> --attach-file <path> [--attach-file <path>] --prompt <text> --json',
+        `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --attach-file <path> [--attach-file <path>] --prompt <text> --json`,
         'tokenless run --long-running --provider chatgpt --prompt <text> --json',
         'tokenless state --task-id <task-id> [--profile <slug>] --json',
         'tokenless resume --job-id <job-id> --browser-visibility headed --json',
@@ -3786,7 +3828,7 @@ function usage() {
       title: 'Provider',
       description: 'Use low-level actions and provider-specific controls.',
       commands: [
-        `tokenless provider-action --profile <slug> --provider <chatgpt|claude|gemini|grok> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> [action options] --json`,
+        `tokenless provider-action --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> [action options] --json`,
         'tokenless chatgpt-controls --json',
         'tokenless chatgpt-configure --model <visible-model> --effort <level> --json',
         'tokenless snapshot-dom --provider chatgpt --json',
@@ -3796,7 +3838,7 @@ function usage() {
       title: 'Other',
       description: 'Inspect or update persistent Tokenless configuration.',
       commands: [
-        'tokenless config --preferred-providers chatgpt,claude,gemini,grok --browser chrome --browser-visibility auto --json',
+        `tokenless config --preferred-providers ${supportedVisibleProviderIds().join(',')} --browser chrome --browser-visibility auto --json`,
         'tokenless daemon stop --daemon-url <loopback-url> --json',
       ],
     },

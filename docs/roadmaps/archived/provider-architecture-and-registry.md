@@ -1,12 +1,14 @@
 # Provider Architecture and Registry
 
-Status: proposed | Priority: P0
+Status: completed | Priority: P0
+
+Disposition: completed on 2026-07-27 and archived after the registry seam was proven by adding Qwen / 千问 without changing shared provider execution logic
 
 Depends on: completion of the TypeScript daemon consolidation, managed Playwright, provider action contracts, managed profiles, fixture provenance, and the existing four-provider behavior baseline
 
-Enables: [Provider Expansion and Parity](provider-expansion.md), [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md), and [Project Knowledge Graph and Provider Mirroring](project-knowledge-graph-and-provider-mirroring.md)
+Enables: [Provider Expansion and Parity](../provider-expansion.md), [Context Delivery and Workspace Alignment](../context-delivery-and-workspace-alignment.md), and [Project Knowledge Graph and Provider Mirroring](../project-knowledge-graph-and-provider-mirroring.md)
 
-## Outcome
+## Delivered Outcome
 
 Tokenless has one explicit TypeScript registration point for every visible web provider and one clean object-oriented provider seam. Every provider is represented by a concrete `BaseProvider` subclass. The base class owns the provider execution skeleton and mandatory conversation workflow, while provider-specific and optional behavior is supplied by capability classes.
 
@@ -27,9 +29,46 @@ The decisive acceptance question is:
 
 The answer must be no before this architecture is considered complete.
 
+## Completion Record
+
+The architecture was completed in TypeScript and proved against Qwen / 千问 as the first new provider. The production delta from the pre-Qwen baseline is one concrete provider module plus one import and constructor entry in the registry. No shared runner, runtime, profile, navigation, capability, daemon, or protocol implementation required a Qwen-specific change.
+
+The implementation differs from some proposed filenames below, but preserves the intended ownership boundaries:
+
+- `packages/cli/src/providers/registry.ts` is the single explicit registration point;
+- `packages/cli/src/providers/base-provider.ts` owns the common execution seam;
+- `packages/cli/src/providers/capability-set.ts` owns capability composition and dispatch;
+- `packages/cli/src/providers/action-catalog.ts` is the exhaustive action lifecycle source;
+- `packages/cli/src/providers/navigation-policy.ts` is the shared URL classifier;
+- `packages/cli/src/providers/capabilities/` contains mandatory and optional capability implementations;
+- each provider is a concrete `BaseProvider` subclass in its own module; and
+- `packages/cli/src/playwright/runner-service.ts` orchestrates jobs through provider methods without owning selectors.
+
+| Acceptance criterion | Completed implementation or evidence |
+| --- | --- |
+| Concrete provider subclasses | ChatGPT, Claude, Gemini, Grok, and Qwen are concrete `BaseProvider` subclasses. |
+| Mandatory execution skeleton | `BaseProvider` requires session, prompt, and response capabilities and owns dispatch through `ProviderCapabilitySet`. |
+| Optional capability composition | Model, effort, attachment, workspace, image, and diagnostics are explicit capability objects with machine-readable unavailable or unknown states. |
+| Runner/provider boundary | The runner resolves providers through the registry and does not read provider selector tables. |
+| No shared provider-ID branching | Concrete behavior is owned by provider modules and provider-owned inspector or choice-policy classes. |
+| One production registration list | `providers/registry.ts` constructs the complete provider set once. |
+| Registry-derived policy | CLI normalization, setup ordering, runtime validation, profile import policy, navigation, execution, and daemon readiness consume registry metadata. |
+| Shared navigation policy | Target, wake, redirect, checkpoint, and continuation validation reuse `ProviderNavigationPolicy`. |
+| Provider-owned special cases | Grok entitlement and choice semantics remain Grok-owned; Gemini account interpretation remains Gemini-owned; Qwen Slate input handling remains Qwen-owned. |
+| Explicit unsupported states | Unproven capabilities fail closed through structured availability and reason fields. |
+| Wire compatibility | Legacy v1/v2 request schemas remain unchanged for the four legacy providers. |
+| Extensible protocol | Playwright job and visible-action v3 accept registry providers while runtime validation rejects unsupported providers. |
+| Daemon negotiation | Authenticated readiness advertises `supported_providers` from the execution registry; incompatible owned daemons are safely replaced. |
+| Deleted-runtime isolation | No provider registry or new provider knowledge was added to phased-out runtime paths. |
+| Compatibility-shim removal | The old Playwright adapter directory, provider table, duplicated URL helpers, and provider strategy strings were removed. |
+| Existing-provider regression boundary | Provenance-bound real-Chromium provider fixtures, daemon lifecycle, conformance, protocol, build, lint, and repository integration coverage preserve the existing baseline. |
+| First-provider seam proof | A fresh Qwen guest profile completed prompt input, submit, exact-marker response reading, and a second same-task continuation through the built CLI and real TypeScript daemon. |
+
+The Qwen integration remains `experimental`; architecture completion proves the extension seam, not every optional Qwen capability. Ongoing provider rollout and promotion criteria remain active in [Provider Expansion and Parity](../provider-expansion.md).
+
 ## Scope
 
-This roadmap is the detailed architecture and implementation plan for the provider seam. It does not itself commit Tokenless to shipping any candidate provider or advanced capability. Provider selection and release sequencing remain in [Provider Expansion and Parity](provider-expansion.md).
+This roadmap is the detailed architecture and implementation plan for the provider seam. It does not itself commit Tokenless to shipping any candidate provider or advanced capability. Provider selection and release sequencing remain in [Provider Expansion and Parity](../provider-expansion.md).
 
 This work covers:
 
@@ -1580,4 +1619,3 @@ Internal architecture and roadmap documentation may remain English.
 - Hidden API access
 - Mock-based visible-provider verification
 - Changing all provider protocols and advanced capabilities in one structural pull request
-

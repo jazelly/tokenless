@@ -13,6 +13,7 @@ import {
   tokenlessHome,
 } from './job-store.js'
 import { daemonUrl as normalizeDaemonUrl, readDaemonToken, shutdownDaemon } from './daemon-client.js'
+import { getProviderInstanceById, getProviderInstanceForUrl, listProviderDescriptors } from './providers/registry.js'
 import {
   DAEMON_ERROR_PROTOCOL,
   DAEMON_PROCESS_PROTOCOL,
@@ -20,11 +21,15 @@ import {
   DAEMON_READY_PROOF_PROTOCOL,
   DAEMON_SNAPSHOT_PROTOCOL,
   EXTENSION_BRIDGE_PROTOCOL,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
   NATIVE_PROTOCOL,
+  VISIBLE_ACTION_PROTOCOL_VERSION,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
 } from './generated/protocol-constants.js'
 import { tokenlessPackageVersion } from './platform-package.js'
 
@@ -35,11 +40,15 @@ export {
   DAEMON_READY_PROOF_PROTOCOL,
   DAEMON_SNAPSHOT_PROTOCOL,
   EXTENSION_BRIDGE_PROTOCOL,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
   MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+  MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
   NATIVE_PROTOCOL,
+  VISIBLE_ACTION_PROTOCOL_VERSION,
   VISIBLE_ACTION_PROTOCOL_VERSION_V1,
   VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+  VISIBLE_ACTION_PROTOCOL_VERSION_V3,
 } from './generated/protocol-constants.js'
 export const EXTENSION_BRIDGE_FILE = 'extension-bridge.json'
 export const DAEMON_PID_FILE = 'daemon.pid.json'
@@ -55,7 +64,7 @@ const MAX_TIMEOUT_MS = 2_147_483_647
 const BUILD_INFO_TIMEOUT_MS = 2_000
 const BUILD_INFO_OUTPUT_LIMIT_BYTES = 16_384
 const SETUP_DAEMON_RECONCILE_MAX_ATTEMPTS = 2
-const SUPPORTED_PROVIDERS = new Set(['chatgpt', 'claude', 'gemini', 'grok'])
+const LEGACY_DAEMON_SUPPORTED_PROVIDERS = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok'])
 
 type RuntimeError = Error & {
   code?: string
@@ -77,6 +86,7 @@ export type DaemonReadyProbe = {
   protocolCompatible?: boolean | undefined
   runtimeKind?: DaemonRuntimeKind | undefined
   supportedProtocols?: SupportedProtocols | undefined
+  supportedProviders?: string[] | undefined
   body?: JsonRecord | undefined
   code?: string | undefined
   message?: string | undefined
@@ -142,6 +152,7 @@ export type EnsureDaemonOptions = {
   binaryPath?: string | undefined
   bundledRoot?: string | undefined
   timeoutMs?: number | undefined
+  requiredProvider?: string | undefined
 }
 
 export type StopDaemonResult = {
@@ -206,11 +217,13 @@ export async function probeDaemonReady({
   homeDir = tokenlessHome(),
   timeoutMs = 750,
   daemonToken,
+  requiredProvider,
 }: {
   daemonUrl?: string | undefined
   homeDir?: string | undefined
   timeoutMs?: number | undefined
   daemonToken?: string | undefined
+  requiredProvider?: string | undefined
 } = {}): Promise<DaemonReadyProbe> {
   const url = normalizeDaemonUrl(daemonUrl)
   const expectedHome = await canonicalPath(homeDir)
@@ -344,11 +357,13 @@ export async function probeDaemonReady({
       sameHomeVerified,
       protocolCompatible: false,
       supportedProtocols: protocolCompatibility.supportedProtocols,
+      supportedProviders: supportedProvidersFromBody(body),
       body,
       code: protocolCompatibility.code,
       message: protocolCompatibility.message,
     }
   }
+  const supportedProviders = supportedProvidersFromBody(body)
   const runtimeKind = daemonRuntimeKindFromBody(body)
   if (runtimeKind !== DAEMON_RUNTIME_KIND) {
     return {
@@ -362,9 +377,28 @@ export async function probeDaemonReady({
       protocolCompatible: true,
       runtimeKind,
       supportedProtocols: protocolCompatibility.supportedProtocols,
+      supportedProviders,
       body,
       code: 'daemon_runtime_kind_mismatch',
       message: `Tokenless daemon runtime is ${runtimeKind}; expected ${DAEMON_RUNTIME_KIND}.`,
+    }
+  }
+  if (requiredProvider && !supportedProviders.includes(requiredProvider)) {
+    return {
+      ok: false,
+      reachable: true,
+      url,
+      expectedHome,
+      actualHome,
+      identityVerified,
+      sameHomeVerified,
+      protocolCompatible: true,
+      runtimeKind,
+      supportedProtocols: protocolCompatibility.supportedProtocols,
+      supportedProviders,
+      body,
+      code: 'daemon_provider_unsupported',
+      message: `Tokenless daemon at ${url} does not advertise Playwright provider support for ${requiredProvider}.`,
     }
   }
 
@@ -379,6 +413,7 @@ export async function probeDaemonReady({
     protocolCompatible: true,
     runtimeKind,
     supportedProtocols: protocolCompatibility.supportedProtocols,
+    supportedProviders,
     body,
   }
 }
@@ -389,21 +424,23 @@ export async function ensureDaemonReady({
   binaryPath,
   bundledRoot,
   timeoutMs = envNumber('TOKENLESS_DAEMON_START_TIMEOUT_MS', DEFAULT_DAEMON_START_TIMEOUT_MS),
+  requiredProvider,
 }: EnsureDaemonOptions = {}) {
+  assertLocalProviderSupport(requiredProvider)
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
-  const initial = await probeDaemonReady({ daemonUrl, homeDir })
+  const initial = await probeDaemonReady({ daemonUrl, homeDir, requiredProvider })
   if (initial.ok) {
     return { ...initial, started: false, binaryPath: null, pid: daemonPidFromReady(initial) ?? await readDaemonPid(homeDir) }
-  } else if (!shouldReplaceLegacyDaemon(initial)) {
+  } else if (!shouldReplaceLegacyDaemon(initial) && !shouldReplaceProviderIncompatibleDaemon(initial)) {
     assertNoDaemonIdentityConflict(initial)
   }
 
   const releaseLock = await acquireDaemonStartLock({ homeDir, timeoutMs })
   try {
-    const afterLock = await probeDaemonReady({ daemonUrl, homeDir })
+    const afterLock = await probeDaemonReady({ daemonUrl, homeDir, requiredProvider })
     if (afterLock.ok) {
       return { ...afterLock, started: false, binaryPath: null, pid: daemonPidFromReady(afterLock) ?? await readDaemonPid(homeDir) }
-    } else if (shouldReplaceLegacyDaemon(afterLock)) {
+    } else if (shouldReplaceLegacyDaemon(afterLock) || shouldReplaceProviderIncompatibleDaemon(afterLock)) {
       await stopDaemon({ homeDir, daemonUrl, timeoutMs })
     } else {
       assertNoDaemonIdentityConflict(afterLock)
@@ -433,7 +470,7 @@ export async function ensureDaemonReady({
       const deadline = Date.now() + timeoutMs
       let lastProbe = afterLock
       while (Date.now() < deadline) {
-        lastProbe = await probeDaemonReady({ daemonUrl, homeDir })
+        lastProbe = await probeDaemonReady({ daemonUrl, homeDir, requiredProvider })
         if (lastProbe.ok) {
           child.unref()
           return {
@@ -831,83 +868,19 @@ export async function waitForExtensionBridge({
 
 export function providerWakeUrl(provider: unknown, targetUrl?: unknown) {
   const providerId = typeof provider === 'string' ? provider.trim().toLowerCase() : ''
-  if (!SUPPORTED_PROVIDERS.has(providerId)) {
-    throw runtimeError('unsupported_provider', 'Provider must be one of: chatgpt, claude, gemini, grok.', false)
+  const providerInstance = getProviderInstanceById(providerId)
+  if (!providerInstance) {
+    throw runtimeError('unsupported_provider', `Provider must be one of: ${supportedVisibleProviderList()}.`, false)
   }
-  const homeUrls: Record<string, string> = {
-    chatgpt: 'https://chatgpt.com/',
-    claude: 'https://claude.ai/new',
-    gemini: 'https://gemini.google.com/app',
-    grok: 'https://grok.com/',
-  }
-  if (targetUrl === undefined || targetUrl === '') {
-    return homeUrls[providerId] as string
-  }
-
-  const parsed = parseProviderWakeTarget(targetUrl)
-  if (!parsed) {
-    throw runtimeError('invalid_provider_url', 'Provider target URL must be a valid HTTPS URL.', false)
-  }
-  const allowedHosts: Record<string, Set<string>> = {
-    chatgpt: new Set(['chatgpt.com', 'chat.openai.com']),
-    claude: new Set(['claude.ai']),
-    gemini: new Set(['gemini.google.com']),
-    grok: new Set(['grok.com']),
-  }
-  if (
-    !allowedHosts[providerId]?.has(parsed.hostname.toLowerCase())
-  ) {
+  const target = providerInstance.navigation.canonicalTarget(targetUrl)
+  if (!target) {
     throw runtimeError(
       'invalid_provider_url',
       `Target URL must use HTTPS and belong to the selected ${providerId} provider.`,
       false
     )
   }
-  return parsed.href
-}
-
-const FORBIDDEN_PROVIDER_URL_INPUT = /[\\\u0000-\u001f\u007f\s]|%(?:00|0[1-9a-f]|1[0-9a-f]|20|23|25|2f|3f|5c|7f)/i
-const MALFORMED_PROVIDER_URL_ESCAPE = /%(?![0-9a-f]{2})/i
-
-function parseProviderWakeTarget(value: unknown) {
-  if (
-    typeof value !== 'string' ||
-    value === '' ||
-    value.trim() !== value ||
-    value.includes('?') ||
-    value.includes('#') ||
-    FORBIDDEN_PROVIDER_URL_INPUT.test(value) ||
-    MALFORMED_PROVIDER_URL_ESCAPE.test(value)
-  ) {
-    return null
-  }
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    return null
-  }
-  if (
-    parsed.protocol !== 'https:' ||
-    parsed.username !== '' ||
-    parsed.password !== '' ||
-    parsed.port !== '' ||
-    parsed.search !== '' ||
-    parsed.hash !== ''
-  ) {
-    return null
-  }
-  const rawAuthority = providerUrlAuthority(value)
-  if (!rawAuthority || rawAuthority.toLowerCase() !== parsed.hostname.toLowerCase()) return null
-  return parsed
-}
-
-function providerUrlAuthority(value: string) {
-  const scheme = value.indexOf('://')
-  if (scheme < 0 || value.slice(0, scheme).toLowerCase() !== 'https') return ''
-  const start = scheme + 3
-  const relativeEnd = value.slice(start).search(/[/?#]/)
-  return relativeEnd < 0 ? value.slice(start) : value.slice(start, start + relativeEnd)
+  return target.href
 }
 
 export async function resolveChromiumBrowser(requested?: unknown): Promise<ChromiumBrowser> {
@@ -958,16 +931,14 @@ export async function resolveChromiumBrowser(requested?: unknown): Promise<Chrom
 export async function openProviderUrl(url: string, browser: ChromiumBrowser) {
   // Re-validate here so future callers cannot turn this into a general URL launcher.
   const parsed = new URL(url)
-  const allowedHosts = new Set(['chatgpt.com', 'chat.openai.com', 'claude.ai', 'gemini.google.com', 'grok.com'])
+  const provider = getProviderInstanceForUrl(parsed.href)
   if (
-    parsed.protocol !== 'https:' ||
-    parsed.username !== '' ||
-    parsed.password !== '' ||
-    !allowedHosts.has(parsed.hostname.toLowerCase())
+    !provider ||
+    provider.navigation.classify(parsed.href).kind !== 'approved'
   ) {
     throw runtimeError(
       'invalid_provider_url',
-      'Tokenless only opens allowlisted ChatGPT, Claude, Gemini, or Grok HTTPS pages.',
+      `Tokenless only opens allowlisted ${supportedVisibleProviderList()} HTTPS pages.`,
       false
     )
   }
@@ -1532,6 +1503,31 @@ function shouldReplaceLegacyDaemon(probe: DaemonReadyProbe) {
     probe.runtimeKind === 'legacy'
 }
 
+function shouldReplaceProviderIncompatibleDaemon(probe: DaemonReadyProbe) {
+  return probe.code === 'daemon_provider_unsupported' &&
+    probe.identityVerified === true &&
+    probe.sameHomeVerified === true &&
+    probe.runtimeKind === DAEMON_RUNTIME_KIND
+}
+
+function assertLocalProviderSupport(requiredProvider: string | undefined) {
+  if (!requiredProvider) return
+  const provider = getProviderInstanceById(requiredProvider)
+  if (provider && provider.descriptor.stage !== 'disabled') return
+  throw runtimeError(
+    'daemon_provider_unsupported',
+    `This Tokenless build does not support Playwright provider ${requiredProvider}.`,
+    false
+  )
+}
+
+function supportedVisibleProviderList() {
+  return listProviderDescriptors()
+    .filter((provider) => provider.stage !== 'disabled')
+    .map((provider) => provider.id)
+    .join(', ')
+}
+
 async function readDaemonPid(homeDir: string) {
   try {
     const payload = JSON.parse(await fs.readFile(path.join(homeDir, DAEMON_PID_FILE), 'utf8')) as JsonRecord
@@ -1656,6 +1652,7 @@ function daemonProtocolCompatibility({
   if (!hasOverlap(supportedProtocols.job, [
     MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
     MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+    MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
   ])) {
     return {
       ok: false,
@@ -1667,6 +1664,7 @@ function daemonProtocolCompatibility({
   if (!hasOverlap(supportedProtocols.action, [
     VISIBLE_ACTION_PROTOCOL_VERSION_V1,
     VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+    VISIBLE_ACTION_PROTOCOL_VERSION_V3,
   ])) {
     return {
       ok: false,
@@ -1687,6 +1685,12 @@ function supportedProtocolsFromBody(body: JsonRecord): SupportedProtocols | unde
     job: stringArray(supported.job) ?? [],
     action: stringArray(supported.action) ?? [],
   }
+}
+
+function supportedProvidersFromBody(body: JsonRecord) {
+  if (body.supported_providers === undefined) return [...LEGACY_DAEMON_SUPPORTED_PROVIDERS]
+  const values = stringArray(body.supported_providers)
+  return values ? [...new Set(values)] : []
 }
 
 function daemonRuntimeKindFromBody(body: JsonRecord): DaemonRuntimeKind {

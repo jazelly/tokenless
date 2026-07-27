@@ -602,7 +602,10 @@ for (const entry of fixtures) {
 }
 
 const manifestEntries = []
-for (const provider of Object.keys(states)) {
+const providerDirectories = (await fs.readdir(fixtureRoot, { withFileTypes: true }))
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+for (const provider of providerDirectories) {
   const providerRoot = path.join(fixtureRoot, provider)
   const accountStates = await fs.readdir(providerRoot, { withFileTypes: true })
   for (const accountState of accountStates.filter((entry) => entry.isDirectory())) {

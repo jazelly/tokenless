@@ -3,11 +3,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { normalizeBrowserVisibility } from './browser-visibility.js'
 import { TOKENLESS_CONFIG_PROTOCOL_VERSION } from './generated/protocol-constants.js'
+import { providerRegistry } from './providers/registry.js'
 import type { BrowserVisibility } from './browser-visibility.js'
 
 export { TOKENLESS_CONFIG_PROTOCOL_VERSION } from './generated/protocol-constants.js'
 
-const SUPPORTED_PROVIDER_IDS = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok'])
 export const SUPPORTED_BROWSER_IDS = Object.freeze([
   'chrome',
   'chrome-for-testing',
@@ -180,9 +180,10 @@ function normalizeProviderList(providers: unknown) {
   for (const provider of providers) {
     if (typeof provider !== 'string') continue
     const value = provider.trim().toLowerCase()
-    if (!SUPPORTED_PROVIDER_IDS.includes(value) || seen.has(value)) continue
-    seen.add(value)
-    normalized.push(value)
+    const resolved = providerRegistry.resolve(value)
+    if (!resolved || seen.has(resolved.id)) continue
+    seen.add(resolved.id)
+    normalized.push(resolved.id)
   }
   return normalized
 }

@@ -601,6 +601,30 @@
       "observedOn": "2026-07-17",
       "htmlPath": "grok/signed-in-unknown/thinking-effort-menu-open.html",
       "provenancePath": "grok/signed-in-unknown/thinking-effort-menu-open.provenance.json"
+    },
+    {
+      "provider": "qwen",
+      "accountState": "signed-out-guest",
+      "scenario": "composer-idle",
+      "routeClass": "new-chat",
+      "operationPhase": "observed",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://www.qianwen.com/",
+      "observedOn": "2026-07-26",
+      "htmlPath": "qwen/signed-out-guest/composer-idle.html",
+      "provenancePath": "qwen/signed-out-guest/composer-idle.provenance.json"
+    },
+    {
+      "provider": "qwen",
+      "accountState": "signed-out-guest",
+      "scenario": "response-complete",
+      "routeClass": "conversation",
+      "operationPhase": "response-complete",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://www.qianwen.com/chat/[redacted]",
+      "observedOn": "2026-07-26",
+      "htmlPath": "qwen/signed-out-guest/response-complete.html",
+      "provenancePath": "qwen/signed-out-guest/response-complete.provenance.json"
     }
   ]
 }

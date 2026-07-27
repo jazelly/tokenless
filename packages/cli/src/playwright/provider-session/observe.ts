@@ -1,11 +1,11 @@
 import type { Page } from 'playwright-core'
 import type { VisibleBlocker } from '../actions.js'
-import type { ProviderConfig } from '../providers.js'
+import type { ProviderDomDefinition } from '../../providers/provider-definition.js'
 import type { ProviderSessionObservation } from './types.js'
 
 export async function observeProviderSession(
   page: Page,
-  provider: ProviderConfig,
+  provider: ProviderDomDefinition,
 ): Promise<ProviderSessionObservation> {
   const [composerVisible, loginVisible, authenticatedControlVisible, guestContinueAvailable, blockers] = await Promise.all([
     anyVisible(page, provider.composerSelectors),
@@ -31,7 +31,7 @@ export async function observeProviderSession(
 
   return {
     provider: provider.id,
-    url: sanitizeBlockerUrl(page.url()),
+    url: sanitizedNavigationOrigin(provider, page.url()),
     authentication,
     access,
     composerVisible,
@@ -42,7 +42,7 @@ export async function observeProviderSession(
 
 export async function clickGuestContinuation(
   page: Page,
-  provider: ProviderConfig,
+  provider: ProviderDomDefinition,
 ) {
   for (const name of provider.access.guestContinueControlNames) {
     for (const role of ['button', 'link'] as const) {
@@ -56,10 +56,10 @@ export async function clickGuestContinuation(
 
 async function detectStructuredBlockers(
   page: Page,
-  provider: ProviderConfig,
+  provider: ProviderDomDefinition,
 ): Promise<VisibleBlocker[]> {
   const url = page.url()
-  const currentUrl = safeUrl(url)
+  const navigation = provider.navigationPolicy.classify(url)
   const domBlockers = await page.evaluate(() => {
     type RawBlocker = {
       kind: 'challenge' | 'auth' | 'terminal'
@@ -181,7 +181,7 @@ async function detectStructuredBlockers(
       visibleProof: `visible-selector:${reason}`,
     }))
   }
-  if (currentUrl && isProviderSignInNavigation(currentUrl)) {
+  if (navigation.kind === 'trusted_sign_in') {
     selectorBlockers.push(createBlocker({
       provider,
       url,
@@ -214,7 +214,7 @@ async function detectStructuredBlockers(
 }
 
 function createBlocker(input: {
-  provider: ProviderConfig
+  provider: ProviderDomDefinition
   url: string
   kind: VisibleBlocker['kind']
   code: string
@@ -231,7 +231,7 @@ function createBlocker(input: {
     retryable: userResolvable,
     visibleProof: input.visibleProof,
     provider: input.provider.id,
-    url: sanitizeBlockerUrl(input.url),
+    url: sanitizedNavigationOrigin(input.provider, input.url),
     ...(input.family ? { family: input.family } : {}),
   }
 }
@@ -267,34 +267,9 @@ function selectorReason(selector: string) {
   return 'visible_blocker'
 }
 
-function safeUrl(value: string) {
-  try {
-    return new URL(value)
-  } catch {
-    return null
-  }
-}
-
-export function isProviderSignInNavigation(value: URL | string) {
-  const url = typeof value === 'string' ? safeUrl(value) : value
-  if (!url) return false
-  const host = url.hostname.toLowerCase()
-  const path = url.pathname.toLowerCase()
-  return host === 'accounts.google.com' ||
-    host === 'auth.openai.com' ||
-    host === 'auth0.openai.com' ||
-    host === 'login.openai.com' ||
-    path.includes('/auth/login') ||
-    path.includes('/login') ||
-    path.includes('/signin') ||
-    path.includes('/sign-in')
-}
-
-function sanitizeBlockerUrl(value: string) {
-  try {
-    const url = new URL(value)
-    return url.origin
-  } catch {
-    return ''
-  }
+function sanitizedNavigationOrigin(provider: ProviderDomDefinition, value: string) {
+  const classification = provider.navigationPolicy.classify(value)
+  if (classification.kind === 'approved') return classification.target.origin
+  if (classification.kind === 'trusted_sign_in') return classification.origin
+  return ''
 }

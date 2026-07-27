@@ -1,5 +1,5 @@
 import type { VisibleBlocker } from '../actions.js'
-import type { ProviderAccessClass, ProviderId } from '../providers.js'
+import type { ProviderAccessClass, ProviderId } from '../../providers/registry.js'
 
 export type ProviderAuthenticationState = 'authenticated' | 'unauthenticated' | 'unknown'
 

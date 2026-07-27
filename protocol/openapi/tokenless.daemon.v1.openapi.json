@@ -955,7 +955,8 @@
           "ready_proof_protocol",
           "ready_challenge",
           "ready_proof",
-          "supported_protocols"
+          "supported_protocols",
+          "supported_providers"
         ],
         "additionalProperties": false,
         "properties": {
@@ -999,8 +1000,19 @@
           },
           "supported_protocols": {
             "$ref": "#/components/schemas/SupportedProtocols"
+          },
+          "supported_providers": {
+            "$ref": "#/components/schemas/SupportedProviders"
           }
         }
+      },
+      "SupportedProviders": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true
       },
       "ProtocolList": {
         "type": "array",

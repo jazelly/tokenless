@@ -20,4 +20,6 @@ An archived roadmap may return to the parent directory only when the direction i
 
 ## Archived Roadmaps
 
-None.
+| Roadmap | Disposition |
+| --- | --- |
+| [Provider Architecture and Registry](provider-architecture-and-registry.md) | Completed 2026-07-27 after the OOP provider seam, single registry, daemon negotiation, compatibility cleanup, and first new-provider proof were accepted. |

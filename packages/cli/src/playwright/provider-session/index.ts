@@ -1,5 +1,6 @@
 import type { Page } from 'playwright-core'
-import type { ProviderConfig } from '../providers.js'
+import type { ProviderDomDefinition } from '../../providers/provider-definition.js'
+import type { ProviderAccessClass, ProviderAccountTier } from '../../providers/registry.js'
 import { inspectProviderAccountSession } from './account.js'
 import { decideProviderSession, providerSignInRequiredBlocker } from './machine.js'
 import { clickGuestContinuation, observeProviderSession } from './observe.js'
@@ -11,14 +12,14 @@ export type {
   ProviderSessionObservation,
   ProviderSessionResolution,
 } from './types.js'
-export type { ProviderAccessClass, ProviderAccountTier } from '../providers.js'
+export type { ProviderAccessClass, ProviderAccountTier }
 
-export { isProviderSignInNavigation, observeProviderSession } from './observe.js'
+export { observeProviderSession } from './observe.js'
 export { inspectProviderAccountSession } from './account.js'
 
 export async function resolveProviderSession(
   page: Page,
-  provider: ProviderConfig,
+  provider: ProviderDomDefinition,
   {
     waitForReadyMs = 0,
     signal,
@@ -101,7 +102,7 @@ export async function resolveProviderSession(
 }
 
 function providerSurfaceNotReadyBlocker(
-  provider: ProviderConfig,
+  provider: ProviderDomDefinition,
   observation: ProviderSessionResolution['observations'][number],
 ) {
   return {
@@ -118,7 +119,7 @@ function providerSurfaceNotReadyBlocker(
 
 export async function inspectProviderBlockers(
   page: Page,
-  provider: ProviderConfig,
+  provider: ProviderDomDefinition,
 ) {
   const observation = await observeProviderSession(page, provider)
   const decision = decideProviderSession(provider, observation)

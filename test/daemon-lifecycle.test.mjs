@@ -13,6 +13,7 @@ const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = path.join(cliDir, 'dist/src/index.js')
 const packageVersion = JSON.parse(fs.readFileSync(path.join(cliDir, 'package.json'), 'utf8')).version
+const supportedProviders = ['chatgpt', 'claude', 'gemini', 'grok', 'qwen']
 
 test('ensureDaemonReady installs the packaged daemon and reports supported protocols', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-first-install-')))
@@ -20,7 +21,7 @@ test('ensureDaemonReady installs the packaged daemon and reports supported proto
   let pid
   try {
     const runtime = await importCli()
-    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000 })
+    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000, requiredProvider: 'chatgpt' })
     pid = ready.pid
     assert.equal(ready.started, true)
     assert.equal(ready.identityVerified, true)
@@ -34,12 +35,16 @@ test('ensureDaemonReady installs the packaged daemon and reports supported proto
       job: [
         runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V1,
         runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2,
+        runtime.MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3,
       ],
       action: [
         runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V1,
         runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V2,
+        runtime.VISIBLE_ACTION_PROTOCOL_VERSION_V3,
       ],
     })
+    assert.deepEqual(ready.supportedProviders, supportedProviders)
+    assert.deepEqual(ready.body.supported_providers, supportedProviders)
     assert.equal(Number.isInteger(ready.body.pid), true)
     assert.equal(ready.body.pid, pid)
     const inspection = await runtime.inspectManagedRuntime(homeDir)
@@ -49,6 +54,35 @@ test('ensureDaemonReady installs the packaged daemon and reports supported proto
     assert.equal(inspection.packaged.path, ready.daemonEntryPath)
     assert.equal(inspection.installed.path, ready.daemonEntryPath)
     assert.equal(inspection.installed.matchesBundled, true)
+  } finally {
+    if (pid) await stopPid(pid)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('ensureDaemonReady never restarts a healthy daemon for a provider absent from the local registry', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-provider-reconcile-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const runtime = await importCli()
+  let pid
+  try {
+    const ready = await runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000, requiredProvider: 'chatgpt' })
+    pid = ready.pid
+    assert.equal(ready.runtimeKind, 'typescript')
+    assert.deepEqual(ready.supportedProviders, supportedProviders)
+
+    await assert.rejects(
+      runtime.ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: 10_000, requiredProvider: 'not-a-provider' }),
+      (error) => {
+        assert.equal(error.code, 'daemon_provider_unsupported')
+        assert.match(error.message, /not-a-provider/)
+        return true
+      }
+    )
+    assert.equal(await pidExited(pid), false)
+    const afterFailure = await runtime.probeDaemonReady({ homeDir, daemonUrl, timeoutMs: 500 })
+    assert.equal(afterFailure.ok, true)
+    assert.equal(afterFailure.body.pid, pid)
   } finally {
     if (pid) await stopPid(pid)
     fs.rmSync(homeDir, { recursive: true, force: true })

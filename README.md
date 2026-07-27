@@ -4,7 +4,7 @@
 
 ## Overview
 
-Tokenless is a local tool for anyone who uses AI and wants to reduce token usage. Its intelligent routing mechanism sends suitable parts of an agent's requests to web-based AI services, reducing token consumption on the agent side. Tokenless currently supports the web versions of ChatGPT, Claude, Grok, and Gemini, and can use multiple services together.
+Tokenless is a local tool for anyone who uses AI and wants to reduce token usage. Its intelligent routing mechanism sends suitable parts of an agent's requests to web-based AI services, reducing token consumption on the agent side. Tokenless currently supports the web versions of ChatGPT, Claude, Grok, and Gemini, and can use multiple services together. Qwen / 千问 is available as an experimental guest-session provider.
 
 ## Why We Built Tokenless
 
@@ -13,10 +13,10 @@ As AI agents are used in more scenarios, they consume an increasing number of to
 ## Key Features
 
 - **Intelligent task routing**: Customizable Skill Prompts let users define which types of tasks should be handled by which AI service, enabling flexible and controlled routing strategies.
-- **Multiple AI services**: Tokenless currently supports the web versions of ChatGPT, Claude, Grok, and Gemini, and can use multiple services together.
+- **Multiple AI services**: Tokenless supports the web versions of ChatGPT, Claude, Grok, and Gemini. Qwen / 千问 is available as an experimental guest-session provider.
 - **Fully local operation**: All automation runs locally, with no third-party relays and no collection of user data.
-- **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity across all four providers. Experimental capability inspection and Workspace handling make subscription-dependent native support and fallbacks explicit.
-- **Explicit guest and sign-in routing**: ChatGPT and Gemini can run through visible guest sessions. Claude and Grok hand the existing job to the user for sign-in before Tokenless enters task content.
+- **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity across the supported providers. Qwen's experimental baseline currently covers prompt submission, response reading, and same-task conversation continuation; unproven optional capabilities remain unavailable or unknown.
+- **Explicit guest and sign-in routing**: ChatGPT and Gemini can run through visible guest sessions, as can the experimental Qwen integration. Claude and Grok hand the existing job to the user for sign-in before Tokenless enters task content.
 
 ## Technology Stack
 
@@ -46,7 +46,7 @@ Run `tokenless provider-action --action capability.inspect --provider <provider>
 - A TypeScript CLI provides the user-facing interface, while a local TypeScript daemon runs persistently on the user's machine and manages state.
 - Routing is implemented through Skill Prompts. Users can define rules that assign different types of tasks to different AI services.
 - Playwright operates provider-visible controls and reports fixture-proven postconditions. File uploads distinguish selected files from visibly accepted attachments, while Workspace requests expose whether the provider used a native resource or a conversation fallback.
-- A provider catalog records guest, account-tier, selector, and capability policy; a separate provider-session state machine turns visible page evidence into guest, account, handoff, wait, or terminal outcomes.
+- One typed provider registry records identity, navigation, guest, account-tier, selector, and capability policy. Every provider is a concrete `BaseProvider` subclass, while a provider-session state machine turns visible page evidence into guest, account, handoff, wait, or terminal outcomes.
 - The entire workflow runs locally, without passing through third-party relay services or collecting user activity data.
 
 ## Current Status

@@ -7,26 +7,60 @@ import { chromium } from 'playwright'
 
 import {
   VISIBLE_ACTIONS,
-  createProviderAdapterRegistry,
   createVisibleActionRequest,
-  listProviders,
+  getProviderInstanceById,
 } from '../packages/cli/dist/src/playwright/index.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = path.join(root, 'test/fixtures/provider-dom')
 const providers = [
-  { id: 'chatgpt', state: 'signed-in-paid', url: 'https://chatgpt.com/' },
-  { id: 'claude', state: 'signed-in-free', url: 'https://claude.ai/new' },
-  { id: 'gemini', state: 'signed-in-unknown', url: 'https://gemini.google.com/app' },
-  { id: 'grok', state: 'signed-in-unknown', url: 'https://grok.com/' },
+  {
+    id: 'chatgpt',
+    state: 'signed-in-paid',
+    url: 'https://chatgpt.com/',
+    composerSelectors: [
+      'div#prompt-textarea[contenteditable="true"]',
+      'textarea[name="prompt-textarea"]',
+    ],
+  },
+  {
+    id: 'claude',
+    state: 'signed-in-free',
+    url: 'https://claude.ai/new',
+    composerSelectors: [
+      'div[data-testid="chat-input"][contenteditable="true"][role="textbox"]',
+    ],
+  },
+  {
+    id: 'gemini',
+    state: 'signed-in-unknown',
+    url: 'https://gemini.google.com/app',
+    composerSelectors: [
+      'rich-textarea div.ql-editor[contenteditable="true"][role="textbox"]',
+    ],
+  },
+  {
+    id: 'grok',
+    state: 'signed-in-unknown',
+    url: 'https://grok.com/',
+    composerSelectors: [
+      'div.tiptap.ProseMirror[contenteditable="true"][role="textbox"][aria-label="Ask Grok anything"]',
+    ],
+  },
+  {
+    id: 'qwen',
+    state: 'signed-out-guest',
+    url: 'https://www.qianwen.com/',
+    composerSelectors: [
+      'div[contenteditable="true"][role="textbox"][aria-multiline="true"][data-placeholder="向千问提问"][data-slate-editor="true"]',
+    ],
+  },
 ]
 
-test('real Chromium inputs and clears drafts on authenticated provider DOM captures', {
+test('real Chromium inputs and clears drafts on provenance-bound provider DOM captures', {
   timeout: 60000,
 }, async (t) => {
   const browser = await chromium.launch({ headless: true })
-  const registry = createProviderAdapterRegistry()
-  const providerConfigs = new Map(listProviders().map((provider) => [provider.id, provider]))
   t.after(() => browser.close())
 
   for (const provider of providers) {
@@ -35,15 +69,15 @@ test('real Chromium inputs and clears drafts on authenticated provider DOM captu
       const page = await context.newPage()
       try {
         await openCapturedFixture(page, provider)
-        const providerConfig = providerConfigs.get(provider.id)
-        assert.ok(providerConfig, `provider config missing: ${provider.id}`)
+        const providerInstance = getProviderInstanceById(provider.id)
+        assert.ok(providerInstance, `provider instance missing: ${provider.id}`)
         const prompt = `Tokenless deterministic prompt draft for ${provider.id}`
         const adapterContext = {
           profileId: `${provider.id}-fixture-profile`,
           operationId: `${provider.id}-prompt-actions`,
         }
 
-        const input = await registry.execute(
+        const input = await providerInstance.executeAction(
           page,
           visibleRequest(provider.id, VISIBLE_ACTIONS.PROMPT_INPUT, { text: prompt }),
           adapterContext,
@@ -53,9 +87,9 @@ test('real Chromium inputs and clears drafts on authenticated provider DOM captu
           visible: true,
           inputProof: 'prompt-text-visible',
         })
-        assert.equal(await visibleComposerText(page, providerConfig.composerSelectors), prompt)
+        assert.equal(await visibleComposerText(page, provider.composerSelectors), prompt)
 
-        const clear = await registry.execute(
+        const clear = await providerInstance.executeAction(
           page,
           visibleRequest(provider.id, VISIBLE_ACTIONS.PROMPT_CLEAR),
           adapterContext,
@@ -65,7 +99,7 @@ test('real Chromium inputs and clears drafts on authenticated provider DOM captu
           visible: true,
           inputProof: 'empty',
         })
-        assert.equal(await visibleComposerText(page, providerConfig.composerSelectors), '')
+        assert.equal(await visibleComposerText(page, provider.composerSelectors), '')
       } finally {
         await context.close()
       }
@@ -85,7 +119,9 @@ test('prompt input reports a visibility timeout when the captured provider page 
     await openCapturedFixture(page, provider, 'settings-general')
 
     const startedAt = Date.now()
-    const input = await createProviderAdapterRegistry().execute(
+    const providerInstance = getProviderInstanceById(provider.id)
+    assert.ok(providerInstance, `provider instance missing: ${provider.id}`)
+    const input = await providerInstance.executeAction(
       page,
       visibleRequest(provider.id, VISIBLE_ACTIONS.PROMPT_INPUT, { text: 'Tokenless timeout probe' }),
       {
@@ -121,7 +157,9 @@ test('prompt submit reports a visibility timeout when the captured provider page
     await openCapturedFixture(page, provider, 'settings-general')
 
     const startedAt = Date.now()
-    const submit = await createProviderAdapterRegistry().execute(
+    const providerInstance = getProviderInstanceById(provider.id)
+    assert.ok(providerInstance, `provider instance missing: ${provider.id}`)
+    const submit = await providerInstance.executeAction(
       page,
       visibleRequest(provider.id, VISIBLE_ACTIONS.PROMPT_SUBMIT),
       {

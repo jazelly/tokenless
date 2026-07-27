@@ -230,7 +230,10 @@ test('provider DOM manifest inventories every fixture with its sanitized page UR
   }
 
   const actual = new Set()
-  for (const provider of Object.keys(providers)) {
+  const providerDirectories = (await fs.readdir(fixtureRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+  for (const provider of providerDirectories) {
     const accountStates = await fs.readdir(path.join(fixtureRoot, provider), { withFileTypes: true })
     for (const accountState of accountStates.filter((entry) => entry.isDirectory())) {
       const files = await fs.readdir(path.join(fixtureRoot, provider, accountState.name))
@@ -240,6 +243,58 @@ test('provider DOM manifest inventories every fixture with its sanitized page UR
     }
   }
   assert.deepEqual([...listed].sort(), [...actual].sort())
+})
+
+test('Qwen guest fixtures preserve provenance-bound composer and completed-response evidence', {
+  timeout: 30000,
+}, async () => {
+  const accountRoot = path.join(fixtureRoot, 'qwen', 'signed-out-guest')
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  try {
+    for (const scenario of ['composer-idle', 'response-complete']) {
+      const [htmlBytes, provenanceText] = await Promise.all([
+        fs.readFile(path.join(accountRoot, `${scenario}.html`)),
+        fs.readFile(path.join(accountRoot, `${scenario}.provenance.json`), 'utf8'),
+      ])
+      const html = htmlBytes.toString('utf8')
+      const provenance = JSON.parse(provenanceText)
+
+      assert.equal(provenance.schema, 'tokenless.provider-dom-provenance.v1')
+      assert.equal(provenance.provider, 'qwen')
+      assert.equal(provenance.accountState, 'signed-out-guest')
+      assert.deepEqual(provenance.observedPlan, { status: 'unknown', label: null })
+      assert.equal(provenance.scenario, scenario)
+      assert.equal(provenance.observedOn, '2026-07-26')
+      assert.equal(provenance.source, 'unauthenticated-user-visible-in-app-browser-session')
+      assert.equal(provenance.artifactKind, 'redacted-reduced-dom')
+      assert.equal(provenance.containsProviderJavaScript, false)
+      assert.equal(provenance.containsSyntheticBehavior, false)
+      assert.equal(sha256(htmlBytes), provenance.contentSha256)
+      assertPrivacyBoundary(html)
+      assertPrivacyBoundary(provenanceText)
+      assert.doesNotMatch(html, /<script\b|<style\b/i)
+
+      await page.setContent(html)
+      for (const evidence of provenance.evidenceSelectors) {
+        assert.equal(
+          await page.locator(evidence.selector).count(),
+          evidence.expectedCount,
+          `qwen/${scenario} ${evidence.capability}: ${evidence.selector}`
+        )
+      }
+      for (const absence of provenance.absenceSelectors) {
+        assert.equal(
+          await page.locator(absence.selector).count(),
+          absence.expectedCount,
+          `qwen/${scenario} ${absence.purpose}: ${absence.selector}`
+        )
+      }
+      await assertSanitizedLinks(page, `qwen/${scenario}`)
+    }
+  } finally {
+    await browser.close()
+  }
 })
 
 test('deep workflow fixtures cover authenticated provider jobs, settings, connectors, uploads, and media', {

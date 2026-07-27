@@ -229,6 +229,67 @@ function validateJsonSchemaFixtures(ajv) {
   if (actionV2(controlCharacterLabel)) {
     throw new Error('visible-action.v2 fixture must reject C0/DEL characters in selection labels')
   }
+
+  const jobV3 = ajv.getSchema('https://tokenless.dev/protocol/schemas/playwright-job.v3.schema.json')
+  if (!jobV3) throw new Error('playwright-job.v3 fixture schema is not registered')
+  const validGenericJob = {
+    protocol: 'tokenless.playwright.job.v3',
+    provider: 'future-ai',
+    target: { kind: 'provider_home', url: 'https://future.example/path' },
+    taskId: null,
+    browserVisibility: 'auto',
+    actions: [
+      {
+        protocol: 'tokenless.playwright.visible-action.v3',
+        requestId: 'fixture-3',
+        provider: 'future-ai',
+        action: 'auth.status',
+        payload: {},
+      },
+    ],
+  }
+  if (!jobV3(validGenericJob)) {
+    throw new Error(`playwright-job.v3 fixture must accept generic provider syntax and safe HTTPS targets: ${JSON.stringify(jobV3.errors)}`)
+  }
+  const genericSafetyCases = [
+    ['bad provider syntax', { provider: 'Future_AI' }],
+    ['target credentials', { target: { kind: 'provider_home', url: 'https://user@future.example/' } }],
+    ['target query', { target: { kind: 'provider_home', url: 'https://future.example/?q=1' } }],
+    ['target fragment', { target: { kind: 'provider_home', url: 'https://future.example/#frag' } }],
+    ['ip-like target', { target: { kind: 'provider_home', url: 'https://127.0.0.1/' } }],
+    ['v2 action in v3 job', {
+      actions: [
+        {
+          protocol: 'tokenless.playwright.visible-action.v2',
+          requestId: 'fixture-4',
+          provider: 'future-ai',
+          action: 'auth.status',
+          payload: {},
+        },
+      ],
+    }],
+  ]
+  for (const [name, override] of genericSafetyCases) {
+    if (jobV3({ ...validGenericJob, ...override })) {
+      throw new Error(`playwright-job.v3 fixture must reject ${name}`)
+    }
+  }
+
+  const actionV3 = ajv.getSchema('https://tokenless.dev/protocol/schemas/visible-action.v3.schema.json')
+  if (!actionV3) throw new Error('visible-action.v3 fixture schema is not registered')
+  const validGenericAction = {
+    protocol: 'tokenless.playwright.visible-action.v3',
+    requestId: 'fixture-5',
+    provider: 'future-ai',
+    action: 'auth.status',
+    payload: {},
+  }
+  if (!actionV3(validGenericAction)) {
+    throw new Error(`visible-action.v3 fixture must accept generic provider syntax: ${JSON.stringify(actionV3.errors)}`)
+  }
+  if (actionV3({ ...validGenericAction, provider: 'Future_AI' })) {
+    throw new Error('visible-action.v3 fixture must reject invalid provider syntax')
+  }
 }
 
 async function validateOpenApiArtifact({ artifactPath, parsed }) {

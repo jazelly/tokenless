@@ -1,0 +1,340 @@
+import { PROVIDER_CAPABILITIES } from './provider-identity.js'
+import { PromptCapability } from './capabilities/prompt.js'
+import { ResponseCapability } from './capabilities/response.js'
+import { ConversationContinueCapability, ProviderSessionCapability } from './capabilities/session.js'
+import { DomAttachmentCapability } from './capabilities/dom-attachment.js'
+import { DomChoiceCapability } from './capabilities/dom-choice.js'
+import { ConversationWorkspaceCapability } from './capabilities/workspace.js'
+import { DiagnosticsCapability } from './capabilities/diagnostics.js'
+import { UnsupportedImageGenerationCapability } from './capabilities/image-generation.js'
+import { DefaultChoiceAvailability } from './choice-availability.js'
+import { ProviderNavigationPolicy } from './navigation-policy.js'
+import { VISIBLE_ACTIONS } from './contracts.js'
+import type { BaseProviderCapabilities } from './base-provider.js'
+import type { Locator, Page } from 'playwright-core'
+import type { ProviderCapabilityId, ProviderId, ProviderStage } from './provider-identity.js'
+import type { ProviderNavigationDefinition } from './navigation-policy.js'
+
+export type ProviderCapabilityAvailability = 'available' | 'unavailable' | 'unknown'
+export type ProviderCapabilityResourceKind = 'visible_action' | 'file_attachment' | 'project' | 'conversation'
+export type ProviderCapabilityStability = 'experimental'
+export type ProviderGuestAccess = 'supported' | 'unsupported'
+export type ProviderAccessClass =
+  | 'guest'
+  | 'sign_in_required'
+  | 'signed_in_free'
+  | 'signed_in_paid'
+  | 'signed_in_unknown'
+  | 'unknown'
+export type ProviderAccountTier = {
+  class: 'signed_in_free' | 'signed_in_paid' | 'signed_in_unknown'
+  label: string | null
+}
+
+export type ProviderDescriptor<TId extends string = string> = Readonly<{
+  id: TId
+  label: string
+  stage: ProviderStage
+  setupOrder: number
+  protocolCompatibility: Readonly<{
+    legacyRequests: boolean
+  }>
+  navigation: ProviderNavigationDefinition
+  profileImport: Readonly<{
+    cookieDomains: readonly string[]
+  }>
+  controls: Readonly<{
+    chatSurface: boolean
+  }>
+}>
+
+export type ProviderAccessPolicy = {
+  readonly guest: ProviderGuestAccess
+  readonly guestContinueControlNames: readonly string[]
+}
+
+export type ProviderAccountInspection = {
+  readonly name: string | null
+  readonly subscription: string | null
+  readonly subscriptionEvidence: {
+    readonly status: 'observed' | 'derived' | 'unknown'
+    readonly source: string | null
+  }
+}
+
+export interface ProviderAccountInspector {
+  inspect(
+    page: Page,
+    provider: ProviderDomDefinition,
+    accountControl: Locator,
+    signal: AbortSignal | undefined,
+  ): Promise<ProviderAccountInspection>
+}
+
+export type ProviderAccountPolicy = {
+  readonly inspector: ProviderAccountInspector
+  readonly freePlanLabels: readonly string[]
+  readonly paidPlanLabels: readonly string[]
+}
+
+export type ProviderChoiceAvailabilityPolicy = {
+  readonly unavailableClassTokens: readonly string[]
+  readonly mutedUnavailableClassToken: string | null
+  readonly mutedOpacityClassToken: string | null
+}
+
+export type ProviderCapabilityStrategy = {
+  readonly capability: ProviderCapabilityId
+  readonly availability: ProviderCapabilityAvailability
+  readonly visibleProof: string
+  readonly reason: string | null
+  readonly native: {
+    readonly resourceKind: ProviderCapabilityResourceKind | null
+    readonly availability: ProviderCapabilityAvailability
+    readonly visibleProof: string | null
+    readonly reason: string | null
+  }
+  readonly fallback: {
+    readonly resourceKind: ProviderCapabilityResourceKind | null
+    readonly availability: ProviderCapabilityAvailability
+    readonly mode: 'conversation' | null
+    readonly visibleProof: string | null
+    readonly reason: string | null
+  }
+  readonly stability: ProviderCapabilityStability
+}
+
+export type ProviderDomDefinition<TId extends ProviderId = ProviderId> = ProviderDescriptor<TId> & {
+  readonly descriptor: ProviderDescriptor<TId>
+  readonly navigationPolicy: ProviderNavigationPolicy
+  readonly homeUrl: string
+  readonly access: ProviderAccessPolicy
+  readonly account: ProviderAccountPolicy
+  readonly composerSelectors: readonly string[]
+  readonly submitSelectors: readonly string[]
+  readonly answerSelectors: readonly string[]
+  readonly fileInputSelectors: readonly string[]
+  readonly fileUploadTriggerSelectors: readonly string[]
+  readonly fileUploadLocalSelectors: readonly string[]
+  readonly modelControlSelectors: readonly string[]
+  readonly effortControlSelectors: readonly string[]
+  readonly authIndicators: readonly string[]
+  readonly loginIndicators: readonly string[]
+  readonly blockerSelectors: readonly string[]
+  readonly busySelectors: readonly string[]
+  readonly choiceAvailability: ProviderChoiceAvailabilityPolicy
+  readonly capabilities: Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>>
+}
+
+export const DEFAULT_CHOICE_AVAILABILITY = new DefaultChoiceAvailability() satisfies ProviderChoiceAvailabilityPolicy
+
+export function createBaseProviderCapabilities(provider: ProviderDomDefinition): BaseProviderCapabilities {
+  return {
+    session: new ProviderSessionCapability(provider),
+    prompt: new PromptCapability(provider),
+    response: new ResponseCapability(provider),
+    optional: [
+      new DomAttachmentCapability(provider),
+      new ConversationWorkspaceCapability(provider),
+      new ConversationContinueCapability(provider),
+      new DomChoiceCapability(provider, {
+        capability: PROVIDER_CAPABILITIES.MODEL_CHOICE,
+        kind: 'model',
+        inspectAction: VISIBLE_ACTIONS.MODEL_INSPECT,
+        selectAction: VISIBLE_ACTIONS.MODEL_SELECT,
+      }),
+      new DomChoiceCapability(provider, {
+        capability: PROVIDER_CAPABILITIES.EFFORT_CHOICE,
+        kind: 'effort',
+        inspectAction: VISIBLE_ACTIONS.EFFORT_INSPECT,
+        selectAction: VISIBLE_ACTIONS.EFFORT_SELECT,
+      }),
+      new DiagnosticsCapability(provider),
+      new UnsupportedImageGenerationCapability(provider),
+    ],
+  }
+}
+
+export function providerCapabilities(): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
+  return Object.freeze({
+    [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.CAPABILITY_INSPECT,
+      availability: 'available',
+      visibleProof: 'provider-capability-registry',
+      reason: null,
+      native: Object.freeze({
+        resourceKind: 'visible_action',
+        availability: 'available',
+        visibleProof: 'provider-capability-registry',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'native_visible_action_has_no_fallback',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.MODEL_CHOICE]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.MODEL_CHOICE,
+      availability: 'unknown',
+      visibleProof: 'runtime-visible-model-control-evidence-required',
+      reason: 'availability_depends_on_visible_provider_controls',
+      native: Object.freeze({
+        resourceKind: 'visible_action',
+        availability: 'unknown',
+        visibleProof: 'runtime-visible-model-control-evidence-required',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'no_provider_neutral_choice_fallback',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.EFFORT_CHOICE]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.EFFORT_CHOICE,
+      availability: 'unknown',
+      visibleProof: 'runtime-visible-effort-control-evidence-required',
+      reason: 'availability_depends_on_visible_provider_controls',
+      native: Object.freeze({
+        resourceKind: 'visible_action',
+        availability: 'unknown',
+        visibleProof: 'runtime-visible-effort-control-evidence-required',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'no_provider_neutral_choice_fallback',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.FILE_UPLOAD]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.FILE_UPLOAD,
+      availability: 'unknown',
+      visibleProof: 'runtime-visible-upload-evidence-required',
+      reason: 'availability_depends_on_visible_provider_controls',
+      native: Object.freeze({
+        resourceKind: 'file_attachment',
+        availability: 'unknown',
+        visibleProof: 'runtime-visible-upload-evidence-required',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'no_provider_neutral_file_upload_fallback',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.WORKSPACE_ENSURE]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.WORKSPACE_ENSURE,
+      availability: 'available',
+      visibleProof: 'conversation-fallback-declared',
+      reason: 'native_workspace_creation_unproven',
+      native: Object.freeze({
+        resourceKind: 'project',
+        availability: 'unavailable',
+        visibleProof: null,
+        reason: 'no_fixture_proven_native_workspace_creation_closure',
+      }),
+      fallback: Object.freeze({
+        resourceKind: 'conversation',
+        availability: 'available',
+        mode: 'conversation',
+        visibleProof: 'conversation-composer-visible',
+        reason: null,
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE,
+      availability: 'unknown',
+      visibleProof: 'runtime-visible-composer-evidence-required',
+      reason: 'availability_depends_on_visible_composer',
+      native: Object.freeze({
+        resourceKind: 'conversation',
+        availability: 'unknown',
+        visibleProof: 'runtime-visible-composer-evidence-required',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'conversation_continuation_is_the_native_visible_outcome',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.DIAGNOSTICS]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.DIAGNOSTICS,
+      availability: 'available',
+      visibleProof: 'provider-diagnostics-actions-registered',
+      reason: null,
+      native: Object.freeze({
+        resourceKind: 'visible_action',
+        availability: 'available',
+        visibleProof: 'provider-diagnostics-actions-registered',
+        reason: null,
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'diagnostics_actions_have_no_fallback',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.IMAGE_GENERATION]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.IMAGE_GENERATION,
+      availability: 'unavailable',
+      visibleProof: 'unsupported-image-generation-capability',
+      reason: 'no_fixture_proven_visible_image_generation_closure',
+      native: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        visibleProof: null,
+        reason: 'image_generation_not_advertised_without_provider_evidence',
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'no_provider_neutral_image_generation_fallback',
+      }),
+      stability: 'experimental',
+    }),
+  })
+}
+
+export function defineDescriptor<TId extends ProviderId>(descriptor: ProviderDescriptor<TId>): ProviderDescriptor<TId> {
+  return Object.freeze(descriptor)
+}
+
+export function defineProvider<TId extends ProviderId>(
+  provider: Omit<ProviderDomDefinition<TId>, keyof ProviderDescriptor<TId> | 'navigationPolicy' | 'homeUrl'> & {
+    descriptor: ProviderDescriptor<TId>
+  }
+): ProviderDomDefinition<TId> {
+  const navigationPolicy = new ProviderNavigationPolicy(provider.descriptor.id, provider.descriptor.navigation)
+  return Object.freeze({
+    ...provider.descriptor,
+    ...provider,
+    descriptor: provider.descriptor,
+    navigationPolicy,
+    homeUrl: provider.descriptor.navigation.homeUrl,
+  })
+}

@@ -49,7 +49,10 @@ chatgpt
 claude
 gemini
 grok
+qwen
 ```
+
+ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问 is experimental: its guest-session prompt, response, and same-task continuation baseline is proven, while unproven optional capabilities remain unavailable or unknown.
 
 Runtime browser values are `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, and `brave`. Local profile import currently supports only Chrome and Brave.
 

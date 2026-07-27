@@ -4,11 +4,11 @@ import {
   createManagedPlaywrightJobRequest,
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
-import { createDaemonClient } from './daemon-client.js'
+import { createDaemonClient, daemonAdvertisesProvider } from './daemon-client.js'
 import { tokenlessError } from './errors.js'
 import type { DaemonJob, DaemonJobStatus, ManagedDaemonClient } from './daemon-client.js'
 import type { CreateManagedPlaywrightJobRequestInput, ManagedPlaywrightJobRequest } from './job-contract.js'
-import type { ProviderId } from './providers.js'
+import type { ProviderId } from '../providers/registry.js'
 
 export type ManagedPlaywrightJobApiOptions = {
   daemonClient?: ManagedDaemonClient | undefined
@@ -48,7 +48,16 @@ export type ResumeManagedPlaywrightJobOptions = GetManagedPlaywrightJobOptions
 
 export async function submitManagedPlaywrightJob(options: SubmitManagedPlaywrightJobOptions) {
   const request = normalizeJobRequest(options.request)
-  return daemonClient(options).createJob({
+  const client = daemonClient(options)
+  const daemonReady = await client.ready(daemonOptions(options))
+  if (!daemonAdvertisesProvider(daemonReady, request.provider)) {
+    throw tokenlessError(
+      'unsupported_playwright_provider',
+      `Tokenless daemon does not advertise Playwright provider support for ${request.provider}.`,
+      { retryable: true }
+    )
+  }
+  return client.createJob({
     ...daemonOptions(options),
     provider: request.provider,
     action: MANAGED_PLAYWRIGHT_JOB_ACTION,

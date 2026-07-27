@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -7,6 +8,7 @@ import type { BrowserVisibility } from '../browser-visibility.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331' as const
 const DEFAULT_DAEMON_REQUEST_TIMEOUT_MS = 5_000
+const LEGACY_DAEMON_SUPPORTED_PROVIDERS = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok'])
 
 export type DaemonJobStatus = 'queued' | 'claimed' | 'running' | 'waiting_for_user' | 'succeeded' | 'failed' | 'canceled' | 'timed_out'
 export type DaemonExecutionBackend = 'legacy_extension' | 'playwright'
@@ -40,6 +42,13 @@ export type DaemonClientOptions = {
   token?: string | undefined
   fetchImpl?: typeof fetch | undefined
 }
+
+export type DaemonReadyResponse = Record<string, unknown> & {
+  ready: true
+  supported_providers: string[]
+}
+
+export type DaemonReadyOptions = DaemonClientOptions
 
 export type CreateDaemonJobOptions = DaemonClientOptions & {
   provider: string
@@ -102,6 +111,7 @@ export type CancelDaemonJobOptions = GetDaemonJobOptions & {
 }
 
 export type ManagedDaemonClient = {
+  ready(options?: DaemonReadyOptions): Promise<DaemonReadyResponse>
   createJob(options: CreateDaemonJobOptions): Promise<DaemonClaimedJob>
   listJobs(options?: ListDaemonJobsOptions): Promise<DaemonJob[]>
   getJob(options: GetDaemonJobOptions): Promise<DaemonJob>
@@ -140,6 +150,7 @@ export async function readDaemonToken({ homeDir = tokenlessHome() }: Pick<Daemon
 
 export function createDaemonClient(defaults: DaemonClientOptions = {}): ManagedDaemonClient {
   return {
+    ready: (options = {}) => daemonReady({ ...defaults, ...options }),
     createJob: (options) => createDaemonJob({ ...defaults, ...options }),
     listJobs: (options = {}) => listDaemonJobs({ ...defaults, ...options }),
     getJob: (options) => getDaemonJob({ ...defaults, ...options }),
@@ -153,6 +164,36 @@ export function createDaemonClient(defaults: DaemonClientOptions = {}): ManagedD
     completeJob: (options) => completeDaemonJob({ ...defaults, ...options }),
     cancelJob: (options) => cancelDaemonJob({ ...defaults, ...options }),
   }
+}
+
+export async function daemonReady(options: DaemonReadyOptions = {}) {
+  const challenge = randomBytes(32).toString('base64url')
+  const query = new URLSearchParams({ challenge })
+  const body = await daemonRequest<Record<string, unknown>>({
+    ...options,
+    method: 'GET',
+    path: `/ready?${query.toString()}`,
+  })
+  if (!body || typeof body !== 'object' || Array.isArray(body) || body.ready !== true) {
+    throw tokenlessError('daemon_not_ready', 'Tokenless daemon /ready did not report ready=true.', { retryable: true })
+  }
+  return {
+    ...body,
+    ready: true as const,
+    supported_providers: supportedProvidersFromReadyBody(body),
+  } satisfies DaemonReadyResponse
+}
+
+export function daemonAdvertisesProvider(body: unknown, provider: string) {
+  return supportedProvidersFromReadyBody(body).includes(provider)
+}
+
+export function supportedProvidersFromReadyBody(body: unknown) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return []
+  const value = (body as { supported_providers?: unknown }).supported_providers
+  if (value === undefined) return [...LEGACY_DAEMON_SUPPORTED_PROVIDERS]
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) return []
+  return [...new Set(value)]
 }
 
 export async function createDaemonJob({

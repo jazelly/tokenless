@@ -2,11 +2,33 @@
 
 Status: proposed | Priority: P0
 
-Depends on: [Provider Architecture and Registry](provider-architecture-and-registry.md), existing managed Playwright, provider action protocol, fixture provenance, and profile lifecycle
+Depends on: completed [Provider Architecture and Registry](archived/provider-architecture-and-registry.md), existing managed Playwright, provider action protocol, fixture provenance, and profile lifecycle
 
 ## Outcome
 
 Tokenless supports a broader set of high-value Chinese AI web providers while preserving one honest provider-neutral contract. Adding a provider must improve user choice without weakening session isolation, visible verification, failure behavior, or maintainability.
+
+## Current Implementation State
+
+As of 2026-07-27:
+
+- the shared registry extraction and OOP provider seam are complete and recorded in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap;
+- Qwen / 千问 is registered as an `experimental` provider through one provider module and one registry entry;
+- a fresh real managed guest profile completed prompt input, visible submission, correlated response reading, and same-task conversation continuation through the built CLI and TypeScript daemon;
+- Qwen provenance-bound DOM captures cover the signed-out idle composer and a completed response; and
+- unproven Qwen model, effort, file-upload, native workspace, and image-generation capabilities remain `unknown` or `unavailable` rather than being inferred from visible controls.
+
+| Qwen capability | Current state | Evidence boundary |
+| --- | --- | --- |
+| Guest access | Experimental, available | Fresh managed signed-out profile |
+| Prompt input and submit | Experimental, available | Built CLI and real visible Qwen session |
+| Response reading | Experimental, available | Exact correlated marker returned |
+| Same-task continuation | Experimental, available | Second built-CLI job reused the trusted conversation scope |
+| Conversation workspace fallback | Experimental, available when the composer is visible | Provider-neutral conversation capability |
+| Model and effort selection | Unknown | No proven selector or exact-selection postcondition |
+| File and input-image upload | Unknown | No proven visible acceptance postcondition |
+| Native workspace | Unavailable | No proven native creation or exact identity closure |
+| Image generation | Unavailable | No proven generation lifecycle |
 
 The first evaluation wave is:
 
@@ -77,9 +99,9 @@ File upload, native Project creation, image generation, deep research, agent mod
 
 Exit: the candidate has an approved origin model, an evidence plan, and no unresolved boundary that would require credentials, private APIs, or invented fixtures.
 
-### Phase 1: Shared Registry Extraction
+### Phase 1: Shared Registry Extraction — completed 2026-07-27
 
-- Follow the object model, capability composition, registry seam, TypeScript daemon negotiation, and phased migration defined in [Provider Architecture and Registry](provider-architecture-and-registry.md).
+- Follow the object model, capability composition, registry seam, TypeScript daemon negotiation, and phased migration defined in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md).
 - Replace duplicated provider allowlists with one typed provider registry consumed by config, runtime validation, profile handling, navigation, capture tooling, and tests.
 - Represent every provider as a concrete `BaseProvider` subclass.
 - Keep provider-specific selectors and behavior inside provider-owned capability implementations.
@@ -89,7 +111,7 @@ Exit: the candidate has an approved origin model, an evidence plan, and no unres
 
 Exit: adding a provider requires one provider subclass and one registry entry, does not require shared production-logic changes, and no longer requires manually synchronizing independent allowlists across the CLI, daemon-facing contracts, helpers, and test matrices.
 
-### Phase 2: First Chinese Provider Baseline
+### Phase 2: First Chinese Provider Baseline — Qwen experimental baseline completed 2026-07-27
 
 - Implement the highest-ranked first-wave provider.
 - Prove sign-in states, composer readiness, prompt submission, stable completion, and conversation continuation.

@@ -38,13 +38,22 @@
           ],
           "job": [
             "tokenless.playwright.job.v1",
-            "tokenless.playwright.job.v2"
+            "tokenless.playwright.job.v2",
+            "tokenless.playwright.job.v3"
           ],
           "action": [
             "tokenless.playwright.visible-action.v1",
-            "tokenless.playwright.visible-action.v2"
+            "tokenless.playwright.visible-action.v2",
+            "tokenless.playwright.visible-action.v3"
           ]
-        }
+        },
+        "supported_providers": [
+          "chatgpt",
+          "claude",
+          "gemini",
+          "grok",
+          "qwen"
+        ]
       }
     },
     {

@@ -3,13 +3,14 @@ import { constants as fsConstants } from 'node:fs'
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
+import { getProviderDescriptorById } from '../../providers/registry.js'
 import { tokenlessError } from '../errors.js'
 import { withPrivateSqliteWriterLock } from './sqlite-lock.js'
 import type {
   ProviderAccessClass,
   ProviderAccountTier,
   ProviderId,
-} from '../providers.js'
+} from '../../providers/registry.js'
 
 export type ProfileLifecycleState = 'created' | 'importing' | 'ready' | 'removed' | 'failed'
 export type ManagedProfileLabelOrigin = 'slug' | 'import' | 'user'
@@ -527,7 +528,7 @@ function parseIso(value: unknown) {
 }
 
 function isProviderId(value: string): value is ProviderId {
-  return value === 'chatgpt' || value === 'claude' || value === 'gemini' || value === 'grok'
+  return Boolean(getProviderDescriptorById(value))
 }
 
 function isUuid(value: string) {

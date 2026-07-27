@@ -2,8 +2,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { chmod, copyFile, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { getProviderDescriptorById } from '../../providers/registry.js'
 import { tokenlessError } from '../errors.js'
-import type { ProviderId } from '../providers.js'
+import type { ProviderId } from '../../providers/registry.js'
 import { resolveChromeProfile } from './chrome-discovery.js'
 import { isPathInside } from './registry.js'
 
@@ -37,12 +38,6 @@ export type ChromeCookieAuthProviderResult = {
 
 type SqliteDatabase = import('node:sqlite').DatabaseSync
 type SqliteValue = null | number | bigint | string | NodeJS.ArrayBufferView
-
-const PROVIDER_COOKIE_AUTH_DOMAINS: Readonly<Record<'chatgpt' | 'claude' | 'grok', readonly string[]>> = Object.freeze({
-  chatgpt: Object.freeze(['chatgpt.com', 'openai.com']),
-  claude: Object.freeze(['claude.ai', 'anthropic.com']),
-  grok: Object.freeze(['grok.com', 'x.ai']),
-})
 
 const PROFILE_EXCLUDE_EXACT = new Set([
   'Archived History',
@@ -346,7 +341,7 @@ function createEmptyCookieAuthResult(providers: readonly ProviderId[]): ChromeCo
     providers: [...new Set(providers)].map((provider) => ({
       provider,
       cookies: 0,
-      supported: provider in PROVIDER_COOKIE_AUTH_DOMAINS,
+      supported: (getProviderDescriptorById(provider)?.profileImport.cookieDomains.length ?? 0) > 0,
     })),
     totalCookies: 0,
   }
@@ -358,9 +353,8 @@ function selectedCookieAuthProviders(providers: readonly ProviderId[]): CookieAu
   for (const provider of providers) {
     if (seen.has(provider)) continue
     seen.add(provider)
-    if (provider === 'gemini') continue
-    const domains = PROVIDER_COOKIE_AUTH_DOMAINS[provider as keyof typeof PROVIDER_COOKIE_AUTH_DOMAINS]
-    if (!domains) continue
+    const domains = getProviderDescriptorById(provider)?.profileImport.cookieDomains ?? []
+    if (domains.length === 0) continue
     selected.push({ provider, domains })
   }
   return selected

@@ -142,7 +142,7 @@
     {
       "id": "tokenless.playwright.job.v2",
       "owner": "cli",
-      "status": "active",
+      "status": "legacy-accepted",
       "accepts": [
         "playwright-worker"
       ],
@@ -155,6 +155,24 @@
       ],
       "constants": {
         "typescript": "MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V2"
+      }
+    },
+    {
+      "id": "tokenless.playwright.job.v3",
+      "owner": "cli",
+      "status": "active",
+      "accepts": [
+        "playwright-worker"
+      ],
+      "emits": [
+        "cli",
+        "playwright-worker"
+      ],
+      "artifacts": [
+        "protocol/schemas/playwright-job.v3.schema.json"
+      ],
+      "constants": {
+        "typescript": "MANAGED_PLAYWRIGHT_JOB_PROTOCOL_VERSION_V3"
       },
       "aliases": {
         "typescript": [
@@ -182,7 +200,7 @@
     {
       "id": "tokenless.playwright.visible-action.v2",
       "owner": "cli",
-      "status": "active",
+      "status": "legacy-accepted",
       "accepts": [
         "playwright-worker"
       ],
@@ -195,6 +213,24 @@
       ],
       "constants": {
         "typescript": "VISIBLE_ACTION_PROTOCOL_VERSION_V2"
+      }
+    },
+    {
+      "id": "tokenless.playwright.visible-action.v3",
+      "owner": "cli",
+      "status": "active",
+      "accepts": [
+        "playwright-worker"
+      ],
+      "emits": [
+        "cli",
+        "playwright-worker"
+      ],
+      "artifacts": [
+        "protocol/schemas/visible-action.v3.schema.json"
+      ],
+      "constants": {
+        "typescript": "VISIBLE_ACTION_PROTOCOL_VERSION_V3"
       },
       "aliases": {
         "typescript": [
@@ -225,6 +261,20 @@
     {
       "id": "tokenless.playwright.runner-checkpoint.v1",
       "owner": "playwright-worker",
+      "status": "legacy-accepted",
+      "accepts": [
+        "playwright-worker"
+      ],
+      "emits": [
+        "playwright-worker"
+      ],
+      "constants": {
+        "typescript": "RUNNER_CHECKPOINT_PROTOCOL_V1"
+      }
+    },
+    {
+      "id": "tokenless.playwright.runner-checkpoint.v2",
+      "owner": "playwright-worker",
       "status": "active",
       "accepts": [
         "playwright-worker"
@@ -233,7 +283,12 @@
         "playwright-worker"
       ],
       "constants": {
-        "typescript": "RUNNER_CHECKPOINT_PROTOCOL"
+        "typescript": "RUNNER_CHECKPOINT_PROTOCOL_V2"
+      },
+      "aliases": {
+        "typescript": [
+          "RUNNER_CHECKPOINT_PROTOCOL"
+        ]
       }
     },
     {
