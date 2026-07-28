@@ -1,6 +1,6 @@
 ---
 name: tokenless
-description: Route shareable Q&A, analysis, review, research, writing, and file-based tasks through a user's visible ChatGPT, Claude, Gemini, or Grok website using Tokenless Playwright automation to save API tokens.
+description: Use when any tasks can be completed without directly write to the workspace. Call the tokenless CLI to route tasks to AI provider websitesto save token.
 ---
 
 # Tokenless agent workflow
@@ -9,7 +9,7 @@ Require the globally installed `tokenless` command on `PATH` and use it as the e
 
 Tokenless sends visible jobs through its authenticated local TypeScript daemon and Playwright worker into a user-configured persistent managed Chromium profile. Keep provider authentication opaque inside that profile, operate only visible page controls, and use only documented Tokenless CLI or local API surfaces.
 
-Do not initiate installation, onboarding, profile creation, or profile import before provider work. Use `tokenless-install` only when the user explicitly asks for installation, upgrade, repair, or integrity verification.
+You MUST not initiate installation, onboarding, profile creation, or profile import before provider work.
 
 ## Resolve provider and profile
 

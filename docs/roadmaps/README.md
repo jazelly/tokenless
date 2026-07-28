@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-07-27
+Status: active product direction | Last reviewed: 2026-07-28
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -36,6 +36,7 @@ Every addition, rename, move, or lifecycle change must update this index, all re
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
+| [Real Provider Browser E2E and Native Projects](real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](provider-expansion.md) | Add high-value Chinese AI web providers and keep all supported providers aligned on a reliable provider-neutral baseline. | P0 |
 | [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
@@ -78,12 +79,13 @@ flowchart LR
 The shared contracts should be built before provider-specific shortcuts:
 
 1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap.
-2. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
-3. Replace the daemon's manual HTTP dispatcher with a compatible Fastify API and make polling the explicit asynchronous caller contract.
-4. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
-5. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.
-6. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
-7. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
+2. Establish the real-provider browser E2E evidence plane and close Claude and Grok native Project identity before depending on those capabilities for broader context delivery.
+3. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
+4. Replace the daemon's manual HTTP dispatcher with a compatible Fastify API and make polling the explicit asynchronous caller contract.
+5. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
+6. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.
+7. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
+8. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 

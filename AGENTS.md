@@ -52,6 +52,19 @@ Use focused integration or browser E2E tests for behavior that crosses the Playw
 - Do not add unit tests.
 - Do not introduce mocks, fakes, stubs, spies, synthetic fetch implementations, fake daemons, fake pages, fake locators, fake browser contexts, fake runners, fake process supervisors, or dependency-injected test doubles.
 - Do not test implementation shape by reading source files, test files, Markdown, or documentation and matching strings or regular expressions.
-- Provider DOM fixtures are allowed only when they are redacted, provenance-bound reductions of DOM genuinely captured from an authenticated visible provider session. Do not invent synthetic provider DOM and present it as provider evidence.
+
+### Provider DOM Fixture Policy
+
+- Provider DOM fixtures are development aids only. They are allowed only when they are redacted, provenance-bound reductions of DOM genuinely captured from a real visible provider session.
+- Use fixtures only for focused development checks of selectors, parsers, sanitization, and already-observed DOM variants.
+- Never install a fixture route in a built CLI or daemon browser E2E, intercept provider network traffic for E2E, label a fixture-based check as E2E or live, or count fixture evidence toward a capability matrix, support declaration, release gate, or provider acceptance criterion.
+- Do not invent synthetic provider DOM, simulate a provider transition or response, or infer live behavior from separate before-and-after fixtures.
+- Continuously capture materially distinct, capability-relevant DOM states discovered during real provider testing: redact the real state, record its provenance, add it to the checked-in fixture manifest, and use it for focused development checks of selectors, parsers, and already-observed DOM variants. Preserve distinct account tiers, blockers, menus, composer states, attachment states, project states, and provider DOM variants when they change observable capability behavior.
+
+### Real Provider Browser E2E
+
+- Run every browser E2E and every visible-provider capability acceptance test against the real provider website with the built CLI, packaged daemon, real managed browser, real provider network, and no fixture route, network interception, or simulated provider response.
+- Require explicitly gated real provider E2E closure for state transitions and provider-side effects, including model or effort changes, accepted uploads, prompt submission, response generation, citations, conversation continuation, and native Project creation, reuse, instruction application, or chat.
+- Use dedicated test accounts and managed profiles for provider-side mutations. Real messages, conversations, Projects, attachments, retained test artifacts, and provider usage cost are acceptable when needed for closure; identify them with unique run-scoped markers and never use cost as a reason to substitute fixture evidence.
 - If an external integration cannot run safely by default, add an explicitly gated real integration or browser E2E test. Do not replace the unavailable integration with a simulation.
 - Assert commands, durable state, visible browser outcomes, and real protocol results rather than internal method calls or collaborator interactions.
