@@ -39,12 +39,12 @@ Jobs use explicit provider and profile identity. Unsupported controls, ambiguous
 
 ## Setup and profiles
 
-`tokenless setup` is the interactive onboarding flow. It invokes the shared maintenance reconciler to upsert both global agent skills and align the daemon with the installed `tokenless` package version, then discovers supported browsers, selects providers, and offers two profile paths:
+`tokenless setup` is the interactive onboarding flow. It aligns the global skills and daemon with the installed CLI, chooses a browser, selects every non-disabled registry provider, and offers two profile paths:
 
 - Import one existing Chrome or Brave profile with explicit consent. Only selected provider sign-in state is copied into a separate managed directory; the source remains unchanged.
 - Create a clean managed profile without requiring provider sign-in during setup.
 
-`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and ChatGPT, checks the installed CLI against the latest npm release, runs the same skills-and-daemon maintenance reconciler used by the verified new CLI during `tokenless upgrade`, checks each provider's visible sign-in status once, and reports the observed results without opening a sign-in handoff or retrying the check. Ordinary daemon startup uses the Tokenless Daemon API v1 OpenAPI contract: readiness comes from the same-home proof and exact package version on `/ready`, with API version recorded only in OpenAPI `info.version`. Job, action, and local recovery payloads keep internal schema IDs where persisted validation needs them; they are not negotiated across the CLI-daemon boundary. Setup may replace a daemon only when a verified same-home daemon reports a different package version. Foreign, different-home, and unverified listeners remain untouched. Shutdown verifies `/ready` for the same home immediately before sending the bearer token to `/control/shutdown`; Tokenless never kills a process merely because it occupies the configured loopback port. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
+`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and every provider whose registry stage is not `disabled`, checks the installed CLI against the latest npm release, runs the same skills-and-daemon maintenance reconciler used by the verified new CLI during `tokenless upgrade`, checks each enabled provider's visible sign-in status once, and reports the observed results without opening a sign-in handoff or retrying the check. Ordinary daemon startup uses the Tokenless Daemon API v1 OpenAPI contract: readiness comes from the same-home proof and exact package version on `/ready`, with API version recorded only in OpenAPI `info.version`. Job, action, and local recovery payloads keep internal schema IDs where persisted validation needs them; they are not negotiated across the CLI-daemon boundary. Setup may replace a daemon only when a verified same-home daemon reports a different package version. Foreign, different-home, and unverified listeners remain untouched. Shutdown verifies `/ready` for the same home immediately before sending the bearer token to `/control/shutdown`; Tokenless never kills a process merely because it occupies the configured loopback port. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
 
 Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. Import, reset, and deletion require explicit commands and consent.
 
@@ -54,7 +54,7 @@ Successful account observations retain only the visible account display name, su
 
 `profiles status` runs this provider-page inspection and persists the observation. `profiles list` is a registry read: it reports the last saved observation and never refreshes a provider page implicitly.
 
-Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT and Gemini may proceed in guest mode. Claude and Grok hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
+Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT and Gemini may proceed in guest mode; experimental Qwen may proceed through its guest route. Claude and Grok hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
 
 ## Provider architecture and session state machine
 
@@ -111,11 +111,11 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 
 ## Capability and Workspace strategy
 
-The current visible-action schema includes `capability.inspect`, `workspace.ensure`, and the Qwen-only `qwen.mode.inspect/select` actions. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every supported provider.
+The current visible-action schema includes `capability.inspect`, `workspace.ensure`, and the Qwen-only `qwen.mode.inspect/select` actions. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every enabled provider.
 
 Subscription labels are diagnostic evidence, not authorization. Runtime decisions prefer an enabled visible control, then an explicit disabled, upgrade, or plan-limit state, and otherwise report `unknown`. Missing selectors never prove that a subscription lacks a capability.
 
-Native Project creation remains unavailable until a complete fixture sequence proves its list, form, final mutation, and success postcondition. `workspace.ensure` therefore supports explicit conversation-scoped fallback. `auto` reports that fallback, `conversation` requires it, and `native` fails before prompt or file mutation. `--project-name` remains metadata unless the caller opts in with `--workspace-mode`.
+Native Project creation and reuse are capability-gated runtime behavior. Where the live provider matrix proves the native flow, `workspace.ensure` uses exact visible names, reports `created` or `reused`, and persists provider resource identity; otherwise `auto` can report conversation fallback only after stable visible native unavailability, `conversation` requires that strategy, and `native` fails before prompt or file mutation. `--project-name` remains metadata unless the caller opts in with `--workspace-mode`.
 
 Conversation fallback is scoped to one provider, managed profile, and task identifier. Before reusing a previous provider URL, the CLI queries the authenticated daemon and accepts only a successful same-scope job result that passes provider URL validation.
 
@@ -142,4 +142,4 @@ Managed jobs transition through daemon states such as `queued`, `claimed`, `runn
 
 ## Current delivery status
 
-The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, and job APIs are implemented. Provider parity, file-upload acceptance across all supported providers, and the public local API remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.
+The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, and job APIs are implemented. Provider parity, file-upload acceptance across enabled providers, and the public local API remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.

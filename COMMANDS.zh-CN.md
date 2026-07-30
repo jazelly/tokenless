@@ -41,7 +41,7 @@
 
 ## 通用约定
 
-### 支持的 providers
+### Provider 可选值
 
 Provider 可选值为：
 
@@ -130,7 +130,7 @@ tokenless install --browsers chrome,brave --json
 
 ### `tokenless setup`
 
-执行完整 onboarding：无条件 upsert 全局 Tokenless agent skills，通过共享 maintenance 模块将 daemon 对齐已安装 CLI 版本、选择浏览器、保存 provider preferences、创建或选择 managed profile，并对所有支持的 provider 各执行一次实时登录检查。
+执行完整 onboarding：无条件 upsert 全局 Tokenless agent skills，通过共享 maintenance 模块将 daemon 对齐已安装 CLI 版本、选择浏览器、保存 provider preferences、创建或选择 managed profile，并对所有 enabled providers 各执行一次实时登录检查。
 
 交互式 setup：
 
@@ -167,7 +167,7 @@ tokenless setup \
 - `--reimport-profile` 从指定来源替换已存在的 imported managed profile。
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
-`setup` 会检查所有支持的 providers，因此不接受 `--provider` 或 `--preferred-providers`。`--fresh` 不能与 profile import 或 re-import 同时使用。
+`setup` 会检查 registry stage 不为 `disabled` 的每一家 provider，包括 Qwen 这样的 experimental provider。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。该命令不接受 `--provider` 或 `--preferred-providers`。`--fresh` 不能与 profile import 或 re-import 同时使用。
 
 ### `tokenless doctor`
 
@@ -177,7 +177,7 @@ tokenless setup \
 tokenless doctor --json
 ```
 
-`doctor` 不会打开 provider 页面，也不会刷新认证状态。Provider readiness 来自 profile 中最后保存的检查结果。
+`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。Provider readiness 来自 profile 中最后保存的检查结果。`checks.providerReadiness.ok` 表示 configured providers 是否已有 recorded observations；`usableProviders` 列出缓存中可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
 
 主要选项：`--browser`、`--daemon-url`、`--home` 和 `--json`。
 
@@ -193,7 +193,7 @@ tokenless config --json
 
 ```bash
 tokenless config \
-  --preferred-providers chatgpt,claude,gemini,grok \
+  --preferred-providers chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
   --browser-visibility auto \
   --json
@@ -234,7 +234,7 @@ tokenless daemon stop --json
 
 ## Managed Profiles
 
-一个 managed profile 代表一个持久化的本地 browser identity。一个 profile 可以同时保存所有支持 providers 的 sessions。
+一个 managed profile 代表一个持久化的本地 browser identity。一个 profile 可以同时保存所有 enabled providers 的 sessions。
 
 ### `tokenless profiles discover`
 
@@ -352,6 +352,12 @@ tokenless run \
   --prompt "Review this proposal." \
   --json
 ```
+
+Provider 选择：
+
+- 显式 `--provider <provider>` 或 `TOKENLESS_PROVIDER` 会保持精确匹配，不会因为缓存可用性而被替换。
+- 当两者都省略时，Tokenless 会为 resolved profile 选择第一个 cached access 为 `guest` 或以 `signed_in_` 开头的 configured provider。
+- Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
 
 Prompt 输入：
 

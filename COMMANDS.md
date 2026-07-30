@@ -41,7 +41,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 
 ## Conventions
 
-### Supported providers
+### Provider values
 
 Provider values are:
 
@@ -130,7 +130,7 @@ This command does not configure a managed profile or check provider sign-in. Run
 
 ### `tokenless setup`
 
-Runs the complete onboarding flow: unconditionally upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version through the shared maintenance module, chooses a browser, saves provider preferences, creates or selects a managed profile, and performs one live sign-in check for every supported provider.
+Runs the complete onboarding flow: unconditionally upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version through the shared maintenance module, chooses a browser, saves provider preferences, creates or selects a managed profile, and performs one live sign-in check for every enabled provider.
 
 Interactive setup:
 
@@ -167,7 +167,7 @@ Main options:
 - `--reimport-profile` replaces an existing imported managed profile from a selected source.
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
-`setup` checks all supported providers; it does not accept `--provider` or `--preferred-providers`. `--fresh` cannot be combined with profile import or re-import.
+`setup` checks every provider whose registry stage is not `disabled`, including experimental providers such as Qwen. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. It does not accept `--provider` or `--preferred-providers`. `--fresh` cannot be combined with profile import or re-import.
 
 ### `tokenless doctor`
 
@@ -177,7 +177,7 @@ Performs a read-only health report over Node.js, installed skills, packaged runt
 tokenless doctor --json
 ```
 
-`doctor` does not open provider pages and does not refresh authentication. Provider readiness comes from the last saved profile observation.
+`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. Provider readiness comes from the last saved profile observation. `checks.providerReadiness.ok` reports whether configured providers have recorded observations; `usableProviders` lists the cached providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
 
 Main options: `--browser`, `--daemon-url`, `--home`, and `--json`.
 
@@ -193,7 +193,7 @@ Updates one or more persistent values when options are supplied:
 
 ```bash
 tokenless config \
-  --preferred-providers chatgpt,claude,gemini,grok \
+  --preferred-providers chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
   --browser-visibility auto \
   --json
@@ -234,7 +234,7 @@ The command discovers the actual endpoint from SQLite and does not kill an unver
 
 ## Managed Profiles
 
-A managed profile is one persistent local browser identity. One profile may hold sessions for all supported providers.
+A managed profile is one persistent local browser identity. One profile may hold sessions for all enabled providers.
 
 ### `tokenless profiles discover`
 
@@ -352,6 +352,12 @@ tokenless run \
   --prompt "Review this proposal." \
   --json
 ```
+
+Provider selection:
+
+- Explicit `--provider <provider>` or `TOKENLESS_PROVIDER` is exact and is not replaced based on cached usability.
+- When both are omitted, Tokenless chooses the first configured provider whose cached access for the resolved profile is `guest` or starts with `signed_in_`.
+- Unknown and sign-in-required observations are not usable for implicit routing. If no cached provider is usable, the CLI returns `provider_unavailable` with provider observation context before creating a daemon job.
 
 Prompt input:
 

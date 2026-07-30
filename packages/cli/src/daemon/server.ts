@@ -61,13 +61,16 @@ export async function serveHttp({
   const activate = () => {
     active = true
   }
+  const deactivate = () => {
+    active = false
+  }
   let closePromise: Promise<void> | undefined
   const close = () => {
     closePromise ??= closeServer(server, store, beforeClose)
     return closePromise
   }
   const server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, runtimeController, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -127,6 +130,7 @@ async function handleRequest(
   store: JobStore,
   closeDaemon: () => Promise<void>,
   isActive: () => boolean,
+  deactivate: () => void,
   runtimeController: BrowserRuntimeController | undefined,
   request: IncomingMessage,
   response: ServerResponse
@@ -296,6 +300,7 @@ async function handleRequest(
     }
 
     if (method === 'POST' && url.pathname === '/control/shutdown') {
+      deactivate()
       writeJson(response, 200, { ok: true, status: 'shutting_down', pid: process.pid })
       setImmediate(() => {
         void closeDaemon()

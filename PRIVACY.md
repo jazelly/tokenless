@@ -2,12 +2,12 @@
 
 Effective date: 2026-07-20
 
-Tokenless runs locally. It operates visible ChatGPT, Claude, Gemini, and Grok pages through managed Playwright browser profiles and an authenticated local daemon.
+Tokenless runs locally. It operates visible ChatGPT, Claude, Gemini, Grok, and experimental Qwen pages through managed Playwright browser profiles and an authenticated local daemon.
 
 ## Data handling
 
 - Managed browser profiles, provider sign-in state, configuration, job state, logs, and snapshots remain on the user's device.
-- With explicit consent, setup can copy supported ChatGPT, Claude, or Grok sign-in records from an existing Chrome or Brave profile into a separate Tokenless-managed profile. Gemini and shared Google sign-in data are not imported. Passwords, history, bookmarks, payment data, sync data, unrelated site data, and caches are excluded.
+- With explicit consent, setup can copy selected ChatGPT, Claude, Grok, or experimental Qwen sign-in records from an existing Chrome or Brave profile into a separate Tokenless-managed profile. Gemini and shared Google sign-in data are not imported. Passwords, history, bookmarks, payment data, sync data, unrelated site data, and caches are excluded.
 - Authentication values stay opaque to agents. Tokenless does not print, log, export, or send them to a Tokenless service.
 - Browser visibility settings (`auto`, `headed`, and `headless`) only change how the local managed browser is presented. They do not disable Chromium sandboxing, and they keep the same local daemon and managed profile flow.
 - Prompt text, selected files, and visible page actions are sent only to the provider chosen by the user. That provider's privacy, retention, and subscription terms apply.

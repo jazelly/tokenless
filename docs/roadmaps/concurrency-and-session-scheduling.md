@@ -18,7 +18,7 @@ The scheduler should allow useful concurrency:
 
 ## Current Behavior Audit
 
-As of 2026-07-25, the current source implements several important foundations:
+As of 2026-07-30, the current source implements several important foundations:
 
 - `tokenless run` is daemon-only; each invocation creates a local-daemon job before visible provider work begins.
 - Jobs, results, errors, blockers, checkpoints, timestamps, task metadata, backend, and profile scope are persisted in SQLite.
@@ -36,13 +36,13 @@ The current page and conversation behavior is more limited:
 - Each job navigates that reused page to its resolved target.
 - Without an explicit target or a working conversation mapping, the target is the provider home URL, which normally starts a new provider conversation in the same browser tab.
 - An explicit `--target-url` can target an existing conversation.
-- Conversation fallback intends to recover a previous URL from a successful same-provider, same-profile, same-task job. The current managed result contract does not persist the runner's canonical submitted conversation URL in a form that this lookup reads, and successful completion clears the checkpoint containing that URL. Automatic continuation therefore does not currently close the loop reliably.
+- Successful response-reading jobs with a task ID now persist validated provider/task conversation URLs, and native Workspace jobs can also persist project-scoped conversation mappings. `workspace-mode conversation` and native Workspace target resolution can reuse those exact same-provider, same-profile mappings when the provider capability is proven.
 - Reusing a `taskId` or idempotency key does not deduplicate job creation. Multiple concurrent callers can create multiple jobs that later submit duplicate prompts.
 - There is no project-, workspace-, conversation-, or page-scoped scheduler lane, no queue admission limit, and no user-visible queue position.
 
 Therefore the current answer is:
 
-> Concurrent calls are durably queued, and calls using the same profile run one at a time. They do not each open a new page. They reuse the first page, usually navigate it to the provider home, and therefore usually begin separate conversations sequentially. Exact automatic conversation reuse and duplicate suppression are incomplete.
+> Concurrent calls are durably queued, and calls using the same profile run one at a time. They do not each open a new page. They reuse the first page. Exact conversation reuse is available only through proven provider/profile mappings and explicit Workspace or conversation targeting, while duplicate suppression remains incomplete.
 
 ## Concurrency Identity
 
@@ -164,8 +164,8 @@ The daemon is the source of truth; browser processes and pages are recoverable e
 ### Phase 0: Document and Measure Current Semantics
 
 - Add machine-readable scheduler diagnostics for runner, profile, job, context, page, and queue state.
-- Add a durable final provider URL to successful managed job results.
-- Close the automatic conversation-continuation contract and prove it through a real visible session.
+- Expose persisted final provider URLs and mapping status in scheduler diagnostics.
+- Close the automatic conversation-continuation contract for explicit default/new/continue policies and prove it through a real visible session.
 - Document that `taskId` is grouping while `idempotencyKey` is deduplication.
 
 Exit: state output can explain exactly why a job is queued, which page/conversation it targets, and whether it will create or continue a conversation.

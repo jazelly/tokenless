@@ -537,6 +537,7 @@ test('doctor validates an existing managed profile registry without mutating hom
       },
     },
   }, null, 2)}\n`, { mode: 0o600 })
+  fs.writeFileSync(path.join(homeDir, 'daemon.token'), 'initialized-stopped-home-token\n', { mode: 0o600 })
   fs.writeFileSync(markerPath, 'unchanged\n', { mode: 0o600 })
   const before = snapshotTree(homeDir)
   try {
@@ -545,6 +546,13 @@ test('doctor validates an existing managed profile registry without mutating hom
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.checks.managedProfile.ok, true)
     assert.equal(payload.checks.managedProfile.slug, 'personal')
+    assert.equal(payload.checks.daemon.ok, true)
+    assert.equal(payload.checks.daemon.ready, false)
+    assert.equal(payload.checks.daemon.running, false)
+    assert.equal(payload.checks.daemon.status, 'stopped')
+    assert.equal(payload.checks.daemon.versionCompatible, null)
+    assert.equal(payload.checks.runner.ok, true)
+    assert.equal(payload.checks.runner.state, 'stopped')
     assert.equal(payload.checks.daemon.daemonLogPath, path.join(homeDir, 'daemon.log'))
     assert.equal(payload.checks.daemon.daemonLogExists, false)
     assert.deepEqual(snapshotTree(homeDir), before)

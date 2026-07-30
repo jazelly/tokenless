@@ -112,6 +112,7 @@ type CliError = Error & {
   statusLog?: StatusEvent[]
   usage?: CliUsageDetails
   exitCode?: number
+  context?: Record<string, any>
 }
 type StatusReporter = {
   events: StatusEvent[]
@@ -310,6 +311,7 @@ try {
   if (typeof cliError.status === 'string' && cliError.status) payload.status = cliError.status
   if (Array.isArray(cliError.statusLog)) payload.statusLog = cliError.statusLog
   if (cliError.usage) payload.error.usage = cliError.usage
+  if (cliError.context) payload.error.context = cliError.context
   if (args.json) console.log(JSON.stringify(payload, null, 2))
   else console.error(formatCliError(payload, cliError.usage))
   process.exit(cliError.exitCode ?? 1)
@@ -640,10 +642,12 @@ async function doctorRunnerStatus({
   homeDir,
   daemonUrl: configuredDaemonUrl,
   daemonReady,
+  daemonHealthy,
 }: {
   homeDir: string
   daemonUrl: string
   daemonReady: boolean
+  daemonHealthy: boolean
 }) {
   if (daemonReady) {
     try {
@@ -665,7 +669,7 @@ async function doctorRunnerStatus({
     }
   }
   return {
-    ok: false,
+    ok: daemonHealthy,
     ...stoppedRunnerStatus(),
     runtime: 'embedded',
     runtimeStatus: 'stopped',
@@ -1056,6 +1060,69 @@ function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string
   }
 }
 
+function resolveDaemonJobProvider({
+  args,
+  config,
+  profile,
+}: {
+  args: CliArgs
+  config: Awaited<ReturnType<typeof readTokenlessConfig>>
+  profile: ManagedProfileRecord
+}): ProviderId {
+  const explicit = args.provider || process.env.TOKENLESS_PROVIDER
+  if (explicit) return normalizeProvider(explicit)
+
+  const candidates = implicitProviderCandidates(config.preferredProviders)
+  const providers = providerObservationContext(candidates, profile)
+  const usable = providers.find((provider) => provider.usable)
+  if (usable) return usable.provider
+
+  const error = usageError(
+    'provider_unavailable',
+    `No configured provider is currently usable for profile '${profile.slug}'. Run "tokenless setup" or sign in to a provider, then rerun the command.`
+  )
+  error.context = {
+    profile: {
+      slug: profile.slug,
+      id: profile.id,
+    },
+    providers,
+    usableProviders: [],
+    nextAction: 'Run "tokenless setup" to refresh provider access observations, or pass --provider to target a provider explicitly.',
+  }
+  throw error
+}
+
+function implicitProviderCandidates(preferredProviders: readonly string[]): ProviderId[] {
+  const configured = preferredProviders.map(normalizeProvider)
+  if (configured.length > 0) return configured
+  return supportedVisibleProviderIds()
+}
+
+function providerObservationContext(
+  providers: readonly ProviderId[],
+  profile: ManagedProfileRecord,
+) {
+  return providers.map((provider) => {
+    const observed = profile.lastObservedAuth?.[provider]
+    const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
+    const usable = isUsableProviderAccess(access)
+    return {
+      provider,
+      observed: observed !== undefined,
+      usable,
+      auth: observed?.auth ?? 'unknown',
+      access,
+      checkedAt: observed?.checkedAt ?? null,
+      tier: observed?.account?.tier ?? null,
+    }
+  })
+}
+
+function isUsableProviderAccess(access: unknown): access is ProviderAccessClass {
+  return access === 'guest' || (typeof access === 'string' && access.startsWith('signed_in_'))
+}
+
 async function runCommand(args: CliArgs) {
   assertVisibleRunArguments(args)
   const prompt = await promptFromArgs(args)
@@ -1302,10 +1369,17 @@ async function executeDaemonJob({
   }
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
-  const provider = normalizeProvider(
-    args.provider || process.env.TOKENLESS_PROVIDER || config.preferredProviders[0] || defaultVisibleProviderId()
-  )
-  const providerControls = visibleAction ? {} : resolveProviderControls({ args, provider, action })
+  const explicitProvider = args.provider || process.env.TOKENLESS_PROVIDER
+  const explicitProviderId = explicitProvider ? normalizeProvider(explicitProvider) : undefined
+  const explicitProviderControls = explicitProviderId && !visibleAction
+    ? resolveProviderControls({ args, provider: explicitProviderId, action })
+    : undefined
+  const registry = new ManagedProfileRegistry(homeDir)
+  const profileForTarget = await registry.resolveProfile(args.profile)
+  const provider = explicitProviderId ?? resolveDaemonJobProvider({ args, config, profile: profileForTarget })
+  const providerControls = visibleAction
+    ? {}
+    : explicitProviderControls ?? resolveProviderControls({ args, provider, action })
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
   const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
   const taskId = deriveTaskId({
@@ -1319,7 +1393,6 @@ async function executeDaemonJob({
   const workspace = visibleAction || workspaceMode === undefined
     ? undefined
     : await workspaceEnsurePayloadFromArgs(args, workspaceMode)
-  const profileForTarget = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   let stagedAttachmentBundleId: string | undefined
   let daemonJobSubmissionStarted = false
@@ -2184,34 +2257,34 @@ async function recordSetupSweepResult({
     return
   }
 
-  const authObservation = authObservationFromManagedResult(result.waitResult?.result)
-  const observedAuth = authObservation?.state ?? null
-  if (authObservation) {
-    await registry.updateProviderStatus(profile.slug, {
-      provider,
-      auth: authObservation.state,
-      access: authObservation.access,
-      checkedAt: new Date().toISOString(),
-      ...(authObservation.state === 'authenticated' && authObservation.account
-        ? { account: authObservation.account }
-        : {}),
-    })
-  }
+  const authObservation = authObservationFromManagedResult(result.waitResult?.result) ?? {
+    state: 'unknown',
+    access: 'unknown',
+  } satisfies ManagedAuthObservation
+  await registry.updateProviderStatus(profile.slug, {
+    provider,
+    auth: authObservation.state,
+    access: authObservation.access,
+    checkedAt: new Date().toISOString(),
+    ...(authObservation.state === 'authenticated' && authObservation.account
+      ? { account: authObservation.account }
+      : {}),
+  })
 
   const status = result.waitResult?.status ?? 'unknown'
   const blocker = result.waitResult?.blocker
-  const auth = observedAuth ?? 'unknown'
+  const auth = authObservation.state
   readiness[provider] = {
     provider,
     classification: auth,
     auth,
-    access: authObservation?.access ?? 'unknown',
+    access: authObservation.access,
     status,
     jobId: result.job.job_id,
     ...(blocker ? { blocker } : {}),
   }
-  if (auth === 'authenticated') presenter.success(`${provider} is authenticated (${authObservation?.access ?? 'signed_in_unknown'}).`)
-  else presenter.note(`${provider} sign-in status: ${auth}; access: ${authObservation?.access ?? 'unknown'}.`)
+  if (auth === 'authenticated') presenter.success(`${provider} is authenticated (${authObservation.access}).`)
+  else presenter.note(`${provider} sign-in status: ${auth}; access: ${authObservation.access}.`)
 }
 
 function recordSetupReadinessFailure({
@@ -2720,11 +2793,14 @@ async function doctorCommand(args: CliArgs) {
     const runningVersion = typeof ready.body?.version === 'string' ? ready.body.version : null
     const expectedMajor = semanticVersionMajor(expectedVersion)
     const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
-    const versionCompatible = runningVersion === expectedVersion
+    const versionCompatible = runningVersion === null ? null : runningVersion === expectedVersion
     if (!ready.ok) {
+      const normallyStopped = ready.code === 'daemon_unavailable'
       daemon = {
-        ok: false,
+        ok: normallyStopped,
         ready: false,
+        running: false,
+        status: normallyStopped ? 'stopped' : 'unavailable',
         url: ready.url,
         daemonLogPath,
         daemonLogExists,
@@ -2740,6 +2816,8 @@ async function doctorCommand(args: CliArgs) {
       daemon = {
         ok: true,
         ready: true,
+        running: true,
+        status: 'running',
         url: ready.url,
         daemonLogPath,
         daemonLogExists,
@@ -2771,19 +2849,23 @@ async function doctorCommand(args: CliArgs) {
         imported: Boolean(profile.import),
       }
       const providers = Array.isArray(config.preferredProviders) ? config.preferredProviders : []
-      const statuses = Object.fromEntries(providers.map((provider) => {
-        const observed = profile.lastObservedAuth?.[provider as ProviderId]
-        const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
-        return [provider, {
-          ok: access === 'guest' || access.startsWith('signed_in_'),
-          auth: observed?.auth ?? 'unknown',
-          access,
-          tier: observed?.account?.tier ?? null,
-          checkedAt: observed?.checkedAt ?? null,
-        }]
-      }))
+      const observations = providerObservationContext(providers.map(normalizeProvider), profile)
+      const statuses = Object.fromEntries(observations.map((observation) => [observation.provider, {
+        ok: observation.observed,
+        observed: observation.observed,
+        usable: observation.usable,
+        auth: observation.auth,
+        access: observation.access,
+        tier: observation.tier,
+        checkedAt: observation.checkedAt,
+      }]))
+      const usableProviders = observations
+        .filter((observation) => observation.usable)
+        .map((observation) => observation.provider)
       providerReadiness = {
-        ok: providers.length > 0 && Object.values(statuses).every((status: any) => status.ok === true),
+        ok: providers.length > 0 && observations.every((observation) => observation.observed),
+        usable: usableProviders.length > 0,
+        usableProviders,
         providers: statuses,
       }
     }
@@ -2791,7 +2873,12 @@ async function doctorCommand(args: CliArgs) {
     managedProfile = { ok: false, message: error instanceof Error ? error.message : String(error) }
     providerReadiness = { ok: false, providers: {} }
   }
-  const runner = await doctorRunnerStatus({ homeDir, daemonUrl: daemonStatusUrl, daemonReady: daemon.ready === true })
+  const runner = await doctorRunnerStatus({
+    homeDir,
+    daemonUrl: daemonStatusUrl,
+    daemonReady: daemon.ready === true,
+    daemonHealthy: daemon.ok === true,
+  })
   const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split('.').map(Number)
   const nodeOk = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13)
   const checks = {

@@ -4,20 +4,20 @@ on:
   pull_request:
     branches:
       - dev
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ts-daemon-conformance-${{ github.ref }}-${{ matrix.node-version }}
-  cancel-in-progress: true
 
 jobs:
   conformance:
     name: Node ${{ matrix.node-version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    concurrency:
+      group: ts-daemon-conformance-${{ github.ref }}-${{ matrix.node-version }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:

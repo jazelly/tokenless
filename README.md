@@ -13,68 +13,68 @@
 
 ## Overview
 
-Tokenless is a local tool for anyone who uses AI and wants to reduce token usage. Its intelligent routing mechanism sends suitable parts of an agent's requests to web-based AI services, reducing token consumption on the agent side. Tokenless currently supports the web versions of ChatGPT, Claude, Grok, and Gemini, and can use multiple services together. Qwen / 千问 is available as an experimental guest-session provider.
+Tokenless is a local CLI that lets agents use visible AI websites through managed Playwright browser profiles. It reduces agent-side token use by routing suitable work to web sessions while keeping provider credentials, browser state, daemon state, and job results on the user's machine.
 
-## Why We Built Tokenless
+| Provider | Stage | Signed-out use |
+| --- | --- | --- |
+| ChatGPT | Supported | Guest supported |
+| Claude | Supported | Sign-in required |
+| Gemini | Supported | Guest supported |
+| Grok | Supported | Sign-in required |
+| Qwen / 千问 | Experimental | Guest supported |
 
-As AI agents are used in more scenarios, they consume an increasing number of tokens and costs continue to rise. Web-based AI services and the APIs used by agents draw from separate usage pools. Routing part of the workload to web-based services can therefore reduce overall AI usage costs without requiring additional API quota. We built Tokenless around this idea.
+## Install and Setup
 
-## Key Features
+```bash
+npm install --global tokenless@latest
+tokenless setup
+tokenless doctor --json
+```
 
-- **Intelligent task routing**: Customizable Skill Prompts let users define which types of tasks should be handled by which AI service, enabling flexible and controlled routing strategies.
-- **Multiple AI services**: Tokenless supports the web versions of ChatGPT, Claude, Grok, and Gemini. Qwen / 千问 is available as an experimental guest-session provider.
-- **Fully local operation**: All automation runs locally, with no third-party relays and no collection of user data.
-- **Crash-tolerant local jobs**: The CLI starts the daemon only when needed, discovers its actual loopback port from SQLite, restores leased/checkpointed work after restart, and lets addressed agents drain each unseen outcome summary once while retaining full job results.
-- **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity where the real-provider capability matrix proves them. Qwen's experimental baseline also exposes its provider-specific modes and Auto/Thinking/Fast reasoning control; cross-process continuation is unavailable in the selected Qwen and Gemini guest profiles because reopening the mapped URL does not restore prior-turn context.
-- **Explicit guest and sign-in routing**: ChatGPT and Gemini can run through visible guest sessions, as can the experimental Qwen integration. Claude and Grok hand the existing job to the user for sign-in before Tokenless enters task content.
+`tokenless setup` installs the required agent skills, reconciles the local daemon to the installed CLI version, chooses a supported Chromium browser, creates or imports a managed profile, and checks all enabled providers once. The clean path is:
 
-## Technology Stack
+```bash
+tokenless setup --fresh --json
+```
 
-- **Automation layer**: Playwright, used to operate each AI provider's web interface
-- **Command-line tool**: A TypeScript CLI that serves as the user-facing entry point
-- **Local daemon**: A TypeScript daemon responsible for persistent local execution and state management
+Fresh setup creates or reuses `default`, selects every provider whose registry stage is not `disabled`, including Qwen, and reports sign-in state once. It does not open a sign-in handoff.
 
-## Command-Line Short Options
+## Run
 
-Profile and provider selection use distinct, case-sensitive short options:
+```bash
+tokenless run \
+  --profile default \
+  --provider chatgpt \
+  --prompt "Review this proposal." \
+  --json
+```
 
-- `-P <slug>` is short for `--profile <slug>`.
-- `-p <provider>` is short for `--provider <provider>`.
+Without an explicit provider, Tokenless uses the first configured provider with a cached guest or signed-in observation. If none is usable, it fails before creating a job. An explicit provider is never silently replaced.
 
-For example, `tokenless profiles status -P work -p claude --json` checks Claude for the `work` profile.
+## Current Capabilities
 
-For the complete public command inventory, see the [Tokenless CLI Command Reference](COMMANDS.md).
-
-## Experimental Workspace Handling
-
-`--project-name` remains task metadata by default. Add `--workspace-mode auto` to request a provider-neutral Workspace. Claude and Grok prefer a visible native Project; Tokenless creates an exact name when absent, reuses one exact visible match, and fails closed on duplicates. `auto` falls back to a conversation only when the provider visibly reports stable native unavailability; transient UI, navigation, network, blocker, or selector failures remain errors. Use `--workspace-mode native` to reject fallback, or `--workspace-mode conversation` to require the conversation strategy. Cross-process restoration remains capability-gated.
-
-Native Workspace results distinguish `created`, `reused`, and `fallback`, include the canonical resource URL and provider/profile scope, and report how requested Project instructions were handled. Tokenless persists Project identity by provider resource ID and stores exact task conversation mappings in SQLite for later CLI processes.
-
-Run `tokenless provider-action --action capability.inspect --provider <provider> --json` to inspect the visible, subscription-dependent capability state. These contracts remain experimental until the live free, paid, unknown-plan, and managed-account matrix is complete.
+- Tokenless runs locally through an authenticated loopback daemon and persistent managed browser profiles.
+- Runtime actions use visible provider pages and visible postconditions. Unsupported or unproven behavior fails closed.
+- ChatGPT and Gemini can run through visible guest sessions. Experimental Qwen can also run through its guest path. Claude and Grok require sign-in before task content is entered.
+- File upload, citations, model or effort controls, Workspace handling, and conversation continuation are provider/profile-specific runtime capabilities, not blanket promises. Inspect them with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
+- `--project-name` is task metadata unless `--workspace-mode` is present. Workspace behavior is experimental and reports native `created`/`reused` or conversation `fallback` when proven.
 
 ## Experimental Qwen Modes
 
-Qwen-specific composer modes use the optional `qwen.mode` capability instead of pretending they are provider-neutral model or effort choices. Inspect the current visible modes with `qwen.mode.inspect`, or select one for a run:
+Qwen-specific composer modes use the optional `qwen.mode` capability. Inspect current visible modes with `qwen.mode.inspect`, or select one for a run:
 
 ```bash
 tokenless run \
   --provider qwen \
   --qwen-mode "Deep Research" \
   --qwen-mode-variant "Advanced" \
-  --prompt "Research this topic and return a cited report." \
+  --prompt "Proceed with a standalone report on this topic; use official sources and do not compare competitors." \
   --json
 ```
 
-Current visible mode availability is discovered at runtime. Disabled entries remain disabled, and exact selection must produce a visible Qwen mode postcondition before the prompt is submitted. Qwen's Auto, Thinking, and Fast selector remains the provider-neutral `effort.choice` capability and uses `--effort`.
+This experimental capability proves exact mode selection and the first correlated visible response. It does not yet claim Qwen's complete multi-turn final-report lifecycle. Auto, Thinking, and Fast remain effort choices selected with `--effort`.
 
-## Implementation
-
-- A TypeScript CLI provides the user-facing interface, while an on-demand local TypeScript daemon manages durable SQLite state. The configured URL is a preferred loopback origin; the actual port may advance when occupied and is recorded in SQLite.
-- Routing is implemented through Skill Prompts. Users can define rules that assign different types of tasks to different AI services.
-- Playwright operates provider-visible controls and reports runtime-visible postconditions. File uploads distinguish selected files from visibly accepted attachments, while Workspace requests expose whether the provider used a native resource or a conversation fallback.
-- One typed provider registry records identity, navigation, guest, account-tier, selector, and capability policy. Every provider is a concrete `BaseProvider` subclass, while a provider-session state machine turns visible page evidence into guest, account, handoff, wait, or terminal outcomes.
-- The entire workflow runs locally, without passing through third-party relay services or collecting user activity data.
+See [CLI Commands](COMMANDS.md), [Privacy](PRIVACY.md), and [Architecture](docs/architecture.md) for details.
 
 ## Current Status
 

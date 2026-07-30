@@ -12,6 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const protocol = 'tokenless.e2e-browser-inspection.v1'
 const pollMs = 50
+const daemonStopTimeoutMs = 60_000
 
 export async function createLiveBrowserInspectionSession(options) {
   const homeDir = path.resolve(requiredString(options.homeDir, 'homeDir'))
@@ -89,14 +90,15 @@ export async function createLiveBrowserInspectionSession(options) {
     },
     async close() {
       const canceledJobs = cancelRunJobs({ homeDir, daemonUrl, env, jobPrefix })
+      await Promise.allSettled([...observers].map((browser) => browser.close()))
+      observers.clear()
       const result = runCliSync([
         'daemon', 'stop',
         '--home', homeDir,
         ...(daemonUrl ? ['--daemon-url', daemonUrl] : []),
+        '--timeout-ms', String(daemonStopTimeoutMs),
         '--json',
       ], env)
-      await Promise.allSettled([...observers].map((browser) => browser.close()))
-      observers.clear()
       await fs.rm(barrierRoot, { recursive: true, force: true }).catch(() => undefined)
       assertCliSuccess(result, 'stop the E2E inspection daemon')
       for (const canceled of canceledJobs) {
@@ -235,6 +237,7 @@ async function stopExistingDaemons({ homeDir, daemonUrl }) {
       'daemon', 'stop',
       '--home', homeDir,
       ...(target ? ['--daemon-url', target] : []),
+      '--timeout-ms', String(daemonStopTimeoutMs),
       '--json',
     ])
     if (result.status !== 0) {
@@ -281,7 +284,7 @@ function runCliSync(args, env = process.env) {
     cwd: root,
     env,
     encoding: 'utf8',
-    timeout: 60_000,
+    timeout: daemonStopTimeoutMs + 10_000,
   })
   return {
     status: result.status,

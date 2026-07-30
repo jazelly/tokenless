@@ -13,68 +13,68 @@
 
 ## 项目简介
 
-Tokenless 是一款面向所有 AI 用户、帮助降低 token 消耗的本地工具。它通过智能分流机制，将 Agent 请求中适合的部分转发到网页版 AI 服务处理，从而降低 Agent 侧的 token 消耗。项目目前支持 ChatGPT、Claude、Grok 和 Gemini 四家网页版 AI 服务，并支持在多个服务之间混合使用；Qwen / 千问现作为实验性 Guest-session provider 提供。
+Tokenless 是一个本地 CLI，让 Agent 通过 managed Playwright browser profiles 使用可见的 AI 网页服务。它把适合的工作分流到 web session，从而降低 Agent 侧 token 消耗；provider credentials、browser state、daemon state 和 job results 都保留在用户本机。
 
-## 为什么开发
+| Provider | 阶段 | 未登录使用 |
+| --- | --- | --- |
+| ChatGPT | Supported | 支持 Guest |
+| Claude | Supported | 需要登录 |
+| Gemini | Supported | 支持 Guest |
+| Grok | Supported | 需要登录 |
+| Qwen / 千问 | Experimental | 支持 Guest |
 
-随着 AI Agent 的应用场景不断增多，消耗的 token 也越来越多，成本压力随之上升。网页版 AI 服务与 Agent 使用的 API 消耗池相互独立，将部分任务分流到网页版处理，可以在不依赖额外 API 额度的情况下降低整体 AI 使用成本。基于这个思路，我们开发了 Tokenless。
+## 安装与初始化
 
-## 项目特色
+```bash
+npm install --global tokenless@latest
+tokenless setup
+tokenless doctor --json
+```
 
-- **智能任务分流**：通过可自定义的 Skill Prompt，用户可以自行设定“什么类型的任务适合交给哪个 AI 处理”，实现灵活、可控的分流策略。
-- **多 AI 服务支持**：目前支持 ChatGPT、Claude、Grok、Gemini 四家网页版 AI 服务；Qwen / 千问现作为实验性 Guest-session provider 提供。
-- **完全本地运行**：所有自动化流程均在本地执行，不经第三方转发，也不收集用户数据。
-- **可恢复的本地 Jobs**：CLI 只在需要时启动 daemon，从 SQLite 发现其实际 loopback 端口，在重启后恢复 lease/checkpoint work，并允许指定 agent 对每个未见 outcome 摘要只 drain 一次，同时保留完整 job result。
-- **Provider-neutral 可见工作流**：在真实 provider capability matrix 已证明的范围内统一完成提示词、完整性校验后的文件选择和对话延续。Qwen 的实验性 baseline 还会暴露其 provider-specific modes 以及 Auto/Thinking/Fast reasoning control；当前选定的 Qwen 与 Gemini Guest profile 在重新打开 mapped URL 后都无法恢复上一轮上下文，因此 cross-process continuation 明确保持 unavailable。
-- **明确的 Guest 与登录路由**：ChatGPT 和 Gemini 可通过可见 Guest session 执行，实验性 Qwen 集成也支持该路径；Claude 和 Grok 会在 Tokenless 输入任务内容前，将同一个 job handoff 给用户登录。
+`tokenless setup` 会安装所需 agent skills，将本地 daemon 对齐到已安装 CLI 版本，选择 supported Chromium browser，创建或导入 managed profile，并对所有 enabled providers 各检查一次。Clean path 为：
 
-## 技术栈
+```bash
+tokenless setup --fresh --json
+```
 
-- **自动化操作层**：Playwright，用于操作各 AI 服务商的网页版界面
-- **命令行工具**：基于 TypeScript 实现的 CLI，作为用户交互入口
-- **本地守护进程**：基于 TypeScript 实现的 Daemon，负责本地状态的持久化
+Fresh setup 会创建或复用 `default` profile，选择 registry stage 不为 `disabled` 的每一家 provider（包括 Qwen），并只报告一次 sign-in state。它不会打开 sign-in handoff。
 
-## 命令行短选项
+## 执行
 
-Profile 和 provider 使用不同且区分大小写的短选项：
+```bash
+tokenless run \
+  --profile default \
+  --provider chatgpt \
+  --prompt "Review this proposal." \
+  --json
+```
 
-- `-P <slug>` 是 `--profile <slug>` 的短形式。
-- `-p <provider>` 是 `--provider <provider>` 的短形式。
+没有显式 provider 时，Tokenless 会选择第一个已有 Guest 或登录缓存记录的 configured provider。如果没有可用 provider，它会在创建 job 前失败。显式 provider 不会被静默替换。
 
-例如，`tokenless profiles status -P work -p claude --json` 会检查 `work` profile 中的 Claude 状态。
+## 当前能力
 
-完整的公开命令清单请参阅 [Tokenless CLI 命令参考](COMMANDS.zh-CN.md)。
-
-## 实验性 Workspace 处理
-
-默认情况下，`--project-name` 仍然只作为 task metadata。显式添加 `--workspace-mode auto` 后，Tokenless 才会请求 provider-neutral Workspace。Claude 和 Grok 会优先使用可见的原生 Project：不存在时按精确名称创建，只有一个精确可见匹配时复用，重名时 fail closed。只有 provider 明确显示原生 Project 稳定不可用时，`auto` 才会 fallback 到 conversation；临时 UI、导航、网络、blocker 或 selector 故障仍然返回错误。使用 `--workspace-mode native` 可禁止 fallback；使用 `--workspace-mode conversation` 可强制使用 conversation strategy。跨进程恢复仍由 capability gate 决定。
-
-原生 Workspace 结果会明确区分 `created`、`reused` 和 `fallback`，包含 canonical resource URL、provider/profile scope，并报告所请求 Project instructions 的处理结果。Tokenless 会按 provider resource ID 将 Project identity 持久化，并在 SQLite 中保存精确的 task conversation mapping，供后续 CLI 进程复用。
-
-运行 `tokenless provider-action --action capability.inspect --provider <provider> --json` 可以检查当前可见 UI 中由 subscription 决定的 capability 状态。在 free、paid、unknown-plan 和 managed-account 的 live matrix 完成前，这些 contract 保持 experimental。
+- Tokenless 通过 authenticated loopback daemon 和 persistent managed browser profiles 在本地运行。
+- Runtime actions 只操作可见 provider 页面和可见 postconditions。Unsupported 或尚未证明的行为会 fail closed。
+- ChatGPT 和 Gemini 可以通过可见 Guest sessions 运行。Experimental Qwen 也可通过其 Guest path 运行。Claude 和 Grok 会在输入 task content 前要求登录。
+- File upload、citations、model 或 effort controls、Workspace handling 和 conversation continuation 都是 provider/profile-specific runtime capabilities，不是 blanket promises。可用 `tokenless provider-action --action capability.inspect --provider <provider> --json` 检查。
+- 默认情况下，`--project-name` 只是 task metadata；只有传入 `--workspace-mode` 时才请求 Workspace。Workspace behavior 仍为 experimental，并在已证明时报告 native `created`/`reused` 或 conversation `fallback`。
 
 ## 实验性 Qwen Modes
 
-Qwen 专属的 composer modes 通过 optional `qwen.mode` capability 暴露，不会伪装成 provider-neutral model 或 effort choice。可以使用 `qwen.mode.inspect` 检查当前可见 modes，也可以在一次 run 中选择 mode：
+Qwen 专属的 composer modes 通过 optional `qwen.mode` capability 暴露。可以使用 `qwen.mode.inspect` 检查当前可见 modes，也可以在一次 run 中选择 mode：
 
 ```bash
 tokenless run \
   --provider qwen \
   --qwen-mode "Deep Research" \
   --qwen-mode-variant "Advanced" \
-  --prompt "Research this topic and return a cited report." \
+  --prompt "Proceed with a standalone report on this topic; use official sources and do not compare competitors." \
   --json
 ```
 
-当前 mode availability 会在运行时从可见 UI 发现。Disabled entries 会保持 disabled；只有精确选择产生可见的 Qwen mode postcondition 后，Tokenless 才会提交 prompt。Qwen 的 Auto、Thinking 和 Fast selector 仍归入 provider-neutral `effort.choice` capability，并使用 `--effort`。
+该 experimental capability 证明 exact mode selection 和第一条关联的可见 response；目前尚未声称完成 Qwen 的完整 multi-turn final-report lifecycle。Auto、Thinking 和 Fast 仍是通过 `--effort` 选择的 effort choices。
 
-## 实现要点
-
-- 前端通过 TypeScript 编写的 CLI 暴露给用户使用，本机按需运行的 TypeScript Daemon 负责管理持久化 SQLite 状态。配置 URL 是首选 loopback origin；端口被占用时实际端口可以顺延，并记录到 SQLite。
-- 分流逻辑基于 Skill Prompt 实现，用户可以自定义规则，指定不同类型的任务应由哪个 AI 服务处理。
-- Playwright 只操作 provider 的可见控件并报告运行时可见的 postcondition。文件上传会区分“已选择”与“provider 已通过可见附件证明接受”，Workspace 请求也会明确返回原生资源或 conversation fallback。
-- 单一 typed provider registry 统一记录 identity、navigation、guest、账号 tier、selector 和 capability 策略。每家 provider 都是具体的 `BaseProvider` 子类；独立的 provider-session state machine 根据可见页面证据裁决 guest、account、handoff、wait 或 terminal 结果。
-- 整个流程运行在本地，不经过第三方服务转发，也不收集用户的使用数据。
+详细信息见 [CLI 命令](COMMANDS.zh-CN.md)、[隐私政策](PRIVACY.md)和[架构](docs/architecture.md)。
 
 ## 补充说明
 

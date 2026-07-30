@@ -29,7 +29,7 @@ As of 2026-07-30:
 | Response reading | Experimental, available | Exact correlated marker returned |
 | Same-task continuation | Unavailable in the selected guest profile | The shared `/c/guest` route does not restore the prior visible response after navigation or reopen |
 | Conversation workspace fallback | Experimental, available when the composer is visible | Provider-neutral conversation capability |
-| Provider-specific mode selection | Experimental, available | Built CLI exact selection with visible Deep Research Advanced postcondition |
+| Provider-specific mode selection | Implemented, release-gate completion pending | Built CLI and read-only CDP observer proved Deep Research Advanced selection; the product returned a correlated clarification response with durable success, while the strengthened observer prompt assertion awaits rerun after the visible guest plan limit clears |
 | Effort selection | Experimental, available | Built CLI and read-only CDP observer proved Auto/Thinking/Fast inspection, exact Thinking selection, and Auto restore |
 | Model selection | Unknown | No proven exact-selection postcondition |
 | File and input-image upload | Unknown | No proven visible acceptance postcondition |
@@ -92,7 +92,7 @@ A provider does not become generally supported until it closes the baseline:
 - safe model or mode preservation, with verified selection only where proven; and
 - real integration or browser E2E coverage through the built product.
 
-File upload, native Project creation, generated-media lifecycles, deep research, agent mode, and other advanced controls remain capability-gated. Qwen Deep Research mode selection is provider-specific and does not make its full long-running research lifecycle provider-neutral. A provider may ship the baseline while an advanced capability remains `unknown` or `unavailable`.
+File upload, native Project creation, generated-media lifecycles, deep research final-report orchestration, agent mode, and other advanced controls remain capability-gated. Qwen Deep Research mode selection is provider-specific and proves the first correlated visible response, which may be a clarification phase; it does not make the full multi-turn research lifecycle provider-neutral. A provider may ship the baseline while an advanced capability remains `unknown` or `unavailable`.
 
 ## Delivery Phases
 
