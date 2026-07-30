@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-07-28
+Status: active product direction | Last reviewed: 2026-07-29
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 

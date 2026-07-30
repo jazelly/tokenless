@@ -85,7 +85,7 @@ export class UnsupportedImageGenerationCapability implements ImageGenerationCapa
 function unsupportedImageGeneration() {
   return providerCapabilityFailure(
     'image_generation_unavailable',
-    'Visible image generation is not available without fixture-proven provider evidence.',
+    'Visible image generation is not available without real-provider acceptance evidence.',
     { retryable: false },
   )
 }

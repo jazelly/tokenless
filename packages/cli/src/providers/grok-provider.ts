@@ -6,6 +6,7 @@ import {
 } from './provider-definition.js'
 import { GrokEntitlementAccountInspector } from './grok-account-inspector.js'
 import { GrokChoiceAvailability } from './grok-choice-availability.js'
+import { NativeProjectWorkspaceCapability } from './capabilities/native-project-workspace.js'
 
 export class GrokProvider extends BaseProvider<'grok'> {
   constructor() {
@@ -20,7 +21,12 @@ export class GrokProvider extends BaseProvider<'grok'> {
       navigation: Object.freeze({
         homeUrl: 'https://grok.com/',
         origins: Object.freeze(['https://grok.com']),
-        trustedSignInOrigins: Object.freeze([]),
+        trustedSignInOrigins: Object.freeze([
+          Object.freeze({
+            origin: 'https://accounts.x.ai',
+            pathPrefixes: Object.freeze(['/check-login']),
+          }),
+        ]),
       }),
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['grok.com', 'x.ai']),
@@ -87,8 +93,47 @@ export class GrokProvider extends BaseProvider<'grok'> {
       ]),
       busySelectors: Object.freeze([]),
       choiceAvailability: new GrokChoiceAvailability(),
-      capabilities: providerCapabilities(),
+      capabilities: providerCapabilities({ nativeWorkspace: true }),
     })
-    super(provider)
+    super(provider, {
+      workspace: new NativeProjectWorkspaceCapability(provider, {
+        listUrl: 'https://grok.com/',
+        projectPath: /^\/(?:project|projects)\/(?<resourceId>[A-Za-z0-9_-]+)(?:\/|$)/u,
+        projectLinkSelectors: Object.freeze([
+          'a[href*="/project/"]',
+          'a[href*="/projects/"]',
+        ]),
+        createTriggerSelectors: Object.freeze([
+          'button:has-text("New Project")',
+          'button:has-text("Create Project")',
+          'a:has-text("New Project")',
+        ]),
+        nameInputSelectors: Object.freeze([
+          'input[aria-label="Project name"]',
+        ]),
+        instructionsInputSelectors: Object.freeze([
+          'textarea[aria-label="Project Instructions"]',
+          'textarea[placeholder*="instructions" i]',
+        ]),
+        createSubmitSelectors: Object.freeze([
+          '[role="dialog"][aria-label="New Project"] button:has-text("Next")',
+          '[role="dialog"] button:has-text("Create Project")',
+          '[role="dialog"] button:has-text("Create")',
+        ]),
+        instructionOpenSelectors: Object.freeze([
+          'button:has-text("Project Instructions")',
+          'button:has-text("Add instructions")',
+          'button:has-text("Edit instructions")',
+        ]),
+        instructionSaveSelectors: Object.freeze([
+          '[role="dialog"] button:has-text("Save")',
+          'button:has-text("Save instructions")',
+        ]),
+        stableUnavailableSelectors: Object.freeze([
+          'text=/projects (?:are )?(?:not available|unavailable) on your plan/i',
+          'text=/upgrade to (?:create|use) projects/i',
+        ]),
+      }),
+    })
   }
 }

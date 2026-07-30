@@ -10,6 +10,7 @@ import {
   VISIBLE_ACTIONS,
   ManagedProfileRegistry,
   createManagedPlaywrightJobRequest,
+  createE2EInspectionJobId,
   discoverChromiumProfiles,
   getProviderDescriptorById,
   importChromeProfile,
@@ -50,6 +51,8 @@ import {
   readTokenlessConfig,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
+  resolveProviderConversation,
+  resolveProviderMapping,
   resumeDaemonJob,
   semanticVersionMajor,
   stageVisibleAttachments,
@@ -1322,6 +1325,7 @@ async function executeDaemonJob({
           explicitTargetUrl: args.targetUrl,
           workspaceMode,
           taskId,
+          projectName,
           homeDir,
           daemonUrl: configuredDaemonUrl,
           daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
@@ -1467,7 +1471,9 @@ async function executeManagedPlaywrightJob({
     daemonPid: daemon.pid,
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
   })
-  await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
+  if (args.daemonUrl === undefined) {
+    await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
+  }
   const runner = await embeddedRunnerStatus({ homeDir, daemonUrl: actualDaemonUrl })
   statusReporter.report({
     event: 'playwright_runner_ready',
@@ -1602,14 +1608,14 @@ function managedVisibleActions({
     actions.push({ requestId, action: VISIBLE_ACTIONS.SNAPSHOT_SANITIZED, payload: {} })
     return actions
   }
+  if (workspace !== undefined) {
+    actions.push({ requestId: `${requestId}:workspace`, action: VISIBLE_ACTIONS.WORKSPACE_ENSURE, payload: workspace })
+  }
   if (providerControls.model !== undefined) {
     actions.push({ requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: providerControls.model } })
   }
   if (providerControls.effort !== undefined) {
     actions.push({ requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_SELECT, payload: { label: providerControls.effort } })
-  }
-  if (workspace !== undefined) {
-    actions.push({ requestId: `${requestId}:workspace`, action: VISIBLE_ACTIONS.WORKSPACE_ENSURE, payload: workspace })
   }
   if (attachments !== undefined && attachments.length > 0) {
     actions.push({ requestId: `${requestId}:files`, action: VISIBLE_ACTIONS.FILE_UPLOAD, payload: { attachments } })
@@ -1634,6 +1640,7 @@ async function managedProviderTargetUrl({
   explicitTargetUrl,
   workspaceMode,
   taskId,
+  projectName,
   homeDir,
   daemonUrl,
   daemonStartTimeoutMs,
@@ -1643,6 +1650,7 @@ async function managedProviderTargetUrl({
   explicitTargetUrl: unknown
   workspaceMode?: string | undefined
   taskId?: string | null | undefined
+  projectName?: string | undefined
   homeDir: string
   daemonUrl: string
   daemonStartTimeoutMs?: number | undefined
@@ -1655,16 +1663,29 @@ async function managedProviderTargetUrl({
     parsed.hash = ''
     return parsed.toString()
   }
-  if ((workspaceMode === 'auto' || workspaceMode === 'conversation') && taskId) {
+  if ((workspaceMode === 'auto' || workspaceMode === 'native') && projectName) {
     const daemon = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
     const mapped = await mappedDaemonTarget({
       homeDir,
       daemonUrl: daemon.url,
       provider,
       profileId,
-      taskId,
+      taskId: taskId ?? undefined,
+      projectName,
     })
     if (mapped) return mapped
+  }
+  if (workspaceMode === 'conversation' && taskId) {
+    const daemon = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
+    const resolved = await resolveProviderConversation({
+      homeDir,
+      daemonUrl: daemon.url,
+      provider,
+      profileId,
+      taskId,
+    })
+    const candidate = resolved.mapping?.canonical_url
+    if (candidate) return providerWakeUrl(provider, candidate)
   }
   const candidate = requireProviderHomeUrl(provider)
   const parsed = new URL(candidate)
@@ -1682,7 +1703,7 @@ function managedProviderExplicitTargetUrl(provider: string, targetUrl: unknown) 
 }
 
 function managedPlaywrightJobId() {
-  return `tlp_${randomUUID()}`
+  return createE2EInspectionJobId() ?? `tlp_${randomUUID()}`
 }
 
 function visibleRequestId(value: string) {
@@ -2826,36 +2847,34 @@ async function mappedDaemonTarget({
   provider,
   profileId,
   taskId,
+  projectName,
 }: {
   homeDir: string
   daemonUrl: string
   provider: string
-  profileId?: string | undefined
+  profileId: string
   taskId?: string | undefined
+  projectName: string
 }) {
-  if (!taskId) return null
-  const jobs = await listDaemonJobs({
+  const resolved = await resolveProviderMapping({
     homeDir,
     daemonUrl,
     provider,
-    taskId,
-    executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
-    ...(profileId === undefined ? {} : { profileId }),
-    limit: 1000,
+    profileId,
+    projectName,
+    ...(taskId ? { taskId } : {}),
   })
-  for (const job of jobs) {
-    if (job.provider !== provider || daemonTaskId(job) !== taskId) continue
-    if (profileId !== undefined && job.profile_id !== profileId) continue
-    if (job.status !== 'succeeded') continue
-    const candidate = resultUrl(job.result_json)
-    if (!candidate) continue
-    try {
-      return providerWakeUrl(provider, candidate)
-    } catch {
-      // Never open an untrusted URL recovered from job metadata.
-    }
+  const candidate = resolved.mapping?.conversation?.canonical_url ??
+    resolved.mapping?.project.canonical_url
+  if (!candidate) return null
+  try {
+    return providerWakeUrl(provider, candidate)
+  } catch {
+    throw usageError(
+      'provider_mapping_invalid',
+      'The exact provider Project mapping contains an unauthorized target URL.',
+    )
   }
-  return null
 }
 
 function publicDaemonJobState(job: Record<string, any>) {

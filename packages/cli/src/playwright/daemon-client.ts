@@ -23,6 +23,7 @@ export type ManagedDaemonClient = {
     profileId?: string | undefined
     provider?: string | undefined
     action?: string | undefined
+    jobIdPrefix?: string | undefined
     signal?: AbortSignal | undefined
   }): Promise<{ job: DaemonClaimedJob | null }>
   getJob(options: JobOptions): Promise<DaemonJob>
@@ -32,4 +33,26 @@ export type ManagedDaemonClient = {
   parkJob(options: ClaimedJobOptions & { blocker: unknown, checkpoint: unknown }): Promise<DaemonJob>
   renewJobClaim(options: ClaimedJobOptions): Promise<DaemonJob>
   completeJob(options: ClaimedJobOptions & { result?: unknown, error?: unknown }): Promise<DaemonJob>
+  upsertProviderProject(options: ClaimedJobOptions & {
+    provider: string
+    profileId: string
+    resourceId: string
+    name: string
+    canonicalUrl: string
+    visibleProof: string
+    created: boolean
+  }): Promise<unknown>
+  upsertProviderConversation(options: ClaimedJobOptions & {
+    provider: string
+    profileId: string
+    projectResourceId: string
+    taskId: string
+    canonicalUrl: string
+  }): Promise<unknown>
+  upsertProviderTaskConversation(options: ClaimedJobOptions & {
+    provider: string
+    profileId: string
+    taskId: string
+    canonicalUrl: string
+  }): Promise<unknown>
 }

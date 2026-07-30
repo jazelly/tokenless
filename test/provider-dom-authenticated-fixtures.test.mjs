@@ -252,7 +252,25 @@ test('Qwen guest fixtures preserve provenance-bound composer and completed-respo
   const browser = await chromium.launch({ headless: true })
   const page = await browser.newPage()
   try {
-    for (const scenario of ['composer-idle', 'response-complete']) {
+    const cases = [
+      {
+        scenario: 'composer-idle',
+        observedOn: '2026-07-26',
+        source: 'unauthenticated-user-visible-in-app-browser-session',
+      },
+      {
+        scenario: 'response-complete',
+        observedOn: '2026-07-26',
+        source: 'unauthenticated-user-visible-in-app-browser-session',
+      },
+      {
+        scenario: 'studio-response-complete',
+        observedOn: '2026-07-29',
+        source: 'managed-visible-provider-session',
+      },
+    ]
+    for (const fixtureCase of cases) {
+      const { scenario } = fixtureCase
       const [htmlBytes, provenanceText] = await Promise.all([
         fs.readFile(path.join(accountRoot, `${scenario}.html`)),
         fs.readFile(path.join(accountRoot, `${scenario}.provenance.json`), 'utf8'),
@@ -265,8 +283,8 @@ test('Qwen guest fixtures preserve provenance-bound composer and completed-respo
       assert.equal(provenance.accountState, 'signed-out-guest')
       assert.deepEqual(provenance.observedPlan, { status: 'unknown', label: null })
       assert.equal(provenance.scenario, scenario)
-      assert.equal(provenance.observedOn, '2026-07-26')
-      assert.equal(provenance.source, 'unauthenticated-user-visible-in-app-browser-session')
+      assert.equal(provenance.observedOn, fixtureCase.observedOn)
+      assert.equal(provenance.source, fixtureCase.source)
       assert.equal(provenance.artifactKind, 'redacted-reduced-dom')
       assert.equal(provenance.containsProviderJavaScript, false)
       assert.equal(provenance.containsSyntheticBehavior, false)

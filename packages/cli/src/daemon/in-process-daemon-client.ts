@@ -15,6 +15,7 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
         {
           provider: options.provider,
           action: options.action,
+          job_id_prefix: options.jobIdPrefix,
         },
         options.executionBackend,
         options.profileId ?? null
@@ -41,6 +42,40 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
         options.claimToken,
         hasResult ? { result_json: options.result } : { error_json: options.error }
       ))
+    }),
+    upsertProviderProject: (options) => claimRequest(options, () => {
+      assertCurrentClaim(store, options.jobId, options.claimToken)
+      return store.upsertProviderProject({
+        provider: options.provider,
+        profile_id: options.profileId,
+        resource_id: options.resourceId,
+        name: options.name,
+        canonical_url: options.canonicalUrl,
+        visible_proof: options.visibleProof,
+        job_id: options.jobId,
+        created: options.created,
+      })
+    }),
+    upsertProviderConversation: (options) => claimRequest(options, () => {
+      assertCurrentClaim(store, options.jobId, options.claimToken)
+      return store.upsertProviderConversation({
+        provider: options.provider,
+        profile_id: options.profileId,
+        project_resource_id: options.projectResourceId,
+        task_id: options.taskId,
+        canonical_url: options.canonicalUrl,
+        job_id: options.jobId,
+      })
+    }),
+    upsertProviderTaskConversation: (options) => claimRequest(options, () => {
+      assertCurrentClaim(store, options.jobId, options.claimToken)
+      return store.upsertProviderTaskConversation({
+        provider: options.provider,
+        profile_id: options.profileId,
+        task_id: options.taskId,
+        canonical_url: options.canonicalUrl,
+        job_id: options.jobId,
+      })
     }),
   }
 }
@@ -139,4 +174,11 @@ function daemonStoreError(error: unknown) {
 
 function daemonRequestAbortedError() {
   return tokenlessError('daemon_request_timeout', 'Tokenless daemon request timed out or was aborted.', { retryable: true })
+}
+
+function assertCurrentClaim(store: JobStore, jobId: string, claimToken: string) {
+  const job = store.getJob(jobId)
+  if (job.claim_token !== claimToken || (job.status !== 'claimed' && job.status !== 'running' && job.status !== 'waiting_for_user')) {
+    throw tokenlessError('daemon_claim_rejected', 'The daemon job claim is not active.', { retryable: false })
+  }
 }

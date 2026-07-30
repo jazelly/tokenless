@@ -1,10 +1,11 @@
 import { VISIBLE_ACTIONS } from '../contracts.js'
 import { tokenlessError } from '../../playwright/errors.js'
-import { waitForVisibleLocator } from '../dom-locators.js'
+import { countVisibleLocators, firstVisibleLocator, waitForEnabledLocator, waitForVisibleLocator } from '../dom-locators.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderDomDefinition } from '../provider-definition.js'
 
 const PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS = 15_000
+const PROMPT_SUBMISSION_ACCEPTANCE_TIMEOUT_MS = 10_000
 
 export type PromptAction =
   | typeof VISIBLE_ACTIONS.PROMPT_INPUT
@@ -47,14 +48,21 @@ export async function inputDomPrompt(provider: ProviderDomDefinition, page: Page
   )
 }
 
-export async function submitDomPrompt(provider: ProviderDomDefinition, page: Page) {
-  const button = await waitForVisibleLocator(page, provider.submitSelectors, PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS)
+export async function submitDomPrompt(
+  provider: ProviderDomDefinition,
+  page: Page,
+) {
+  const button = await waitForEnabledLocator(page, provider.submitSelectors, PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS)
   if (!button) {
     throw tokenlessError(
-      'prompt_submit_visibility_timeout',
-      `Timed out after ${PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS}ms waiting for a visible prompt submit control.`,
+      'prompt_submit_actionability_timeout',
+      `Timed out after ${PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS}ms waiting for an enabled visible prompt submit control.`,
       { retryable: true },
     )
+  }
+  const baseline = {
+    answerCount: await countVisibleLocators(page, provider.answerSelectors),
+    url: page.url(),
   }
   try {
     await button.click({ timeout: 5000 })
@@ -65,10 +73,39 @@ export async function submitDomPrompt(provider: ProviderDomDefinition, page: Pag
       { retryable: true, cause: error },
     )
   }
-  return {
-    visible: true as const,
-    submissionProof: 'visible-submit-clicked',
-  }
+  const deadline = Date.now() + PROMPT_SUBMISSION_ACCEPTANCE_TIMEOUT_MS
+  do {
+    if (await submissionTransitionIsVisible(provider, page, button, baseline)) {
+      return {
+        visible: true as const,
+        submissionProof: 'visible-submission-transition',
+      }
+    }
+    if (Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(100, Math.max(1, deadline - Date.now())))
+    }
+  } while (Date.now() < deadline)
+  throw tokenlessError(
+    'prompt_submit_not_accepted',
+    `No visible provider submission transition followed the click within ${PROMPT_SUBMISSION_ACCEPTANCE_TIMEOUT_MS}ms.`,
+    { retryable: true },
+  )
+}
+
+async function submissionTransitionIsVisible(
+  provider: ProviderDomDefinition,
+  page: Page,
+  clickedButton: Locator,
+  baseline: { answerCount: number, url: string },
+) {
+  if (page.url() !== baseline.url) return true
+  if (await countVisibleLocators(page, provider.answerSelectors) > baseline.answerCount) return true
+  if (await countVisibleLocators(page, provider.busySelectors) > 0) return true
+  if (!await clickedButton.isVisible({ timeout: 50 }).catch(() => false)) return true
+  if (!await clickedButton.isEnabled({ timeout: 50 }).catch(() => false)) return true
+  const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)
+  if (!composer || await composerIsVisiblyEmpty(composer)) return true
+  return false
 }
 
 async function composerHasExpectedPresence(locator: Locator, expectEmpty: boolean) {
@@ -83,6 +120,21 @@ async function composerHasExpectedPresence(locator: Locator, expectEmpty: boolea
   } catch {
     return false
   }
+}
+
+async function composerIsVisiblyEmpty(locator: Locator) {
+  return await locator.evaluate((element) => {
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      return normalizedPromptText(element.value).length === 0
+    }
+    const clone = element.cloneNode(true) as Element
+    clone.querySelectorAll('[data-slate-placeholder="true"], [data-slate-zero-width]').forEach((node) => node.remove())
+    return normalizedPromptText(clone.textContent ?? '').length === 0
+
+    function normalizedPromptText(value: string) {
+      return value.replace(/[\s\u00a0\u200b-\u200d\u2060\ufeff]/gu, '')
+    }
+  }).catch(() => false)
 }
 
 async function writePrompt(page: Page, composer: Locator, text: string) {

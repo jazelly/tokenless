@@ -1,5 +1,5 @@
 import { providerCapabilityFailure } from '../capability-set.js'
-import { firstVisibleLocator } from '../dom-locators.js'
+import { firstVisibleLocator, waitForVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import { tokenlessError } from '../../playwright/errors.js'
 import { VISIBLE_ACTIONS } from '../contracts.js'
@@ -29,11 +29,11 @@ export class ConversationWorkspaceCapability implements ProviderActionCapability
     if (request.payload.mode === 'native') {
       throw providerCapabilityFailure(
         'workspace_native_unavailable',
-        'Native workspace creation is unavailable from fixture-proven visible provider controls.',
+        'Native workspace creation is unavailable for this provider.',
         { retryable: false },
       )
     }
-    return await ensureWorkspace(page, this.provider, request.payload)
+    return await ensureWorkspace(page, this.provider, request.payload, _context.profileId)
   }
 
   async inspect(page: Page): Promise<ProviderCapabilityInspection> {
@@ -74,13 +74,14 @@ async function ensureWorkspace(
   page: Page,
   provider: ProviderDomDefinition,
   payload: WorkspaceEnsurePayload,
+  profileId: string,
 ): Promise<WorkspaceEnsureResult> {
   const name = payload.name
   const mode = payload.mode
   if (typeof name !== 'string' || (mode !== 'auto' && mode !== 'conversation')) {
     throw new Error('Validated request payload unexpectedly lacked workspace fields.')
   }
-  const composer = await firstVisibleLocator(page, provider.composerSelectors)
+  const composer = await waitForVisibleLocator(page, provider.composerSelectors, 10_000)
   if (!composer) {
     throw tokenlessError(
       'workspace_conversation_unavailable',
@@ -97,7 +98,7 @@ async function ensureWorkspace(
     availability: 'unavailable' as const,
     canonicalUrl: null,
     visibleProof: null,
-    reason: 'no_fixture_proven_native_workspace_creation_closure',
+    reason: 'no_real_provider_native_workspace_creation_closure',
     updateInstructions: {
       availability: 'unavailable' as const,
       visibleProof: null,
@@ -107,18 +108,28 @@ async function ensureWorkspace(
   return {
     mode: 'conversation' as const,
     requestedMode,
+    resolvedMode: 'conversation' as const,
     name,
+    scope: {
+      provider: provider.id,
+      profileId,
+    },
     identity: {
       provider: provider.id,
       name,
+      resourceId: null,
       canonicalUrl,
     },
     resource: {
       kind: 'conversation' as const,
       native: false as const,
+      disposition: 'fallback' as const,
+      id: null,
+      canonicalUrl,
     },
     native,
     updateInstructions: native.updateInstructions,
+    instructionOutcome: payload.instructions === undefined ? 'not_requested' as const : 'unavailable' as const,
     availability: 'available' as const,
     visibleProof: 'conversation-composer-visible',
     reason: mode === 'auto' ? 'auto_fell_back_to_conversation' : null,

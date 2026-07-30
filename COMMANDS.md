@@ -53,7 +53,7 @@ grok
 qwen
 ```
 
-ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问 is experimental: its guest-session prompt, response, and same-task continuation baseline is proven, while unproven optional capabilities remain unavailable or unknown.
+ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问 is experimental: its guest-session prompt submission and response reading are proven, while cross-process continuation and unproven optional capabilities remain unavailable or unknown.
 
 Runtime browser values are `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, and `brave`. Local profile import currently supports only Chrome and Brave.
 
@@ -386,9 +386,11 @@ Execution:
 
 Workspace modes:
 
-- `auto` prefers a proven native provider workspace and otherwise returns an explicit conversation fallback.
-- `native` requires a native workspace and fails instead of falling back.
-- `conversation` requires conversation-scoped continuity.
+- `auto` prefers a visible native Project for Claude and Grok. It falls back only when the provider visibly reports stable native unavailability; transient UI, navigation, network, blocker, and selector failures remain errors.
+- `native` requires exact native Project creation or reuse and fails instead of falling back. Duplicate exact visible names fail closed.
+- `conversation` requires the conversation-scoped strategy; cross-process restoration is supported only where the real-provider capability matrix proves it.
+- Native results report `created` or `reused`, canonical provider resource identity, provider/profile scope, and the instruction outcome. Conversation results report `fallback`.
+- Project and task conversation targets are persisted as exact SQLite mappings rather than recovered by scanning historical job results.
 
 ### `tokenless replay`
 

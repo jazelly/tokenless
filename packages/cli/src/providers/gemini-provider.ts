@@ -73,6 +73,7 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
         '[role="menuitem"]:has-text("Upload files")',
       ]),
       modelControlSelectors: Object.freeze([
+        'button[data-test-id="bard-mode-menu-button"]',
         'button[aria-label*="model" i]',
         'button:has-text("Gemini")',
       ]),

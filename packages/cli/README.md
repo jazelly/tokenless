@@ -84,9 +84,11 @@ The shared Playwright action contract covers:
 - prompt submission, correlated response reading, and visible citations;
 - fail-closed navigation checks and sanitized structural snapshots.
 
-Four-provider parity and end-to-end upload acceptance are still being completed. Qwen's experimental baseline covers guest prompt submission, response reading, and same-task conversation continuation; its unproven optional capabilities fail explicitly as unavailable or unknown.
+Four-provider parity and end-to-end upload acceptance are still being completed. Qwen's experimental baseline covers guest prompt submission and response reading. Cross-process continuation is explicitly unavailable in the selected Qwen and Gemini guest profiles because reopening a mapped URL does not restore prior-turn context; other unproven optional capabilities fail as unavailable or unknown.
 
-`--project-name` continues to provide task identity only unless `--workspace-mode` is present. `auto` prefers a fixture-proven native Project and otherwise reports a conversation fallback, `native` fails when native creation is unverified or unavailable, and `conversation` requires the conversation strategy. Repeated `auto` or `conversation` runs with the same provider, profile, and task identity reuse only a trusted successful conversation URL.
+`--project-name` continues to provide task identity only unless `--workspace-mode` is present. For Claude and Grok, `auto` prefers a visible native Project and falls back only after stable visible evidence that native Projects are unavailable. Transient UI, navigation, network, blocker, and selector failures do not trigger fallback. `native` requires exact native creation or reuse, and `conversation` requires the conversation strategy.
+
+Native Project lookup uses an exact visible name, creates when absent, reuses exactly one match, and fails on ambiguity. Creation applies requested Project instructions; reuse never silently overwrites them. The result reports `mode`, `requestedMode`, `resolvedMode`, provider/profile `scope`, stable resource identity, canonical URL, `created|reused|fallback` disposition, and instruction outcome. SQLite mappings use provider resource IDs and exact task IDs, so later CLI processes do not scan historical result payloads.
 
 Inspect all current provider capabilities with:
 

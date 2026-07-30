@@ -82,7 +82,16 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   }
   requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'], 'invalid_playwright_job_request')
   if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
-    throw tokenlessError('invalid_playwright_job_protocol', 'Managed Playwright job protocol version is not supported.')
+    throw tokenlessError(
+      'invalid_playwright_job_protocol',
+      `Managed Playwright job protocol '${String(input.protocol)}' is not supported; expected '${MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID}'.`,
+      {
+        details: {
+          expected: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+          received: typeof input.protocol === 'string' ? input.protocol : null,
+        },
+      },
+    )
   }
   const provider = getProviderInstanceById(input.provider)
   if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')

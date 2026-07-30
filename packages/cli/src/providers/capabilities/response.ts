@@ -1,31 +1,38 @@
 import { VISIBLE_ACTIONS, validateProviderActionPreparation } from '../contracts.js'
 import { countVisibleLocators, latestLocator } from '../dom-locators.js'
+import { createHash } from 'node:crypto'
 import type { Page } from 'playwright-core'
 import type { ProviderDomDefinition } from '../provider-definition.js'
 import type { ProviderActionObservation, ProviderActionPreparation } from '../contracts.js'
 import type { VisibleCitation } from '../../playwright/actions.js'
 
-export const RESPONSE_CURSOR_SCHEMA = 'tokenless.provider.response-cursor.v1'
+export const RESPONSE_CURSOR_SCHEMA = 'tokenless.provider.response-cursor.v2'
 
 export type ResponseCursorObservation = {
   answerCount: number
+  latestAnswerFingerprint: string | null
   busy: boolean
 }
 
 export async function prepareDomResponseCursor(provider: ProviderDomDefinition, page: Page): Promise<ProviderActionPreparation<typeof VISIBLE_ACTIONS.RESPONSE_READ>> {
-  return createResponsePreparation(provider, await countVisibleLocators(page, provider.answerSelectors))
+  const observation = await observeDomResponseCursor(provider, page)
+  return createResponsePreparation(provider, observation.answerCount, observation.latestAnswerFingerprint)
 }
 
 export function legacyDomResponsePreparationFromBaseline(
   provider: ProviderDomDefinition,
   baseline: number,
 ): ProviderActionPreparation<typeof VISIBLE_ACTIONS.RESPONSE_READ> {
-  return createResponsePreparation(provider, validateBaseline(baseline))
+  return createResponsePreparation(provider, validateBaseline(baseline), null)
 }
 
 export async function observeDomResponseCursor(provider: ProviderDomDefinition, page: Page): Promise<ResponseCursorObservation> {
+  const latestAnswer = await latestLocator(page, provider.answerSelectors)
   return {
     answerCount: await countVisibleLocators(page, provider.answerSelectors),
+    latestAnswerFingerprint: latestAnswer
+      ? fingerprintAnswer(await latestAnswer.innerText({ timeout: 1000 }).catch(() => ''))
+      : null,
     busy: await countVisibleLocators(page, provider.busySelectors) > 0,
   }
 }
@@ -37,8 +44,14 @@ export async function observeDomResponseAction(
 ): Promise<ProviderActionObservation> {
   const baseline = validateDomResponsePreparation(provider, preparation)
   const observation = await observeDomResponseCursor(provider, page)
+  const hasNewAnswer = observation.answerCount > baseline.answerCount ||
+    (
+      baseline.latestAnswerFingerprint !== null &&
+      observation.latestAnswerFingerprint !== null &&
+      observation.latestAnswerFingerprint !== baseline.latestAnswerFingerprint
+    )
   return {
-    state: observation.answerCount > baseline && !observation.busy ? 'ready' as const : 'pending' as const,
+    state: hasNewAnswer && !observation.busy ? 'ready' as const : 'pending' as const,
   }
 }
 
@@ -52,10 +65,13 @@ export function validateDomResponsePreparation(provider: ProviderDomDefinition, 
     action: VISIBLE_ACTIONS.RESPONSE_READ,
     schema: RESPONSE_CURSOR_SCHEMA,
   })
-  if (!isPlainRecord(validated.value) || !hasExactKeys(validated.value, ['answerCount'])) {
+  if (!isPlainRecord(validated.value) || !hasExactKeys(validated.value, ['answerCount', 'latestAnswerFingerprint'])) {
     throw new Error('Response cursor value is invalid.')
   }
-  return validateBaseline(validated.value.answerCount)
+  return {
+    answerCount: validateBaseline(validated.value.answerCount),
+    latestAnswerFingerprint: validateFingerprint(validated.value.latestAnswerFingerprint),
+  }
 }
 
 export async function readDomResponse(provider: ProviderDomDefinition, page: Page) {
@@ -82,6 +98,7 @@ export async function readDomResponse(provider: ProviderDomDefinition, page: Pag
 function createResponsePreparation(
   provider: ProviderDomDefinition,
   answerCount: number,
+  latestAnswerFingerprint: string | null,
 ): ProviderActionPreparation<typeof VISIBLE_ACTIONS.RESPONSE_READ> {
   return Object.freeze({
     provider: provider.id,
@@ -89,6 +106,7 @@ function createResponsePreparation(
     schema: RESPONSE_CURSOR_SCHEMA,
     value: Object.freeze({
       answerCount: validateBaseline(answerCount),
+      latestAnswerFingerprint: validateFingerprint(latestAnswerFingerprint),
     }),
   })
 }
@@ -100,6 +118,19 @@ function sanitizeVisibleText(text: string) {
 function validateBaseline(value: unknown) {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new Error('Response cursor baseline is invalid.')
+  }
+  return value
+}
+
+function fingerprintAnswer(text: string) {
+  const normalized = sanitizeVisibleText(text)
+  return normalized ? createHash('sha256').update(normalized).digest('hex') : null
+}
+
+function validateFingerprint(value: unknown) {
+  if (value === null) return null
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new Error('Response cursor fingerprint is invalid.')
   }
   return value
 }

@@ -1,4 +1,6 @@
 import { chromium } from 'playwright-core'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import {
   normalizeBrowserVisibility,
   resolveEffectiveBrowserVisibility,
@@ -40,6 +42,7 @@ export type PersistentContextManagerOptions = {
 export type ManagedBrowserLaunchTarget = {
   id: string
   executablePath?: string | undefined
+  e2eInspection?: boolean | undefined
 }
 
 export type PersistentContextManagerTimers = {
@@ -162,6 +165,11 @@ export class PersistentContextManager {
       }
       if (this.contexts.size >= this.maxContexts) {
         throw tokenlessError('playwright_context_limit_reached', 'Too many managed browser profiles are active.', { retryable: true })
+      }
+      if (this.browser.e2eInspection) {
+        await fs.unlink(path.join(profile.directory, 'DevToolsActivePort')).catch((error) => {
+          if (!isMissingFileError(error)) throw error
+        })
       }
       const browserContext = await this.launcher(profile.directory, managedBrowserLaunchOptions(this.browser, requestedVisibility))
       if (this.shuttingDown) {
@@ -316,6 +324,12 @@ export function managedBrowserLaunchOptions(
       '--disable-sync',
       '--no-first-run',
       '--no-default-browser-check',
+      ...(normalized.e2eInspection
+        ? [
+            '--remote-debugging-address=127.0.0.1',
+            '--remote-debugging-port=0',
+          ]
+        : []),
     ],
   }
 }
@@ -338,7 +352,11 @@ function normalizeManagedBrowserLaunchTarget(
       `Managed Playwright requires an executable path for browser '${id}'.`
     )
   }
-  return executablePath ? { id, executablePath } : { id }
+  return {
+    id,
+    ...(executablePath ? { executablePath } : {}),
+    ...(browser?.e2eInspection ? { e2eInspection: true } : {}),
+  }
 }
 
 function normalizeRunWithProfileArgs<T>(
@@ -396,4 +414,8 @@ function unrefTimer(handle: unknown) {
 export function isBrowserClosedError(error: unknown) {
   if (!(error instanceof Error)) return false
   return /browser.*closed|context.*closed|target.*closed|page.*closed/i.test(error.message)
+}
+
+function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }

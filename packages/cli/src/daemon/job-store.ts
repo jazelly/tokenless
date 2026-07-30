@@ -99,6 +99,38 @@ export type ListJobsInput = {
 export type ClaimNextInput = {
   provider?: string | undefined
   action?: string | undefined
+  job_id_prefix?: string | undefined
+}
+
+export type ProviderProjectMapping = {
+  provider: string
+  profile_id: string
+  resource_id: string
+  name: string
+  canonical_url: string
+  first_observed_at: string
+  last_observed_at: string
+  last_visible_proof: string
+  creation_job_id: string | null
+}
+
+export type ProviderConversationMapping = {
+  provider: string
+  profile_id: string
+  project_resource_id: string
+  task_id: string
+  canonical_url: string
+  proved_job_id: string
+  observed_at: string
+}
+
+export type ProviderTaskConversationMapping = {
+  provider: string
+  profile_id: string
+  task_id: string
+  canonical_url: string
+  proved_job_id: string
+  observed_at: string
 }
 
 const DATABASE_FILE_NAME = 'tokenless.sqlite3'
@@ -402,6 +434,212 @@ export class JobStore {
     return this.getJobWithoutRecovery(jobId)
   }
 
+  upsertProviderProject(input: {
+    provider: string
+    profile_id: string
+    resource_id: string
+    name: string
+    canonical_url: string
+    visible_proof: string
+    job_id: string
+    created: boolean
+  }): ProviderProjectMapping {
+    const provider = mappingText(input.provider, 'provider', 128)
+    const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
+    const resourceId = mappingText(input.resource_id, 'resource_id', 256)
+    const name = mappingText(input.name, 'name', 256)
+    const canonicalUrl = canonicalMappingUrl(input.canonical_url)
+    const visibleProof = mappingText(input.visible_proof, 'visible_proof', 512)
+    const jobId = mappingText(input.job_id, 'job_id', 256)
+    this.getJob(jobId)
+    const now = nowRfc3339()
+    this.run(
+      `INSERT INTO provider_projects (
+        provider, profile_id, resource_id, name, canonical_url,
+        first_observed_at, last_observed_at, last_visible_proof, creation_job_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider, profile_id, resource_id) DO UPDATE SET
+        name = excluded.name,
+        canonical_url = excluded.canonical_url,
+        last_observed_at = excluded.last_observed_at,
+        last_visible_proof = excluded.last_visible_proof,
+        creation_job_id = COALESCE(provider_projects.creation_job_id, excluded.creation_job_id)`,
+      provider,
+      profileId,
+      resourceId,
+      name,
+      canonicalUrl,
+      now,
+      now,
+      visibleProof,
+      input.created ? jobId : null,
+    )
+    return this.getProviderProject(provider, profileId, resourceId)
+  }
+
+  upsertProviderConversation(input: {
+    provider: string
+    profile_id: string
+    project_resource_id: string
+    task_id: string
+    canonical_url: string
+    job_id: string
+  }): ProviderConversationMapping {
+    const provider = mappingText(input.provider, 'provider', 128)
+    const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
+    const projectResourceId = mappingText(input.project_resource_id, 'project_resource_id', 256)
+    const taskId = mappingText(input.task_id, 'task_id', 256)
+    const canonicalUrl = canonicalMappingUrl(input.canonical_url)
+    const jobId = mappingText(input.job_id, 'job_id', 256)
+    this.getProviderProject(provider, profileId, projectResourceId)
+    this.getJob(jobId)
+    const now = nowRfc3339()
+    this.run(
+      `INSERT INTO provider_conversations (
+        provider, profile_id, project_resource_id, task_id,
+        canonical_url, proved_job_id, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider, profile_id, project_resource_id, task_id) DO UPDATE SET
+        canonical_url = excluded.canonical_url,
+        proved_job_id = excluded.proved_job_id,
+        observed_at = excluded.observed_at`,
+      provider,
+      profileId,
+      projectResourceId,
+      taskId,
+      canonicalUrl,
+      jobId,
+      now,
+    )
+    return this.getProviderConversation(provider, profileId, projectResourceId, taskId)
+  }
+
+  upsertProviderTaskConversation(input: {
+    provider: string
+    profile_id: string
+    task_id: string
+    canonical_url: string
+    job_id: string
+  }): ProviderTaskConversationMapping {
+    const provider = mappingText(input.provider, 'provider', 128)
+    const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
+    const taskId = mappingText(input.task_id, 'task_id', 256)
+    const canonicalUrl = canonicalMappingUrl(input.canonical_url)
+    const jobId = mappingText(input.job_id, 'job_id', 256)
+    this.getJob(jobId)
+    const now = nowRfc3339()
+    this.run(
+      `INSERT INTO provider_task_conversations (
+        provider, profile_id, task_id, canonical_url, proved_job_id, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider, profile_id, task_id) DO UPDATE SET
+        canonical_url = excluded.canonical_url,
+        proved_job_id = excluded.proved_job_id,
+        observed_at = excluded.observed_at`,
+      provider,
+      profileId,
+      taskId,
+      canonicalUrl,
+      jobId,
+      now,
+    )
+    return this.resolveProviderTaskConversation({ provider, profile_id: profileId, task_id: taskId }) as ProviderTaskConversationMapping
+  }
+
+  resolveProviderTaskConversation(input: {
+    provider: string
+    profile_id: string
+    task_id: string
+  }): ProviderTaskConversationMapping | null {
+    const provider = mappingText(input.provider, 'provider', 128)
+    const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
+    const taskId = mappingText(input.task_id, 'task_id', 256)
+    const row = this.get(
+      `SELECT provider, profile_id, task_id, canonical_url, proved_job_id, observed_at
+       FROM provider_task_conversations
+       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
+      provider,
+      profileId,
+      taskId,
+    )
+    return row ? rowToProviderTaskConversation(row) : null
+  }
+
+  resolveProviderMapping(input: {
+    provider: string
+    profile_id: string
+    project_name: string
+    task_id?: string | null | undefined
+  }): {
+    project: ProviderProjectMapping
+    conversation: ProviderConversationMapping | null
+  } | null {
+    const provider = mappingText(input.provider, 'provider', 128)
+    const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
+    const projectName = mappingText(input.project_name, 'project_name', 256)
+    const projects = this.all(
+      `SELECT
+        provider, profile_id, resource_id, name, canonical_url,
+        first_observed_at, last_observed_at, last_visible_proof, creation_job_id
+       FROM provider_projects
+       WHERE provider = ? AND profile_id = ? AND name = ?
+       ORDER BY resource_id`,
+      provider,
+      profileId,
+      projectName,
+    ).map(rowToProviderProject)
+    if (projects.length === 0) return null
+    if (projects.length > 1) {
+      throw invalidInput('provider project mapping is ambiguous for the exact visible name')
+    }
+    const project = projects[0] as ProviderProjectMapping
+    const taskId = input.task_id === undefined || input.task_id === null
+      ? null
+      : mappingText(input.task_id, 'task_id', 256)
+    return {
+      project,
+      conversation: taskId === null
+        ? null
+        : this.findProviderConversation(provider, profileId, project.resource_id, taskId),
+    }
+  }
+
+  private getProviderProject(provider: string, profileId: string, resourceId: string) {
+    const row = this.get(
+      `SELECT
+        provider, profile_id, resource_id, name, canonical_url,
+        first_observed_at, last_observed_at, last_visible_proof, creation_job_id
+       FROM provider_projects
+       WHERE provider = ? AND profile_id = ? AND resource_id = ?`,
+      provider,
+      profileId,
+      resourceId,
+    )
+    if (!row) throw invalidInput('provider project mapping was not found')
+    return rowToProviderProject(row)
+  }
+
+  private getProviderConversation(provider: string, profileId: string, projectResourceId: string, taskId: string) {
+    const mapping = this.findProviderConversation(provider, profileId, projectResourceId, taskId)
+    if (!mapping) throw invalidInput('provider conversation mapping was not found')
+    return mapping
+  }
+
+  private findProviderConversation(provider: string, profileId: string, projectResourceId: string, taskId: string) {
+    const row = this.get(
+      `SELECT
+        provider, profile_id, project_resource_id, task_id,
+        canonical_url, proved_job_id, observed_at
+       FROM provider_conversations
+       WHERE provider = ? AND profile_id = ? AND project_resource_id = ? AND task_id = ?`,
+      provider,
+      profileId,
+      projectResourceId,
+      taskId,
+    )
+    return row ? rowToProviderConversation(row) : null
+  }
+
   claimJob(jobId: string, claimToken: string) {
     const nowMs = nowUnixMillis()
     this.requeueExpiredClaimsAt(nowMs)
@@ -432,6 +670,9 @@ export class JobStore {
     validateClaimBackendProfile(executionBackend, profileId)
     const provider = query.provider === undefined ? null : normalizeNonempty(query.provider, 'provider')
     const action = query.action === undefined ? null : normalizeNonempty(query.action, 'action')
+    const jobIdPrefix = query.job_id_prefix === undefined
+      ? null
+      : mappingText(query.job_id_prefix, 'job_id_prefix', 192)
     this.requeueExpiredClaimsAt(nowMs)
     const now = nowRfc3339()
     const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
@@ -447,6 +688,7 @@ export class JobStore {
            AND ((? IS NULL AND profile_id IS NULL) OR profile_id = ?)
            AND (? IS NULL OR provider = ?)
            AND (? IS NULL OR action = ?)
+           AND (? IS NULL OR substr(job_id, 1, length(?)) = ?)
          ORDER BY created_at ASC, job_id ASC
          LIMIT 1
        )
@@ -466,7 +708,10 @@ export class JobStore {
       provider,
       provider,
       action,
-      action
+      action,
+      jobIdPrefix,
+      jobIdPrefix,
+      jobIdPrefix
     )
     return row ? rowToJob(row) : null
   }
@@ -961,6 +1206,40 @@ export class JobStore {
         task_id TEXT NOT NULL CHECK (length(task_id) BETWEEN 1 AND 256),
         PRIMARY KEY (job_id, task_id)
       );
+      CREATE TABLE IF NOT EXISTS provider_projects (
+        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
+        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
+        resource_id TEXT NOT NULL CHECK (length(resource_id) BETWEEN 1 AND 256),
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 256),
+        canonical_url TEXT NOT NULL CHECK (length(canonical_url) BETWEEN 1 AND 2048),
+        first_observed_at TEXT NOT NULL,
+        last_observed_at TEXT NOT NULL,
+        last_visible_proof TEXT NOT NULL CHECK (length(last_visible_proof) BETWEEN 1 AND 512),
+        creation_job_id TEXT REFERENCES jobs(job_id),
+        PRIMARY KEY (provider, profile_id, resource_id)
+      );
+      CREATE TABLE IF NOT EXISTS provider_conversations (
+        provider TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        project_resource_id TEXT NOT NULL,
+        task_id TEXT NOT NULL CHECK (length(task_id) BETWEEN 1 AND 256),
+        canonical_url TEXT NOT NULL CHECK (length(canonical_url) BETWEEN 1 AND 2048),
+        proved_job_id TEXT NOT NULL REFERENCES jobs(job_id),
+        observed_at TEXT NOT NULL,
+        PRIMARY KEY (provider, profile_id, project_resource_id, task_id),
+        FOREIGN KEY (provider, profile_id, project_resource_id)
+          REFERENCES provider_projects(provider, profile_id, resource_id)
+          ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS provider_task_conversations (
+        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
+        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
+        task_id TEXT NOT NULL CHECK (length(task_id) BETWEEN 1 AND 256),
+        canonical_url TEXT NOT NULL CHECK (length(canonical_url) BETWEEN 1 AND 2048),
+        proved_job_id TEXT NOT NULL REFERENCES jobs(job_id),
+        observed_at TEXT NOT NULL,
+        PRIMARY KEY (provider, profile_id, task_id)
+      );
     `)
   }
 
@@ -978,6 +1257,12 @@ export class JobStore {
         ON job_task_keys(task_id, job_id);
       CREATE INDEX IF NOT EXISTS jobs_replay_outcome_recipient_idx
         ON jobs(agent_kind, agent_session_id, reported_outcome_revision, outcome_revision, updated_at, job_id);
+      CREATE INDEX IF NOT EXISTS provider_projects_exact_name_idx
+        ON provider_projects(provider, profile_id, name, resource_id);
+      CREATE INDEX IF NOT EXISTS provider_conversations_task_idx
+        ON provider_conversations(provider, profile_id, task_id, project_resource_id);
+      CREATE INDEX IF NOT EXISTS provider_task_conversations_job_idx
+        ON provider_task_conversations(proved_job_id);
     `)
   }
 
@@ -1266,6 +1551,71 @@ function rowToJob(row: Record<string, unknown>): Job {
     updated_at: String(row.updated_at),
     claim_expires_at_ms: nullableNumber(row.claim_expires_at),
   }
+}
+
+function rowToProviderProject(row: Record<string, unknown>): ProviderProjectMapping {
+  return {
+    provider: String(row.provider),
+    profile_id: String(row.profile_id),
+    resource_id: String(row.resource_id),
+    name: String(row.name),
+    canonical_url: String(row.canonical_url),
+    first_observed_at: String(row.first_observed_at),
+    last_observed_at: String(row.last_observed_at),
+    last_visible_proof: String(row.last_visible_proof),
+    creation_job_id: nullableString(row.creation_job_id),
+  }
+}
+
+function rowToProviderConversation(row: Record<string, unknown>): ProviderConversationMapping {
+  return {
+    provider: String(row.provider),
+    profile_id: String(row.profile_id),
+    project_resource_id: String(row.project_resource_id),
+    task_id: String(row.task_id),
+    canonical_url: String(row.canonical_url),
+    proved_job_id: String(row.proved_job_id),
+    observed_at: String(row.observed_at),
+  }
+}
+
+function rowToProviderTaskConversation(row: Record<string, unknown>): ProviderTaskConversationMapping {
+  return {
+    provider: String(row.provider),
+    profile_id: String(row.profile_id),
+    task_id: String(row.task_id),
+    canonical_url: String(row.canonical_url),
+    proved_job_id: String(row.proved_job_id),
+    observed_at: String(row.observed_at),
+  }
+}
+
+function mappingText(value: unknown, field: string, maximumLength: number) {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  if (normalized.length < 1 || normalized.length > maximumLength) {
+    throw invalidInput(`${field} must contain between 1 and ${maximumLength} characters`)
+  }
+  return normalized
+}
+
+function canonicalMappingUrl(value: unknown) {
+  const normalized = mappingText(value, 'canonical_url', 2048)
+  let parsed: URL
+  try {
+    parsed = new URL(normalized)
+  } catch {
+    throw invalidInput('canonical_url must be a valid URL')
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.search !== '' ||
+    parsed.hash !== ''
+  ) {
+    throw invalidInput('canonical_url must be a canonical public HTTPS URL')
+  }
+  return parsed.toString()
 }
 
 function rowToReplaySummary(row: Record<string, unknown>, reportedAt: string): ReplaySummary {

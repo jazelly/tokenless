@@ -10,12 +10,14 @@ Tokenless supports a broader set of high-value Chinese AI web providers while pr
 
 ## Current Implementation State
 
-As of 2026-07-27:
+As of 2026-07-29:
 
 - the shared registry extraction and OOP provider seam are complete and recorded in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap;
 - Qwen / 千问 is registered as an `experimental` provider through one provider module and one registry entry;
-- a fresh real managed guest profile completed prompt input, visible submission, correlated response reading, and same-task conversation continuation through the built CLI and TypeScript daemon;
-- Qwen provenance-bound DOM captures cover the signed-out idle composer and a completed response; and
+- a fresh real managed guest profile completed prompt input, visible submission, and correlated response reading through the built CLI and TypeScript daemon;
+- the canonical Qwen Studio entry is `https://chat.qwen.ai/`; a real built-CLI run navigated the same visible page to the shared `/c/guest` route and returned an exact correlated marker;
+- navigation or reopen of the shared guest route does not restore the prior visible response, so cross-process continuation remains unavailable;
+- Qwen provenance-bound DOM captures cover the earlier regional surface and the current Qwen Studio completed-response state; and
 - unproven Qwen model, effort, file-upload, native workspace, and image-generation capabilities remain `unknown` or `unavailable` rather than being inferred from visible controls.
 
 | Qwen capability | Current state | Evidence boundary |
@@ -23,7 +25,7 @@ As of 2026-07-27:
 | Guest access | Experimental, available | Fresh managed signed-out profile |
 | Prompt input and submit | Experimental, available | Built CLI and real visible Qwen session |
 | Response reading | Experimental, available | Exact correlated marker returned |
-| Same-task continuation | Experimental, available | Second built-CLI job reused the trusted conversation scope |
+| Same-task continuation | Unavailable in the selected guest profile | The shared `/c/guest` route does not restore the prior visible response after navigation or reopen |
 | Conversation workspace fallback | Experimental, available when the composer is visible | Provider-neutral conversation capability |
 | Model and effort selection | Unknown | No proven selector or exact-selection postcondition |
 | File and input-image upload | Unknown | No proven visible acceptance postcondition |
@@ -40,7 +42,7 @@ The next evaluation wave includes DeepSeek Chat, Doubao, and Tencent Yuanbao. Th
 
 Official product entry points:
 
-- [Qwen / 千问](https://www.qianwen.com/)
+- [Qwen / 千问](https://chat.qwen.ai/)
 - [Kimi](https://www.kimi.com/)
 - [Zhipu Qingyan / 智谱清言](https://chatglm.cn/)
 - [DeepSeek Chat](https://chat.deepseek.com/)

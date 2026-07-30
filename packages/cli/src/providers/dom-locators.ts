@@ -75,6 +75,19 @@ export async function firstEnabledLocator(page: Page, selectors: readonly string
   return null
 }
 
+export async function waitForEnabledLocator(page: Page, selectors: readonly string[], timeoutMs: number): Promise<Locator | null> {
+  if (selectors.length === 0) return null
+  const deadline = Date.now() + timeoutMs
+  do {
+    const locator = await firstEnabledLocator(page, selectors)
+    if (locator) return locator
+    if (Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(100, Math.max(1, deadline - Date.now())))
+    }
+  } while (Date.now() < deadline)
+  return null
+}
+
 export async function firstUnavailableLocator(page: Page, selectors: readonly string[]): Promise<Locator | null> {
   for (const selector of selectors) {
     const locator = page.locator(selector).filter({ visible: true }).first()

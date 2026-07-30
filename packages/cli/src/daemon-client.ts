@@ -82,6 +82,19 @@ export type ListDaemonJobsOptions = DaemonClientOptions & {
   limit?: number | undefined
 }
 
+export type ResolveProviderMappingOptions = DaemonClientOptions & {
+  provider: string
+  profileId: string
+  projectName: string
+  taskId?: string | undefined
+}
+
+export type ResolveProviderConversationOptions = DaemonClientOptions & {
+  provider: string
+  profileId: string
+  taskId: string
+}
+
 export type CancelDaemonJobOptions = GetDaemonJobOptions & {
   reason?: unknown
 }
@@ -284,6 +297,84 @@ export async function getDaemonJob({
     daemonUrl: daemon.daemonUrl,
     method: 'GET',
     path: `/jobs/${encodeURIComponent(jobId)}`,
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function resolveProviderMapping({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  provider,
+  profileId,
+  projectName,
+  taskId,
+}: ResolveProviderMappingOptions) {
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const query = new URLSearchParams({
+    provider,
+    profile_id: profileId,
+    project_name: projectName,
+  })
+  if (taskId) query.set('task_id', taskId)
+  return daemonRequest<{
+    mapping: {
+      project: {
+        provider: string
+        profile_id: string
+        resource_id: string
+        name: string
+        canonical_url: string
+      }
+      conversation: {
+        provider: string
+        profile_id: string
+        project_resource_id: string
+        task_id: string
+        canonical_url: string
+      } | null
+    } | null
+  }>({
+    daemonUrl: daemon.daemonUrl,
+    method: 'GET',
+    path: `/provider-mappings/resolve?${query.toString()}`,
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function resolveProviderConversation({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  provider,
+  profileId,
+  taskId,
+}: ResolveProviderConversationOptions) {
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const query = new URLSearchParams({
+    provider,
+    profile_id: profileId,
+    task_id: taskId,
+  })
+  return daemonRequest<{
+    mapping: {
+      provider: string
+      profile_id: string
+      task_id: string
+      canonical_url: string
+      proved_job_id: string
+      observed_at: string
+    } | null
+  }>({
+    daemonUrl: daemon.daemonUrl,
+    method: 'GET',
+    path: `/provider-conversations/resolve?${query.toString()}`,
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,

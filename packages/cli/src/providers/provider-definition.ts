@@ -204,7 +204,7 @@ export function createProviderOptionalCapabilities(
   return OPTIONAL_CAPABILITY_ORDER.map((key) => capabilities[key])
 }
 
-export function providerCapabilities(): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
+export function providerCapabilities(options: { nativeWorkspace?: boolean } = {}): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
   return Object.freeze({
     [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT]: Object.freeze({
       capability: PROVIDER_CAPABILITIES.CAPABILITY_INSPECT,
@@ -289,13 +289,13 @@ export function providerCapabilities(): Readonly<Record<ProviderCapabilityId, Pr
     [PROVIDER_CAPABILITIES.WORKSPACE_ENSURE]: Object.freeze({
       capability: PROVIDER_CAPABILITIES.WORKSPACE_ENSURE,
       availability: 'available',
-      visibleProof: 'conversation-fallback-declared',
-      reason: 'native_workspace_creation_unproven',
+      visibleProof: options.nativeWorkspace ? 'native-project-provider-strategy-registered' : 'conversation-fallback-declared',
+      reason: options.nativeWorkspace ? null : 'native_workspace_unavailable',
       native: Object.freeze({
         resourceKind: 'project',
-        availability: 'unavailable',
-        visibleProof: null,
-        reason: 'no_fixture_proven_native_workspace_creation_closure',
+        availability: options.nativeWorkspace ? 'unknown' : 'unavailable',
+        visibleProof: options.nativeWorkspace ? 'runtime-native-project-evidence-required' : null,
+        reason: options.nativeWorkspace ? 'runtime_native_project_evidence_required' : 'native_workspace_unavailable',
       }),
       fallback: Object.freeze({
         resourceKind: 'conversation',
@@ -350,7 +350,7 @@ export function providerCapabilities(): Readonly<Record<ProviderCapabilityId, Pr
       capability: PROVIDER_CAPABILITIES.IMAGE_GENERATION,
       availability: 'unavailable',
       visibleProof: 'unsupported-image-generation-capability',
-      reason: 'no_fixture_proven_visible_image_generation_closure',
+      reason: 'no_real_provider_visible_image_generation_closure',
       native: Object.freeze({
         resourceKind: null,
         availability: 'unavailable',

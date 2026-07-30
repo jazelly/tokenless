@@ -17,6 +17,18 @@
     {
       "provider": "chatgpt",
       "accountState": "signed-in-paid",
+      "scenario": "composer-no-choice-controls",
+      "routeClass": "new-chat",
+      "operationPhase": "choice-inspection",
+      "capabilityOutcome": "unavailable",
+      "sanitizedUrl": "https://chatgpt.com/",
+      "observedOn": "2026-07-28",
+      "htmlPath": "chatgpt/signed-in-paid/composer-no-choice-controls.html",
+      "provenancePath": "chatgpt/signed-in-paid/composer-no-choice-controls.provenance.json"
+    },
+    {
+      "provider": "chatgpt",
+      "accountState": "signed-in-paid",
       "scenario": "connectors-directory",
       "routeClass": "connectors-directory",
       "operationPhase": "observed",
@@ -423,6 +435,18 @@
       "provenancePath": "gemini/signed-in-unknown/upload-tools-menu-open.provenance.json"
     },
     {
+      "provider": "gemini",
+      "accountState": "signed-out-guest",
+      "scenario": "mode-picker",
+      "routeClass": "new-chat",
+      "operationPhase": "choice-inspection",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://gemini.google.com/",
+      "observedOn": "2026-07-28",
+      "htmlPath": "gemini/signed-out-guest/mode-picker.html",
+      "provenancePath": "gemini/signed-out-guest/mode-picker.provenance.json"
+    },
+    {
       "provider": "grok",
       "accountState": "signed-in-free",
       "scenario": "attach-menu-open",
@@ -605,6 +629,18 @@
     {
       "provider": "qwen",
       "accountState": "signed-out-guest",
+      "scenario": "studio-response-complete",
+      "routeClass": "conversation",
+      "operationPhase": "response-complete",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.qwen.ai/c/guest",
+      "observedOn": "2026-07-29",
+      "htmlPath": "qwen/signed-out-guest/studio-response-complete.html",
+      "provenancePath": "qwen/signed-out-guest/studio-response-complete.provenance.json"
+    },
+    {
+      "provider": "qwen",
+      "accountState": "signed-out-guest",
       "scenario": "composer-idle",
       "routeClass": "new-chat",
       "operationPhase": "observed",
@@ -613,6 +649,18 @@
       "observedOn": "2026-07-26",
       "htmlPath": "qwen/signed-out-guest/composer-idle.html",
       "provenancePath": "qwen/signed-out-guest/composer-idle.provenance.json"
+    },
+    {
+      "provider": "qwen",
+      "accountState": "signed-out-guest",
+      "scenario": "composer-slate-placeholder",
+      "routeClass": "new-chat",
+      "operationPhase": "prompt-input-clear",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://www.qianwen.com/",
+      "observedOn": "2026-07-28",
+      "htmlPath": "qwen/signed-out-guest/composer-slate-placeholder.html",
+      "provenancePath": "qwen/signed-out-guest/composer-slate-placeholder.provenance.json"
     },
     {
       "provider": "qwen",

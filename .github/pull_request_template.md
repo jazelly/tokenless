@@ -1,0 +1,2 @@
+- [ ] I ran the applicable manual real-provider E2E gates locally, or this pull request does not affect visible-provider behavior.
+- [ ] Every applicable real-provider E2E passes before release; invoked suites had no skipped case or internal retry.

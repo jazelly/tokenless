@@ -53,7 +53,7 @@ grok
 qwen
 ```
 
-ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问目前为 experimental：其 Guest-session prompt、response 与同一 task 对话延续 baseline 已得到证明，尚未证明的可选 capability 保持 unavailable 或 unknown。
+ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问目前为 experimental：其 Guest-session prompt 提交与 response 读取已得到证明；cross-process continuation 和尚未证明的可选 capability 保持 unavailable 或 unknown。
 
 Runtime browser 可选值为 `chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc` 和 `brave`。本地 profile import 当前只支持 Chrome 与 Brave。
 
@@ -386,9 +386,11 @@ Identity 与 continuity：
 
 Workspace modes：
 
-- `auto` 优先使用已经证明可用的原生 provider workspace，否则返回明确的 conversation fallback。
-- `native` 强制要求原生 workspace，不允许 fallback。
-- `conversation` 强制使用 conversation-scoped continuity。
+- `auto` 在 Claude 和 Grok 中优先使用可见的原生 Project。只有 provider 明确显示原生能力稳定不可用时才 fallback；临时 UI、导航、网络、blocker 和 selector 故障仍然返回错误。
+- `native` 强制要求精确创建或复用原生 Project，不允许 fallback；出现重复的精确可见名称时 fail closed。
+- `conversation` 强制使用 conversation-scoped strategy；只有真实 provider capability matrix 已证明的 provider/profile 才支持跨进程恢复。
+- 原生结果会报告 `created` 或 `reused`、canonical provider resource identity、provider/profile scope 和 instruction outcome；conversation 结果会报告 `fallback`。
+- Project 和 task conversation target 会作为精确 SQLite mapping 持久化，不再通过扫描历史 job result 恢复。
 
 ### `tokenless replay`
 

@@ -195,6 +195,33 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       projectLinks: [],
     },
   }),
+  qwen: defineProvider({
+    id: 'qwen',
+    label: 'Qwen',
+    origin: 'https://chat.qwen.ai',
+    url: 'https://chat.qwen.ai/',
+    outputName: 'qwen-dom.sanitized.html',
+    selectors: {
+      composers: [
+        'textarea.message-input-textarea',
+      ],
+      submits: [
+        'button.send-button',
+      ],
+      answers: [
+        '.qwen-chat-message-assistant .chat-response-message .qwen-markdown',
+        '.qwen-chat-message-assistant .qwen-markdown',
+      ],
+      blockers: [],
+      busy: [
+        'button.stop-button',
+        '.qwen-chat-message-awaiting-response',
+      ],
+      modelPickers: [],
+      fileInputs: [],
+      projectLinks: [],
+    },
+  }),
 })
 
 export const providerDefinitions = PROVIDER_DEFINITIONS
@@ -225,7 +252,7 @@ export async function captureProviderDom({
     if (!provider) {
       throw usageError(
         'unsupported_provider',
-        'Provider must be one of: chatgpt, claude, gemini, grok.'
+        'Provider must be one of: chatgpt, claude, gemini, grok, qwen.'
       )
     }
     validateArgs(args)
@@ -618,6 +645,7 @@ export async function captureProviderDom({
           claude: new Set(['/new']),
           gemini: new Set(['/app', '/gems/view']),
           grok: new Set(['/']),
+          qwen: new Set(['/', '/c/guest']),
         }
         if (staticPaths[provider]?.has(normalized)) return normalized
 
@@ -626,6 +654,7 @@ export async function captureProviderDom({
           claude: new Set(['chat']),
           gemini: new Set(['app', 'gems', 'share']),
           grok: new Set(['c', 'share']),
+          qwen: new Set(['c']),
         }
         const firstSegment = normalized.split('/').filter(Boolean)[0]
         return firstSegment && knownRoutePrefixes[provider]?.has(firstSegment)
@@ -833,7 +862,7 @@ function printHelp({ forcedProvider, programName }) {
     '',
     ...(provider ? [] : [
       'Providers:',
-      '  chatgpt | claude | gemini | grok',
+      '  chatgpt | claude | gemini | grok | qwen',
       '',
     ]),
     'Options:',

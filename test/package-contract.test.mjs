@@ -5,10 +5,17 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { loadLiveProviderCapabilityMatrix } from './helpers/live-provider-capability-matrix.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
+
+test('checked-in live provider capability matrix classifies every registered provider and case', () => {
+  const matrix = loadLiveProviderCapabilityMatrix()
+  assert.equal(matrix.schema, 'tokenless.live-provider-capability-matrix.v1')
+})
+
 test('workspace packages keep standalone product names', () => {
   const cli = readJson('packages/cli/package.json')
   assert.equal(cli.name, 'tokenless')

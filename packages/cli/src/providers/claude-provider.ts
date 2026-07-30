@@ -6,6 +6,7 @@ import {
   providerCapabilities,
 } from './provider-definition.js'
 import { MenuTextAccountInspector } from './account-inspectors.js'
+import { NativeProjectWorkspaceCapability } from './capabilities/native-project-workspace.js'
 
 export class ClaudeProvider extends BaseProvider<'claude'> {
   constructor() {
@@ -95,8 +96,48 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
         'button[aria-label*="Stop" i]',
       ]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
-      capabilities: providerCapabilities(),
+      capabilities: providerCapabilities({ nativeWorkspace: true }),
     })
-    super(provider)
+    super(provider, {
+      workspace: new NativeProjectWorkspaceCapability(provider, {
+        listUrl: 'https://claude.ai/projects',
+        projectPath: /^\/project\/(?<resourceId>[A-Za-z0-9_-]+)(?:\/|$)/u,
+        projectLinkSelectors: Object.freeze([
+          'ul[aria-label="Projects"] a[href*="/project/"]',
+          'a[href*="/project/"]',
+        ]),
+        createTriggerSelectors: Object.freeze([
+          'button:has-text("New project")',
+          'button:has-text("Create project")',
+        ]),
+        nameInputSelectors: Object.freeze([
+          'input[aria-label="Project name"]',
+          'input[placeholder*="project name" i]',
+          '[role="dialog"] input[type="text"]',
+        ]),
+        instructionsInputSelectors: Object.freeze([
+          'textarea[aria-label*="project instructions" i]',
+          'textarea[placeholder*="instructions" i]',
+          '[role="dialog"] textarea',
+        ]),
+        createSubmitSelectors: Object.freeze([
+          '[role="dialog"] button:has-text("Create project")',
+          '[role="dialog"] button:has-text("Create")',
+        ]),
+        instructionOpenSelectors: Object.freeze([
+          'button:has-text("Set project instructions")',
+          'button:has-text("Add instructions")',
+          'button:has-text("Edit instructions")',
+        ]),
+        instructionSaveSelectors: Object.freeze([
+          '[role="dialog"] button:has-text("Save")',
+          'button:has-text("Save instructions")',
+        ]),
+        stableUnavailableSelectors: Object.freeze([
+          'text=/projects (?:are )?(?:not available|unavailable) on your plan/i',
+          'text=/upgrade to (?:create|use) projects/i',
+        ]),
+      }),
+    })
   }
 }

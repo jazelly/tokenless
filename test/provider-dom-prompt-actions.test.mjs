@@ -50,9 +50,10 @@ const providers = [
   {
     id: 'qwen',
     state: 'signed-out-guest',
-    url: 'https://www.qianwen.com/',
+    scenario: 'studio-response-complete',
+    url: 'https://chat.qwen.ai/',
     composerSelectors: [
-      'div[contenteditable="true"][role="textbox"][aria-multiline="true"][data-placeholder="向千问提问"][data-slate-editor="true"]',
+      'textarea.message-input-textarea',
     ],
   },
 ]
@@ -68,7 +69,7 @@ test('real Chromium inputs and clears drafts on provenance-bound provider DOM ca
       const context = await browser.newContext({ viewport: { width: 1100, height: 850 } })
       const page = await context.newPage()
       try {
-        await openCapturedFixture(page, provider)
+        await openCapturedFixture(page, provider, provider.scenario)
         const providerInstance = getProviderInstanceById(provider.id)
         assert.ok(providerInstance, `provider instance missing: ${provider.id}`)
         const prompt = `Tokenless deterministic prompt draft for ${provider.id}`
@@ -145,7 +146,7 @@ test('prompt input reports a visibility timeout when the captured provider page 
   }
 })
 
-test('prompt submit reports a visibility timeout when the captured provider page has no submit control', {
+test('prompt submit reports an actionability timeout when the captured provider page has no enabled submit control', {
   timeout: 30000,
 }, async () => {
   const browser = await chromium.launch({ headless: true })
@@ -171,12 +172,12 @@ test('prompt submit reports a visibility timeout when the captured provider page
 
     assert.equal(submit.ok, false)
     assert.deepEqual(submit.error, {
-      code: 'prompt_submit_visibility_timeout',
-      message: 'Timed out after 15000ms waiting for a visible prompt submit control.',
+      code: 'prompt_submit_actionability_timeout',
+      message: 'Timed out after 15000ms waiting for an enabled visible prompt submit control.',
       retryable: true,
     })
-    assert.ok(elapsedMs >= 14000, `prompt submit returned before the visibility timeout: ${elapsedMs}ms`)
-    assert.ok(elapsedMs < 20000, `prompt submit exceeded the bounded visibility timeout: ${elapsedMs}ms`)
+    assert.ok(elapsedMs >= 14000, `prompt submit returned before the actionability timeout: ${elapsedMs}ms`)
+    assert.ok(elapsedMs < 20000, `prompt submit exceeded the bounded actionability timeout: ${elapsedMs}ms`)
   } finally {
     await context.close()
     await browser.close()

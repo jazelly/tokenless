@@ -5,6 +5,7 @@ import {
   ManagedPlaywrightRunnerService,
 } from '../playwright/runner-service.js'
 import { isClaimRecoveryError } from '../playwright/errors.js'
+import { resolveE2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
 import { readTokenlessConfig } from '../job-store.js'
 import { resolveChromiumBrowser } from '../runtime.js'
 import type { JobStore } from './job-store.js'
@@ -147,6 +148,7 @@ export class BrowserRuntimeController {
   }
 
   private async resolveBrowserLaunchTarget(): Promise<ManagedBrowserLaunchTarget> {
+    const e2eInspection = resolveE2EBrowserInspectionConfig(this.store.homeDir) !== null
     let configuredBrowser: unknown
     try {
       configuredBrowser = (await readTokenlessConfig(this.store.homeDir)).browser ?? undefined
@@ -154,18 +156,19 @@ export class BrowserRuntimeController {
       configuredBrowser = undefined
     }
     if (configuredBrowser === undefined || configuredBrowser === null || configuredBrowser === '' || configuredBrowser === 'chrome') {
-      return { id: 'chrome' }
+      return { id: 'chrome', ...(e2eInspection ? { e2eInspection: true } : {}) }
     }
     if (configuredBrowser === 'edge') {
-      return { id: 'edge' }
+      return { id: 'edge', ...(e2eInspection ? { e2eInspection: true } : {}) }
     }
     const resolved = await resolveChromiumBrowser(configuredBrowser)
     if (resolved.browser === 'chrome' || resolved.browser === 'edge') {
-      return { id: resolved.browser }
+      return { id: resolved.browser, ...(e2eInspection ? { e2eInspection: true } : {}) }
     }
     return {
       id: resolved.browser,
       ...(resolved.playwrightExecutablePath ? { executablePath: resolved.playwrightExecutablePath } : {}),
+      ...(e2eInspection ? { e2eInspection: true } : {}),
     }
   }
 

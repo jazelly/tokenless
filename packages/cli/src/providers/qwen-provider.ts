@@ -13,6 +13,7 @@ import type { ProviderExecutionContext } from './execution-context.js'
 import type { ProviderDomDefinition } from './provider-definition.js'
 
 const QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS = 15_000
+const QWEN_APP_HYDRATION_AGE_MS = 3_000
 
 export class QwenProvider extends BaseProvider<'qwen'> {
   constructor() {
@@ -25,12 +26,12 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         legacyRequests: false,
       }),
       navigation: Object.freeze({
-        homeUrl: 'https://www.qianwen.com/',
-        origins: Object.freeze(['https://www.qianwen.com']),
+        homeUrl: 'https://chat.qwen.ai/',
+        origins: Object.freeze(['https://chat.qwen.ai']),
         trustedSignInOrigins: Object.freeze([]),
       }),
       profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['qianwen.com']),
+        cookieDomains: Object.freeze(['qwen.ai']),
       }),
       controls: Object.freeze({
         chatSurface: false,
@@ -48,13 +49,14 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         paidPlanLabels: Object.freeze([]),
       }),
       composerSelectors: Object.freeze([
-        'div[contenteditable="true"][role="textbox"][aria-multiline="true"][data-slate-editor="true"]',
+        'textarea.message-input-textarea',
       ]),
       submitSelectors: Object.freeze([
-        'button[aria-label="发送消息"]',
+        'button.send-button',
       ]),
       answerSelectors: Object.freeze([
-        '.chat-answers-card-wrap .qk-markdown',
+        '.qwen-chat-message-assistant .chat-response-message .qwen-markdown',
+        '.qwen-chat-message-assistant .qwen-markdown',
       ]),
       fileInputSelectors: Object.freeze([]),
       fileUploadTriggerSelectors: Object.freeze([]),
@@ -63,11 +65,14 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       effortControlSelectors: Object.freeze([]),
       authIndicators: Object.freeze([]),
       loginIndicators: Object.freeze([
+        'button:has-text("Log in")',
+        'button:has-text("Sign up")',
         'button:has-text("登录")',
       ]),
       blockerSelectors: Object.freeze([]),
       busySelectors: Object.freeze([
-        '.chat-answers-card-wrap .qk-markdown:not(.qk-markdown-complete)',
+        'button.stop-button',
+        '.qwen-chat-message-awaiting-response',
       ]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
       capabilities: providerCapabilities(),
@@ -77,6 +82,7 @@ export class QwenProvider extends BaseProvider<'qwen'> {
 
   protected override async inputPrompt(page: Page, text: string, _context: ProviderExecutionContext) {
     const deadline = Date.now() + QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS
+    await waitForQwenAppHydration(page, deadline)
     let composerObserved = false
     do {
       const composer = await waitForVisibleLocator(
@@ -109,6 +115,14 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       'The visible prompt input remained empty after input.',
       { retryable: true },
     )
+  }
+}
+
+async function waitForQwenAppHydration(page: Page, deadline: number) {
+  const pageAgeMs = await page.evaluate(() => performance.now()).catch(() => 0)
+  const remainingHydrationMs = Math.max(0, QWEN_APP_HYDRATION_AGE_MS - pageAgeMs)
+  if (remainingHydrationMs > 0) {
+    await page.waitForTimeout(Math.min(remainingHydrationMs, Math.max(1, deadline - Date.now())))
   }
 }
 
@@ -177,7 +191,11 @@ async function qwenComposerHasExpectedText(
       .trim()
     const text = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
       ? element.value
-      : (element.textContent ?? '')
+      : (() => {
+          const clone = element.cloneNode(true) as Element
+          clone.querySelectorAll('[data-slate-placeholder="true"], [data-slate-zero-width]').forEach((node) => node.remove())
+          return clone.textContent ?? ''
+        })()
     const normalized = normalizeSlateText(text)
     const expected = normalizeSlateText(value)
     return expected.length === 0 ? normalized.length === 0 : normalized === expected

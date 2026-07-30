@@ -1,6 +1,6 @@
 # Real Provider Browser E2E and Native Projects
 
-Status: proposed | Priority: P0
+Status: in progress | Priority: P0
 
 Depends on: the completed [Provider Architecture and Registry](archived/provider-architecture-and-registry.md), the managed Playwright runtime, durable daemon jobs, managed profile lifecycle, attachment staging, and conversation continuation
 
@@ -25,7 +25,29 @@ All browser E2E and visible-provider capability acceptance tests use real provid
 
 Redacted, provenance-bound provider DOM captures remain development aids for selectors, parsers, and already-observed DOM variants. They are not E2E, do not close provider transitions, and do not count toward capability acceptance.
 
-Provider-side mutations, retained test artifacts, and usage cost are acceptable in dedicated test accounts and managed profiles. Every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp. Tests never use ordinary user accounts or profiles.
+Provider E2E runs manually on this machine with the explicitly selected managed profile already provisioned through Tokenless setup. It does not create a separate test account, automate login, or silently select another profile. Provider-side mutations, retained test artifacts, and usage cost are acceptable. Every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
+
+## Current Closure
+
+As of 2026-07-29, the implementation, capability matrix, CDP observer boundary, durable mappings, native Project strategies, public contracts, and manual gate commands are in place. Real runs additionally established these capability boundaries:
+
+- the selected Gemini guest profile does not restore prior-turn context when a second CLI process opens the mapped conversation URL;
+- the selected Qwen guest profile uses the shared `/c/guest` route, which does not restore the prior visible response after navigation or reopen; and
+- both combinations are therefore explicitly unavailable in the checked-in matrix rather than being counted as continuation support.
+
+The latest complete manual gate attempts produced:
+
+- non-submission: 16 invoked cases, 3 passed and 13 failed;
+- mutation: 20 invoked cases, 5 passed and 15 failed; and
+- Project: 2 invoked cases, 0 passed and 2 failed.
+
+All three gates ran with zero skipped cases and no internal retry. Gemini and Qwen currently provide real mutation closure for every capability required by their matrix entries. The latest mutation run passed Gemini submit/read, citations, and conversation workspace plus Qwen submit/read and conversation workspace. It failed all ChatGPT, Claude, and Grok cases with `e2e_provider_auth_unavailable` because the selected setup-managed profile was not authenticated for those providers.
+
+Qwen closure now starts from its canonical `https://chat.qwen.ai/` chat surface. A real built-CLI run proved that the provider accepts the prompt, navigates the same visible page to `/c/guest`, and returns the exact marker. Qwen Studio exposes its textarea before the guest backend is ready, so the adapter waits only until the initial page lifecycle is three seconds old before first input; an already hydrated conversation incurs no additional delay. The real mutation gate then passed both required Qwen cases through independent CDP observation and durable state.
+
+The subsequent non-submission gate encountered intermittent system DNS failure for `chat.qwen.ai` after the same hostname had resolved for the successful mutation gate. Navigation now reports this explicitly as retryable `provider_dns_unavailable`; no test-only DNS override is used or counted as acceptance evidence.
+
+The roadmap remains in progress. Before release, the operator must restore the required selected-profile authentication for ChatGPT, Claude, and Grok, ensure stable system DNS resolution for `chat.qwen.ai`, manually rerun every applicable gate, and obtain a complete pass. Claude and Grok native Project implementation also remains provisional until real authenticated sessions supply the required DOM development captures and close creation, exact reuse, instructions, Project chat, and continuation.
 
 ## Actor and Oracle Boundary
 
@@ -41,9 +63,11 @@ A second Playwright client connects to the product-launched Chromium through CDP
 - locate the target page;
 - read accessible roles and visible marker content;
 - inspect visible attachment, Project, conversation, response, and citation outcomes; and
-- capture bounded screenshots or diagnostics on failure.
+- report bounded semantic observations needed for the core flow.
 
 It must not intercept network traffic, install routes, modify page state, or perform product actions. Observer assertions must not import production provider selectors or action implementations.
+
+E2E evidence must not include screenshots, full DOM dumps, cookies, local storage, session storage, credentials, or unrelated account content.
 
 ## Milestone 1: Real-Provider Browser E2E Foundation
 
@@ -67,6 +91,8 @@ The test loader validates that:
 - unavailable entries have an explicit reason;
 - response reading and citation extraction remain separate capabilities; and
 - runtime conditions cannot silently convert a required case into a skip.
+
+When the suite is invoked, every required case runs exactly once. The suite has no internal retry and no skip path for missing activation, unavailable authentication, provider failure, blocker state, or another unmet prerequisite. Each condition fails with a clear machine-readable reason. Retry happens only when the operator manually runs the suite again.
 
 Exit: capability declarations and live acceptance coverage cannot drift independently.
 
@@ -99,12 +125,12 @@ Exit: the observer deterministically sees the real page before product actions b
 
 Run the built CLI as an asynchronous child process against:
 
-- a dedicated `TOKENLESS_HOME`;
+- the explicitly selected local `TOKENLESS_HOME`;
 - the real SQLite job store;
 - the packaged TypeScript daemon;
-- a dedicated managed browser profile;
+- the existing managed browser profile provisioned through Tokenless setup;
 - the real Chromium installation; and
-- the real provider website and account.
+- the real provider website and current authenticated account state in that profile.
 
 Every core case correlates one unique task and marker across:
 
@@ -112,7 +138,7 @@ Every core case correlates one unique task and marker across:
 2. independent visible DOM observation; and
 3. daemon API and SQLite durable job state.
 
-The harness records bounded evidence artifacts on both success and failure. A provider failure fails the required case and retains diagnostics; it does not become a skip.
+The harness records bounded structured CLI, observer, daemon API, and SQLite evidence on both success and failure. It does not capture screenshots or full DOM. An authentication or provider failure fails the required case with a clear reason; it does not become a skip.
 
 Exit: a test can prove one product-owned provider workflow through all real system boundaries without a fixture or simulated response.
 
@@ -136,6 +162,8 @@ The live suite has explicit gates:
 - **Non-submission gate:** auth, capability inspection, navigation, blocker state, model and effort change with restoration, draft input and clear, and attachment selection with draft cleanup.
 - **Mutation gate:** prompt submission, attachment submission, real response reading, citations, and conversation continuation.
 - **Project gate:** native Project creation, reuse, instructions, Project chat, and Project-scoped continuation.
+
+These gates select which manually invoked command performs provider-side mutations; they do not skip cases inside an invoked suite.
 
 Exit: every currently advertised visible capability has real-provider acceptance evidence through the capability matrix.
 
@@ -232,7 +260,7 @@ Exit: retries and later CLI invocations recover the exact Project and conversati
 
 ### Phase 5: Native Project Live Acceptance
 
-For both Claude and Grok, on a dedicated live-test account:
+For both Claude and Grok, using the explicitly selected local setup-managed profile:
 
 1. generate a run-scoped unique Project identity;
 2. run `workspace.ensure --workspace-mode native` and require `created`;
@@ -252,6 +280,9 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - Milestone 1 is internal test infrastructure and does not require a changeset by itself.
 - Milestone 2 changes user-visible CLI behavior and JSON results, so it requires a changeset.
 - Update paired English and Chinese user documentation together.
+- Provider browser E2E does not run in CI. Pull requests carry a non-enforced reminder for the author to run the applicable local E2E.
+- Every applicable provider E2E must pass manually before release. The release process relies on this checklist rather than an automated CI enforcement.
+- E2E suites do not retry internally. An operator may manually rerun the complete applicable suite after investigating a clear failure.
 - Do not manually publish packages or releases; repository automation owns changeset-driven publication.
 
 ## Acceptance Criteria
@@ -259,6 +290,9 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - No fixture-based test is named or counted as browser E2E.
 - Every advertised visible capability has a required real-provider matrix entry.
 - Every required real-provider case proves CLI, visible DOM, and durable state for the same task and marker.
+- An invoked E2E suite has no skipped cases and no internal retry.
+- Authentication or setup-profile problems fail with a clear reason.
+- All applicable E2E suites pass manually before release, without requiring CI enforcement.
 - CDP inspection is test-only, loopback-only, read-only, and absent from normal runs.
 - Runtime provider failures fail required tests rather than silently skipping them.
 - Claude and Grok native Project creation and reuse are both exercised against fresh real Project identities.
@@ -272,10 +306,10 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 | Risk | Response |
 | --- | --- |
 | Provider UI drift | Fail the required live case, retain bounded diagnostics, capture the new real DOM variant for development, and update the provider-owned adapter |
-| Account or subscription variation | Encode the required account class in the capability matrix and use dedicated test accounts |
+| Account or subscription variation | Inspect the selected setup-managed profile, run applicable declared capabilities, and fail clearly when authentication or account state cannot satisfy a required case |
 | CDP endpoint is stale or unavailable | Start the daemon and browser context in inspection mode, validate lifecycle identity, and fail explicitly |
 | Observer changes product behavior | Keep it read-only, prohibit routes and actions, and assert through independent accessible roles and markers |
-| Provider rate limits or usage cost | Use dedicated accounts, explicit gates, bounded concurrency, and real artifacts; do not substitute fixtures |
+| Provider rate limits or usage cost | Fail clearly, investigate, and manually rerun the suite when appropriate; use explicit gates, bounded concurrency, and real artifacts rather than fixtures |
 | Duplicate Project names | Resolve a stable provider resource identity or fail closed |
 | Project creation succeeds but a later action fails | Persist the Project mapping at the successful workspace action checkpoint |
 | Native UI is temporarily broken | Return a retryable failure and do not fall back under `auto` |
@@ -287,6 +321,8 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - Private provider APIs
 - CAPTCHA or authentication bypass
 - Automatic login
-- Running mutations in ordinary user accounts or profiles
+- Automatic account or profile provisioning for E2E
+- Provider browser E2E in CI
+- Internal E2E retry or runtime skip
 - Native Project support for ChatGPT, Gemini, or Qwen without the same real-session closure
 - Making crash/restart, abrupt process death, port competition, replay, or acknowledgement edge cases part of the default browser E2E acceptance bar

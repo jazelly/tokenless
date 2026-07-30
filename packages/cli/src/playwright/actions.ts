@@ -167,45 +167,106 @@ export type FileUploadResult = {
   }[]
 }
 
-export type WorkspaceEnsureResult = {
-  mode: 'conversation'
+type WorkspaceInstructionOutcome =
+  | 'not_requested'
+  | 'applied_on_creation'
+  | 'already_equivalent'
+  | 'skipped_on_reuse'
+  | 'unavailable'
+
+type WorkspaceEnsureResultBase = {
   requestedMode: 'auto' | 'native' | 'conversation'
+  resolvedMode: 'native' | 'conversation'
   name: string
+  scope: {
+    provider: ProviderId
+    profileId: string
+  }
+  instructionOutcome: WorkspaceInstructionOutcome
+  availability: 'available'
+  visibleProof: string
+  reason: string | null
+}
+
+export type NativeWorkspaceEnsureResult = WorkspaceEnsureResultBase & {
+  mode: 'native'
+  resolvedMode: 'native'
   identity: {
     provider: ProviderId
     name: string
+    resourceId: string
+    canonicalUrl: string
+  }
+  resource: {
+    kind: 'project'
+    native: true
+    disposition: 'created' | 'reused'
+    id: string
+    canonicalUrl: string
+  }
+  native: {
+    resourceKind: 'project'
+    availability: 'available'
+    canonicalUrl: string
+    visibleProof: string
+    reason: null
+    updateInstructions: {
+      availability: 'available' | 'unavailable'
+      visibleProof: string | null
+      reason: string | null
+    }
+  }
+  updateInstructions: {
+    availability: 'available' | 'unavailable'
+    visibleProof: string | null
+    reason: string | null
+  }
+  fallback: null
+}
+
+export type ConversationWorkspaceEnsureResult = WorkspaceEnsureResultBase & {
+  mode: 'conversation'
+  resolvedMode: 'conversation'
+  identity: {
+    provider: ProviderId
+    name: string
+    resourceId: null
     canonicalUrl: string | null
   }
   resource: {
-    kind: 'conversation' | null
+    kind: 'conversation'
     native: false
+    disposition: 'fallback'
+    id: null
+    canonicalUrl: string | null
   }
   native: {
     resourceKind: 'project'
     availability: 'unavailable'
-    canonicalUrl: string | null
-    visibleProof: string | null
+    canonicalUrl: null
+    visibleProof: null
     reason: string
     updateInstructions: {
       availability: 'unavailable'
-      visibleProof: string | null
+      visibleProof: null
       reason: string
     }
   }
   updateInstructions: {
     availability: 'unavailable'
-    visibleProof: string | null
+    visibleProof: null
     reason: string
   }
-  availability: 'available' | 'unavailable'
-  visibleProof: string
-  reason: string | null
   fallback: {
     mode: 'conversation'
     resourceKind: 'conversation'
     availability: 'available'
   } | null
 }
+
+export type WorkspaceEnsureResult =
+  | NativeWorkspaceEnsureResult
+  | ConversationWorkspaceEnsureResult
 
 export type PromptInputResult = {
   visible: true

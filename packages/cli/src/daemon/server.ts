@@ -210,6 +210,27 @@ async function handleRequest(
       return
     }
 
+    if (method === 'GET' && url.pathname === '/provider-mappings/resolve') {
+      const mapping = store.resolveProviderMapping({
+        provider: requiredQueryString(url.searchParams.get('provider'), 'provider'),
+        profile_id: requiredQueryString(url.searchParams.get('profile_id'), 'profile_id'),
+        project_name: requiredQueryString(url.searchParams.get('project_name'), 'project_name'),
+        task_id: optionalQueryString(url.searchParams.get('task_id')),
+      })
+      writeJson(response, 200, { mapping })
+      return
+    }
+
+    if (method === 'GET' && url.pathname === '/provider-conversations/resolve') {
+      const mapping = store.resolveProviderTaskConversation({
+        provider: requiredQueryString(url.searchParams.get('provider'), 'provider'),
+        profile_id: requiredQueryString(url.searchParams.get('profile_id'), 'profile_id'),
+        task_id: requiredQueryString(url.searchParams.get('task_id'), 'task_id'),
+      })
+      writeJson(response, 200, { mapping })
+      return
+    }
+
     if (method === 'GET' && url.pathname === '/jobs') {
       const jobs = store.listJobs({
         status: optionalJobStatus(url.searchParams.get('status')),
@@ -421,6 +442,11 @@ function optionalString(value: unknown) {
 
 function optionalQueryString(value: string | null) {
   return value === null ? undefined : value
+}
+
+function requiredQueryString(value: string | null, field: string) {
+  if (value === null || value.trim() === '') throw invalidInput(`missing query parameter ${field}`)
+  return value
 }
 
 function optionalLimit(value: string | null) {

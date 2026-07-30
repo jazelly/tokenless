@@ -107,6 +107,140 @@
         }
       }
     },
+    "/provider-mappings/resolve": {
+      "get": {
+        "operationId": "resolveProviderProjectMapping",
+        "summary": "Resolve an exact provider Project and optional task conversation mapping",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "project_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact provider Project mapping, with a task-scoped conversation when requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderMappingResolveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/provider-conversations/resolve": {
+      "get": {
+        "operationId": "resolveProviderTaskConversation",
+        "summary": "Resolve a provider conversation by exact profile and task scope",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exact provider task conversation mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderTaskConversationResolveResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/jobs": {
       "get": {
         "operationId": "listJobs",
@@ -775,6 +909,660 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ProviderProjectMapping": {
+        "type": "object",
+        "required": [
+          "provider",
+          "profile_id",
+          "resource_id",
+          "name",
+          "canonical_url",
+          "first_observed_at",
+          "last_observed_at",
+          "last_visible_proof",
+          "creation_job_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "resource_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "canonical_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          },
+          "first_observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_visible_proof": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "creation_job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256
+          }
+        }
+      },
+      "ProviderProjectConversationMapping": {
+        "type": "object",
+        "required": [
+          "provider",
+          "profile_id",
+          "project_resource_id",
+          "task_id",
+          "canonical_url",
+          "proved_job_id",
+          "observed_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "project_resource_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "task_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "canonical_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          },
+          "proved_job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProviderTaskConversationMapping": {
+        "type": "object",
+        "required": [
+          "provider",
+          "profile_id",
+          "task_id",
+          "canonical_url",
+          "proved_job_id",
+          "observed_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "task_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "canonical_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://"
+          },
+          "proved_job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProviderMappingResolveResponse": {
+        "type": "object",
+        "required": [
+          "mapping"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "mapping": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "project",
+                  "conversation"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "project": {
+                    "$ref": "#/components/schemas/ProviderProjectMapping"
+                  },
+                  "conversation": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/ProviderProjectConversationMapping"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ProviderTaskConversationResolveResponse": {
+        "type": "object",
+        "required": [
+          "mapping"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "mapping": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderTaskConversationMapping"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "WorkspaceEnsureResult": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NativeWorkspaceEnsureResult"
+          },
+          {
+            "$ref": "#/components/schemas/ConversationWorkspaceEnsureResult"
+          }
+        ]
+      },
+      "NativeWorkspaceEnsureResult": {
+        "type": "object",
+        "required": [
+          "mode",
+          "requestedMode",
+          "resolvedMode",
+          "name",
+          "scope",
+          "identity",
+          "resource",
+          "native",
+          "updateInstructions",
+          "instructionOutcome",
+          "availability",
+          "visibleProof",
+          "reason",
+          "fallback"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "const": "native"
+          },
+          "requestedMode": {
+            "enum": [
+              "auto",
+              "native"
+            ]
+          },
+          "resolvedMode": {
+            "const": "native"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "$ref": "#/components/schemas/WorkspaceScope"
+          },
+          "identity": {
+            "type": "object",
+            "required": [
+              "provider",
+              "name",
+              "resourceId",
+              "canonicalUrl"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resourceId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "canonicalUrl": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              }
+            }
+          },
+          "resource": {
+            "type": "object",
+            "required": [
+              "kind",
+              "native",
+              "disposition",
+              "id",
+              "canonicalUrl"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "project"
+              },
+              "native": {
+                "const": true
+              },
+              "disposition": {
+                "enum": [
+                  "created",
+                  "reused"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "canonicalUrl": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              }
+            }
+          },
+          "native": {
+            "type": "object",
+            "required": [
+              "resourceKind",
+              "availability",
+              "canonicalUrl",
+              "visibleProof",
+              "reason",
+              "updateInstructions"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "resourceKind": {
+                "const": "project"
+              },
+              "availability": {
+                "const": "available"
+              },
+              "canonicalUrl": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              },
+              "visibleProof": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "null"
+              },
+              "updateInstructions": {
+                "$ref": "#/components/schemas/NativeWorkspaceInstructionUpdate"
+              }
+            }
+          },
+          "updateInstructions": {
+            "$ref": "#/components/schemas/NativeWorkspaceInstructionUpdate"
+          },
+          "instructionOutcome": {
+            "$ref": "#/components/schemas/WorkspaceInstructionOutcome"
+          },
+          "availability": {
+            "const": "available"
+          },
+          "visibleProof": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "null"
+          },
+          "fallback": {
+            "type": "null"
+          }
+        }
+      },
+      "ConversationWorkspaceEnsureResult": {
+        "type": "object",
+        "required": [
+          "mode",
+          "requestedMode",
+          "resolvedMode",
+          "name",
+          "scope",
+          "identity",
+          "resource",
+          "native",
+          "updateInstructions",
+          "instructionOutcome",
+          "availability",
+          "visibleProof",
+          "reason",
+          "fallback"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "const": "conversation"
+          },
+          "requestedMode": {
+            "enum": [
+              "auto",
+              "conversation"
+            ]
+          },
+          "resolvedMode": {
+            "const": "conversation"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "$ref": "#/components/schemas/WorkspaceScope"
+          },
+          "identity": {
+            "type": "object",
+            "required": [
+              "provider",
+              "name",
+              "resourceId",
+              "canonicalUrl"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resourceId": {
+                "type": "null"
+              },
+              "canonicalUrl": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^https://"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "resource": {
+            "type": "object",
+            "required": [
+              "kind",
+              "native",
+              "disposition",
+              "id",
+              "canonicalUrl"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "conversation"
+              },
+              "native": {
+                "const": false
+              },
+              "disposition": {
+                "const": "fallback"
+              },
+              "id": {
+                "type": "null"
+              },
+              "canonicalUrl": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "format": "uri",
+                    "pattern": "^https://"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "native": {
+            "type": "object",
+            "required": [
+              "resourceKind",
+              "availability",
+              "canonicalUrl",
+              "visibleProof",
+              "reason",
+              "updateInstructions"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "resourceKind": {
+                "const": "project"
+              },
+              "availability": {
+                "const": "unavailable"
+              },
+              "canonicalUrl": {
+                "type": "null"
+              },
+              "visibleProof": {
+                "type": "null"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "updateInstructions": {
+                "$ref": "#/components/schemas/UnavailableWorkspaceInstructionUpdate"
+              }
+            }
+          },
+          "updateInstructions": {
+            "$ref": "#/components/schemas/UnavailableWorkspaceInstructionUpdate"
+          },
+          "instructionOutcome": {
+            "$ref": "#/components/schemas/WorkspaceInstructionOutcome"
+          },
+          "availability": {
+            "const": "available"
+          },
+          "visibleProof": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fallback": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "resourceKind",
+                  "availability"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "conversation"
+                  },
+                  "resourceKind": {
+                    "const": "conversation"
+                  },
+                  "availability": {
+                    "const": "available"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "WorkspaceScope": {
+        "type": "object",
+        "required": [
+          "provider",
+          "profileId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "profileId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "WorkspaceInstructionOutcome": {
+        "enum": [
+          "not_requested",
+          "applied_on_creation",
+          "already_equivalent",
+          "skipped_on_reuse",
+          "unavailable"
+        ]
+      },
+      "NativeWorkspaceInstructionUpdate": {
+        "type": "object",
+        "required": [
+          "availability",
+          "visibleProof",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "enum": [
+              "available",
+              "unavailable"
+            ]
+          },
+          "visibleProof": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UnavailableWorkspaceInstructionUpdate": {
+        "type": "object",
+        "required": [
+          "availability",
+          "visibleProof",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "const": "unavailable"
+          },
+          "visibleProof": {
+            "type": "null"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
           }
         }
       },

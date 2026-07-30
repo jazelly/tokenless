@@ -1,6 +1,6 @@
 import { firstVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
-import type { Page } from 'playwright-core'
+import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
 import type { VisibleAction, VisibleActionRequest } from '../contracts.js'
 import type { ProviderExecutionContext } from '../execution-context.js'
@@ -116,7 +116,7 @@ async function inspectChoices(page: Page, provider: ProviderDomDefinition, kind:
     }
   }
   await trigger.click({ timeout: 5000 })
-  const choices = await collectVisibleChoices(page, provider)
+  const choices = await collectVisibleChoices(page, provider, trigger)
   return {
     supported: true as const,
     choices,
@@ -150,15 +150,25 @@ async function selectChoice(
   }
 }
 
-async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition): Promise<Choice[]> {
+async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition, trigger: Locator): Promise<Choice[]> {
+  const controlledId = await trigger.getAttribute('aria-controls')
+  const controlledRoot = controlledId
+    ? page.locator(`[id="${controlledId.replace(/["\\]/gu, '\\$&')}"]`).filter({ visible: true })
+    : null
+  const overlayRoot = page.locator('[role="menu"], [role="listbox"], [role="dialog"]').filter({ visible: true }).last()
+  const root = controlledRoot && await controlledRoot.count() > 0 ? controlledRoot : overlayRoot
   const locators = [
-    page.locator('[role="menuitem"], [role="option"], [cmdk-item], button'),
+    root.locator('[role="menuitem"], [role="option"], [cmdk-item], button').filter({ visible: true }),
   ]
   const choices: Choice[] = []
   for (const locator of locators) {
     const values = await locator.evaluateAll((elements, choiceAvailability) => elements.slice(0, 80).map((element) => {
-      const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
-      const ariaSelected = element.getAttribute('aria-selected') === 'true' || element.getAttribute('data-state') === 'checked'
+      const labelElement = element.querySelector('.label')
+      const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
+      const ariaSelected = element.getAttribute('aria-selected') === 'true' ||
+        element.getAttribute('data-state') === 'checked' ||
+        element.classList.contains('selected') ||
+        element.querySelector('[aria-label="Selected"]') !== null
       const dataDisabled = element.getAttribute('data-disabled')
       const classTokens = new Set((element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean))
       const style = element instanceof HTMLElement ? window.getComputedStyle(element) : null
@@ -169,12 +179,15 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
           (choiceAvailability.mutedOpacityClassToken !== null && classTokens.has(choiceAvailability.mutedOpacityClassToken)) ||
           (style !== null && Number(style.opacity) < 1)
         )
+      const unrelatedAccountControl = /(?:sign|log) in|upgrade|subscribe/i.test(text) ||
+        /(?:sign|log)[-_]?in|upgrade|subscribe/i.test(element.getAttribute('data-testid') ?? element.getAttribute('data-test-id') ?? '')
       const disabled = (
         element.hasAttribute('disabled') ||
         element.getAttribute('aria-disabled') === 'true' ||
         (dataDisabled !== null && dataDisabled !== 'false') ||
         explicitlyUnavailable ||
-        mutedUnavailable
+        mutedUnavailable ||
+        unrelatedAccountControl
       )
       return {
         label: text.slice(0, 120),

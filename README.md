@@ -16,7 +16,7 @@ As AI agents are used in more scenarios, they consume an increasing number of to
 - **Multiple AI services**: Tokenless supports the web versions of ChatGPT, Claude, Grok, and Gemini. Qwen / 千问 is available as an experimental guest-session provider.
 - **Fully local operation**: All automation runs locally, with no third-party relays and no collection of user data.
 - **Crash-tolerant local jobs**: The CLI starts the daemon only when needed, discovers its actual loopback port from SQLite, restores leased/checkpointed work after restart, and lets addressed agents drain each unseen outcome summary once while retaining full job results.
-- **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity across the supported providers. Qwen's experimental baseline currently covers prompt submission, response reading, and same-task conversation continuation; unproven optional capabilities remain unavailable or unknown.
+- **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity where the real-provider capability matrix proves them. Qwen's experimental baseline currently covers guest prompt submission and response reading; cross-process continuation is unavailable in the selected Qwen and Gemini guest profiles because reopening the mapped URL does not restore prior-turn context.
 - **Explicit guest and sign-in routing**: ChatGPT and Gemini can run through visible guest sessions, as can the experimental Qwen integration. Claude and Grok hand the existing job to the user for sign-in before Tokenless enters task content.
 
 ## Technology Stack
@@ -38,7 +38,9 @@ For the complete public command inventory, see the [Tokenless CLI Command Refere
 
 ## Experimental Workspace Handling
 
-`--project-name` remains task metadata by default. Add `--workspace-mode auto` to request a provider-neutral Workspace: Tokenless uses a fixture-proven native Project only when available and otherwise reports an explicit conversation-scoped fallback. Use `--workspace-mode native` to reject fallback, or `--workspace-mode conversation` to require conversation continuity.
+`--project-name` remains task metadata by default. Add `--workspace-mode auto` to request a provider-neutral Workspace. Claude and Grok prefer a visible native Project; Tokenless creates an exact name when absent, reuses one exact visible match, and fails closed on duplicates. `auto` falls back to a conversation only when the provider visibly reports stable native unavailability; transient UI, navigation, network, blocker, or selector failures remain errors. Use `--workspace-mode native` to reject fallback, or `--workspace-mode conversation` to require the conversation strategy. Cross-process restoration remains capability-gated.
+
+Native Workspace results distinguish `created`, `reused`, and `fallback`, include the canonical resource URL and provider/profile scope, and report how requested Project instructions were handled. Tokenless persists Project identity by provider resource ID and stores exact task conversation mappings in SQLite for later CLI processes.
 
 Run `tokenless provider-action --action capability.inspect --provider <provider> --json` to inspect the visible, subscription-dependent capability state. These contracts remain experimental until the live free, paid, unknown-plan, and managed-account matrix is complete.
 
@@ -46,7 +48,7 @@ Run `tokenless provider-action --action capability.inspect --provider <provider>
 
 - A TypeScript CLI provides the user-facing interface, while an on-demand local TypeScript daemon manages durable SQLite state. The configured URL is a preferred loopback origin; the actual port may advance when occupied and is recorded in SQLite.
 - Routing is implemented through Skill Prompts. Users can define rules that assign different types of tasks to different AI services.
-- Playwright operates provider-visible controls and reports fixture-proven postconditions. File uploads distinguish selected files from visibly accepted attachments, while Workspace requests expose whether the provider used a native resource or a conversation fallback.
+- Playwright operates provider-visible controls and reports runtime-visible postconditions. File uploads distinguish selected files from visibly accepted attachments, while Workspace requests expose whether the provider used a native resource or a conversation fallback.
 - One typed provider registry records identity, navigation, guest, account-tier, selector, and capability policy. Every provider is a concrete `BaseProvider` subclass, while a provider-session state machine turns visible page evidence into guest, account, handoff, wait, or terminal outcomes.
 - The entire workflow runs locally, without passing through third-party relay services or collecting user activity data.
 

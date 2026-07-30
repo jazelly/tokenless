@@ -525,6 +525,104 @@ test('replay migration initializes durable outcome revisions and preserves an ex
   }
 })
 
+test('SQLite preserves exact provider Project and conversation mappings across store restart', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-provider-mappings-')
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  let store = await JobStore.open(homeDir)
+  try {
+    const job = store.createJob({
+      provider: 'claude',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: 'profile-mapping',
+      request_json: {
+        protocol: 'tokenless.playwright.job.v3',
+        provider: 'claude',
+        target: { kind: 'provider_home', url: 'https://claude.ai/new' },
+        taskId: 'task-mapping',
+        browserVisibility: 'headed',
+        actions: [],
+      },
+    })
+    store.upsertProviderProject({
+      provider: 'claude',
+      profile_id: 'profile-mapping',
+      resource_id: 'project-resource',
+      name: 'TOKENLESS_E2E_PROJECT_MAPPING',
+      canonical_url: 'https://claude.ai/project/project-resource',
+      visible_proof: 'native-project-url-name-and-composer-visible',
+      job_id: job.job_id,
+      created: true,
+    })
+    store.upsertProviderConversation({
+      provider: 'claude',
+      profile_id: 'profile-mapping',
+      project_resource_id: 'project-resource',
+      task_id: 'task-mapping',
+      canonical_url: 'https://claude.ai/project/project-resource/chat/conversation-resource',
+      job_id: job.job_id,
+    })
+    store.upsertProviderTaskConversation({
+      provider: 'claude',
+      profile_id: 'profile-mapping',
+      task_id: 'task-mapping',
+      canonical_url: 'https://claude.ai/project/project-resource/chat/conversation-resource',
+      job_id: job.job_id,
+    })
+    const e2eJob = store.createJob({
+      provider: 'claude',
+      action: managedPlaywrightJobAction,
+      execution_backend: 'playwright',
+      profile_id: 'profile-mapping',
+      job_id: `tlp_e2e-run-${randomUUID()}`,
+      request_json: {
+        protocol: 'tokenless.playwright.job.v3',
+        provider: 'claude',
+        target: { kind: 'provider_home', url: 'https://claude.ai/new' },
+        taskId: 'task-e2e-isolation',
+        browserVisibility: 'headed',
+        actions: [],
+      },
+    })
+    const isolatedClaim = store.claimNextJob(
+      {
+        action: managedPlaywrightJobAction,
+        job_id_prefix: 'tlp_e2e-run-',
+      },
+      'playwright',
+      'profile-mapping',
+    )
+    assert.equal(isolatedClaim.job_id, e2eJob.job_id)
+    assert.equal(store.getJob(job.job_id).status, 'queued')
+    store.close()
+    store = await JobStore.open(homeDir)
+
+    const project = store.resolveProviderMapping({
+      provider: 'claude',
+      profile_id: 'profile-mapping',
+      project_name: 'TOKENLESS_E2E_PROJECT_MAPPING',
+      task_id: 'task-mapping',
+    })
+    assert.equal(project.project.resource_id, 'project-resource')
+    assert.equal(project.conversation.task_id, 'task-mapping')
+    const conversation = store.resolveProviderTaskConversation({
+      provider: 'claude',
+      profile_id: 'profile-mapping',
+      task_id: 'task-mapping',
+    })
+    assert.equal(
+      conversation.canonical_url,
+      'https://claude.ai/project/project-resource/chat/conversation-resource',
+    )
+  } finally {
+    store.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('built Playwright validators enforce the current internal schema IDs', {
   timeout: 60_000,
 }, async () => {
@@ -533,7 +631,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
   const runtime = await importCli()
   const created = playwright.createManagedPlaywrightJobRequest({
     provider: 'qwen',
-    target: { kind: 'provider_home', url: 'https://www.qianwen.com/' },
+    target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },
     taskId: 'v3-qwen-provider',
     browserVisibility: 'headless',
     actions: [
@@ -547,7 +645,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
   assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID)
   assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3)
   assert.equal(created.provider, 'qwen')
-  assert.equal(created.target.url, 'https://www.qianwen.com/')
+  assert.equal(created.target.url, 'https://chat.qwen.ai/')
   assert.equal(created.actions[0].provider, 'qwen')
   assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID)
   assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID_V3)
@@ -555,7 +653,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
   const v3Validated = playwright.validateManagedPlaywrightJobRequest({
     protocol: runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
     provider: 'qwen',
-    target: { kind: 'provider_home', url: 'https://www.qianwen.com/' },
+    target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },
     taskId: 'v3-explicit-qwen-provider',
     browserVisibility: 'headless',
     actions: [
@@ -662,55 +760,6 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     const awake = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
     assert.equal(awake.status, 'running')
     assertProfileDirectoryEmpty(profile.directory)
-  } finally {
-    await shutdownDaemon(daemon).catch(() => undefined)
-    await terminateChildrenForHome(homeDir)
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-
-test('gated real browser quiesce settles an embedded-owned active claim before returning', {
-  timeout: 180_000,
-}, async (t) => {
-  if (process.env.TOKENLESS_RUN_ACTIVE_CLAIM_QUIESCE_E2E !== '1') {
-    t.skip('set TOKENLESS_RUN_ACTIVE_CLAIM_QUIESCE_E2E=1 to run real Chromium/provider active-claim quiesce proof')
-    return
-  }
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-active-claim-quiesce-')
-  const profile = createReadyManagedProfile(homeDir)
-  const daemon = await startTsDaemon(homeDir)
-  try {
-    const token = readControlToken(homeDir)
-    const playwright = await importPlaywright()
-    const jobId = randomUUID()
-    const request = playwright.createManagedPlaywrightJobRequest({
-      provider: 'chatgpt',
-      target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
-      browserVisibility: 'headed',
-      taskId: `active-claim-quiesce:${jobId}`,
-      actions: [
-        { requestId: `${jobId}:auth`, action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} },
-      ],
-    })
-    await daemonRequest(daemon.url, token, 'POST', '/jobs', {
-      provider: 'chatgpt',
-      action: managedPlaywrightJobAction,
-      execution_backend: 'playwright',
-      profile_id: profile.id,
-      job_id: jobId,
-      request_json: request,
-    })
-    const active = await waitForDaemonJobOneOf(daemon.url, token, jobId, ['running', 'waiting_for_user', 'succeeded', 'failed'], 90_000)
-    if (active.status !== 'running') {
-      t.skip(`real browser job reached ${active.status} before quiesce could observe a running claim`)
-      return
-    }
-    const quiesced = await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
-    assert.equal(quiesced.status, 'quiesced')
-    const latest = await daemonRequest(daemon.url, token, 'GET', `/jobs/${encodeURIComponent(jobId)}`)
-    assert.notEqual(latest.status, 'claimed')
-    assert.notEqual(latest.status, 'running')
   } finally {
     await shutdownDaemon(daemon).catch(() => undefined)
     await terminateChildrenForHome(homeDir)

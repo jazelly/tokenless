@@ -8,6 +8,12 @@ import {
 } from './errors.js'
 import { RUNNER_CHECKPOINT_SCHEMA_ID, USER_HANDOVER_SCHEMA_ID } from '../schema-ids.js'
 import { PersistentContextManager } from './browser/context-manager.js'
+import {
+  e2eInspectionJobPrefix,
+  resolveE2EBrowserInspectionConfig,
+  waitForE2EBrowserObserver,
+} from './e2e-inspection.js'
+import type { E2EBrowserInspectionConfig } from './e2e-inspection.js'
 import type { ManagedBrowserLaunchTarget } from './browser/context-manager.js'
 import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
@@ -30,6 +36,7 @@ import type { BrowserVisibility } from '../browser-visibility.js'
 import type { VisibleAction, VisibleActionRequest } from './actions.js'
 import type { VisibleActionResponse } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
+import type { NativeWorkspaceEnsureResult } from './actions.js'
 import type { ProviderActionPreparation } from '../providers/contracts.js'
 import type { BrowserContext, Page } from 'playwright-core'
 
@@ -139,6 +146,7 @@ export class ManagedPlaywrightRunnerService {
   private readonly recoverAbortedClaim: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   private readonly cleanupAttachmentRoot: boolean
   private readonly now: () => Date
+  private readonly e2eInspection: E2EBrowserInspectionConfig | null
   private readonly inFlightProfiles = new Set<string>()
   private readonly inFlightJobs = new Set<Promise<void>>()
   private stopped = false
@@ -164,6 +172,7 @@ export class ManagedPlaywrightRunnerService {
     this.recoverAbortedClaim = options.recoverAbortedClaim
     this.cleanupAttachmentRoot = options.cleanupAttachmentRoot ?? true
     this.now = options.now ?? (() => new Date())
+    this.e2eInspection = resolveE2EBrowserInspectionConfig(options.homeDir)
   }
 
   stop() {
@@ -209,6 +218,7 @@ export class ManagedPlaywrightRunnerService {
         executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
         profileId: profile.id,
         action: MANAGED_PLAYWRIGHT_JOB_ACTION,
+        jobIdPrefix: this.e2eInspection ? e2eInspectionJobPrefix(this.e2eInspection) : undefined,
         signal,
       })
       if (claimed.job) return await this.executeClaimedJob(profile, claimed.job, signal)
@@ -227,6 +237,7 @@ export class ManagedPlaywrightRunnerService {
         executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
         profileId: profile.id,
         action: MANAGED_PLAYWRIGHT_JOB_ACTION,
+        jobIdPrefix: this.e2eInspection ? e2eInspectionJobPrefix(this.e2eInspection) : undefined,
         signal,
       })
       if (!claimed.job) continue
@@ -267,6 +278,7 @@ export class ManagedPlaywrightRunnerService {
     let canceled = false
     let renewError: unknown
     let attachmentRoot: string | undefined
+    let providerAttachmentRoot: string | undefined
     let autoEscalatedBrowserContext: BrowserContext | undefined
     let terminalCompletion = false
     const renewTimer = setInterval(() => {
@@ -290,7 +302,10 @@ export class ManagedPlaywrightRunnerService {
     try {
       const request = this.validateClaimedJob(profile, job)
       attachmentRoot = await this.attachmentRootForJob?.(job)
-      if (attachmentRoot) assertSafeAttachmentCleanupRoot(attachmentRoot, job.job_id)
+      if (attachmentRoot) {
+        assertSafeAttachmentCleanupRoot(attachmentRoot, job.job_id)
+        providerAttachmentRoot = path.dirname(attachmentRoot)
+      }
       await this.daemonClient.markJobRunning({
         jobId: job.job_id,
         claimToken: job.claim_token,
@@ -300,7 +315,7 @@ export class ManagedPlaywrightRunnerService {
         profile,
         job,
         request,
-        attachmentRoot,
+        providerAttachmentRoot,
         signal,
         () => canceled,
         () => renewError,
@@ -433,6 +448,17 @@ export class ManagedPlaywrightRunnerService {
       const state = executionStateFromCheckpoint(restoredCheckpoint)
       const startUrl = state.submitted?.providerUrl ?? request.target.url
       await navigateToTarget(page, startUrl, signal, request.actions.some((action) => action.action === VISIBLE_ACTIONS.NAVIGATION_CHECK))
+      if (this.e2eInspection) {
+        await waitForE2EBrowserObserver({
+          config: this.e2eInspection,
+          jobId: job.job_id,
+          profileId: profile.id,
+          profileDirectory: profile.directory,
+          provider: request.provider,
+          url: page.url(),
+          signal,
+        })
+      }
       if (restoredCheckpoint && !state.submitted) {
         await reconstructCompletedPreSubmitActions(page, {
           provider,
@@ -522,6 +548,51 @@ export class ManagedPlaywrightRunnerService {
         if (lifecycle.completion === 'reads_response') state.preparation = null
         state.actionCursor = actionIndex + 1
         await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('completed', actionIndex, action, page, provider))
+        if (action.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE && isNativeWorkspaceResult(response.result)) {
+          await this.daemonClient.upsertProviderProject({
+            jobId: job.job_id,
+            claimToken: job.claim_token,
+            provider: request.provider,
+            profileId: profile.id,
+            resourceId: response.result.resource.id,
+            name: response.result.name,
+            canonicalUrl: response.result.resource.canonicalUrl,
+            visibleProof: response.result.visibleProof,
+            created: response.result.resource.disposition === 'created',
+            signal,
+          })
+        }
+        if (lifecycle.completion === 'reads_response' && request.taskId) {
+          const workspace = latestNativeWorkspaceResult(state.responses)
+          const conversationUrl = validatedConversationUrl(
+            page.url(),
+            provider,
+            workspace?.resource.canonicalUrl ?? request.target.url,
+          )
+          if (conversationUrl) {
+            await this.daemonClient.upsertProviderTaskConversation({
+              jobId: job.job_id,
+              claimToken: job.claim_token,
+              provider: request.provider,
+              profileId: profile.id,
+              taskId: request.taskId,
+              canonicalUrl: conversationUrl,
+              signal,
+            })
+          }
+          if (workspace && conversationUrl) {
+            await this.daemonClient.upsertProviderConversation({
+              jobId: job.job_id,
+              claimToken: job.claim_token,
+              provider: request.provider,
+              profileId: profile.id,
+              projectResourceId: workspace.resource.id,
+              taskId: request.taskId,
+              canonicalUrl: conversationUrl,
+              signal,
+            })
+          }
+        }
       }
       return state.responses
     })
@@ -582,14 +653,14 @@ export class ManagedPlaywrightRunnerService {
       claimToken: options.job.claim_token,
       checkpoint,
     })
-    if (options.claimBrowserVisibility === 'headless') {
+    if (options.claimBrowserVisibility === 'headless' || this.e2eInspection) {
       await this.daemonClient.parkJob({
         jobId: options.job.job_id,
         claimToken: options.job.claim_token,
         blocker: blockerPayload(options.job, initial.blockers, {
           requestedVisibility: options.claimBrowserVisibility,
           effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-          windowOpen: false,
+          windowOpen: options.claimBrowserVisibility !== 'headless',
         }),
         checkpoint,
       })
@@ -691,6 +762,7 @@ export function serializeRunnerError(error: unknown) {
     code: response.code,
     message: response.message,
     retryable: response.retryable,
+    ...(response.details === undefined ? {} : { details: response.details }),
   }
 }
 
@@ -1027,7 +1099,18 @@ async function navigateToTarget(page: unknown, url: string, signal: AbortSignal,
     bringToFront?: () => Promise<unknown>
   }
   if (typeof maybePage.goto === 'function') {
-    await maybePage.goto(url, { waitUntil: 'domcontentloaded' })
+    try {
+      await maybePage.goto(url, { waitUntil: 'domcontentloaded' })
+    } catch (error) {
+      if (String(error).includes('net::ERR_NAME_NOT_RESOLVED')) {
+        throw tokenlessError(
+          'provider_dns_unavailable',
+          'The provider hostname could not be resolved by the current system DNS configuration.',
+          { retryable: true, cause: error }
+        )
+      }
+      throw error
+    }
   }
   if (foreground && typeof maybePage.bringToFront === 'function') {
     await maybePage.bringToFront()
@@ -1208,6 +1291,40 @@ function sanitizedNavigationOrigin(provider: RunnerProvider, value: string) {
   if (classification.kind === 'approved') return classification.target.origin
   if (classification.kind === 'trusted_sign_in') return classification.origin
   return ''
+}
+
+function isNativeWorkspaceResult(value: unknown): value is NativeWorkspaceEnsureResult {
+  if (!isPlainRecord(value) || value.mode !== 'native') return false
+  const resource = isPlainRecord(value.resource) ? value.resource : null
+  return resource?.kind === 'project' &&
+    resource.native === true &&
+    typeof resource.id === 'string' &&
+    typeof resource.canonicalUrl === 'string' &&
+    (resource.disposition === 'created' || resource.disposition === 'reused')
+}
+
+function latestNativeWorkspaceResult(responses: readonly VisibleActionResponse[]) {
+  for (let index = responses.length - 1; index >= 0; index -= 1) {
+    const response = responses[index]
+    if (response?.ok && response.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE && isNativeWorkspaceResult(response.result)) {
+      return response.result
+    }
+  }
+  return null
+}
+
+function validatedConversationUrl(
+  value: string,
+  provider: RunnerProvider,
+  projectUrl: string,
+) {
+  const target = provider.navigation.assertCurrentPageAllowed(value)
+  if (!target) return null
+  const canonical = new URL(target.href)
+  canonical.search = ''
+  canonical.hash = ''
+  const href = canonical.toString()
+  return href === projectUrl ? null : href
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
