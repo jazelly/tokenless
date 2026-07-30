@@ -8,48 +8,137 @@ Depends on: stable local job identity, typed provider capabilities, and the Cont
 
 Tokenless binds work to the exact conversation and filesystem scope of the local agent that requested it. Provider routing no longer guesses a project from names or the process's incidental current directory.
 
-The product surface is an agent-neutral integration protocol with a local MCP server as its primary explicit agent tool surface. A Codex plugin is the first deep lifecycle integration, not a Codex-only architecture.
+The product surface is an agent-neutral, capability-first routing protocol with a local MCP server as its primary explicit agent tool surface. Callers state the outcome they require; Tokenless selects a provider and provider-specific strategy. A Codex plugin is the first deep lifecycle integration, not a Codex-only architecture.
 
-## Why MCP, Not a Generic `--mode` Flag
+## Capability-First Routing
 
 A provider-neutral `--mode` flag would unify spelling without unifying meaning. Qwen composer modes, provider reasoning controls, research variants, image creation surfaces, and future provider-specific controls do not share one stable semantic type. A raw string flag would still let an agent pass a valid Qwen label to the wrong provider, use a disabled account-tier option, or reuse a stale label after the provider DOM changes.
 
-The CLI remains the human, scripting, diagnostics, and recovery surface. MCP becomes the preferred agent surface because it provides:
+The caller-facing interface should instead accept canonical task capabilities such as:
 
-- typed tool inputs instead of shell quoting and flag routing;
-- structured results and error recovery instructions;
-- explicit read-only discovery before provider mutation;
-- durable job identifiers for polling, resume, and cancellation; and
-- a place to enforce provider, profile, capability, and freshness constraints before browser actions start.
+| Capability | Caller intent |
+| --- | --- |
+| `conversation.chat` | Submit a normal chat request and read the correlated response |
+| `research.deep` | Produce a provider-native deep research result that meets the documented evidence contract |
+| `image.generation` | Produce an image result through a proven visible provider flow |
+| `file.upload` | Deliver caller-selected files and prove visible provider acceptance |
+| `workspace.native` | Use a proven native provider Project or equivalent named workspace |
+| `conversation.continue` | Continue the exact durable provider conversation |
+| `response.citations` | Require visible citation evidence in the provider response |
 
-MCP does not make provider-specific semantics generic. It exposes those semantics through one generic discovery and selection protocol while retaining namespaced capability identifiers such as `qwen.mode`.
+This initial list is illustrative, not an automatic support declaration. A capability enters the public catalog only after its minimum semantics, inputs, success evidence, composability, and failure behavior are defined.
 
-## Provider Capability Snapshot Contract
+`qwen.mode`, `model.choice`, and provider DOM selectors remain provider strategy details. For example, `research.deep` may currently route to a Qwen strategy that selects the visible Deep Research mode. If another provider later proves the same canonical outcome, it can satisfy the same task capability through a different adapter without changing the caller interface.
 
-Introduce a versioned `ProviderCapabilitySnapshot` returned by read-only inspection:
+Do not claim equivalence merely because two providers use similar labels. A canonical capability represents a minimum externally observable outcome, not the presence of a menu item.
+
+## Capability Catalog and Provider Matrix
+
+Maintain two related but distinct product records:
+
+### Canonical Capability Catalog
+
+The catalog defines what callers may request:
 
 | Field | Purpose |
 | --- | --- |
-| `snapshotId` | Opaque server-minted handle for one observed provider/profile capability state |
-| `provider` and `profileId` | Exact scope; a reference cannot be replayed against another provider or profile |
-| `revision` | Monotonic or content-derived capability revision used for stale-state detection |
-| `observedAt` and `expiresAt` | Freshness evidence |
-| `capabilities` | Availability, visible proof, reason, and stability for common and provider-specific capabilities |
-| `choices` | Hierarchical enabled, disabled, selected, and descriptive visible choices |
-| `blockers` | Auth, CAPTCHA, plan limit, consent, or other state preventing safe use |
+| `id` | Stable canonical capability identifier |
+| `title` and `description` | Agent- and human-readable intent |
+| `inputSchema` | Capability-specific structured inputs |
+| `sideEffects` | Whether the capability reads, uploads, submits, creates, or persists provider state |
+| `composesWith` and `conflictsWith` | Valid multi-capability requests |
+| `requiredEvidence` | Minimum visible and durable outcomes needed for success |
+| `stability` | Experimental or supported |
 
-Every selectable node returns an opaque `choiceRef`. A child choice carries its hierarchy, so Qwen Deep Research Advanced is represented as one validated selection path rather than unrelated `mode` and `modeVariant` strings. Human-readable labels remain presentation data and visible evidence, not durable identifiers.
+### Provider Capability Matrix
 
-An execution request that includes provider controls supplies `snapshotId` and one or more `choiceRef` values. Before job admission, Tokenless must verify that:
+The provider matrix defines how, and whether, each provider satisfies each canonical capability:
 
-- the snapshot belongs to the requested provider and managed profile;
-- each reference belongs to that snapshot and capability;
-- the choice was enabled when observed;
-- mutually exclusive choices are not combined;
-- the snapshot is still fresh enough for mutation; and
-- the current visible control still matches before applying the choice.
+| Field | Purpose |
+| --- | --- |
+| `provider` and `capability` | Matrix key |
+| `strategy` | Provider-owned implementation, such as the Qwen Deep Research mode strategy |
+| `support` | `supported`, `experimental`, `unavailable`, or `unknown` |
+| `accountConstraints` | Known tier or authentication constraints without treating labels as authorization |
+| `runtimeInspection` | Visible controls and blockers that must be checked for the selected profile |
+| `evidence` | Real-provider E2E closure required before routing is advertised |
+| `reason` | Structured explanation when unavailable or unknown |
 
-Stale, unknown, disabled, cross-provider, or cross-profile references fail closed with a structured instruction to inspect again. Tokenless never guesses the closest label.
+The checked-in live E2E matrix remains an acceptance and evidence plan; it is not imported as runtime product configuration. Runtime declarations live with the typed provider and capability registry. Built-interface checks should verify that the externally listed capability routes and the real-provider acceptance matrix do not drift.
+
+## Router Module
+
+The router is a deep module at the caller-to-provider seam. Its small interface accepts:
+
+- one or more required canonical capabilities;
+- the selected managed profile;
+- an optional explicit provider constraint when the user actually requested one; and
+- structured task inputs such as prompt, files, workspace intent, and output requirements.
+
+Its implementation owns:
+
+- the canonical catalog;
+- provider strategy mappings;
+- provider stage and support evidence;
+- configured provider preferences;
+- cached profile access observations;
+- fresh read-only capability inspection when needed; and
+- deterministic failure explanations.
+
+The router returns one `CapabilityRoute` containing the selected provider, profile, matched strategies, route reason, evidence status, and any blocker. Execution uses that exact route and re-checks visible preconditions before the first mutation.
+
+### Deterministic Routing Policy
+
+1. Validate the requested capability set and infer structurally required capabilities. Attachments imply `file.upload`; native workspace intent implies `workspace.native`.
+2. If the caller supplied an explicit provider constraint, evaluate only that provider and fail rather than silently switching.
+3. Otherwise, if `preferredProviders` is configured, use membership in that list as the complete provider filter.
+4. Otherwise, use every enabled provider in stable setup order.
+5. Remove providers without implemented and real-E2E-closed mappings for every required capability.
+6. Evaluate current profile access, visible availability, blockers, subscription-aware capacity, and plan limits through read-only inspection and the scheduler capacity policy.
+7. Select an eligible provider through the general capacity, fairness, and route-selection algorithm.
+8. If no single provider satisfies the complete request, fail with every evaluated provider and structured reasons.
+
+V1 never splits one task across multiple providers and never submits trial prompts while routing. `preferredProviders` filters candidate membership only: list position does not override capability eligibility, rate-limit capacity, fairness, profile health, or the rest of route selection. Falling back outside a configured preferred list requires a future explicit opt-in; it is not implicit.
+
+The existing `preferredProviders` name is weaker than this behavior because “preferred” often implies ordered ranking or fallback outside the list. Before making capability routing a public contract, either document its filter semantics explicitly or migrate to an unambiguous name such as `providerRoutingScope`.
+
+For example, if `research.deep` is currently closed only for Qwen:
+
+- preferences `[chatgpt, qwen]` route to Qwen;
+- preferences `[chatgpt, claude]` fail without escaping the configured scope;
+- no preferences route to Qwen if the selected profile can use the proven strategy; and
+- an explicit `provider=chatgpt` constraint fails rather than switching to Qwen.
+
+Provider-specific tuning remains secondary. A canonical capability uses a documented default provider strategy. Add cross-provider parameters only when their semantics can be defined honestly. Advanced low-level CLI controls may remain for diagnostics and explicit human use, but agents should not need them for the primary flow.
+
+The planned CLI interface is deliberately small:
+
+```bash
+tokenless capabilities list --json
+
+tokenless run \
+  --capability research.deep \
+  "Research this topic"
+
+tokenless run \
+  --capability research.deep \
+  --attach-file evidence.pdf \
+  "Research this topic using the attached evidence"
+```
+
+`--capability` is repeatable. A run without the flag infers `conversation.chat`; attachments additionally infer `file.upload`. Explicit and inferred requirements are merged before routing, so the caller does not repeat information already present in structured task inputs.
+
+## Why MCP
+
+The CLI remains the human, scripting, diagnostics, and recovery interface. MCP becomes the preferred agent interface because it provides:
+
+- typed capability identifiers and structured inputs instead of shell quoting and flag routing;
+- a discoverable capability catalog;
+- structured route decisions, results, and repair instructions;
+- durable job identifiers for polling, resume, and cancellation; and
+- a place to enforce provider, profile, capability, evidence, and freshness constraints before browser actions start.
+
+MCP does not make provider-specific semantics generic. It lets the router hide them behind a capability-first interface.
 
 ## Minimal MCP Tool Surface
 
@@ -57,17 +146,17 @@ The first MCP version should expose a small stable tool list instead of one tool
 
 | Tool | Mutation | Purpose |
 | --- | --- | --- |
-| `tokenless_inspect_provider` | No | Resolve the provider/profile, inspect auth and blockers, and return a `ProviderCapabilitySnapshot` with valid `choiceRef` values |
-| `tokenless_run` | Yes | Submit a prompt with optional files, workspace intent, and snapshot-bound provider selections |
+| `tokenless_list_capabilities` | No | Return the canonical catalog, schemas, and current declared provider coverage |
+| `tokenless_run` | Yes | Accept required capabilities and task inputs, resolve one route, and submit one durable job |
 | `tokenless_get_job` | No | Read durable state, structured visible-action evidence, response text, and repair instructions |
 | `tokenless_resume_job` | Yes | Resume the same waiting job after user-resolvable auth, CAPTCHA, consent, or confirmation |
 | `tokenless_cancel_job` | Yes | Cancel one exact durable job |
 
-Do not expose a generic arbitrary `provider-action` MCP tool in v1. It would reproduce the CLI's low-level action vocabulary without making common agent workflows safer. Add narrowly scoped advanced tools later only when an agent workflow cannot be represented by inspect, run, state, resume, and cancel.
+Do not expose a generic arbitrary `provider-action` or raw provider-mode MCP tool in v1. It would reproduce the CLI's low-level action vocabulary without making common agent workflows safer. Add narrowly scoped advanced tools later only when an agent workflow cannot be represented by catalog, run, state, resume, and cancel.
 
 The MCP server is a thin trusted local adapter over the same daemon job and provider capability contracts. It does not own another browser, attach through CDP, automate login, or receive provider credentials. The daemon remains the only Playwright actor.
 
-Keep the MCP tool schemas stable across account state. Runtime choices belong in inspection results, not in a connection-specific tool list or a dynamically rewritten enum. Tool-list change notifications are reserved for actual product tool additions or removals. This avoids depending on every MCP host refreshing dynamic schemas correctly and remains compatible with stateless transports.
+Keep the MCP tool schemas stable across account state. The canonical capability identifiers may be a schema enum for a published product version, while runtime provider eligibility belongs in route results rather than a connection-specific tool list. Tool-list change notifications are reserved for actual product tool additions or removals. This avoids depending on every MCP host refreshing dynamic schemas correctly and remains compatible with stateless transports.
 
 Tool results use structured output schemas and also provide concise text fallbacks for compatible hosts. Tool annotations identify read-only and mutating operations, but are hints rather than authorization; user approval policy remains the MCP host's responsibility.
 
@@ -78,16 +167,16 @@ sequenceDiagram
   participant Daemon as Tokenless daemon
   participant Provider as Real provider website
 
-  Agent->>MCP: tokenless_inspect_provider(provider, profile)
-  MCP->>Daemon: Submit read-only capability inspection
-  Daemon->>Provider: Observe visible controls
-  Provider-->>Daemon: Current modes, variants, blockers
-  Daemon-->>MCP: Snapshot plus opaque choiceRef values
-  MCP-->>Agent: Structured ProviderCapabilitySnapshot
-  Agent->>MCP: tokenless_run(snapshotId, choiceRefs, prompt)
-  MCP->>Daemon: Validate scope and freshness, then submit
-  Daemon->>Provider: Re-check and apply visible selection
-  Daemon-->>Agent: Durable job id and state
+  Agent->>MCP: tokenless_list_capabilities()
+  MCP-->>Agent: Canonical capability catalog
+  Agent->>MCP: tokenless_run(capabilities, task inputs)
+  MCP->>Daemon: Resolve candidate scope and submit routing inspection
+  Daemon->>Provider: Read visible eligibility without mutation
+  Provider-->>Daemon: Current controls, access, and blockers
+  Daemon->>Daemon: Select one evidence-backed CapabilityRoute
+  Daemon->>Provider: Re-check route and execute visible strategy
+  Daemon-->>MCP: Durable job id, provider route, and state
+  MCP-->>Agent: Structured result
 ```
 
 The adapter should call internal typed APIs or the authenticated daemon contract directly, not spawn CLI subprocesses and parse their output. Package the first `stdio` server with the existing CLI distribution rather than creating a new package namespace.
@@ -169,26 +258,26 @@ Hooks register identity; they do not submit prompts or upload files implicitly.
 
 ## Delivery Phases
 
-### Phase 0: Agent and Capability Selection Protocol
+### Phase 0: Capability Catalog and Routing Protocol
 
-- Define `AgentSessionBinding`, `ProviderCapabilitySnapshot`, `choiceRef`, lifecycle events, capability negotiation, and schema versioning.
+- Define the canonical capability catalog, provider capability matrix, `CapabilityRoute`, `AgentSessionBinding`, lifecycle events, and schema versioning.
 - Separate agent identity, filesystem identity, provider workspace identity, and task identity.
 - Define collision, resume, fork, worktree-change, and stale-session behavior.
-- Define snapshot expiry, stale-choice, cross-provider, cross-profile, disabled-choice, and mutually exclusive selection behavior.
-- Add local inspect and revoke commands.
+- Define capability composition, conflicts, provider preference scope, explicit provider constraints, stale observations, account blockers, and route failure behavior.
+- Add built CLI commands to list canonical capabilities and submit repeated required capability identifiers.
 
-Exit: a test client can register two concurrent sessions without identity collisions and cannot apply a capability choice outside the snapshot that produced it.
+Exit: the built CLI can list the catalog and deterministically route a multi-capability request to one eligible provider without caller-supplied provider details.
 
 ### Phase 1: Local MCP Server
 
 - Add a local `stdio` MCP entry point backed by the packaged Tokenless daemon and existing durable jobs.
-- Expose only inspect, run, get-job, resume-job, and cancel-job.
+- Expose only list-capabilities, run, get-job, resume-job, and cancel-job.
 - Publish strict input and structured output schemas generated from or checked against the internal contracts.
-- Map provider-specific controls into snapshot-bound choice references without flattening them into a generic mode enum.
-- Return typed blockers and retry or repair instructions.
+- Accept canonical required capabilities and keep provider-specific controls behind the router module.
+- Return the chosen provider route, typed blockers, candidate rejection reasons, and retry or repair instructions.
 - Add MCP protocol conformance and real daemon-bound integration coverage without provider simulations.
 
-Exit: an MCP client can discover Qwen Deep Research Advanced, submit it by reference, poll the durable result, and receives a pre-mutation error for stale or cross-provider references.
+Exit: an MCP client can request `research.deep` without naming Qwen, observe an evidence-backed Qwen route, poll the durable result, and receive a pre-mutation error when no provider in the configured scope is eligible.
 
 ### Phase 2: Explicit Codex Binding
 
@@ -229,8 +318,11 @@ Exit: a second agent can complete the same exact-binding and context-handoff wor
 ## Acceptance Criteria
 
 - Session matching uses an agent-supplied stable id, never chat title or project display name.
-- Provider-specific choices are namespaced capabilities selected through snapshot-bound references, not generic mode strings.
-- MCP mutation tools reject missing, stale, disabled, cross-provider, and cross-profile choice references before browser mutation.
+- Callers request canonical task capabilities; provider-specific actions and mode labels stay inside provider strategy adapters.
+- Routing honors an explicit provider constraint, otherwise filters candidates by the configured preferred-provider set, otherwise considers all enabled providers; the normal capability, capacity, fairness, and health algorithms run after that filter.
+- One V1 route must satisfy the complete requested capability set through one provider.
+- Runtime presence alone never makes a route supported; provider mapping and real-provider E2E closure are both required.
+- MCP mutation tools reject unknown, conflicting, unsupported, unavailable, and blocked capability requests before browser mutation.
 - MCP tool schemas and structured outputs are versioned and validated against the internal daemon contracts.
 - The first MCP release has no arbitrary low-level provider-action escape hatch.
 - Working directory and project root are canonicalized and checked for changes.
@@ -252,9 +344,11 @@ Exit: a second agent can complete the same exact-binding and context-handoff wor
 | Same repository has multiple worktrees or subdirectory sessions | Bind canonical `cwd`, project root, and worktree identity separately |
 | Agent lacks lifecycle hooks | Use explicit invocation metadata and report reduced lifecycle capability |
 | Plugin surface changes | Keep the agent-neutral local protocol independently usable |
-| MCP host caches tools or ignores list-change notifications | Keep the v1 tool list stable and return runtime capability choices as inspected data |
-| Agent invents or edits a provider option label | Accept only opaque snapshot-bound choice references for controlled selections |
-| Provider choices change after inspection | Enforce expiry and re-check visible state before mutation |
+| MCP host caches tools or ignores list-change notifications | Keep the v1 tool list stable and return runtime provider eligibility in route results |
+| Agent invents or edits a provider option label | Accept canonical capability identifiers and keep provider labels out of the primary MCP interface |
+| Preferred providers cannot satisfy the request | Fail with candidate reasons; do not silently escape the configured scope |
+| Provider availability changes during routing | Re-check visible route preconditions before the first mutation |
+| Similar provider features do not have equivalent outcomes | Define capability semantics by required evidence and keep non-equivalent strategies provider-specific |
 | Tool annotations are treated as authorization | Enforce authorization and mutation policy inside Tokenless; annotations remain hints |
 
 ## Non-Goals
@@ -266,4 +360,6 @@ Exit: a second agent can complete the same exact-binding and context-handoff wor
 - Requiring every supported agent to install the same plugin format
 - Flattening provider-specific controls into one universal mode taxonomy
 - Generating one MCP tool for every provider mode or visible menu item
+- Splitting one V1 request across several providers
+- Silently routing outside the user's configured preferred-provider scope
 - Exposing the daemon bearer token or browser debugging access to the MCP client
