@@ -13,6 +13,18 @@ const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const protocol = 'tokenless.e2e-browser-inspection.v1'
 const pollMs = 50
 const daemonStopTimeoutMs = 60_000
+const lsAppInfo = '/usr/bin/lsappinfo'
+const chromiumBundleIds = new Set([
+  'com.brave.Browser',
+  'com.google.Chrome',
+  'com.google.Chrome.beta',
+  'com.google.Chrome.canary',
+  'com.google.Chrome.dev',
+  'com.google.Chrome.forTesting',
+  'com.microsoft.edgemac',
+  'company.thebrowser.Browser',
+  'org.chromium.Chromium',
+])
 
 export async function createLiveBrowserInspectionSession(options) {
   const homeDir = path.resolve(requiredString(options.homeDir, 'homeDir'))
@@ -42,50 +54,56 @@ export async function createLiveBrowserInspectionSession(options) {
     homeDir,
     profileSlug,
     async startCli(args, startOptions = {}) {
-      const commandArgs = [
-        ...args,
-        '--profile', profileSlug,
-        '--home', homeDir,
-        ...(daemonUrl ? ['--daemon-url', daemonUrl] : []),
-        '--json',
-      ]
-      const child = spawn(process.execPath, [cliEntry, ...commandArgs], {
-        cwd: root,
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      const output = collectChildOutput(child)
-      const waiting = await waitForWaitingBarrier({
-        barrierRoot,
-        nonce,
-        jobPrefix,
-        seenJobs,
-        childOutput: output,
-        timeoutMs: startOptions.startTimeoutMs ?? 120_000,
-      })
-      seenJobs.add(waiting.jobId)
-      const observer = await connectObserver(waiting, startedAt)
-      observers.add(observer.browser)
-      await startOptions.beforeRelease?.({ waiting, page: observer.page })
-      const observation = startOptions.observeAfterRelease === undefined
-        ? Promise.resolve(undefined)
-        : Promise.resolve().then(() => startOptions.observeAfterRelease({ waiting, page: observer.page }))
-      await releaseBarrier({ barrierRoot, waiting, runId, nonce })
-      return {
-        waiting,
-        page: observer.page,
-        async wait() {
-          const [result, observerResult] = await Promise.all([output.exit, observation])
-          return {
-            ...result,
-            payload: parseJsonOutput(result),
-            observerResult,
-          }
-        },
-        async close() {
-          await observer.browser.close()
-          observers.delete(observer.browser)
-        },
+      const frontmostApplication = captureFrontmostApplication()
+      try {
+        const commandArgs = [
+          ...args,
+          '--profile', profileSlug,
+          '--home', homeDir,
+          ...(daemonUrl ? ['--daemon-url', daemonUrl] : []),
+          '--json',
+        ]
+        const child = spawn(process.execPath, [cliEntry, ...commandArgs], {
+          cwd: root,
+          env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        const output = collectChildOutput(child)
+        const waiting = await waitForWaitingBarrier({
+          barrierRoot,
+          nonce,
+          jobPrefix,
+          seenJobs,
+          childOutput: output,
+          timeoutMs: startOptions.startTimeoutMs ?? 120_000,
+        })
+        seenJobs.add(waiting.jobId)
+        const observer = await connectObserver(waiting, startedAt)
+        observers.add(observer.browser)
+        restoreFrontmostApplication(frontmostApplication)
+        await startOptions.beforeRelease?.({ waiting, page: observer.page })
+        const observation = startOptions.observeAfterRelease === undefined
+          ? Promise.resolve(undefined)
+          : Promise.resolve().then(() => startOptions.observeAfterRelease({ waiting, page: observer.page }))
+        await releaseBarrier({ barrierRoot, waiting, runId, nonce })
+        return {
+          waiting,
+          page: observer.page,
+          async wait() {
+            const [result, observerResult] = await Promise.all([output.exit, observation])
+            return {
+              ...result,
+              payload: parseJsonOutput(result),
+              observerResult,
+            }
+          },
+          async close() {
+            await observer.browser.close()
+            observers.delete(observer.browser)
+          },
+        }
+      } finally {
+        restoreFrontmostApplication(frontmostApplication)
       }
     },
     async close() {
@@ -292,6 +310,44 @@ function runCliSync(args, env = process.env) {
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
     error: result.error,
+  }
+}
+
+function captureFrontmostApplication() {
+  if (process.platform !== 'darwin') return null
+  const result = spawnSync(lsAppInfo, ['front'], {
+    encoding: 'utf8',
+    timeout: 2_000,
+  })
+  if (result.status !== 0) {
+    throw new Error(`Unable to capture the frontmost macOS application before headed E2E launch:\n${summarizeProcess(result)}`)
+  }
+  const application = /\bASN:0x[0-9a-f]+-0x[0-9a-f]+:/iu.exec(result.stdout)?.[0]
+  if (!application) {
+    throw new Error(`Unable to parse the frontmost macOS application before headed E2E launch:\n${summarizeProcess(result)}`)
+  }
+  return application
+}
+
+function restoreFrontmostApplication(application) {
+  if (!application || process.platform !== 'darwin') return
+  const current = captureFrontmostApplication()
+  if (!current || current === application) return
+  const info = spawnSync(lsAppInfo, ['info', '-only', 'bundleID', current], {
+    encoding: 'utf8',
+    timeout: 2_000,
+  })
+  if (info.status !== 0) {
+    throw new Error(`Unable to inspect the frontmost macOS application after headed E2E launch:\n${summarizeProcess(info)}`)
+  }
+  const bundleId = /"CFBundleIdentifier"="([^"]+)"/u.exec(info.stdout)?.[1]
+  if (!bundleId || !chromiumBundleIds.has(bundleId)) return
+  const restored = spawnSync(lsAppInfo, ['setfront', application], {
+    encoding: 'utf8',
+    timeout: 2_000,
+  })
+  if (restored.status !== 0) {
+    throw new Error(`Unable to restore the frontmost macOS application after headed E2E launch:\n${summarizeProcess(restored)}`)
   }
 }
 

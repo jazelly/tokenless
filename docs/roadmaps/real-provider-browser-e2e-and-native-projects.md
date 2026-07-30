@@ -29,6 +29,8 @@ Redacted, provenance-bound provider DOM captures remain development aids for sel
 
 Provider E2E runs manually on this machine with the explicitly selected managed profile already provisioned through Tokenless setup. It does not create a separate test account, automate login, or silently select another profile. Provider-side mutations, retained test artifacts, and usage cost are acceptable. Every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
 
+On macOS, the live E2E helper preserves the operator's working focus around each headed browser launch. It records the frontmost application before starting the built CLI and restores that application only when a known Chromium browser became frontmost; if the operator moved to another non-browser application during startup, the helper leaves that newer choice untouched. The managed browser remains headed and visible for independent CDP observation.
+
 ## Current Closure
 
 As of 2026-07-29, the implementation, capability matrix, CDP observer boundary, durable mappings, native Project strategies, public contracts, and manual gate commands are in place. Real runs additionally established these capability boundaries:
