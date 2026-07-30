@@ -67,8 +67,15 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
   for (const caseId of caseIds) {
     assert.match(caseId, /^[a-z][a-z0-9-]*$/)
     const definition = matrix.cases[caseId]
-    assert.deepEqual(Object.keys(definition).sort(), ['actions', 'closure', 'gate'])
+    assert.deepEqual(Object.keys(definition).sort(), ['actions', 'closure', 'gate', 'submissions'])
     assert.equal(gates.has(definition.gate), true, `${caseId} gate must be recognized`)
+    assert.equal(Number.isSafeInteger(definition.submissions), true, `${caseId} submissions must be an integer`)
+    assert.ok(definition.submissions >= 0 && definition.submissions <= 2, `${caseId} submissions must be between zero and two`)
+    assert.equal(
+      definition.gate === 'non_submission',
+      definition.submissions === 0,
+      `${caseId} submission budget must match its gate`,
+    )
     assert.equal(Array.isArray(definition.actions), true, `${caseId} actions must be an array`)
     assert.equal(Array.isArray(definition.closure), true, `${caseId} closure must be an array`)
     assert.ok(definition.actions.length > 0, `${caseId} must declare actions`)

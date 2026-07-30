@@ -45,6 +45,8 @@ The latest complete manual gate attempts produced:
 
 All three gates ran with zero skipped cases and no internal retry. This predates the narrow Claude Cloudflare known-issue skip classification now declared in the matrix; the release bar remains zero skips except for that exact durable blocker condition. Gemini and Qwen currently provide real mutation closure for every capability required by their matrix entries. The latest mutation run passed Gemini submit/read, citations, and conversation workspace plus Qwen submit/read and conversation workspace. It failed all ChatGPT, Claude, and Grok cases with `e2e_provider_auth_unavailable` because the selected setup-managed profile was not authenticated for those providers.
 
+On 2026-07-31, the mutation cases were consolidated around provider submissions rather than capability-by-capability messages. ChatGPT, Claude, and Grok now prove attachment acceptance, response reading, citations, conversation fallback, durable mapping, and cross-process continuation in one two-turn workflow. Gemini proves response reading, citations, conversation fallback, and durable mapping in one submission. Qwen proves Deep Research mode selection, response reading, conversation fallback, and durable mapping in one submission. The matrix records and the harness enforces an exact per-case submission budget. The full manual gate budget is now 12 submissions: 8 in the mutation gate and 4 in the two native Project cases, down from 28. This structural reduction is not provider acceptance evidence; the consolidated cases still require a fresh manual real-provider run.
+
 Qwen closure now starts from its canonical `https://chat.qwen.ai/` chat surface. A real built-CLI run proved that the provider accepts the prompt, navigates the same visible page to `/c/guest`, and returns the exact marker. Qwen Studio exposes its textarea before the guest backend is ready, so the adapter waits only until the initial page lifecycle is three seconds old before first input; an already hydrated conversation incurs no additional delay. The real mutation gate then passed both required Qwen cases through independent CDP observation and durable state.
 
 The subsequent non-submission gate encountered intermittent system DNS failure for `chat.qwen.ai` after the same hostname had resolved for the successful mutation gate. Navigation now reports this explicitly as retryable `provider_dns_unavailable`; no test-only DNS override is used or counted as acceptance evidence.
@@ -93,6 +95,7 @@ The test loader validates that:
 - every registered provider and declared visible capability has a matrix entry;
 - every supported entry maps to a real E2E case;
 - unavailable entries have an explicit reason;
+- every case declares an exact provider-submission budget of zero, one, or two;
 - the only known-issue skip is declared with a recognized provider, machine-readable reason, and safe structured blocker codes;
 - response reading and citation extraction remain separate capabilities; and
 - runtime conditions cannot silently convert a required case into a skip outside the declared Claude Cloudflare durable blocker exception.

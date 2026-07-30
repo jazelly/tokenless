@@ -8,7 +8,11 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="COMMANDS.zh-CN.md">命令大全</a> · <a href="docs/roadmaps/README.md">Roadmaps</a>
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="COMMANDS.zh-CN.md">CLI 命令</a> · <a href="#安装与初始化">快速开始</a>
 </p>
 
 ## Tokenless 能做什么
@@ -35,12 +39,21 @@ Tokenless 让 AI Agent 把任务直接交给 ChatGPT、Claude、Gemini、Grok �
 
 ## 安装与初始化
 
+安装 CLI：
+
 ```bash
 npm install --global tokenless@latest
+```
+
+然后按照交互式 setup 流程完成初始化：
+
+```bash
 tokenless setup
 ```
 
-需要 Node.js 22.13+，以及 Chrome、Brave、Edge、Arc 或 Chromium。`tokenless setup` 会准备本地运行环境，创建或导入浏览器 profile，并检查所有已启用的 providers。
+安装 npm package 只是第一步。使用 Tokenless 前必须完成 `tokenless setup`；它会准备本地运行环境，创建或导入浏览器 profile，并检查所有已启用的 providers。
+
+需要 Node.js 22.13+，以及 Chrome、Brave、Edge、Arc 或 Chromium。
 
 ## 执行
 
@@ -67,3 +80,25 @@ tokenless run \
 ### Codex 的 sandbox policy 可能阻止 Tokenless 运行
 
 在 Codex 中，Agent 使用的 sandbox policy 可能会阻止 Tokenless 启动浏览器或执行必要的本地操作。在可信环境中，可以将 Codex 设置为 Full Access；也可以在 Codex 弹出授权询问时批准该操作，并选择今后允许相同操作，避免后续重复授权。
+
+## 常见问题
+
+### Tokenless 会完全消除 token 消耗吗？
+
+不会。Tokenless 会把适合的任务分流到 AI provider 的网页版，从而减少 Agent 侧的 token 消耗；Agent 仍需要使用少量 token 来判断分流内容并处理结果。
+
+### 只安装 npm package 就可以使用吗？
+
+不可以。安装后还必须运行 `tokenless setup` 并完成 setup 流程。Tokenless 需要配置好的浏览器 profile 和至少一个可用的 provider 才能执行任务。
+
+### Tokenless 需要 provider API Key 吗？
+
+不需要。Tokenless 使用 provider 的可见网页，而不是 provider API。部分 provider 仍要求登录，实际可用能力取决于你的账号在网页上能够使用的功能。
+
+### Tokenless 会把整个项目发送给 provider 吗？
+
+不会。它只发送委派任务所需的 prompt、选定文件和 task context，不会自动暴露无关的项目文件。
+
+### 每个 provider 都支持所有功能吗？
+
+不支持。Tokenless 只启用已经在各 provider 可见网页上验证过的工作流；不支持或尚未验证的能力会明确报错并停止。

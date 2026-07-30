@@ -13,6 +13,7 @@
   "cases": {
     "session-readiness": {
       "gate": "non_submission",
+      "submissions": 0,
       "actions": [
         "auth.status",
         "capability.inspect",
@@ -27,6 +28,7 @@
     },
     "prompt-draft": {
       "gate": "non_submission",
+      "submissions": 0,
       "actions": [
         "prompt.input",
         "prompt.clear"
@@ -39,6 +41,7 @@
     },
     "model-choice": {
       "gate": "non_submission",
+      "submissions": 0,
       "actions": [
         "model.inspect",
         "model.select"
@@ -52,6 +55,7 @@
     },
     "effort-choice": {
       "gate": "non_submission",
+      "submissions": 0,
       "actions": [
         "effort.inspect",
         "effort.select"
@@ -63,26 +67,9 @@
         "restore_original"
       ]
     },
-    "qwen-mode": {
-      "gate": "mutation",
-      "actions": [
-        "qwen.mode.inspect",
-        "qwen.mode.select",
-        "prompt.input",
-        "prompt.submit",
-        "response.read"
-      ],
-      "closure": [
-        "cli",
-        "visible_dom",
-        "visible_submission",
-        "visible_response",
-        "durable_state",
-        "restore_original"
-      ]
-    },
     "file-selection": {
       "gate": "non_submission",
+      "submissions": 0,
       "actions": [
         "file.upload",
         "prompt.clear"
@@ -94,9 +81,11 @@
         "durable_state"
       ]
     },
-    "file-upload": {
+    "conversation-workflow": {
       "gate": "mutation",
+      "submissions": 2,
       "actions": [
+        "workspace.ensure",
         "file.upload",
         "prompt.input",
         "prompt.submit",
@@ -104,55 +93,20 @@
       ],
       "closure": [
         "cli",
+        "conversation_fallback",
         "visible_attachment",
-        "visible_response",
-        "durable_state"
-      ]
-    },
-    "submit-read": {
-      "gate": "mutation",
-      "actions": [
-        "prompt.input",
-        "prompt.submit",
-        "response.read"
-      ],
-      "closure": [
-        "cli",
         "visible_submission",
         "visible_response",
-        "durable_state"
-      ]
-    },
-    "citations": {
-      "gate": "mutation",
-      "actions": [
-        "prompt.input",
-        "prompt.submit",
-        "response.read"
-      ],
-      "closure": [
-        "cli",
-        "visible_response",
         "visible_citation",
-        "durable_state"
-      ]
-    },
-    "conversation-continuation": {
-      "gate": "mutation",
-      "actions": [
-        "prompt.input",
-        "prompt.submit",
-        "response.read"
-      ],
-      "closure": [
         "two_cli_processes",
         "same_conversation",
         "visible_two_turns",
         "durable_mapping"
       ]
     },
-    "conversation-workspace": {
+    "workspace-response-citations": {
       "gate": "mutation",
+      "submissions": 1,
       "actions": [
         "workspace.ensure",
         "prompt.input",
@@ -162,12 +116,36 @@
       "closure": [
         "cli",
         "conversation_fallback",
+        "visible_submission",
         "visible_response",
+        "visible_citation",
         "durable_mapping"
+      ]
+    },
+    "qwen-mode-workspace": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "qwen.mode.inspect",
+        "qwen.mode.select",
+        "workspace.ensure",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "conversation_fallback",
+        "visible_submission",
+        "visible_response",
+        "durable_mapping",
+        "restore_original"
       ]
     },
     "native-project": {
       "gate": "project",
+      "submissions": 2,
       "actions": [
         "workspace.ensure",
         "file.upload",
@@ -194,16 +172,13 @@
         "session-readiness",
         "prompt-draft",
         "file-selection",
-        "file-upload",
-        "submit-read",
-        "citations",
-        "conversation-continuation",
-        "conversation-workspace"
+        "conversation-workflow"
       ],
       "unavailable": {
         "model-choice": "no_visible_model_control_observed_2026_07_28",
         "effort-choice": "no_visible_effort_control_observed_2026_07_28",
-        "qwen-mode": "provider_specific_capability",
+        "workspace-response-citations": "covered_by_conversation_workflow",
+        "qwen-mode-workspace": "provider_specific_capability",
         "native-project": "native_project_not_yet_proven"
       }
     },
@@ -215,16 +190,13 @@
         "prompt-draft",
         "model-choice",
         "file-selection",
-        "file-upload",
-        "submit-read",
-        "citations",
-        "conversation-continuation",
-        "conversation-workspace",
+        "conversation-workflow",
         "native-project"
       ],
       "unavailable": {
         "effort-choice": "no_independent_effort_control_declared",
-        "qwen-mode": "provider_specific_capability"
+        "workspace-response-citations": "covered_by_conversation_workflow",
+        "qwen-mode-workspace": "provider_specific_capability"
       }
     },
     "gemini": {
@@ -233,17 +205,14 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "submit-read",
-        "citations",
-        "conversation-workspace"
+        "workspace-response-citations"
       ],
       "unavailable": {
         "model-choice": "no_enabled_alternate_model_in_selected_guest_profile",
         "effort-choice": "no_independent_effort_control_declared",
-        "qwen-mode": "provider_specific_capability",
         "file-selection": "no_visible_upload_control_in_selected_guest_profile_2026_07_28",
-        "file-upload": "no_visible_upload_control_in_selected_guest_profile_2026_07_28",
-        "conversation-continuation": "selected_guest_profile_does_not_restore_prior_turn_context_at_mapped_url_2026_07_28",
+        "conversation-workflow": "no_upload_or_continuation_closure_in_selected_guest_profile",
+        "qwen-mode-workspace": "provider_specific_capability",
         "native-project": "native_project_not_yet_proven"
       }
     },
@@ -256,15 +225,12 @@
         "model-choice",
         "effort-choice",
         "file-selection",
-        "file-upload",
-        "submit-read",
-        "citations",
-        "conversation-continuation",
-        "conversation-workspace",
+        "conversation-workflow",
         "native-project"
       ],
       "unavailable": {
-        "qwen-mode": "provider_specific_capability"
+        "workspace-response-citations": "covered_by_conversation_workflow",
+        "qwen-mode-workspace": "provider_specific_capability"
       }
     },
     "qwen": {
@@ -274,16 +240,13 @@
         "session-readiness",
         "prompt-draft",
         "effort-choice",
-        "qwen-mode",
-        "submit-read",
-        "conversation-workspace"
+        "qwen-mode-workspace"
       ],
       "unavailable": {
         "model-choice": "no_real_selection_closure",
         "file-selection": "no_real_visible_attachment_closure",
-        "file-upload": "no_real_visible_attachment_closure",
-        "citations": "no_real_visible_citation_closure",
-        "conversation-continuation": "shared_guest_route_does_not_restore_prior_visible_response_after_reopen_2026_07_29",
+        "conversation-workflow": "no_real_attachment_or_continuation_closure",
+        "workspace-response-citations": "covered_by_qwen_mode_workspace",
         "native-project": "native_project_not_proven"
       }
     }

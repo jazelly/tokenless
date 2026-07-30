@@ -20,18 +20,16 @@ const gate = requiredGate()
 const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
 const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
 const suiteRunMarker = `${compactTimestamp(new Date())}_${randomUUID().slice(0, 8)}`
+const submissionTrackers = new WeakMap()
 const handlers = {
   'session-readiness': sessionReadiness,
   'prompt-draft': promptDraft,
   'model-choice': modelChoice,
   'effort-choice': effortChoice,
-  'qwen-mode': qwenMode,
   'file-selection': fileSelection,
-  'file-upload': fileUpload,
-  'submit-read': submitRead,
-  citations,
-  'conversation-continuation': conversationContinuation,
-  'conversation-workspace': conversationWorkspace,
+  'conversation-workflow': conversationWorkflow,
+  'workspace-response-citations': workspaceResponseCitations,
+  'qwen-mode-workspace': qwenModeWorkspace,
   'native-project': nativeProject,
 }
 
@@ -51,11 +49,17 @@ for (const { provider, caseId } of selectedCases) {
       profileSlug,
       daemonUrl,
     })
+    submissionTrackers.set(session, {
+      attempts: 0,
+      budget: matrix.cases[caseId].submissions,
+      caseId,
+    })
     try {
       if (gate !== 'non_submission' && matrix.providers[provider].account === 'signed_in_selected_setup_profile') {
         await requireSignedInSelectedProfile(provider, session)
       }
       await handler({ provider, declaration: matrix.providers[provider], session })
+      assertSubmissionBudget(session)
     } catch (error) {
       if (isKnownIssueSkip(error)) {
         t.skip(error.message)
@@ -133,7 +137,7 @@ async function effortChoice(context) {
   await choiceCase(context, 'effort')
 }
 
-async function qwenMode({ provider, session }) {
+async function qwenModeWorkspace({ provider, session }) {
   assert.equal(provider, 'qwen')
   const inspected = await action(session, provider, 'qwen.mode.inspect')
   const inspection = responseResult(inspected.payload, 'qwen.mode.inspect')
@@ -146,9 +150,13 @@ async function qwenMode({ provider, session }) {
   )
   await inspected.close()
 
+  const name = markerFor(provider, 'MODE_WORKSPACE')
+  const taskId = markerFor(provider, 'MODE_WORKSPACE_TASK')
   const marker = markerFor(provider, 'DEEP_RESEARCH')
   const run = await cliRun(session, provider, [
-    '--task-id', markerFor(provider, 'DEEP_RESEARCH_TASK'),
+    '--task-id', taskId,
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
     '--qwen-mode', 'Deep Research',
     '--qwen-mode-variant', 'Advanced',
     '--prompt', [
@@ -170,6 +178,7 @@ async function qwenMode({ provider, session }) {
   })
   assert.equal(run.observerResult, true, 'Qwen observer must see Deep Research Advanced selected')
   assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assertConversationWorkspaceResult(provider, taskId, run)
   await run.close()
 
   const restored = await action(session, provider, 'qwen.mode.select', ['--qwen-mode', 'Chat'])
@@ -223,108 +232,75 @@ async function fileSelection({ provider, session }) {
   }
 }
 
-async function fileUpload({ provider, session }) {
-  const marker = markerFor(provider, 'ATTACHMENT_SUBMISSION')
-  const name = `${marker}.txt`
-  const file = path.join(root, 'test-results', 'live-provider-inputs', name)
-  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  await fs.writeFile(file, `${marker}\n`, { mode: 0o600 })
+async function conversationWorkflow({ provider, session }) {
+  const name = markerFor(provider, 'CONVERSATION_WORKFLOW')
+  const taskId = markerFor(provider, 'CONVERSATION_WORKFLOW_TASK')
+  const attachmentMarker = markerFor(provider, 'ATTACHMENT')
+  const responseMarker = markerFor(provider, 'TURN_ONE_RESPONSE')
+  const contextSecret = markerFor(provider, 'CONTEXT_SECRET')
+  const attachmentName = `${attachmentMarker}.txt`
+  const attachment = path.join(root, 'test-results', 'live-provider-inputs', attachmentName)
+  await fs.mkdir(path.dirname(attachment), { recursive: true, mode: 0o700 })
+  await fs.writeFile(attachment, `${attachmentMarker}\n`, { mode: 0o600 })
   try {
-    const run = await cliRun(session, provider, [
-      '--task-id', markerFor(provider, 'ATTACHMENT_TASK'),
-      '--attach-file', file,
-      '--prompt', `Read the attached file and reply with exactly its marker: ${marker}`,
-    ], 360_000, ({ page }) => waitForExactText(page, name, 180_000))
-    const upload = responseResult(run.payload, 'file.upload')
-    assert.ok(upload?.attachments?.some((attachment) => attachment.name === name))
-    assert.equal(run.observerResult, true, `${provider} observer must see the submitted attachment`)
-    assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
-    assert.equal(await pageContains(run.page, marker, 2), true)
+    const first = await cliRun(session, provider, [
+      '--task-id', taskId,
+      '--project-name', name,
+      '--workspace-mode', 'conversation',
+      '--attach-file', attachment,
+      '--prompt', [
+        'Read the attached file and include its exact marker in your response.',
+        `Also include this exact response marker: ${responseMarker}.`,
+        `Remember this secret for my next message but do not reveal it yet: ${contextSecret}.`,
+        'Identify the official Node.js homepage and cite that official source.',
+      ].join(' '),
+    ], 360_000, ({ page }) => waitForExactText(page, attachmentName, 180_000))
+    const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
+    const citations = responseResult(first.payload, 'response.read')?.citations
+    assert.match(firstText, new RegExp(escapeRegExp(attachmentMarker)))
+    assert.match(firstText, new RegExp(escapeRegExp(responseMarker)))
+    assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextSecret)))
+    assert.ok(responseResult(first.payload, 'file.upload')?.attachments?.some(
+      (attachmentResult) => attachmentResult.name === attachmentName,
+    ))
+    assert.equal(first.observerResult, true, `${provider} observer must see the submitted attachment`)
+    assert.equal(await pageContains(first.page, responseMarker, 2), true)
+    assert.ok(Array.isArray(citations) && citations.length > 0, `${provider} must return normalized real citations`)
+    assert.ok(await visibleCitationCount(first.page, citations) > 0, `${provider} observer must see a returned citation link`)
+    const firstUrl = assertConversationWorkspaceResult(provider, taskId, first)
+    await first.close()
+
+    const second = await cliRun(session, provider, [
+      '--task-id', taskId,
+      '--project-name', name,
+      '--workspace-mode', 'conversation',
+      '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
+    ])
+    const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
+    assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
+    assert.equal(canonicalPageUrl(second.page.url()), firstUrl, `${provider} both CLI processes must share one exact conversation`)
+    assertTaskConversationMapping(provider, taskId, firstUrl, second.payload)
   } finally {
-    await fs.rm(file, { force: true })
+    await fs.rm(attachment, { force: true })
   }
 }
 
-async function submitRead({ provider, session }) {
-  const marker = markerFor(provider, 'RESPONSE')
+async function workspaceResponseCitations({ provider, session }) {
+  const name = markerFor(provider, 'WORKSPACE_RESPONSE')
+  const taskId = markerFor(provider, 'WORKSPACE_RESPONSE_TASK')
+  const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
   const run = await cliRun(session, provider, [
-    '--task-id', markerFor(provider, 'TASK'),
-    '--prompt', `Reply with exactly this marker and nothing else: ${marker}`,
-  ])
-  const result = responseResult(run.payload, 'response.read')
-  assert.match(result?.text ?? '', new RegExp(escapeRegExp(marker)))
-  assert.equal(await pageContains(run.page, marker, 2), true, `${provider} observer must see prompt and response markers`)
-}
-
-async function citations({ provider, session }) {
-  const marker = markerFor(provider, 'CITATION')
-  const run = await cliRun(session, provider, [
-    '--task-id', markerFor(provider, 'CITATION_TASK'),
-    '--prompt', `Find the current official homepage for Node.js. Include the marker ${marker} and cite the official source.`,
-  ])
-  const result = responseResult(run.payload, 'response.read')
-  assert.match(result?.text ?? '', new RegExp(escapeRegExp(marker)))
-  assert.ok(Array.isArray(result?.citations) && result.citations.length > 0, `${provider} must return normalized real citations`)
-  assert.ok(await visibleCitationCount(run.page, result.citations) > 0, `${provider} observer must see a returned citation link`)
-}
-
-async function conversationContinuation({ provider, session }) {
-  const taskId = markerFor(provider, 'CONTINUATION_TASK')
-  const firstMarker = markerFor(provider, 'TURN_ONE_ACK')
-  const contextSecret = markerFor(provider, 'CONTEXT_SECRET')
-  const first = await cliRun(session, provider, [
-    '--task-id', taskId,
-    '--workspace-mode', 'conversation',
-    '--project-name', taskId,
-    '--prompt', `Remember this secret for my next message: ${contextSecret}. Reply with exactly ${firstMarker} and do not include the secret.`,
-  ])
-  const firstUrl = canonicalPageUrl(first.page.url())
-  const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
-  assert.match(firstText, new RegExp(escapeRegExp(firstMarker)))
-  assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextSecret)))
-  await first.close()
-
-  const second = await cliRun(session, provider, [
-    '--task-id', taskId,
-    '--workspace-mode', 'conversation',
-    '--project-name', taskId,
-    '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
-  ])
-  const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
-  assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
-  assert.equal(canonicalPageUrl(second.page.url()), firstUrl, `${provider} both CLI processes must share one exact conversation`)
-  assertTaskConversationMapping(provider, taskId, firstUrl, second.payload)
-}
-
-async function conversationWorkspace({ provider, session }) {
-  const name = markerFor(provider, 'CONVERSATION_WORKSPACE')
-  const taskId = markerFor(provider, 'CONVERSATION_WORKSPACE_TASK')
-  const responseMarker = markerFor(provider, 'CONVERSATION_WORKSPACE_RESPONSE')
-  const ensured = await cliRun(session, provider, [
     '--task-id', taskId,
     '--project-name', name,
     '--workspace-mode', 'conversation',
-    '--prompt', `Reply with exactly this marker: ${responseMarker}`,
+    '--prompt', `Include this exact marker: ${responseMarker}. Identify the official Node.js homepage and cite that official source.`,
   ])
-  const result = responseResult(ensured.payload, 'workspace.ensure')
-  assert.equal(result?.mode, 'conversation')
-  assert.equal(result?.resource?.kind, 'conversation')
-  assert.equal(result?.resource?.native, false)
-  assert.equal(result?.resource?.disposition, 'fallback')
-  assert.match(responseResult(ensured.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
-  const conversationUrl = canonicalPageUrl(ensured.page.url())
-  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
-  try {
-    const mapping = database.prepare(
-      `SELECT canonical_url
-       FROM provider_task_conversations
-       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
-    ).get(provider, result.scope.profileId, taskId)
-    assert.equal(typeof mapping?.canonical_url, 'string', `${provider} must persist the conversation Workspace mapping`)
-    assert.equal(canonicalPageUrl(mapping?.canonical_url), conversationUrl)
-  } finally {
-    database.close()
-  }
+  const response = responseResult(run.payload, 'response.read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
+  assert.equal(await pageContains(run.page, responseMarker, 2), true)
+  assert.ok(Array.isArray(response?.citations) && response.citations.length > 0, `${provider} must return normalized real citations`)
+  assert.ok(await visibleCitationCount(run.page, response.citations) > 0, `${provider} observer must see a returned citation link`)
+  assertConversationWorkspaceResult(provider, taskId, run)
 }
 
 async function nativeProject({ provider, session }) {
@@ -479,6 +455,7 @@ async function action(session, provider, visibleAction, args = [], timeoutMs = 1
 }
 
 async function cliRun(session, provider, args, timeoutMs = 300_000, observeAfterRelease) {
+  recordSubmissionAttempt(session)
   const operation = await session.startCli([
     'run',
     '--provider', provider,
@@ -495,6 +472,26 @@ async function cliRun(session, provider, args, timeoutMs = 300_000, observeAfter
   const result = await operation.wait()
   assertDurableSuccess(result.payload, provider)
   return { ...operation, ...result }
+}
+
+function recordSubmissionAttempt(session) {
+  const tracker = submissionTrackers.get(session)
+  assert.ok(tracker, 'live E2E submission tracker must be initialized')
+  tracker.attempts += 1
+  assert.ok(
+    tracker.attempts <= tracker.budget,
+    `${tracker.caseId} exceeded its provider submission budget of ${tracker.budget}`,
+  )
+}
+
+function assertSubmissionBudget(session) {
+  const tracker = submissionTrackers.get(session)
+  assert.ok(tracker, 'live E2E submission tracker must be initialized')
+  assert.equal(
+    tracker.attempts,
+    tracker.budget,
+    `${tracker.caseId} must use exactly ${tracker.budget} provider submissions`,
+  )
 }
 
 function assertDurableSuccess(payload, provider) {
@@ -560,6 +557,28 @@ function responseResult(payload, actionName) {
     payload?.latest?.result?.value?.responses
   if (!Array.isArray(responses)) return null
   return [...responses].reverse().find((response) => response?.ok === true && response.action === actionName)?.result ?? null
+}
+
+function assertConversationWorkspaceResult(provider, taskId, run) {
+  const result = responseResult(run.payload, 'workspace.ensure')
+  assert.equal(result?.mode, 'conversation')
+  assert.equal(result?.resource?.kind, 'conversation')
+  assert.equal(result?.resource?.native, false)
+  assert.equal(result?.resource?.disposition, 'fallback')
+  const conversationUrl = canonicalPageUrl(run.page.url())
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    const mapping = database.prepare(
+      `SELECT canonical_url
+       FROM provider_task_conversations
+       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
+    ).get(provider, result.scope.profileId, taskId)
+    assert.equal(typeof mapping?.canonical_url, 'string', `${provider} must persist the conversation Workspace mapping`)
+    assert.equal(canonicalPageUrl(mapping?.canonical_url), conversationUrl)
+  } finally {
+    database.close()
+  }
+  return conversationUrl
 }
 
 function assertTaskConversationMapping(provider, taskId, expectedUrl, payload) {

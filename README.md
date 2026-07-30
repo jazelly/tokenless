@@ -8,7 +8,11 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="COMMANDS.md">CLI commands</a> · <a href="docs/roadmaps/README.md">Roadmaps</a>
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="COMMANDS.md">CLI commands</a> · <a href="#install-and-setup">Quick start</a>
 </p>
 
 ## What Tokenless Does
@@ -35,12 +39,21 @@ Capabilities are enabled only where Tokenless has verified the visible provider 
 
 ## Install and Setup
 
+Install the CLI:
+
 ```bash
 npm install --global tokenless@latest
+```
+
+Then follow the interactive setup:
+
+```bash
 tokenless setup
 ```
 
-Requires Node.js 22.13+ and Chrome, Brave, Edge, Arc, or Chromium. `tokenless setup` prepares the local runtime, creates or imports a browser profile, and checks every enabled provider.
+Installing the package is only the first step. Complete `tokenless setup` before using Tokenless; it prepares the local runtime, creates or imports a browser profile, and checks every enabled provider.
+
+Requires Node.js 22.13+ and Chrome, Brave, Edge, Arc, or Chromium.
 
 ## Run
 
@@ -67,3 +80,25 @@ Tokenless is currently in private beta. We plan to publish detailed benchmarks o
 ### Codex sandbox policies can prevent Tokenless from running
 
 In Codex, the sandbox policy applied to an agent may block Tokenless from launching a browser or performing required local operations. In a trusted environment, either enable Full Access or approve the operation when Codex asks for permission and choose to allow the same operation in the future.
+
+## FAQ
+
+### Does Tokenless eliminate all token usage?
+
+No. It reduces agent-side token usage by routing suitable work to AI providers' websites. Your agent still needs some tokens to decide what to delegate and use the result.
+
+### Is installing the npm package enough?
+
+No. Run `tokenless setup` after installation and follow the setup flow. Tokenless needs a configured browser profile and at least one available provider before it can run tasks.
+
+### Does Tokenless require provider API keys?
+
+No. Tokenless uses providers' visible websites rather than their APIs. Some providers still require you to sign in, and the capabilities available depend on what your account can access on the website.
+
+### Does Tokenless send my entire project to a provider?
+
+No. It sends the prompt, selected files, and task context needed for the delegated work. It does not automatically expose unrelated project files.
+
+### Does every provider support every feature?
+
+No. Tokenless enables only workflows verified against each provider's visible website. Unsupported or unverified capabilities stop with a clear error.
