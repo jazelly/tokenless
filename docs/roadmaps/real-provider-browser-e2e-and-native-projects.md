@@ -23,6 +23,8 @@ All browser E2E and visible-provider capability acceptance tests use real provid
 - no runtime skip for a temporary page, network, selector, or account failure; and
 - no capability claim based only on a selector, menu, static DOM state, or CLI result.
 
+The only runtime skip exception is the checked-in Claude Cloudflare known issue declared in `test/live-provider-capability-matrix.json`. It may apply only to provider `claude`, only when the durable job payload is `waiting_for_user`, and only when the structured blocker code is `visible_cloudflare_turnstile` or `visible_cloudflare_interstitial`. Sign-in-required states, authentication unavailability, timeouts, selector or UI drift, other challenge families, other blocker codes, and every other provider remain hard failures.
+
 Redacted, provenance-bound provider DOM captures remain development aids for selectors, parsers, and already-observed DOM variants. They are not E2E, do not close provider transitions, and do not count toward capability acceptance.
 
 Provider E2E runs manually on this machine with the explicitly selected managed profile already provisioned through Tokenless setup. It does not create a separate test account, automate login, or silently select another profile. Provider-side mutations, retained test artifacts, and usage cost are acceptable. Every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
@@ -41,7 +43,7 @@ The latest complete manual gate attempts produced:
 - mutation: 20 invoked cases, 5 passed and 15 failed; and
 - Project: 2 invoked cases, 0 passed and 2 failed.
 
-All three gates ran with zero skipped cases and no internal retry. Gemini and Qwen currently provide real mutation closure for every capability required by their matrix entries. The latest mutation run passed Gemini submit/read, citations, and conversation workspace plus Qwen submit/read and conversation workspace. It failed all ChatGPT, Claude, and Grok cases with `e2e_provider_auth_unavailable` because the selected setup-managed profile was not authenticated for those providers.
+All three gates ran with zero skipped cases and no internal retry. This predates the narrow Claude Cloudflare known-issue skip classification now declared in the matrix; the release bar remains zero skips except for that exact durable blocker condition. Gemini and Qwen currently provide real mutation closure for every capability required by their matrix entries. The latest mutation run passed Gemini submit/read, citations, and conversation workspace plus Qwen submit/read and conversation workspace. It failed all ChatGPT, Claude, and Grok cases with `e2e_provider_auth_unavailable` because the selected setup-managed profile was not authenticated for those providers.
 
 Qwen closure now starts from its canonical `https://chat.qwen.ai/` chat surface. A real built-CLI run proved that the provider accepts the prompt, navigates the same visible page to `/c/guest`, and returns the exact marker. Qwen Studio exposes its textarea before the guest backend is ready, so the adapter waits only until the initial page lifecycle is three seconds old before first input; an already hydrated conversation incurs no additional delay. The real mutation gate then passed both required Qwen cases through independent CDP observation and durable state.
 
@@ -91,10 +93,11 @@ The test loader validates that:
 - every registered provider and declared visible capability has a matrix entry;
 - every supported entry maps to a real E2E case;
 - unavailable entries have an explicit reason;
+- the only known-issue skip is declared with a recognized provider, machine-readable reason, and safe structured blocker codes;
 - response reading and citation extraction remain separate capabilities; and
-- runtime conditions cannot silently convert a required case into a skip.
+- runtime conditions cannot silently convert a required case into a skip outside the declared Claude Cloudflare durable blocker exception.
 
-When the suite is invoked, every required case runs exactly once. The suite has no internal retry and no skip path for missing activation, unavailable authentication, provider failure, blocker state, or another unmet prerequisite. Each condition fails with a clear machine-readable reason. Retry happens only when the operator manually runs the suite again.
+When the suite is invoked, every required case runs exactly once. The suite has no internal retry and no skip path for missing activation, unavailable authentication, provider failure, blocker state, or another unmet prerequisite. The sole exception is a runtime skip for Claude when the completed job payload is durably `waiting_for_user` with structured blocker code `visible_cloudflare_turnstile` or `visible_cloudflare_interstitial`. Each other condition fails with a clear machine-readable reason. Retry happens only when the operator manually runs the suite again.
 
 Exit: capability declarations and live acceptance coverage cannot drift independently.
 
@@ -293,11 +296,11 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - No fixture-based test is named or counted as browser E2E.
 - Every advertised visible capability has a required real-provider matrix entry.
 - Every required real-provider case proves CLI, visible DOM, and durable state for the same task and marker.
-- An invoked E2E suite has no skipped cases and no internal retry.
+- An invoked E2E suite has no skipped cases and no internal retry, except for the checked-in Claude Cloudflare durable blocker known issue.
 - Authentication or setup-profile problems fail with a clear reason.
 - All applicable E2E suites pass manually before release, without requiring CI enforcement.
 - CDP inspection is test-only, loopback-only, read-only, and absent from normal runs.
-- Runtime provider failures fail required tests rather than silently skipping them.
+- Runtime provider failures fail required tests rather than silently skipping them unless they match the declared Claude Cloudflare durable blocker known issue.
 - Claude and Grok native Project creation and reuse are both exercised against fresh real Project identities.
 - Model, effort, upload, prompt, submit, and read actions execute after native Project alignment.
 - Project and conversation mappings use exact provider resource scope rather than display names.
@@ -326,6 +329,6 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - Automatic login
 - Automatic account or profile provisioning for E2E
 - Provider browser E2E in CI
-- Internal E2E retry or runtime skip
+- Internal E2E retry or runtime skip outside the declared Claude Cloudflare durable blocker known issue
 - Native Project support for ChatGPT, Gemini, or Qwen without the same real-session closure
 - Making crash/restart, abrupt process death, port competition, replay, or acknowledgement edge cases part of the default browser E2E acceptance bar

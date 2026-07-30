@@ -87,6 +87,7 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
       ]),
       blockerSelectors: Object.freeze([
         'iframe[src*="captcha"]',
+        'iframe[src*="challenges.cloudflare.com"]',
         'input[placeholder="Enter your email"]',
         'text=/rate limit|too many requests/i',
         'text=/upgrade required|upgrade your plan/i',

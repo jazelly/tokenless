@@ -8,7 +8,11 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
-import { loadLiveProviderCapabilityMatrix } from './helpers/live-provider-capability-matrix.mjs'
+import {
+  knownIssueSkipForDurableBlocker,
+  loadLiveProviderCapabilityMatrix,
+  structuredBlockerCodes,
+} from './helpers/live-provider-capability-matrix.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const matrix = loadLiveProviderCapabilityMatrix()
@@ -38,7 +42,7 @@ const selectedCases = Object.entries(matrix.providers)
 
 assert.ok(selectedCases.length > 0, `TOKENLESS_LIVE_E2E_GATE=${gate} selected no required cases`)
 for (const { provider, caseId } of selectedCases) {
-  test(`real provider ${provider}: ${caseId}`, { timeout: 1_200_000 }, async () => {
+  test(`real provider ${provider}: ${caseId}`, { timeout: 1_200_000 }, async (t) => {
     const handler = handlers[caseId]
     assert.equal(typeof handler, 'function', `missing real E2E handler for ${caseId}`)
     const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -52,6 +56,12 @@ for (const { provider, caseId } of selectedCases) {
         await requireSignedInSelectedProfile(provider, session)
       }
       await handler({ provider, declaration: matrix.providers[provider], session })
+    } catch (error) {
+      if (isKnownIssueSkip(error)) {
+        t.skip(error.message)
+        return
+      }
+      throw error
     } finally {
       await session.close()
     }
@@ -464,7 +474,7 @@ async function action(session, provider, visibleAction, args = [], timeoutMs = 1
     observeAfterRelease,
   })
   const result = await operation.wait()
-  assertDurableSuccess(result.payload)
+  assertDurableSuccess(result.payload, provider)
   return { ...operation, ...result }
 }
 
@@ -483,17 +493,22 @@ async function cliRun(session, provider, args, timeoutMs = 300_000, observeAfter
     observeAfterRelease,
   })
   const result = await operation.wait()
-  assertDurableSuccess(result.payload)
+  assertDurableSuccess(result.payload, provider)
   return { ...operation, ...result }
 }
 
-function assertDurableSuccess(payload) {
+function assertDurableSuccess(payload, provider) {
   assert.equal(payload?.ok, true)
   if (payload?.status === 'waiting_for_user' || payload?.waitingForUser === true) {
-    const blockerCode = payload?.blocker?.primary?.code ??
-      payload?.blocker?.blocker?.code ??
-      payload?.blocker?.blockers?.[0]?.code ??
-      'provider_user_handover_required'
+    const knownIssueSkip = knownIssueSkipForDurableBlocker(matrix, provider, payload)
+    if (knownIssueSkip) {
+      assertDurableWaitingForUser(payload, provider, knownIssueSkip.blockerCode)
+      throw e2eSkip(
+        'e2e_known_issue_provider_blocker',
+        `${provider} known issue ${knownIssueSkip.reason}: ${knownIssueSkip.blockerCode}`,
+      )
+    }
+    const blockerCode = structuredBlockerCodes(payload?.blocker)[0] ?? 'provider_user_handover_required'
     throw e2eFailure(
       'e2e_provider_prerequisite_unavailable',
       `provider job requires user action: ${blockerCode}`,
@@ -510,6 +525,30 @@ function assertDurableSuccess(payload) {
     assert.equal(row?.status, 'succeeded')
     assert.equal(typeof row?.result_json, 'string')
     assert.equal(row?.error_json, null)
+  } finally {
+    database.close()
+  }
+}
+
+function assertDurableWaitingForUser(payload, provider, blockerCode) {
+  const jobId = payload.jobId
+  assert.equal(typeof jobId, 'string')
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    const row = database.prepare(
+      'SELECT provider, status, blocker_json, error_json FROM jobs WHERE job_id = ?',
+    ).get(jobId)
+    assert.equal(row?.provider, provider)
+    assert.equal(row?.status, 'waiting_for_user')
+    assert.equal(row?.error_json, null)
+    const durableBlocker = typeof row?.blocker_json === 'string'
+      ? JSON.parse(row.blocker_json)
+      : null
+    assert.equal(
+      structuredBlockerCodes(durableBlocker).includes(blockerCode),
+      true,
+      `durable blocker must include ${blockerCode}`,
+    )
   } finally {
     database.close()
   }
@@ -618,7 +657,12 @@ function requiredGate() {
 
 function requiredEnv(name) {
   const value = process.env[name]?.trim()
-  if (!value) throw e2eFailure('e2e_activation_missing', `${name} is required; the live suite never skips`)
+  if (!value) {
+    throw e2eFailure(
+      'e2e_activation_missing',
+      `${name} is required; only declared durable provider known issues may skip`,
+    )
+  }
   return value
 }
 
@@ -643,4 +687,12 @@ function escapeRegExp(value) {
 
 function e2eFailure(code, message) {
   return Object.assign(new Error(`${code}: ${message}`), { code })
+}
+
+function e2eSkip(code, message) {
+  return Object.assign(new Error(`${code}: ${message}`), { code })
+}
+
+function isKnownIssueSkip(error) {
+  return error?.code === 'e2e_known_issue_provider_blocker'
 }

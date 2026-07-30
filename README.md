@@ -11,70 +11,52 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="COMMANDS.md">CLI commands</a> · <a href="docs/roadmaps/README.md">Roadmaps</a>
 </p>
 
-## Overview
+## What Tokenless Does
 
-Tokenless is a local CLI that lets agents use visible AI websites through managed Playwright browser profiles. It reduces agent-side token use by routing suitable work to web sessions while keeping provider credentials, browser state, daemon state, and job results on the user's machine.
+Tokenless lets AI agents send work to ChatGPT, Claude, Gemini, Grok, and Qwen directly through their websites—reducing agent-side token use without provider API keys.
 
-| Provider | Stage | Signed-out use |
+It goes beyond sending prompts. Tokenless adapts each provider's real web workflows into one local interface for agents:
+
+- send prompts and read responses or citations;
+- upload files through the provider's own controls;
+- use visible models, reasoning levels, and provider-specific modes;
+- create or reuse Projects and keep each task scoped to the right profile, Project, and conversation; and
+- deliver selected project files and turn context without exposing unrelated files.
+
+Capabilities are enabled only where Tokenless has verified the visible provider workflow. Unsupported or unproven behavior stops with a clear error instead of being guessed. Provider credentials, browser state, and job data stay on the user's machine.
+
+| Provider | Status | Login |
 | --- | --- | --- |
-| ChatGPT | Supported | Guest supported |
-| Claude | Supported | Sign-in required |
-| Gemini | Supported | Guest supported |
-| Grok | Supported | Sign-in required |
-| Qwen / 千问 | Experimental | Guest supported |
+| ChatGPT | Available | Not required |
+| Claude | Available | Required |
+| Gemini | Available | Not required |
+| Grok | Available | Required |
+| Qwen / 千问 | Beta | Not required |
 
 ## Install and Setup
 
 ```bash
 npm install --global tokenless@latest
 tokenless setup
-tokenless doctor --json
 ```
 
-`tokenless setup` installs the required agent skills, reconciles the local daemon to the installed CLI version, chooses a supported Chromium browser, creates or imports a managed profile, and checks all enabled providers once. The clean path is:
-
-```bash
-tokenless setup --fresh --json
-```
-
-Fresh setup creates or reuses `default`, selects every provider whose registry stage is not `disabled`, including Qwen, and reports sign-in state once. It does not open a sign-in handoff.
+Requires Node.js 22.13+ and Chrome, Brave, Edge, Arc, or Chromium. `tokenless setup` prepares the local runtime, creates or imports a browser profile, and checks every enabled provider.
 
 ## Run
 
+After setup, ask your agent to use Tokenless, or run a quick check yourself:
+
 ```bash
 tokenless run \
-  --profile default \
   --provider chatgpt \
-  --prompt "Review this proposal." \
-  --json
+  --prompt "Review this proposal."
 ```
 
-Without an explicit provider, Tokenless uses the first configured provider with a cached guest or signed-in observation. If none is usable, it fails before creating a job. An explicit provider is never silently replaced.
+Without `--provider`, Tokenless chooses an available configured provider. If you name one, Tokenless uses that exact provider.
 
-## Current Capabilities
+Inspect provider-specific availability with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
 
-- Tokenless runs locally through an authenticated loopback daemon and persistent managed browser profiles.
-- Runtime actions use visible provider pages and visible postconditions. Unsupported or unproven behavior fails closed.
-- ChatGPT and Gemini can run through visible guest sessions. Experimental Qwen can also run through its guest path. Claude and Grok require sign-in before task content is entered.
-- File upload, citations, model or effort controls, Workspace handling, and conversation continuation are provider/profile-specific runtime capabilities, not blanket promises. Inspect them with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
-- `--project-name` is task metadata unless `--workspace-mode` is present. Workspace behavior is experimental and reports native `created`/`reused` or conversation `fallback` when proven.
-
-## Experimental Qwen Modes
-
-Qwen-specific composer modes use the optional `qwen.mode` capability. Inspect current visible modes with `qwen.mode.inspect`, or select one for a run:
-
-```bash
-tokenless run \
-  --provider qwen \
-  --qwen-mode "Deep Research" \
-  --qwen-mode-variant "Advanced" \
-  --prompt "Proceed with a standalone report on this topic; use official sources and do not compare competitors." \
-  --json
-```
-
-This experimental capability proves exact mode selection and the first correlated visible response. It does not yet claim Qwen's complete multi-turn final-report lifecycle. Auto, Thinking, and Fast remain effort choices selected with `--effort`.
-
-See [CLI Commands](COMMANDS.md), [Privacy](PRIVACY.md), and [Architecture](docs/architecture.md) for details.
+See [CLI Commands](COMMANDS.md), [Privacy](PRIVACY.md), and [Architecture](docs/architecture.md) for advanced options and implementation details.
 
 ## Current Status
 

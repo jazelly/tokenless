@@ -1,5 +1,15 @@
 {
   "schema": "tokenless.live-provider-capability-matrix.v1",
+  "knownIssueSkips": [
+    {
+      "provider": "claude",
+      "reason": "claude_recurring_cloudflare_human_check",
+      "blockerCodes": [
+        "visible_cloudflare_turnstile",
+        "visible_cloudflare_interstitial"
+      ]
+    }
+  ],
   "cases": {
     "session-readiness": {
       "gate": "non_submission",

@@ -99,6 +99,7 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       ],
       blockers: [
         'iframe[src*="captcha"]',
+        'iframe[src*="challenges.cloudflare.com"]',
         'button[data-testid="login-with-google"]',
         'form:has(input[placeholder="Enter your email"]) button[data-testid="continue"]',
         'input[placeholder="Enter your email"]',
@@ -315,7 +316,6 @@ export async function captureProviderDom({
         'meta',
         'noscript',
         'template',
-        'iframe',
         'object',
         'embed',
         'input[type="hidden"]',

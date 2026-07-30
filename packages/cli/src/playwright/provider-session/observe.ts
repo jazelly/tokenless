@@ -121,7 +121,13 @@ async function detectStructuredBlockers(
     if (visibleWithAttribute('.cf-turnstile, [data-cf-turnstile], [data-turnstile-widget]')) {
       raw.push({ kind: 'challenge', code: 'visible_cloudflare_turnstile', family: 'cloudflare', message: 'Visible Cloudflare Turnstile is blocking the provider page.', proof: 'visible-turnstile-widget' })
     }
-    if (/(checking if the site connection is secure|verify you are human|cloudflare ray id|needs to review the security of your connection)/i.test(text)) {
+    const cloudflareSecurityVerification = /cloudflare/i.test(text) && (
+      /(performing security verification|security service to protect against malicious bots|verif(?:y|ies) you are not a bot|ray id)/i.test(text)
+    )
+    if (
+      cloudflareSecurityVerification ||
+      /(checking if the site connection is secure|verify you are human|cloudflare ray id|needs to review the security of your connection)/i.test(text)
+    ) {
       raw.push({ kind: 'challenge', code: 'visible_cloudflare_interstitial', family: 'cloudflare', message: 'Visible Cloudflare interstitial is blocking the provider page.', proof: 'visible-cloudflare-interstitial-text' })
     }
     const signInControl = visibleInputs.find((element) => /log in|sign in|continue with|enter your email|email address/i.test([

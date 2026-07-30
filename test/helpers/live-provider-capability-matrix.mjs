@@ -13,6 +13,11 @@ export const liveProviderCapabilityMatrixPath = path.join(root, 'test/live-provi
 
 const schema = 'tokenless.live-provider-capability-matrix.v1'
 const gates = new Set(['non_submission', 'mutation', 'project'])
+const knownIssueSkipReasons = new Set(['claude_recurring_cloudflare_human_check'])
+const knownIssueSkipBlockerCodes = new Set([
+  'visible_cloudflare_turnstile',
+  'visible_cloudflare_interstitial',
+])
 const accountConditions = new Set([
   'signed_in_selected_setup_profile',
   'guest_or_signed_in_selected_setup_profile',
@@ -46,9 +51,15 @@ export function loadLiveProviderCapabilityMatrix() {
 
 export function validateLiveProviderCapabilityMatrix(matrix) {
   assert.equal(isRecord(matrix), true, 'live capability matrix must be an object')
+  assert.deepEqual(
+    Object.keys(matrix).sort(),
+    ['cases', 'knownIssueSkips', 'providers', 'schema'],
+    'live capability matrix fields must be exact',
+  )
   assert.equal(matrix.schema, schema)
   assert.equal(isRecord(matrix.cases), true, 'live capability matrix cases must be an object')
   assert.equal(isRecord(matrix.providers), true, 'live capability matrix providers must be an object')
+  assert.equal(Array.isArray(matrix.knownIssueSkips), true, 'live capability matrix knownIssueSkips must be an array')
 
   const visibleActions = new Set(Object.values(VISIBLE_ACTIONS))
   const caseIds = Object.keys(matrix.cases)
@@ -73,6 +84,8 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
   }
 
   const descriptors = listProviderDescriptors()
+  const providerIds = new Set(descriptors.map((provider) => provider.id))
+  validateKnownIssueSkips(matrix.knownIssueSkips, providerIds)
   assert.deepEqual(
     Object.keys(matrix.providers).sort(),
     descriptors.map((provider) => provider.id).sort(),
@@ -103,6 +116,76 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
     }
   }
   return matrix
+}
+
+export function knownIssueSkipForDurableBlocker(matrix, provider, payload) {
+  if (payload?.status !== 'waiting_for_user') return null
+  if (payload?.provider !== provider) return null
+  const blockerCodes = structuredBlockerCodes(payload?.blocker)
+  for (const issue of matrix.knownIssueSkips) {
+    if (issue.provider !== provider) continue
+    const blockerCode = blockerCodes.find((code) => issue.blockerCodes.includes(code))
+    if (!blockerCode) continue
+    return {
+      provider: issue.provider,
+      reason: issue.reason,
+      blockerCode,
+    }
+  }
+  return null
+}
+
+export function structuredBlockerCodes(blocker) {
+  const codes = []
+  appendBlockerCode(codes, blocker)
+  appendBlockerCode(codes, blocker?.primary)
+  appendBlockerCode(codes, blocker?.blocker)
+  if (Array.isArray(blocker?.blockers)) {
+    for (const candidate of blocker.blockers) appendBlockerCode(codes, candidate)
+  }
+  return [...new Set(codes)]
+}
+
+function validateKnownIssueSkips(knownIssueSkips, providerIds) {
+  assert.equal(knownIssueSkips.length, 1, 'live capability matrix must declare exactly one known issue skip')
+  for (const issue of knownIssueSkips) {
+    assert.equal(isRecord(issue), true, 'known issue skip must be an object')
+    assert.deepEqual(
+      Object.keys(issue).sort(),
+      ['blockerCodes', 'provider', 'reason'],
+      'known issue skip fields must be exact',
+    )
+    assert.equal(issue.provider, 'claude', 'known issue skip provider must be claude')
+    assert.equal(providerIds.has(issue.provider), true, `${issue.provider} known issue provider must be registered`)
+    assert.equal(
+      knownIssueSkipReasons.has(issue.reason),
+      true,
+      `${issue.provider} known issue skip reason must be recognized`,
+    )
+    assert.equal(Array.isArray(issue.blockerCodes), true, `${issue.provider} known issue blockerCodes must be an array`)
+    assert.ok(issue.blockerCodes.length > 0, `${issue.provider} known issue must declare blocker codes`)
+    assert.equal(
+      new Set(issue.blockerCodes).size,
+      issue.blockerCodes.length,
+      `${issue.provider} known issue blocker codes must be unique`,
+    )
+    assert.deepEqual(
+      [...issue.blockerCodes].sort(),
+      [...knownIssueSkipBlockerCodes].sort(),
+      `${issue.provider} known issue blocker codes must match the allowed Cloudflare codes exactly`,
+    )
+    for (const code of issue.blockerCodes) {
+      assert.equal(
+        knownIssueSkipBlockerCodes.has(code),
+        true,
+        `${issue.provider} known issue blocker code ${code} is not allowed`,
+      )
+    }
+  }
+}
+
+function appendBlockerCode(codes, candidate) {
+  if (isRecord(candidate) && typeof candidate.code === 'string') codes.push(candidate.code)
 }
 
 function isRecord(value) {

@@ -291,6 +291,18 @@
       "provenancePath": "claude/signed-in-free/upload-connectors-menu-open.provenance.json"
     },
     {
+      "provider": "claude",
+      "accountState": "signed-out-challenge",
+      "scenario": "cloudflare-security-verification",
+      "routeClass": "new-chat-challenge",
+      "operationPhase": "challenge-visible",
+      "capabilityOutcome": "unavailable",
+      "sanitizedUrl": "https://claude.ai/new",
+      "observedOn": "2026-07-31",
+      "htmlPath": "claude/signed-out-challenge/cloudflare-security-verification.html",
+      "provenancePath": "claude/signed-out-challenge/cloudflare-security-verification.provenance.json"
+    },
+    {
       "provider": "gemini",
       "accountState": "signed-in-unknown",
       "scenario": "composer-idle",
@@ -629,30 +641,6 @@
     {
       "provider": "qwen",
       "accountState": "signed-out-guest",
-      "scenario": "deep-research-advanced-selected",
-      "routeClass": "new-chat",
-      "operationPhase": "selected",
-      "capabilityOutcome": "available",
-      "sanitizedUrl": "https://chat.qwen.ai/",
-      "observedOn": "2026-07-30",
-      "htmlPath": "qwen/signed-out-guest/deep-research-advanced-selected.html",
-      "provenancePath": "qwen/signed-out-guest/deep-research-advanced-selected.provenance.json"
-    },
-    {
-      "provider": "qwen",
-      "accountState": "signed-out-guest",
-      "scenario": "studio-response-complete",
-      "routeClass": "conversation",
-      "operationPhase": "response-complete",
-      "capabilityOutcome": "available",
-      "sanitizedUrl": "https://chat.qwen.ai/c/guest",
-      "observedOn": "2026-07-29",
-      "htmlPath": "qwen/signed-out-guest/studio-response-complete.html",
-      "provenancePath": "qwen/signed-out-guest/studio-response-complete.provenance.json"
-    },
-    {
-      "provider": "qwen",
-      "accountState": "signed-out-guest",
       "scenario": "composer-idle",
       "routeClass": "new-chat",
       "operationPhase": "observed",
@@ -677,6 +665,18 @@
     {
       "provider": "qwen",
       "accountState": "signed-out-guest",
+      "scenario": "deep-research-advanced-selected",
+      "routeClass": "new-chat",
+      "operationPhase": "selected",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.qwen.ai/",
+      "observedOn": "2026-07-30",
+      "htmlPath": "qwen/signed-out-guest/deep-research-advanced-selected.html",
+      "provenancePath": "qwen/signed-out-guest/deep-research-advanced-selected.provenance.json"
+    },
+    {
+      "provider": "qwen",
+      "accountState": "signed-out-guest",
       "scenario": "response-complete",
       "routeClass": "conversation",
       "operationPhase": "response-complete",
@@ -685,6 +685,18 @@
       "observedOn": "2026-07-26",
       "htmlPath": "qwen/signed-out-guest/response-complete.html",
       "provenancePath": "qwen/signed-out-guest/response-complete.provenance.json"
+    },
+    {
+      "provider": "qwen",
+      "accountState": "signed-out-guest",
+      "scenario": "studio-response-complete",
+      "routeClass": "conversation",
+      "operationPhase": "response-complete",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.qwen.ai/c/guest",
+      "observedOn": "2026-07-29",
+      "htmlPath": "qwen/signed-out-guest/studio-response-complete.html",
+      "provenancePath": "qwen/signed-out-guest/studio-response-complete.provenance.json"
     }
   ]
 }

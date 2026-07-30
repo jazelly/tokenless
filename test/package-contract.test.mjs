@@ -14,6 +14,14 @@ const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 test('checked-in live provider capability matrix classifies every registered provider and case', () => {
   const matrix = loadLiveProviderCapabilityMatrix()
   assert.equal(matrix.schema, 'tokenless.live-provider-capability-matrix.v1')
+  assert.deepEqual(matrix.knownIssueSkips, [{
+    provider: 'claude',
+    reason: 'claude_recurring_cloudflare_human_check',
+    blockerCodes: [
+      'visible_cloudflare_turnstile',
+      'visible_cloudflare_interstitial',
+    ],
+  }])
 })
 
 test('workspace packages keep standalone product names', () => {
