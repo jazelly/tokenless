@@ -1,6 +1,15 @@
-[中文](README.zh-CN.md) | [English](README.md) | [命令大全](COMMANDS.zh-CN.md) | [Roadmaps](docs/roadmaps/README.md)
+<p align="center">
+  <img src="assets/tokenless-wordmark.png" alt="Tokenless" width="560">
+</p>
 
-# Tokenless
+<p align="center">
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/v/tokenless?logo=npm&amp;label=version" alt="npm 版本"></a>
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/dm/tokenless?logo=npm&amp;label=downloads" alt="npm 月下载量"></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="COMMANDS.zh-CN.md">命令大全</a> · <a href="docs/roadmaps/README.md">Roadmaps</a>
+</p>
 
 ## 项目简介
 
@@ -16,7 +25,7 @@ Tokenless 是一款面向所有 AI 用户、帮助降低 token 消耗的本地�
 - **多 AI 服务支持**：目前支持 ChatGPT、Claude、Grok、Gemini 四家网页版 AI 服务；Qwen / 千问现作为实验性 Guest-session provider 提供。
 - **完全本地运行**：所有自动化流程均在本地执行，不经第三方转发，也不收集用户数据。
 - **可恢复的本地 Jobs**：CLI 只在需要时启动 daemon，从 SQLite 发现其实际 loopback 端口，在重启后恢复 lease/checkpoint work，并允许指定 agent 对每个未见 outcome 摘要只 drain 一次，同时保留完整 job result。
-- **Provider-neutral 可见工作流**：在真实 provider capability matrix 已证明的范围内统一完成提示词、完整性校验后的文件选择和对话延续。Qwen 的实验性 baseline 当前覆盖 Guest prompt 提交和 response 读取；当前选定的 Qwen 与 Gemini Guest profile 在重新打开 mapped URL 后都无法恢复上一轮上下文，因此 cross-process continuation 明确保持 unavailable。
+- **Provider-neutral 可见工作流**：在真实 provider capability matrix 已证明的范围内统一完成提示词、完整性校验后的文件选择和对话延续。Qwen 的实验性 baseline 还会暴露其 provider-specific modes 以及 Auto/Thinking/Fast reasoning control；当前选定的 Qwen 与 Gemini Guest profile 在重新打开 mapped URL 后都无法恢复上一轮上下文，因此 cross-process continuation 明确保持 unavailable。
 - **明确的 Guest 与登录路由**：ChatGPT 和 Gemini 可通过可见 Guest session 执行，实验性 Qwen 集成也支持该路径；Claude 和 Grok 会在 Tokenless 输入任务内容前，将同一个 job handoff 给用户登录。
 
 ## 技术栈
@@ -43,6 +52,21 @@ Profile 和 provider 使用不同且区分大小写的短选项：
 原生 Workspace 结果会明确区分 `created`、`reused` 和 `fallback`，包含 canonical resource URL、provider/profile scope，并报告所请求 Project instructions 的处理结果。Tokenless 会按 provider resource ID 将 Project identity 持久化，并在 SQLite 中保存精确的 task conversation mapping，供后续 CLI 进程复用。
 
 运行 `tokenless provider-action --action capability.inspect --provider <provider> --json` 可以检查当前可见 UI 中由 subscription 决定的 capability 状态。在 free、paid、unknown-plan 和 managed-account 的 live matrix 完成前，这些 contract 保持 experimental。
+
+## 实验性 Qwen Modes
+
+Qwen 专属的 composer modes 通过 optional `qwen.mode` capability 暴露，不会伪装成 provider-neutral model 或 effort choice。可以使用 `qwen.mode.inspect` 检查当前可见 modes，也可以在一次 run 中选择 mode：
+
+```bash
+tokenless run \
+  --provider qwen \
+  --qwen-mode "Deep Research" \
+  --qwen-mode-variant "Advanced" \
+  --prompt "Research this topic and return a cited report." \
+  --json
+```
+
+当前 mode availability 会在运行时从可见 UI 发现。Disabled entries 会保持 disabled；只有精确选择产生可见的 Qwen mode postcondition 后，Tokenless 才会提交 prompt。Qwen 的 Auto、Thinking 和 Fast selector 仍归入 provider-neutral `effort.choice` capability，并使用 `--effort`。
 
 ## 实现要点
 

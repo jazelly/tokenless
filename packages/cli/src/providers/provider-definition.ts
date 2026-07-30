@@ -204,7 +204,10 @@ export function createProviderOptionalCapabilities(
   return OPTIONAL_CAPABILITY_ORDER.map((key) => capabilities[key])
 }
 
-export function providerCapabilities(options: { nativeWorkspace?: boolean } = {}): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
+export function providerCapabilities(options: {
+  nativeWorkspace?: boolean
+  qwenMode?: boolean
+} = {}): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
   return Object.freeze({
     [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT]: Object.freeze({
       capability: PROVIDER_CAPABILITIES.CAPABILITY_INSPECT,
@@ -363,6 +366,28 @@ export function providerCapabilities(options: { nativeWorkspace?: boolean } = {}
         mode: null,
         visibleProof: null,
         reason: 'no_provider_neutral_image_generation_fallback',
+      }),
+      stability: 'experimental',
+    }),
+    [PROVIDER_CAPABILITIES.QWEN_MODE]: Object.freeze({
+      capability: PROVIDER_CAPABILITIES.QWEN_MODE,
+      availability: options.qwenMode ? 'unknown' : 'unavailable',
+      visibleProof: options.qwenMode
+        ? 'runtime-visible-qwen-mode-control-evidence-required'
+        : 'qwen-mode-provider-strategy-unavailable',
+      reason: options.qwenMode ? 'availability_depends_on_visible_provider_controls' : 'unsupported_by_provider',
+      native: Object.freeze({
+        resourceKind: options.qwenMode ? 'visible_action' : null,
+        availability: options.qwenMode ? 'unknown' : 'unavailable',
+        visibleProof: options.qwenMode ? 'runtime-visible-qwen-mode-control-evidence-required' : null,
+        reason: options.qwenMode ? null : 'unsupported_by_provider',
+      }),
+      fallback: Object.freeze({
+        resourceKind: null,
+        availability: 'unavailable',
+        mode: null,
+        visibleProof: null,
+        reason: 'no_provider_neutral_qwen_mode_fallback',
       }),
       stability: 'experimental',
     }),

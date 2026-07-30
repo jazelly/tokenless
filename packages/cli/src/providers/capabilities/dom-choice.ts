@@ -116,6 +116,7 @@ async function inspectChoices(page: Page, provider: ProviderDomDefinition, kind:
     }
   }
   await trigger.click({ timeout: 5000 })
+  await page.waitForTimeout(300)
   const choices = await collectVisibleChoices(page, provider, trigger)
   return {
     supported: true as const,
@@ -142,12 +143,64 @@ async function selectChoice(
       visibleProof: 'exact-label-not-found',
     }
   }
-  await page.getByText(label, { exact: true }).click({ timeout: 5000 })
+  const option = await exactVisibleChoiceLocator(page, label)
+  if (!option) {
+    return {
+      supported: true as const,
+      selectedLabel: '',
+      visibleProof: 'exact-label-not-found',
+    }
+  }
+  await option.click({ timeout: 5000 })
+  const visible = await waitForSelectedLabel(page, provider, kind, label)
   return {
     supported: true as const,
-    selectedLabel: label,
-    visibleProof: 'exact-label-selected',
+    selectedLabel: visible ? label : '',
+    visibleProof: visible ? 'exact-label-selected' : 'selected-label-not-visible',
   }
+}
+
+async function exactVisibleChoiceLocator(page: Page, label: string): Promise<Locator | null> {
+  const candidates = page.locator([
+    '[role="menuitem"]',
+    '[role="menuitemradio"]',
+    '[role="option"]',
+    '[cmdk-item]',
+    '.ant-select-item-option',
+  ].join(',')).filter({ visible: true })
+  const count = Math.min(await candidates.count(), 80)
+  for (let index = 0; index < count; index += 1) {
+    const candidate = candidates.nth(index)
+    const text = await candidate.evaluate((element) => (
+      element.querySelector('.label')?.textContent ??
+      element.getAttribute('aria-label') ??
+      element.textContent ??
+      ''
+    ).replace(/\s+/gu, ' ').trim())
+    if (text === label) return candidate
+  }
+  return null
+}
+
+async function waitForSelectedLabel(
+  page: Page,
+  provider: ProviderDomDefinition,
+  kind: ChoiceKind,
+  label: string,
+) {
+  const selectors = kind === 'model' ? provider.modelControlSelectors : provider.effortControlSelectors
+  const deadline = Date.now() + 5000
+  while (Date.now() <= deadline) {
+    const trigger = await firstVisibleLocator(page, selectors)
+    if (trigger) {
+      const text = await trigger.evaluate((element) => (
+        `${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''}`
+      ).replace(/\s+/gu, ' ').trim()).catch(() => '')
+      if (text === label || text.includes(label)) return true
+    }
+    await page.waitForTimeout(100)
+  }
+  return false
 }
 
 async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition, trigger: Locator): Promise<Choice[]> {
@@ -159,6 +212,8 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
   const root = controlledRoot && await controlledRoot.count() > 0 ? controlledRoot : overlayRoot
   const locators = [
     root.locator('[role="menuitem"], [role="option"], [cmdk-item], button').filter({ visible: true }),
+    page.locator('.ant-select-dropdown').filter({ visible: true })
+      .locator('.ant-select-item-option').filter({ visible: true }),
   ]
   const choices: Choice[] = []
   for (const locator of locators) {

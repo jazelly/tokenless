@@ -32,6 +32,8 @@ export type {
   FileUploadPayload,
   PromptInputActionRequest,
   PromptInputPayload,
+  QwenModeInspectActionRequest,
+  QwenModeSelectActionRequest,
   VisibleAction,
   VisibleActionPayloadForAction,
   VisibleActionProtocolVersion,
@@ -39,6 +41,7 @@ export type {
   VisibleActionRequestForAction,
   VisibleActionWireRequest,
   VisibleSelectionPayload,
+  QwenModeSelectionPayload,
   WorkspaceEnsureActionRequest,
   WorkspaceEnsurePayload,
 } from '../providers/contracts.js'
@@ -150,6 +153,34 @@ export type ChoiceSelectResult = {
 } | {
   supported: false
   reason: 'unsupported_by_provider'
+}
+
+export type QwenModeChoice = {
+  mode: string
+  enabled: boolean
+  selected: boolean
+}
+
+export type QwenModeInspectResult = {
+  supported: true
+  active: {
+    mode: string
+    variant: string | null
+  }
+  modes: readonly QwenModeChoice[]
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available'
+}
+
+export type QwenModeSelectResult = {
+  supported: true
+  selectedMode: string
+  selectedVariant: string | null
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_mode_not_found' | 'exact_variant_not_found'
 }
 
 export type FileUploadResult = {
@@ -359,6 +390,8 @@ export type VisibleActionResult = (
   | AuthStatusResult
   | ChoiceInspectResult
   | ChoiceSelectResult
+  | QwenModeInspectResult
+  | QwenModeSelectResult
   | FileUploadResult
   | WorkspaceEnsureResult
   | PromptInputResult

@@ -16,6 +16,7 @@ export const PROVIDER_CAPABILITIES = Object.freeze({
   CONVERSATION_CONTINUE: 'conversation.continue',
   DIAGNOSTICS: 'diagnostics',
   IMAGE_GENERATION: 'image.generation',
+  QWEN_MODE: 'qwen.mode',
 })
 
 export type ProviderCapabilityId = typeof PROVIDER_CAPABILITIES[keyof typeof PROVIDER_CAPABILITIES]

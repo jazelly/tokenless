@@ -366,6 +366,8 @@ Provider 控件：
 - `--model <exact-visible-label>` 在提交前选择可见 model。
 - `--effort <exact-visible-label>` 选择可见 reasoning 或 effort。
 - `--thinking-effort <label>` 是另一种 effort 参数形式。
+- `--qwen-mode <exact-visible-label>` 选择 Qwen 专属的 composer mode。
+- `--qwen-mode-variant <exact-visible-label>` 选择该 Qwen mode 的可见 variant，并要求同时提供 `--qwen-mode`。
 - `--browser-visibility <auto|headed|headless>` 覆盖已配置的可见性策略。
 
 Identity 与 continuity：
@@ -523,6 +525,8 @@ tokenless provider-action \
 | `model.select` | 选择一个精确的可见 model。 | `--model` |
 | `effort.inspect` | 列出可见 effort controls。 | 无 |
 | `effort.select` | 选择一个精确的可见 effort。 | `--effort` 或 `--thinking-effort` |
+| `qwen.mode.inspect` | 列出 Qwen 专属的可见 composer modes。 | 无；仅限 Qwen |
+| `qwen.mode.select` | 选择一个 Qwen 专属 mode 和可选的可见 variant。 | `--qwen-mode`；`--qwen-mode-variant` 可选 |
 | `file.upload` | 通过可见 file controls 上传文件。 | 一个或多个 `--attach-file` |
 | `workspace.ensure` | 确保存在原生或 conversation-scoped Workspace。 | `--project-name`；`--workspace-mode` 和 instructions 可选 |
 | `prompt.clear` | 清空可见 composer。 | 无 |

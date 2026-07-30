@@ -8,6 +8,7 @@ import {
 } from './provider-definition.js'
 import { MenuTextAccountInspector } from './account-inspectors.js'
 import { tokenlessError } from '../playwright/errors.js'
+import { QwenModeCapability } from './capabilities/qwen-mode.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
 import type { ProviderDomDefinition } from './provider-definition.js'
@@ -62,7 +63,9 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       fileUploadTriggerSelectors: Object.freeze([]),
       fileUploadLocalSelectors: Object.freeze([]),
       modelControlSelectors: Object.freeze([]),
-      effortControlSelectors: Object.freeze([]),
+      effortControlSelectors: Object.freeze([
+        '.qwen-select-thinking',
+      ]),
       authIndicators: Object.freeze([]),
       loginIndicators: Object.freeze([
         'button:has-text("Log in")',
@@ -75,9 +78,13 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         '.qwen-chat-message-awaiting-response',
       ]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
-      capabilities: providerCapabilities(),
+      capabilities: providerCapabilities({ qwenMode: true }),
     })
-    super(provider)
+    super(provider, {
+      extensions: Object.freeze([
+        new QwenModeCapability(provider),
+      ]),
+    })
   }
 
   protected override async inputPrompt(page: Page, text: string, _context: ProviderExecutionContext) {

@@ -47,6 +47,8 @@ Qwen closure now starts from its canonical `https://chat.qwen.ai/` chat surface.
 
 The subsequent non-submission gate encountered intermittent system DNS failure for `chat.qwen.ai` after the same hostname had resolved for the successful mutation gate. Navigation now reports this explicitly as retryable `provider_dns_unavailable`; no test-only DNS override is used or counted as acceptance evidence.
 
+On 2026-07-30, Qwen-specific mode work added `qwen.mode.inspect/select`, runtime enabled/disabled mode discovery, exact Deep Research Normal/Advanced selection, Auto/Thinking/Fast effort controls, and a required real mutation case that selects Deep Research Advanced before prompt submission and response reading. A built-CLI action produced the visible `qwen-mode-and-variant-visible` postcondition for Deep Research Advanced. A separate development capture recorded the selected Deep Research Advanced state through a read-only CDP observer and added the redacted reduction to the fixture manifest; its one-off public-DNS host resolution is recorded in provenance and the fixture does not count as acceptance. After system DNS recovered, a built-CLI plus read-only-CDP run proved Auto/Thinking/Fast inspection, exact Thinking selection, visible selection, durable success, and Auto restoration. Full Deep Research mutation closure remains pending; the successful selector mutation and static fixture alone are not counted as prompt/research/response acceptance.
+
 The roadmap remains in progress. Before release, the operator must restore the required selected-profile authentication for ChatGPT, Claude, and Grok, ensure stable system DNS resolution for `chat.qwen.ai`, manually rerun every applicable gate, and obtain a complete pass. Claude and Grok native Project implementation also remains provisional until real authenticated sessions supply the required DOM development captures and close creation, exact reuse, instructions, Project chat, and continuation.
 
 ## Actor and Oracle Boundary
@@ -151,6 +153,7 @@ The initial required matrix is:
 | Auth, capability inspection, navigation, blocker inspection, sanitized snapshot | Every provider that declares the action |
 | Prompt input and clear | Every provider that declares composer support; observer sees the unique draft and its removal |
 | Model and effort inspection and selection | Inspect the current choice, select a real alternate, verify the visible selection, and restore the original choice |
+| Provider-specific Qwen mode | Inspect enabled and disabled modes, select Deep Research Advanced, verify the visible mode and variant, submit a real prompt, read the correlated response, and restore Chat |
 | File upload | Verify a visible attachment and submit it with a correlated prompt |
 | Prompt submission and response reading | Submit a unique marker and read a real provider response correlated to that marker |
 | Citation extraction | For providers that declare it, use a source-seeking prompt and verify real visible citation controls and normalized results |
@@ -160,7 +163,7 @@ The initial required matrix is:
 The live suite has explicit gates:
 
 - **Non-submission gate:** auth, capability inspection, navigation, blocker state, model and effort change with restoration, draft input and clear, and attachment selection with draft cleanup.
-- **Mutation gate:** prompt submission, attachment submission, real response reading, citations, and conversation continuation.
+- **Mutation gate:** prompt submission, attachment submission, real response reading, citations, conversation continuation, and Qwen Deep Research mode closure.
 - **Project gate:** native Project creation, reuse, instructions, Project chat, and Project-scoped continuation.
 
 These gates select which manually invoked command performs provider-side mutations; they do not skip cases inside an invoked suite.

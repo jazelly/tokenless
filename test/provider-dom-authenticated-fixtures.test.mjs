@@ -245,7 +245,7 @@ test('provider DOM manifest inventories every fixture with its sanitized page UR
   assert.deepEqual([...listed].sort(), [...actual].sort())
 })
 
-test('Qwen guest fixtures preserve provenance-bound composer and completed-response evidence', {
+test('Qwen guest fixtures preserve provenance-bound composer, mode, and completed-response evidence', {
   timeout: 30000,
 }, async () => {
   const accountRoot = path.join(fixtureRoot, 'qwen', 'signed-out-guest')
@@ -262,6 +262,11 @@ test('Qwen guest fixtures preserve provenance-bound composer and completed-respo
         scenario: 'response-complete',
         observedOn: '2026-07-26',
         source: 'unauthenticated-user-visible-in-app-browser-session',
+      },
+      {
+        scenario: 'deep-research-advanced-selected',
+        observedOn: '2026-07-30',
+        source: 'development-visible-provider-session-cdp-observer',
       },
       {
         scenario: 'studio-response-complete',

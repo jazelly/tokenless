@@ -173,6 +173,8 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'model.select',
   'effort.inspect',
   'effort.select',
+  'qwen.mode.inspect',
+  'qwen.mode.select',
   'file.upload',
   'workspace.ensure',
   'prompt.clear',
@@ -1121,13 +1123,21 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
       `provider-action --action must be one of: ${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST}.`
     )
   }
+  if (action.startsWith('qwen.mode.') && normalizeProvider(args.provider) !== 'qwen') {
+    throw usageError('qwen_mode_unsupported', 'qwen.mode actions are available only for the Qwen provider.')
+  }
 
   if (action === 'capability.inspect') {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
   }
 
-  if (action === 'auth.status' || action === 'model.inspect' || action === 'effort.inspect') {
+  if (
+    action === 'auth.status' ||
+    action === 'model.inspect' ||
+    action === 'effort.inspect' ||
+    action === 'qwen.mode.inspect'
+  ) {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
   }
@@ -1173,6 +1183,17 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     return {
       action,
       payload: { label: normalizeVisibleModelLabel(value, '--effort', 'invalid_effort') },
+    }
+  }
+
+  if (action === 'qwen.mode.select') {
+    assertProviderActionPayloadOptions(args, new Set(['qwenMode', 'qwenModeVariant']))
+    if (args.qwenMode === undefined) {
+      throw usageError('missing_visible_action_qwen_mode', 'qwen.mode.select requires --qwen-mode <exact-visible-mode>.')
+    }
+    return {
+      action,
+      payload: qwenModeSelectionPayload(args),
     }
   }
 
@@ -1227,6 +1248,8 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['modelFallbacks', '--model-fallback'],
     ['effort', '--effort'],
     ['thinkingEffort', '--thinking-effort'],
+    ['qwenMode', '--qwen-mode'],
+    ['qwenModeVariant', '--qwen-mode-variant'],
     ['chatSurface', '--chat-surface'],
     ['projectName', '--project-name'],
     ['projectInstructions', '--project-instructions'],
@@ -1610,6 +1633,18 @@ function managedVisibleActions({
   }
   if (workspace !== undefined) {
     actions.push({ requestId: `${requestId}:workspace`, action: VISIBLE_ACTIONS.WORKSPACE_ENSURE, payload: workspace })
+  }
+  if (providerControls.qwenMode !== undefined) {
+    actions.push({
+      requestId: `${requestId}:qwen-mode`,
+      action: VISIBLE_ACTIONS.QWEN_MODE_SELECT,
+      payload: {
+        mode: providerControls.qwenMode,
+        ...(providerControls.qwenModeVariant === undefined
+          ? {}
+          : { variant: providerControls.qwenModeVariant }),
+      },
+    })
   }
   if (providerControls.model !== undefined) {
     actions.push({ requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: providerControls.model } })
@@ -3115,7 +3150,8 @@ function createCommandContracts(): CommandContract[] {
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'browserVisibility',
     'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
-    'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface', 'noWait',
+    'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
+    'chatSurface', 'noWait',
     'agentKind', 'agentSessionId',
   ] as const
   const runOptions = [
@@ -3144,7 +3180,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'inspect-chatgpt-controls', usage: ['tokenless inspect-chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
     { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
     { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort'] },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
@@ -3237,6 +3273,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--model-fallback': 'modelFallbacks',
     '--effort': 'effort',
     '--thinking-effort': 'thinkingEffort',
+    '--qwen-mode': 'qwenMode',
+    '--qwen-mode-variant': 'qwenModeVariant',
     '--chat-surface': 'chatSurface',
   }
   const booleanFlags: Record<string, string> = {
@@ -3572,6 +3610,7 @@ function resolveProviderControls({
 }) {
   const hasRequestedModelControl = args.model !== undefined || args.modelFallbacks !== undefined
   const hasRequestedEffortControl = args.effort !== undefined || args.thinkingEffort !== undefined
+  const hasRequestedQwenMode = args.qwenMode !== undefined || args.qwenModeVariant !== undefined
   const hasRequestedChatGptControl = (
     args.chatSurface !== undefined
   )
@@ -3580,7 +3619,7 @@ function resolveProviderControls({
     action === 'inspect_controls' ||
     action === 'inspect_chatgpt_controls'
   )
-  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedChatGptControl)) {
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedChatGptControl)) {
     throw usageError(
       'controls_unsupported_for_action',
       'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
@@ -3590,6 +3629,12 @@ function resolveProviderControls({
     throw usageError(
       'chatgpt_controls_unsupported',
       '--chat-surface is available only for ChatGPT.'
+    )
+  }
+  if (provider !== 'qwen' && hasRequestedQwenMode) {
+    throw usageError(
+      'qwen_mode_unsupported',
+      '--qwen-mode and --qwen-mode-variant are available only for the Qwen provider.'
     )
   }
   if (inspectionAction) return {}
@@ -3609,8 +3654,18 @@ function resolveProviderControls({
     ? undefined
     : normalizeVisibleModelLabel(effortValue, '--effort', 'invalid_effort')
 
+  const qwenMode = args.qwenMode === undefined
+    ? undefined
+    : normalizeVisibleModelLabel(args.qwenMode, '--qwen-mode', 'invalid_qwen_mode')
+  const qwenModeVariant = args.qwenModeVariant === undefined
+    ? undefined
+    : normalizeVisibleModelLabel(args.qwenModeVariant, '--qwen-mode-variant', 'invalid_qwen_mode_variant')
+  if (qwenModeVariant !== undefined && qwenMode === undefined) {
+    throw usageError('qwen_mode_variant_requires_mode', '--qwen-mode-variant requires --qwen-mode.')
+  }
+
   if (!providerSupportsChatSurface(provider)) {
-    return { model, modelFallbacks, effort }
+    return { model, modelFallbacks, effort, qwenMode, qwenModeVariant }
   }
 
   const chatSurface = args.chatSurface === undefined ? 'chat' : String(args.chatSurface).trim().toLowerCase()
@@ -3622,6 +3677,17 @@ function resolveProviderControls({
     model,
     modelFallbacks,
     effort,
+  }
+}
+
+function qwenModeSelectionPayload(args: CliArgs) {
+  const mode = normalizeVisibleModelLabel(args.qwenMode, '--qwen-mode', 'invalid_qwen_mode')
+  const variant = args.qwenModeVariant === undefined
+    ? undefined
+    : normalizeVisibleModelLabel(args.qwenModeVariant, '--qwen-mode-variant', 'invalid_qwen_mode_variant')
+  return {
+    mode,
+    ...(variant === undefined ? {} : { variant }),
   }
 }
 

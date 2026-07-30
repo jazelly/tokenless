@@ -21,6 +21,7 @@ const handlers = {
   'prompt-draft': promptDraft,
   'model-choice': modelChoice,
   'effort-choice': effortChoice,
+  'qwen-mode': qwenMode,
   'file-selection': fileSelection,
   'file-upload': fileUpload,
   'submit-read': submitRead,
@@ -120,6 +121,55 @@ async function modelChoice(context) {
 
 async function effortChoice(context) {
   await choiceCase(context, 'effort')
+}
+
+async function qwenMode({ provider, session }) {
+  assert.equal(provider, 'qwen')
+  const inspected = await action(session, provider, 'qwen.mode.inspect')
+  const inspection = responseResult(inspected.payload, 'qwen.mode.inspect')
+  assert.equal(inspection?.supported, true)
+  assert.deepEqual(inspection?.active, { mode: 'Chat', variant: null })
+  assert.equal(
+    inspection?.modes?.some((mode) => mode.mode === 'Deep Research' && mode.enabled),
+    true,
+    'Qwen must expose an enabled Deep Research mode',
+  )
+  await inspected.close()
+
+  const marker = markerFor(provider, 'DEEP_RESEARCH')
+  const run = await cliRun(session, provider, [
+    '--task-id', markerFor(provider, 'DEEP_RESEARCH_TASK'),
+    '--qwen-mode', 'Deep Research',
+    '--qwen-mode-variant', 'Advanced',
+    '--prompt', [
+      'Proceed immediately with a standalone research report about the official Qwen homepage.',
+      'Focus only on its current product features, available user entry points, and stated use cases.',
+      'Use the official Qwen site as the primary source, do not compare competitors, and do not ask clarifying questions.',
+      `Include this exact marker exactly once in the final report: ${marker}`,
+    ].join(' '),
+  ], 720_000, async ({ page }) => (
+    await exactTextVisible(page, 'Deep Research') &&
+    await exactTextVisible(page, 'Advanced')
+  ))
+  const selected = responseResult(run.payload, 'qwen.mode.select')
+  assert.deepEqual(selected, {
+    supported: true,
+    selectedMode: 'Deep Research',
+    selectedVariant: 'Advanced',
+    visibleProof: 'qwen-mode-and-variant-visible',
+  })
+  assert.equal(run.observerResult, true, 'Qwen observer must see Deep Research Advanced selected')
+  assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
+  await run.close()
+
+  const restored = await action(session, provider, 'qwen.mode.select', ['--qwen-mode', 'Chat'])
+  assert.deepEqual(responseResult(restored.payload, 'qwen.mode.select'), {
+    supported: true,
+    selectedMode: 'Chat',
+    selectedVariant: null,
+    visibleProof: 'qwen-chat-mode-visible',
+  })
+  assert.equal(await exactTextVisible(restored.page, 'Auto'), true)
 }
 
 async function choiceCase({ provider, session }, kind) {

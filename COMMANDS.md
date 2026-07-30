@@ -366,6 +366,8 @@ Provider controls:
 - `--model <exact-visible-label>` selects a visible model before submission.
 - `--effort <exact-visible-label>` selects visible reasoning or effort.
 - `--thinking-effort <label>` is an alternative effort option.
+- `--qwen-mode <exact-visible-label>` selects a Qwen-specific composer mode.
+- `--qwen-mode-variant <exact-visible-label>` selects a visible variant of that Qwen mode and requires `--qwen-mode`.
 - `--browser-visibility <auto|headed|headless>` overrides the configured visibility policy.
 
 Identity and continuity:
@@ -523,6 +525,8 @@ tokenless provider-action \
 | `model.select` | Select one exact visible model. | `--model` |
 | `effort.inspect` | List visible effort controls. | None |
 | `effort.select` | Select one exact visible effort. | `--effort` or `--thinking-effort` |
+| `qwen.mode.inspect` | List Qwen-specific visible composer modes. | None; Qwen only |
+| `qwen.mode.select` | Select one Qwen-specific mode and optional visible variant. | `--qwen-mode`; optional `--qwen-mode-variant` |
 | `file.upload` | Upload files through visible file controls. | One or more `--attach-file` |
 | `workspace.ensure` | Ensure a native or conversation-scoped Workspace. | `--project-name`; optional `--workspace-mode` and instructions |
 | `prompt.clear` | Clear the visible composer. | None |

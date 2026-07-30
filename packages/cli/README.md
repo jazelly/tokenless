@@ -79,12 +79,13 @@ The shared Playwright action contract covers:
 - visible authentication and blocker checks;
 - experimental subscription-aware capability inspection;
 - exact-label model and effort inspection and selection;
+- Qwen-specific mode discovery and exact selection, including visible Deep Research variants;
 - integrity-checked file upload with separate `selected` and visibly proven `accepted` outcomes;
 - experimental Workspace ensure with explicit native-only or conversation fallback policy;
 - prompt submission, correlated response reading, and visible citations;
 - fail-closed navigation checks and sanitized structural snapshots.
 
-Four-provider parity and end-to-end upload acceptance are still being completed. Qwen's experimental baseline covers guest prompt submission and response reading. Cross-process continuation is explicitly unavailable in the selected Qwen and Gemini guest profiles because reopening a mapped URL does not restore prior-turn context; other unproven optional capabilities fail as unavailable or unknown.
+Four-provider parity and end-to-end upload acceptance are still being completed. Qwen's experimental baseline covers guest prompt submission, response reading, Auto/Thinking/Fast effort selection, and provider-specific mode selection. Cross-process continuation is explicitly unavailable in the selected Qwen and Gemini guest profiles because reopening a mapped URL does not restore prior-turn context; other unproven optional capabilities fail as unavailable or unknown.
 
 `--project-name` continues to provide task identity only unless `--workspace-mode` is present. For Claude and Grok, `auto` prefers a visible native Project and falls back only after stable visible evidence that native Projects are unavailable. Transient UI, navigation, network, blocker, and selector failures do not trigger fallback. `native` requires exact native creation or reuse, and `conversation` requires the conversation strategy.
 
@@ -101,6 +102,8 @@ tokenless provider-action \
 ```
 
 Use the low-level Workspace action with `--action workspace.ensure --project-name <name> --workspace-mode <auto|native|conversation>`. Optional instructions can be supplied with `--project-instructions` or `--project-instructions-file`.
+
+Qwen-specific modes are exposed through `qwen.mode.inspect` and `qwen.mode.select`. A prompt can select Deep Research Advanced in the same managed-browser job with `--provider qwen --qwen-mode "Deep Research" --qwen-mode-variant "Advanced"`.
 
 ## Browser Visibility Policy
 

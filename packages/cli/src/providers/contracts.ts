@@ -17,6 +17,8 @@ export const VISIBLE_ACTIONS = Object.freeze({
   MODEL_SELECT: 'model.select',
   EFFORT_INSPECT: 'effort.inspect',
   EFFORT_SELECT: 'effort.select',
+  QWEN_MODE_INSPECT: 'qwen.mode.inspect',
+  QWEN_MODE_SELECT: 'qwen.mode.select',
   FILE_UPLOAD: 'file.upload',
   WORKSPACE_ENSURE: 'workspace.ensure',
   PROMPT_INPUT: 'prompt.input',
@@ -62,6 +64,10 @@ export type AttachmentInput = {
 export type EmptyVisibleActionPayload = Record<string, never>
 export type VisibleSelectionPayload = {
   label: string
+}
+export type QwenModeSelectionPayload = {
+  mode: string
+  variant?: string
 }
 export type FileUploadPayload = {
   attachments: readonly AttachmentInput[]
@@ -110,6 +116,14 @@ export type EffortSelectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.EFFORT_SELECT,
   VisibleSelectionPayload
 >
+export type QwenModeInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.QWEN_MODE_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type QwenModeSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.QWEN_MODE_SELECT,
+  QwenModeSelectionPayload
+>
 export type FileUploadActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.FILE_UPLOAD,
   FileUploadPayload
@@ -154,6 +168,8 @@ export type VisibleActionRequest =
   | ModelSelectActionRequest
   | EffortInspectActionRequest
   | EffortSelectActionRequest
+  | QwenModeInspectActionRequest
+  | QwenModeSelectActionRequest
   | FileUploadActionRequest
   | WorkspaceEnsureActionRequest
   | PromptInputActionRequest

@@ -218,6 +218,16 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
         '.qwen-chat-message-awaiting-response',
       ],
       modelPickers: [],
+      effortPickers: [
+        '.qwen-select-thinking',
+        '[role="combobox"][aria-label="Thinking"]',
+      ],
+      modePickers: [
+        '[role="button"][aria-label="Select Mode"]',
+        '.mode-select',
+        '.message-input-column-footer-submode',
+        '[role="menuitem"].mode-select-common-item',
+      ],
       fileInputs: [],
       projectLinks: [],
     },

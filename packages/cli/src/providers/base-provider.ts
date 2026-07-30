@@ -30,7 +30,9 @@ import type { ResponseCursorObservation } from './capabilities/response.js'
 import type { AuthStatusResult, BlockerCheckResult, VisibleActionResponse, VisibleActionResult } from '../playwright/actions.js'
 import type { ProviderSessionResolution } from '../playwright/provider-session/types.js'
 
-export type BaseProviderCapabilities = ProviderOptionalCapabilityOverrides
+export type BaseProviderCapabilities = ProviderOptionalCapabilityOverrides & Readonly<{
+  extensions?: readonly ProviderCapability[]
+}>
 
 type PromptActionRequest = Extract<VisibleActionRequest, {
   action:
@@ -45,7 +47,11 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
 
   protected constructor(definition: ProviderDomDefinition<TId>, capabilities: BaseProviderCapabilities = {}) {
     this.definition = definition
-    const optionalCapabilities = createProviderOptionalCapabilities(definition, capabilities)
+    const { extensions = [], ...overrides } = capabilities
+    const optionalCapabilities = [
+      ...createProviderOptionalCapabilities(definition, overrides),
+      ...extensions,
+    ]
     assertNoReservedOptionalCapabilities(optionalCapabilities)
     this.providerCapabilities = new ProviderCapabilitySet(optionalCapabilities)
   }

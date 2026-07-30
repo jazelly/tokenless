@@ -1,6 +1,15 @@
-[中文](README.zh-CN.md) | [English](README.md) | [CLI commands](COMMANDS.md) | [Roadmaps](docs/roadmaps/README.md)
+<p align="center">
+  <img src="assets/tokenless-wordmark.png" alt="Tokenless" width="560">
+</p>
 
-# Tokenless
+<p align="center">
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/v/tokenless?logo=npm&amp;label=version" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/tokenless"><img src="https://img.shields.io/npm/dm/tokenless?logo=npm&amp;label=downloads" alt="npm monthly downloads"></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="COMMANDS.md">CLI commands</a> · <a href="docs/roadmaps/README.md">Roadmaps</a>
+</p>
 
 ## Overview
 
@@ -16,7 +25,7 @@ As AI agents are used in more scenarios, they consume an increasing number of to
 - **Multiple AI services**: Tokenless supports the web versions of ChatGPT, Claude, Grok, and Gemini. Qwen / 千问 is available as an experimental guest-session provider.
 - **Fully local operation**: All automation runs locally, with no third-party relays and no collection of user data.
 - **Crash-tolerant local jobs**: The CLI starts the daemon only when needed, discovers its actual loopback port from SQLite, restores leased/checkpointed work after restart, and lets addressed agents drain each unseen outcome summary once while retaining full job results.
-- **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity where the real-provider capability matrix proves them. Qwen's experimental baseline currently covers guest prompt submission and response reading; cross-process continuation is unavailable in the selected Qwen and Gemini guest profiles because reopening the mapped URL does not restore prior-turn context.
+- **Provider-neutral visible workflows**: Tokenless automates prompts, integrity-checked file selection, and conversation continuity where the real-provider capability matrix proves them. Qwen's experimental baseline also exposes its provider-specific modes and Auto/Thinking/Fast reasoning control; cross-process continuation is unavailable in the selected Qwen and Gemini guest profiles because reopening the mapped URL does not restore prior-turn context.
 - **Explicit guest and sign-in routing**: ChatGPT and Gemini can run through visible guest sessions, as can the experimental Qwen integration. Claude and Grok hand the existing job to the user for sign-in before Tokenless enters task content.
 
 ## Technology Stack
@@ -43,6 +52,21 @@ For the complete public command inventory, see the [Tokenless CLI Command Refere
 Native Workspace results distinguish `created`, `reused`, and `fallback`, include the canonical resource URL and provider/profile scope, and report how requested Project instructions were handled. Tokenless persists Project identity by provider resource ID and stores exact task conversation mappings in SQLite for later CLI processes.
 
 Run `tokenless provider-action --action capability.inspect --provider <provider> --json` to inspect the visible, subscription-dependent capability state. These contracts remain experimental until the live free, paid, unknown-plan, and managed-account matrix is complete.
+
+## Experimental Qwen Modes
+
+Qwen-specific composer modes use the optional `qwen.mode` capability instead of pretending they are provider-neutral model or effort choices. Inspect the current visible modes with `qwen.mode.inspect`, or select one for a run:
+
+```bash
+tokenless run \
+  --provider qwen \
+  --qwen-mode "Deep Research" \
+  --qwen-mode-variant "Advanced" \
+  --prompt "Research this topic and return a cited report." \
+  --json
+```
+
+Current visible mode availability is discovered at runtime. Disabled entries remain disabled, and exact selection must produce a visible Qwen mode postcondition before the prompt is submitted. Qwen's Auto, Thinking, and Fast selector remains the provider-neutral `effort.choice` capability and uses `--effort`.
 
 ## Implementation
 

@@ -11,6 +11,7 @@ import type {
   VisibleAction,
   VisibleActionPayloadForAction,
   VisibleSelectionPayload,
+  QwenModeSelectionPayload,
   WorkspaceEnsurePayload,
 } from './contracts.js'
 
@@ -108,6 +109,18 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [],
     validatePayload: validateSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.QWEN_MODE_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.QWEN_MODE_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.QWEN_MODE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.QWEN_MODE_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.QWEN_MODE_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.QWEN_MODE],
+    validatePayload: validateQwenModeSelectionPayload,
   }),
   [VISIBLE_ACTIONS.FILE_UPLOAD]: defineAction({
     action: VISIBLE_ACTIONS.FILE_UPLOAD,
@@ -235,6 +248,20 @@ function validateSelectionPayload(payload: Record<string, unknown>): VisibleSele
   requireExactKeys(payload, ['label'], 'invalid_visible_action_payload')
   validateVisibleLabel(payload.label)
   return payload as VisibleSelectionPayload
+}
+
+function validateQwenModeSelectionPayload(payload: Record<string, unknown>): QwenModeSelectionPayload {
+  const keys = Object.keys(payload)
+  if (
+    (keys.length !== 1 && keys.length !== 2) ||
+    !Object.hasOwn(payload, 'mode') ||
+    keys.some((key) => key !== 'mode' && key !== 'variant')
+  ) {
+    throw tokenlessError('invalid_visible_action_payload', 'Expected exact keys: mode, optional variant.')
+  }
+  validateVisibleLabel(payload.mode)
+  if (Object.hasOwn(payload, 'variant')) validateVisibleLabel(payload.variant)
+  return payload as QwenModeSelectionPayload
 }
 
 function validateFileUploadPayload(payload: Record<string, unknown>): FileUploadPayload {

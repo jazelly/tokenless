@@ -83,6 +83,18 @@ test('provider-action maps only the strict priority payload for each action', as
         code: 'duplicate_effort',
       },
       {
+        args: ['provider-action', '--provider', 'qwen', '--action', 'qwen.mode.select'],
+        code: 'missing_visible_action_qwen_mode',
+      },
+      {
+        args: ['provider-action', '--provider', 'claude', '--action', 'qwen.mode.inspect'],
+        code: 'qwen_mode_unsupported',
+      },
+      {
+        args: ['provider-action', '--provider', 'qwen', '--action', 'qwen.mode.select', '--qwen-mode', 'Deep Research\nAdvanced'],
+        code: 'invalid_qwen_mode',
+      },
+      {
         args: ['provider-action', '--provider', 'chatgpt', '--action', 'file.upload'],
         code: 'missing_visible_action_file',
       },

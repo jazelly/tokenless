@@ -53,6 +53,24 @@
         "restore_original"
       ]
     },
+    "qwen-mode": {
+      "gate": "mutation",
+      "actions": [
+        "qwen.mode.inspect",
+        "qwen.mode.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_submission",
+        "visible_response",
+        "durable_state",
+        "restore_original"
+      ]
+    },
     "file-selection": {
       "gate": "non_submission",
       "actions": [
@@ -175,6 +193,7 @@
       "unavailable": {
         "model-choice": "no_visible_model_control_observed_2026_07_28",
         "effort-choice": "no_visible_effort_control_observed_2026_07_28",
+        "qwen-mode": "provider_specific_capability",
         "native-project": "native_project_not_yet_proven"
       }
     },
@@ -194,7 +213,8 @@
         "native-project"
       ],
       "unavailable": {
-        "effort-choice": "no_independent_effort_control_declared"
+        "effort-choice": "no_independent_effort_control_declared",
+        "qwen-mode": "provider_specific_capability"
       }
     },
     "gemini": {
@@ -210,6 +230,7 @@
       "unavailable": {
         "model-choice": "no_enabled_alternate_model_in_selected_guest_profile",
         "effort-choice": "no_independent_effort_control_declared",
+        "qwen-mode": "provider_specific_capability",
         "file-selection": "no_visible_upload_control_in_selected_guest_profile_2026_07_28",
         "file-upload": "no_visible_upload_control_in_selected_guest_profile_2026_07_28",
         "conversation-continuation": "selected_guest_profile_does_not_restore_prior_turn_context_at_mapped_url_2026_07_28",
@@ -232,7 +253,9 @@
         "conversation-workspace",
         "native-project"
       ],
-      "unavailable": {}
+      "unavailable": {
+        "qwen-mode": "provider_specific_capability"
+      }
     },
     "qwen": {
       "stage": "experimental",
@@ -240,12 +263,13 @@
       "required": [
         "session-readiness",
         "prompt-draft",
+        "effort-choice",
+        "qwen-mode",
         "submit-read",
         "conversation-workspace"
       ],
       "unavailable": {
         "model-choice": "no_real_selection_closure",
-        "effort-choice": "no_real_selection_closure",
         "file-selection": "no_real_visible_attachment_closure",
         "file-upload": "no_real_visible_attachment_closure",
         "citations": "no_real_visible_citation_closure",

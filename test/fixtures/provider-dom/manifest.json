@@ -629,6 +629,18 @@
     {
       "provider": "qwen",
       "accountState": "signed-out-guest",
+      "scenario": "deep-research-advanced-selected",
+      "routeClass": "new-chat",
+      "operationPhase": "selected",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.qwen.ai/",
+      "observedOn": "2026-07-30",
+      "htmlPath": "qwen/signed-out-guest/deep-research-advanced-selected.html",
+      "provenancePath": "qwen/signed-out-guest/deep-research-advanced-selected.provenance.json"
+    },
+    {
+      "provider": "qwen",
+      "accountState": "signed-out-guest",
       "scenario": "studio-response-complete",
       "routeClass": "conversation",
       "operationPhase": "response-complete",
