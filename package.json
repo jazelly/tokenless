@@ -15,7 +15,7 @@
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node dist/scripts/test-all.mjs",
     "test:ts-daemon-conformance": "npm run build && node --test --test-concurrency=1 test/ts-daemon-conformance.test.mjs",
-    "test:e2e": "npm run build && npm run test:e2e:non-submission && npm run test:e2e:mutation && npm run test:e2e:project",
+    "test:e2e": "npm run build && TOKENLESS_LIVE_E2E_GATE=all node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
     "test:e2e:non-submission": "TOKENLESS_LIVE_E2E_GATE=non_submission node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
     "test:e2e:mutation": "TOKENLESS_LIVE_E2E_GATE=mutation node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
     "test:e2e:project": "TOKENLESS_LIVE_E2E_GATE=project node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs"

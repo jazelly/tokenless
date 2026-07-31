@@ -35,27 +35,38 @@ const handlers = {
 
 const selectedCases = Object.entries(matrix.providers)
   .flatMap(([provider, declaration]) => declaration.required
-    .filter((caseId) => matrix.cases[caseId].gate === gate)
-    .map((caseId) => ({ provider, caseId })))
+    .filter((caseId) => gate === 'all' || matrix.cases[caseId].gate === gate)
+    .map((caseId) => ({ provider, caseId, caseGate: matrix.cases[caseId].gate })))
 
 assert.ok(selectedCases.length > 0, `TOKENLESS_LIVE_E2E_GATE=${gate} selected no required cases`)
-for (const { provider, caseId } of selectedCases) {
+let sharedSession
+
+test.before(async () => {
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  sharedSession = await createLiveBrowserInspectionSession({
+    homeDir,
+    profileSlug,
+    daemonUrl,
+  })
+})
+
+test.after(async () => {
+  await sharedSession?.close()
+})
+
+for (const { provider, caseId, caseGate } of selectedCases) {
   test(`real provider ${provider}: ${caseId}`, { timeout: 1_200_000 }, async (t) => {
     const handler = handlers[caseId]
     assert.equal(typeof handler, 'function', `missing real E2E handler for ${caseId}`)
-    const daemonUrl = `http://127.0.0.1:${await freePort()}`
-    const session = await createLiveBrowserInspectionSession({
-      homeDir,
-      profileSlug,
-      daemonUrl,
-    })
+    const session = sharedSession
+    assert.ok(session, 'shared live E2E browser session must be initialized')
     submissionTrackers.set(session, {
       attempts: 0,
       budget: matrix.cases[caseId].submissions,
       caseId,
     })
     try {
-      if (gate !== 'non_submission' && matrix.providers[provider].account === 'signed_in_selected_setup_profile') {
+      if (caseGate !== 'non_submission' && matrix.providers[provider].account === 'signed_in_selected_setup_profile') {
         await requireSignedInSelectedProfile(provider, session)
       }
       await handler({ provider, declaration: matrix.providers[provider], session })
@@ -66,8 +77,6 @@ for (const { provider, caseId } of selectedCases) {
         return
       }
       throw error
-    } finally {
-      await session.close()
     }
   })
 }
@@ -668,8 +677,8 @@ async function freePort() {
 
 function requiredGate() {
   const value = requiredEnv('TOKENLESS_LIVE_E2E_GATE')
-  if (!['non_submission', 'mutation', 'project'].includes(value)) {
-    throw e2eFailure('e2e_gate_invalid', 'TOKENLESS_LIVE_E2E_GATE must be non_submission, mutation, or project')
+  if (!['all', 'non_submission', 'mutation', 'project'].includes(value)) {
+    throw e2eFailure('e2e_gate_invalid', 'TOKENLESS_LIVE_E2E_GATE must be all, non_submission, mutation, or project')
   }
   return value
 }
