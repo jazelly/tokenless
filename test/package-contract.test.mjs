@@ -81,6 +81,8 @@ test('CLI help separates canonical and advanced commands into described workflow
   }
 
   assert.match(canonicalUsage, /tokenless run --provider/)
+  assert.match(canonicalUsage, /tokenless capabilities list --json/)
+  assert.match(canonicalUsage, /tokenless run --capability <capability>/)
   assert.match(canonicalUsage, /tokenless setup/)
   assert.match(canonicalUsage, /tokenless profiles list/)
   assert.match(canonicalUsage, /tokenless provider-status/)
@@ -172,7 +174,7 @@ test('CLI rejects misspelled, unknown, and wrong-command options with usage befo
   assert.equal(humanInvalid.stdout, '')
   assert.match(humanInvalid.stderr, /^error: invalid_option: tokenless run does not accept option: --all\./)
   assert.match(humanInvalid.stderr, /^Usage:$/m)
-  assert.match(humanInvalid.stderr, /^  tokenless run --provider/m)
+  assert.match(humanInvalid.stderr, /^  tokenless run \[--capability <capability>\] --provider/m)
   assert.match(humanInvalid.stderr, /^Common options:$/m)
   assert.match(humanInvalid.stderr, /^  -h, --help$/m)
 

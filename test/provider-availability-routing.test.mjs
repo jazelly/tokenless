@@ -10,6 +10,33 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 
+test('capabilities list exposes canonical outcomes and only evidence-backed routes', () => {
+  const result = runCli(['capabilities', 'list', '--json'])
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  const payload = JSON.parse(result.stdout)
+  assert.equal(payload.schema, 'tokenless.task-capability-catalog.v1')
+
+  const byId = new Map(payload.capabilities.map((capability) => [capability.id, capability]))
+  assert.equal(byId.get('conversation.chat').routeable, true)
+  assert.deepEqual(
+    byId.get('conversation.chat').routes.map((route) => route.provider),
+    ['chatgpt', 'claude', 'gemini', 'grok', 'qwen'],
+  )
+  assert.deepEqual(
+    byId.get('file.upload').routes.map((route) => route.provider),
+    ['chatgpt', 'claude', 'grok'],
+  )
+  assert.deepEqual(
+    byId.get('workspace.native').routes.map((route) => route.provider),
+    ['claude', 'grok'],
+  )
+  assert.equal(byId.get('research.deep').routeable, false)
+  assert.deepEqual(byId.get('research.deep').routes, [])
+  assert.equal(byId.has('qwen.mode'), false)
+  assert.equal(byId.has('model.choice'), false)
+  assert.equal(byId.has('effort.choice'), false)
+})
+
 test('implicit run routing chooses the first usable cached provider in setup order', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-provider-route-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
@@ -41,6 +68,171 @@ test('implicit run routing chooses the first usable cached provider in setup ord
     assert.equal(payload.status, 'no_wait')
   } finally {
     if (daemonStarted) runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('attachment inference routes around a usable provider without file acceptance closure', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-file-route-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  const attachment = path.join(homeDir, 'evidence.txt')
+  fs.writeFileSync(attachment, 'Tokenless capability routing evidence.\n')
+  let daemonStarted = false
+  try {
+    seedManagedProfile(homeDir, {
+      gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
+      grok: observedProvider('grok', 'authenticated', 'signed_in_paid'),
+    })
+    writeConfig(homeDir, ['gemini', 'grok'], daemonUrl)
+
+    const result = runCli([
+      'run',
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--prompt',
+      'Tokenless capability file routing test',
+      '--attach-file',
+      attachment,
+      '--no-wait',
+      '--json',
+    ])
+    daemonStarted = result.status === 0
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.provider, 'grok')
+    assert.deepEqual(payload.capabilityRoute.requirements, ['conversation.chat', 'file.upload'])
+    assert.deepEqual(
+      payload.capabilityRoute.strategies,
+      ['visible-conversation', 'visible-file-attachment'],
+    )
+    const state = runCli([
+      'state',
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--job-id',
+      payload.jobId,
+      '--json',
+    ])
+    assert.equal(state.status, 0, state.stderr || state.stdout)
+    assert.deepEqual(
+      JSON.parse(state.stdout).latest.capabilityRoute,
+      payload.capabilityRoute,
+    )
+  } finally {
+    if (daemonStarted) runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('explicit provider fails before daemon submission when required capability is not closed', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-explicit-')))
+  const daemonUrl = 'http://127.0.0.1:9'
+  const attachment = path.join(homeDir, 'evidence.txt')
+  fs.writeFileSync(attachment, 'Tokenless explicit route evidence.\n')
+  try {
+    seedManagedProfile(homeDir, {
+      gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
+    })
+    writeConfig(homeDir, ['gemini'], daemonUrl)
+
+    const result = runCli([
+      'run',
+      '--home',
+      homeDir,
+      '--daemon-url',
+      daemonUrl,
+      '--provider',
+      'gemini',
+      '--capability',
+      'file.upload',
+      '--attach-file',
+      attachment,
+      '--prompt',
+      'Tokenless explicit capability failure test',
+      '--json',
+    ])
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.error.code, 'task_capability_route_unavailable')
+    assert.deepEqual(payload.error.context.requirements, ['file.upload', 'conversation.chat'])
+    assert.deepEqual(payload.error.context.providers[0].missingCapabilities, ['file.upload'])
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('deep research stays unavailable until its complete lifecycle is closed', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-research-')))
+  try {
+    seedManagedProfile(homeDir, {
+      qwen: observedProvider('qwen', 'unauthenticated', 'guest'),
+    })
+    writeConfig(homeDir, ['qwen'], 'http://127.0.0.1:9')
+
+    const result = runCli([
+      'run',
+      '--home',
+      homeDir,
+      '--provider',
+      'qwen',
+      '--capability',
+      'research.deep',
+      '--prompt',
+      'Tokenless deep research closure test',
+      '--json',
+    ])
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.error.code, 'task_capability_route_unavailable')
+    assert.deepEqual(payload.error.context.requirements, [
+      'research.deep',
+      'search.web',
+      'response.citations',
+      'task.background',
+      'task.interactive',
+      'conversation.chat',
+    ])
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('attachment media infers its semantic input capability', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-image-input-')))
+  const image = path.join(homeDir, 'evidence.png')
+  fs.writeFileSync(image, Buffer.from('89504e470d0a1a0a', 'hex'))
+  try {
+    seedManagedProfile(homeDir, {
+      chatgpt: observedProvider('chatgpt', 'unauthenticated', 'guest'),
+    })
+    writeConfig(homeDir, ['chatgpt'], 'http://127.0.0.1:9')
+
+    const result = runCli([
+      'run',
+      '--home',
+      homeDir,
+      '--attach-file',
+      image,
+      '--prompt',
+      'Tokenless image input closure test',
+      '--json',
+    ])
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.error.code, 'task_capability_route_unavailable')
+    assert.deepEqual(
+      payload.error.context.requirements,
+      ['conversation.chat', 'file.upload', 'image.input'],
+    )
+    assert.deepEqual(payload.error.context.providers[0].missingCapabilities, ['image.input'])
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+  } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })

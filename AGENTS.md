@@ -53,6 +53,21 @@ Use focused integration or browser E2E tests for behavior that crosses the Playw
 - Do not introduce mocks, fakes, stubs, spies, synthetic fetch implementations, fake daemons, fake pages, fake locators, fake browser contexts, fake runners, fake process supervisors, or dependency-injected test doubles.
 - Do not test implementation shape by reading source files, test files, Markdown, or documentation and matching strings or regular expressions.
 
+### Credential and macOS Keychain Safety
+
+Tokenless does not need, own, or directly access a user's Keychain password, encryption keys, browser credentials, cookies, or browser-storage secrets. Browser authentication state must remain opaque inside the user-controlled managed browser profile.
+
+- Never ask the user for a macOS login password, Keychain password, browser password, cookie, token, encryption key, hidden authentication header, or browser-storage value.
+- Never inspect, read, export, log, transmit, copy, or attempt to decrypt Keychain items or browser authentication secrets. Do not use `security`, Keychain APIs, credential-dumping tools, browser storage extraction, or equivalent mechanisms to obtain them.
+- Never automate, approve, dismiss as harmless, or instruct the user to approve a macOS Keychain prompt on behalf of Tokenless. In particular, never select `Allow` or `Always Allow` for an automated test or development browser.
+- Automated tests, development helpers, and test-only browsers must not trigger a system Keychain prompt. A test that opens such a prompt is interactive, unsafe by default, and failed even if its command later exits successfully.
+- The existing test-only browser target `profile` must retain Playwright's keychain-neutral defaults, including `--password-store=basic` and `--use-mock-keychain`. Production browser targets may preserve their normal browser-managed credential behavior, but that behavior must not be inherited by test-only targets.
+- Real-boundary browser testing remains mandatory where required. Preventing Keychain access does not justify replacing the real CLI, daemon, filesystem, persistent Chromium context, provider network, or visible website with a mock or simulation.
+- If any Tokenless-triggered Keychain prompt appears, stop the responsible test or spawned browser, tell the user to choose `Deny` or `Cancel` without entering a password, record the run as failed, and fix the launch configuration before rerunning it.
+- Before completing a browser-launch change, verify that test-only launch options remain keychain-neutral, production launch options were not unintentionally changed, Chromium sandboxing remains enabled, spawned processes are cleaned up, and the focused real-boundary test finishes without a Keychain prompt.
+
+Regression record: a provider-less `profiles open` conformance test once launched Playwright's Google Chrome for Testing executable through the test-only `profile` target while removing Playwright's `--password-store=basic` and `--use-mock-keychain` defaults. macOS then displayed a `Chromium Safe Storage` prompt. The approved fix scopes the removal of those defaults to non-`profile` targets. Do not broaden or reverse that condition.
+
 ### Provider DOM Fixture Policy
 
 - Provider DOM fixtures are development aids only. They are allowed only when they are redacted, provenance-bound reductions of DOM genuinely captured from a real visible provider session.

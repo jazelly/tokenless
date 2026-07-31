@@ -312,14 +312,10 @@ export function managedBrowserLaunchOptions(
     : normalized.id === 'edge'
       ? { channel: 'msedge' as const }
       : { executablePath: normalized.executablePath as string }
-  return {
+  const launchOptions: PersistentChromeLaunchOptions = {
     ...executable,
     headless: effectiveVisibility === 'headless',
     chromiumSandbox: true,
-    ignoreDefaultArgs: [
-      '--password-store=basic',
-      '--use-mock-keychain',
-    ],
     args: [
       '--disable-sync',
       '--no-first-run',
@@ -332,6 +328,13 @@ export function managedBrowserLaunchOptions(
         : []),
     ],
   }
+  if (normalized.id !== 'profile') {
+    launchOptions.ignoreDefaultArgs = [
+      '--password-store=basic',
+      '--use-mock-keychain',
+    ]
+  }
+  return launchOptions
 }
 
 export function chromeLaunchOptions(): PersistentChromeLaunchOptions {

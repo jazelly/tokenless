@@ -67,6 +67,19 @@ tokenless run \
 
 不传 `--provider` 时，Tokenless 会选择一个当前可用的 configured provider。显式指定后，Tokenless 只使用该 provider。
 
+Agent 可以发现 canonical outcome catalog，并请求一个或多个已有证据闭环的 capabilities：
+
+```bash
+tokenless capabilities list --json
+
+tokenless run \
+  --capability file.upload \
+  --attach-file proposal.pdf \
+  --prompt "Review the attached proposal."
+```
+
+Tokenless 会合并显式 capability 与结构化输入推导出的要求。普通 run 要求 `conversation.chat`，attachments 要求 `file.upload` 及对应的 media-specific input capability，`--workspace-mode native` 要求 `workspace.native`。Router 会在 configured provider scope 内选择一家能完整满足全部要求的 provider。`research.deep` 等 candidate capabilities 仍会列在 catalog 中，但在完整 provider lifecycle 通过真实 E2E closure 前，会在浏览器 mutation 之前明确失败。
+
 可以使用 `tokenless provider-action --action capability.inspect --provider <provider> --json` 检查某家 provider 当前可用的具体能力。
 
 高级选项和实现细节见 [CLI 命令](COMMANDS.zh-CN.md)、[隐私政策](PRIVACY.md)和[架构](docs/architecture.md)。

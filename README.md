@@ -67,6 +67,19 @@ tokenless run \
 
 Without `--provider`, Tokenless chooses an available configured provider. If you name one, Tokenless uses that exact provider.
 
+Agents can discover the canonical outcome catalog and request one or more evidence-backed capabilities:
+
+```bash
+tokenless capabilities list --json
+
+tokenless run \
+  --capability file.upload \
+  --attach-file proposal.pdf \
+  --prompt "Review the attached proposal."
+```
+
+Tokenless combines explicit capabilities with requirements inferred from structured inputs. A normal run requires `conversation.chat`, attachments require `file.upload` plus their media-specific input capability, and `--workspace-mode native` requires `workspace.native`. The router selects one provider that satisfies the complete requirement set inside the configured provider scope. Candidate capabilities such as `research.deep` remain listed but fail before browser mutation until their full provider lifecycle has real E2E closure.
+
 Inspect provider-specific availability with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
 
 See [CLI Commands](COMMANDS.md), [Privacy](PRIVACY.md), and [Architecture](docs/architecture.md) for advanced options and implementation details.

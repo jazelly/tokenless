@@ -36,6 +36,24 @@ tokenless run \
 
 If no provider is explicit, Tokenless uses the first configured provider with a cached guest or signed-in observation. If none is usable, it fails before creating a job and reports how to refresh access.
 
+List canonical task outcomes and their evidence-backed provider routes:
+
+```bash
+tokenless capabilities list --json
+```
+
+`--capability` is repeatable. Tokenless also infers `conversation.chat` for a normal run, `file.upload` plus the media-specific input capability from attachments, and `workspace.native` from native Workspace intent. One provider must satisfy the entire merged requirement set:
+
+```bash
+tokenless run \
+  --capability file.upload \
+  --attach-file proposal.pdf \
+  --prompt "Review the attached proposal." \
+  --json
+```
+
+The catalog also contains future candidate outcomes so agents can inspect a stable vocabulary. A candidate is not routeable until its provider strategy and complete real-provider lifecycle are implemented and E2E-closed.
+
 ## Providers
 
 | Provider | Stage | Signed-out use |
@@ -91,6 +109,7 @@ One managed profile can hold sessions for all enabled providers. Use separate pr
 
 ```bash
 tokenless profiles list --json
+tokenless profiles open --profile work
 tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```

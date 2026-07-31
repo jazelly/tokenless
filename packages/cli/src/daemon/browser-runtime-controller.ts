@@ -3,13 +3,15 @@ import process from 'node:process'
 import { createInProcessDaemonClient } from './in-process-daemon-client.js'
 import {
   ManagedPlaywrightRunnerService,
+  type ManagedProfileOpenResult,
 } from '../playwright/runner-service.js'
-import { isClaimRecoveryError } from '../playwright/errors.js'
+import { isClaimRecoveryError, tokenlessError } from '../playwright/errors.js'
 import { resolveE2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
 import { readTokenlessConfig } from '../job-store.js'
 import { resolveChromiumBrowser } from '../runtime.js'
 import type { JobStore } from './job-store.js'
 import type { ManagedBrowserLaunchTarget } from '../playwright/browser/context-manager.js'
+import type { BrowserVisibility } from '../browser-visibility.js'
 
 export type BrowserRuntimeState = 'running' | 'quiescing' | 'quiesced' | 'stopped'
 
@@ -72,6 +74,19 @@ export class BrowserRuntimeController {
       this.runner = await this.createRunner()
       this.state = 'running'
       return this.status()
+    })
+  }
+
+  async openProfile(profileId: string, browserVisibility: BrowserVisibility): Promise<ManagedProfileOpenResult & {
+    status: BrowserRuntimeStatus
+  }> {
+    return await this.enqueue(async () => {
+      const runner = await this.ensureRunningInLane()
+      const opened = await runner.service.openProfile(profileId, browserVisibility)
+      return {
+        ...opened,
+        status: this.status(),
+      }
     })
   }
 
@@ -145,6 +160,20 @@ export class BrowserRuntimeController {
         void this.onFatalError?.(error)
       })
     return runner
+  }
+
+  private async ensureRunningInLane(): Promise<RunnerInstance> {
+    if (this.terminal) {
+      throw tokenlessError('browser_runtime_stopped', 'Tokenless browser runtime is stopped.')
+    }
+    if (this.quiesceFailure) throw this.quiesceFailure
+    if (this.quiesceRequested || this.state === 'quiescing') {
+      throw tokenlessError('browser_runtime_quiescing', 'Tokenless browser runtime is quiescing.', { retryable: true })
+    }
+    if (this.runner && this.state === 'running') return this.runner
+    this.runner = await this.createRunner()
+    this.state = 'running'
+    return this.runner
   }
 
   private async resolveBrowserLaunchTarget(): Promise<ManagedBrowserLaunchTarget> {

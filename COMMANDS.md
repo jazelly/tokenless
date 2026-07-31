@@ -19,11 +19,12 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless profiles add` | Create or import a managed browser profile. | None |
 | `tokenless profiles list` | List profiles and their last saved provider observations. | None |
 | `tokenless profiles status` | Check one provider live and save the observation to the profile registry. | Yes |
-| `tokenless profiles open` | Open one provider in a managed profile using a headed browser. | Yes |
+| `tokenless profiles open` | Open a managed profile headed, optionally navigating to one provider. | Optional |
 | `tokenless profiles set-default` | Select the default managed profile. | None |
 | `tokenless profiles reset` | Re-import an imported profile from its recorded source. | None |
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
+| `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
 | `tokenless replay` | Report previously unseen daemon outcome summaries for one agent recipient. | None |
 | `tokenless state` | Inspect durable daemon job state. | None |
@@ -291,13 +292,14 @@ If omitted, the profile resolves to the configured default and the provider fall
 
 ### `tokenless profiles open`
 
-Opens one provider in the selected managed profile with a headed browser and verifies navigation.
+Opens the selected managed profile with a headed browser. Without `--provider`, Tokenless does not resolve `TOKENLESS_PROVIDER`, does not select ChatGPT or any other provider, and does not navigate; Chromium shows the profile's natural initial, default, or restored page. With `--provider`, Tokenless opens that provider and verifies navigation.
 
 ```bash
+tokenless profiles open -P work --json
 tokenless profiles open -P work -p claude --json
 ```
 
-Use this command for user-controlled sign-in, CAPTCHA, MFA, consent, or account switching. It does not replace `profiles status`; run the status command afterward to save a fresh observation.
+Use the provider-less form for user-controlled browser maintenance, account switching, or inspecting the managed profile. Use the provider form for sign-in, CAPTCHA, MFA, consent, or provider-specific account switching. It does not replace `profiles status`; run the status command afterward to save a fresh observation.
 
 ### `tokenless profiles set-default`
 
@@ -341,6 +343,18 @@ tokenless profiles remove -P work --confirm-delete --json
 
 ## Running Work and Managing Jobs
 
+### `tokenless capabilities list`
+
+Returns the versioned canonical task-capability catalog without opening a browser:
+
+```bash
+tokenless capabilities list --json
+```
+
+Each entry describes the caller outcome, parameter schema, lifecycle, side effects, required evidence, output kinds, stability, and declared provider routes. `routeable: true` means at least one checked-in provider strategy has complete implementation and real-provider E2E evidence. Candidate entries remain discoverable with `routeable: false`; they cannot be selected for a run.
+
+Provider controls such as `model.choice`, `effort.choice`, and `qwen.mode` are intentionally absent. They remain provider adapter details rather than canonical caller outcomes.
+
 ### `tokenless run`
 
 Builds a managed Playwright job, sends a prompt through the selected visible provider session, and normally waits for the correlated response.
@@ -356,8 +370,13 @@ tokenless run \
 Provider selection:
 
 - Explicit `--provider <provider>` or `TOKENLESS_PROVIDER` is exact and is not replaced based on cached usability.
-- When both are omitted, Tokenless chooses the first configured provider whose cached access for the resolved profile is `guest` or starts with `signed_in_`.
+- `--capability <capability>` is repeatable and requests canonical caller outcomes rather than provider-specific controls.
+- Tokenless merges explicit capabilities with structural inference: a normal `submit_and_read` run requires `conversation.chat`, `--attach-file` requires `file.upload` plus `image.input`, `audio.input`, or `video.input` when applicable, and `--workspace-mode native` requires `workspace.native`.
+- When no provider is explicit, Tokenless chooses the first configured provider that satisfies the full requirement set and whose cached access for the resolved profile is `guest` or starts with `signed_in_`.
+- An explicit provider that cannot satisfy the full requirement set fails before daemon submission instead of silently switching.
 - Unknown and sign-in-required observations are not usable for implicit routing. If no cached provider is usable, the CLI returns `provider_unavailable` with provider observation context before creating a daemon job.
+- A known capability with no complete route returns `task_capability_route_unavailable` before browser mutation. `--capability` currently requires the normal `submit_and_read` action.
+- Successful submissions return and durably store `capabilityRoute`, including normalized requirements, selected strategies, support level, evidence identifiers, and runtime eligibility; `tokenless state` returns the same route.
 
 Prompt input:
 

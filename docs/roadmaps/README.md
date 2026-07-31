@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-07-30
+Status: active product direction | Last reviewed: 2026-07-31
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -37,7 +37,7 @@ Every addition, rename, move, or lifecycle change must update this index, all re
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
 | [Real Provider Browser E2E and Native Projects](real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
-| [Provider Expansion and Parity](provider-expansion.md) | Add high-value Chinese AI web providers and keep all supported providers aligned on a reliable provider-neutral baseline. | P0 |
+| [Provider Expansion and Parity](provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Agent Session Integrations](agent-session-integrations.md) | Route caller-requested task capabilities to evidence-backed provider strategies through a safe local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration. | P1 |

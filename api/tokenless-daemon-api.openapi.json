@@ -107,6 +107,46 @@
         }
       }
     },
+    "/control/browser-runtime/open-profile": {
+      "post": {
+        "operationId": "openBrowserRuntimeProfile",
+        "summary": "Open a managed profile in the embedded browser runtime without provider navigation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenBrowserRuntimeProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Opened managed profile runtime status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenBrowserRuntimeProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/provider-mappings/resolve": {
       "get": {
         "operationId": "resolveProviderProjectMapping",
@@ -836,6 +876,67 @@
           "pid": {
             "type": "integer",
             "minimum": 1
+          }
+        }
+      },
+      "BrowserVisibility": {
+        "enum": [
+          "auto",
+          "headed",
+          "headless"
+        ]
+      },
+      "EffectiveBrowserVisibility": {
+        "enum": [
+          "headed",
+          "headless"
+        ]
+      },
+      "OpenBrowserRuntimeProfileRequest": {
+        "type": "object",
+        "required": [
+          "profile_id",
+          "browser_visibility"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "browser_visibility": {
+            "$ref": "#/components/schemas/BrowserVisibility"
+          }
+        }
+      },
+      "OpenBrowserRuntimeProfileResponse": {
+        "type": "object",
+        "required": [
+          "profileId",
+          "browserVisibility",
+          "effectiveBrowserVisibility",
+          "pageCount",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "profileId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "browserVisibility": {
+            "$ref": "#/components/schemas/BrowserVisibility"
+          },
+          "effectiveBrowserVisibility": {
+            "$ref": "#/components/schemas/EffectiveBrowserVisibility"
+          },
+          "pageCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/BrowserRuntimeStatus"
           }
         }
       },

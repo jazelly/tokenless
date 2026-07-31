@@ -10,6 +10,21 @@ Tokenless binds work to the exact conversation and filesystem scope of the local
 
 The product surface is an agent-neutral, capability-first routing protocol with a local MCP server as its primary explicit agent tool surface. Callers state the outcome they require; Tokenless selects a provider and provider-specific strategy. A Codex plugin is the first deep lifecycle integration, not a Codex-only architecture.
 
+## Current Implementation State
+
+As of 2026-07-31, the first CLI routing slice is complete:
+
+- `tokenless capabilities list --json` returns the versioned canonical catalog, parameter schemas, lifecycle and evidence contracts, stability, and declared provider routes without opening a browser;
+- `tokenless run --capability <capability>` accepts repeatable canonical requirements;
+- normal runs infer `conversation.chat`, attachments infer `file.upload` plus their media-specific input capability, and native Workspace intent infers `workspace.native`;
+- explicit and inferred requirements are merged before any daemon submission or browser mutation;
+- implicit selection filters the configured provider scope by the complete requirement set and cached profile eligibility;
+- explicit provider constraints fail rather than switching when the provider lacks an E2E-closed route; and
+- the selected capability route is persisted with the daemon job and returned by `tokenless state`; and
+- `conversation.chat`, `file.upload`, and `workspace.native` are the only currently routeable task outcomes.
+
+Candidate catalog entries remain non-routeable. The complete Deep Research lifecycle, required-citation postcondition, explicit continuation contract, generated artifact lifecycles, structured capability parameters, MCP transport, and scheduler-aware route selection remain planned work.
+
 ## Capability-First Routing
 
 A provider-neutral `--mode` flag would unify spelling without unifying meaning. Qwen composer modes, provider reasoning controls, research variants, image creation surfaces, and future provider-specific controls do not share one stable semantic type. A raw string flag would still let an agent pass a valid Qwen label to the wrong provider, use a disabled account-tier option, or reuse a stale label after the provider DOM changes.
@@ -28,13 +43,15 @@ The caller-facing interface should instead accept canonical task capabilities su
 
 This initial list is illustrative, not an automatic support declaration. A capability enters the public catalog only after its minimum semantics, inputs, success evidence, composability, and failure behavior are defined.
 
-`qwen.mode`, `model.choice`, and provider DOM selectors remain provider strategy details. For example, `research.deep` may currently route to a Qwen strategy that selects the visible Deep Research mode. If another provider later proves the same canonical outcome, it can satisfy the same task capability through a different adapter without changing the caller interface.
+`qwen.mode`, `model.choice`, and provider DOM selectors remain provider strategy details. A future `research.deep` route may use a Qwen strategy that selects the visible Deep Research mode, but the current implementation rejects that capability because Qwen's final-report lifecycle is not closed. If Qwen or another provider later proves the same canonical outcome, it can satisfy the task capability through a different adapter without changing the caller interface.
 
 Do not claim equivalence merely because two providers use similar labels. A canonical capability represents a minimum externally observable outcome, not the presence of a menu item.
 
 ## Capability Catalog and Provider Matrix
 
 Maintain two related but distinct product records:
+
+The maintained [Provider Capability Census](../provider-capability-census.md) supplies current product reconnaissance and the candidate vocabulary. It does not grant runtime support.
 
 ### Canonical Capability Catalog
 

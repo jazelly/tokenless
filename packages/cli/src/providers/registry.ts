@@ -22,6 +22,18 @@ import type { ProviderCapabilityId, ProviderId, ProviderStage } from './provider
 
 export { PROVIDER_CAPABILITIES, isProviderIdSyntax } from './provider-identity.js'
 export {
+  TASK_CAPABILITIES,
+  TASK_CAPABILITY_CATALOG_SCHEMA_ID,
+  TASK_CAPABILITY_ROUTE_SCHEMA_ID,
+  TaskCapabilityRequestError,
+  listProviderTaskCapabilityRoutes,
+  listTaskCapabilityDefinitions,
+  normalizeTaskCapabilityRequirements,
+  resolveTaskCapabilityRoute,
+  taskCapabilityDefinition,
+  validateTaskCapabilityRoute,
+} from './task-capabilities.js'
+export {
   ProviderNavigationPolicy,
   assertProviderUrlAllowed,
   canonicalProviderTarget,
@@ -43,6 +55,21 @@ export type {
   ProviderGuestAccess,
 } from './provider-definition.js'
 export type { ProviderCapabilityId, ProviderId, ProviderStage } from './provider-identity.js'
+export type {
+  JsonSchema,
+  ProviderTaskCapabilityRoute,
+  TaskCapabilityDefinition,
+  TaskCapabilityFamily,
+  TaskCapabilityId,
+  TaskCapabilityLifecycle,
+  TaskCapabilityOutputKind,
+  TaskCapabilityRoute,
+  TaskCapabilityRouteCandidate,
+  TaskCapabilityRouteDecision,
+  TaskCapabilityRouteEvaluation,
+  TaskCapabilitySideEffect,
+  TaskCapabilityStability,
+} from './task-capabilities.js'
 
 export type ProviderInstance = BaseProvider<ProviderId>
 

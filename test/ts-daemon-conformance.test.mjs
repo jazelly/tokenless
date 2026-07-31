@@ -646,6 +646,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
   assert.equal(created.protocol, runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3)
   assert.equal(created.provider, 'qwen')
   assert.equal(created.target.url, 'https://chat.qwen.ai/')
+  assert.equal(created.capabilityRoute, null)
   assert.equal(created.actions[0].provider, 'qwen')
   assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID)
   assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID_V3)
@@ -667,7 +668,43 @@ test('built Playwright validators enforce the current internal schema IDs', {
     ],
   })
   assert.equal(v3Validated.provider, 'qwen')
+  assert.equal(v3Validated.capabilityRoute, null)
   assert.equal(v3Validated.actions[0].provider, 'qwen')
+
+  const routeDecision = playwright.resolveTaskCapabilityRoute({
+    requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
+    candidates: [{ provider: 'qwen', runtimeEligibility: 'unchecked' }],
+  })
+  assert.equal(routeDecision.ok, true)
+  const routed = playwright.createManagedPlaywrightJobRequest({
+    provider: 'qwen',
+    target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },
+    taskId: 'v3-qwen-capability-route',
+    capabilityRoute: routeDecision.route,
+    browserVisibility: 'headless',
+    actions: [
+      {
+        requestId: 'v3-routed-action',
+        action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+        payload: {},
+      },
+    ],
+  })
+  assert.deepEqual(routed.capabilityRoute, routeDecision.route)
+
+  assert.throws(
+    () => playwright.validateManagedPlaywrightJobRequest({
+      ...routed,
+      capabilityRoute: {
+        ...routed.capabilityRoute,
+        evidence: ['invented-evidence'],
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, 'invalid_playwright_job_capability_route')
+      return true
+    }
+  )
 
   assert.throws(
     () => playwright.validateManagedPlaywrightJobRequest({
@@ -761,6 +798,62 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
     assert.equal(awake.status, 'running')
     assertProfileDirectoryEmpty(profile.directory)
   } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('profiles open without provider opens the default managed profile through daemon browser runtime control', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-profile-open-providerless-')
+  const profile = createReadyManagedProfile(homeDir)
+  const runtime = await importCli()
+  const { chromium } = await import('playwright-core')
+  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  const previousProvider = process.env.TOKENLESS_PROVIDER
+  process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
+  process.env.TOKENLESS_PROVIDER = 'claude'
+  let daemon
+  try {
+    await runtime.writeTokenlessConfig({ homeDir, browser: 'profile' })
+    daemon = await startTsDaemon(homeDir)
+    await runtime.writeTokenlessConfig({ homeDir, daemonUrl: daemon.url })
+
+    const result = runCli([
+      'profiles',
+      'open',
+      '--home',
+      homeDir,
+      '--json',
+    ])
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.ok, true)
+    assert.equal(payload.command, 'profiles.open')
+    assert.equal(payload.transport, 'daemon')
+    assert.equal(payload.backend, 'playwright')
+    assert.equal(payload.profile.slug, 'default')
+    assert.equal(payload.profile.id, profile.id)
+    assert.equal(Object.hasOwn(payload, 'provider'), false)
+    assert.equal(Object.hasOwn(payload, 'jobId'), false)
+    assert.equal(Object.hasOwn(payload, 'result'), false)
+    assert.equal(payload.browser.requestedVisibility, 'headed')
+    assert.equal(payload.browser.effectiveVisibility, 'headed')
+    assert.equal(payload.runner.runtime, 'embedded')
+    assert.equal(payload.runner.runtimeStatus, 'running')
+    assert.equal(payload.runner.activeProfileCount, 1)
+
+    const token = readControlToken(homeDir)
+    const jobs = await daemonRequest(daemon.url, token, 'GET', `/jobs?profile_id=${encodeURIComponent(profile.id)}`)
+    assert.deepEqual(jobs, [])
+  } finally {
+    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
+    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
+    if (previousProvider === undefined) delete process.env.TOKENLESS_PROVIDER
+    else process.env.TOKENLESS_PROVIDER = previousProvider
     await shutdownDaemon(daemon).catch(() => undefined)
     await terminateChildrenForHome(homeDir)
     fs.rmSync(homeDir, { recursive: true, force: true })

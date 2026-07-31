@@ -19,11 +19,12 @@
 | `tokenless profiles add` | 创建或导入 managed browser profile。 | 否 |
 | `tokenless profiles list` | 列出 profiles 及其最后保存的 provider 检查结果。 | 否 |
 | `tokenless profiles status` | 实时检查一家 provider，并把结果保存到 profile registry。 | 是 |
-| `tokenless profiles open` | 使用 headed browser 在 managed profile 中打开 provider。 | 是 |
+| `tokenless profiles open` | 以 headed browser 打开 managed profile，可选择是否导航到 provider。 | 可选 |
 | `tokenless profiles set-default` | 设置默认 managed profile。 | 否 |
 | `tokenless profiles reset` | 从已记录的来源重新导入 imported profile。 | 否 |
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
+| `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
 | `tokenless replay` | 为一个 agent recipient 报告此前未见过的 daemon outcome 摘要。 | 否 |
 | `tokenless state` | 查询 daemon 中持久化的 job 状态。 | 否 |
@@ -291,13 +292,14 @@ tokenless profiles status -P work -p chatgpt --json
 
 ### `tokenless profiles open`
 
-使用 headed browser，在所选 managed profile 中打开一家 provider 并验证 navigation。
+以 headed browser 打开所选 managed profile。不传 `--provider` 时，Tokenless 不会解析 `TOKENLESS_PROVIDER`，不会选择 ChatGPT 或任何其他 provider，也不会执行 navigation；Chromium 会显示该 profile 自然的初始页、默认页或恢复页。传 `--provider` 时，Tokenless 会打开该 provider 并验证 navigation。
 
 ```bash
+tokenless profiles open -P work --json
 tokenless profiles open -P work -p claude --json
 ```
 
-该命令用于由用户处理登录、CAPTCHA、MFA、consent 或账号切换。它不能替代 `profiles status`；操作完成后应再次运行 status 命令，保存最新 observation。
+无 provider 形式适合用户维护浏览器、切换账号或检查 managed profile。provider 形式适合处理登录、CAPTCHA、MFA、consent 或 provider 相关账号切换。它不能替代 `profiles status`；操作完成后应再次运行 status 命令，保存最新 observation。
 
 ### `tokenless profiles set-default`
 
@@ -341,6 +343,18 @@ tokenless profiles remove -P work --confirm-delete --json
 
 ## 执行任务与管理 Jobs
 
+### `tokenless capabilities list`
+
+返回带版本的 canonical task-capability catalog，不会打开浏览器：
+
+```bash
+tokenless capabilities list --json
+```
+
+每个条目描述 caller outcome、parameter schema、lifecycle、side effects、required evidence、output kinds、stability 和已声明的 provider routes。`routeable: true` 表示至少一个已签入的 provider strategy 具有完整实现和真实 provider E2E 证据。Candidate 条目仍可通过 catalog 发现，但会标记为 `routeable: false`，不能用于 run。
+
+`model.choice`、`effort.choice` 和 `qwen.mode` 等 provider control 不会出现在这里；它们保留为 provider adapter 细节，而不是 canonical caller outcome。
+
 ### `tokenless run`
 
 构建 managed Playwright job，通过所选的可见 provider session 发送 prompt，并通常等待关联 response。
@@ -356,8 +370,13 @@ tokenless run \
 Provider 选择：
 
 - 显式 `--provider <provider>` 或 `TOKENLESS_PROVIDER` 会保持精确匹配，不会因为缓存可用性而被替换。
-- 当两者都省略时，Tokenless 会为 resolved profile 选择第一个 cached access 为 `guest` 或以 `signed_in_` 开头的 configured provider。
+- `--capability <capability>` 可以重复使用，用于请求 canonical caller outcome，而不是 provider 专属控件。
+- Tokenless 会合并显式 capabilities 与结构化推导：普通 `submit_and_read` run 要求 `conversation.chat`，`--attach-file` 要求 `file.upload`，并在适用时增加 `image.input`、`audio.input` 或 `video.input`；`--workspace-mode native` 要求 `workspace.native`。
+- 未显式指定 provider 时，Tokenless 会选择第一家能够满足完整 requirement set，且 resolved profile 的 cached access 为 `guest` 或以 `signed_in_` 开头的 configured provider。
+- 显式 provider 无法满足完整 requirement set 时，会在提交 daemon job 前失败，不会静默切换。
 - Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
+- 已知 capability 如果没有完整 route，会在 browser mutation 前返回 `task_capability_route_unavailable`。`--capability` 当前只支持正常的 `submit_and_read` action。
+- 成功提交会返回并持久化 `capabilityRoute`，其中包含规范化 requirements、所选 strategies、support level、evidence identifiers 和 runtime eligibility；`tokenless state` 会返回同一 route。
 
 Prompt 输入：
 

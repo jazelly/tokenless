@@ -10,10 +10,10 @@ import {
   validateVisibleActionRequest,
 } from './actions.js'
 import { tokenlessError } from './errors.js'
-import { getProviderInstanceById } from '../providers/registry.js'
+import { getProviderInstanceById, validateTaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 import type { VisibleActionRequest, VisibleActionWireRequest } from './actions.js'
-import type { ProviderId, ProviderInstance } from '../providers/registry.js'
+import type { ProviderId, ProviderInstance, TaskCapabilityRoute } from '../providers/registry.js'
 
 export {
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
@@ -31,6 +31,7 @@ export type ManagedPlaywrightJobRequest = {
   provider: ProviderId
   target: ManagedPlaywrightSafeTarget
   taskId: string | null
+  capabilityRoute: TaskCapabilityRoute | null
   browserVisibility: BrowserVisibility
   actions: readonly VisibleActionRequest[]
 }
@@ -39,6 +40,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   provider: ProviderId
   target?: Partial<ManagedPlaywrightSafeTarget> | undefined
   taskId?: string | null | undefined
+  capabilityRoute?: TaskCapabilityRoute | null | undefined
   browserVisibility?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
     requestId?: string | undefined
@@ -71,6 +73,7 @@ export function createManagedPlaywrightJobRequest(
     provider: provider.id,
     target,
     taskId: validateTaskId(input.taskId ?? null),
+    capabilityRoute: input.capabilityRoute ?? null,
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     actions,
   })
@@ -80,7 +83,12 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   if (!isPlainRecord(input)) {
     throw tokenlessError('invalid_playwright_job_request', 'Managed Playwright job request must be an object.')
   }
-  requireExactKeys(input, ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'], 'invalid_playwright_job_request')
+  requireKeys(
+    input,
+    ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'],
+    ['capabilityRoute'],
+    'invalid_playwright_job_request',
+  )
   if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
     throw tokenlessError(
       'invalid_playwright_job_protocol',
@@ -97,6 +105,9 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
   const target = validateSafeTarget(input.target, provider)
   const taskId = validateTaskId(input.taskId)
+  const capabilityRoute = input.capabilityRoute === undefined || input.capabilityRoute === null
+    ? null
+    : validateJobCapabilityRoute(input.capabilityRoute, provider.id)
   const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
   if (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 100) {
     throw tokenlessError('invalid_playwright_job_actions', 'Managed Playwright job requires one to one hundred actions.')
@@ -118,6 +129,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     provider: provider.id,
     target,
     taskId,
+    capabilityRoute,
     browserVisibility,
     actions,
   }
@@ -175,11 +187,39 @@ function validateJobBrowserVisibility(value: unknown): BrowserVisibility {
   return visibility
 }
 
+function validateJobCapabilityRoute(value: unknown, provider: ProviderId) {
+  try {
+    return validateTaskCapabilityRoute(value, provider)
+  } catch (error) {
+    throw tokenlessError(
+      'invalid_playwright_job_capability_route',
+      error instanceof Error ? error.message : 'Managed Playwright job capability route is invalid.',
+    )
+  }
+}
+
 function requireExactKeys(record: Record<string, unknown>, keys: readonly string[], code: string) {
   const expected = new Set(keys)
   const actual = Object.keys(record)
   if (actual.length !== expected.size || actual.some((key) => !expected.has(key))) {
     throw tokenlessError(code, `Expected exact keys: ${keys.join(', ') || '(none)'}.`)
+  }
+}
+
+function requireKeys(
+  record: Record<string, unknown>,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[],
+  code: string,
+) {
+  const required = new Set(requiredKeys)
+  const allowed = new Set([...requiredKeys, ...optionalKeys])
+  const actual = Object.keys(record)
+  if (requiredKeys.some((key) => !Object.hasOwn(record, key)) || actual.some((key) => !allowed.has(key))) {
+    throw tokenlessError(
+      code,
+      `Expected required keys ${[...required].join(', ')} and optional keys ${optionalKeys.join(', ') || '(none)'}.`,
+    )
   }
 }
 

@@ -6,11 +6,11 @@ Depends on: completed [Provider Architecture and Registry](archived/provider-arc
 
 ## Outcome
 
-Tokenless supports a broader set of high-value Chinese AI web providers while preserving one honest provider-neutral contract. Adding a provider must improve user choice without weakening session isolation, visible verification, failure behavior, or maintainability.
+Tokenless supports a broader set of high-value AI web providers while preserving one honest capability catalog and provider-neutral contract. Adding a provider must improve user choice without weakening session isolation, visible verification, failure behavior, or maintainability.
 
 ## Current Implementation State
 
-As of 2026-07-30:
+As of 2026-07-31:
 
 - the shared registry extraction and OOP provider seam are complete and recorded in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap;
 - Qwen / 千问 is registered as an `experimental` provider through one provider module and one registry entry;
@@ -20,6 +20,7 @@ As of 2026-07-30:
 - Qwen provenance-bound DOM captures cover the earlier regional surface and the current Qwen Studio completed-response state; and
 - Qwen's provider-specific mode menu is exposed as `qwen.mode`, including runtime enabled/disabled discovery and exact Deep Research Normal/Advanced selection;
 - the visible Auto/Thinking/Fast selector is exposed through the provider-neutral `effort.choice` capability; and
+- the versioned canonical task-capability catalog and evidence-backed provider routing matrix are implemented in the CLI, with `conversation.chat`, `file.upload`, and `workspace.native` as the first routeable outcomes; and
 - unproven Qwen model, file-upload, native workspace, and generated-media lifecycles remain `unknown` or `unavailable` rather than being inferred from visible controls.
 
 | Qwen capability | Current state | Evidence boundary |
@@ -36,22 +37,32 @@ As of 2026-07-30:
 | Native workspace | Unavailable | No proven native creation or exact identity closure |
 | Image generation | Unavailable | No proven generation lifecycle |
 
-The first evaluation wave is:
+The maintained [Provider Capability Census](../provider-capability-census.md) records official product surfaces, current Tokenless evidence, candidate providers, and the proposed canonical capability schema.
 
-1. Qwen / 千问
-2. Kimi
-3. Zhipu Qingyan / 智谱清言
+The next evaluation wave is:
 
-The next evaluation wave includes DeepSeek Chat, Doubao, and Tencent Yuanbao. This is a discovery order, not a claim that every candidate is already suitable for automation or will ship.
+1. Kimi web, prioritizing the complete asynchronous Deep Research lifecycle;
+2. Z.ai with GLM-5.2, prioritizing baseline chat, effort control, long-context inputs, and coding workflows;
+3. Perplexity, prioritizing research, citations, source scope, Spaces, and generated artifacts;
+4. Mistral Le Chat, prioritizing a second independent research/Project/artifact implementation; and
+5. DeepSeek Chat, prioritizing a compact high-value baseline, reasoning mode, search, and files.
+
+Doubao, Meta AI, Microsoft Copilot, Tencent Yuanbao, and MiniMax Agent remain scored candidates. Doubao requires product-policy review and live web reconnaissance before implementation. Meta AI is currently strongest as an image-generation/editing candidate rather than a Deep Research provider. MiniMax Agent requires a distinct long-horizon agent lifecycle and must not distort the baseline chat contract. This is a discovery order, not a claim that every candidate is already suitable for automation or will ship.
 
 Official product entry points:
 
 - [Qwen / 千问](https://chat.qwen.ai/)
 - [Kimi](https://www.kimi.com/)
+- [Z.ai / GLM](https://chat.z.ai/)
 - [Zhipu Qingyan / 智谱清言](https://chatglm.cn/)
 - [DeepSeek Chat](https://chat.deepseek.com/)
+- [Perplexity](https://www.perplexity.ai/)
+- [Mistral Le Chat](https://chat.mistral.ai/)
 - [Doubao](https://www.doubao.com/)
+- [Meta AI](https://www.meta.ai/)
+- [Microsoft Copilot](https://copilot.microsoft.com/)
 - [Tencent Yuanbao](https://yuanbao.tencent.com/)
+- [MiniMax Agent](https://agent.minimax.io/)
 
 ## Why This Matters
 
@@ -132,7 +143,7 @@ Exit: a real managed browser session can complete and continue a prompt through 
 - Compare differences and evolve shared contracts only where the concept is genuinely provider-neutral.
 - Add file acceptance, model or mode selection, and workspace behavior independently when visible proof exists.
 
-Exit: Qwen, Kimi, and Zhipu Qingyan each have an explicit support state and evidence-backed capability matrix.
+Exit: Kimi, Z.ai, Perplexity, Mistral Le Chat, and DeepSeek each have an explicit support state and evidence-backed capability matrix, even when the correct state is unavailable or parked.
 
 ### Phase 4: Continuous Parity
 

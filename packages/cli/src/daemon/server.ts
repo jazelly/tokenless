@@ -2,6 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import net from 'node:net'
 
 import { tokenlessPackageVersion } from '../platform-package.js'
+import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import { listProviderInstances } from '../providers/registry.js'
 import {
   daemonReadyProof,
@@ -173,6 +174,19 @@ async function handleRequest(
       writeJson(response, 200, await browserRuntimeQuiesce(runtimeController))
       return
     }
+    if (method === 'POST' && url.pathname === '/control/browser-runtime/open-profile') {
+      const body = await readJsonObject(request)
+      const openFields = new Set(['profile_id', 'browser_visibility'])
+      if (Object.keys(body).some((key) => !openFields.has(key))) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
+      writeJson(response, 200, await browserRuntimeOpenProfile(
+        runtimeController,
+        requiredString(body.profile_id, 'profile_id'),
+        requiredBrowserVisibility(body.browser_visibility),
+      ))
+      return
+    }
 
     if (method === 'POST' && url.pathname === '/jobs') {
       const body = await readJsonObject(request)
@@ -329,6 +343,21 @@ function browserRuntimeStatus(runtimeController: BrowserRuntimeController | unde
 
 async function browserRuntimeQuiesce(runtimeController: BrowserRuntimeController | undefined) {
   return await runtimeController?.quiesce() ?? browserRuntimeStatus(runtimeController)
+}
+
+async function browserRuntimeOpenProfile(
+  runtimeController: BrowserRuntimeController | undefined,
+  profileId: string,
+  browserVisibility: ReturnType<typeof requiredBrowserVisibility>
+) {
+  if (!runtimeController) throw invalidInput('browser runtime control is unavailable')
+  return await runtimeController.openProfile(profileId, browserVisibility)
+}
+
+function requiredBrowserVisibility(value: unknown) {
+  const browserVisibility = normalizeBrowserVisibility(value)
+  if (!browserVisibility) throw invalidInput('browser_visibility must be auto, headed, or headless')
+  return browserVisibility
 }
 
 function supportedProviders() {

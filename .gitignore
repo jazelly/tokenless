@@ -12,5 +12,6 @@ packages/*/dist/
 docs/
 !docs/
 docs/*
+!docs/provider-capability-census.md
 !docs/roadmaps/
 !docs/roadmaps/**

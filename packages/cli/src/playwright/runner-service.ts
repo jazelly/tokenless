@@ -74,6 +74,13 @@ export type ManagedPlaywrightJobResult = {
   responses: readonly VisibleActionResponse[]
 }
 
+export type ManagedProfileOpenResult = {
+  profileId: string
+  browserVisibility: BrowserVisibility
+  effectiveBrowserVisibility: Exclude<BrowserVisibility, 'auto'>
+  pageCount: number
+}
+
 type RunnerCheckpointPhase =
   | { state: 'idle' }
   | {
@@ -185,6 +192,25 @@ export class ManagedPlaywrightRunnerService {
 
   activeProfileCount() {
     return this.contextManager.activeProfileIds().length
+  }
+
+  async openProfile(profileId: string, browserVisibility: BrowserVisibility): Promise<ManagedProfileOpenResult> {
+    const profile = (await this.profileRegistry.listProfiles())
+      .find((candidate) => candidate.id === profileId && (candidate.lifecycle === undefined || candidate.lifecycle === 'ready'))
+    if (!profile) {
+      throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
+    }
+    const managedContext = await this.contextManager.ensureContext(profile, browserVisibility)
+    const pages = managedContext.browserContext.pages()
+    if (pages[0] && managedContext.effectiveBrowserVisibility === 'headed') {
+      await bringToFront(pages[0])
+    }
+    return {
+      profileId: profile.id,
+      browserVisibility: managedContext.browserVisibility,
+      effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
+      pageCount: pages.length,
+    }
   }
 
   async shutdown() {

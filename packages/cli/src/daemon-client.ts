@@ -132,6 +132,19 @@ export type BrowserRuntimeStatus = {
   pid: number
 }
 
+export type BrowserRuntimeOpenProfileOptions = DaemonClientOptions & {
+  profileId: string
+  browserVisibility: 'auto' | 'headed' | 'headless'
+}
+
+export type BrowserRuntimeOpenProfileResponse = {
+  profileId: string
+  browserVisibility: 'auto' | 'headed' | 'headless'
+  effectiveBrowserVisibility: 'headed' | 'headless'
+  pageCount: number
+  status: BrowserRuntimeStatus
+}
+
 type DaemonError = Error & {
   code?: string
   retryable?: boolean
@@ -449,6 +462,28 @@ export async function quiesceBrowserRuntime({
   return daemonRequest<BrowserRuntimeStatus>({
     daemonUrl: daemon.daemonUrl,
     path: '/control/browser-runtime/quiesce',
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function openBrowserRuntimeProfile({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  profileId,
+  browserVisibility,
+}: BrowserRuntimeOpenProfileOptions) {
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<BrowserRuntimeOpenProfileResponse>({
+    daemonUrl: daemon.daemonUrl,
+    path: '/control/browser-runtime/open-profile',
+    body: {
+      profile_id: profileId,
+      browser_visibility: browserVisibility,
+    },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,

@@ -7,15 +7,22 @@ import { createInterface } from 'node:readline/promises'
 import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
   PLAYWRIGHT_EXECUTION_BACKEND,
+  TASK_CAPABILITIES,
+  TASK_CAPABILITY_CATALOG_SCHEMA_ID,
   VISIBLE_ACTIONS,
   ManagedProfileRegistry,
+  TaskCapabilityRequestError,
   createManagedPlaywrightJobRequest,
   createE2EInspectionJobId,
   discoverChromiumProfiles,
   getProviderDescriptorById,
   importChromeProfile,
+  listProviderTaskCapabilityRoutes,
   listProviderDescriptors,
+  listTaskCapabilityDefinitions,
+  normalizeTaskCapabilityRequirements,
   readManagedProfileRegistryReadOnly,
+  resolveTaskCapabilityRoute,
   resolveChromeProfile,
   submitManagedPlaywrightJob,
   validateChromeProfileDirectoryKey,
@@ -23,6 +30,8 @@ import {
   type ProviderAccessClass,
   type ProviderAccountTier,
   type ProviderId,
+  type TaskCapabilityId,
+  type TaskCapabilityRoute,
   type VisibleAction,
 } from './playwright/index.js'
 
@@ -44,6 +53,7 @@ import {
   markDaemonJobReported,
   normalizeBrowserId,
   normalizeBrowserVisibility,
+  openBrowserRuntimeProfile,
   openProviderUrl,
   persistDaemonSnapshot,
   probeDaemonReady,
@@ -82,6 +92,7 @@ const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
 
 type CliArgs = Record<string, any> & {
   attachFiles: string[]
+  capabilities: string[]
   files: string[]
   [CLI_ARG_FLAGS]?: Record<string, string[]>
 }
@@ -194,12 +205,13 @@ const COMMAND_CONTRACT_BY_KEY = new Map(COMMAND_CONTRACTS.map((contract) => [com
 const TOP_LEVEL_USAGE = [
   'tokenless <command> [options]',
   `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
+  'tokenless capabilities list --json',
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless daemon stop [--json]',
   'tokenless help',
 ]
-let args: CliArgs = { attachFiles: [], files: [], json: process.argv.includes('--json') }
+let args: CliArgs = { attachFiles: [], capabilities: [], files: [], json: process.argv.includes('--json') }
 
 try {
   const argv = process.argv.slice(2)
@@ -215,7 +227,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   assertKnownTopLevelCommand(command)
@@ -250,6 +262,8 @@ try {
     await daemonCommand(subcommand, args)
   } else if (command === 'run') {
     await runCommand(args)
+  } else if (command === 'capabilities') {
+    await capabilitiesCommand(subcommand, args)
   } else if (command === 'replay') {
     await replayCommand(args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
@@ -528,8 +542,12 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     return
   }
 
-  if (subcommand === 'status' || subcommand === 'open') {
-    const provider = normalizeProvider(args.provider || process.env.TOKENLESS_PROVIDER || defaultVisibleProviderId())
+  if (subcommand === 'status' || (subcommand === 'open' && args.provider !== undefined)) {
+    const provider = normalizeProvider(
+      subcommand === 'open'
+        ? args.provider
+        : (args.provider || process.env.TOKENLESS_PROVIDER || defaultVisibleProviderId())
+    )
     const visibleAction = subcommand === 'status' ? VISIBLE_ACTIONS.AUTH_STATUS : VISIBLE_ACTIONS.NAVIGATION_CHECK
     const result = await executeManagedPlaywrightJob({
       args: subcommand === 'open' ? { ...args, browserVisibility: 'headed' } : args,
@@ -570,6 +588,65 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       compactOutput: result.waitResult?.compactOutput,
       status: result.waitResult?.status,
       statusLog: result.statusLog,
+    }, args)
+    return
+  }
+
+  if (subcommand === 'open') {
+    if (args.targetUrl !== undefined) {
+      throw usageError('profile_open_provider_required', '--target-url requires --provider for profiles open.')
+    }
+    const config = await readTokenlessConfig(homeDir)
+    const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+    const statusReporter = createCliStatusReporter(args)
+    const profile = await registry.resolveProfile(args.profile)
+    const daemon = await ensureDaemonReady({
+      homeDir,
+      daemonUrl: configuredDaemonUrl,
+      timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+    })
+    const actualDaemonUrl = daemon.url
+    statusReporter.report({
+      event: daemon.started ? 'daemon_started' : 'daemon_ready',
+      status: 'ready',
+      daemonUrl: actualDaemonUrl,
+      daemonPid: daemon.pid,
+      backend: PLAYWRIGHT_EXECUTION_BACKEND,
+    })
+    if (args.daemonUrl === undefined) {
+      await writeTokenlessConfig({ homeDir, daemonUrl: configuredDaemonUrl })
+    }
+    const opened = await openBrowserRuntimeProfile({
+      daemonUrl: actualDaemonUrl,
+      homeDir,
+      profileId: profile.id,
+      browserVisibility: 'headed',
+    })
+    const runner = browserRuntimeOpenRunnerStatus(opened.status, daemon.started)
+    statusReporter.report({
+      event: 'managed_profile_opened',
+      status: opened.status.status,
+      backend: PLAYWRIGHT_EXECUTION_BACKEND,
+      action: 'profiles.open',
+      profileId: profile.id,
+      browserVisibility: opened.browserVisibility,
+      effectiveBrowserVisibility: opened.effectiveBrowserVisibility,
+    })
+    printPayload({
+      ok: true,
+      command: 'profiles.open',
+      transport: 'daemon',
+      backend: PLAYWRIGHT_EXECUTION_BACKEND,
+      profile: publicManagedProfile(profile, await defaultProfileSlug(registry)),
+      runner,
+      browser: {
+        requestedVisibility: opened.browserVisibility,
+        effectiveVisibility: opened.effectiveBrowserVisibility,
+        pageCount: opened.pageCount,
+      },
+      compactOutput: `Opened managed profile '${profile.slug}' in a headed browser.`,
+      status: opened.status.status,
+      statusLog: statusReporter.events,
     }, args)
     return
   }
@@ -631,6 +708,24 @@ async function embeddedRunnerStatus({
     safeToStop: false,
     heartbeatAt: null,
     started: false,
+    runtime: 'embedded',
+    runtimeStatus: status.status,
+    activeProfileCount: status.activeProfileCount,
+    activeJobCount: status.activeJobCount,
+  }
+}
+
+function browserRuntimeOpenRunnerStatus(
+  status: Awaited<ReturnType<typeof browserRuntimeStatus>>,
+  started: boolean,
+) {
+  return {
+    state: status.status === 'running' ? 'running' : 'stopped',
+    pid: status.pid,
+    sessionId: 'embedded',
+    safeToStop: false,
+    heartbeatAt: null,
+    started,
     runtime: 'embedded',
     runtimeStatus: status.status,
     activeProfileCount: status.activeProfileCount,
@@ -1060,35 +1155,61 @@ function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string
   }
 }
 
-function resolveDaemonJobProvider({
-  args,
+function resolveDaemonJobCapabilityRoute({
   config,
   profile,
+  explicitProvider,
+  requirements,
 }: {
-  args: CliArgs
   config: Awaited<ReturnType<typeof readTokenlessConfig>>
   profile: ManagedProfileRecord
-}): ProviderId {
-  const explicit = args.provider || process.env.TOKENLESS_PROVIDER
-  if (explicit) return normalizeProvider(explicit)
+  explicitProvider?: ProviderId | undefined
+  requirements: readonly TaskCapabilityId[]
+}): TaskCapabilityRoute {
+  const providers = explicitProvider
+    ? [{
+        provider: explicitProvider,
+        observed: profile.lastObservedAuth?.[explicitProvider] !== undefined,
+        usable: true,
+        auth: profile.lastObservedAuth?.[explicitProvider]?.auth ?? 'unknown',
+        access: profile.lastObservedAuth?.[explicitProvider]?.access ?? 'unknown',
+        checkedAt: profile.lastObservedAuth?.[explicitProvider]?.checkedAt ?? null,
+        tier: profile.lastObservedAuth?.[explicitProvider]?.account?.tier ?? null,
+      }]
+    : providerObservationContext(implicitProviderCandidates(config.preferredProviders), profile)
+  const decision = resolveTaskCapabilityRoute({
+    requirements,
+    candidates: providers.map((provider) => ({
+      provider: provider.provider,
+      runtimeEligibility: explicitProvider
+        ? 'unchecked'
+        : (provider.usable ? 'eligible' : 'ineligible'),
+      reason: provider.usable ? null : `provider_access_${provider.access}`,
+    })),
+  })
+  if (decision.ok) return decision.route
 
-  const candidates = implicitProviderCandidates(config.preferredProviders)
-  const providers = providerObservationContext(candidates, profile)
-  const usable = providers.find((provider) => provider.usable)
-  if (usable) return usable.provider
-
+  const runtimeProviderUnavailable = !explicitProvider && providers.every((provider) => !provider.usable)
+  const providerUnavailable = requirements.length === 0 || runtimeProviderUnavailable
   const error = usageError(
-    'provider_unavailable',
-    `No configured provider is currently usable for profile '${profile.slug}'. Run "tokenless setup" or sign in to a provider, then rerun the command.`
+    providerUnavailable ? 'provider_unavailable' : decision.code,
+    providerUnavailable
+      ? `No configured provider is currently usable for profile '${profile.slug}'. Run "tokenless setup" or sign in to a provider, then rerun the command.`
+      : decision.message,
   )
   error.context = {
     profile: {
       slug: profile.slug,
       id: profile.id,
     },
-    providers,
-    usableProviders: [],
-    nextAction: 'Run "tokenless setup" to refresh provider access observations, or pass --provider to target a provider explicitly.',
+    requirements: decision.requirements,
+    providers: providerUnavailable ? providers : decision.evaluated,
+    usableProviders: explicitProvider
+      ? []
+      : providers.filter((provider) => provider.usable).map((provider) => provider.provider),
+    nextAction: providerUnavailable
+      ? 'Run "tokenless setup" to refresh provider access observations, or pass --provider to target a provider explicitly.'
+      : 'Choose a provider scope with an evidence-backed route, remove unsupported capabilities, or complete the required real-provider E2E closure.',
   }
   throw error
 }
@@ -1127,6 +1248,24 @@ async function runCommand(args: CliArgs) {
   assertVisibleRunArguments(args)
   const prompt = await promptFromArgs(args)
   await executeDaemonJob({ args, action: args.action || 'submit_and_read', prompt })
+}
+
+async function capabilitiesCommand(subcommand: string | undefined, args: CliArgs) {
+  if (subcommand !== 'list') {
+    throw usageError('capabilities_subcommand_required', 'Usage: tokenless capabilities list --json')
+  }
+  printPayload({
+    ok: true,
+    schema: TASK_CAPABILITY_CATALOG_SCHEMA_ID,
+    capabilities: listTaskCapabilityDefinitions().map((definition) => {
+      const routes = listProviderTaskCapabilityRoutes(definition.id)
+      return {
+        ...definition,
+        routeable: routes.length > 0,
+        routes,
+      }
+    }),
+  }, args)
 }
 
 async function replayCommand(args: CliArgs) {
@@ -1371,12 +1510,20 @@ async function executeDaemonJob({
   const config = await readTokenlessConfig(homeDir)
   const explicitProvider = args.provider || process.env.TOKENLESS_PROVIDER
   const explicitProviderId = explicitProvider ? normalizeProvider(explicitProvider) : undefined
+  const taskCapabilities = taskCapabilityRequirementsForExecution(args, action, visibleAction)
   const explicitProviderControls = explicitProviderId && !visibleAction
     ? resolveProviderControls({ args, provider: explicitProviderId, action })
     : undefined
   const registry = new ManagedProfileRegistry(homeDir)
   const profileForTarget = await registry.resolveProfile(args.profile)
-  const provider = explicitProviderId ?? resolveDaemonJobProvider({ args, config, profile: profileForTarget })
+  const capabilityRoute = resolveDaemonJobCapabilityRoute({
+    config,
+    profile: profileForTarget,
+    explicitProvider: explicitProviderId,
+    requirements: taskCapabilities,
+  })
+  const provider = capabilityRoute.provider
+  const recordedCapabilityRoute = taskCapabilities.length === 0 ? null : capabilityRoute
   const providerControls = visibleAction
     ? {}
     : explicitProviderControls ?? resolveProviderControls({ args, provider, action })
@@ -1429,6 +1576,7 @@ async function executeDaemonJob({
         }),
       },
       taskId: taskId ?? null,
+      capabilityRoute: recordedCapabilityRoute,
       actions: managedVisibleActions({
         action,
         provider,
@@ -1464,6 +1612,7 @@ async function executeDaemonJob({
         job,
         taskId,
         provider,
+        capabilityRoute: recordedCapabilityRoute,
         profile: submitted.profile,
         projectName,
         chatName,
@@ -1491,6 +1640,7 @@ async function executeDaemonJob({
         jobId: job.job_id,
         taskId,
         provider,
+        capabilityRoute: recordedCapabilityRoute,
         backend: PLAYWRIGHT_EXECUTION_BACKEND,
         profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
         snapshot,
@@ -1508,6 +1658,7 @@ async function executeDaemonJob({
       jobId: job.job_id,
       taskId,
       provider,
+      capabilityRoute: recordedCapabilityRoute,
       profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
       projectName,
       chatName,
@@ -1630,18 +1781,31 @@ async function executeManagedPlaywrightJob({
 function visibleAttachmentMediaType(sourcePath: string) {
   const extension = path.extname(sourcePath).toLowerCase()
   return ({
+    '.aac': 'audio/aac',
+    '.avi': 'video/x-msvideo',
     '.csv': 'text/csv',
+    '.flac': 'audio/flac',
     '.gif': 'image/gif',
     '.html': 'text/html',
     '.jpeg': 'image/jpeg',
     '.jpg': 'image/jpeg',
     '.json': 'application/json',
+    '.m4a': 'audio/mp4',
     '.md': 'text/markdown',
+    '.mkv': 'video/x-matroska',
+    '.mov': 'video/quicktime',
+    '.mp3': 'audio/mpeg',
+    '.mp4': 'video/mp4',
+    '.mpeg': 'video/mpeg',
+    '.mpg': 'video/mpeg',
+    '.ogg': 'audio/ogg',
     '.pdf': 'application/pdf',
     '.png': 'image/png',
     '.rtf': 'application/rtf',
     '.txt': 'text/plain',
+    '.wav': 'audio/wav',
     '.webp': 'image/webp',
+    '.webm': 'video/webm',
     '.xml': 'application/xml',
   } as Record<string, string>)[extension] ?? 'application/octet-stream'
 }
@@ -3011,6 +3175,7 @@ function publicDaemonJobState(job: Record<string, any>) {
       : { id: job.profile_id },
     provider: job.provider,
     action: job.action,
+    capabilityRoute: request.capabilityRoute ?? null,
     browserVisibility: request.browserVisibility,
     projectName: metadata.projectName,
     chatName: metadata.chatName,
@@ -3037,6 +3202,7 @@ function waitingForUserPayload({
   job,
   taskId,
   provider,
+  capabilityRoute,
   profile,
   projectName,
   chatName,
@@ -3060,6 +3226,7 @@ function waitingForUserPayload({
     jobId: job.job_id,
     taskId,
     provider,
+    capabilityRoute,
     profile: publicManagedProfile(profile, profile.slug),
     projectName,
     chatName,
@@ -3243,7 +3410,7 @@ function createCommandContracts(): CommandContract[] {
   ] as const
   const runOptions = [
     ...visibleJobOptions, 'prompt', 'promptFile', 'projectRoot', 'context', 'contextFile',
-    'turnContextFile', 'files', 'attachFiles', 'action', 'longRunning',
+    'turnContextFile', 'files', 'attachFiles', 'capabilities', 'action', 'longRunning',
   ] as const
   const providerInspectOptions = [
     'home', 'json', 'quiet', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs',
@@ -3257,7 +3424,8 @@ function createCommandContracts(): CommandContract[] {
   const contracts: CommandContract[] = [
     { command: 'help', usage: ['tokenless help'], options: [] },
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
-    { command: 'run', usage: [`tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`], options: runOptions },
+    { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`], options: runOptions },
+    { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },
     { command: 'replay', usage: ['tokenless replay --agent-kind <kind> --agent-session-id <id> [--limit <count>] --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs', 'agentKind', 'agentSessionId', 'limit'] },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -3305,7 +3473,7 @@ function commandDisplayName(context: CommandContext) {
 }
 
 function parseArgs(argv: string[], context: CommandContext): CliArgs {
-  const parsed: CliArgs = { attachFiles: [], files: [] }
+  const parsed: CliArgs = { attachFiles: [], capabilities: [], files: [] }
   Object.defineProperty(parsed, CLI_ARG_FLAGS, {
     value: {},
     enumerable: false,
@@ -3396,6 +3564,13 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
       const value = requireFlagValue(argv, index, arg, context)
       parsed.attachFiles.push(value)
       rememberArgFlag(parsed, 'attachFiles', arg)
+      index += 1
+      continue
+    }
+    if (arg === '--capability') {
+      const value = requireFlagValue(argv, index, arg, context)
+      parsed.capabilities.push(value)
+      rememberArgFlag(parsed, 'capabilities', arg)
       index += 1
       continue
     }
@@ -3563,10 +3738,11 @@ function providerSupportsChatSurface(providerId: string) {
 function unsupportedArgumentFlags(args: CliArgs, allowed: Set<string>) {
   const flags = args[CLI_ARG_FLAGS] ?? {}
   const unsupported = Object.entries(args)
-    .filter(([key, value]) => !['attachFiles', 'files'].includes(key) && value !== undefined && !allowed.has(key))
+    .filter(([key, value]) => !['attachFiles', 'capabilities', 'files'].includes(key) && value !== undefined && !allowed.has(key))
     .flatMap(([key]) => flags[key] ?? [optionUsageLabel(key)])
   if (args.files.length > 0 && !allowed.has('files')) unsupported.push(...(flags.files ?? ['--file']))
   if (args.attachFiles.length > 0 && !allowed.has('attachFiles')) unsupported.push(...(flags.attachFiles ?? ['--attach-file']))
+  if (args.capabilities.length > 0 && !allowed.has('capabilities')) unsupported.push(...(flags.capabilities ?? ['--capability']))
   return [...new Set(unsupported)]
 }
 
@@ -3659,6 +3835,62 @@ function assertVisibleRunArguments(args: CliArgs) {
   if (args.attachFiles.length > 0 && !['submit', 'submit_and_read'].includes(action)) {
     throw usageError('attachment_action_unsupported', '--attach-file requires the submit or submit_and_read visible action.')
   }
+}
+
+function taskCapabilityRequirementsForExecution(
+  args: CliArgs,
+  action: string,
+  visibleAction: { action: string; payload: Record<string, unknown> } | undefined,
+): readonly TaskCapabilityId[] {
+  if (visibleAction) return []
+  if (args.capabilities.length > 0 && action !== 'submit_and_read') {
+    throw usageError(
+      'task_capability_action_unsupported',
+      '--capability currently requires the submit_and_read run action so Tokenless can prove the requested outcome.',
+    )
+  }
+
+  let explicit: readonly TaskCapabilityId[]
+  try {
+    explicit = normalizeTaskCapabilityRequirements(args.capabilities)
+  } catch (error) {
+    if (!(error instanceof TaskCapabilityRequestError)) throw error
+    const cliError = usageError(error.code, error.message)
+    cliError.context = {
+      capability: error.capability,
+      availableCapabilities: listTaskCapabilityDefinitions().map((definition) => definition.id),
+    }
+    throw cliError
+  }
+
+  if (explicit.includes(TASK_CAPABILITIES.FILE_UPLOAD) && args.attachFiles.length === 0) {
+    throw usageError('task_capability_input_required', 'file.upload requires at least one --attach-file <path>.')
+  }
+  if (
+    explicit.includes(TASK_CAPABILITIES.WORKSPACE_NATIVE) &&
+    (args.workspaceMode === undefined || normalizeWorkspaceMode(args.workspaceMode) !== 'native')
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'workspace.native requires --workspace-mode native and --project-name <name>.',
+    )
+  }
+
+  const inferred: TaskCapabilityId[] = []
+  if (action === 'submit_and_read') inferred.push(TASK_CAPABILITIES.CONVERSATION_CHAT)
+  if (args.attachFiles.length > 0) {
+    inferred.push(TASK_CAPABILITIES.FILE_UPLOAD)
+    for (const sourcePath of args.attachFiles) {
+      const mediaType = visibleAttachmentMediaType(sourcePath)
+      if (mediaType.startsWith('image/')) inferred.push(TASK_CAPABILITIES.IMAGE_INPUT)
+      if (mediaType.startsWith('audio/')) inferred.push(TASK_CAPABILITIES.AUDIO_INPUT)
+      if (mediaType.startsWith('video/')) inferred.push(TASK_CAPABILITIES.VIDEO_INPUT)
+    }
+  }
+  if (args.workspaceMode !== undefined && normalizeWorkspaceMode(args.workspaceMode) === 'native') {
+    inferred.push(TASK_CAPABILITIES.WORKSPACE_NATIVE)
+  }
+  return normalizeTaskCapabilityRequirements([...explicit, ...inferred])
 }
 
 function requiredChatGptProvider(args: CliArgs) {
@@ -3937,7 +4169,9 @@ function usage() {
       title: 'Run',
       description: 'Send work through a visible AI provider.',
       commands: [
+        'tokenless capabilities list --json',
         `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
+        'tokenless run --capability <capability> --prompt <text> --json',
       ],
     },
     {
@@ -4138,6 +4372,7 @@ function optionUsageLabel(option: string) {
     browser: '--browser <browser>',
     browsers: '--browsers <list>',
     browserVisibility: '--browser-visibility <auto|headed|headless>',
+    capabilities: '--capability <capability>',
     bridgeTimeoutMs: '--bridge-timeout-ms <ms>',
     cancelTimeoutMs: '--cancel-timeout-ms <ms>',
     chatName: '--chat-name <name>',
