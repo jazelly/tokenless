@@ -14,17 +14,6 @@ const protocol = 'tokenless.e2e-browser-inspection.v1'
 const pollMs = 50
 const daemonStopTimeoutMs = 60_000
 const lsAppInfo = '/usr/bin/lsappinfo'
-const chromiumBundleIds = new Set([
-  'com.brave.Browser',
-  'com.google.Chrome',
-  'com.google.Chrome.beta',
-  'com.google.Chrome.canary',
-  'com.google.Chrome.dev',
-  'com.google.Chrome.forTesting',
-  'com.microsoft.edgemac',
-  'company.thebrowser.Browser',
-  'org.chromium.Chromium',
-])
 
 export async function createLiveBrowserInspectionSession(options) {
   const homeDir = path.resolve(requiredString(options.homeDir, 'homeDir'))
@@ -54,7 +43,7 @@ export async function createLiveBrowserInspectionSession(options) {
     homeDir,
     profileSlug,
     async startCli(args, startOptions = {}) {
-      const frontmostApplication = captureFrontmostApplication()
+      const focusGuard = monitorFrontmostApplication()
       try {
         const commandArgs = [
           ...args,
@@ -80,7 +69,7 @@ export async function createLiveBrowserInspectionSession(options) {
         seenJobs.add(waiting.jobId)
         const observer = await connectObserver(waiting, startedAt)
         observers.add(observer.browser)
-        restoreFrontmostApplication(frontmostApplication)
+        focusGuard.assertUnchanged()
         await startOptions.beforeRelease?.({ waiting, page: observer.page })
         const observation = startOptions.observeAfterRelease === undefined
           ? Promise.resolve(undefined)
@@ -103,7 +92,7 @@ export async function createLiveBrowserInspectionSession(options) {
           },
         }
       } finally {
-        restoreFrontmostApplication(frontmostApplication)
+        focusGuard.stop()
       }
     },
     async close() {
@@ -329,25 +318,36 @@ function captureFrontmostApplication() {
   return application
 }
 
-function restoreFrontmostApplication(application) {
-  if (!application || process.platform !== 'darwin') return
-  const current = captureFrontmostApplication()
-  if (!current || current === application) return
-  const info = spawnSync(lsAppInfo, ['info', '-only', 'bundleID', current], {
-    encoding: 'utf8',
-    timeout: 2_000,
-  })
-  if (info.status !== 0) {
-    throw new Error(`Unable to inspect the frontmost macOS application after headed E2E launch:\n${summarizeProcess(info)}`)
+function monitorFrontmostApplication() {
+  if (process.platform !== 'darwin') {
+    return { assertUnchanged() {}, stop() {} }
   }
-  const bundleId = /"CFBundleIdentifier"="([^"]+)"/u.exec(info.stdout)?.[1]
-  if (!bundleId || !chromiumBundleIds.has(bundleId)) return
-  const restored = spawnSync(lsAppInfo, ['setfront', application], {
-    encoding: 'utf8',
-    timeout: 2_000,
-  })
-  if (restored.status !== 0) {
-    throw new Error(`Unable to restore the frontmost macOS application after headed E2E launch:\n${summarizeProcess(restored)}`)
+  const expected = captureFrontmostApplication()
+  let actual = expected
+  let error
+  const sample = () => {
+    if (actual !== expected || error) return
+    try {
+      actual = captureFrontmostApplication()
+    } catch (caught) {
+      error = caught
+    }
+  }
+  const timer = setInterval(sample, 10)
+  return {
+    assertUnchanged() {
+      sample()
+      clearInterval(timer)
+      if (error) throw error
+      if (actual !== expected) {
+        throw new Error(
+          `Headed E2E launch changed the frontmost macOS application from ${expected} to ${actual}; focus stealing is a test failure.`,
+        )
+      }
+    },
+    stop() {
+      clearInterval(timer)
+    },
   }
 }
 

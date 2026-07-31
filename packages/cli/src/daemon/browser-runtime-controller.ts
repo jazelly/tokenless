@@ -185,14 +185,32 @@ export class BrowserRuntimeController {
       configuredBrowser = undefined
     }
     if (configuredBrowser === undefined || configuredBrowser === null || configuredBrowser === '' || configuredBrowser === 'chrome') {
-      return { id: 'chrome', ...(e2eInspection ? { e2eInspection: true } : {}) }
+      if (!e2eInspection) return { id: 'chrome' }
+      const resolved = await resolveChromiumBrowser('chrome')
+      return {
+        id: 'chrome',
+        executablePath: resolved.playwrightExecutablePath,
+        e2eInspection: true,
+      }
     }
     if (configuredBrowser === 'edge') {
-      return { id: 'edge', ...(e2eInspection ? { e2eInspection: true } : {}) }
+      if (!e2eInspection) return { id: 'edge' }
+      const resolved = await resolveChromiumBrowser('edge')
+      return {
+        id: 'edge',
+        executablePath: resolved.playwrightExecutablePath,
+        e2eInspection: true,
+      }
     }
     const resolved = await resolveChromiumBrowser(configuredBrowser)
     if (resolved.browser === 'chrome' || resolved.browser === 'edge') {
-      return { id: resolved.browser, ...(e2eInspection ? { e2eInspection: true } : {}) }
+      return {
+        id: resolved.browser,
+        ...(e2eInspection ? {
+          executablePath: resolved.playwrightExecutablePath,
+          e2eInspection: true,
+        } : {}),
+      }
     }
     return {
       id: resolved.browser,

@@ -1,4 +1,5 @@
 import { chromium } from 'playwright-core'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import {
@@ -7,7 +8,8 @@ import {
 } from '../../browser-visibility.js'
 import { tokenlessError } from '../errors.js'
 import type { BrowserVisibility, EffectiveBrowserVisibility } from '../../browser-visibility.js'
-import type { BrowserContext, Page } from 'playwright-core'
+import type { Browser, BrowserContext, Page } from 'playwright-core'
+import type { ChildProcess } from 'node:child_process'
 
 export type ManagedBrowserProfile = {
   id: string
@@ -60,7 +62,13 @@ type ActiveContext = {
   requestedVisibility: BrowserVisibility
   effectiveVisibility: EffectiveBrowserVisibility
   browserContext: BrowserContext
+  closeBrowser: () => Promise<void>
   closing: boolean
+}
+
+type LaunchedManagedContext = {
+  browserContext: BrowserContext
+  closeBrowser: () => Promise<void>
 }
 
 type ScheduledContextClose = {
@@ -171,9 +179,14 @@ export class PersistentContextManager {
           if (!isMissingFileError(error)) throw error
         })
       }
-      const browserContext = await this.launcher(profile.directory, managedBrowserLaunchOptions(this.browser, requestedVisibility))
+      const launched = await this.launchContext(
+        profile.directory,
+        managedBrowserLaunchOptions(this.browser, requestedVisibility),
+        effectiveVisibility,
+      )
+      const { browserContext } = launched
       if (this.shuttingDown) {
-        await browserContext.close().catch(() => undefined)
+        await launched.closeBrowser().catch(() => undefined)
         throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
       }
       const active: ActiveContext = {
@@ -181,6 +194,7 @@ export class PersistentContextManager {
         requestedVisibility,
         effectiveVisibility,
         browserContext,
+        closeBrowser: launched.closeBrowser,
         closing: false,
       }
       this.contexts.set(profile.id, active)
@@ -268,7 +282,7 @@ export class PersistentContextManager {
         return await manager.switchProfileVisibility(active.profile, visibility)
       },
       async close() {
-        await active.browserContext.close()
+        await manager.closeProfile(active.profile.id)
       },
     }
   }
@@ -277,7 +291,22 @@ export class PersistentContextManager {
     this.cancelScheduledClose(profileId)
     active.closing = true
     if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
-    await active.browserContext.close().catch(() => undefined)
+    await active.closeBrowser().catch(() => undefined)
+  }
+
+  private async launchContext(
+    userDataDir: string,
+    launchOptions: PersistentChromeLaunchOptions,
+    effectiveVisibility: EffectiveBrowserVisibility,
+  ): Promise<LaunchedManagedContext> {
+    if (this.browser.e2eInspection && process.platform === 'darwin' && effectiveVisibility === 'headed') {
+      return await launchBackgroundMacOSContext(userDataDir, launchOptions, this.browser)
+    }
+    const browserContext = await this.launcher(userDataDir, launchOptions)
+    return {
+      browserContext,
+      closeBrowser: async () => await browserContext.close(),
+    }
   }
 
   private cancelScheduledClose(profileId: string): void {
@@ -298,6 +327,162 @@ export class PersistentContextManager {
       return
     }
     this.activeOperations.delete(profileId)
+  }
+}
+
+async function launchBackgroundMacOSContext(
+  userDataDir: string,
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+): Promise<LaunchedManagedContext> {
+  const executablePath = browserTarget.executablePath
+  const applicationPath = executablePath ? macOSApplicationPath(executablePath) : null
+  if (!executablePath || !applicationPath) {
+    throw tokenlessError(
+      'e2e_background_browser_executable_required',
+      'Headed macOS E2E inspection requires an installed browser application path.',
+    )
+  }
+
+  const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
+  const browserArguments = backgroundChromiumArguments(userDataDir, launchOptions, browserTarget)
+  const launcher = spawn('/usr/bin/open', [
+    '-g',
+    '-n',
+    '-W',
+    '-a', applicationPath,
+    '--args',
+    ...browserArguments,
+  ], {
+    stdio: 'ignore',
+  })
+  const launcherExit = observeChildExit(launcher)
+  await waitForChildSpawn(launcher)
+
+  let connectedBrowser: Browser | undefined
+  try {
+    const endpoint = await waitForDevToolsEndpoint(endpointFile, launcherExit)
+    connectedBrowser = await chromium.connectOverCDP(endpoint)
+    const contexts = connectedBrowser.contexts()
+    if (contexts.length !== 1 || !contexts[0]) {
+      throw new Error('Background managed browser must expose exactly one persistent context.')
+    }
+    const browser = connectedBrowser
+    let closing: Promise<void> | undefined
+    return {
+      browserContext: contexts[0],
+      closeBrowser() {
+        closing ??= closeBackgroundMacOSBrowser(browser, launcher, launcherExit)
+        return closing
+      },
+    }
+  } catch (error) {
+    await closeBackgroundMacOSBrowser(connectedBrowser, launcher, launcherExit).catch(() => undefined)
+    throw error
+  }
+}
+
+function backgroundChromiumArguments(
+  userDataDir: string,
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+) {
+  return [
+    '--disable-background-networking',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-breakpad',
+    '--disable-component-update',
+    '--disable-default-apps',
+    '--disable-extensions',
+    '--disable-hang-monitor',
+    '--disable-popup-blocking',
+    '--disable-prompt-on-repost',
+    '--disable-renderer-backgrounding',
+    '--enable-automation',
+    '--metrics-recording-only',
+    '--no-service-autorun',
+    ...(browserTarget.id === 'profile'
+      ? ['--password-store=basic', '--use-mock-keychain']
+      : []),
+    ...(launchOptions.args ?? []),
+    `--user-data-dir=${userDataDir}`,
+    'about:blank',
+  ]
+}
+
+function macOSApplicationPath(executablePath: string) {
+  const marker = `${path.sep}Contents${path.sep}MacOS${path.sep}`
+  const index = executablePath.indexOf(marker)
+  if (index < 1) return null
+  return executablePath.slice(0, index)
+}
+
+async function waitForChildSpawn(child: ChildProcess) {
+  if (child.pid) return
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', resolve)
+    child.once('error', reject)
+  })
+}
+
+function observeChildExit(child: ChildProcess) {
+  let result: { code: number | null, signal: NodeJS.Signals | null } | undefined
+  const promise = new Promise<{ code: number | null, signal: NodeJS.Signals | null }>((resolve) => {
+    child.once('exit', (code, signal) => {
+      result = { code, signal }
+      resolve(result)
+    })
+  })
+  return {
+    promise,
+    result: () => result,
+  }
+}
+
+async function waitForDevToolsEndpoint(
+  endpointFile: string,
+  launcherExit: ReturnType<typeof observeChildExit>,
+) {
+  const deadline = Date.now() + 30_000
+  while (Date.now() <= deadline) {
+    const exited = launcherExit.result()
+    if (exited) {
+      throw new Error(`Background browser launcher exited before DevTools was ready (code ${exited.code}, signal ${exited.signal}).`)
+    }
+    try {
+      const [port, websocketPath] = (await fs.readFile(endpointFile, 'utf8')).trim().split(/\r?\n/u)
+      if (/^\d+$/u.test(port ?? '') && /^\/devtools\/browser\/[A-Za-z0-9-]+$/u.test(websocketPath ?? '')) {
+        return `http://127.0.0.1:${port}`
+      }
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
+    await delay(50)
+  }
+  throw new Error('Timed out waiting for the background managed browser DevTools endpoint.')
+}
+
+async function closeBackgroundMacOSBrowser(
+  browser: Browser | undefined,
+  launcher: ChildProcess,
+  launcherExit: ReturnType<typeof observeChildExit>,
+) {
+  if (browser?.isConnected()) {
+    try {
+      const session = await browser.newBrowserCDPSession()
+      await session.send('Browser.close')
+    } catch {
+      await browser.close().catch(() => undefined)
+    }
+  }
+  const exited = await Promise.race([
+    launcherExit.promise.then(() => true),
+    delay(15_000).then(() => false),
+  ])
+  if (!exited && launcher.exitCode === null && launcher.signalCode === null) {
+    launcher.kill('SIGTERM')
+    await Promise.race([launcherExit.promise, delay(2_000)])
   }
 }
 
@@ -412,6 +597,10 @@ function unrefTimer(handle: unknown) {
   if (handle && typeof handle === 'object' && typeof (handle as { unref?: unknown }).unref === 'function') {
     ;(handle as { unref: () => void }).unref()
   }
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
 export function isBrowserClosedError(error: unknown) {
