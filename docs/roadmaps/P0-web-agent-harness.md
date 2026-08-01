@@ -1,4 +1,4 @@
-# Web Agent Harness and Tool Runtime
+# Web Agent Harness
 
 Status: proposed | Priority: P0 | First provider: ChatGPT
 
@@ -12,7 +12,7 @@ Packaging direction: independently buildable workspace package first; separate H
 
 Tokenless treats visible AI websites as model providers, not as the agent harness itself. A caller can start one durable agent run whose model turns happen through a real provider website while the harness owns instruction delivery, tool discovery, authorization, execution, result return, loop limits, recovery, and the final run result.
 
-The current repository remains the Provider Integration and API project, including thin CLI, northbound MCP, and caller-skill adapters. It converts evidence-backed visible website workflows into durable, provider-neutral jobs and results. The new harness is not added to the provider runtime as another provider capability implementation; it begins as a separate package that consumes the provider-turn interface exactly as a future external project would.
+The current repository remains the Web Provider API project. It converts evidence-backed visible website workflows into durable, provider-neutral jobs and results. Today's CLI, daemon, capability, and planned P1 integration interfaces are different ways to call that same Web Provider layer; they do not add an agent loop. The new harness is not another provider capability implementation. It begins as a separate package built specifically on top of the Web Provider interface.
 
 The first complete path is ChatGPT because it is the current strategic target for persistent Projects, instructions, files, exact conversation continuation, and tool-loop instruction following. This is a sequencing decision, not a permanent claim that other providers cannot support agent runs.
 
@@ -51,41 +51,38 @@ Provider-native Agent, Research, apps, connectors, or other modes remain visible
 
 ```mermaid
 flowchart TB
-  Caller["Caller<br/>CLI or northbound MCP"]
-  Harness["Web agent harness<br/>instructions + durable loop"]
-  Policy["Authorization policy<br/>approval + limits"]
-  Tools["Tool runtime<br/>southbound MCP clients + local tools"]
-  Provider["Web provider runtime<br/>workspace + turn + evidence"]
-  ChatGPT["Visible ChatGPT website<br/>Project + conversation"]
-  Servers["Configured MCP servers<br/>real local processes"]
-  Local["Registered local tools<br/>typed and scoped"]
+  Caller["Caller"]
+  Skills["Activated skills<br/>instructions + tool guidance"]
+  MCP["Configured MCP servers"]
+  Harness["Layer 2: Web Agent Harness<br/>skill injection + MCP tool loop + approval"]
+  Provider["Layer 1: Web Provider API<br/>Projects + files + conversations + turns"]
+  Playwright["Playwright provider adapters"]
+  Websites["Visible AI provider websites"]
 
   Caller --> Harness
-  Harness --> Provider
-  Provider --> ChatGPT
-  ChatGPT --> Provider
-  Provider --> Harness
-  Harness --> Policy
-  Policy --> Tools
-  Tools --> Servers
-  Tools --> Local
-  Tools --> Harness
+  Skills --> Harness
+  Harness <--> MCP
+  Harness <--> Provider
+  Provider <--> Playwright
+  Playwright <--> Websites
 ```
 
 The seam is deliberately above DOM operations. The harness never receives a Playwright `Page`, selector, browser profile path, provider credential, or raw provider action menu. The provider runtime never receives an MCP client, tool approval policy, or agent-loop state.
 
-## Product and Package Direction
+Authorization, local tools, MCP clients, instruction compilation, and loop persistence are internal modules of Layer 2. They are not additional product layers.
+
+## The Two Modules and Eventual Projects
 
 The intended end state contains two independently useful projects:
 
-| Project | Owns | Does not own |
+| Module and eventual project | Owns | Does not own |
 | --- | --- | --- |
-| Provider Integration and API | Visible provider adapters, managed browser execution, Projects, files, conversations, capability routing, durable provider jobs, scheduling, scaling, evidence, the versioned provider-turn interface, and thin caller CLI, northbound MCP, or integration-skill adapters | Web-model prompts, southbound MCP tool execution, harness skills, approvals, or the agent loop |
-| Agent Harness | Agent runs, instruction compilation, tool protocol, southbound MCP clients, registered local tools, harness skills, approvals, loop policy, and harness-owned run state | Provider DOM, browser profiles, selectors, provider credentials, provider-specific workspace logic, or caller-side Provider Integration skills |
+| Web Provider API | Playwright provider adapters, managed browser execution, Projects, files, conversations, visible model controls, durable provider turns, routing, scheduling, scaling, evidence, and the versioned Web Provider interface | Skill injection, MCP tool execution, approvals, or an agent loop |
+| Web Agent Harness | Agent runs, web-specific instruction delivery, skill injection, visible tool-call protocol, southbound MCP clients, registered local tools, approvals, loop policy, and harness-owned run state | Provider DOM, browser profiles, selectors, credentials, or direct Playwright operations |
 
 The repository is not split while both interfaces are still moving. The delivery sequence is:
 
-1. keep the existing provider implementation in this repository;
+1. keep the existing Web Provider API implementation in this repository;
 2. add the harness as an independently buildable workspace package, provisionally `packages/web-agent-harness/`;
 3. make that package depend only on a versioned provider-turn client and shared wire schemas;
 4. prove the complete ChatGPT tool loop and stabilize the cross-package interface; and
@@ -101,40 +98,45 @@ The allowed dependency direction is:
 web-agent-harness package
   -> provider-turn client + versioned wire schemas
   -> authenticated daemon HTTP interface
-  -> Provider Integration implementation
+  -> Web Provider API implementation
   -> Playwright and visible provider website
 ```
 
-The harness package must not import from provider adapters, Playwright, daemon job-store implementation, profile management, DOM locators, or CLI command modules. The Provider Integration implementation must not import harness prompt, MCP, skill, approval, or loop modules.
+The harness package must not import from provider adapters, Playwright, daemon job-store implementation, profile management, DOM locators, or CLI command modules. The Web Provider API implementation must not import harness prompt, MCP, skill, approval, or loop modules.
 
 The provider-turn client is an adapter over the durable daemon interface, not a wrapper that exposes internal classes. Opaque provider job, workspace, conversation, and evidence identifiers cross the seam; database handles, tables, browser objects, and internal state-machine values do not.
 
-The harness owns its AgentRun persistence schema and migrations behind its own module. It may initially be hosted in the same installation or process topology, but the provider implementation never reads harness tables and the harness never reads provider tables. Correlation happens through public opaque identifiers.
+The harness owns its AgentRun persistence schema and migrations behind its own module. It may initially be hosted in the same installation or process topology, but the Web Provider implementation never reads harness tables and the harness never reads provider tables. Correlation happens through public opaque identifiers.
 
-### Skill Directionality
+### Web-Harness Specificity
 
-The two projects may both use the word `skill`, but they refer to different instruction flows:
+This is not a generic model-API harness with a Web Provider adapter added afterward. Its loop is designed around the actual Web Provider interface:
 
-| Skill role | Consumer | Owner |
-| --- | --- | --- |
-| Provider Integration skill | Codex or another external agent that needs instructions for calling Tokenless provider operations | Provider Integration project and the P1 integration roadmap |
-| Harness skill | The web model inside an AgentRun; contributes bounded instructions and required tool references | Agent Harness package |
+- model output arrives as a complete visible webpage response rather than a native function-call event stream;
+- skills and the MCP calling contract must be injected through proven Project instructions, files, or a visible conversation bootstrap;
+- the current tool catalog and per-turn nonce must fit provider message and file limits;
+- MCP tool requests must be parsed from the visible response protocol;
+- tool results must be returned as the next message in the exact same provider conversation;
+- Projects, attachments, citations, provider blockers, slow turns, and conversation recovery remain part of the loop; and
+- each provider becomes harness-capable only after its complete real website loop is proven.
 
-The Provider Integration skill remains a thin caller adapter and contains no agent loop. A Harness skill cannot call the provider implementation directly, add executable authority, or replace the provider-turn client.
+The harness is therefore Web-Provider-aware but DOM-agnostic. It understands Web Provider semantics and limitations while all selectors, clicks, browser profiles, and provider-specific visible operations remain below the Web Provider interface.
 
 ### Extractability Tests
 
 The package shape is correct when all of these deletion and replacement checks hold:
 
 - deleting the harness package leaves current CLI and daemon provider jobs working;
-- running the Provider Integration project without the harness does not load MCP clients, skills, or agent-loop state;
-- replacing the web provider implementation with another conforming provider-turn adapter does not change harness code;
+- running the Web Provider API project without the harness does not load MCP clients, skills, or agent-loop state;
+- changing Playwright or provider-adapter implementation behind the Web Provider interface does not change harness code;
 - moving the harness package to another repository requires dependency and release wiring, not source reorganization; and
 - provider and harness release versions can advance independently under explicit protocol compatibility rules.
 
-## Layer 1: Web Provider Runtime
+## Layer 1: Web Provider API
 
 The existing provider architecture becomes a deep model-turn module. Its interface exposes provider outcomes rather than general browser automation.
+
+All currently exposed operations belong to this layer: they are structured wrappers around supported, real-E2E-verified web workflows. P1 may expose those operations through MCP and bind them to an external session, but that still does not make P1 an Agent Harness.
 
 The provider runtime owns:
 

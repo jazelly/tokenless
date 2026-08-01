@@ -22,6 +22,7 @@ import {
   type BrowserRuntimeBinding,
   type BrowserRuntimeInspection,
   type BrowserRuntimePlatform,
+  type BrowserRuntimeProgress,
   type BrowserSelection,
   type EnsureBrowserRuntimeOptions,
   type ManagedBrowserFamily,
@@ -242,7 +243,6 @@ export class BrowserRuntimeManager {
     const temporaryRoot = path.join(this.browserRoot, `.install-${randomUUID()}`)
     const payloadDirectory = path.join(temporaryRoot, 'payload')
     const archivePath = path.join(temporaryRoot, `browser.${entry.archiveFormat}`)
-    const executablePath = path.join(payloadDirectory, entry.executableRelativePath)
     const emit = (phase: Parameters<NonNullable<EnsureBrowserRuntimeOptions['onProgress']>>[0]['phase']) => {
       options.onProgress?.({
         phase,
@@ -256,44 +256,14 @@ export class BrowserRuntimeManager {
     try {
       emit('download')
       await downloadArtifact(entry.downloadUrl, archivePath, options.signal)
-      emit('verify')
-      const actualChecksum = await sha256File(archivePath)
-      if (actualChecksum !== entry.sha256) {
-        throw tokenlessError(
-          'browser_runtime_checksum_mismatch',
-          `${entry.displayName} download checksum mismatch; refusing to extract the artifact.`,
-          { details: { expected: entry.sha256, actual: actualChecksum } },
-        )
-      }
-
-      emit('extract')
-      await fs.mkdir(payloadDirectory, { recursive: false, mode: 0o700 })
-      await validateArchivePaths(archivePath)
-      await runCommand('tar', ['-xf', archivePath, '-C', payloadDirectory], {
-        timeoutMs: ARCHIVE_TIMEOUT_MS,
-        maxOutputBytes: MAX_ARCHIVE_LIST_BYTES,
+      await verifyAndExtractManagedBrowserArtifact({
+        entry,
+        archivePath,
+        payloadDirectory,
+        temporaryRoot,
+        ...(options.signal ? { signal: options.signal } : {}),
+        onPhase: emit,
       })
-      await normalizeCloakWindowsArchive(entry, payloadDirectory)
-      if (process.platform !== 'win32') await fs.chmod(executablePath, 0o755)
-      await assertExecutableInside(payloadDirectory, executablePath)
-      if (process.platform === 'darwin') {
-        await runCommand('/usr/bin/xattr', ['-cr', payloadDirectory], {
-          timeoutMs: VERSION_TIMEOUT_MS,
-          maxOutputBytes: 256 * 1024,
-        }).catch(() => undefined)
-      }
-
-      emit('version')
-      const actualVersion = await browserExecutableVersion(executablePath)
-      if (actualVersion !== entry.browserVersion) {
-        throw tokenlessError(
-          'browser_runtime_version_mismatch',
-          `${entry.displayName} reported browser ${actualVersion}; expected ${entry.browserVersion}.`,
-        )
-      }
-
-      emit('smoke-launch')
-      await smokeLaunchBrowser(executablePath, entry.family, temporaryRoot, options.signal)
       const installedAt = new Date().toISOString()
       const manifest: RuntimeManifest = {
         version: 1,
@@ -461,6 +431,58 @@ export class BrowserRuntimeManager {
       },
     })
   }
+}
+
+export async function verifyAndExtractManagedBrowserArtifact(options: {
+  entry: ManagedBrowserCatalogEntry
+  archivePath: string
+  payloadDirectory: string
+  temporaryRoot: string
+  signal?: AbortSignal
+  onPhase?: (phase: BrowserRuntimeProgress['phase']) => void
+}) {
+  const { entry, archivePath, payloadDirectory, temporaryRoot } = options
+  const executablePath = path.join(payloadDirectory, entry.executableRelativePath)
+
+  options.onPhase?.('verify')
+  const actualChecksum = await sha256File(archivePath)
+  if (actualChecksum !== entry.sha256) {
+    throw tokenlessError(
+      'browser_runtime_checksum_mismatch',
+      `${entry.displayName} download checksum mismatch; refusing to extract the artifact.`,
+      { details: { expected: entry.sha256, actual: actualChecksum } },
+    )
+  }
+
+  options.onPhase?.('extract')
+  await fs.mkdir(payloadDirectory, { recursive: false, mode: 0o700 })
+  await validateArchivePaths(archivePath)
+  await runCommand('tar', ['-xf', archivePath, '-C', payloadDirectory], {
+    timeoutMs: ARCHIVE_TIMEOUT_MS,
+    maxOutputBytes: MAX_ARCHIVE_LIST_BYTES,
+  })
+  await normalizeCloakWindowsArchive(entry, payloadDirectory)
+  if (process.platform !== 'win32') await fs.chmod(executablePath, 0o755)
+  await assertExecutableInside(payloadDirectory, executablePath)
+  if (process.platform === 'darwin') {
+    await runCommand('/usr/bin/xattr', ['-cr', payloadDirectory], {
+      timeoutMs: VERSION_TIMEOUT_MS,
+      maxOutputBytes: 256 * 1024,
+    }).catch(() => undefined)
+  }
+
+  options.onPhase?.('version')
+  const actualVersion = await browserExecutableVersion(executablePath)
+  if (actualVersion !== entry.browserVersion) {
+    throw tokenlessError(
+      'browser_runtime_version_mismatch',
+      `${entry.displayName} reported browser ${actualVersion}; expected ${entry.browserVersion}.`,
+    )
+  }
+
+  options.onPhase?.('smoke-launch')
+  await smokeLaunchBrowser(executablePath, entry.family, temporaryRoot, options.signal)
+  return { executablePath, actualVersion }
 }
 
 function supportedPlatform() {

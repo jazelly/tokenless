@@ -4,7 +4,7 @@ Status: proposed | Priority: P1 | First integration: northbound local MCP server
 
 Depends on: stable local job identity, typed provider capabilities, and the Context Envelope contract
 
-Related: [Web Agent Harness and Tool Runtime](P0-web-agent-harness-and-tool-runtime.md) owns the independently buildable harness package, southbound MCP client, tool authorization, and web-model tool loop
+Related: [Web Agent Harness](P0-web-agent-harness.md) owns the independently buildable harness package, skill injection, southbound MCP client, tool authorization, and web-model tool loop
 
 ## Outcome
 
@@ -160,9 +160,9 @@ The CLI remains the human, scripting, diagnostics, and recovery interface. MCP b
 
 MCP does not make provider-specific semantics generic. It lets the router hide them behind a capability-first interface.
 
-This roadmap uses MCP in the northbound direction: Tokenless is an MCP server called by Codex or another agent host. It does not own the separate southbound role in which Tokenless is the MCP host/client executing tools requested by a web model. That role, its credentials, approvals, tool schemas, and durable loop belong to [Web Agent Harness and Tool Runtime](P0-web-agent-harness-and-tool-runtime.md).
+This roadmap uses MCP only as a northbound transport: Tokenless is an MCP server called by Codex or another agent host. It does not own the separate southbound role in which the Web Agent Harness is the MCP host/client executing tools requested by a web model. That role, its credentials, approvals, tool schemas, and durable loop belong to [Web Agent Harness](P0-web-agent-harness.md).
 
-This roadmap is therefore an integration interface, not an early Agent Harness. Its provider-capability tools and routing skill expose the Provider Integration project's durable web operations. The caller-side skill teaches Codex or another external agent how to use those operations; it is distinct from Harness skills injected into a web-model AgentRun. When the separate harness package is available, agent-run tools call that package through its public interface; they do not move harness logic into this MCP adapter. Caller-specific lifecycle adapters may later ship beside the harness, but the provider runtime remains independently usable.
+This roadmap is therefore an integration interface, not an early Agent Harness. Its tools expose the Web Provider layer's durable web operations and bind them to an external session. It does not inject skills into the web model, teach the web model an MCP calling protocol, execute the requested MCP tools, return their results to the provider conversation, or own the agent loop. When the separate harness package is available, an agent-run interface calls that package; harness logic does not move into this P1 adapter.
 
 ## Minimal MCP Tool Surface
 
