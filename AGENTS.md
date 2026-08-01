@@ -27,8 +27,9 @@
 
 ## Roadmap lifecycle
 
-- Directory defines state: `docs/roadmaps/*.md` is active, `docs/roadmaps/backlog/*.md` accepted but inactive, and `docs/roadmaps/archived/*.md` completed, superseded, cancelled, or abandoned. Exclude each `README.md`.
-- Keep `docs/roadmaps/README.md` synchronized with every roadmap add, rename, move, or state change.
+- Directory defines state: `docs/roadmaps/P[0-3]-*.md` is active, `docs/roadmaps/backlog/P[0-3]-*.md` accepted but inactive, and `docs/roadmaps/archived/P[0-3]-*.md` completed, superseded, cancelled, or abandoned. Exclude each `README.md`.
+- Name every roadmap `P0-<name>.md`, `P1-<name>.md`, `P2-<name>.md`, or `P3-<name>.md`; the filename prefix must match the document's declared priority.
+- Keep `docs/roadmaps/README.md` synchronized with every roadmap add, rename, priority change, move, or state change, and update all repository links when a priority change renames a roadmap.
 - On moves, update all links and lifecycle notes, name any replacement, and preserve history except factual corrections.
 - Use no `active/` directory or roadmap location outside these three states.
 

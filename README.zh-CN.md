@@ -54,15 +54,23 @@ npm install --global tokenless@latest
 tokenless setup
 ```
 
-安装 npm package 只是第一步。使用 Tokenless 前必须完成 `tokenless setup`；它会选择并验证精确的 browser runtime，创建或导入与其兼容的 browser profile，准备本地运行环境，并检查所有已启用的 providers。默认的 `auto` 会优先使用用户已经安装的 Chrome-family browser；如果没有可用浏览器，setup 才会 lazy download 由 Tokenless 管理的 Chrome for Testing 145。CloakBrowser 必须由用户在 setup 中显式选择，并从 Cloak 官方 release 下载到 Tokenless 私有 cache；它采用单独许可的 binary 不会进入 Tokenless npm package 或 release artifact。
+交互式 setup 会先询问是否使用 Anti-Detect 模式，再询问哪些 provider 属于当前 managed profile。它只检查这些 provider，为每个 provider 保留一个 headed 页面供用户直接审核登录状态，并在一个保留标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
 
-每个 managed profile 都会绑定创建它的 browser runtime。Tokenless 不会把 system-browser profile 静默改用 Cloak 或 managed fallback 打开；切换 runtime family 时会创建 clean profile，而且当前不支持把完整 Chrome profile 导入 Cloak。
+```bash
+tokenless dashboard
+```
 
-首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制面向用户的 CLI 文案和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可通过 `tokenless config --language en` 或 `tokenless config --language zh-CN` 修改。
+控制台只由 loopback daemon 提供，可管理浏览器身份、profile 级 provider 路由、可见就绪状态与控件、能力目录、持久任务、用户接管和脱敏诊断信息。浏览器 JavaScript 不会拿到 daemon bearer token 或 provider 登录信息；`tokenless dashboard` 通过一次性 bootstrap ticket 建立短期本地 UI session。
+
+安装 npm package 只是第一步。使用 Tokenless 前必须完成 `tokenless setup`；它会选择并验证精确的 browser runtime，创建或复用 clean 且绑定 runtime 的 browser profile，准备本地运行环境，检查所有已启用的 providers，并为每个 provider 打开一个审核 tab。默认的 `auto` 会优先使用用户已经安装的 Chrome-family browser；如果没有可用浏览器，setup 才会 lazy download 由 Tokenless 管理的 Chrome for Testing 145。Anti-Detect 模式会选择 CloakBrowser，非交互流程也可使用 `--anti-detect`。Cloak 会从官方 release 下载到 Tokenless 私有 cache；采用单独许可的 binary 不会进入 Tokenless npm package 或 release artifact。
+
+每个 managed profile 都会绑定创建它的 browser runtime。Tokenless 不会把 system-browser profile 静默改用 Cloak 或 managed fallback 打开；切换 runtime family 会创建 clean profile。Tokenless 不会把现有 Chrome、Brave 或 Cloak profile 及其中的 cookies 和认证状态复制进 managed profile。请打开 clean managed profile 并在其中手动登录；之后由浏览器自己跨 job 保留 session。
+
+首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制 CLI、控制台和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可在控制台中修改，也可运行 `tokenless config --language en` 或 `tokenless config --language zh-CN`。
 
 为评估 browser capability，config 文件接受实验性的 `browserConnectionMode: "playwright" | "cdp"`；默认值为 `playwright`，不提供 CLI flag，并在 daemon 重启后生效。
 
-需要 Node.js 22.13+。Browser runtime management 当前支持 Apple Silicon Mac 和 Windows x64；Windows x64 同时覆盖 Intel 与 AMD CPU。
+需要 Node.js 22.13+。首批 browser runtime 目标平台是 Apple Silicon Mac 和 Windows x64；Windows x64 同时覆盖 Intel 与 AMD CPU。Windows 在真机 gate 通过前仍属于 prerelease。
 
 ## 执行
 

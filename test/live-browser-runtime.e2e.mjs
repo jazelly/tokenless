@@ -6,6 +6,9 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { BrowserRuntimeManager } from '../packages/cli/dist/src/browser-runtime/manager.js'
+import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const enabled = process.env.TOKENLESS_LIVE_BROWSER_RUNTIME_GATE === '1'
@@ -32,18 +35,21 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
     ...process.env,
     TOKENLESS_SETUP_SKILL_HOME: skillHome,
   }
+  const ownedDaemonPids = new Set()
   try {
     await fs.mkdir(skillHome, { recursive: true, mode: 0o700 })
 
     const automatic = await runCli([
       'install', '--browser', 'auto', '--home', homeDir, '--json',
     ], env)
+    rememberDaemonPid(ownedDaemonPids, automatic)
     assert.equal(automatic.ok, true)
     assert.equal(automatic.browser.family, expectedAutoFamily)
 
     const managed = await runCli([
       'install', '--browser', 'managed-chromium', '--home', homeDir, '--json',
     ], env)
+    rememberDaemonPid(ownedDaemonPids, managed)
     assert.equal(managed.ok, true)
     assert.equal(managed.browser.family, 'managed-chromium')
     assert.match(managed.browser.runtimeId, /^managed-chromium:/)
@@ -57,6 +63,7 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
     const cloak = await runCli([
       'install', '--browser', 'cloak', '--home', homeDir, '--json',
     ], env)
+    rememberDaemonPid(ownedDaemonPids, cloak)
     assert.equal(cloak.ok, true)
     assert.equal(cloak.browser.family, 'cloak')
     assert.match(cloak.browser.runtimeId, /^cloak:/)
@@ -70,6 +77,7 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
     const repaired = await runCli([
       'install', '--browser', 'cloak', '--repair-browser', '--home', homeDir, '--json',
     ], env)
+    rememberDaemonPid(ownedDaemonPids, repaired)
     assert.equal(repaired.ok, true)
     assert.equal(repaired.browser.runtimeId, cloak.browser.runtimeId)
 
@@ -78,11 +86,142 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
     assert.equal(doctor.checks.browser.runtimeId, cloak.browser.runtimeId)
     assert.equal(doctor.checks.managedProfile.runtime.ok, true)
     assert.equal(doctor.checks.managedProfile.runtime.runtime.runtimeId, cloak.browser.runtimeId)
+    assert.equal(doctor.checks.profileRuntime.ok, true)
+    assert.equal(doctor.checks.profileRuntime.runtime.runtimeId, cloak.browser.runtimeId)
+
+    await runNegativeRuntimeAcceptance({
+      homeDir,
+      env,
+      ownedDaemonPids,
+    })
   } finally {
     await runCli(['daemon', 'stop', '--home', homeDir, '--json'], env, { allowFailure: true }).catch(() => undefined)
+    await stopOwnedDaemonProcesses(ownedDaemonPids)
     await fs.rm(homeDir, { recursive: true, force: true })
   }
 })
+
+async function runNegativeRuntimeAcceptance({ homeDir, env, ownedDaemonPids }) {
+  await runCli(['daemon', 'stop', '--home', homeDir, '--json'], env, { allowFailure: true })
+  await stopOwnedDaemonProcesses(ownedDaemonPids)
+
+  const runtimeManager = new BrowserRuntimeManager({ homeDir })
+  const cloak = await runtimeManager.ensure('cloak', { allowDownload: false })
+  const runtimeDirectory = path.join(
+    runtimeManager.runtimesRoot,
+    cloak.family,
+    cloak.platform,
+    cloak.artifactVersion,
+  )
+  const manifestPath = path.join(runtimeDirectory, 'runtime.json')
+  const configPath = path.join(homeDir, 'config.json')
+  const registryPath = path.join(homeDir, 'browser', 'profiles.json')
+  const originalManifest = await fs.readFile(manifestPath)
+  const configBeforeCacheChecks = await fs.readFile(configPath)
+  const registryBeforeCacheChecks = await fs.readFile(registryPath)
+  try {
+    const parsed = JSON.parse(originalManifest.toString('utf8'))
+    for (const mutation of [
+      { field: 'sha256', value: '0'.repeat(64) },
+      { field: 'browserVersion', value: '0.0.0.0' },
+    ]) {
+      await fs.writeFile(manifestPath, `${JSON.stringify({ ...parsed, [mutation.field]: mutation.value }, null, 2)}\n`, { mode: 0o600 })
+      await assert.rejects(
+        new BrowserRuntimeManager({ homeDir }).ensure('cloak', { allowDownload: false }),
+        (error) => error?.code === 'browser_runtime_cache_invalid',
+      )
+      assert.deepEqual(await fs.readFile(configPath), configBeforeCacheChecks)
+      assert.deepEqual(await fs.readFile(registryPath), registryBeforeCacheChecks)
+      await fs.writeFile(manifestPath, originalManifest, { mode: 0o600 })
+    }
+  } finally {
+    await fs.writeFile(manifestPath, originalManifest, { mode: 0o600 })
+  }
+
+  const automatic = await runtimeManager.ensure('auto', { allowDownload: false })
+  const negativeEnv = {
+    ...env,
+    TOKENLESS_BROWSER_EXECUTABLE: automatic.executablePath,
+  }
+  const registry = new ManagedProfileRegistry(homeDir)
+  const cases = [
+    {
+      slug: 'runtime-mismatch',
+      expectedCode: 'profile_runtime_mismatch',
+      binding: {
+        runtimeId: 'test:mismatched-profile',
+        family: 'test',
+        browserId: 'profile',
+        createdWithVersion: automatic.actualVersion,
+        profileFormat: 1,
+      },
+    },
+    {
+      slug: 'runtime-downgrade',
+      expectedCode: 'profile_browser_downgrade_blocked',
+      binding: {
+        runtimeId: 'test:profile',
+        family: 'test',
+        browserId: 'profile',
+        createdWithVersion: '999.0.0.0',
+        profileFormat: 1,
+      },
+    },
+  ]
+  for (const entry of cases) {
+    const profile = await registry.addProfile({
+      slug: entry.slug,
+      lifecycle: 'ready',
+      setDefault: true,
+      runtimeBinding: entry.binding,
+    })
+    const configBefore = await fs.readFile(configPath)
+    const registryBefore = await fs.readFile(registryPath)
+    const profileEntriesBefore = await fs.readdir(profile.directory)
+    const result = await runCli([
+      'profiles', 'open', '--profile', profile.slug, '--home', homeDir, '--json',
+    ], negativeEnv, { allowFailure: true })
+    assert.equal(result.ok, false)
+    assert.equal(result.error?.code, entry.expectedCode)
+    assert.deepEqual(await fs.readFile(configPath), configBefore)
+    assert.deepEqual(await fs.readFile(registryPath), registryBefore)
+    assert.deepEqual(await fs.readdir(profile.directory), profileEntriesBefore)
+    await runCli(['daemon', 'stop', '--home', homeDir, '--json'], negativeEnv, { allowFailure: true })
+  }
+}
+
+function rememberDaemonPid(ownedDaemonPids, payload) {
+  if (Number.isSafeInteger(payload?.daemon?.pid) && payload.daemon.pid > 0) {
+    ownedDaemonPids.add(payload.daemon.pid)
+  }
+}
+
+async function stopOwnedDaemonProcesses(ownedDaemonPids) {
+  const living = [...ownedDaemonPids].filter(processIsAlive)
+  for (const pid of living) signalProcess(pid, 'SIGTERM')
+  const deadline = Date.now() + 5_000
+  while (living.some(processIsAlive) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  for (const pid of living.filter(processIsAlive)) signalProcess(pid, 'SIGKILL')
+}
+
+function signalProcess(pid, signal) {
+  try {
+    process.kill(pid, signal)
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error
+  }
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 async function runCli(args, env, { allowFailure = false } = {}) {
   const result = await new Promise((resolvePromise, reject) => {

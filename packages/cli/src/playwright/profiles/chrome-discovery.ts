@@ -10,10 +10,12 @@ export type ChromeProfileCandidate = {
   profileDir: string
   name: string
   isDefault: boolean
+  browserVersion: string | null
 }
 
 export type ChromeUserDataRoot = {
   userDataDir: string
+  browserVersion: string | null
   profiles: readonly ChromeProfileCandidate[]
 }
 
@@ -60,7 +62,7 @@ export async function discoverChromeProfiles(options: { userDataDirs?: readonly 
     browser: 'chrome',
     ...(options.userDataDirs ? { userDataDirs: options.userDataDirs } : {}),
   })
-  return roots.map(({ userDataDir, profiles }) => ({ userDataDir, profiles }))
+  return roots.map(({ userDataDir, browserVersion, profiles }) => ({ userDataDir, browserVersion, profiles }))
 }
 
 export async function discoverChromiumProfiles(options: {
@@ -76,13 +78,15 @@ export async function discoverChromiumProfiles(options: {
       await access(localStatePath)
       const parsed = JSON.parse(await readFile(localStatePath, 'utf8')) as unknown
       const profileCache = readProfileCache(parsed)
+      const browserVersion = await readChromeProfileVersion(userDataDir)
       const profiles: ChromeProfileCandidate[] = []
       for (const [directoryKey, metadata] of Object.entries(profileCache)) {
-        const candidate = await chromeProfileCandidate(userDataDir, directoryKey, metadata)
+        const candidate = await chromeProfileCandidate(userDataDir, directoryKey, metadata, browserVersion)
         if (candidate) profiles.push(candidate)
       }
       discovered.push({
         userDataDir,
+        browserVersion,
         profiles: profiles.sort((left, right) => left.directoryKey.localeCompare(right.directoryKey)),
       })
     } catch (error) {
@@ -106,12 +110,24 @@ export async function resolveChromeProfile(userDataDir: string, directoryKey: st
   }
   const state = await readChromeLocalState(root)
   const metadata = readProfileCache(state)[key] ?? {}
+  const browserVersion = await readChromeProfileVersion(root)
   return {
     userDataDir: root,
     directoryKey: key,
     profileDir,
     name: typeof metadata.name === 'string' && metadata.name.trim() ? metadata.name.trim() : key,
     isDefault: metadata.is_using_default_name === true || key === 'Default',
+    browserVersion,
+  }
+}
+
+export async function readChromeProfileVersion(userDataDir: string): Promise<string | null> {
+  try {
+    const value = (await readFile(resolve(userDataDir, 'Last Version'), 'utf8')).trim()
+    return /^\d+(?:\.\d+){1,3}$/.test(value) ? value : null
+  } catch (error) {
+    if (isIgnorableDiscoveryError(error)) return null
+    throw error
   }
 }
 
@@ -160,7 +176,12 @@ function readProfileCache(localState: unknown): Record<string, Record<string, un
   return cache
 }
 
-async function chromeProfileCandidate(userDataDir: string, directoryKey: string, metadata: Record<string, unknown>): Promise<ChromeProfileCandidate | null> {
+async function chromeProfileCandidate(
+  userDataDir: string,
+  directoryKey: string,
+  metadata: Record<string, unknown>,
+  browserVersion: string | null,
+): Promise<ChromeProfileCandidate | null> {
   let key: string
   try {
     key = validateChromeProfileDirectoryKey(directoryKey)
@@ -181,6 +202,7 @@ async function chromeProfileCandidate(userDataDir: string, directoryKey: string,
     profileDir,
     name: typeof metadata.name === 'string' && metadata.name.trim() ? metadata.name.trim() : key,
     isDefault: metadata.is_using_default_name === true || key === 'Default',
+    browserVersion,
   }
 }
 

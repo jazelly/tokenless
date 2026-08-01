@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import {
   claimRecoveryError,
   errorResponse,
@@ -25,6 +26,7 @@ import {
 import { getVisibleActionLifecycle } from '../providers/action-catalog.js'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersion } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
+import { readTokenlessConfig } from '../job-store.js'
 import { getProviderInstanceById } from '../providers/registry.js'
 import type {
   ManagedBrowserContext,
@@ -83,6 +85,11 @@ export type ManagedProfileOpenResult = {
   browserVisibility: BrowserVisibility
   effectiveBrowserVisibility: Exclude<BrowserVisibility, 'auto'>
   pageCount: number
+}
+
+export type ManagedControlPlaneOpenResult = ManagedProfileOpenResult & {
+  url: string
+  reused: boolean
 }
 
 type RunnerCheckpointPhase =
@@ -158,12 +165,29 @@ export class ManagedPlaywrightRunnerService {
   private readonly cleanupAttachmentRoot: boolean
   private readonly now: () => Date
   private readonly e2eInspection: E2EBrowserInspectionConfig | null
+  private readonly controlPlanePageKey: string
   private readonly inFlightProfiles = new Set<string>()
   private readonly inFlightJobs = new Set<Promise<void>>()
   private stopped = false
 
   constructor(options: ManagedPlaywrightRunnerServiceOptions) {
-    this.profileRegistry = options.profileRegistry ?? new ManagedProfileRegistry(options.homeDir)
+    if (options.profileRegistry) {
+      this.profileRegistry = options.profileRegistry
+    } else {
+      const registry = new ManagedProfileRegistry(options.homeDir)
+      this.profileRegistry = {
+        listProfiles: async () => {
+          const [profiles, config] = await Promise.all([
+            registry.listProfiles(),
+            readTokenlessConfig(options.homeDir),
+          ])
+          return profiles.map((profile) => ({
+            ...profile,
+            proxy: config.profilePreferences[profile.slug]?.proxy ?? null,
+          }))
+        },
+      }
+    }
     this.daemonClient = options.daemonClient
     this.contextManager = options.contextManager ?? new PersistentContextManager({
       connectionMode: options.browserConnectionMode ?? 'playwright',
@@ -186,6 +210,8 @@ export class ManagedPlaywrightRunnerService {
     this.cleanupAttachmentRoot = options.cleanupAttachmentRoot ?? true
     this.now = options.now ?? (() => new Date())
     this.e2eInspection = resolveE2EBrowserInspectionConfig(options.homeDir)
+    const homeIdentity = createHash('sha256').update(path.resolve(options.homeDir ?? '.')).digest('base64url').slice(0, 20)
+    this.controlPlanePageKey = `tokenless:control-plane:${homeIdentity}`
   }
 
   stop() {
@@ -216,6 +242,34 @@ export class ManagedPlaywrightRunnerService {
       browserVisibility: managedContext.browserVisibility,
       effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
       pageCount: pages.length,
+    }
+  }
+
+  async openControlPlane(profileId: string, bootstrapUrl: string): Promise<ManagedControlPlaneOpenResult> {
+    const parsed = new URL(bootstrapUrl)
+    if (
+      parsed.protocol !== 'http:' ||
+      parsed.username ||
+      parsed.password ||
+      !(parsed.hostname === 'localhost' || parsed.hostname === '::1' || parsed.hostname.startsWith('127.'))
+    ) {
+      throw tokenlessError('invalid_control_plane_url', 'Control-plane URL must use a loopback HTTP origin.')
+    }
+    const profile = (await this.profileRegistry.listProfiles())
+      .find((candidate) => candidate.id === profileId && (candidate.lifecycle === undefined || candidate.lifecycle === 'ready'))
+    if (!profile) throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
+    const managedContext = await this.contextManager.ensureContext(profile, 'headed')
+    const page = await managedContext.acquireReservedPage({ key: this.controlPlanePageKey, policy: 'preserve' })
+    const reused = page.url() !== 'about:blank'
+    await page.goto(parsed.toString(), { waitUntil: 'domcontentloaded' })
+    await bringToFront(page)
+    return {
+      profileId: profile.id,
+      browserVisibility: managedContext.browserVisibility,
+      effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
+      pageCount: managedContext.browserContext.pages().length,
+      url: page.url(),
+      reused,
     }
   }
 
@@ -493,6 +547,7 @@ export class ManagedPlaywrightRunnerService {
           profileDirectory: profile.directory,
           provider: request.provider,
           url: page.url(),
+          targetId: await chromiumTargetId(managedContext.browserContext, page),
           signal,
         })
       }
@@ -807,6 +862,16 @@ export class ManagedPlaywrightRunnerService {
       await delay(Math.min(options.pollMs, Math.max(1, deadline - Date.now())), options.signal)
     }
     throw tokenlessError('playwright_response_timeout', 'Timed out waiting for a new visible provider response.', { retryable: true })
+  }
+}
+
+async function chromiumTargetId(browserContext: BrowserContext, page: Page) {
+  const session = await browserContext.newCDPSession(page)
+  try {
+    const result = await session.send('Target.getTargetInfo')
+    return result.targetInfo.targetId
+  } finally {
+    await session.detach().catch(() => undefined)
   }
 }
 

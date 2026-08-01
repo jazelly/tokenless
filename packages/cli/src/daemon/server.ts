@@ -21,6 +21,9 @@ import {
   type DaemonError,
 } from './errors.js'
 import { JobStore, publicView, type ExecutionBackend, type JobStatus } from './job-store.js'
+import { TokenlessApplicationServices } from '../application/services.js'
+import { TokenlessUiServer } from './ui-server.js'
+import { UiSessionManager } from './ui-session.js'
 
 export type DaemonServer = {
   activate(): void
@@ -70,8 +73,21 @@ export async function serveHttp({
     closePromise ??= closeServer(server, store, beforeClose)
     return closePromise
   }
-  const server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, request, response)
+  const startedAt = Date.now()
+  let server: http.Server
+  const origin = () => serverOrigin(host, serverPort(server, port))
+  const uiServer = new TokenlessUiServer({
+    services: new TokenlessApplicationServices({
+      store,
+      runtimeController,
+      origin,
+      startedAt,
+    }),
+    sessions: new UiSessionManager(),
+    origin,
+  })
+  server = http.createServer((request, response) => {
+    void handleRequest(store, close, () => active, deactivate, runtimeController, uiServer, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -133,6 +149,7 @@ async function handleRequest(
   isActive: () => boolean,
   deactivate: () => void,
   runtimeController: BrowserRuntimeController | undefined,
+  uiServer: TokenlessUiServer,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -164,7 +181,40 @@ async function handleRequest(
       return
     }
 
+    if (url.pathname === '/ui' || url.pathname.startsWith('/ui/')) {
+      try {
+        await uiServer.handle(request, response, url)
+      } catch (error) {
+        uiServer.writeError(response, error)
+      }
+      return
+    }
+
+    if (url.pathname.startsWith('/ui-api/v1/')) {
+      try {
+        await uiServer.handle(request, response, url)
+      } catch (error) {
+        uiServer.writeError(response, error)
+      }
+      return
+    }
+
     requireControlAuth(store, request)
+
+    if (method === 'POST' && url.pathname === '/control/ui-bootstrap') {
+      const rawBody = await readBody(request)
+      const body = rawBody ? parseJsonObject(rawBody) : {}
+      if (Object.keys(body).some((key) => key !== 'profile_id' && key !== 'open')) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
+      const ticket = uiServer.mintTicket()
+      const profileId = optionalString(body.profile_id)
+      const opened = body.open === true && profileId
+        ? await runtimeController?.openControlPlane(profileId, ticket.bootstrapUrl)
+        : null
+      writeJson(response, 200, { ...ticket, opened })
+      return
+    }
 
     if (method === 'GET' && url.pathname === '/control/browser-runtime/status') {
       writeJson(response, 200, browserRuntimeStatus(runtimeController))

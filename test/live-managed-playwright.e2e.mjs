@@ -34,12 +34,17 @@ const handlers = {
   'native-project': nativeProject,
 }
 
-const selectedCases = Object.entries(matrix.providers)
-  .flatMap(([provider, declaration]) => declaration.required
-    .filter((caseId) => gate === 'all' || matrix.cases[caseId].gate === gate)
-    .map((caseId) => ({ provider, caseId, caseGate: matrix.cases[caseId].gate })))
+const selectedProviders = Object.entries(matrix.providers)
+  .map(([provider, declaration]) => ({
+    provider,
+    declaration,
+    caseIds: declaration.required.filter(
+      (caseId) => gate === 'all' || matrix.cases[caseId].gate === gate,
+    ),
+  }))
+  .filter(({ caseIds }) => caseIds.length > 0)
 
-assert.ok(selectedCases.length > 0, `TOKENLESS_LIVE_E2E_GATE=${gate} selected no required cases`)
+assert.ok(selectedProviders.length > 0, `TOKENLESS_LIVE_E2E_GATE=${gate} selected no required providers`)
 let sharedSession
 let originalBrowserConnectionMode
 
@@ -67,57 +72,76 @@ test.after(async () => {
   }
 })
 
-for (const { provider, caseId, caseGate } of selectedCases) {
-  test(`real provider ${provider}: ${caseId}`, { timeout: 1_200_000 }, async (t) => {
-    const handler = handlers[caseId]
-    assert.equal(typeof handler, 'function', `missing real E2E handler for ${caseId}`)
+for (const { provider, declaration, caseIds } of selectedProviders) {
+  test(`real provider ${provider}: ${gate} journey`, { timeout: 1_200_000 }, async (t) => {
     const session = sharedSession
     assert.ok(session, 'shared live E2E browser session must be initialized')
-    submissionTrackers.set(session, {
-      attempts: 0,
-      budget: matrix.cases[caseId].submissions,
-      caseId,
-    })
-    try {
-      if (caseGate !== 'non_submission' && matrix.providers[provider].account === 'signed_in_selected_setup_profile') {
-        await requireSignedInSelectedProfile(provider, session)
-      }
-      await handler({ provider, declaration: matrix.providers[provider], session })
-      assertSubmissionBudget(session)
-    } catch (error) {
-      if (isKnownIssueSkip(error)) {
-        t.skip(error.message)
-        return
-      }
-      throw error
+    const journey = createProviderJourney(session, provider)
+    for (const caseId of caseIds) {
+      await t.test(`${provider}: ${caseId}`, { timeout: 1_200_000 }, async (step) => {
+        if (journey.skipReason) {
+          step.skip(journey.skipReason)
+          return
+        }
+        const handler = handlers[caseId]
+        assert.equal(typeof handler, 'function', `missing real E2E handler for ${caseId}`)
+        submissionTrackers.set(journey, {
+          attempts: 0,
+          budget: matrix.cases[caseId].submissions,
+          caseId,
+        })
+        try {
+          if (
+            matrix.cases[caseId].gate !== 'non_submission' &&
+            declaration.account === 'signed_in_selected_setup_profile' &&
+            !journey.authenticated
+          ) {
+            await requireSignedInSelectedProfile(journey)
+          }
+          await handler({ provider, declaration, journey })
+          assertSubmissionBudget(journey)
+        } catch (error) {
+          if (isKnownIssueSkip(error)) {
+            journey.skipReason = `${caseId}: ${error.message}`
+            step.skip(journey.skipReason)
+            return
+          }
+          throw Object.assign(
+            new Error(`${provider} journey step ${caseId}: ${error instanceof Error ? error.message : String(error)}`),
+            { cause: error },
+          )
+        }
+      })
     }
   })
 }
 
-async function requireSignedInSelectedProfile(provider, session) {
-  const auth = await action(session, provider, 'auth.status')
+async function requireSignedInSelectedProfile(journey) {
+  const auth = await journey.action('auth.status')
   const result = responseResult(auth.payload, 'auth.status')
   await auth.close()
   const signedIn = result?.state === 'authenticated' || String(result?.access ?? '').startsWith('signed_in_')
   if (!signedIn) {
     throw e2eFailure(
       'e2e_provider_auth_unavailable',
-      `${provider} selected setup profile is not authenticated`,
+      `${journey.provider} selected setup profile is not authenticated`,
     )
   }
+  journey.authenticated = true
 }
 
-async function sessionReadiness({ provider, declaration, session }) {
-  const auth = await action(session, provider, 'auth.status')
+async function sessionReadiness({ provider, declaration, journey }) {
+  const auth = await journey.action('auth.status')
   const authResult = responseResult(auth.payload, 'auth.status')
   await auth.close()
-  const capabilities = await action(session, provider, 'capability.inspect')
+  const capabilities = await journey.action('capability.inspect')
   const capabilityResult = responseResult(capabilities.payload, 'capability.inspect')
-  const navigation = await action(session, provider, 'navigation.check')
+  const navigation = await journey.action('navigation.check')
   assert.equal(responseResult(navigation.payload, 'navigation.check')?.allowed, true)
-  const blocker = await action(session, provider, 'blocker.check')
+  const blocker = await journey.action('blocker.check')
   const blockerResult = responseResult(blocker.payload, 'blocker.check')
   assert.equal(blockerResult?.blocked, false)
+  await Promise.all([capabilities.close(), navigation.close(), blocker.close()])
   const signedIn = authResult?.state === 'authenticated' || String(authResult?.access ?? '').startsWith('signed_in_')
   const guestReady = authResult?.access === 'guest' ||
     blockerResult?.observation?.composerVisible === true ||
@@ -131,11 +155,12 @@ async function sessionReadiness({ provider, declaration, session }) {
       `${provider} selected setup profile does not satisfy ${declaration.account}`,
     )
   }
+  journey.authenticated = signedIn
 }
 
-async function promptDraft({ provider, session }) {
+async function promptDraft({ provider, journey }) {
   const marker = markerFor(provider, 'DRAFT')
-  const input = await action(session, provider, 'prompt.input', ['--prompt', marker])
+  const input = await journey.action('prompt.input', ['--prompt', marker])
   assert.deepEqual(responseResult(input.payload, 'prompt.input'), {
     visible: true,
     inputProof: 'prompt-text-visible',
@@ -143,12 +168,13 @@ async function promptDraft({ provider, session }) {
   assert.equal(await composerContains(input.page, marker), true, `${provider} observer must see the unique draft`)
   await input.close()
 
-  const clear = await action(session, provider, 'prompt.clear')
+  const clear = await journey.action('prompt.clear')
   assert.deepEqual(responseResult(clear.payload, 'prompt.clear'), {
     visible: true,
     inputProof: 'empty',
   })
   assert.equal(await composerContains(clear.page, marker), false, `${provider} observer must see the draft removed`)
+  await clear.close()
 }
 
 async function modelChoice(context) {
@@ -159,9 +185,9 @@ async function effortChoice(context) {
   await choiceCase(context, 'effort')
 }
 
-async function qwenModeWorkspace({ provider, session }) {
+async function qwenModeWorkspace({ provider, journey }) {
   assert.equal(provider, 'qwen')
-  const inspected = await action(session, provider, 'qwen.mode.inspect')
+  const inspected = await journey.action('qwen.mode.inspect')
   const inspection = responseResult(inspected.payload, 'qwen.mode.inspect')
   assert.equal(inspection?.supported, true)
   assert.deepEqual(inspection?.active, { mode: 'Chat', variant: null })
@@ -173,10 +199,8 @@ async function qwenModeWorkspace({ provider, session }) {
   await inspected.close()
 
   const name = markerFor(provider, 'MODE_WORKSPACE')
-  const taskId = markerFor(provider, 'MODE_WORKSPACE_TASK')
   const marker = markerFor(provider, 'DEEP_RESEARCH')
-  const run = await cliRun(session, provider, [
-    '--task-id', taskId,
+  const run = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
     '--qwen-mode', 'Deep Research',
@@ -200,10 +224,10 @@ async function qwenModeWorkspace({ provider, session }) {
   })
   assert.equal(run.observerResult, true, 'Qwen observer must see Deep Research Advanced selected')
   assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
-  assertConversationWorkspaceResult(provider, taskId, run)
+  assertConversationWorkspaceResult(provider, journey.taskId, run)
   await run.close()
 
-  const restored = await action(session, provider, 'qwen.mode.select', ['--qwen-mode', 'Chat'])
+  const restored = await journey.action('qwen.mode.select', ['--qwen-mode', 'Chat'])
   assert.deepEqual(responseResult(restored.payload, 'qwen.mode.select'), {
     supported: true,
     selectedMode: 'Chat',
@@ -211,12 +235,13 @@ async function qwenModeWorkspace({ provider, session }) {
     visibleProof: 'qwen-chat-mode-visible',
   })
   assert.equal(await exactTextVisible(restored.page, 'Auto'), true)
+  await restored.close()
 }
 
-async function choiceCase({ provider, session }, kind) {
+async function choiceCase({ provider, journey }, kind) {
   const inspectAction = `${kind}.inspect`
   const selectAction = `${kind}.select`
-  const inspect = await action(session, provider, inspectAction)
+  const inspect = await journey.action(inspectAction)
   const result = responseResult(inspect.payload, inspectAction)
   assert.equal(result?.supported, true, `${provider} ${inspectAction} must be supported`)
   const selected = result.choices.find((choice) => choice.selected && choice.enabled)
@@ -226,37 +251,38 @@ async function choiceCase({ provider, session }, kind) {
   await inspect.close()
 
   const option = kind === 'model' ? '--model' : '--effort'
-  const changed = await action(session, provider, selectAction, [option, alternate.label])
+  const changed = await journey.action(selectAction, [option, alternate.label])
   try {
     assert.equal(responseResult(changed.payload, selectAction)?.selectedLabel, alternate.label)
     assert.equal(await exactTextVisible(changed.page, alternate.label), true, `${provider} observer must see selected ${kind}`)
   } finally {
     await changed.close()
-    const restored = await action(session, provider, selectAction, [option, selected.label])
+    const restored = await journey.action(selectAction, [option, selected.label])
     assert.equal(responseResult(restored.payload, selectAction)?.selectedLabel, selected.label)
+    await restored.close()
   }
 }
 
-async function fileSelection({ provider, session }) {
+async function fileSelection({ provider, journey }) {
   const name = `${markerFor(provider, 'ATTACHMENT')}.txt`
   const file = path.join(root, 'test-results', 'live-provider-inputs', name)
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
   await fs.writeFile(file, `${name}\n`, { mode: 0o600 })
   try {
-    const uploaded = await action(session, provider, 'file.upload', ['--attach-file', file], 180_000)
+    const uploaded = await journey.action('file.upload', ['--attach-file', file], 180_000)
     const result = responseResult(uploaded.payload, 'file.upload')
     assert.ok(result?.attachments?.some((attachment) => attachment.name === name))
     assert.equal(await exactTextVisible(uploaded.page, name), true, `${provider} observer must see selected attachment`)
     await uploaded.close()
-    await action(session, provider, 'prompt.clear')
+    const cleared = await journey.action('prompt.clear')
+    await cleared.close()
   } finally {
     await fs.rm(file, { force: true })
   }
 }
 
-async function conversationWorkflow({ provider, session }) {
+async function conversationWorkflow({ provider, journey }) {
   const name = markerFor(provider, 'CONVERSATION_WORKFLOW')
-  const taskId = markerFor(provider, 'CONVERSATION_WORKFLOW_TASK')
   const attachmentMarker = markerFor(provider, 'ATTACHMENT')
   const responseMarker = markerFor(provider, 'TURN_ONE_RESPONSE')
   const contextSecret = markerFor(provider, 'CONTEXT_SECRET')
@@ -265,8 +291,7 @@ async function conversationWorkflow({ provider, session }) {
   await fs.mkdir(path.dirname(attachment), { recursive: true, mode: 0o700 })
   await fs.writeFile(attachment, `${attachmentMarker}\n`, { mode: 0o600 })
   try {
-    const first = await cliRun(session, provider, [
-      '--task-id', taskId,
+    const first = await journey.run([
       '--project-name', name,
       '--workspace-mode', 'conversation',
       '--attach-file', attachment,
@@ -289,11 +314,10 @@ async function conversationWorkflow({ provider, session }) {
     assert.equal(await pageContains(first.page, responseMarker, 2), true)
     assert.ok(Array.isArray(citations) && citations.length > 0, `${provider} must return normalized real citations`)
     assert.ok(await visibleCitationCount(first.page, citations) > 0, `${provider} observer must see a returned citation link`)
-    const firstUrl = assertConversationWorkspaceResult(provider, taskId, first)
+    const firstUrl = assertConversationWorkspaceResult(provider, journey.taskId, first)
     await first.close()
 
-    const second = await cliRun(session, provider, [
-      '--task-id', taskId,
+    const second = await journey.run([
       '--project-name', name,
       '--workspace-mode', 'conversation',
       '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
@@ -301,18 +325,17 @@ async function conversationWorkflow({ provider, session }) {
     const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
     assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
     assert.equal(canonicalPageUrl(second.page.url()), firstUrl, `${provider} both CLI processes must share one exact conversation`)
-    assertTaskConversationMapping(provider, taskId, firstUrl, second.payload)
+    assertTaskConversationMapping(provider, journey.taskId, firstUrl, second.payload)
+    await second.close()
   } finally {
     await fs.rm(attachment, { force: true })
   }
 }
 
-async function workspaceResponseCitations({ provider, session }) {
+async function workspaceResponseCitations({ provider, journey }) {
   const name = markerFor(provider, 'WORKSPACE_RESPONSE')
-  const taskId = markerFor(provider, 'WORKSPACE_RESPONSE_TASK')
   const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
-  const run = await cliRun(session, provider, [
-    '--task-id', taskId,
+  const run = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
     '--prompt', `Include this exact marker: ${responseMarker}. Identify the official Node.js homepage and cite that official source.`,
@@ -322,15 +345,15 @@ async function workspaceResponseCitations({ provider, session }) {
   assert.equal(await pageContains(run.page, responseMarker, 2), true)
   assert.ok(Array.isArray(response?.citations) && response.citations.length > 0, `${provider} must return normalized real citations`)
   assert.ok(await visibleCitationCount(run.page, response.citations) > 0, `${provider} observer must see a returned citation link`)
-  assertConversationWorkspaceResult(provider, taskId, run)
+  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  await run.close()
 }
 
-async function nativeProject({ provider, session }) {
+async function nativeProject({ provider, journey }) {
   const projectName = markerFor(provider, 'PROJECT')
   const instructionMarker = markerFor(provider, 'PROJECT_INSTRUCTION')
   const instructions = `Include this exact marker in every response: ${instructionMarker}`
-  const taskId = markerFor(provider, 'PROJECT_TASK')
-  const created = await action(session, provider, 'workspace.ensure', [
+  const created = await journey.action('workspace.ensure', [
     '--project-name', projectName,
     '--workspace-mode', 'native',
     '--project-instructions', instructions,
@@ -343,7 +366,7 @@ async function nativeProject({ provider, session }) {
   const projectUrl = createdResult.resource.canonicalUrl
   await created.close()
 
-  const reused = await action(session, provider, 'workspace.ensure', [
+  const reused = await journey.action('workspace.ensure', [
     '--project-name', projectName,
     '--workspace-mode', 'native',
     '--project-instructions', instructions,
@@ -356,10 +379,10 @@ async function nativeProject({ provider, session }) {
 
   const controls = []
   if (matrix.providers[provider].required.includes('model-choice')) {
-    controls.push(await projectChoice(provider, session, projectUrl, 'model'))
+    controls.push(await projectChoice(provider, journey, projectUrl, 'model'))
   }
   if (matrix.providers[provider].required.includes('effort-choice')) {
-    controls.push(await projectChoice(provider, session, projectUrl, 'effort'))
+    controls.push(await projectChoice(provider, journey, projectUrl, 'effort'))
   }
 
   const firstMarker = markerFor(provider, 'PROJECT_TURN_ONE')
@@ -369,8 +392,7 @@ async function nativeProject({ provider, session }) {
   await fs.writeFile(attachment, `${firstMarker}\n`, { mode: 0o600 })
   let primaryError
   try {
-    const first = await cliRun(session, provider, [
-      '--task-id', taskId,
+    const first = await journey.run([
       '--project-name', projectName,
       '--project-instructions', instructions,
       '--workspace-mode', 'native',
@@ -393,8 +415,7 @@ async function nativeProject({ provider, session }) {
     await first.close()
 
     const secondMarker = markerFor(provider, 'PROJECT_TURN_TWO')
-    const second = await cliRun(session, provider, [
-      '--task-id', taskId,
+    const second = await journey.run([
       '--project-name', projectName,
       '--workspace-mode', 'native',
       '--prompt', `Reply with both the earlier file marker and this marker: ${secondMarker}`,
@@ -414,11 +435,12 @@ async function nativeProject({ provider, session }) {
       const conversation = database.prepare(
         `SELECT canonical_url FROM provider_conversations
          WHERE provider = ? AND profile_id = ? AND project_resource_id = ? AND task_id = ?`,
-      ).get(provider, createdResult.scope.profileId, project.resource_id, taskId)
+      ).get(provider, createdResult.scope.profileId, project.resource_id, journey.taskId)
       assert.equal(conversation?.canonical_url, conversationUrl)
     } finally {
       database.close()
     }
+    await second.close()
   } catch (error) {
     primaryError = error
     throw error
@@ -426,11 +448,12 @@ async function nativeProject({ provider, session }) {
     await fs.rm(attachment, { force: true })
     for (const control of controls) {
       try {
-        const restored = await action(session, provider, `${control.kind}.select`, [
+        const restored = await journey.action(`${control.kind}.select`, [
           '--target-url', projectUrl,
           control.option, control.original,
         ])
         assert.equal(responseResult(restored.payload, `${control.kind}.select`)?.selectedLabel, control.original)
+        await restored.close()
       } catch (error) {
         if (primaryError === undefined) throw error
       }
@@ -438,9 +461,9 @@ async function nativeProject({ provider, session }) {
   }
 }
 
-async function projectChoice(provider, session, targetUrl, kind) {
+async function projectChoice(provider, journey, targetUrl, kind) {
   const inspectAction = `${kind}.inspect`
-  const inspected = await action(session, provider, inspectAction, ['--target-url', targetUrl])
+  const inspected = await journey.action(inspectAction, ['--target-url', targetUrl])
   const result = responseResult(inspected.payload, inspectAction)
   assert.equal(result?.supported, true)
   const selected = result.choices.find((choice) => choice.selected && choice.enabled)
@@ -456,48 +479,89 @@ async function projectChoice(provider, session, targetUrl, kind) {
   }
 }
 
-async function action(session, provider, visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) {
-  const operation = await session.startCli([
+function createProviderJourney(session, provider) {
+  const journey = {
+    session,
+    provider,
+    taskId: markerFor(provider, 'JOURNEY_TASK'),
+    targetId: null,
+    authenticated: false,
+    skipReason: null,
+  }
+  journey.action = (visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) => (
+    action(journey, visibleAction, args, timeoutMs, observeAfterRelease)
+  )
+  journey.run = (args, timeoutMs = 300_000, observeAfterRelease) => (
+    cliRun(journey, args, timeoutMs, observeAfterRelease)
+  )
+  return journey
+}
+
+async function action(journey, visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) {
+  assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
+  const operation = await journey.session.startCli([
     'provider-action',
-    '--provider', provider,
+    '--provider', journey.provider,
+    '--task-id', journey.taskId,
     '--action', visibleAction,
     ...args,
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
   ], {
     beforeRelease: ({ waiting, page }) => {
-      assert.equal(waiting.provider, provider)
-      assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
+      assertJourneyPage(journey, waiting, page)
     },
     observeAfterRelease,
   })
-  const result = await operation.wait()
-  assertDurableSuccess(result.payload, provider)
-  return { ...operation, ...result }
+  try {
+    const result = await operation.wait()
+    assertDurableSuccess(result.payload, journey.provider)
+    return { ...operation, ...result }
+  } catch (error) {
+    await operation.close()
+    throw error
+  }
 }
 
-async function cliRun(session, provider, args, timeoutMs = 300_000, observeAfterRelease) {
-  recordSubmissionAttempt(session)
-  const operation = await session.startCli([
+async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
+  assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
+  recordSubmissionAttempt(journey)
+  const operation = await journey.session.startCli([
     'run',
-    '--provider', provider,
+    '--provider', journey.provider,
+    '--task-id', journey.taskId,
     ...args,
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
   ], {
     beforeRelease: ({ waiting, page }) => {
-      assert.equal(waiting.provider, provider)
-      assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
+      assertJourneyPage(journey, waiting, page)
     },
     observeAfterRelease,
   })
-  const result = await operation.wait()
-  assertDurableSuccess(result.payload, provider)
-  return { ...operation, ...result }
+  try {
+    const result = await operation.wait()
+    assertDurableSuccess(result.payload, journey.provider)
+    return { ...operation, ...result }
+  } catch (error) {
+    await operation.close()
+    throw error
+  }
 }
 
-function recordSubmissionAttempt(session) {
-  const tracker = submissionTrackers.get(session)
+function assertJourneyPage(journey, waiting, page) {
+  assert.equal(waiting.provider, journey.provider)
+  assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
+  if (journey.targetId === null) journey.targetId = waiting.targetId
+  assert.equal(
+    waiting.targetId,
+    journey.targetId,
+    `${journey.provider} capability journey must stay on one exact Chromium page target`,
+  )
+}
+
+function recordSubmissionAttempt(journey) {
+  const tracker = submissionTrackers.get(journey)
   assert.ok(tracker, 'live E2E submission tracker must be initialized')
   tracker.attempts += 1
   assert.ok(
@@ -506,8 +570,8 @@ function recordSubmissionAttempt(session) {
   )
 }
 
-function assertSubmissionBudget(session) {
-  const tracker = submissionTrackers.get(session)
+function assertSubmissionBudget(journey) {
+  const tracker = submissionTrackers.get(journey)
   assert.ok(tracker, 'live E2E submission tracker must be initialized')
   assert.equal(
     tracker.attempts,

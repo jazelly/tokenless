@@ -146,6 +146,18 @@ export type BrowserRuntimeOpenProfileResponse = {
   status: BrowserRuntimeStatus
 }
 
+export type OpenDashboardOptions = DaemonClientOptions & {
+  profileId?: string | undefined
+  open?: boolean | undefined
+}
+
+export type OpenDashboardResponse = {
+  ticket: string
+  bootstrapUrl: string
+  expiresAt: string
+  opened: null | (BrowserRuntimeOpenProfileResponse & { url: string, reused: boolean })
+}
+
 type DaemonError = Error & {
   code?: string
   retryable?: boolean
@@ -484,6 +496,28 @@ export async function openBrowserRuntimeProfile({
     body: {
       profile_id: profileId,
       browser_visibility: browserVisibility,
+    },
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function openTokenlessDashboard({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  profileId,
+  open = true,
+}: OpenDashboardOptions = {}) {
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<OpenDashboardResponse>({
+    daemonUrl: daemon.daemonUrl,
+    path: '/control/ui-bootstrap',
+    body: {
+      ...(profileId ? { profile_id: profileId } : {}),
+      open,
     },
     token: daemon.token,
     timeoutMs: requestTimeoutMs,

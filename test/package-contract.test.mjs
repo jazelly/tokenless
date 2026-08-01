@@ -91,8 +91,8 @@ test('CLI help separates canonical and advanced commands into described workflow
     'Manage AI providers and their visible controls.',
     'Use miscellaneous maintenance and help commands.',
     'Customize, inspect, resume, or cancel jobs.',
-    'Automate setup, profile import, or profile re-import.',
-    'Discover, import, reset, or remove browser profiles.',
+    'Automate browser runtime and clean-profile setup.',
+    'Discover metadata or manage clean browser profiles.',
     'Use low-level actions and provider-specific controls.',
     'Inspect or update persistent Tokenless configuration.',
   ]) {
@@ -348,7 +348,7 @@ test('CLI command help is a supported common option for commands and subcommands
   }
 })
 
-test('universal CLI package contains the pure JS runtime without native optionals', () => {
+test('universal CLI manifest declares the pure JS runtime without native optionals', () => {
   const pkg = readJson('packages/cli/package.json')
   assert.equal(pkg.dependencies['@tokenless/playwright'], undefined)
   assert.equal(typeof pkg.dependencies['playwright-core'], 'string')
@@ -357,19 +357,6 @@ test('universal CLI package contains the pure JS runtime without native optional
   assert.equal(pkg.scripts['build:native'], undefined)
   assert.equal(fs.existsSync(path.join(cliDir, 'dist/src/native-host.mjs')), false)
   assert.equal(fs.existsSync(path.join(cliDir, 'dist/src/direct')), false)
-
-  const output = npmExecFileSync(['pack', '--dry-run', '--json'], { cwd: cliDir })
-  const [pack] = JSON.parse(output)
-  const paths = pack.files.map((file) => file.path)
-  assert.equal(paths.some((file) => file.startsWith('dist/bin/') || file.startsWith('npm/')), false)
-  assert.ok(paths.includes('dist/src/tokenless.mjs'))
-  assert.ok(paths.includes('dist/src/daemon/daemon-entry.mjs'))
-  assert.ok(paths.includes('dist/src/playwright/index.js'))
-  assert.ok(paths.includes('dist/src/playwright/index.d.ts'))
-  assert.equal(paths.includes('dist/src/playwright/runner-entry.mjs'), false)
-  assert.ok(paths.includes('README.md'))
-  assert.equal(paths.some((file) => /native-host\.mjs$/.test(file)), false)
-  assert.equal(paths.some((file) => file.startsWith('dist/src/direct/')), false)
 })
 
 test('public manifests and lockfile do not reference unpublished scoped or native Tokenless packages', () => {
@@ -413,10 +400,19 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     universalTarball = path.join(packDir, universalPack.filename)
     playwrightCoreTarball = path.join(packDir, playwrightCorePack.filename)
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.d.ts'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/daemon-entry.mjs'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/tokenless.mjs'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/ui/index.html'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/ui/app.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/ui/styles.css'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/ui/mark.png'))
+    assert.ok(universalPack.files.some((file) => file.path === 'README.md'))
     assert.equal(universalPack.files.some((file) => file.path === 'dist/src/playwright/runner-entry.mjs'), false)
     assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/bin/')), false)
     assert.equal(universalPack.files.some((file) => file.path.startsWith('npm/')), false)
+    assert.equal(universalPack.files.some((file) => /native-host\.mjs$/.test(file.path)), false)
+    assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/src/direct/')), false)
 
     npmExecFileSync([
       'install',
@@ -486,6 +482,23 @@ test('CLI rejects removed local fallback routes before network access', () => {
   ], { cwd: root, encoding: 'utf8' })
   assert.equal(reimportConflict.status, 1)
   assert.equal(JSON.parse(reimportConflict.stdout).error.code, 'setup_profile_choice_conflict')
+
+  const copyPolicyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-copy-policy-'))
+  const copyPolicyHome = path.join(copyPolicyRoot, 'home')
+  try {
+    for (const args of [
+      ['setup', '--import-browser-profile', 'Default', '--home', copyPolicyHome, '--json'],
+      ['profiles', 'add', '--profile', 'copied', '--import-browser-profile', 'Default', '--home', copyPolicyHome, '--json'],
+      ['profiles', 'reset', '--profile', 'legacy', '--home', copyPolicyHome, '--json'],
+    ]) {
+      const result = spawnSync(process.execPath, [cliEntry, ...args], { cwd: root, encoding: 'utf8' })
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, 'browser_profile_copy_disabled')
+      assert.equal(fs.existsSync(copyPolicyHome), false, 'copy policy must fail before local profile mutation')
+    }
+  } finally {
+    fs.rmSync(copyPolicyRoot, { recursive: true, force: true })
+  }
 
   const compatibilityAlias = spawnSync(process.execPath, [
     cliEntry,

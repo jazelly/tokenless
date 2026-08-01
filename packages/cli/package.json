@@ -24,7 +24,7 @@
   },
   "scripts": {
     "build": "npm run build:js",
-    "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.chmodSync('dist/src/tokenless.mjs',0o755); fs.chmodSync('dist/src/daemon/daemon-entry.mjs',0o755)\"",
+    "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/src/ui',{recursive:true}); fs.copyFileSync('src/ui/index.html','dist/src/ui/index.html'); fs.copyFileSync('src/ui/styles.css','dist/src/ui/styles.css'); fs.copyFileSync('../../assets/tokenless-mark.png','dist/src/ui/mark.png'); fs.chmodSync('dist/src/tokenless.mjs',0o755); fs.chmodSync('dist/src/daemon/daemon-entry.mjs',0o755)\"",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build:js"
   },

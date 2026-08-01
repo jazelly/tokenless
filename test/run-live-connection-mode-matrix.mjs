@@ -20,7 +20,7 @@ for (const mode of modes) {
 
 const report = {
   schema: 'tokenless.live-browser-connection-matrix-result.v1',
-  gate: process.env.TOKENLESS_LIVE_E2E_GATE ?? null,
+  gate: process.env.TOKENLESS_LIVE_E2E_GATE ?? 'all',
   results,
 }
 const reportDirectory = path.join(root, 'test-results', 'live-browser-connection-matrix')
@@ -41,6 +41,7 @@ function runMode(mode) {
       cwd: root,
       env: {
         ...process.env,
+        TOKENLESS_LIVE_E2E_GATE: process.env.TOKENLESS_LIVE_E2E_GATE ?? 'all',
         TOKENLESS_LIVE_BROWSER_CONNECTION_MODE: mode,
       },
       stdio: 'inherit',

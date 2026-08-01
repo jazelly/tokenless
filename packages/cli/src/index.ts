@@ -15,6 +15,7 @@ export {
   listDaemonJobs,
   markDaemonJobReported,
   openBrowserRuntimeProfile,
+  openTokenlessDashboard,
   quiesceBrowserRuntime,
   readDaemonToken,
   resolveProviderConversation,
@@ -37,6 +38,8 @@ export type {
   BrowserRuntimeStatus,
   BrowserRuntimeOpenProfileOptions,
   BrowserRuntimeOpenProfileResponse,
+  OpenDashboardOptions,
+  OpenDashboardResponse,
   ResumeDaemonJobOptions,
   ResolveProviderMappingOptions,
   ResolveProviderConversationOptions,
@@ -45,7 +48,7 @@ export type {
   WaitDaemonJobResultOptions,
 } from './daemon-client.js'
 
-export type { TokenlessConfig } from './job-store.js'
+export type { ManagedProfilePreferences, TokenlessConfig } from './job-store.js'
 export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
 export type { BrowserConnectionMode } from './browser-connection-mode.js'
 
@@ -64,6 +67,7 @@ export {
   configPath,
   deriveTaskId,
   normalizeBrowserId,
+  normalizeManagedProfileProxy,
   readTokenlessConfig,
   TOKENLESS_CONFIG_SCHEMA_ID,
   tokenlessHome,

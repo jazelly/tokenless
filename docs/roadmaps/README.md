@@ -41,9 +41,10 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
+| [Web Agent Harness and Tool Runtime](P0-web-agent-harness-and-tool-runtime.md) | Build a ChatGPT-first durable agent loop as an independently buildable package over the Provider Integration project's versioned turn interface, ready for later extraction into its own project. | P0 |
 | [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
-| [Agent Session Integrations](P1-agent-session-integrations.md) | Route caller-requested task capabilities to evidence-backed provider strategies through a safe local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration. | P1 |
+| [Agent Session Integrations](P1-agent-session-integrations.md) | Expose durable provider operations through a northbound local MCP interface and caller skill, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](P1-project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 
 Priority describes product importance, not a promise that all work proceeds serially.
@@ -63,6 +64,8 @@ flowchart LR
   Session["Agent session binding<br/>session id + working directory"]
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
   Context["Context envelope<br/>provenance + policy + limits"]
+  Harness["Web agent harness<br/>instructions + durable tool loop"]
+  Tools["Tool runtime<br/>southbound MCP + local tools"]
   Graph["Project knowledge graph<br/>rules + architecture + symbols"]
   Browser["Browser runtime manager<br/>system + managed + Cloak"]
   Provider["Provider adapters<br/>visible capabilities"]
@@ -75,6 +78,12 @@ flowchart LR
   API --> Scheduler
   Scheduler --> Context
   Graph --> Context
+  API --> Harness
+  Session --> Harness
+  Context --> Harness
+  Harness --> Scheduler
+  Harness --> Tools
+  Tools --> Harness
   Context --> Provider
   Browser --> Provider
   Provider --> Scheduler
@@ -92,13 +101,16 @@ The shared contracts should be built before provider-specific shortcuts:
 5. Add the authenticated local web control plane over shared application services without exposing the daemon bearer token to browser JavaScript.
 6. Keep the daemon's small built-in HTTP server and make polling the explicit asynchronous caller and UI contract.
 7. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
-8. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.
-9. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
-10. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
+8. Build the ChatGPT-first web agent harness as an independently buildable package over exact provider turns, durable checkpoints, explicit approvals, southbound MCP tools, and finite loop limits; defer repository extraction until the interface is stable.
+9. Expand provider coverage using the same visible-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
+10. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
+11. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 
 - **Visible provider boundary:** operate provider websites through visible controls and visible postconditions. Do not depend on private provider APIs.
+- **Harness-owned agency:** provider websites supply verified model turns; Tokenless owns instruction precedence, tool authorization, execution, durable looping, and termination.
+- **Directional MCP roles:** the northbound Tokenless MCP server is a caller interface; southbound MCP clients are separately configured tool adapters and never inherit caller authority.
 - **Evidence before availability:** selectors or menu presence are not success. A capability is supported only when a real visible-session sequence proves the final outcome.
 - **Fail closed:** ambiguous identity, navigation, attachment state, workspace selection, or context delivery must return an explicit unavailable or unknown result.
 - **Exact identity over names:** use provider/profile/resource identifiers and agent/session/worktree identity. Human-readable project and chat names are metadata, not primary keys.

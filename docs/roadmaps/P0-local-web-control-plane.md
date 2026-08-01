@@ -1,8 +1,10 @@
 # Local Web Control Plane
 
-Status: proposed | Priority: P0
+Status: implemented; real-provider release evidence pending | Priority: P0
 
 Depends on: authenticated loopback daemon, managed profile lifecycle, provider registry and capability catalog, embedded browser-runtime supervision, durable jobs, and browser page ownership
+
+Implementation note (2026-08-01): phases 0–4 and the currently stable phase-5 surfaces are implemented in the bundled CLI package. This includes profile-scoped preferences and migration, shared application services, one-time UI bootstrap and browser sessions, the `/ui-api/v1` contract, reserved control-plane page ownership, setup/dashboard handoff, all six administration areas, clean-profile/provider/browser/job mutations, capability-first routing views, freshly observed model/effort controls, revision/ETag polling that preserves unsaved edits, English and Simplified Chinese localization, and redacted diagnostics. Browser-profile copying was superseded by the clean-profile-only safety policy: the dashboard exposes no import or reset mutation and never copies authentication state. Scheduler projections and project/context-mirror views remain conditional on the separate roadmaps that own those contracts. The roadmap stays active until the required authenticated real-provider release matrix is run; local real-daemon and real-Chromium acceptance is checked in.
 
 ## Outcome
 
@@ -40,6 +42,7 @@ The first control-plane release does not:
 - detect whether a user is in mainland China or any other region;
 - install, start, configure, or inspect Clash, V2Ray, Xray, sing-box, VPN software, or proxy subscriptions;
 - read browser credentials, cookies, local storage, session storage, or Keychain data;
+- copy an existing Chrome, Brave, or Cloak profile or its authentication state into a managed profile;
 - expose the daemon on the LAN or public Internet;
 - replace provider websites with embedded iframes;
 - make experimental capabilities supported without real-provider E2E closure; or
@@ -52,7 +55,7 @@ The current implementation has useful foundations but no browser-facing product 
 - the daemon binds only to loopback and exposes authenticated job and browser-runtime routes;
 - the daemon owns durable SQLite job state and an embedded Playwright runtime;
 - configuration is stored in `config.json` and currently includes provider scope, browser, visibility, daemon URL, and language;
-- managed profiles have stable IDs, labels, lifecycle state, default selection, import provenance, and cached provider observations;
+- managed profiles have stable IDs, labels, lifecycle state, default selection, legacy provenance where applicable, and cached provider observations;
 - provider descriptors and canonical capability routes are typed and centrally registered;
 - jobs expose durable queued, claimed, running, waiting-for-user, and terminal states;
 - `profiles open` can start a headed managed profile without navigating to a provider; and
@@ -137,17 +140,15 @@ It shows:
 The profiles area manages isolated browser identities:
 
 - create a clean profile;
-- discover and import an existing supported browser profile with explicit copy consent;
 - label its purpose or role;
 - set the default profile;
 - choose its enabled providers;
 - choose browser visibility;
 - configure an optional user-managed proxy endpoint;
 - open the profile without provider navigation;
-- reset an imported profile from its recorded source; and
 - remove a profile through an explicit destructive confirmation.
 
-The UI must clearly state that importing copies selected provider state into a separate managed directory and does not operate the source profile.
+The UI never offers browser-profile import or authentication-state copy. Users sign in through the visible clean managed profile, whose runtime binding and browser-owned session persist across jobs.
 
 ### Providers
 
@@ -211,7 +212,7 @@ Raw diagnostic JSON may be offered as an explicit copy action after redaction. T
 
 ### Interactive Setup Handoff
 
-1. Setup installs and reconciles the runtime, chooses a browser, creates or imports a managed profile, and starts the daemon.
+1. Setup installs and reconciles the runtime, chooses a browser, creates or reuses a clean managed profile, and starts the daemon.
 2. Setup records the user's provider choices instead of selecting every registered provider.
 3. Setup performs live checks only for the selected providers.
 4. Regardless of whether some provider checks succeed, require sign-in, or fail technically, setup opens the selected managed profile in headed mode.
@@ -306,7 +307,7 @@ The browser-facing API should initially expose:
 
 - one aggregate overview snapshot;
 - config read and update;
-- profile list, create, import, label, default, reset, and remove;
+- profile list, clean create, label, default, and remove;
 - per-profile provider membership and cached observations;
 - explicit provider open, readiness check, and controls inspection;
 - capability catalog and route availability;
@@ -361,7 +362,7 @@ Visual design requires a separate design target and review before frontend imple
 
 ### Phase 3: Profile and Browser Administration
 
-- Add clean profile creation, profile discovery, consented import, label/role editing, default selection, reset, and removal.
+- Add clean profile creation, label/role editing, default selection, and removal; do not add profile-copy or authentication-state import.
 - Add browser selection, visibility, runtime open, quiesce, and restart-required flows.
 - Add optional user-managed proxy server and bypass configuration with validation and safe redaction.
 - Prevent mutations while unsafe profile ownership or active jobs make them ambiguous.

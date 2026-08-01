@@ -66,7 +66,9 @@ const ZH_TEXT = new Map<string, string>([
   ['--repair-browser cannot be combined with --no-browser-download.', '--repair-browser 不能与 --no-browser-download 同时使用。'],
   ['Browser must be auto, chrome, chrome-for-testing, chromium, edge, arc, brave, managed-chromium, or cloak.', 'Browser 必须是 auto、chrome、chrome-for-testing、chromium、edge、arc、brave、managed-chromium 或 cloak。'],
   ['Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.', '无效的 Tokenless browser；应为 auto、受支持的 system browser、managed-chromium 或 cloak。'],
-  ['Keeps sign-ins between jobs. Imports copy selected provider cookies and limited browser compatibility state; other browser data is excluded.', '在不同 job 之间保留登录状态。导入时会复制所选 provider 的 cookie 和有限的浏览器兼容性状态，其他浏览器数据不会导入。'],
+  ['Keeps sign-ins between jobs inside a Tokenless-managed profile. Tokenless does not copy an existing browser profile or its authentication state.', '登录状态会保留在 Tokenless 管理的 profile 中并跨 job 复用。Tokenless 不会复制现有浏览器 profile 或其中的认证状态。'],
+  ['Use Anti-Detect mode? Tokenless will use CloakBrowser.', '是否使用 Anti-Detect 模式？Tokenless 将使用 CloakBrowser。'],
+  ['Anti-Detect mode uses CloakBrowser.', 'Anti-Detect 模式使用 CloakBrowser。'],
   ['Checks visible sign-in state without submitting a prompt.', '检查可见的登录状态，不会提交 prompt。'],
   ['Setup selection must be one of the displayed numbers.', '设置选项必须是界面显示的编号之一。'],
   ['Usage', '用法'],
@@ -84,8 +86,8 @@ const ZH_TEXT = new Map<string, string>([
   ['Manage AI providers and their visible controls.', '管理 AI provider 及其可见控件。'],
   ['Use miscellaneous maintenance and help commands.', '使用其他维护和帮助命令。'],
   ['Customize, inspect, resume, or cancel jobs.', '自定义、检查、恢复或取消 job。'],
-  ['Automate setup, profile import, or profile re-import.', '自动执行设置、profile 导入或重新导入。'],
-  ['Discover, import, reset, or remove browser profiles.', '发现、导入、重置或移除浏览器 profile。'],
+  ['Automate browser runtime and clean-profile setup.', '自动设置 browser runtime 与 clean profile。'],
+  ['Discover metadata or manage clean browser profiles.', '发现 browser 元数据或管理 clean profile。'],
   ['Use low-level actions and provider-specific controls.', '使用底层 action 和 provider 专属控件。'],
   ['Inspect or update persistent Tokenless configuration.', '检查或更新持久化的 Tokenless 配置。'],
   ['Short options:', '短选项：'],
@@ -100,6 +102,11 @@ const ZH_TEXT = new Map<string, string>([
   ['(none)', '（无）'],
   ['Tokenless CLI failed.', 'Tokenless CLI 执行失败。'],
   ['Invalid Tokenless language; expected en or zh-CN.', '无效的 Tokenless language；应为 en 或 zh-CN。'],
+  ['Proxy configuration requires --profile <slug>.', 'Proxy 配置必须提供 --profile <slug>。'],
+  ['--profile can scope only provider membership, browser visibility, and proxy settings.', '--profile 只能限定 provider membership、browser visibility 和 proxy 设置。'],
+  ['--clear-proxy cannot be combined with --proxy-server or --proxy-bypass.', '--clear-proxy 不能与 --proxy-server 或 --proxy-bypass 同时使用。'],
+  ['--proxy-bypass requires an existing proxy or --proxy-server.', '--proxy-bypass 需要已有 proxy 或同时提供 --proxy-server。'],
+  ['Proxy must use HTTP, HTTPS, or SOCKS5 without embedded credentials.', 'Proxy 必须使用 HTTP、HTTPS 或 SOCKS5，且不能嵌入凭据。'],
   ['User action is required; inspect the structured result for the safe resume step.', '需要用户操作；请查看结构化结果中的安全恢复步骤。'],
 ])
 
@@ -118,6 +125,16 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^Browser must be one of: (.+)\.$/, 'Browser 必须是以下值之一：$1。')
     .replace(/^Browser must be auto, a supported system browser, managed-chromium, or cloak\.$/, 'Browser 必须是 auto、受支持的 system browser、managed-chromium 或 cloak。')
     .replace(/^Automatic — (.+)$/, '自动 — $1')
+    .replace(/^Enable (.+) for this profile\?$/, '为此 profile 启用 $1？')
+    .replace(/^Detected installed Chrome version: (.+)\.$/, '检测到的已安装 Chrome 版本：$1。')
+    .replace(/^Opening (.+) review tab$/, '打开 $1 审核 tab')
+    .replace(/^Opened (\d+) provider review tab\(s\)\.$/, '已打开 $1 个 provider 审核 tab。')
+    .replace(/^Could not open (\d+) provider review tab\(s\)\.$/, '无法打开 $1 个 provider 审核 tab。')
+    .replace(/^Could not keep the provider review browser open\.$/, '无法让 provider 审核浏览器保持打开。')
+    .replace(/^Setup could not open (\d+) provider review tab\(s\) in profile (.+)\.$/, '设置无法在 profile $2 中打开 $1 个 provider 审核 tab。')
+    .replace(/^Setup could not keep provider review tabs open in profile (.+)\.$/, '设置无法让 profile $1 的 provider 审核 tab 保持打开。')
+    .replace(/^Opened the Tokenless dashboard in managed profile '(.+)'.$/, '已在托管 profile「$1」中打开 Tokenless 控制台。')
+    .replace(/^Dashboard ready for managed profile '(.+)': (.+)$/, '托管 profile「$1」的控制台已就绪：$2')
     .replace(/ — installed system browser$/, ' — 已安装的 system browser')
     .replace(/ — official download required$/, ' — 需要从官方来源下载')
     .replace(/ — download required$/, ' — 需要下载')
@@ -131,8 +148,7 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^(.+) (\S+) is not installed\. Run tokenless setup with browser downloads enabled\.$/, '$1 $2 尚未安装。请启用 browser download 后重新运行 tokenless setup。')
     .replace(/^Configured system browser '(.+)' is not installed or executable\.$/, "配置的 system browser '$1' 尚未安装或不可执行。")
     .replace(/^Managed profile '(.+)' cannot use (.+); create a clean profile for that browser runtime\.$/, "Managed profile '$1' 不能使用 $2；请为该 browser runtime 创建 clean profile。")
-    .replace(/^Browser profile import is unavailable for (.+); create a clean managed profile instead\.$/, '$1 不支持 browser profile import；请改为创建 clean managed profile。')
-    .replace(/^The selected (.+) profile cannot be imported into (.+)\.$/, '所选 $1 profile 不能导入 $2。')
+    .replace(/^Tokenless does not copy local browser profiles or authentication state\. Create a clean managed profile and sign in inside that profile\.$/, 'Tokenless 不复制本地浏览器 profile 或认证状态。请创建 clean managed profile，并在其中手动登录。')
     .replace(/^Unsupported Tokenless browser platform: (.+)\. Supported platforms are darwin-arm64 and win32-x64\.$/, 'Tokenless 不支持 browser platform：$1。支持 darwin-arm64 和 win32-x64。')
     .replace(/^Managed profile '(.+)' predates browser runtime binding\. Rerun tokenless setup and explicitly select a compatible browser\.$/, "Managed profile '$1' 尚未记录 browser runtime binding。请重新运行 tokenless setup 并显式选择兼容的 browser。")
     .replace(/^Managed profile '(.+)' is bound to (.+), but Tokenless resolved (.+)\.$/, "Managed profile '$1' 绑定到 $2，但 Tokenless 解析出 $3。")
@@ -164,8 +180,6 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^Could not check npm latest tokenless version: (.+)\.$/, '无法检查 npm 上最新的 tokenless 版本：$1。')
     .replace(/^tokenless (.+) is available on npm; local CLI is (.+)\.$/, 'npm 上已有 tokenless $1；本地 CLI 为 $2。')
     .replace(/^tokenless (.+) is up to date with npm\.$/, 'tokenless $1 已与 npm 最新版本一致。')
-    .replace(/^Re-import (.+) from (.+)\? This replaces its managed browser data\.$/, '是否从 $2 重新导入 $1？这会替换其托管浏览器数据。')
-    .replace(/^Re-importing (.+) into managed profile (.+)$/, '正在将 $1 重新导入托管 profile $2')
     .replace(/^Setting managed profile (.+) as default$/, '正在将托管 profile $1 设为默认值')
     .replace(/^Import an existing (.+) profile into Tokenless\?$/, '是否将现有的 $1 profile 导入 Tokenless？')
     .replace(/^Creating managed profile (.+) for import$/, '正在创建用于导入的托管 profile $1')

@@ -4,13 +4,17 @@ Status: proposed | Priority: P0 | First provider: ChatGPT
 
 Depends on: the typed visible-provider capability seam, durable daemon jobs and conversation lanes, the Context Envelope contract, and real ChatGPT Project, instruction, upload, and continuation evidence
 
-Related: [Agent Session Integrations](agent-session-integrations.md) owns the northbound local MCP server and exact caller-session binding; this roadmap owns the southbound MCP client and the web-model tool loop
+Related: [Agent Session Integrations](P1-agent-session-integrations.md) owns the northbound local MCP server and exact caller-session binding; this roadmap owns the southbound MCP client and the web-model tool loop
+
+Packaging direction: independently buildable workspace package first; separate Harness project only after the provider-turn interface and real agent loop are stable
 
 ## Outcome
 
-Tokenless treats visible AI websites as model providers, not as the agent harness itself. A caller can start one durable agent run whose model turns happen through a real provider website while Tokenless owns instruction delivery, tool discovery, authorization, execution, result return, loop limits, recovery, and the final run result.
+Tokenless treats visible AI websites as model providers, not as the agent harness itself. A caller can start one durable agent run whose model turns happen through a real provider website while the harness owns instruction delivery, tool discovery, authorization, execution, result return, loop limits, recovery, and the final run result.
 
-The first complete path is ChatGPT because it is the current strategic target with the strongest observed fit for persistent Projects, instructions, files, exact conversation continuation, and reliable instruction following. This is a sequencing decision, not a permanent claim that other providers cannot support agent runs.
+The current repository remains the Provider Integration and API project, including thin CLI, northbound MCP, and caller-skill adapters. It converts evidence-backed visible website workflows into durable, provider-neutral jobs and results. The new harness is not added to the provider runtime as another provider capability implementation; it begins as a separate package that consumes the provider-turn interface exactly as a future external project would.
+
+The first complete path is ChatGPT because it is the current strategic target for persistent Projects, instructions, files, exact conversation continuation, and tool-loop instruction following. This is a sequencing decision, not a permanent claim that other providers cannot support agent runs.
 
 V1 proves one bounded loop:
 
@@ -70,6 +74,64 @@ flowchart TB
 
 The seam is deliberately above DOM operations. The harness never receives a Playwright `Page`, selector, browser profile path, provider credential, or raw provider action menu. The provider runtime never receives an MCP client, tool approval policy, or agent-loop state.
 
+## Product and Package Direction
+
+The intended end state contains two independently useful projects:
+
+| Project | Owns | Does not own |
+| --- | --- | --- |
+| Provider Integration and API | Visible provider adapters, managed browser execution, Projects, files, conversations, capability routing, durable provider jobs, scheduling, scaling, evidence, the versioned provider-turn interface, and thin caller CLI, northbound MCP, or integration-skill adapters | Web-model prompts, southbound MCP tool execution, harness skills, approvals, or the agent loop |
+| Agent Harness | Agent runs, instruction compilation, tool protocol, southbound MCP clients, registered local tools, harness skills, approvals, loop policy, and harness-owned run state | Provider DOM, browser profiles, selectors, provider credentials, provider-specific workspace logic, or caller-side Provider Integration skills |
+
+The repository is not split while both interfaces are still moving. The delivery sequence is:
+
+1. keep the existing provider implementation in this repository;
+2. add the harness as an independently buildable workspace package, provisionally `packages/web-agent-harness/`;
+3. make that package depend only on a versioned provider-turn client and shared wire schemas;
+4. prove the complete ChatGPT tool loop and stabilize the cross-package interface; and
+5. extract the harness package into its own project only when doing so is a mechanical repository move rather than an architectural rewrite.
+
+No external package scope, registry namespace, or final package name is assumed by this roadmap. Those names require separate ownership verification before publication.
+
+### Package Dependency Rule
+
+The allowed dependency direction is:
+
+```text
+web-agent-harness package
+  -> provider-turn client + versioned wire schemas
+  -> authenticated daemon HTTP interface
+  -> Provider Integration implementation
+  -> Playwright and visible provider website
+```
+
+The harness package must not import from provider adapters, Playwright, daemon job-store implementation, profile management, DOM locators, or CLI command modules. The Provider Integration implementation must not import harness prompt, MCP, skill, approval, or loop modules.
+
+The provider-turn client is an adapter over the durable daemon interface, not a wrapper that exposes internal classes. Opaque provider job, workspace, conversation, and evidence identifiers cross the seam; database handles, tables, browser objects, and internal state-machine values do not.
+
+The harness owns its AgentRun persistence schema and migrations behind its own module. It may initially be hosted in the same installation or process topology, but the provider implementation never reads harness tables and the harness never reads provider tables. Correlation happens through public opaque identifiers.
+
+### Skill Directionality
+
+The two projects may both use the word `skill`, but they refer to different instruction flows:
+
+| Skill role | Consumer | Owner |
+| --- | --- | --- |
+| Provider Integration skill | Codex or another external agent that needs instructions for calling Tokenless provider operations | Provider Integration project and the P1 integration roadmap |
+| Harness skill | The web model inside an AgentRun; contributes bounded instructions and required tool references | Agent Harness package |
+
+The Provider Integration skill remains a thin caller adapter and contains no agent loop. A Harness skill cannot call the provider implementation directly, add executable authority, or replace the provider-turn client.
+
+### Extractability Tests
+
+The package shape is correct when all of these deletion and replacement checks hold:
+
+- deleting the harness package leaves current CLI and daemon provider jobs working;
+- running the Provider Integration project without the harness does not load MCP clients, skills, or agent-loop state;
+- replacing the web provider implementation with another conforming provider-turn adapter does not change harness code;
+- moving the harness package to another repository requires dependency and release wiring, not source reorganization; and
+- provider and harness release versions can advance independently under explicit protocol compatibility rules.
+
 ## Layer 1: Web Provider Runtime
 
 The existing provider architecture becomes a deep model-turn module. Its interface exposes provider outcomes rather than general browser automation.
@@ -85,7 +147,7 @@ The provider runtime owns:
 - continuing the exact conversation on the next harness turn; and
 - classifying authentication, CAPTCHA, plan, availability, navigation, and selector blockers.
 
-The conceptual external interface stays small:
+The conceptual external interface stays small and preserves the provider runtime's asynchronous job semantics:
 
 ```ts
 type ProviderTurnRequest = {
@@ -98,19 +160,26 @@ type ProviderTurnRequest = {
   correlation: TurnCorrelation
 }
 
-type ProviderTurnResult = {
-  workspace: ProviderWorkspaceRef
-  conversation: ProviderConversationRef
-  response: VisibleProviderResponse
-  evidence: VisibleActionEvidence[]
+type ProviderTurnRef = {
+  jobId: string
 }
 
-executeProviderTurn(request: ProviderTurnRequest): Promise<ProviderTurnResult>
+type ProviderTurnState =
+  | { status: 'queued' | 'running' | 'waiting_for_user' }
+  | { status: 'succeeded'; result: VisibleProviderResponse }
+  | { status: 'failed' | 'cancelled'; error: ProviderTurnError }
+
+interface ProviderTurnClient {
+  submit(request: ProviderTurnRequest): Promise<ProviderTurnRef>
+  read(ref: ProviderTurnRef): Promise<ProviderTurnState>
+  resume(ref: ProviderTurnRef): Promise<ProviderTurnState>
+  cancel(ref: ProviderTurnRef): Promise<ProviderTurnState>
+}
 ```
 
 This is a design target, not a commitment to those exact TypeScript names. The important constraint is that callers ask for one verified provider turn and do not orchestrate individual clicks.
 
-Raw visible actions remain internal interfaces used by provider adapters. They are not a public Web Provider API, are not MCP tools, and are not made available to the web model.
+Raw visible actions remain internal interfaces used by provider adapters. They are not part of the public Web Provider interface, are not MCP tools, and are not made available to the web model.
 
 The provider runtime does not own:
 
@@ -149,7 +218,7 @@ The harness implementation owns:
 - stopping on final, denial, limit, cancellation, ambiguity, or unrecoverable failure; and
 - returning final text, artifacts, citations, provider identity, and a bounded audit trail without private reasoning.
 
-The harness does not know provider selectors or MCP transport internals. It depends on the provider-turn and tool-runtime interfaces.
+The harness does not know provider selectors, daemon internals, or MCP transport internals. It depends on the provider-turn client and tool-runtime interfaces.
 
 ## Provider Eligibility for Agent Runs
 
@@ -192,7 +261,7 @@ Lower layers cannot grant permissions, add tools, or rewrite higher-layer policy
 
 ## Visible Web-Agent Control Protocol
 
-Provider websites do not expose the native function-call events available through model APIs. V1 therefore uses one explicit visible text protocol. Every complete model response must contain exactly one envelope of one of these kinds:
+Tokenless's visible-site interface does not receive the native function-call events available through model APIs, and it does not inspect private provider traffic to obtain them. V1 therefore uses one explicit visible text protocol. Every complete model response must contain exactly one envelope of one of these kinds:
 
 - `tool_calls`: one or more requested calls; or
 - `final`: the final Markdown result and declared artifacts.
@@ -284,7 +353,7 @@ Tokenless participates in MCP in two different directions:
 
 | Direction | Tokenless role | Owner |
 | --- | --- | --- |
-| Northbound | MCP server exposing `tokenless_run`, job reads, resume, and cancel to Codex or another caller | [Agent Session Integrations](agent-session-integrations.md) |
+| Northbound | MCP server exposing `tokenless_run`, job reads, resume, and cancel to Codex or another caller | [Agent Session Integrations](P1-agent-session-integrations.md) |
 | Southbound | MCP host/client discovering and calling tools requested by the web model | This roadmap |
 
 The two directions share durable run identity and policy types but not transport sessions, credentials, tools, or approval decisions. A northbound caller invoking Tokenless never becomes trusted to approve arbitrary southbound actions implicitly.
@@ -368,15 +437,18 @@ Cancellation stops future turns and requests MCP cancellation where supported. I
 
 ## Delivery Phases
 
-### Phase 0: Seams and Contracts
+### Phase 0: Seams, Contracts, and Package Skeleton
 
-- Define `AgentRunSpec`, `AgentRun`, `AgentTurn`, `ProviderTurnRequest`, `ProviderTurnResult`, `InstructionDeliveryPlan`, `ToolDescriptor`, `ToolCall`, `ToolOutcome`, and approval-policy schemas.
+- Define `AgentRunSpec`, `AgentRun`, `AgentTurn`, `ProviderTurnRequest`, `ProviderTurnRef`, `ProviderTurnState`, `ProviderTurnClient`, `InstructionDeliveryPlan`, `ToolDescriptor`, `ToolCall`, `ToolOutcome`, and approval-policy schemas.
 - Keep visible browser actions behind provider adapters and expose one provider-turn interface to the harness.
+- Add an independently buildable harness workspace package with no imports from provider, Playwright, daemon-storage, profile, DOM, or CLI implementation modules.
+- Add a provider-turn client adapter over the authenticated durable daemon interface and version the wire schemas it consumes.
+- Give the harness ownership of its AgentRun state and migrations; correlate provider jobs only through opaque public identifiers.
 - Define `qa`, `continuable`, and `harness_agent` evidence without enabling a route from product reconnaissance alone.
 - Define parent/child durable identity, limits, checkpoints, and failure codes.
 - Document northbound and southbound MCP directionality in public diagnostics.
 
-Exit: the built CLI can execute today's normal ChatGPT QA flow through the provider-turn interface with unchanged visible behavior, and the daemon can persist a no-tool agent run without new provider-specific branching.
+Exit: the built CLI can execute today's normal ChatGPT QA flow through the provider-turn interface with unchanged visible behavior; removing the harness package leaves that flow intact; and the independently built harness can persist a no-tool AgentRun using only the provider-turn client.
 
 ### Phase 1: ChatGPT Instruction and Control Protocol
 
@@ -459,6 +531,10 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 ## Acceptance Criteria
 
 - The harness and provider runtime communicate only through the provider-turn interface; harness code contains no provider selectors or page operations.
+- The harness is an independently buildable workspace package and imports no provider adapter, Playwright, daemon storage, profile, DOM, or CLI implementation module.
+- Provider Integration and Harness own separate persistence schemas and correlate only through versioned public identifiers.
+- Removing the harness package leaves all normal provider CLI, daemon, and browser execution behavior working.
+- Extracting the harness to another repository requires no provider source move and no harness source reorganization.
 - The provider runtime can still execute a normal one-turn QA job without loading MCP or agent-harness modules.
 - ChatGPT is the only initial `harness_agent` route, and its support is backed by a complete real visible tool loop.
 - Every new agent run uses a fresh conversation and freezes exact instruction, context, tool-catalog, provider, profile, workspace, and limit revisions.
@@ -506,6 +582,8 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 - Multi-agent handoffs, delegation, autonomous planning graphs, or cross-provider continuation in V1
 - Automatically applying generated code, patches, messages, or destructive changes without the applicable local review and approval
 - Advertising Claude, Gemini, Grok, Qwen, DeepSeek, or another provider as agent-harness capable before its independent real-browser loop closes
+- Splitting repositories or publishing the harness package before the provider-turn interface and first real agent loop are stable
+- Assuming ownership of an npm scope, package name, organization, or other external namespace for the future extracted project
 
 ## Primary References
 

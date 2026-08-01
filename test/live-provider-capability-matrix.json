@@ -4,6 +4,15 @@
     "playwright",
     "cdp"
   ],
+  "journey": {
+    "scope": "provider_connection_mode",
+    "pagePolicy": "one_managed_page",
+    "caseOrder": "providers.required",
+    "identityProof": [
+      "stable_task_id",
+      "stable_chromium_target_id"
+    ]
+  },
   "knownIssueSkips": [
     {
       "provider": "claude",

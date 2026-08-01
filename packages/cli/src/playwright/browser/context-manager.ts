@@ -15,9 +15,11 @@ import type { BrowserConnectionMode } from '../../browser-connection-mode.js'
 
 export type ManagedBrowserProfile = {
   id: string
+  slug?: string | undefined
   directory: string
   lifecycle?: 'created' | 'importing' | 'ready' | 'removed' | 'failed'
   runtimeBinding?: BrowserRuntimeBinding | undefined
+  proxy?: { server: string, bypass: readonly string[] } | null | undefined
 }
 
 export type ManagedBrowserContext = {
@@ -26,6 +28,7 @@ export type ManagedBrowserContext = {
   effectiveBrowserVisibility: EffectiveBrowserVisibility
   browserContext: BrowserContext
   acquirePage(request: ManagedPageRequest): Promise<Page>
+  acquireReservedPage(request: ManagedPageRequest): Promise<Page>
   switchVisibility(visibility: BrowserVisibility): Promise<ManagedBrowserContext>
   close(): Promise<void>
 }
@@ -82,6 +85,7 @@ type ActiveContext = {
   effectiveVisibility: EffectiveBrowserVisibility
   browserContext: BrowserContext
   pagesByKey: Map<string, Page>
+  reservedPagesByKey: Map<string, Page>
   closeBrowser: () => Promise<void>
   closePromise?: Promise<void> | undefined
   browserTarget: ManagedBrowserLaunchTarget
@@ -183,7 +187,8 @@ export class PersistentContextManager {
       existing &&
       !existing.closing &&
       existing.effectiveVisibility === effectiveVisibility &&
-      sameBrowserRuntime(existing.browserTarget, browserTarget)
+      sameBrowserRuntime(existing.browserTarget, browserTarget) &&
+      sameBrowserProxy(existing.profile.proxy, profile.proxy)
     ) {
       existing.profile = profile
       existing.requestedVisibility = requestedVisibility
@@ -199,7 +204,8 @@ export class PersistentContextManager {
         current &&
         !current.closing &&
         current.effectiveVisibility === effectiveVisibility &&
-        sameBrowserRuntime(current.browserTarget, browserTarget)
+        sameBrowserRuntime(current.browserTarget, browserTarget) &&
+        sameBrowserProxy(current.profile.proxy, profile.proxy)
       ) {
         current.profile = profile
         current.requestedVisibility = requestedVisibility
@@ -220,7 +226,7 @@ export class PersistentContextManager {
       }
       const launched = await this.launchContext(
         profile.directory,
-        managedBrowserLaunchOptions(browserTarget, requestedVisibility),
+        managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
         effectiveVisibility,
         browserTarget,
       )
@@ -235,6 +241,7 @@ export class PersistentContextManager {
         effectiveVisibility,
         browserContext,
         pagesByKey: new Map(),
+        reservedPagesByKey: new Map(),
         closeBrowser: launched.closeBrowser,
         browserTarget,
         closing: false,
@@ -326,9 +333,13 @@ export class PersistentContextManager {
         if (existing) active.pagesByKey.delete(key)
 
         const pages = active.browserContext.pages().filter((page) => !page.isClosed())
-        const claimedPages = new Set(active.pagesByKey.values())
+        const claimedPages = new Set([
+          ...active.pagesByKey.values(),
+          ...active.reservedPagesByKey.values(),
+        ])
+        const replaceablePages = pages.filter((candidate) => !new Set(active.reservedPagesByKey.values()).has(candidate))
         const page = policy === 'replace'
-          ? pages.at(-1) ?? await active.browserContext.newPage()
+          ? replaceablePages.at(-1) ?? await active.browserContext.newPage()
           : pages.find((candidate) => !claimedPages.has(candidate) && candidate.url() === 'about:blank')
             ?? await active.browserContext.newPage()
         if (policy === 'replace') {
@@ -339,6 +350,27 @@ export class PersistentContextManager {
         active.pagesByKey.set(key, page)
         page.once('close', () => {
           if (active.pagesByKey.get(key) === page) active.pagesByKey.delete(key)
+        })
+        return page
+      },
+      async acquireReservedPage(request) {
+        const key = validateManagedPageKey(request.key)
+        if (!key.startsWith('tokenless:control-plane:')) {
+          throw tokenlessError('invalid_reserved_page_key', 'Reserved managed pages require a control-plane key.')
+        }
+        const existing = active.reservedPagesByKey.get(key)
+        if (existing && !existing.isClosed()) return existing
+        if (existing) active.reservedPagesByKey.delete(key)
+        const claimedPages = new Set([
+          ...active.pagesByKey.values(),
+          ...active.reservedPagesByKey.values(),
+        ])
+        const page = active.browserContext.pages()
+          .find((candidate) => !candidate.isClosed() && !claimedPages.has(candidate) && candidate.url() === 'about:blank')
+          ?? await active.browserContext.newPage()
+        active.reservedPagesByKey.set(key, page)
+        page.once('close', () => {
+          if (active.reservedPagesByKey.get(key) === page) active.reservedPagesByKey.delete(key)
         })
         return page
       },
@@ -655,7 +687,8 @@ async function closeBackgroundMacOSBrowser(
 
 export function managedBrowserLaunchOptions(
   browser: ManagedBrowserLaunchTarget = { id: 'chrome' },
-  visibility: BrowserVisibility = 'headed'
+  visibility: BrowserVisibility = 'headed',
+  proxy?: ManagedBrowserProfile['proxy'],
 ): PersistentChromeLaunchOptions {
   const normalized = normalizeManagedBrowserLaunchTarget(browser)
   const effectiveVisibility = resolveEffectiveBrowserVisibility(validateRequestedVisibility(visibility))
@@ -686,18 +719,36 @@ export function managedBrowserLaunchOptions(
   }
   if (normalized.id !== 'profile') {
     launchOptions.ignoreDefaultArgs = [
-      '--password-store=basic',
-      '--use-mock-keychain',
+      ...(normalized.e2eInspection
+        ? []
+        : [
+            '--password-store=basic',
+            '--use-mock-keychain',
+          ]),
       ...(normalized.launchPolicy === 'cloak'
         ? ['--enable-automation', '--enable-unsafe-swiftshader']
         : []),
     ]
+  }
+  if (proxy) {
+    launchOptions.proxy = {
+      server: proxy.server,
+      ...(proxy.bypass.length > 0 ? { bypass: proxy.bypass.join(',') } : {}),
+    }
   }
   return launchOptions
 }
 
 export function chromeLaunchOptions(): PersistentChromeLaunchOptions {
   return managedBrowserLaunchOptions({ id: 'chrome' })
+}
+
+function sameBrowserProxy(
+  left: ManagedBrowserProfile['proxy'],
+  right: ManagedBrowserProfile['proxy'],
+) {
+  if (!left || !right) return !left && !right
+  return left.server === right.server && left.bypass.join('\n') === right.bypass.join('\n')
 }
 
 function normalizeManagedBrowserLaunchTarget(

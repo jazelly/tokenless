@@ -12,6 +12,7 @@ import {
   normalizeBrowserSelection,
   type BrowserSelection,
 } from './browser-runtime/types.js'
+import { withPrivateSqliteWriterLock } from './playwright/profiles/sqlite-lock.js'
 
 export { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 
@@ -23,11 +24,23 @@ export type TokenlessConfig = {
   protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
   preferredProviders: string[]
+  profilePreferences: Record<string, ManagedProfilePreferences>
   browser: BrowserSelection
   browserConnectionMode: BrowserConnectionMode
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
   language: TokenlessLanguage
+}
+
+export type ManagedProfilePreferences = {
+  profileId: string
+  roleLabel: string
+  enabledProviders: string[]
+  browserVisibility: BrowserVisibility
+  proxy: {
+    server: string
+    bypass: string[]
+  } | null
 }
 
 export function tokenlessHome(explicitHome = process.env.TOKENLESS_HOME) {
@@ -84,6 +97,9 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.preferredProviders !== undefined && !Array.isArray(payload.preferredProviders)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.profilePreferences !== undefined && !isJsonRecord(payload.profilePreferences)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   if (payload.browser !== undefined && payload.browser !== null && !normalizeBrowserId(payload.browser)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
@@ -103,6 +119,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
     preferredProviders: normalizeProviderList(payload.preferredProviders),
+    profilePreferences: normalizeProfilePreferences(payload.profilePreferences),
     browser: normalizeBrowserId(payload.browser) ?? 'auto',
     browserConnectionMode: normalizeBrowserConnectionMode(payload.browserConnectionMode) ?? 'playwright',
     browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
@@ -114,6 +131,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
 export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
   preferredProviders,
+  profilePreferences,
   browser,
   browserConnectionMode,
   browserVisibility,
@@ -122,6 +140,7 @@ export async function writeTokenlessConfig({
 }: {
   homeDir?: string
   preferredProviders?: unknown
+  profilePreferences?: unknown
   browser?: unknown
   browserConnectionMode?: unknown
   browserVisibility?: unknown
@@ -130,25 +149,31 @@ export async function writeTokenlessConfig({
 } = {}) {
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
   await fs.chmod(homeDir, 0o700).catch(() => undefined)
-  const current = await readTokenlessConfig(homeDir)
-  const config: TokenlessConfig = {
-    protocol: TOKENLESS_CONFIG_SCHEMA_ID,
-    updatedAt: new Date().toISOString(),
-    preferredProviders: preferredProviders === undefined
-      ? current.preferredProviders
-      : normalizeProviderList(preferredProviders),
-    browser: browser === undefined ? current.browser : validateConfigBrowser(browser),
-    browserConnectionMode: browserConnectionMode === undefined
-      ? current.browserConnectionMode
-      : validateConfigBrowserConnectionMode(browserConnectionMode),
-    browserVisibility: browserVisibility === undefined
-      ? current.browserVisibility
-      : validateConfigBrowserVisibility(browserVisibility),
-    daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
-    language: language === undefined ? current.language : validateConfigLanguage(language),
-  }
-  await writeJsonAtomic(configPath(homeDir), config, 0o600)
-  return config
+  const canonicalHome = await fs.realpath(homeDir)
+  return await withPrivateSqliteWriterLock(path.join(canonicalHome, 'config.writer.sqlite'), async () => {
+    const current = await readTokenlessConfig(homeDir)
+    const config: TokenlessConfig = {
+      protocol: TOKENLESS_CONFIG_SCHEMA_ID,
+      updatedAt: new Date().toISOString(),
+      preferredProviders: preferredProviders === undefined
+        ? current.preferredProviders
+        : normalizeProviderList(preferredProviders),
+      profilePreferences: profilePreferences === undefined
+        ? current.profilePreferences
+        : validateProfilePreferences(profilePreferences),
+      browser: browser === undefined ? current.browser : validateConfigBrowser(browser),
+      browserConnectionMode: browserConnectionMode === undefined
+        ? current.browserConnectionMode
+        : validateConfigBrowserConnectionMode(browserConnectionMode),
+      browserVisibility: browserVisibility === undefined
+        ? current.browserVisibility
+        : validateConfigBrowserVisibility(browserVisibility),
+      daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
+      language: language === undefined ? current.language : validateConfigLanguage(language),
+    }
+    await writeJsonAtomic(configPath(homeDir), config, 0o600)
+    return config
+  })
 }
 
 function emptyTokenlessConfig(): TokenlessConfig {
@@ -156,12 +181,64 @@ function emptyTokenlessConfig(): TokenlessConfig {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
     preferredProviders: [],
+    profilePreferences: {},
     browser: 'auto',
     browserConnectionMode: 'playwright',
     browserVisibility: 'auto',
     daemonUrl: null,
     language: 'en',
   }
+}
+
+function validateProfilePreferences(value: unknown) {
+  if (!isJsonRecord(value)) {
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless profile preferences.')
+  }
+  return normalizeProfilePreferences(value)
+}
+
+function normalizeProfilePreferences(value: unknown): Record<string, ManagedProfilePreferences> {
+  if (!isJsonRecord(value)) return {}
+  const preferences: Record<string, ManagedProfilePreferences> = {}
+  for (const [profileId, candidate] of Object.entries(value)) {
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(profileId) || !isJsonRecord(candidate)) continue
+    const browserVisibility = normalizeBrowserVisibility(candidate.browserVisibility, 'auto')
+    if (!browserVisibility) continue
+    const proxy = normalizeManagedProfileProxy(candidate.proxy)
+    if (candidate.proxy !== undefined && candidate.proxy !== null && proxy === undefined) continue
+    preferences[profileId] = {
+      profileId,
+      roleLabel: normalizeRoleLabel(candidate.roleLabel),
+      enabledProviders: normalizeProviderList(candidate.enabledProviders),
+      browserVisibility,
+      proxy: proxy ?? null,
+    }
+  }
+  return preferences
+}
+
+function normalizeRoleLabel(value: unknown) {
+  if (typeof value !== 'string') return ''
+  return value.trim().replace(/\s+/g, ' ').slice(0, 80)
+}
+
+export function normalizeManagedProfileProxy(value: unknown) {
+  if (value === undefined || value === null) return null
+  if (!isJsonRecord(value) || typeof value.server !== 'string') return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(value.server.trim())
+  } catch {
+    return undefined
+  }
+  if (!['http:', 'https:', 'socks5:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    return undefined
+  }
+  const bypass = Array.isArray(value.bypass)
+    ? [...new Set(value.bypass.filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trim()).filter(Boolean))].slice(0, 100)
+    : []
+  return { server: parsed.toString(), bypass }
 }
 
 function validateConfigBrowser(value: unknown): BrowserSelection {

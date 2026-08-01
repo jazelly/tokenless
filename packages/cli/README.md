@@ -6,7 +6,7 @@
 
 ## Install
 
-Requires Node.js 22.13+. Browser runtime management currently supports Apple Silicon macOS and x64 Windows.
+Requires Node.js 22.13+. The first browser-runtime targets are Apple Silicon macOS and x64 Windows. Windows remains prerelease until its real-hardware gates pass.
 
 ```bash
 npm install --global tokenless@latest
@@ -14,7 +14,7 @@ tokenless setup
 tokenless doctor --json
 ```
 
-`setup` first resolves an exact browser runtime, creates or selects a runtime-bound managed profile, then installs the required agent skills, prepares the local daemon, and checks every enabled provider once. `auto` prefers an installed system browser and lazily downloads Tokenless-managed Chrome for Testing 145 only when none exists. `cloak` is explicit opt-in and downloads the platform pin from Cloak's official release into the Tokenless cache; Tokenless does not redistribute the Cloak binary. On first setup it also detects `en` or `zh-CN` from the system locale; use `tokenless config --language <en|zh-CN>` to override the saved preference.
+`setup` first resolves an exact browser runtime, creates or selects a runtime-bound managed profile, then installs the required agent skills, prepares the local daemon, checks every enabled provider once, and leaves one headed provider review tab open for each enabled provider. `auto` prefers an installed system browser and lazily downloads Tokenless-managed Chrome for Testing 145 only when none exists. Interactive setup asks whether to use Anti-Detect mode; `--anti-detect` is the non-interactive equivalent and selects the platform-pinned Cloak release. Tokenless downloads Cloak from its official release and does not redistribute it. On first setup it also detects `en` or `zh-CN` from the system locale; use `tokenless config --language <en|zh-CN>` to override the saved preference.
 
 For a clean non-interactive profile:
 
@@ -119,7 +119,7 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-Chrome and Brave profiles can be imported only with explicit copy consent. Gemini and shared Google sign-in data are not imported.
+New profiles always start clean and are bound to the exact runtime that created them. Tokenless does not copy an existing Chrome, Brave, or Cloak profile—or its cookies and authentication state. Open the managed profile and sign in through the visible browser; the browser then keeps that profile's session across jobs.
 
 ## Browser and Local Runtime
 

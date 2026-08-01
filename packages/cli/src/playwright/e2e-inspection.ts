@@ -5,7 +5,7 @@ import process from 'node:process'
 
 import { tokenlessError } from './errors.js'
 
-export const E2E_BROWSER_INSPECTION_PROTOCOL = 'tokenless.e2e-browser-inspection.v1' as const
+export const E2E_BROWSER_INSPECTION_PROTOCOL = 'tokenless.e2e-browser-inspection.v2' as const
 
 export type E2EBrowserInspectionConfig = {
   protocol: typeof E2E_BROWSER_INSPECTION_PROTOCOL
@@ -93,6 +93,7 @@ export async function waitForE2EBrowserObserver(options: {
   profileDirectory: string
   provider: string
   url: string
+  targetId: string
   signal?: AbortSignal | undefined
 }): Promise<void> {
   const { config } = options
@@ -110,6 +111,7 @@ export async function waitForE2EBrowserObserver(options: {
     profileDirectory: options.profileDirectory,
     provider: options.provider,
     url: options.url,
+    targetId: requiredTargetId(options.targetId),
     waitingAt: new Date().toISOString(),
   })
   const deadline = Date.now() + config.timeoutMs
@@ -172,6 +174,18 @@ function requiredSafeComponent(value: unknown, label: string) {
     throw tokenlessError(
       'invalid_e2e_browser_inspection',
       `${label} is invalid for E2E browser inspection.`,
+      { retryable: false },
+    )
+  }
+  return normalized
+}
+
+function requiredTargetId(value: unknown) {
+  const normalized = String(value ?? '')
+  if (!/^[A-Fa-f0-9]{16,128}$/u.test(normalized)) {
+    throw tokenlessError(
+      'invalid_e2e_browser_inspection',
+      'Chromium target id is invalid for E2E browser inspection.',
       { retryable: false },
     )
   }

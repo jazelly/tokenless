@@ -12,16 +12,17 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless --version` | Print the installed CLI version. | None |
 | `tokenless install` | Verify the packaged local runtime, selected browser, and daemon. | None |
 | `tokenless setup` | Configure skills, browser, profiles, daemon, and one-time provider sign-in checks. | Yes |
+| `tokenless dashboard` | Open or mint a one-time URL for the authenticated local web control plane. | None |
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
-| `tokenless profiles discover` | Discover importable Chrome or Brave profiles. | None |
-| `tokenless profiles add` | Create or import a managed browser profile. | None |
+| `tokenless profiles discover` | Read non-secret Chrome or Brave profile metadata without enabling copy. | None |
+| `tokenless profiles add` | Create a clean managed browser profile. | None |
 | `tokenless profiles list` | List profiles and their last saved provider observations. | None |
 | `tokenless profiles status` | Check one provider live and save the observation to the profile registry. | Yes |
 | `tokenless profiles open` | Open a managed profile headed, optionally navigating to one provider. | Optional |
 | `tokenless profiles set-default` | Select the default managed profile. | None |
-| `tokenless profiles reset` | Re-import an imported profile from its recorded source. | None |
+| `tokenless profiles reset` | Legacy compatibility command; profile copying is disabled. | None |
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
@@ -56,7 +57,7 @@ qwen
 
 ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问 is experimental: its guest-session prompt submission and response reading are proven, while cross-process continuation and unproven optional capabilities remain unavailable or unknown.
 
-Runtime browser values are `auto`, `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, `brave`, `managed-chromium`, and `cloak`. `auto` prefers an installed system browser and uses the locked managed fallback only when none exists. `cloak` is explicit opt-in. Local profile import currently supports only matching system Chrome and Brave runtimes; managed Chromium and Cloak always start with clean profiles.
+Runtime browser values are `auto`, `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, `brave`, `managed-chromium`, and `cloak`. `auto` prefers an installed system browser and uses the locked managed fallback only when none exists. `cloak` is explicit opt-in. Every newly created Tokenless profile is clean and runtime-bound; Tokenless does not copy an existing browser profile or its authentication state.
 
 ### Short options
 
@@ -145,43 +146,50 @@ Create or reuse a clean profile non-interactively:
 
 ```bash
 tokenless setup --profile default --fresh --json
-tokenless setup --browser cloak --profile cloak-default --fresh --json
+tokenless setup --anti-detect --profile cloak-default --fresh --json
 tokenless setup --browser managed-chromium --profile managed-default --fresh --json
-```
-
-Import an existing local browser profile:
-
-```bash
-tokenless setup \
-  --profile work \
-  --browser chrome \
-  --import-browser-profile "Profile 1" \
-  --consent-local-profile-copy \
-  --json
 ```
 
 Main options:
 
 - `--profile <slug>` selects or names the managed profile.
+- `--anti-detect` explicitly selects the catalog-pinned CloakBrowser runtime. Interactive setup asks this question before ordinary browser selection.
+- `--preferred-providers <list>` selects provider membership for that profile during non-interactive setup.
+- `--no-open` completes setup without opening the dashboard.
 - `--browser <browser>` selects `auto`, one exact system browser, `managed-chromium`, or `cloak`.
 - `--no-browser-download` fails instead of downloading a missing managed runtime.
 - `--repair-browser` explicitly reinstalls a selected `managed-chromium` or `cloak` runtime. It cannot be combined with `--no-browser-download`.
 - `--fresh` or `-f` creates a clean managed profile.
 - `--defaults` selects non-interactive defaults.
-- `--import-browser-profile <directory-key>` imports a Chrome or Brave profile.
-- `--browser-user-data-dir <path>` disambiguates the source browser directory.
-- `--consent-local-profile-copy` explicitly authorizes the local copy.
-- `--reimport-profile` replaces an existing imported managed profile from a selected source.
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
 
-`auto` is the default and prefers an installed Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing executable. If no supported system browser exists, setup downloads the locked Chrome for Testing 145 artifact into `~/.tokenless/browser/runtimes`. An explicit missing system-browser choice fails rather than falling back. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first supported runtime platforms are Apple Silicon macOS and Windows x64 (Intel and AMD).
+`auto` is the default and prefers an installed Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing executable. If no supported system browser exists, setup downloads the locked Chrome for Testing 145 artifact into `~/.tokenless/browser/runtimes`. An explicit missing system-browser choice fails rather than falling back. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first runtime targets are Apple Silicon macOS and Windows x64 (Intel and AMD); Windows remains prerelease until its real-hardware gates pass.
 
-Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing from a system browser to managed Chromium or Cloak creates a clean profile. Full Chrome-profile import into Cloak or managed Chromium is intentionally unavailable.
+Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing runtime family creates a clean profile. The user signs in inside that Tokenless-managed profile, and the profile then preserves its own browser-managed session across jobs. Legacy profile-copy flags remain recognized only to return the structured `browser_profile_copy_disabled` error; they never copy data.
 
-With explicit copy consent, profile import copies selected provider cookies plus limited Chromium compatibility state: Origin Bound Certs, Trust Tokens, TransportSecurity, Visited Links, the Affiliation Database, and the Site Characteristics Database. Passwords, full history, bookmarks, payment data, sync data, unrelated site storage, and caches remain excluded. Fresh profiles do not copy source browser data.
+Interactive `setup` asks which providers belong to the selected profile. Non-interactive setup uses `--preferred-providers`, the existing configured scope, or all non-disabled providers when no scope exists. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
 
-`setup` checks every provider whose registry stage is not `disabled`, including experimental providers such as Qwen. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. It does not accept `--provider` or `--preferred-providers`. `--fresh` cannot be combined with profile import or re-import.
+### `tokenless dashboard`
+
+Starts or discovers the same-home daemon, mints a single-use 60-second bootstrap ticket, and opens one reserved dashboard tab in the selected managed profile:
+
+```bash
+tokenless dashboard
+tokenless dashboard --profile work
+tokenless dashboard --profile work --no-open --json
+```
+
+`--no-open` returns the one-time loopback bootstrap URL without launching a browser. The URL redirects immediately to `/ui/` after use and cannot be reused. The resulting browser session is short-lived, stored in an `HttpOnly` `SameSite=Strict` cookie, and uses exact-Origin plus CSRF checks for mutations. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
+
+The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
+
+```bash
+tokenless config --profile work --preferred-providers chatgpt,claude --browser-visibility headed --json
+tokenless config --profile work --proxy-server socks5://127.0.0.1:1080 --proxy-bypass localhost --json
+tokenless profiles open --profile work --json
+tokenless state --profile work --json
+```
 
 ### `tokenless doctor`
 
@@ -191,7 +199,7 @@ Performs a read-only health report over Node.js, installed skills, packaged runt
 tokenless doctor --json
 ```
 
-`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. Provider readiness comes from the last saved profile observation. `checks.providerReadiness.ok` reports whether configured providers have recorded observations; `usableProviders` lists the cached providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
+`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. `checks.managedProfile.ok` reports registry/profile health, while `checks.profileRuntime.ok` independently reports whether that profile has a compatible resolvable browser binding. Provider readiness comes from the last saved profile observation. `checks.providerReadiness.ok` reports whether configured providers have recorded observations; `usableProviders` lists the cached providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
 
 Main options: `--browser`, `--daemon-url`, `--home`, and `--json`.
 
@@ -220,8 +228,12 @@ Configurable values:
 - `--preferred-providers <list>`
 - `--browser <browser>`
 - `--browser-visibility <auto|headed|headless>`
+- `--proxy-server <http|https|socks5-url>` with optional `--proxy-bypass <comma-separated-list>`
+- `--clear-proxy`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
+
+Add `--profile <slug>` to scope `--preferred-providers`, `--browser-visibility`, and credential-free proxy settings to one managed profile. Proxy options require `--profile`; `--clear-proxy` removes that profile's endpoint. Global `preferredProviders` remains a compatibility union for older callers, while routing reads the selected profile's membership.
 
 Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
 
@@ -256,7 +268,7 @@ A managed profile is one persistent local browser identity. One profile may hold
 
 ### `tokenless profiles discover`
 
-Discovers importable local Chrome or Brave profiles without copying or modifying them.
+Reads non-secret Chrome or Brave profile metadata without copying or modifying browser data. Discovery does not make a profile importable.
 
 ```bash
 tokenless profiles discover --browser chrome --json
@@ -271,20 +283,7 @@ Creates an empty managed profile:
 tokenless profiles add -P work --label "Work" --set-default --json
 ```
 
-Or imports selected authentication data into a separate managed copy:
-
-```bash
-tokenless profiles add \
-  -P work \
-  --browser chrome \
-  --import-browser-profile "Profile 1" \
-  --preferred-providers chatgpt,claude \
-  --consent-local-profile-copy \
-  --set-default \
-  --json
-```
-
-Import requires an explicit provider list and `--consent-local-profile-copy`.
+The profile starts clean. Open it and sign in through the visible browser; Tokenless never copies authentication state from another browser profile.
 
 ### `tokenless profiles list`
 
@@ -328,14 +327,11 @@ tokenless profiles set-default -P work --json
 
 ### `tokenless profiles reset`
 
-Quiesces the embedded Playwright runtime and re-imports an imported managed profile from its recorded source.
+This legacy command is retained only for compatibility and fails with `browser_profile_copy_disabled`. Tokenless does not recopy local profiles or authentication state.
 
 ```bash
-tokenless profiles reset -P work
-tokenless profiles reset -P work --preferred-providers chatgpt,claude
+tokenless profiles reset -P work --json
 ```
-
-This is a human maintenance command and does not accept `--json`. It works only for profiles that were originally imported.
 
 ### `tokenless profiles clear`
 
@@ -356,7 +352,7 @@ Deletes one managed profile through the structured, explicitly confirmed form:
 tokenless profiles remove -P work --confirm-delete --json
 ```
 
-`--confirm-delete` is mandatory. Removing or clearing a managed profile deletes its Tokenless-managed browser data; it does not modify the source browser profile from which it may have been imported.
+`--confirm-delete` is mandatory. Removing or clearing a managed profile deletes only its Tokenless-managed browser data; it does not modify any system-browser profile.
 
 ## Running Work and Managing Jobs
 
@@ -654,3 +650,19 @@ provider-status
 ```
 
 Commands that may open or operate a provider page are `setup`, `profiles status`, `profiles open`, `run`, `resume`, every provider inspection/configuration/action command, and `snapshot-dom`.
+
+## Manual Real-Browser Acceptance
+
+Browser-runtime and provider-surface acceptance tests are explicit local gates and do not run in CI:
+
+```bash
+npm run test:e2e:browser-runtime
+npm run test:e2e:browser-surfaces
+npm run test:e2e:system-surfaces
+npm run test:e2e:managed-surfaces
+npm run test:e2e:cloak-surfaces
+```
+
+On a machine intentionally prepared without a supported system browser, run `npm run test:e2e:browser-runtime -- --expected-auto managed-chromium` to require proof of the lazy managed fallback. The default command requires `auto` to resolve a system browser. Run both commands on each targeted Windows x64 CPU class; npm forwards these arguments identically from `cmd.exe`, PowerShell, and POSIX shells.
+
+The browser surface gate runs the same real headed, keychain-neutral test profile against system auto-selection, managed Chrome for Testing, and Cloak. Each case always visits every registered provider plus Google Search over the real network before aggregating failures, fails on a detected anti-bot challenge, and reports only public location, title, response status, and structured challenge outcomes. It does not authenticate, submit prompts, read browser storage, capture screenshots, or replace the authenticated built-CLI provider release gate. The three selection-specific commands run only system, managed, or Cloak respectively.

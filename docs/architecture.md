@@ -1,6 +1,6 @@
 # Tokenless Architecture
 
-Tokenless exposes visible AI websites through a provider-neutral local CLI today. Managed Playwright through the authenticated local daemon is the only execution path; a public local API is planned but is not a compatibility surface yet.
+Tokenless exposes visible AI websites through a provider-neutral local CLI and a browser-based local control plane. Managed Playwright through the authenticated local daemon remains the only provider execution path. The machine bearer API and browser session API are separate trust boundaries.
 
 ## Components
 
@@ -10,8 +10,8 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI today
 4. The provider registry declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, and Qwen.
 5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
-7. A public local API is planned as a second interface to the same application and job contracts.
-8. The planned [Local Web Control Plane](roadmaps/P0-local-web-control-plane.md) provides a browser-facing localhost console over shared application services without exposing the daemon control bearer token to browser JavaScript.
+7. Shared application services expose redacted config, profile, provider, capability, job, runtime, and diagnostic operations to the local control plane.
+8. The bundled TypeScript SPA is served from `/ui/`; its authenticated `/ui-api/v1` surface never exposes the daemon control bearer token to browser JavaScript.
 
 ## Execution path
 
@@ -20,7 +20,8 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI today
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
 | CLI | CLI → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Primary interface |
-| Local API | Local API → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Planned; schemas and client authentication are not public yet |
+| Local dashboard | Browser → `/ui-api/v1` → shared services/daemon → managed profile → visible provider page | One-time bootstrap ticket plus short-lived UI session; provider sign-in remains inside the managed profile | Local administration interface |
+| Machine API | Trusted local caller → bearer API → daemon → Playwright worker | Daemon bearer token plus provider sign-in inside the managed profile | Local scripting interface |
 
 ## Managed Playwright flow
 
@@ -40,18 +41,15 @@ Jobs use explicit provider and profile identity. Unsupported controls, ambiguous
 
 ## Setup and profiles
 
-`tokenless setup` is the interactive onboarding flow. It first crosses the `BrowserRuntimeManager` seam to discover, install when authorized, and verify one exact runtime. It then selects or creates a runtime-compatible profile, commits the preference, aligns the global skills and daemon with the installed CLI, selects every non-disabled registry provider, and offers two profile paths:
+`tokenless setup` is the interactive onboarding flow. It first crosses the `BrowserRuntimeManager` seam to discover, install when authorized, and verify one exact runtime. It then selects or creates a clean runtime-compatible profile, collects that profile's provider membership, commits the preference, aligns the global skills and daemon with the installed CLI, and checks only the selected providers. Tokenless never copies an existing Chrome, Brave, or Cloak profile or its authentication state; users sign in through the visible clean managed profile and the browser preserves that managed session across jobs.
 
-- Import one existing Chrome or Brave profile with explicit consent. Only selected provider sign-in state is copied into a separate managed directory; the source remains unchanged.
-- Create a clean managed profile without requiring provider sign-in during setup.
-
-`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser and every provider whose registry stage is not `disabled`, checks the installed CLI against the latest npm release, runs the same skills-and-daemon maintenance reconciler used by the verified new CLI during `tokenless upgrade`, checks each enabled provider's visible sign-in status once, and reports the observed results without opening a sign-in handoff or retrying the check. Ordinary daemon startup uses the Tokenless Daemon API v1 OpenAPI contract: readiness comes from the same-home proof and exact package version on `/ready`, with API version recorded only in OpenAPI `info.version`. Job, action, and local recovery payloads keep internal schema IDs where persisted validation needs them; they are not negotiated across the CLI-daemon boundary. Setup may replace a daemon only when a verified same-home daemon reports a different package version. Foreign, different-home, and unverified listeners remain untouched. Shutdown verifies `/ready` for the same home immediately before sending the bearer token to `/control/shutdown`; Tokenless never kills a process merely because it occupies the configured loopback port. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
+`tokenless setup --fresh` is the clean-profile path. Add `--json` for non-interactive setup. On a new installation it creates `default`, selects the first supported browser, uses an explicit or existing provider scope (falling back to every non-disabled provider only when none exists), checks the installed CLI against the latest npm release, runs the same skills-and-daemon maintenance reconciler used by the verified new CLI during `tokenless upgrade`, and checks each enabled provider's visible sign-in status once. Interactive setup then opens the reserved dashboard tab; machine-oriented and `--no-open` runs return `tokenless dashboard` as the later handoff. Ordinary daemon startup uses the Tokenless Daemon API v1 OpenAPI contract: readiness comes from the same-home proof and exact package version on `/ready`, with API version recorded only in OpenAPI `info.version`. Job, action, and local recovery payloads keep internal schema IDs where persisted validation needs them; they are not negotiated across the CLI-daemon boundary. Setup may replace a daemon only when a verified same-home daemon reports a different package version. Foreign, different-home, and unverified listeners remain untouched. Shutdown verifies `/ready` for the same home immediately before sending the bearer token to `/control/shutdown`; Tokenless never kills a process merely because it occupies the configured loopback port. An unavailable npm registry is reported as an advisory check failure rather than making an otherwise runnable local setup fail.
 
 Browser selection is system-first. `auto` uses an installed supported browser and lazily installs catalog-pinned Chrome for Testing 145 only when none exists. `managed-chromium` forces that cache-managed runtime; `cloak` explicitly opts into the platform-specific Cloak release. Managed downloads happen only during setup or install, pass fixed SHA-256, archive-path, executable-version, sandboxed smoke-launch, and atomic-cache checks, and are never performed by npm postinstall, daemon startup, or a job. Cloak binaries are downloaded from the official release and are not redistributed by Tokenless.
 
 Each managed profile stores a runtime binding containing the exact runtime identity, family, browser ID, and creation version. The daemon resolves from this binding and always passes the resulting executable path to Playwright. It never reinterprets the global preference, silently falls back across runtime families, or opens a profile with an older browser. Existing unbound profiles can migrate only to a compatible system/test runtime; a family change provisions a clean profile.
 
-Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. Import, reset, and deletion require explicit commands and consent.
+Managed profiles live under the Tokenless home and use unique directories. Jobs reuse them but never import, reset, clear, or replace them automatically. New profiles always start clean; deletion requires an explicit command and confirmation.
 
 Authentication status is a single visible observation, not an enforced login workflow. A provider-specific account control is authenticated evidence; it does not have to be clicked to prove the state. A visible login surface is unauthenticated evidence. For guest-capable providers, an unauthenticated visible composer produces `access: guest`; for providers that require an account it produces `access: sign_in_required`. A page that has not stabilized may be reported honestly as `unknown`. Setup does not retry after login or open a handoff.
 
@@ -97,7 +95,11 @@ The provider-session machine is intentionally separate from the daemon job state
 
 The daemon binds to loopback, stores its bearer token beside its SQLite database, and protects job and control endpoints with that token. The daemon home and token use restrictive filesystem permissions on supported systems. User configuration stores a preferred loopback origin. The daemon may scan upward from that port when it is occupied, while a single SQLite runtime-state row records the current actual origin, startup generation, and owner. CLI processes probe that row and coordinate startup through a compare-and-swap lease; no operating-system service actively restarts the daemon.
 
-These HTTP endpoints are an internal runtime control plane, not the planned browser-facing API. The planned [Local Web Control Plane](roadmaps/P0-local-web-control-plane.md) adds a separate browser session and `/ui-api/v1` surface while keeping the daemon bearer token inside the trusted local process rather than exposing it to browser JavaScript.
+The bearer-protected machine endpoints remain an internal runtime control plane. Browser administration uses a separate `/ui-api/v1` surface documented in `api/tokenless-ui-api.openapi.json`. An authenticated CLI call mints a random, 60-second, single-use ticket; `/ui/bootstrap` consumes it, sets an `HttpOnly`, `SameSite=Strict`, path-scoped session cookie, and redirects to `/ui/` so the ticket leaves browser history. UI mutations require the exact daemon Origin and a per-session CSRF header. Sessions live only in daemon memory and are invalidated on restart.
+
+All UI routes enforce the daemon's exact loopback `Host`, a restrictive same-origin CSP, `frame-ancestors 'none'`, `nosniff`, and `Referrer-Policy: no-referrer`. Static assets are bundled in the npm package and load no remote JavaScript, fonts, analytics, or CDN resources. Purpose-built responses redact control tokens, claims, checkpoints, browser storage, raw DOM, legacy source paths, and private file paths. Bounded polling uses revision ETags and defers rendering while a form has uncommitted edits; there is no SSE or WebSocket transport.
+
+The dashboard's reserved page key is `tokenless:control-plane:<daemon-home-id>`. It has a separate registry from provider page leases, cannot be selected by provider `pagePolicy: replace`, is focused rather than duplicated, and is recreated if the user closes it. Closing the tab does not stop the daemon or managed context.
 
 Job creation, claim, lease renewal, completion, cancellation, state queries, and agent replay are daemon-backed. Before readiness is activated, startup reconciles expired claims and durable Playwright checkpoints, then starts the runner. Claims are correlated to one worker and expire safely. CLI cancellation is reported as complete only after the authenticated control endpoint confirms `canceled`.
 
@@ -114,6 +116,7 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 - Every provider adapter has an explicit action and capability contract. Unverified behavior is unavailable rather than guessed.
 - Navigation and target URLs are canonicalized and checked before and after actions.
 - Pages are owned by a logical key derived from provider plus stable task identity, or provider plus job identity when no task exists. The default preserve policy never navigates an unrelated owned page; replacement requires an explicit job policy.
+- The control-plane page is separately reserved and can never be acquired, navigated, or replaced by a provider job.
 
 ## Capability and Workspace strategy
 
@@ -127,7 +130,7 @@ Conversation fallback is scoped to one provider, managed profile, and task ident
 
 ## Browser visibility policy
 
-Tokenless stores browser visibility in config and defaults omitted values to `auto`. The same policy can be overridden per job, but the runner resolves it into the same managed-browser contract every time.
+Tokenless stores a global browser visibility fallback and profile-scoped visibility preferences, defaulting omitted values to `auto`. The same policy can be overridden per job, but the runner resolves it into the same managed-browser contract every time. Profile preferences also contain provider routing membership, a human role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy. Proxy changes require browser quiescence and cause the persistent context to be recreated.
 
 The persistent config also stores `browserConnectionMode`, with `playwright` as the backward-compatible default and `cdp` as an experimental capability-evaluation mode. This is a daemon-runner setting rather than a job field or CLI flag. Native mode uses `launchPersistentContext`; CDP mode launches the exact profile-bound Chromium executable with an ephemeral loopback DevTools endpoint and then uses `connectOverCDP`. Both modes preserve the same profile, visibility, page-key, provider, and durable-mapping contracts. The daemon must be restarted after this config value changes.
 
@@ -150,4 +153,4 @@ Managed jobs transition through daemon states such as `queued`, `claimed`, `runn
 
 ## Current delivery status
 
-The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, and job APIs are implemented. Provider parity, file-upload acceptance across enabled providers, and the public local API remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.
+The managed profile lifecycle, local daemon, Playwright worker, CLI setup flow, readiness reporting, job APIs, and browser-based local control plane are implemented. The UI API is local and purpose-built for the bundled dashboard; it is not a remote administration contract. Provider parity and file-upload acceptance across enabled providers remain under active development. The roadmap is a delivery plan, not a compatibility guarantee.

@@ -13,17 +13,20 @@
     "api:check": "node scripts/check-api-contract.mjs",
     "release:version": "node scripts/release/version.mjs",
     "prototype:cloakbrowser": "node scripts/prototypes/cloakbrowser-spike.mjs",
-    "prototype:cloakbrowser-profile-compat": "node scripts/prototypes/cloakbrowser-profile-compat-spike.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node dist/scripts/test-all.mjs",
     "test:ts-daemon-conformance": "npm run build && node --test --test-concurrency=1 test/ts-daemon-conformance.test.mjs",
-    "test:e2e": "npm run build && TOKENLESS_LIVE_E2E_GATE=all node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
-    "test:e2e:browser-runtime": "npm run build && TOKENLESS_LIVE_BROWSER_RUNTIME_GATE=1 TOKENLESS_LIVE_BROWSER_RUNTIME_EXPECT_AUTO=system node --test --test-concurrency=1 test/live-browser-runtime.e2e.mjs",
-    "test:e2e:connection-matrix": "npm run build && TOKENLESS_LIVE_E2E_GATE=all node test/run-live-connection-mode-matrix.mjs",
-    "test:e2e:non-submission": "TOKENLESS_LIVE_E2E_GATE=non_submission node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
-    "test:e2e:mutation": "TOKENLESS_LIVE_E2E_GATE=mutation node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
-    "test:e2e:project": "TOKENLESS_LIVE_E2E_GATE=project node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
-    "test:e2e:fallback": "TOKENLESS_LIVE_FALLBACK_E2E_GATE=real-provider-fallback node --test --test-concurrency=1 test/live-provider-fallback.e2e.mjs"
+    "test:e2e": "npm run build && node test/run-gated-e2e.mjs managed-playwright all",
+    "test:e2e:browser-runtime": "npm run build && node test/run-gated-e2e.mjs browser-runtime",
+    "test:e2e:browser-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs",
+    "test:e2e:system-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs --selection auto",
+    "test:e2e:managed-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs --selection managed-chromium",
+    "test:e2e:cloak-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs --selection cloak",
+    "test:e2e:connection-matrix": "npm run build && node test/run-live-connection-mode-matrix.mjs",
+    "test:e2e:non-submission": "node test/run-gated-e2e.mjs managed-playwright non_submission",
+    "test:e2e:mutation": "node test/run-gated-e2e.mjs managed-playwright mutation",
+    "test:e2e:project": "node test/run-gated-e2e.mjs managed-playwright project",
+    "test:e2e:fallback": "node test/run-gated-e2e.mjs provider-fallback"
   },
   "workspaces": [
     "packages/*"

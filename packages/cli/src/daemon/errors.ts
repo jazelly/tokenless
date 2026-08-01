@@ -1,3 +1,5 @@
+import { TokenlessPlaywrightError } from '../playwright/errors.js'
+
 export type JobStatus =
   | 'queued'
   | 'claimed'
@@ -24,6 +26,7 @@ type DaemonErrorKind =
   | 'control_auth_missing'
   | 'control_auth_rejected'
   | 'invalid_job_state'
+  | 'product'
 
 export class DaemonError extends Error {
   readonly kind: DaemonErrorKind
@@ -33,6 +36,9 @@ export class DaemonError extends Error {
   readonly actual?: JobStatus | undefined
   readonly host?: string | undefined
   readonly cause?: unknown
+  readonly productCode?: string | undefined
+  readonly productRetryable?: boolean | undefined
+  readonly productDetails?: unknown
 
   constructor(kind: DaemonErrorKind, message: string, options: {
     jobId?: string | undefined
@@ -41,6 +47,9 @@ export class DaemonError extends Error {
     actual?: JobStatus | undefined
     host?: string | undefined
     cause?: unknown
+    productCode?: string | undefined
+    productRetryable?: boolean | undefined
+    productDetails?: unknown
   } = {}) {
     super(message)
     this.name = 'DaemonError'
@@ -51,6 +60,9 @@ export class DaemonError extends Error {
     this.actual = options.actual
     this.host = options.host
     this.cause = options.cause
+    this.productCode = options.productCode
+    this.productRetryable = options.productRetryable
+    this.productDetails = options.productDetails
   }
 }
 
@@ -119,6 +131,14 @@ export function invalidJobState(jobId: string, expected: string, actual: JobStat
 
 export function toDaemonError(error: unknown) {
   if (error instanceof DaemonError) return error
+  if (error instanceof TokenlessPlaywrightError) {
+    return new DaemonError('product', error.message, {
+      cause: error,
+      productCode: error.code,
+      productRetryable: error.retryable,
+      productDetails: error.details,
+    })
+  }
   return sqliteError(error)
 }
 
@@ -138,6 +158,8 @@ export function daemonErrorStatus(error: DaemonError) {
     case 'claim_expired':
     case 'invalid_job_state':
     case 'bridge_busy':
+      return 409
+    case 'product':
       return 409
     case 'io':
     case 'random':
@@ -180,6 +202,11 @@ export function daemonErrorCodeRetryable(error: DaemonError) {
       return { code: 'control_auth_rejected', retryable: false }
     case 'invalid_job_state':
       return { code: 'invalid_job_state', retryable: false }
+    case 'product':
+      return {
+        code: error.productCode ?? 'tokenless_product_error',
+        retryable: error.productRetryable ?? false,
+      }
   }
 }
 
@@ -211,6 +238,8 @@ function daemonErrorDetails(error: DaemonError) {
         expected: error.expected,
         actual: error.actual,
       }
+    case 'product':
+      return error.productDetails ?? null
     default:
       return null
   }

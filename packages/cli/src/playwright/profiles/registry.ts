@@ -43,6 +43,7 @@ export type ManagedProfileRecord = {
     profileDirectoryKey: string
     importedAt: string
     browser?: string | undefined
+    browserVersion?: string | undefined
     providers?: readonly ProviderId[] | undefined
   }
   lastObservedAuth: Partial<Record<ProviderId, ProviderStatus>>
@@ -149,6 +150,26 @@ export class ManagedProfileRegistry {
     })
   }
 
+  async updateLabel(slug: string, label: string): Promise<ManagedProfileRecord> {
+    return await this.withWriteLock(async () => {
+      const normalized = normalizeSlug(slug)
+      const data = await this.readUnlocked()
+      const record = data.profiles[normalized]
+      if (!record || record.lifecycle === 'removed') {
+        throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
+      }
+      const updated: ManagedProfileRecord = {
+        ...record,
+        label: normalizeLabel(label, record.slug),
+        labelOrigin: 'user',
+        updatedAt: new Date().toISOString(),
+      }
+      data.profiles[normalized] = updated
+      await this.writeUnlocked(data)
+      return updated
+    })
+  }
+
   async removeProfile(slug: string, options: { confirmDelete: boolean }): Promise<ManagedProfileRecord> {
     if (!options.confirmDelete) {
       throw tokenlessError('profile_delete_confirmation_required', 'Profile removal requires explicit delete confirmation.')
@@ -232,7 +253,7 @@ export class ManagedProfileRegistry {
     })
   }
 
-  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; profileName?: string; importedAt?: string; browser?: string; providers?: readonly ProviderId[] }): Promise<ManagedProfileRecord> {
+  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; profileName?: string; importedAt?: string; browser?: string; browserVersion?: string | null; providers?: readonly ProviderId[] }): Promise<ManagedProfileRecord> {
     return await this.withWriteLock(async () => {
       const data = await this.readUnlocked()
       const record = data.profiles[normalizeSlug(slug)]
@@ -253,6 +274,7 @@ export class ManagedProfileRegistry {
           profileDirectoryKey: imported.profileDirectoryKey.slice(0, 128),
           importedAt: imported.importedAt === undefined ? now : parseIso(imported.importedAt),
           ...(imported.browser ? { browser: normalizeImportedBrowser(imported.browser) } : {}),
+          ...(imported.browserVersion ? { browserVersion: normalizeImportedBrowserVersion(imported.browserVersion) } : {}),
           ...(imported.providers ? { providers: normalizeImportedProviders(imported.providers) } : {}),
         },
       }
@@ -539,9 +561,18 @@ function parseImportMetadata(value: unknown): Pick<ManagedProfileRecord, 'import
       profileDirectoryKey: value.profileDirectoryKey.slice(0, 128),
       importedAt: parseIso(value.importedAt),
       ...(typeof value.browser === 'string' ? { browser: normalizeImportedBrowser(value.browser) } : {}),
+      ...(typeof value.browserVersion === 'string' ? { browserVersion: normalizeImportedBrowserVersion(value.browserVersion) } : {}),
       ...(value.providers === undefined ? {} : { providers: normalizeImportedProviders(value.providers) }),
     },
   }
+}
+
+function normalizeImportedBrowserVersion(value: string) {
+  const version = value.trim()
+  if (!/^\d+(?:\.\d+){1,3}$/.test(version)) {
+    throw tokenlessError('invalid_imported_browser_version', 'Imported browser version is invalid.')
+  }
+  return version
 }
 
 function normalizeLabel(label: string | undefined, fallback: string) {

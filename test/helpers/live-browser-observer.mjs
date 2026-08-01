@@ -10,7 +10,7 @@ import { chromium } from 'playwright'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
-const protocol = 'tokenless.e2e-browser-inspection.v1'
+const protocol = 'tokenless.e2e-browser-inspection.v2'
 const pollMs = 50
 const daemonStopTimeoutMs = 60_000
 const lsAppInfo = '/usr/bin/lsappinfo'
@@ -156,6 +156,7 @@ async function waitForWaitingBarrier(options) {
       assert.equal(typeof waiting.profileDirectory, 'string')
       assert.equal(typeof waiting.provider, 'string')
       assert.equal(typeof waiting.url, 'string')
+      assert.match(waiting.targetId ?? '', /^[A-Fa-f0-9]{16,128}$/)
       return waiting
     }
     if (exited) {
@@ -212,7 +213,7 @@ async function connectObserver(waiting, sessionStartedAt) {
   const contexts = browser.contexts()
   assert.equal(contexts.length, 1, 'managed persistent browser must expose exactly one CDP context')
   const expectedUrl = canonicalObservedUrl(waiting.url)
-  const page = await waitForExpectedPage(contexts[0], expectedUrl)
+  const page = await waitForExpectedPage(contexts[0], waiting.targetId, expectedUrl)
   if (!page) {
     await browser.close()
     throw new Error(`CDP observer did not find the product page at ${expectedUrl}.`)
@@ -385,14 +386,32 @@ function canonicalObservedUrl(value) {
   return parsed.toString()
 }
 
-async function waitForExpectedPage(context, expectedUrl) {
+async function waitForExpectedPage(context, expectedTargetId, expectedUrl) {
   const deadline = Date.now() + 10_000
   while (Date.now() <= deadline) {
-    const page = context.pages().find((candidate) => canonicalObservedUrl(candidate.url()) === expectedUrl)
-    if (page) return page
+    for (const page of context.pages()) {
+      if (await pageTargetId(context, page) !== expectedTargetId) continue
+      if (canonicalObservedUrl(page.url()) !== expectedUrl) {
+        throw new Error(`CDP target ${expectedTargetId} resolved to an unexpected page URL.`)
+      }
+      return page
+    }
     await delay(pollMs)
   }
   return null
+}
+
+async function pageTargetId(context, page) {
+  if (page.isClosed()) return null
+  const session = await context.newCDPSession(page).catch(() => null)
+  if (!session) return null
+  try {
+    return (await session.send('Target.getTargetInfo')).targetInfo.targetId
+  } catch {
+    return null
+  } finally {
+    await session.detach().catch(() => undefined)
+  }
 }
 
 function summarizeProcess(result) {
