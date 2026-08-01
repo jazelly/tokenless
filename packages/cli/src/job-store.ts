@@ -2,22 +2,20 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeBrowserVisibility } from './browser-visibility.js'
+import { normalizeBrowserConnectionMode, type BrowserConnectionMode } from './browser-connection-mode.js'
 import { normalizeTokenlessLanguage, type TokenlessLanguage } from './localization.js'
 import { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 import { providerRegistry } from './providers/registry.js'
 import type { BrowserVisibility } from './browser-visibility.js'
+import {
+  BROWSER_SELECTIONS,
+  normalizeBrowserSelection,
+  type BrowserSelection,
+} from './browser-runtime/types.js'
 
 export { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 
-export const SUPPORTED_BROWSER_IDS = Object.freeze([
-  'chrome',
-  'chrome-for-testing',
-  'chromium',
-  'edge',
-  'arc',
-  'brave',
-  'profile',
-])
+export const SUPPORTED_BROWSER_IDS = BROWSER_SELECTIONS
 
 type JsonRecord = Record<string, unknown>
 
@@ -25,7 +23,8 @@ export type TokenlessConfig = {
   protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
   preferredProviders: string[]
-  browser: string | null
+  browser: BrowserSelection
+  browserConnectionMode: BrowserConnectionMode
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
   language: TokenlessLanguage
@@ -44,21 +43,7 @@ export function snapshotsDir(homeDir = tokenlessHome()) {
 }
 
 export function normalizeBrowserId(browser: unknown) {
-  if (typeof browser !== 'string') return null
-  const normalized = browser.trim().toLowerCase().replace(/[_\s]+/g, '-')
-  if (!normalized) return null
-  const aliases: Record<string, string> = {
-    'google-chrome': 'chrome',
-    googlechrome: 'chrome',
-    'chrome-testing': 'chrome-for-testing',
-    'chrome-for-testing-legacy': 'chrome-for-testing',
-    'chromium-browser': 'chromium',
-    'microsoft-edge': 'edge',
-    msedge: 'edge',
-    'brave-browser': 'brave',
-  }
-  const browserId = aliases[normalized] ?? normalized
-  return SUPPORTED_BROWSER_IDS.includes(browserId) ? browserId : null
+  return normalizeBrowserSelection(browser)
 }
 
 export function deriveTaskId({
@@ -102,6 +87,9 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.browser !== undefined && payload.browser !== null && !normalizeBrowserId(payload.browser)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.browserConnectionMode !== undefined && !normalizeBrowserConnectionMode(payload.browserConnectionMode)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   if (payload.browserVisibility !== undefined && !normalizeBrowserVisibility(payload.browserVisibility)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
@@ -115,7 +103,8 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
     preferredProviders: normalizeProviderList(payload.preferredProviders),
-    browser: normalizeBrowserId(payload.browser),
+    browser: normalizeBrowserId(payload.browser) ?? 'auto',
+    browserConnectionMode: normalizeBrowserConnectionMode(payload.browserConnectionMode) ?? 'playwright',
     browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
@@ -126,6 +115,7 @@ export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
   preferredProviders,
   browser,
+  browserConnectionMode,
   browserVisibility,
   daemonUrl,
   language,
@@ -133,6 +123,7 @@ export async function writeTokenlessConfig({
   homeDir?: string
   preferredProviders?: unknown
   browser?: unknown
+  browserConnectionMode?: unknown
   browserVisibility?: unknown
   daemonUrl?: unknown
   language?: unknown
@@ -146,7 +137,10 @@ export async function writeTokenlessConfig({
     preferredProviders: preferredProviders === undefined
       ? current.preferredProviders
       : normalizeProviderList(preferredProviders),
-    browser: browser === undefined ? current.browser : normalizeBrowserId(browser),
+    browser: browser === undefined ? current.browser : validateConfigBrowser(browser),
+    browserConnectionMode: browserConnectionMode === undefined
+      ? current.browserConnectionMode
+      : validateConfigBrowserConnectionMode(browserConnectionMode),
     browserVisibility: browserVisibility === undefined
       ? current.browserVisibility
       : validateConfigBrowserVisibility(browserVisibility),
@@ -162,17 +156,41 @@ function emptyTokenlessConfig(): TokenlessConfig {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
     preferredProviders: [],
-    browser: null,
+    browser: 'auto',
+    browserConnectionMode: 'playwright',
     browserVisibility: 'auto',
     daemonUrl: null,
     language: 'en',
   }
 }
 
+function validateConfigBrowser(value: unknown): BrowserSelection {
+  if (value === null || value === undefined || value === '') return 'auto'
+  const browser = normalizeBrowserId(value)
+  if (!browser) {
+    throw configError(
+      'tokenless_config_invalid',
+      'Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.',
+    )
+  }
+  return browser
+}
+
 function validateConfigLanguage(value: unknown): TokenlessLanguage {
   const language = normalizeTokenlessLanguage(value)
   if (!language) throw configError('tokenless_config_invalid', 'Invalid Tokenless language; expected en or zh-CN.')
   return language
+}
+
+function validateConfigBrowserConnectionMode(value: unknown): BrowserConnectionMode {
+  const connectionMode = normalizeBrowserConnectionMode(value)
+  if (!connectionMode) {
+    throw configError(
+      'tokenless_config_invalid',
+      'Invalid Tokenless browser connection mode; expected playwright or cdp.',
+    )
+  }
+  return connectionMode
 }
 
 export async function hasConfiguredTokenlessLanguage(homeDir = tokenlessHome()) {

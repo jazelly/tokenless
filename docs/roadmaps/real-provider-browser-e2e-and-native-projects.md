@@ -302,6 +302,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - Provider browser E2E does not run in CI. Pull requests carry a non-enforced reminder for the author to run the applicable local E2E.
 - Every applicable provider E2E must pass manually before release. The release process relies on this checklist rather than an automated CI enforcement.
 - E2E suites do not retry internally. An operator may manually rerun the complete applicable suite after investigating a clear failure.
+- Run `npm run test:e2e:fallback` with the explicitly selected managed profile, daemon URL, primary provider, and fallback provider environment variables to prove that a real visible primary blocker atomically requeues one durable job and completes on a capability-compatible provider. This focused suite has no fixture route, interception, synthetic provider response, retry, or skip.
 - Do not manually publish packages or releases; repository automation owns changeset-driven publication.
 
 ## Acceptance Criteria
@@ -314,6 +315,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - All applicable E2E suites pass manually before release, without requiring CI enforcement.
 - CDP inspection is test-only, loopback-only, read-only, and absent from normal runs.
 - Runtime provider failures fail required tests rather than silently skipping them unless they match the declared Claude Cloudflare durable blocker known issue.
+- Runtime provider fallback evidence proves one unchanged job ID, a structured primary blocker, ordered durable attempt history, the fallback provider's correlated visible response, and the same final state through the built CLI.
 - Claude and Grok native Project creation and reuse are both exercised against fresh real Project identities.
 - Model, effort, upload, prompt, submit, and read actions execute after native Project alignment.
 - Project and conversation mappings use exact provider resource scope rather than display names.

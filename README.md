@@ -54,9 +54,13 @@ Then follow the interactive setup:
 tokenless setup
 ```
 
-Installing the package is only the first step. Complete `tokenless setup` before using Tokenless; it prepares the local runtime, creates or imports a browser profile, and checks every enabled provider. On first setup, Tokenless selects English or Simplified Chinese from the system locale and saves the choice as `language` in `~/.tokenless/config.json`. English is the fallback. The preference controls human-readable CLI text and the default provider response language; an explicit language request in the prompt still wins. Change it later with `tokenless config --language en` or `tokenless config --language zh-CN`.
+Installing the package is only the first step. Complete `tokenless setup` before using Tokenless; it selects and verifies an exact browser runtime, creates or imports a compatible browser profile, prepares the local runtime, and checks every enabled provider. The default `auto` choice uses an installed Chrome-family browser first. If none is available, setup lazily downloads Tokenless-managed Chrome for Testing 145. CloakBrowser is an explicit opt-in setup choice and is downloaded from Cloak's official release into the private Tokenless cache; its separately licensed binary is not included in the Tokenless npm package or release artifacts.
 
-Requires Node.js 22.13+ and Chrome, Brave, Edge, Arc, or Chromium.
+Every managed profile is bound to the browser runtime that created it. Tokenless does not silently open a system-browser profile with Cloak or the managed fallback. Changing runtime family creates a clean profile, and full Chrome-profile import into Cloak is not supported.
+
+On first setup, Tokenless selects English or Simplified Chinese from the system locale and saves the choice as `language` in `~/.tokenless/config.json`. English is the fallback. The preference controls human-readable CLI text and the default provider response language; an explicit language request in the prompt still wins. Change it later with `tokenless config --language en` or `tokenless config --language zh-CN`.
+
+Requires Node.js 22.13+. Browser runtime management currently supports Apple Silicon macOS and x64 Windows; Windows x64 covers Intel and AMD processors.
 
 ## Run
 
@@ -82,6 +86,8 @@ tokenless run \
 ```
 
 Tokenless combines explicit capabilities with requirements inferred from structured inputs. A normal run requires `conversation.chat`, attachments require `file.upload` plus their media-specific input capability, and `--workspace-mode native` requires `workspace.native`. The router selects one provider that satisfies the complete requirement set inside the configured provider scope. Candidate capabilities such as `research.deep` remain listed but fail before browser mutation until their full provider lifecycle has real E2E closure.
+
+For an implicit provider run, Tokenless records evidence-backed alternatives and automatically tries the next eligible provider before requesting human help when a provider-scoped sign-in, CAPTCHA, rate-limit, or plan blocker occurs. Every alternative must satisfy the complete capability set for that run. Explicit `--provider`, exact-conversation continuation, provider-specific controls, and ambiguous post-submission state never switch providers automatically. `tokenless state --json` reports the remaining fallback plan and durable provider-attempt history.
 
 Inspect provider-specific availability with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
 

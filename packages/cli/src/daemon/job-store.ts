@@ -746,9 +746,11 @@ export class JobStore {
     const nowMs = nowUnixMillis()
     const now = nowRfc3339()
     const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
+    const attempts = updateCurrentProviderAttempt(this.getJobWithoutRecovery(jobId), 'running')
     const result = this.run(
       `UPDATE jobs
-       SET status = ?, blocker_json = NULL, claim_expires_at = ?, updated_at = ?
+       SET status = ?, blocker_json = NULL, claim_expires_at = ?, updated_at = ?,
+           provider_attempts_json = ?
        WHERE job_id = ?
          AND claim_token = ?
          AND status IN ('claimed', 'waiting_for_user')
@@ -756,6 +758,7 @@ export class JobStore {
       'running',
       expiresAt,
       now,
+      stringifyJson(attempts),
       jobId,
       claimToken,
       nowMs
@@ -768,10 +771,11 @@ export class JobStore {
     const nowMs = nowUnixMillis()
     const now = nowRfc3339()
     const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
+    const attempts = updateCurrentProviderAttempt(this.getJobWithoutRecovery(jobId), 'waiting_for_user', blockerJson)
     const result = this.run(
       `UPDATE jobs
        SET status = ?, blocker_json = ?, claim_expires_at = ?, updated_at = ?,
-           outcome_revision = outcome_revision + 1
+           provider_attempts_json = ?, outcome_revision = outcome_revision + 1
        WHERE job_id = ?
          AND claim_token = ?
          AND status = 'running'
@@ -780,6 +784,7 @@ export class JobStore {
       stringifyJson(blockerJson),
       expiresAt,
       now,
+      stringifyJson(attempts),
       jobId,
       claimToken,
       nowMs
@@ -819,12 +824,13 @@ export class JobStore {
     const nowMs = nowUnixMillis()
     const now = nowRfc3339()
     const replacementToken = generateSecretToken()
+    const attempts = updateCurrentProviderAttempt(this.getJobWithoutRecovery(jobId), 'waiting_for_user', blockerJson)
     const result = this.run(
       `UPDATE jobs
        SET status = ?, claim_token = ?, blocker_json = ?,
            checkpoint_json = ?, resume_json = NULL,
            claim_expires_at = NULL, updated_at = ?,
-           outcome_revision = outcome_revision + 1
+           provider_attempts_json = ?, outcome_revision = outcome_revision + 1
        WHERE job_id = ?
          AND claim_token = ?
          AND execution_backend = 'playwright'
@@ -835,6 +841,7 @@ export class JobStore {
       stringifyJson(blockerJson),
       stringifyJson(checkpointJson),
       now,
+      stringifyJson(attempts),
       jobId,
       claimToken,
       nowMs
@@ -988,15 +995,17 @@ export class JobStore {
     const errorJson = stringifyJson(reason === undefined || reason === null
       ? { code: 'job_canceled' }
       : { code: 'job_canceled', reason })
+    const attempts = updateCurrentProviderAttempt(this.getJobWithoutRecovery(jobId), 'canceled', null, now)
     const result = this.run(
       `UPDATE jobs
        SET status = ?, result_json = NULL, error_json = ?, blocker_json = NULL,
            checkpoint_json = NULL, resume_json = NULL,
-           updated_at = ?, claim_expires_at = NULL,
+           provider_attempts_json = ?, updated_at = ?, claim_expires_at = NULL,
            outcome_revision = outcome_revision + 1
        WHERE job_id = ? AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')`,
       'canceled',
       errorJson,
+      stringifyJson(attempts),
       now,
       jobId
     )
@@ -1647,6 +1656,20 @@ function providerAttempts(value: unknown): ProviderAttempt[] {
     typeof (entry as ProviderAttempt).status === 'string' &&
     typeof (entry as ProviderAttempt).startedAt === 'string'
   ))
+}
+
+function updateCurrentProviderAttempt(
+  job: Job,
+  status: string,
+  blocker: unknown | null = null,
+  completedAt: string | null = null,
+) {
+  const attempts = providerAttempts(job.provider_attempts_json)
+  const current = attempts.at(-1) ?? providerAttempt(1, job.provider, 'queued', job.created_at)
+  return [
+    ...attempts.slice(0, -1),
+    { ...current, status, blocker, completedAt },
+  ]
 }
 
 function rowToProviderProject(row: Record<string, unknown>): ProviderProjectMapping {

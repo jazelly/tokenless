@@ -94,6 +94,15 @@ import {
 } from './setup-presenter.js'
 import { tokenlessPackageVersion } from './platform-package.js'
 import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand } from './upgrade.js'
+import {
+  BrowserRuntimeManager,
+  managedBrowserCatalogEntry,
+  normalizeBrowserSelection,
+  type BrowserCandidate,
+  type BrowserRuntimeBinding,
+  type BrowserSelection,
+  type ResolvedBrowserRuntime,
+} from './browser-runtime/index.js'
 
 const CLI_ARG_FLAGS: unique symbol = Symbol('tokenless.cliArgFlags')
 
@@ -367,6 +376,11 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 
   if (subcommand === 'add') {
     const slug = requiredAdminValue(args.profile, '--profile')
+    const profileConfig = await readTokenlessConfig(homeDir)
+    const profileRuntime = await new BrowserRuntimeManager({ homeDir }).ensure(
+      args.browser === undefined ? profileConfig.browser : normalizeCliBrowser(args.browser),
+      { allowDownload: false },
+    )
     const importKey = args.importChromeProfile === undefined
       ? undefined
       : validateChromeProfileDirectoryKey(String(args.importChromeProfile))
@@ -382,6 +396,15 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const importSource = importKey
       ? await resolveProfileImportSource(args, importKey)
       : null
+    if (importSource) {
+      assertSetupRuntimeSupportsProfileImport(profileRuntime)
+      if (importSource.browser !== profileRuntime.browserId) {
+        throw usageError(
+          'profile_import_runtime_mismatch',
+          `The selected ${importSource.browser} profile cannot be imported into ${profileRuntime.runtimeId}.`,
+        )
+      }
+    }
     const lifecycle = importKey ? 'importing' : 'ready'
     let record = await registry.addProfile({
       slug,
@@ -391,6 +414,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       ...(args.label === undefined && importSource ? { labelOrigin: 'import' as const } : {}),
       setDefault: args.setDefault === true,
       lifecycle,
+      runtimeBinding: browserRuntimeBinding(profileRuntime),
     })
     let imported: Record<string, any> | null = null
     try {
@@ -666,9 +690,11 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 async function quiesceBrowserRuntimeForProfileMutation({
   homeDir,
   daemonUrl: explicitDaemonUrl,
+  startIfUnavailable = true,
 }: {
   homeDir: string
   daemonUrl?: string | undefined
+  startIfUnavailable?: boolean | undefined
 }) {
   const configuredDaemonUrl = daemonUrl(explicitDaemonUrl ?? await profileMutationConfiguredDaemonUrl(homeDir))
   try {
@@ -676,6 +702,7 @@ async function quiesceBrowserRuntimeForProfileMutation({
     return stoppedRunnerStatus()
   } catch (error) {
     if (shouldEnsureDaemonBeforeProfileMutationFallback(error)) {
+      if (!startIfUnavailable) return stoppedRunnerStatus()
       const daemon = await ensureDaemonReady({ homeDir, daemonUrl: configuredDaemonUrl })
       await quiesceBrowserRuntime({ homeDir, daemonUrl: daemon.url })
       return stoppedRunnerStatus()
@@ -1148,6 +1175,7 @@ function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string
     isDefault: profile.slug === defaultSlug,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
+    runtimeBinding: profile.runtimeBinding ?? null,
     import: profile.import,
     lastObservedAuth: profile.lastObservedAuth,
     providers: Object.fromEntries(Object.entries(profile.lastObservedAuth).map(([provider, status]) => [
@@ -1584,6 +1612,35 @@ async function executeDaemonJob({
     if (attachments && attachments.some((attachment) => attachment.bundleId !== stagedAttachmentBundleId)) {
       throw usageError('attachment_bundle_invalid', 'Visible attachments must be staged into one private bundle.')
     }
+    const fallbackAlternatives = automaticProviderFallbackAllowed({
+      args,
+      action,
+      explicitProvider: explicitProviderId,
+      visibleAction,
+      taskCapabilities,
+    })
+      ? await Promise.all(capabilityRoutes.slice(1, 6).map(async (route) => {
+          const alternateProvider = route.provider
+          return {
+            provider: alternateProvider,
+            target: {
+              kind: 'provider_home' as const,
+              url: await managedProviderTargetUrl({
+                provider: alternateProvider,
+                explicitTargetUrl: undefined,
+                workspaceMode,
+                taskId,
+                projectName,
+                homeDir,
+                daemonUrl: configuredDaemonUrl,
+                daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+                profileId: profileForTarget.id,
+              }),
+            },
+            capabilityRoute: route,
+          }
+        }))
+      : []
     const request = createManagedPlaywrightJobRequest({
       provider,
       target: {
@@ -1602,6 +1659,12 @@ async function executeDaemonJob({
       },
       taskId: taskId ?? null,
       capabilityRoute: recordedCapabilityRoute,
+      fallback: fallbackAlternatives.length === 0 ? null : {
+        protocol: 'tokenless.provider-fallback.v1',
+        mode: 'automatic',
+        replay: 'from_start',
+        alternatives: fallbackAlternatives,
+      },
       actions: managedVisibleActions({
         action,
         provider,
@@ -1632,12 +1695,16 @@ async function executeDaemonJob({
         : Number(args.timeoutMs),
     })
     const { job, waitResult: result, statusLog } = submitted
+    const resolvedJob = result?.job ?? job
+    const resolvedRequest = objectRecord(resolvedJob.request_json)
+    const resolvedProvider = resolvedJob.provider ?? provider
+    const resolvedCapabilityRoute = resolvedRequest.capabilityRoute ?? recordedCapabilityRoute
     if (result?.status === 'waiting_for_user') {
       printPayload(waitingForUserPayload({
         job,
         taskId,
-        provider,
-        capabilityRoute: recordedCapabilityRoute,
+        provider: resolvedProvider,
+        capabilityRoute: resolvedCapabilityRoute,
         profile: submitted.profile,
         projectName,
         chatName,
@@ -1682,8 +1749,9 @@ async function executeDaemonJob({
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       jobId: job.job_id,
       taskId,
-      provider,
-      capabilityRoute: recordedCapabilityRoute,
+      provider: resolvedProvider,
+      capabilityRoute: resolvedCapabilityRoute,
+      providerAttempts: resolvedJob.provider_attempts_json ?? [],
       profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
       projectName,
       chatName,
@@ -1702,6 +1770,30 @@ async function executeDaemonJob({
     }
     throw error
   }
+}
+
+function automaticProviderFallbackAllowed({
+  args,
+  action,
+  explicitProvider,
+  visibleAction,
+  taskCapabilities,
+}: {
+  args: CliArgs
+  action: string
+  explicitProvider?: ProviderId | undefined
+  visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
+  taskCapabilities: readonly TaskCapabilityId[]
+}) {
+  if (explicitProvider || visibleAction || action !== 'submit_and_read' || taskCapabilities.length === 0) return false
+  if (taskCapabilities.includes(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) return false
+  if (args.targetUrl !== undefined) return false
+  return args.model === undefined &&
+    args.effort === undefined &&
+    args.thinkingEffort === undefined &&
+    args.qwenMode === undefined &&
+    args.qwenModeVariant === undefined &&
+    args.chatSurface === undefined
 }
 
 async function executeManagedPlaywrightJob({
@@ -2252,7 +2344,13 @@ async function installCommand(args: CliArgs) {
     ok: true,
     runtime: 'typescript',
     skills: provisioned.skills,
-    browser: provisioned.browser.browser,
+    browser: {
+      id: provisioned.browser.browserId,
+      runtimeId: provisioned.browser.runtimeId,
+      family: provisioned.browser.family,
+      version: provisioned.browser.actualVersion,
+      source: provisioned.browser.source,
+    },
     browsers: provisioned.browsers,
     daemon: {
       ready: true,
@@ -2291,6 +2389,42 @@ async function setupCommand(args: CliArgs) {
     const cliVersion = await presenter.withProgress('Checking npm version', setupCliVersionCheck)
     noteSetupCliVersion(cliVersion, presenter)
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+    const runtimeManager = new BrowserRuntimeManager({ homeDir })
+    const installedBrowsers = await presenter.withProgress(
+      'Finding browsers',
+      () => discoverSetupBrowsers(runtimeManager),
+    )
+    const selectedBrowser = await selectSetupBrowser({
+      args,
+      config,
+      installedBrowsers,
+      runtimeManager,
+      prompt,
+      presenter,
+    })
+    if (config.browser !== selectedBrowser.selection) {
+      await quiesceBrowserRuntimeForProfileMutation({
+        homeDir,
+        daemonUrl: configuredDaemonUrl,
+        startIfUnavailable: false,
+      })
+    }
+    const providers = selectSetupProviders({ presenter })
+    const profile = await ensureSetupManagedProfile({
+      args,
+      homeDir,
+      runtime: selectedBrowser.runtime,
+      providers,
+      prompt,
+      presenter,
+    })
+    await presenter.withProgress('Saving preferences', () => writeTokenlessConfig({
+      homeDir,
+      browser: selectedBrowser.selection,
+      preferredProviders: providers,
+      daemonUrl: configuredDaemonUrl,
+      language: config.language,
+    }))
     const maintenance = await reconcileTokenlessMaintenance({
       homeDir,
       daemonUrl: configuredDaemonUrl,
@@ -2299,29 +2433,6 @@ async function setupCommand(args: CliArgs) {
     })
     const skills = maintenance.skills
     const localRuntime = maintenance.daemon
-    const installedBrowsers = await presenter.withProgress('Finding browsers', discoverSetupBrowsers)
-    const browser = await selectSetupBrowser({ args, config, installedBrowsers, prompt, presenter })
-    const providers = selectSetupProviders({ presenter })
-    await presenter.withProgress('Saving preferences', async () => {
-      if (config.browser && config.browser !== browser.browser) {
-        await quiesceBrowserRuntimeForProfileMutation({ homeDir, daemonUrl: configuredDaemonUrl })
-      }
-      await writeTokenlessConfig({
-        homeDir,
-        browser: browser.browser,
-        preferredProviders: providers,
-        daemonUrl: configuredDaemonUrl,
-        language: config.language,
-      })
-    })
-    const profile = await ensureSetupManagedProfile({
-      args,
-      homeDir,
-      browser: browser.browser,
-      providers,
-      prompt,
-      presenter,
-    })
     const registry = new ManagedProfileRegistry(homeDir)
     const readiness: Record<string, SetupProviderReadiness> = {}
     let runner: Record<string, any> | null = null
@@ -2391,8 +2502,15 @@ async function setupCommand(args: CliArgs) {
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       skills,
       browser: {
-        id: browser.browser,
-        displayName: browser.displayName,
+        id: selectedBrowser.selection,
+        runtimeId: selectedBrowser.runtime.runtimeId,
+        family: selectedBrowser.runtime.family,
+        displayName: selectedBrowser.runtime.displayName,
+        version: selectedBrowser.runtime.actualVersion,
+        expectedVersion: selectedBrowser.runtime.expectedVersion,
+        source: selectedBrowser.runtime.source,
+        executablePath: selectedBrowser.runtime.executablePath,
+        checksumVerified: selectedBrowser.runtime.checksumVerified,
         installed: true,
       },
       providers,
@@ -2509,32 +2627,41 @@ function recordSetupReadinessFailure({
 async function ensureSetupManagedProfile({
   args,
   homeDir,
-  browser,
+  runtime,
   providers,
   prompt,
   presenter,
 }: {
   args: CliArgs
   homeDir: string
-  browser: string
+  runtime: ResolvedBrowserRuntime
   providers: readonly ProviderId[]
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
 }) {
+  const browser = runtime.browserId
+  const runtimeBinding = browserRuntimeBinding(runtime)
   presenter.explain({
     title: 'Managed browser profile',
     lines: SETUP_MANAGED_PROFILE_DISCLOSURE,
   })
   const registry = new ManagedProfileRegistry(homeDir)
   const existing = await managedProfilesWithDisplayLabels(await registry.listProfiles())
+  const compatibleExisting = existing.filter((profile) => setupProfileRuntimeCompatible(profile, runtime))
   const configuredDefaultProfile = (await registry.read()).defaultProfile
   let slug = args.profile === undefined ? undefined : String(args.profile)
   let selected: ManagedProfileRecord | null = null
   if (slug) {
     selected = existing.find((profile) => profile.slug === slug) ?? null
+    if (selected && !setupProfileRuntimeCompatible(selected, runtime)) {
+      throw usageError(
+        'setup_profile_runtime_mismatch',
+        `Managed profile '${selected.slug}' cannot use ${runtime.runtimeId}; create a clean profile for that browser runtime.`,
+      )
+    }
   } else if (prompt && existing.length > 0) {
     const choices = [
-      ...existing.map((profile) => ({
+      ...compatibleExisting.map((profile) => ({
         label: `${profile.label} (${profile.slug})${profile.import ? ' — imported' : ' — clean'}`,
         value: profile.slug,
       })),
@@ -2543,26 +2670,35 @@ async function ensureSetupManagedProfile({
     const chosen = await prompt.select(
       'Choose a managed profile',
       choices,
-      Math.max(0, existing.findIndex((profile) => profile.slug === configuredDefaultProfile))
+      Math.max(0, choices.findIndex((choice) => choice.value === configuredDefaultProfile))
     )
     if (chosen !== '__new__') {
       slug = chosen
-      selected = existing.find((profile) => profile.slug === slug) ?? null
+      selected = compatibleExisting.find((profile) => profile.slug === slug) ?? null
     }
   } else if (existing.length > 0) {
     try {
-      selected = await registry.resolveProfile()
-      slug = selected.slug
+      const defaultProfile = await registry.resolveProfile()
+      if (setupProfileRuntimeCompatible(defaultProfile, runtime)) {
+        selected = defaultProfile
+        slug = selected.slug
+      }
     } catch {
       // An explicit profile is required below when no default exists.
     }
   }
 
   if (selected) {
+    if (!selected.runtimeBinding) {
+      await quiesceBrowserRuntimeForProfileMutation({ homeDir, startIfUnavailable: false })
+      selected = await registry.bindRuntime(selected.slug, runtimeBinding)
+    }
+    const selectedProfile = selected
     const reimport = args.reimportProfile === true || (prompt && args.freshProfile !== true
-      ? await prompt.confirm(`Re-import ${selected.slug} from ${browser}? This replaces its managed browser data.`, false)
+      ? await prompt.confirm(`Re-import ${selectedProfile.slug} from ${browser}? This replaces its managed browser data.`, false)
       : false)
     if (reimport) {
+      assertSetupRuntimeSupportsProfileImport(runtime)
       if (!prompt && args.importChromeProfile === undefined) {
         throw usageError(
           'setup_reimport_source_required',
@@ -2572,17 +2708,17 @@ async function ensureSetupManagedProfile({
       const source = await selectSetupSourceProfile({ args, browser, prompt })
       requireSetupCopyAuthorization({ args, prompt })
       try {
-        return await presenter.withProgress(`Re-importing ${source.name} into managed profile ${selected.slug}`, async () => {
+        return await presenter.withProgress(`Re-importing ${source.name} into managed profile ${selectedProfile.slug}`, async () => {
           await quiesceBrowserRuntimeForProfileMutation({ homeDir })
-          await registry.updateLifecycle(selected.slug, 'importing')
+          await registry.updateLifecycle(selectedProfile.slug, 'importing')
           await importChromeProfile({
             sourceUserDataDir: source.userDataDir,
             profileDirectoryKey: source.directoryKey,
-            destinationDir: selected.directory,
+            destinationDir: selectedProfile.directory,
             tokenlessHome: homeDir,
             providers,
           })
-          return await registry.markImported(selected.slug, {
+          return await registry.markImported(selectedProfile.slug, {
             source: source.userDataDir,
             profileDirectoryKey: source.directoryKey,
             profileName: source.name,
@@ -2591,32 +2727,35 @@ async function ensureSetupManagedProfile({
           })
         })
       } catch (error) {
-        await registry.updateLifecycle(selected.slug, 'failed').catch(() => undefined)
+        await registry.updateLifecycle(selectedProfile.slug, 'failed').catch(() => undefined)
         throw error
       }
     }
-    if (selected.lifecycle !== 'ready') {
+    if (selectedProfile.lifecycle !== 'ready') {
       throw usageError(
         'setup_profile_not_ready',
-        `Managed profile '${selected.slug}' is ${selected.lifecycle}; explicitly re-import it or choose another ready profile.`
+        `Managed profile '${selectedProfile.slug}' is ${selectedProfile.lifecycle}; explicitly re-import it or choose another ready profile.`
       )
     }
     if (args.setDefault === true || prompt) {
-      await presenter.withProgress(`Setting managed profile ${selected.slug} as default`, () => registry.setDefault(selected.slug))
+      await presenter.withProgress(`Setting managed profile ${selectedProfile.slug} as default`, () => registry.setDefault(selectedProfile.slug))
     }
-    return selected
+    return selectedProfile
   }
 
   if (!slug && prompt) slug = await prompt.text('Profile name', existing.length === 0 ? 'default' : 'primary')
-  if (!slug && args.setupDefaults === true) slug = 'default'
+  if (!slug && args.setupDefaults === true) {
+    slug = existing.length === 0 ? 'default' : setupRuntimeProfileSlug(runtime, existing)
+  }
   slug ??= 'default'
   if (args.reimportProfile === true) {
     throw usageError('setup_reimport_profile_not_found', `Cannot re-import unregistered managed profile '${slug}'.`)
   }
   let source: { userDataDir: string; directoryKey: string; name: string } | null = null
   if (args.importChromeProfile !== undefined) {
+    assertSetupRuntimeSupportsProfileImport(runtime)
     source = await selectSetupSourceProfile({ args, browser, prompt: null })
-  } else if (prompt && args.freshProfile !== true) {
+  } else if (prompt && args.freshProfile !== true && runtime.family === 'system') {
     const discovered = await setupSourceProfiles(browser, args.chromeUserDataDir)
     if (discovered.length > 0 && await prompt.confirm(`Import an existing ${browser} profile into Tokenless?`, true)) {
       source = await selectSetupSourceProfile({ args, browser, prompt, discovered })
@@ -2636,6 +2775,7 @@ async function ensureSetupManagedProfile({
       labelOrigin: args.label === undefined && source ? 'import' : (args.label === undefined ? 'slug' : 'user'),
       setDefault: true,
       lifecycle: source ? 'importing' : 'ready',
+      runtimeBinding,
     }),
   )
   try {
@@ -2662,6 +2802,53 @@ async function ensureSetupManagedProfile({
     await registry.removeProfile(record.slug, { confirmDelete: true }).catch(() => undefined)
     throw error
   }
+}
+
+function browserRuntimeBinding(runtime: ResolvedBrowserRuntime): BrowserRuntimeBinding {
+  return {
+    runtimeId: runtime.runtimeId,
+    family: runtime.family,
+    browserId: runtime.browserId,
+    createdWithVersion: runtime.actualVersion,
+    profileFormat: 1,
+  }
+}
+
+function setupProfileRuntimeCompatible(
+  profile: ManagedProfileRecord,
+  runtime: ResolvedBrowserRuntime,
+) {
+  const binding = profile.runtimeBinding
+  if (binding) {
+    return binding.runtimeId === runtime.runtimeId &&
+      binding.family === runtime.family &&
+      binding.browserId === runtime.browserId
+  }
+  if (runtime.family !== 'system' && runtime.family !== 'test') return false
+  if (!profile.import?.browser) return true
+  return profile.import.browser === runtime.browserId
+}
+
+function setupRuntimeProfileSlug(
+  runtime: ResolvedBrowserRuntime,
+  existing: readonly ManagedProfileRecord[],
+) {
+  const base = `${runtime.browserId}-default`.replace(/[^a-z0-9_-]+/g, '-').slice(0, 56)
+  const used = new Set(existing.map((profile) => profile.slug))
+  if (!used.has(base)) return base
+  for (let index = 2; index < 10_000; index += 1) {
+    const candidate = `${base}-${index}`.slice(0, 64)
+    if (!used.has(candidate)) return candidate
+  }
+  throw usageError('setup_profile_name_unavailable', `Cannot allocate a managed profile name for ${runtime.runtimeId}.`)
+}
+
+function assertSetupRuntimeSupportsProfileImport(runtime: ResolvedBrowserRuntime) {
+  if (runtime.family === 'system' && (runtime.browserId === 'chrome' || runtime.browserId === 'brave')) return
+  throw usageError(
+    'setup_profile_import_runtime_unsupported',
+    `Browser profile import is unavailable for ${runtime.runtimeId}; create a clean managed profile instead.`,
+  )
 }
 
 function createSetupPrompt() {
@@ -2698,59 +2885,86 @@ function createSetupPrompt() {
   }
 }
 
-async function discoverSetupBrowsers() {
-  const installed: Awaited<ReturnType<typeof resolveChromiumBrowser>>[] = []
-  const candidates = process.env.TOKENLESS_BROWSER_EXECUTABLE
-    ? ['profile']
-    : ['chrome', 'brave', 'edge', 'arc', 'chromium']
-  for (const browser of candidates) {
-    try {
-      installed.push(await resolveChromiumBrowser(browser))
-    } catch {
-      // Setup reports only installed supported browsers.
-    }
-  }
-  if (installed.length === 0) {
-    throw usageError(
-      'chromium_browser_not_found',
-      'Tokenless setup needs an installed supported Chromium browser: Chrome, Brave, Edge, Arc, or Chromium.'
-    )
-  }
-  return installed
+async function discoverSetupBrowsers(runtimeManager: BrowserRuntimeManager) {
+  return await runtimeManager.discover()
 }
 
 async function selectSetupBrowser({
   args,
   config,
   installedBrowsers,
+  runtimeManager,
   prompt,
   presenter,
 }: {
   args: CliArgs
   config: Record<string, any>
   installedBrowsers: Awaited<ReturnType<typeof discoverSetupBrowsers>>
+  runtimeManager: BrowserRuntimeManager
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
-}) {
+}): Promise<{ selection: BrowserSelection; runtime: ResolvedBrowserRuntime }> {
   const explicit = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
-  const configured = explicit ?? (typeof config.browser === 'string' ? config.browser : null)
-  if (configured) {
-    const installed = installedBrowsers.find((browser) => browser.browser === configured)
-    if (installed && (!prompt || explicit)) {
-      presenter.success(`Using ${installed.displayName}.`)
-      return installed
-    }
+  const configured = explicit ?? normalizeBrowserSelection(config.browser) ?? 'auto'
+  let selection: BrowserSelection
+  if (!prompt || explicit) {
+    selection = configured
+  } else {
+    presenter.note('Choose the browser runtime Tokenless should use.')
+    const choices = setupBrowserChoices(installedBrowsers)
+    selection = await prompt.select(
+      'Choose a browser runtime',
+      choices,
+      Math.max(0, choices.findIndex((choice) => choice.value === configured)),
+    )
   }
-  if (!prompt) return installedBrowsers[0]!
-  presenter.note('Choose the browser Tokenless should use.')
-  const selected = await prompt.select(
-    'Choose a browser',
-    installedBrowsers.map((browser) => ({ label: browser.displayName, value: browser.browser })),
-    Math.max(0, installedBrowsers.findIndex((browser) => browser.browser === configured))
+  const runtime = await presenter.withProgress(
+    `Preparing ${setupBrowserSelectionLabel(selection)}`,
+    () => runtimeManager.ensure(selection, {
+      allowDownload: args.noBrowserDownload !== true,
+      onProgress: (progress) => presenter.note(
+        `${progress.displayName} ${progress.version}: ${progress.phase}.`,
+      ),
+    }),
   )
-  const browser = installedBrowsers.find((candidate) => candidate.browser === selected)!
-  presenter.success(`Using ${browser.displayName}.`)
-  return browser
+  presenter.success(`Using ${runtime.displayName} ${runtime.actualVersion} (${runtime.source}).`)
+  return { selection, runtime }
+}
+
+function setupBrowserChoices(installedBrowsers: readonly BrowserCandidate[]) {
+  const installedSystem = installedBrowsers.filter((browser) => browser.family === 'system')
+  const managedChromium = managedBrowserCatalogEntry('managed-chromium')
+  const cloak = managedBrowserCatalogEntry('cloak')
+  const managedInstalled = installedBrowsers.find((browser) => browser.family === 'managed-chromium')
+  const cloakInstalled = installedBrowsers.find((browser) => browser.family === 'cloak')
+  const automaticOutcome = installedSystem[0]
+    ? `${installedSystem[0].displayName} ${installedSystem[0].version}`
+    : `${managedChromium.displayName} ${managedChromium.artifactVersion} — download required`
+  return [
+    {
+      label: `Automatic — ${automaticOutcome}`,
+      value: 'auto' as const,
+    },
+    ...installedSystem.map((browser) => ({
+      label: `${browser.displayName} ${browser.version} — installed system browser`,
+      value: browser.selection,
+    })),
+    {
+      label: `${managedChromium.displayName} ${managedChromium.artifactVersion} — ${managedInstalled ? 'cached' : 'download required'}`,
+      value: 'managed-chromium' as const,
+    },
+    {
+      label: `${cloak.displayName} ${cloak.artifactVersion} — ${cloakInstalled ? 'cached' : 'official download required'}`,
+      value: 'cloak' as const,
+    },
+  ]
+}
+
+function setupBrowserSelectionLabel(selection: BrowserSelection) {
+  if (selection === 'auto') return 'automatic browser selection'
+  if (selection === 'managed-chromium') return 'Tokenless-managed Chromium'
+  if (selection === 'cloak') return 'CloakBrowser'
+  return selection
 }
 
 function selectSetupProviders({
@@ -2892,31 +3106,42 @@ async function provisionRuntime(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const requestedBrowsers = args.browsers === undefined
+    ? [args.browser ?? config.browser]
+    : parseList(args.browsers)
+  const runtimeManager = new BrowserRuntimeManager({ homeDir })
+  const resolvedBrowsers: ResolvedBrowserRuntime[] = []
+  const selections: BrowserSelection[] = []
+  for (const requested of requestedBrowsers) {
+    const selection = normalizeCliBrowser(requested)
+    const browser = await runtimeManager.ensure(selection, { allowDownload: true })
+    if (!resolvedBrowsers.some((candidate) => candidate.runtimeId === browser.runtimeId)) {
+      resolvedBrowsers.push(browser)
+      selections.push(selection)
+    }
+  }
+  if (!resolvedBrowsers[0] || !selections[0]) {
+    throw usageError('browser_runtime_selection_required', 'At least one browser runtime selection is required.')
+  }
+  const primaryBrowser = resolvedBrowsers[0]
+  const primarySelection = selections[0]
+  await writeTokenlessConfig({
+    homeDir,
+    browser: primarySelection,
+    daemonUrl: configuredDaemonUrl,
+  })
   const maintenance = await reconcileTokenlessMaintenance({
     homeDir,
     daemonUrl: configuredDaemonUrl,
     daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-  })
-  const requestedBrowsers = args.browsers === undefined
-    ? [args.browser ?? config.browser ?? undefined]
-    : parseList(args.browsers)
-  const resolvedBrowsers: string[] = []
-  for (const requested of requestedBrowsers) {
-    const browser = await resolveChromiumBrowser(requested)
-    if (!resolvedBrowsers.includes(browser.browser)) resolvedBrowsers.push(browser.browser)
-  }
-  await writeTokenlessConfig({
-    homeDir,
-    browser: resolvedBrowsers[0],
-    daemonUrl: configuredDaemonUrl,
   })
   const runtime = await inspectManagedRuntime(homeDir)
   return {
     homeDir,
     config,
     skills: maintenance.skills,
-    browsers: resolvedBrowsers,
-    browser: await resolveChromiumBrowser(resolvedBrowsers[0]),
+    browsers: resolvedBrowsers.map((browser) => browser.runtimeId),
+    browser: primaryBrowser,
     installed: {
       runtime: 'typescript',
       daemonExecutable: runtime.daemon.path,
@@ -2952,16 +3177,31 @@ async function doctorCommand(args: CliArgs) {
       message: error instanceof Error ? error.message : String(error),
     }
   }
-  const browserId = args.browser ?? config.browser ?? undefined
+  const browserId = args.browser ?? config.browser ?? 'auto'
   const runtime = await inspectManagedRuntime(homeDir)
   const skills = await inspectTokenlessSkills(process.env.TOKENLESS_SETUP_SKILL_HOME)
-  let browser: Record<string, any>
-  try {
-    const resolved = await resolveChromiumBrowser(browserId)
-    browser = { ok: true, id: resolved.browser, displayName: resolved.displayName }
-  } catch (error) {
-    browser = { ok: false, id: normalizeBrowserId(browserId), message: (error as Error).message }
-  }
+  const runtimeManager = new BrowserRuntimeManager({ homeDir })
+  const browserInspection = await runtimeManager.inspect(normalizeBrowserSelection(browserId) ?? String(browserId))
+  const browser: Record<string, any> = browserInspection.ok && browserInspection.runtime
+    ? {
+        ok: true,
+        preference: normalizeBrowserSelection(browserId),
+        runtimeId: browserInspection.runtime.runtimeId,
+        family: browserInspection.runtime.family,
+        id: browserInspection.runtime.browserId,
+        displayName: browserInspection.runtime.displayName,
+        actualVersion: browserInspection.runtime.actualVersion,
+        expectedVersion: browserInspection.runtime.expectedVersion,
+        source: browserInspection.runtime.source,
+        executablePath: browserInspection.runtime.executablePath,
+        checksumVerified: browserInspection.runtime.checksumVerified,
+      }
+    : {
+        ok: false,
+        preference: normalizeBrowserSelection(browserId),
+        code: browserInspection.code,
+        message: browserInspection.message,
+      }
   let daemon: Record<string, any>
   const daemonLogPath = path.join(homeDir, 'daemon.log')
   const daemonLogExists = await fileExists(daemonLogPath)
@@ -3043,7 +3283,10 @@ async function doctorCommand(args: CliArgs) {
         id: profile.id,
         lifecycle: profile.lifecycle,
         imported: Boolean(profile.import),
+        runtimeBinding: profile.runtimeBinding ?? null,
+        runtime: await runtimeManager.inspect(profile),
       }
+      managedProfile.ok = managedProfile.ok && managedProfile.runtime.ok === true
       const providers = Array.isArray(config.preferredProviders) ? config.preferredProviders : []
       const observations = providerObservationContext(providers.map(normalizeProvider), profile)
       const statuses = Object.fromEntries(observations.map((observation) => [observation.provider, {
@@ -3212,6 +3455,8 @@ function publicDaemonJobState(job: Record<string, any>) {
     provider: job.provider,
     action: job.action,
     capabilityRoute: request.capabilityRoute ?? null,
+    fallback: fallbackState(request.fallback),
+    providerAttempts: job.provider_attempts_json ?? [],
     browserVisibility: request.browserVisibility,
     projectName: metadata.projectName,
     chatName: metadata.chatName,
@@ -3231,6 +3476,18 @@ function publicDaemonJobState(job: Record<string, any>) {
       ? null
       : { ok: job.status === 'succeeded', value: job.result_json, error: job.error_json },
     error: job.error_json,
+  }
+}
+
+function fallbackState(value: unknown) {
+  const fallback = objectRecord(value)
+  const alternatives = Array.isArray(fallback.alternatives) ? fallback.alternatives : []
+  if (alternatives.length === 0) return null
+  return {
+    protocol: fallback.protocol,
+    mode: fallback.mode,
+    replay: fallback.replay,
+    providers: alternatives.map((entry) => objectRecord(entry).provider).filter((provider) => typeof provider === 'string'),
   }
 }
 
@@ -3263,6 +3520,7 @@ function waitingForUserPayload({
     taskId,
     provider,
     capabilityRoute,
+    providerAttempts: waitResult?.job?.provider_attempts_json ?? job.provider_attempts_json ?? [],
     profile: publicManagedProfile(profile, profile.slug),
     projectName,
     chatName,
@@ -3477,7 +3735,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--profile <slug>] (--defaults|--fresh|--import-browser-profile <key>) --json'], options: ['home', 'json', 'quiet', 'profile', 'browser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
+    { command: 'setup', usage: ['tokenless setup [--profile <slug>] [--browser <browser>] [--no-browser-download] (--defaults|--fresh|--import-browser-profile <key>) --json'], options: ['home', 'json', 'quiet', 'profile', 'browser', 'noBrowserDownload', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] --json'], options: ['home', 'json', 'browser', 'browsers', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
@@ -3576,6 +3834,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--json': 'json',
     '--quiet': 'quiet',
     '--no-open': 'noOpen',
+    '--no-browser-download': 'noBrowserDownload',
     '--no-wait': 'noWait',
     '--long-running': 'longRunning',
     '--set-default': 'setDefault',
@@ -3653,10 +3912,10 @@ function requireFlagValue(argv: string[], index: number, flag: string, context: 
 
 function normalizeCliBrowser(browser: unknown) {
   const browserId = normalizeBrowserId(browser)
-  if (!browserId || browserId === 'profile') {
+  if (!browserId || (browserId === 'profile' && !process.env.TOKENLESS_BROWSER_EXECUTABLE)) {
     throw usageError(
       'invalid_browser',
-      'Browser must be one of: chrome, chrome-for-testing, chromium, edge, arc, brave.'
+      'Browser must be auto, chrome, chrome-for-testing, chromium, edge, arc, brave, managed-chromium, or cloak.'
     )
   }
   return browserId
@@ -4437,6 +4696,7 @@ function optionUsageLabel(option: string) {
     model: '--model <label>',
     modelFallbacks: '--model-fallback <label>',
     noOpen: '--no-open',
+    noBrowserDownload: '--no-browser-download',
     noWait: '--no-wait',
     output: '--output <path>',
     preferredProviders: '--preferred-providers <list>',

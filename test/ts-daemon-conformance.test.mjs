@@ -758,6 +758,88 @@ test('built Playwright validators enforce the current internal schema IDs', {
   )
 })
 
+test('SQLite atomically preserves provider fallback attempts under one durable job id', async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-provider-fallback-store-')
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  const playwright = await importPlaywright()
+  let store = await JobStore.open(homeDir)
+  try {
+    const chatgptRoute = playwright.resolveTaskCapabilityRoute({
+      requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
+      candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
+    })
+    const claudeRoute = playwright.resolveTaskCapabilityRoute({
+      requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
+      candidates: [{ provider: 'claude', runtimeEligibility: 'eligible' }],
+    })
+    assert.equal(chatgptRoute.ok, true)
+    assert.equal(claudeRoute.ok, true)
+    const alternative = playwright.createManagedPlaywrightJobRequest({
+      provider: 'claude',
+      taskId: 'fallback-store-task',
+      capabilityRoute: claudeRoute.route,
+      actions: [{ requestId: 'fallback-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'fallback' } }],
+    })
+    const request = playwright.createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      taskId: 'fallback-store-task',
+      capabilityRoute: chatgptRoute.route,
+      fallback: {
+        protocol: 'tokenless.provider-fallback.v1',
+        mode: 'automatic',
+        replay: 'from_start',
+        alternatives: [{
+          provider: alternative.provider,
+          target: alternative.target,
+          capabilityRoute: alternative.capabilityRoute,
+        }],
+      },
+      actions: [{ requestId: 'primary-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'fallback' } }],
+    })
+    const created = store.createJob({
+      provider: request.provider,
+      action: managedPlaywrightJobAction,
+      request_json: request,
+      profile_id: 'fallback-profile',
+    })
+    const claimed = store.claimJob(created.job_id, created.claim_token)
+    store.markRunning(claimed.job_id, claimed.claim_token)
+    const fallbackRequest = playwright.validateManagedPlaywrightJobRequest({
+      ...alternative,
+      fallback: null,
+      browserVisibility: request.browserVisibility,
+    })
+    const queued = store.fallbackJob({
+      job_id: claimed.job_id,
+      claim_token: claimed.claim_token,
+      provider: 'claude',
+      request_json: fallbackRequest,
+      blocker_json: { blocker: { code: 'visible_cloudflare_turnstile' } },
+    })
+    assert.equal(queued.job_id, created.job_id)
+    assert.equal(queued.provider, 'claude')
+    assert.equal(queued.status, 'queued')
+    assert.equal(queued.provider_attempts_json.length, 2)
+    assert.equal(queued.provider_attempts_json[0].status, 'blocked')
+    assert.equal(queued.provider_attempts_json[0].blocker.blocker.code, 'visible_cloudflare_turnstile')
+    const fallbackClaim = store.claimJob(queued.job_id, queued.claim_token)
+    store.markRunning(fallbackClaim.job_id, fallbackClaim.claim_token)
+    store.completeJob(fallbackClaim.job_id, fallbackClaim.claim_token, { result_json: { provider: 'claude' } })
+    store.close()
+    store = await JobStore.open(homeDir)
+    const completed = store.getJob(created.job_id)
+    assert.equal(completed.status, 'succeeded')
+    assert.deepEqual(completed.provider_attempts_json.map((attempt) => [attempt.provider, attempt.status]), [
+      ['chatgpt', 'blocked'],
+      ['claude', 'succeeded'],
+    ])
+  } finally {
+    store.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('TS daemon browser runtime control is authenticated, quiesces queued work, and wakes on later job creation', {
   timeout: 60_000,
 }, async () => {

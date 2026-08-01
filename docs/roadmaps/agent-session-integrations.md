@@ -21,6 +21,7 @@ As of 2026-07-31, the first CLI routing slice is complete:
 - implicit selection filters the configured provider scope by the complete requirement set and cached profile eligibility;
 - explicit provider constraints fail rather than switching when the provider lacks an E2E-closed route; and
 - the selected capability route is persisted with the daemon job and returned by `tokenless state`; and
+- implicit normal runs persist compatible alternatives and the daemon can atomically requeue the same logical job after a provider-scoped visible blocker while preserving durable attempt history;
 - `conversation.chat`, `file.upload`, and `workspace.native` are the only currently routeable task outcomes.
 
 Candidate catalog entries remain non-routeable. The complete Deep Research lifecycle, required-citation postcondition, explicit continuation contract, generated artifact lifecycles, structured capability parameters, MCP transport, and scheduler-aware route selection remain planned work.
@@ -115,7 +116,7 @@ The router returns one `CapabilityRoute` containing the selected provider, profi
 7. Select an eligible provider through the general capacity, fairness, and route-selection algorithm.
 8. If no single provider satisfies the complete request, fail with every evaluated provider and structured reasons.
 
-V1 never splits one task across multiple providers and never submits trial prompts while routing. `preferredProviders` filters candidate membership only: list position does not override capability eligibility, rate-limit capacity, fairness, profile health, or the rest of route selection. Falling back outside a configured preferred list requires a future explicit opt-in; it is not implicit.
+V1 never splits one successful execution across multiple providers and never submits trial prompts while routing. Runtime fallback replays the authorized request from the beginning only before submission and only when completed mutations are reconstructable; it does not treat provider-local partial work as portable completion. `preferredProviders` filters candidate membership only: list position does not override capability eligibility, rate-limit capacity, fairness, profile health, or the rest of route selection. Fallback never escapes the configured provider set.
 
 The existing `preferredProviders` name is weaker than this behavior because “preferred” often implies ordered ranking or fallback outside the list. Before making capability routing a public contract, either document its filter semantics explicitly or migrate to an unambiguous name such as `providerRoutingScope`.
 

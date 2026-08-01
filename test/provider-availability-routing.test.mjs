@@ -66,6 +66,19 @@ test('implicit run routing chooses the first usable cached provider in setup ord
     const payload = JSON.parse(result.stdout)
     assert.equal(payload.provider, 'gemini')
     assert.equal(payload.status, 'no_wait')
+    const state = runCli([
+      'state', '--home', homeDir, '--daemon-url', daemonUrl,
+      '--job-id', payload.jobId, '--json',
+    ])
+    assert.equal(state.status, 0, state.stderr || state.stdout)
+    const latest = JSON.parse(state.stdout).latest
+    assert.deepEqual(latest.fallback, {
+      protocol: 'tokenless.provider-fallback.v1',
+      mode: 'automatic',
+      replay: 'from_start',
+      providers: ['grok'],
+    })
+    assert.equal(latest.providerAttempts[0].provider, 'gemini')
   } finally {
     if (daemonStarted) runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })

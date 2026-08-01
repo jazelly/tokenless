@@ -40,7 +40,7 @@ const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 const REPLACE_TERMINAL_LINE = '\u001b[2K\u001b[1G'
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
-  'Keeps sign-ins between jobs. Imports copy selected provider cookies only; other browser data is excluded.',
+  'Keeps sign-ins between jobs. Imports copy selected provider cookies and limited browser compatibility state; other browser data is excluded.',
 ])
 
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([

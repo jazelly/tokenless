@@ -90,10 +90,23 @@ const PROFILE_EXCLUDE_EXACT = new Set([
   'Shortcuts',
   'Sync Data',
   'Top Sites',
-  'TransportSecurity',
-  'Visited Links',
   'Web Data',
   'Web Data-journal',
+])
+
+const PROFILE_COMPATIBILITY_INCLUDE_EXACT = new Set([
+  'Affiliation Database',
+  'Origin Bound Certs',
+  'Site Characteristics Database',
+  'TransportSecurity',
+  'Trust Tokens',
+  'Visited Links',
+])
+
+const SQLITE_SIDECAR_SUFFIXES = Object.freeze([
+  '-journal',
+  '-shm',
+  '-wal',
 ])
 
 const ROOT_INCLUDE_EXACT = new Set([
@@ -163,11 +176,21 @@ export async function importChromeProfile(options: ChromeProfileImportOptions): 
 export function shouldCopyChromeEntry(relativeEntry: string, scope: 'root' | 'profile') {
   const normalized = normalizeRelativeEntry(relativeEntry)
   if (scope === 'root') return ROOT_INCLUDE_EXACT.has(normalized)
+  if (isProfileCompatibilityEntry(normalized)) return true
   if (PROFILE_EXCLUDE_EXACT.has(normalized)) return false
   const firstSegment = normalized.split('/')[0] ?? normalized
   if (PROFILE_EXCLUDE_EXACT.has(firstSegment)) return false
   if (/cache|crash|download|history|bookmark|password|autofill|payment|extension|sync/i.test(normalized)) return false
   return true
+}
+
+function isProfileCompatibilityEntry(normalized: string) {
+  const firstSegment = normalized.split('/')[0] ?? normalized
+  if (PROFILE_COMPATIBILITY_INCLUDE_EXACT.has(firstSegment)) return true
+  return SQLITE_SIDECAR_SUFFIXES.some((suffix) =>
+    firstSegment.endsWith(suffix) &&
+    PROFILE_COMPATIBILITY_INCLUDE_EXACT.has(firstSegment.slice(0, -suffix.length))
+  )
 }
 
 async function copySelectedRootFiles(

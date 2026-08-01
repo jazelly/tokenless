@@ -43,7 +43,6 @@ export type ManagedPlaywrightFallbackAlternative = {
   provider: ProviderId
   target: ManagedPlaywrightSafeTarget
   capabilityRoute: TaskCapabilityRoute
-  actions: readonly VisibleActionRequest[]
 }
 
 export type ManagedPlaywrightFallbackPlan = {
@@ -67,6 +66,14 @@ export type CreateManagedPlaywrightJobRequestInput = {
 }
 
 const CORE_ACTIONS = new Set<string>(Object.values(VISIBLE_ACTIONS))
+const AUTOMATIC_FALLBACK_ACTIONS = new Set<string>([
+  VISIBLE_ACTIONS.FILE_UPLOAD,
+  VISIBLE_ACTIONS.WORKSPACE_ENSURE,
+  VISIBLE_ACTIONS.PROMPT_INPUT,
+  VISIBLE_ACTIONS.PROMPT_CLEAR,
+  VISIBLE_ACTIONS.PROMPT_SUBMIT,
+  VISIBLE_ACTIONS.RESPONSE_READ,
+])
 
 export function createManagedPlaywrightJobRequest(
   input: CreateManagedPlaywrightJobRequestInput
@@ -149,6 +156,9 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
       throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright job contains an unsupported action.')
     }
   }
+  if (fallback && actions.some((action) => !AUTOMATIC_FALLBACK_ACTIONS.has(action.action))) {
+    throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback accepts only portable conversation actions.')
+  }
   return {
     protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
     provider: provider.id,
@@ -177,6 +187,9 @@ function validateFallbackPlan(
   if (!currentRoute) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback requires a capability route.')
   }
+  if (currentRoute.requirements.includes('conversation.continue')) {
+    throw tokenlessError('invalid_playwright_job_fallback', 'Exact provider conversation continuation cannot fallback automatically.')
+  }
   if (!Array.isArray(input.alternatives) || input.alternatives.length < 1 || input.alternatives.length > 5) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback requires one to five alternatives.')
   }
@@ -185,7 +198,7 @@ function validateFallbackPlan(
     if (!isPlainRecord(value)) {
       throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback alternative must be an object.')
     }
-    requireExactKeys(value, ['provider', 'target', 'capabilityRoute', 'actions'], 'invalid_playwright_job_fallback')
+    requireExactKeys(value, ['provider', 'target', 'capabilityRoute'], 'invalid_playwright_job_fallback')
     const provider = getProviderInstanceById(value.provider)
     if (!provider || seen.has(provider.id)) {
       throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback providers must be supported and unique.')
@@ -196,14 +209,7 @@ function validateFallbackPlan(
       throw tokenlessError('invalid_playwright_job_fallback', 'Every fallback provider must satisfy the same run capability requirements.')
     }
     const target = validateSafeTarget(value.target, provider)
-    if (!Array.isArray(value.actions) || value.actions.length < 1 || value.actions.length > 100) {
-      throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback actions are invalid.')
-    }
-    const actions = value.actions.map((action) => validateVisibleActionRequest(action))
-    if (actions.some((action) => action.provider !== provider.id || !CORE_ACTIONS.has(action.action))) {
-      throw tokenlessError('invalid_playwright_job_fallback', 'Every fallback action must target its alternative provider.')
-    }
-    return { provider: provider.id, target, capabilityRoute: route, actions }
+    return { provider: provider.id, target, capabilityRoute: route }
   })
   return {
     protocol: 'tokenless.provider-fallback.v1',

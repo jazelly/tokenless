@@ -11,6 +11,7 @@ import type {
   ProviderAccountTier,
   ProviderId,
 } from '../../providers/registry.js'
+import type { BrowserRuntimeBinding } from '../../browser-runtime/types.js'
 
 export type ProfileLifecycleState = 'created' | 'importing' | 'ready' | 'removed' | 'failed'
 export type ManagedProfileLabelOrigin = 'slug' | 'import' | 'user'
@@ -36,6 +37,7 @@ export type ManagedProfileRecord = {
   lifecycle: ProfileLifecycleState
   createdAt: string
   updatedAt: string
+  runtimeBinding?: BrowserRuntimeBinding | undefined
   import?: {
     source: string
     profileDirectoryKey: string
@@ -58,6 +60,7 @@ export type AddProfileOptions = {
   labelOrigin?: ManagedProfileLabelOrigin
   setDefault?: boolean
   lifecycle?: ProfileLifecycleState
+  runtimeBinding?: BrowserRuntimeBinding
 }
 
 export type ProfileRegistryPaths = {
@@ -103,6 +106,7 @@ export class ManagedProfileRegistry {
         lifecycle,
         createdAt: now,
         updatedAt: now,
+        ...(options.runtimeBinding ? { runtimeBinding: validateRuntimeBinding(options.runtimeBinding) } : {}),
         lastObservedAuth: {},
       }
       await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -198,6 +202,29 @@ export class ManagedProfileRegistry {
           ...record.lastObservedAuth,
           [status.provider]: status,
         },
+      }
+      data.profiles[updated.slug] = updated
+      await this.writeUnlocked(data)
+      return updated
+    })
+  }
+
+  async bindRuntime(slug: string, runtimeBinding: BrowserRuntimeBinding): Promise<ManagedProfileRecord> {
+    return await this.withWriteLock(async () => {
+      const data = await this.readUnlocked()
+      const record = data.profiles[normalizeSlug(slug)]
+      if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
+      const binding = validateRuntimeBinding(runtimeBinding)
+      if (record.runtimeBinding && !sameRuntimeBinding(record.runtimeBinding, binding)) {
+        throw tokenlessError(
+          'profile_runtime_rebind_blocked',
+          `Managed profile '${record.slug}' is already bound to ${record.runtimeBinding.runtimeId}; create a clean profile for ${binding.runtimeId}.`,
+        )
+      }
+      const updated: ManagedProfileRecord = {
+        ...record,
+        runtimeBinding: binding,
+        updatedAt: new Date().toISOString(),
       }
       data.profiles[updated.slug] = updated
       await this.writeUnlocked(data)
@@ -364,6 +391,7 @@ function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegi
       lifecycle: parseLifecycle(record.lifecycle),
       createdAt: parseIso(record.createdAt),
       updatedAt: parseIso(record.updatedAt),
+      ...parseRuntimeBinding(record.runtimeBinding),
       ...importMetadata,
       lastObservedAuth: parseProviderStatuses(record.lastObservedAuth),
     }
@@ -377,6 +405,44 @@ function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegi
     defaultProfile,
     profiles,
   }
+}
+
+function parseRuntimeBinding(value: unknown): Pick<ManagedProfileRecord, 'runtimeBinding'> | Record<string, never> {
+  if (value === undefined) return {}
+  return { runtimeBinding: validateRuntimeBinding(value) }
+}
+
+function validateRuntimeBinding(value: unknown): BrowserRuntimeBinding {
+  if (!isRecord(value)) {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile runtime binding is malformed.')
+  }
+  const family = value.family
+  if (family !== 'system' && family !== 'managed-chromium' && family !== 'cloak' && family !== 'test') {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile runtime family is invalid.')
+  }
+  if (
+    typeof value.runtimeId !== 'string' || !value.runtimeId || value.runtimeId.length > 160 ||
+    typeof value.browserId !== 'string' || !value.browserId || value.browserId.length > 64 ||
+    typeof value.createdWithVersion !== 'string' || !/^\d+\.\d+\.\d+\.\d+(?:\.\d+)?$/.test(value.createdWithVersion) ||
+    value.profileFormat !== 1
+  ) {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile runtime binding is invalid.')
+  }
+  return {
+    runtimeId: value.runtimeId,
+    family,
+    browserId: value.browserId,
+    createdWithVersion: value.createdWithVersion,
+    profileFormat: 1,
+  }
+}
+
+function sameRuntimeBinding(left: BrowserRuntimeBinding, right: BrowserRuntimeBinding) {
+  return left.runtimeId === right.runtimeId &&
+    left.family === right.family &&
+    left.browserId === right.browserId &&
+    left.createdWithVersion === right.createdWithVersion &&
+    left.profileFormat === right.profileFormat
 }
 
 function parseLabelOrigin(value: unknown, label: string, slug: string, imported: boolean): ManagedProfileLabelOrigin {

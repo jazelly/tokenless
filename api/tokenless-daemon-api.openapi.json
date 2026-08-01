@@ -970,6 +970,7 @@
           "result_json",
           "error_json",
           "blocker_json",
+          "provider_attempts_json",
           "created_at",
           "updated_at"
         ],
@@ -1003,6 +1004,29 @@
           "result_json": {},
           "error_json": {},
           "blocker_json": {},
+          "provider_attempts_json": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "attempt",
+                "provider",
+                "status",
+                "startedAt",
+                "completedAt",
+                "blocker"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "attempt": { "type": "integer", "minimum": 1 },
+                "provider": { "type": "string", "minLength": 1 },
+                "status": { "type": "string", "minLength": 1 },
+                "startedAt": { "type": "string", "format": "date-time" },
+                "completedAt": { "type": ["string", "null"], "format": "date-time" },
+                "blocker": {}
+              }
+            }
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"

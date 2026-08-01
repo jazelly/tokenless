@@ -29,6 +29,7 @@ export type DaemonJob = {
   result_json: unknown | null
   error_json: unknown | null
   blocker_json: unknown | null
+  provider_attempts_json: unknown
   created_at: string
   updated_at: string
 }

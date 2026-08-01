@@ -56,7 +56,7 @@ qwen
 
 ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问 is experimental: its guest-session prompt submission and response reading are proven, while cross-process continuation and unproven optional capabilities remain unavailable or unknown.
 
-Runtime browser values are `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, and `brave`. Local profile import currently supports only Chrome and Brave.
+Runtime browser values are `auto`, `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, `brave`, `managed-chromium`, and `cloak`. `auto` prefers an installed system browser and uses the locked managed fallback only when none exists. `cloak` is explicit opt-in. Local profile import currently supports only matching system Chrome and Brave runtimes; managed Chromium and Cloak always start with clean profiles.
 
 ### Short options
 
@@ -114,16 +114,17 @@ tokenless -V
 
 ### `tokenless install`
 
-Upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, resolves the selected Chromium browser, saves the runtime configuration, and ensures that the local daemon matches the installed CLI version.
+Resolves or installs the selected exact browser runtime, saves the runtime preference, upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, and ensures that the local daemon matches the installed CLI version.
 
 ```bash
-tokenless install --browser chrome --json
+tokenless install --browser auto --json
+tokenless install --browser cloak --json
 tokenless install --browsers chrome,brave --json
 ```
 
 Main options:
 
-- `--browser <browser>` selects one browser.
+- `--browser <browser>` selects one browser preference. Managed selections download only during install or setup.
 - `--browsers <list>` verifies a comma-separated browser list.
 - `--daemon-url`, `--daemon-start-timeout-ms`, `--home`, and `--json` control the local runtime.
 
@@ -131,7 +132,7 @@ This command does not configure a managed profile or check provider sign-in. Run
 
 ### `tokenless setup`
 
-Runs the complete onboarding flow: unconditionally upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version through the shared maintenance module, chooses a browser, saves provider preferences, creates or selects a managed profile, and performs one live sign-in check for every enabled provider. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
+Runs the complete onboarding flow: discovers system and cached runtimes, resolves or installs the exact selected browser, creates or selects a runtime-compatible managed profile, saves the verified selection, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and performs one live sign-in check for every enabled provider. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
 
 Interactive setup:
 
@@ -143,6 +144,8 @@ Create or reuse a clean profile non-interactively:
 
 ```bash
 tokenless setup --profile default --fresh --json
+tokenless setup --browser cloak --profile cloak-default --fresh --json
+tokenless setup --browser managed-chromium --profile managed-default --fresh --json
 ```
 
 Import an existing local browser profile:
@@ -159,7 +162,8 @@ tokenless setup \
 Main options:
 
 - `--profile <slug>` selects or names the managed profile.
-- `--browser <browser>` selects the local Chromium browser.
+- `--browser <browser>` selects `auto`, one exact system browser, `managed-chromium`, or `cloak`.
+- `--no-browser-download` fails instead of downloading a missing managed runtime.
 - `--fresh` or `-f` creates a clean managed profile.
 - `--defaults` selects non-interactive defaults.
 - `--import-browser-profile <directory-key>` imports a Chrome or Brave profile.
@@ -168,11 +172,18 @@ Main options:
 - `--reimport-profile` replaces an existing imported managed profile from a selected source.
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
+
+`auto` is the default and prefers an installed Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing executable. If no supported system browser exists, setup downloads the locked Chrome for Testing 145 artifact into `~/.tokenless/browser/runtimes`. An explicit missing system-browser choice fails rather than falling back. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first supported runtime platforms are Apple Silicon macOS and Windows x64 (Intel and AMD).
+
+Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing from a system browser to managed Chromium or Cloak creates a clean profile. Full Chrome-profile import into Cloak or managed Chromium is intentionally unavailable.
+
+With explicit copy consent, profile import copies selected provider cookies plus limited Chromium compatibility state: Origin Bound Certs, Trust Tokens, TransportSecurity, Visited Links, the Affiliation Database, and the Site Characteristics Database. Passwords, full history, bookmarks, payment data, sync data, unrelated site storage, and caches remain excluded. Fresh profiles do not copy source browser data.
+
 `setup` checks every provider whose registry stage is not `disabled`, including experimental providers such as Qwen. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. It does not accept `--provider` or `--preferred-providers`. `--fresh` cannot be combined with profile import or re-import.
 
 ### `tokenless doctor`
 
-Performs a read-only health report over Node.js, installed skills, packaged runtime, daemon identity and version, embedded Playwright runtime, browser, configuration, default managed profile, and cached provider readiness.
+Performs a read-only health report over Node.js, installed skills, packaged runtime, daemon identity and version, embedded Playwright runtime, browser preference, resolved runtime family and exact executable version, checksum state, default profile/runtime compatibility, configuration, and cached provider readiness.
 
 ```bash
 tokenless doctor --json
@@ -379,6 +390,7 @@ Provider selection:
 - Unknown and sign-in-required observations are not usable for implicit routing. If no cached provider is usable, the CLI returns `provider_unavailable` with provider observation context before creating a daemon job.
 - A known capability with no complete route returns `task_capability_route_unavailable` before browser mutation. `--capability` currently requires the normal `submit_and_read` action.
 - Successful submissions return and durably store `capabilityRoute`, including normalized requirements, selected strategies, support level, evidence identifiers, and runtime eligibility; `tokenless state` returns the same route.
+- Implicit `submit_and_read` runs may persist an automatic fallback plan. Before submission, provider-scoped auth, CAPTCHA, rate-limit, or plan blockers requeue the same job on the next eligible provider only when it satisfies the run's complete requirements and all completed mutations are reconstructable. Explicit providers and ambiguous submissions never switch automatically. JSON state includes `fallback` and `providerAttempts`.
 
 Prompt input:
 

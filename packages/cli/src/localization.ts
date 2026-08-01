@@ -56,7 +56,15 @@ const ZH_TEXT = new Map<string, string>([
   ['Profile name', 'Profile 名称'],
   ['Choose a browser', '选择浏览器'],
   ['Choose the browser Tokenless should use.', '选择 Tokenless 要使用的浏览器。'],
-  ['Keeps sign-ins between jobs. Imports copy selected provider cookies only; other browser data is excluded.', '在不同 job 之间保留登录状态。导入时只复制所选 provider 的 cookie，不包含其他浏览器数据。'],
+  ['Choose a browser runtime', '选择 browser runtime'],
+  ['Choose the browser runtime Tokenless should use.', '选择 Tokenless 要使用的 browser runtime。'],
+  ['Preparing automatic browser selection', '准备自动 browser selection'],
+  ['Preparing Tokenless-managed Chromium', '准备由 Tokenless 管理的 Chromium'],
+  ['Preparing CloakBrowser', '准备 CloakBrowser'],
+  ['At least one browser runtime selection is required.', '至少需要选择一个 browser runtime。'],
+  ['Browser must be auto, chrome, chrome-for-testing, chromium, edge, arc, brave, managed-chromium, or cloak.', 'Browser 必须是 auto、chrome、chrome-for-testing、chromium、edge、arc、brave、managed-chromium 或 cloak。'],
+  ['Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.', '无效的 Tokenless browser；应为 auto、受支持的 system browser、managed-chromium 或 cloak。'],
+  ['Keeps sign-ins between jobs. Imports copy selected provider cookies and limited browser compatibility state; other browser data is excluded.', '在不同 job 之间保留登录状态。导入时会复制所选 provider 的 cookie 和有限的浏览器兼容性状态，其他浏览器数据不会导入。'],
   ['Checks visible sign-in state without submitting a prompt.', '检查可见的登录状态，不会提交 prompt。'],
   ['Setup selection must be one of the displayed numbers.', '设置选项必须是界面显示的编号之一。'],
   ['Usage', '用法'],
@@ -106,6 +114,39 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^(\S+) is required\.$/, '必须提供 $1。')
     .replace(/^Provider must be one of: (.+)\.$/, 'Provider 必须是以下值之一：$1。')
     .replace(/^Browser must be one of: (.+)\.$/, 'Browser 必须是以下值之一：$1。')
+    .replace(/^Browser must be auto, a supported system browser, managed-chromium, or cloak\.$/, 'Browser 必须是 auto、受支持的 system browser、managed-chromium 或 cloak。')
+    .replace(/^Automatic — (.+)$/, '自动 — $1')
+    .replace(/ — installed system browser$/, ' — 已安装的 system browser')
+    .replace(/ — official download required$/, ' — 需要从官方来源下载')
+    .replace(/ — download required$/, ' — 需要下载')
+    .replace(/ — cached$/, ' — 已缓存')
+    .replace(/^(.+) (\S+): download\.$/, '$1 $2：下载。')
+    .replace(/^(.+) (\S+): verify\.$/, '$1 $2：校验。')
+    .replace(/^(.+) (\S+): extract\.$/, '$1 $2：解包。')
+    .replace(/^(.+) (\S+): version\.$/, '$1 $2：检查版本。')
+    .replace(/^(.+) (\S+): smoke-launch\.$/, '$1 $2：执行 smoke launch。')
+    .replace(/^(.+) (\S+): install\.$/, '$1 $2：安装。')
+    .replace(/^(.+) (\S+) is not installed\. Run tokenless setup with browser downloads enabled\.$/, '$1 $2 尚未安装。请启用 browser download 后重新运行 tokenless setup。')
+    .replace(/^Configured system browser '(.+)' is not installed or executable\.$/, "配置的 system browser '$1' 尚未安装或不可执行。")
+    .replace(/^Managed profile '(.+)' cannot use (.+); create a clean profile for that browser runtime\.$/, "Managed profile '$1' 不能使用 $2；请为该 browser runtime 创建 clean profile。")
+    .replace(/^Browser profile import is unavailable for (.+); create a clean managed profile instead\.$/, '$1 不支持 browser profile import；请改为创建 clean managed profile。')
+    .replace(/^The selected (.+) profile cannot be imported into (.+)\.$/, '所选 $1 profile 不能导入 $2。')
+    .replace(/^Unsupported Tokenless browser platform: (.+)\. Supported platforms are darwin-arm64 and win32-x64\.$/, 'Tokenless 不支持 browser platform：$1。支持 darwin-arm64 和 win32-x64。')
+    .replace(/^Managed profile '(.+)' predates browser runtime binding\. Rerun tokenless setup and explicitly select a compatible browser\.$/, "Managed profile '$1' 尚未记录 browser runtime binding。请重新运行 tokenless setup 并显式选择兼容的 browser。")
+    .replace(/^Managed profile '(.+)' is bound to (.+), but Tokenless resolved (.+)\.$/, "Managed profile '$1' 绑定到 $2，但 Tokenless 解析出 $3。")
+    .replace(/^Managed profile '(.+)' was created with browser (.+); refusing to open it with older browser (.+)\.$/, "Managed profile '$1' 由 browser $2 创建；拒绝使用更旧的 browser $3 打开。")
+    .replace(/^Managed profile '(.+)' is already bound to (.+); create a clean profile for (.+)\.$/, "Managed profile '$1' 已绑定到 $2；请为 $3 创建 clean profile。")
+    .replace(/^(.+) download checksum mismatch; refusing to extract the artifact\.$/, '$1 下载文件的 checksum 不匹配；已拒绝解包。')
+    .replace(/^(.+) reported browser (.+); expected (.+)\.$/, '$1 报告 browser $2；预期为 $3。')
+    .replace(/^(.+) cache reported browser (.+); expected (.+)\.$/, '$1 cache 报告 browser $2；预期为 $3。')
+    .replace(/^Cannot install (.+) (.+)\.$/, '无法安装 $1 $2。')
+    .replace(/^Browser download failed with HTTP (.+)\.$/, 'Browser 下载失败，HTTP 状态为 $1。')
+    .replace(/^Browser download failed\.$/, 'Browser 下载失败。')
+    .replace(/^Browser download was aborted\.$/, 'Browser 下载已中止。')
+    .replace(/^Browser archive is empty\.$/, 'Browser archive 为空。')
+    .replace(/^Browser archive contains an unsafe path: (.+)$/, 'Browser archive 包含不安全路径：$1')
+    .replace(/^Browser smoke launch timed out\.$/, 'Browser smoke launch 超时。')
+    .replace(/^Browser smoke launch failed\.$/, 'Browser smoke launch 失败。')
     .replace(/^Using (.+)\.$/, '正在使用 $1。')
     .replace(/^Checking providers: (.+)\.$/, '正在检查 provider：$1。')
     .replace(/^Checking (.+) sign-in$/, '检查 $1 登录状态')

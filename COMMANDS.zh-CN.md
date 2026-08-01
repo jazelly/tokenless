@@ -56,7 +56,7 @@ qwen
 
 ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问目前为 experimental：其 Guest-session prompt 提交与 response 读取已得到证明；cross-process continuation 和尚未证明的可选 capability 保持 unavailable 或 unknown。
 
-Runtime browser 可选值为 `chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc` 和 `brave`。本地 profile import 当前只支持 Chrome 与 Brave。
+Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc`、`brave`、`managed-chromium` 和 `cloak`。`auto` 优先使用已安装的 system browser，仅在没有可用项时使用锁定的 managed fallback；`cloak` 必须显式选择。本地 profile import 当前只支持匹配的 system Chrome 与 Brave runtime；managed Chromium 和 Cloak 始终使用 clean profile。
 
 ### 短选项
 
@@ -114,16 +114,17 @@ tokenless -V
 
 ### `tokenless install`
 
-Upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，解析所选 Chromium browser，保存 runtime 配置，并确保本地 daemon 与已安装 CLI 版本一致。
+解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 版本一致。
 
 ```bash
-tokenless install --browser chrome --json
+tokenless install --browser auto --json
+tokenless install --browser cloak --json
 tokenless install --browsers chrome,brave --json
 ```
 
 主要选项：
 
-- `--browser <browser>` 选择一个浏览器。
+- `--browser <browser>` 选择一个 browser preference。Managed selection 只会在 install 或 setup 期间下载。
 - `--browsers <list>` 验证逗号分隔的浏览器列表。
 - `--daemon-url`、`--daemon-start-timeout-ms`、`--home` 和 `--json` 控制本地 runtime。
 
@@ -131,7 +132,7 @@ tokenless install --browsers chrome,brave --json
 
 ### `tokenless setup`
 
-执行完整 onboarding：无条件 upsert 全局 Tokenless agent skills，通过共享 maintenance 模块将 daemon 对齐已安装 CLI 版本、选择浏览器、保存 provider preferences、创建或选择 managed profile，并对所有 enabled providers 各执行一次实时登录检查。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
+执行完整 onboarding：发现 system 与 cached runtimes，解析或安装精确的所选 browser，创建或选择 runtime-compatible managed profile，保存已验证的 selection，upsert 全局 Tokenless agent skills，将 daemon 对齐已安装 CLI 版本，并对所有 enabled providers 各执行一次实时登录检查。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
 
 交互式 setup：
 
@@ -143,6 +144,8 @@ tokenless setup
 
 ```bash
 tokenless setup --profile default --fresh --json
+tokenless setup --browser cloak --profile cloak-default --fresh --json
+tokenless setup --browser managed-chromium --profile managed-default --fresh --json
 ```
 
 导入现有本地 browser profile：
@@ -159,7 +162,8 @@ tokenless setup \
 主要选项：
 
 - `--profile <slug>` 选择或命名 managed profile。
-- `--browser <browser>` 选择本地 Chromium browser。
+- `--browser <browser>` 选择 `auto`、一个精确 system browser、`managed-chromium` 或 `cloak`。
+- `--no-browser-download` 在缺少 managed runtime 时直接失败，而不是下载。
 - `--fresh` 或 `-f` 创建 clean managed profile。
 - `--defaults` 选择非交互默认值。
 - `--import-browser-profile <directory-key>` 导入 Chrome 或 Brave profile。
@@ -168,11 +172,18 @@ tokenless setup \
 - `--reimport-profile` 从指定来源替换已存在的 imported managed profile。
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
+
+`auto` 是默认值，会优先使用已安装的 Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing executable。没有支持的 system browser 时，setup 才会把锁定的 Chrome for Testing 145 artifact 下载到 `~/.tokenless/browser/runtimes`。显式选择但不存在的 system browser 会失败，不会 fallback。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批支持 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）。
+
+Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。从 system browser 切换到 managed Chromium 或 Cloak 时会创建 clean profile。完整 Chrome profile import 到 Cloak 或 managed Chromium 明确不可用。
+
+在用户明确授权本地复制后，profile import 会复制所选 provider cookie 和有限的 Chromium 兼容性状态：Origin Bound Certs、Trust Tokens、TransportSecurity、Visited Links、Affiliation Database 和 Site Characteristics Database。密码、完整历史记录、书签、支付数据、同步数据、无关站点存储和缓存仍会被排除。Fresh profile 不会复制来源 browser 数据。
+
 `setup` 会检查 registry stage 不为 `disabled` 的每一家 provider，包括 Qwen 这样的 experimental provider。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。该命令不接受 `--provider` 或 `--preferred-providers`。`--fresh` 不能与 profile import 或 re-import 同时使用。
 
 ### `tokenless doctor`
 
-只读检查 Node.js、已安装 skills、打包 runtime、daemon identity/version、embedded Playwright runtime、browser、配置、默认 managed profile，以及缓存的 provider readiness。
+只读检查 Node.js、已安装 skills、打包 runtime、daemon identity/version、embedded Playwright runtime、browser preference、解析出的 runtime family 与精确 executable version、checksum 状态、默认 profile/runtime compatibility、配置，以及缓存的 provider readiness。
 
 ```bash
 tokenless doctor --json
@@ -379,6 +390,7 @@ Provider 选择：
 - Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
 - 已知 capability 如果没有完整 route，会在 browser mutation 前返回 `task_capability_route_unavailable`。`--capability` 当前只支持正常的 `submit_and_read` action。
 - 成功提交会返回并持久化 `capabilityRoute`，其中包含规范化 requirements、所选 strategies、support level、evidence identifiers 和 runtime eligibility；`tokenless state` 会返回同一 route。
+- 隐式 `submit_and_read` run 可以持久化 automatic fallback plan。提交前遇到 provider-scoped 登录、CAPTCHA、限流或套餐 blocker 时，只有下一个 provider 满足本次 run 的完整 requirements，且此前完成的 mutation 都可安全重建，daemon 才会在同一个 job 上重新排队。显式 provider 和提交状态不确定时绝不会自动切换。JSON state 包含 `fallback` 与 `providerAttempts`。
 
 Prompt 输入：
 

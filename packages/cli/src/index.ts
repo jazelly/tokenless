@@ -47,6 +47,12 @@ export type {
 
 export type { TokenlessConfig } from './job-store.js'
 export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
+export type { BrowserConnectionMode } from './browser-connection-mode.js'
+
+export {
+  BROWSER_CONNECTION_MODES,
+  normalizeBrowserConnectionMode,
+} from './browser-connection-mode.js'
 
 export {
   BROWSER_VISIBILITIES,
@@ -72,6 +78,27 @@ export {
 } from './localization.js'
 
 export type { TokenlessLanguage } from './localization.js'
+
+export {
+  BROWSER_SELECTIONS,
+  SYSTEM_BROWSER_IDS,
+  BrowserRuntimeManager,
+  allManagedBrowserCatalogEntries,
+  currentBrowserRuntimePlatform,
+  managedBrowserCatalogEntry,
+  normalizeBrowserSelection,
+} from './browser-runtime/index.js'
+
+export type {
+  BrowserCandidate,
+  BrowserLaunchPolicy,
+  BrowserRuntimeBinding,
+  BrowserRuntimeFamily,
+  BrowserRuntimeInspection,
+  BrowserRuntimePlatform,
+  BrowserSelection,
+  ResolvedBrowserRuntime,
+} from './browser-runtime/index.js'
 
 export {
   DAEMON_LOG_FILE,

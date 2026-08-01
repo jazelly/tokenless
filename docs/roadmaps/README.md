@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-07-31
+Status: active product direction | Last reviewed: 2026-08-01
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -36,10 +36,12 @@ Every addition, rename, move, or lifecycle change must update this index, all re
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
+| [Browser Runtime Selection and Cloak Integration](browser-runtime-selection-and-cloak.md) | Use an exact profile-bound Chromium runtime, prefer the user's installed browser, provide a locked managed fallback, and add explicit verified Cloak installation on supported platforms. | P0 |
 | [Real Provider Browser E2E and Native Projects](real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
+| [Local Web Control Plane](local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
 | [Agent Session Integrations](agent-session-integrations.md) | Route caller-requested task capabilities to evidence-backed provider strategies through a safe local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 
@@ -55,21 +57,25 @@ Priority describes product importance, not a promise that all work proceeds seri
 ```mermaid
 flowchart LR
   Caller["Trusted local caller<br/>HTTP create + polling"]
-  API["Fastify daemon API<br/>auth + schemas + job reads"]
+  UI["Local web control plane<br/>profiles + providers + jobs"]
+  API["Local daemon API<br/>auth + schemas + job reads"]
   Session["Agent session binding<br/>session id + working directory"]
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
   Context["Context envelope<br/>provenance + policy + limits"]
   Graph["Project knowledge graph<br/>rules + architecture + symbols"]
+  Browser["Browser runtime manager<br/>system + managed + Cloak"]
   Provider["Provider adapters<br/>visible capabilities"]
   Workspace["Provider workspace mirror<br/>Project or conversation"]
   Task["Web-agent task<br/>exact session and project context"]
 
   Caller --> API
+  UI --> API
   Session --> API
   API --> Scheduler
   Scheduler --> Context
   Graph --> Context
   Context --> Provider
+  Browser --> Provider
   Provider --> Scheduler
   Scheduler --> Workspace
   Graph --> Workspace
@@ -79,13 +85,15 @@ flowchart LR
 The shared contracts should be built before provider-specific shortcuts:
 
 1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap.
-2. Establish the real-provider browser E2E evidence plane and close Claude and Grok native Project identity before depending on those capabilities for broader context delivery.
-3. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
-4. Replace the daemon's manual HTTP dispatcher with a compatible Fastify API and make polling the explicit asynchronous caller contract.
-5. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
-6. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.
-7. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
-8. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
+2. Establish exact, profile-bound browser runtime selection and verified system, managed, and Cloak launch paths.
+3. Establish the real-provider browser E2E evidence plane and close Claude and Grok native Project identity before depending on those capabilities for broader context delivery.
+4. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
+5. Add the authenticated local web control plane over shared application services without exposing the daemon bearer token to browser JavaScript.
+6. Keep the daemon's small built-in HTTP server and make polling the explicit asynchronous caller and UI contract.
+7. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
+8. Expand provider coverage using the same visible-session and evidence requirements as the existing providers.
+9. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
+10. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 

@@ -20,7 +20,8 @@
     "test:e2e": "npm run build && TOKENLESS_LIVE_E2E_GATE=all node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
     "test:e2e:non-submission": "TOKENLESS_LIVE_E2E_GATE=non_submission node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
     "test:e2e:mutation": "TOKENLESS_LIVE_E2E_GATE=mutation node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
-    "test:e2e:project": "TOKENLESS_LIVE_E2E_GATE=project node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs"
+    "test:e2e:project": "TOKENLESS_LIVE_E2E_GATE=project node --test --test-concurrency=1 test/live-managed-playwright.e2e.mjs",
+    "test:e2e:fallback": "TOKENLESS_LIVE_FALLBACK_E2E_GATE=real-provider-fallback node --test --test-concurrency=1 test/live-provider-fallback.e2e.mjs"
   },
   "workspaces": [
     "packages/*"
@@ -31,7 +32,7 @@
   "packageManager": "npm@10",
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
-    "@playwright/test": "^1.53.0",
+    "@playwright/test": "1.61.1",
     "@types/node": "^26.1.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",

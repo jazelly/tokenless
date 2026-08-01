@@ -54,9 +54,13 @@ npm install --global tokenless@latest
 tokenless setup
 ```
 
-安装 npm package 只是第一步。使用 Tokenless 前必须完成 `tokenless setup`；它会准备本地运行环境，创建或导入浏览器 profile，并检查所有已启用的 providers。首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制面向用户的 CLI 文案和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可通过 `tokenless config --language en` 或 `tokenless config --language zh-CN` 修改。
+安装 npm package 只是第一步。使用 Tokenless 前必须完成 `tokenless setup`；它会选择并验证精确的 browser runtime，创建或导入与其兼容的 browser profile，准备本地运行环境，并检查所有已启用的 providers。默认的 `auto` 会优先使用用户已经安装的 Chrome-family browser；如果没有可用浏览器，setup 才会 lazy download 由 Tokenless 管理的 Chrome for Testing 145。CloakBrowser 必须由用户在 setup 中显式选择，并从 Cloak 官方 release 下载到 Tokenless 私有 cache；它采用单独许可的 binary 不会进入 Tokenless npm package 或 release artifact。
 
-需要 Node.js 22.13+，以及 Chrome、Brave、Edge、Arc 或 Chromium。
+每个 managed profile 都会绑定创建它的 browser runtime。Tokenless 不会把 system-browser profile 静默改用 Cloak 或 managed fallback 打开；切换 runtime family 时会创建 clean profile，而且当前不支持把完整 Chrome profile 导入 Cloak。
+
+首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制面向用户的 CLI 文案和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可通过 `tokenless config --language en` 或 `tokenless config --language zh-CN` 修改。
+
+需要 Node.js 22.13+。Browser runtime management 当前支持 Apple Silicon Mac 和 Windows x64；Windows x64 同时覆盖 Intel 与 AMD CPU。
 
 ## 执行
 
@@ -82,6 +86,8 @@ tokenless run \
 ```
 
 Tokenless 会合并显式 capability 与结构化输入推导出的要求。普通 run 要求 `conversation.chat`，attachments 要求 `file.upload` 及对应的 media-specific input capability，`--workspace-mode native` 要求 `workspace.native`。Router 会在 configured provider scope 内选择一家能完整满足全部要求的 provider。`research.deep` 等 candidate capabilities 仍会列在 catalog 中，但在完整 provider lifecycle 通过真实 E2E closure 前，会在浏览器 mutation 之前明确失败。
+
+对于未显式指定 provider 的 run，Tokenless 会记录已有证据闭环的候选 route；当当前 provider 遇到登录、CAPTCHA、限流或套餐限制等 provider-scoped blocker 时，会先自动尝试下一个 eligible provider，再请求人工介入。每个候选 provider 都必须满足本次 run 的完整 capability set。显式 `--provider`、精确 conversation continuation、provider-specific controls，以及提交后状态不确定的情况绝不会自动切换。`tokenless state --json` 会报告剩余 fallback plan 和持久化的 provider attempt 历史。
 
 可以使用 `tokenless provider-action --action capability.inspect --provider <provider> --json` 检查某家 provider 当前可用的具体能力。
 

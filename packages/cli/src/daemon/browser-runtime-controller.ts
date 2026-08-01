@@ -8,9 +8,10 @@ import {
 import { isClaimRecoveryError, tokenlessError } from '../playwright/errors.js'
 import { resolveE2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
 import { readTokenlessConfig } from '../job-store.js'
-import { resolveChromiumBrowser } from '../runtime.js'
+import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
 import type { JobStore } from './job-store.js'
 import type { ManagedBrowserLaunchTarget } from '../playwright/browser/context-manager.js'
+import type { ManagedBrowserProfile } from '../playwright/browser/context-manager.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 
 export type BrowserRuntimeState = 'running' | 'quiescing' | 'quiesced' | 'stopped'
@@ -136,11 +137,25 @@ export class BrowserRuntimeController {
   }
 
   private async createRunner(): Promise<RunnerInstance> {
-    const browser = await this.resolveBrowserLaunchTarget()
+    const runtimeManager = new BrowserRuntimeManager({ homeDir: this.store.homeDir })
+    const config = await readTokenlessConfig(this.store.homeDir)
+    const e2eInspection = resolveE2EBrowserInspectionConfig(this.store.homeDir) !== null
+    const resolvedTargets = new Map<string, Promise<ManagedBrowserLaunchTarget>>()
+    const browserResolver = async (profile: ManagedBrowserProfile) => {
+      const cacheKey = profile.runtimeBinding?.runtimeId ?? `unbound:${profile.id}`
+      let pending = resolvedTargets.get(cacheKey)
+      if (!pending) {
+        pending = this.resolveBrowserLaunchTarget(profile, runtimeManager, e2eInspection)
+        resolvedTargets.set(cacheKey, pending)
+        pending.catch(() => resolvedTargets.delete(cacheKey))
+      }
+      return await pending
+    }
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
       daemonClient: createInProcessDaemonClient(this.store),
-      browser,
+      browserConnectionMode: config.browserConnectionMode,
+      browserResolver,
       recoverAbortedClaim: (job) => this.store.recoverActiveClaim(job.job_id, job.claim_token),
     })
     const abortController = new AbortController()
@@ -176,47 +191,32 @@ export class BrowserRuntimeController {
     return this.runner
   }
 
-  private async resolveBrowserLaunchTarget(): Promise<ManagedBrowserLaunchTarget> {
-    const e2eInspection = resolveE2EBrowserInspectionConfig(this.store.homeDir) !== null
-    let configuredBrowser: unknown
-    try {
-      configuredBrowser = (await readTokenlessConfig(this.store.homeDir)).browser ?? undefined
-    } catch {
-      configuredBrowser = undefined
-    }
-    if (configuredBrowser === undefined || configuredBrowser === null || configuredBrowser === '' || configuredBrowser === 'chrome') {
-      if (!e2eInspection) return { id: 'chrome' }
-      const resolved = await resolveChromiumBrowser('chrome')
-      return {
-        id: 'chrome',
-        executablePath: resolved.playwrightExecutablePath,
-        e2eInspection: true,
-      }
-    }
-    if (configuredBrowser === 'edge') {
-      if (!e2eInspection) return { id: 'edge' }
-      const resolved = await resolveChromiumBrowser('edge')
-      return {
-        id: 'edge',
-        executablePath: resolved.playwrightExecutablePath,
-        e2eInspection: true,
-      }
-    }
-    const resolved = await resolveChromiumBrowser(configuredBrowser)
-    if (resolved.browser === 'chrome' || resolved.browser === 'edge') {
-      return {
-        id: resolved.browser,
-        ...(e2eInspection ? {
-          executablePath: resolved.playwrightExecutablePath,
-          e2eInspection: true,
-        } : {}),
-      }
-    }
+  private async resolveBrowserLaunchTarget(
+    profile: ManagedBrowserProfile,
+    runtimeManager: BrowserRuntimeManager,
+    e2eInspection: boolean,
+  ): Promise<ManagedBrowserLaunchTarget> {
+    const runtime = profile.runtimeBinding
+      ? await runtimeManager.resolveForProfile({
+          slug: profile.id,
+          runtimeBinding: profile.runtimeBinding,
+        })
+      : await this.resolveLegacyTestProfileRuntime(runtimeManager)
     return {
-      id: resolved.browser,
-      ...(resolved.playwrightExecutablePath ? { executablePath: resolved.playwrightExecutablePath } : {}),
+      id: runtime.browserId,
+      executablePath: runtime.executablePath,
+      runtimeId: runtime.runtimeId,
+      launchPolicy: runtime.launchPolicy,
       ...(e2eInspection ? { e2eInspection: true } : {}),
     }
+  }
+
+  private async resolveLegacyTestProfileRuntime(runtimeManager: BrowserRuntimeManager) {
+    const configuredBrowser = (await readTokenlessConfig(this.store.homeDir)).browser
+    if (configuredBrowser === 'profile') {
+      return await runtimeManager.ensure('profile', { allowDownload: false })
+    }
+    return await runtimeManager.resolveForProfile({ slug: '<unbound>' })
   }
 
   private async settleRunner(runner: RunnerInstance) {

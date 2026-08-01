@@ -10,11 +10,14 @@ import { tokenlessError } from '../errors.js'
 import type { BrowserVisibility, EffectiveBrowserVisibility } from '../../browser-visibility.js'
 import type { Browser, BrowserContext, Page } from 'playwright-core'
 import type { ChildProcess } from 'node:child_process'
+import type { BrowserRuntimeBinding } from '../../browser-runtime/types.js'
+import type { BrowserConnectionMode } from '../../browser-connection-mode.js'
 
 export type ManagedBrowserProfile = {
   id: string
   directory: string
   lifecycle?: 'created' | 'importing' | 'ready' | 'removed' | 'failed'
+  runtimeBinding?: BrowserRuntimeBinding | undefined
 }
 
 export type ManagedBrowserContext = {
@@ -44,7 +47,9 @@ export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromi
 export type PersistentContextManagerOptions = {
   maxContexts?: number
   launcher?: ManagedContextLauncher
+  connectionMode?: BrowserConnectionMode | undefined
   browser?: ManagedBrowserLaunchTarget
+  browserResolver?: ManagedBrowserResolver
   timers?: PersistentContextManagerTimers | undefined
 }
 
@@ -52,7 +57,13 @@ export type ManagedBrowserLaunchTarget = {
   id: string
   executablePath?: string | undefined
   e2eInspection?: boolean | undefined
+  runtimeId?: string | undefined
+  launchPolicy?: 'standard' | 'cloak' | 'test-profile' | undefined
 }
+
+export type ManagedBrowserResolver = (
+  profile: ManagedBrowserProfile,
+) => Promise<ManagedBrowserLaunchTarget>
 
 export type PersistentContextManagerTimers = {
   setTimeout(callback: () => void, ms: number): unknown
@@ -71,6 +82,8 @@ type ActiveContext = {
   browserContext: BrowserContext
   pagesByKey: Map<string, Page>
   closeBrowser: () => Promise<void>
+  closePromise?: Promise<void> | undefined
+  browserTarget: ManagedBrowserLaunchTarget
   closing: boolean
 }
 
@@ -88,7 +101,9 @@ type ScheduledContextClose = {
 export class PersistentContextManager {
   private readonly maxContexts: number
   private readonly launcher: ManagedContextLauncher
+  private readonly connectionMode: BrowserConnectionMode
   private readonly browser: ManagedBrowserLaunchTarget
+  private readonly browserResolver: ManagedBrowserResolver
   private readonly timers: PersistentContextManagerTimers
   private readonly contexts = new Map<string, ActiveContext>()
   private readonly lanes = new Map<string, Promise<unknown>>()
@@ -100,7 +115,9 @@ export class PersistentContextManager {
   constructor(options: PersistentContextManagerOptions = {}) {
     this.maxContexts = options.maxContexts ?? 4
     this.launcher = options.launcher ?? ((userDataDir, launchOptions) => chromium.launchPersistentContext(userDataDir, launchOptions))
+    this.connectionMode = options.connectionMode ?? 'playwright'
     this.browser = normalizeManagedBrowserLaunchTarget(options.browser)
+    this.browserResolver = options.browserResolver ?? (async () => this.browser)
     this.timers = options.timers ?? nativeTimers()
     if (!Number.isInteger(this.maxContexts) || this.maxContexts < 1 || this.maxContexts > 4) {
       throw tokenlessError('invalid_context_limit', 'Managed Playwright context limit must be between one and four.')
@@ -159,8 +176,14 @@ export class PersistentContextManager {
     this.cancelScheduledClose(profile.id)
     const requestedVisibility = validateRequestedVisibility(visibility)
     const effectiveVisibility = resolveEffectiveBrowserVisibility(requestedVisibility)
+    const browserTarget = normalizeManagedBrowserLaunchTarget(await this.browserResolver(profile))
     const existing = this.contexts.get(profile.id)
-    if (existing && !existing.closing && existing.effectiveVisibility === effectiveVisibility) {
+    if (
+      existing &&
+      !existing.closing &&
+      existing.effectiveVisibility === effectiveVisibility &&
+      sameBrowserRuntime(existing.browserTarget, browserTarget)
+    ) {
       existing.profile = profile
       existing.requestedVisibility = requestedVisibility
       return this.wrap(existing)
@@ -171,26 +194,34 @@ export class PersistentContextManager {
         throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
       }
       const current = this.contexts.get(profile.id)
-      if (current && !current.closing && current.effectiveVisibility === effectiveVisibility) {
+      if (
+        current &&
+        !current.closing &&
+        current.effectiveVisibility === effectiveVisibility &&
+        sameBrowserRuntime(current.browserTarget, browserTarget)
+      ) {
         current.profile = profile
         current.requestedVisibility = requestedVisibility
         return this.wrap(current)
       }
       if (current && !current.closing) {
         await this.closeActiveContext(profile.id, current)
+      } else if (current?.closePromise) {
+        await current.closePromise
       }
       if (this.contexts.size >= this.maxContexts) {
         throw tokenlessError('playwright_context_limit_reached', 'Too many managed browser profiles are active.', { retryable: true })
       }
-      if (this.browser.e2eInspection) {
+      if (browserTarget.e2eInspection) {
         await fs.unlink(path.join(profile.directory, 'DevToolsActivePort')).catch((error) => {
           if (!isMissingFileError(error)) throw error
         })
       }
       const launched = await this.launchContext(
         profile.directory,
-        managedBrowserLaunchOptions(this.browser, requestedVisibility),
+        managedBrowserLaunchOptions(browserTarget, requestedVisibility),
         effectiveVisibility,
+        browserTarget,
       )
       const { browserContext } = launched
       if (this.shuttingDown) {
@@ -204,11 +235,12 @@ export class PersistentContextManager {
         browserContext,
         pagesByKey: new Map(),
         closeBrowser: launched.closeBrowser,
+        browserTarget,
         closing: false,
       }
       this.contexts.set(profile.id, active)
       browserContext.once('close', () => {
-        if (this.contexts.get(profile.id) === active) this.contexts.delete(profile.id)
+        if (!active.closing) void this.closeActiveContext(profile.id, active)
       })
       return this.wrap(active)
     })
@@ -320,18 +352,28 @@ export class PersistentContextManager {
 
   private async closeActiveContext(profileId: string, active: ActiveContext): Promise<void> {
     this.cancelScheduledClose(profileId)
-    active.closing = true
-    if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
-    await active.closeBrowser().catch(() => undefined)
+    if (!active.closePromise) {
+      active.closing = true
+      active.closePromise = active.closeBrowser()
+        .catch(() => undefined)
+        .finally(() => {
+          if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
+        })
+    }
+    await active.closePromise
   }
 
   private async launchContext(
     userDataDir: string,
     launchOptions: PersistentChromeLaunchOptions,
     effectiveVisibility: EffectiveBrowserVisibility,
+    browserTarget: ManagedBrowserLaunchTarget,
   ): Promise<LaunchedManagedContext> {
-    if (this.browser.e2eInspection && process.platform === 'darwin' && effectiveVisibility === 'headed') {
-      return await launchBackgroundMacOSContext(userDataDir, launchOptions, this.browser)
+    if (this.connectionMode === 'cdp') {
+      return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget)
+    }
+    if (browserTarget.e2eInspection && process.platform === 'darwin' && effectiveVisibility === 'headed') {
+      return await launchBackgroundMacOSContext(userDataDir, launchOptions, browserTarget)
     }
     const browserContext = await this.launcher(userDataDir, launchOptions)
     return {
@@ -358,6 +400,94 @@ export class PersistentContextManager {
       return
     }
     this.activeOperations.delete(profileId)
+  }
+}
+
+async function launchCdpManagedContext(
+  userDataDir: string,
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+): Promise<LaunchedManagedContext> {
+  const executablePath = browserTarget.executablePath
+  if (!executablePath) {
+    throw tokenlessError(
+      'cdp_browser_executable_required',
+      'CDP connection mode requires an explicit Chromium browser executable path.',
+    )
+  }
+  const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
+  await fs.unlink(endpointFile).catch((error) => {
+    if (!isMissingFileError(error)) throw error
+  })
+  const browserProcess = spawn(executablePath, cdpChromiumArguments(userDataDir, launchOptions, browserTarget), {
+    stdio: 'ignore',
+  })
+  const browserExit = observeChildExit(browserProcess)
+  await waitForChildSpawn(browserProcess)
+
+  let connectedBrowser: Browser | undefined
+  try {
+    const endpoint = await waitForDevToolsEndpoint(endpointFile, browserExit)
+    connectedBrowser = await chromium.connectOverCDP(endpoint)
+    const contexts = connectedBrowser.contexts()
+    if (contexts.length !== 1 || !contexts[0]) {
+      throw new Error('CDP managed browser must expose exactly one persistent context.')
+    }
+    const browser = connectedBrowser
+    let closing: Promise<void> | undefined
+    return {
+      browserContext: contexts[0],
+      closeBrowser() {
+        closing ??= closeCdpManagedBrowser(browser, browserProcess, browserExit)
+        return closing
+      },
+    }
+  } catch (error) {
+    await closeCdpManagedBrowser(connectedBrowser, browserProcess, browserExit).catch(() => undefined)
+    throw error
+  }
+}
+
+function cdpChromiumArguments(
+  userDataDir: string,
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+) {
+  const configuredArgs = launchOptions.args ?? []
+  return [
+    ...backgroundChromiumArguments(userDataDir, { ...launchOptions, args: [] }, browserTarget).slice(0, -1),
+    ...(launchOptions.headless ? ['--headless=new'] : []),
+    ...(configuredArgs.some((argument) => argument.startsWith('--remote-debugging-address='))
+      ? []
+      : ['--remote-debugging-address=127.0.0.1']),
+    ...(configuredArgs.some((argument) => argument.startsWith('--remote-debugging-port='))
+      ? []
+      : ['--remote-debugging-port=0']),
+    ...configuredArgs,
+    'about:blank',
+  ]
+}
+
+async function closeCdpManagedBrowser(
+  browser: Browser | undefined,
+  browserProcess: ChildProcess,
+  browserExit: ReturnType<typeof observeChildExit>,
+) {
+  if (browser?.isConnected()) {
+    try {
+      const session = await browser.newBrowserCDPSession()
+      await session.send('Browser.close')
+    } catch {
+      await browser.close().catch(() => undefined)
+    }
+  }
+  const exited = await Promise.race([
+    browserExit.promise.then(() => true),
+    delay(15_000).then(() => false),
+  ])
+  if (!exited && browserProcess.exitCode === null && browserProcess.signalCode === null) {
+    browserProcess.kill('SIGTERM')
+    await Promise.race([browserExit.promise, delay(2_000)])
   }
 }
 
@@ -430,7 +560,7 @@ function backgroundChromiumArguments(
     '--disable-popup-blocking',
     '--disable-prompt-on-repost',
     '--disable-renderer-backgrounding',
-    '--enable-automation',
+    ...(browserTarget.launchPolicy === 'cloak' ? [] : ['--enable-automation']),
     '--metrics-recording-only',
     '--no-service-autorun',
     ...(browserTarget.id === 'profile'
@@ -524,9 +654,13 @@ export function managedBrowserLaunchOptions(
   const normalized = normalizeManagedBrowserLaunchTarget(browser)
   const effectiveVisibility = resolveEffectiveBrowserVisibility(validateRequestedVisibility(visibility))
   const executable = normalized.id === 'chrome'
-    ? { channel: 'chrome' as const }
+    ? (normalized.executablePath
+        ? { executablePath: normalized.executablePath }
+        : { channel: 'chrome' as const })
     : normalized.id === 'edge'
-      ? { channel: 'msedge' as const }
+      ? (normalized.executablePath
+          ? { executablePath: normalized.executablePath }
+          : { channel: 'msedge' as const })
       : { executablePath: normalized.executablePath as string }
   const launchOptions: PersistentChromeLaunchOptions = {
     ...executable,
@@ -548,6 +682,9 @@ export function managedBrowserLaunchOptions(
     launchOptions.ignoreDefaultArgs = [
       '--password-store=basic',
       '--use-mock-keychain',
+      ...(normalized.launchPolicy === 'cloak'
+        ? ['--enable-automation', '--enable-unsafe-swiftshader']
+        : []),
     ]
   }
   return launchOptions
@@ -561,7 +698,7 @@ function normalizeManagedBrowserLaunchTarget(
   browser: ManagedBrowserLaunchTarget | undefined
 ): ManagedBrowserLaunchTarget {
   const id = String(browser?.id ?? 'chrome').trim().toLowerCase()
-  if (!['chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing', 'profile'].includes(id)) {
+  if (!['chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak', 'profile'].includes(id)) {
     throw tokenlessError('unsupported_managed_browser', `Managed Playwright does not support browser '${id}'.`)
   }
   const executablePath = browser?.executablePath?.trim()
@@ -575,7 +712,14 @@ function normalizeManagedBrowserLaunchTarget(
     id,
     ...(executablePath ? { executablePath } : {}),
     ...(browser?.e2eInspection ? { e2eInspection: true } : {}),
+    ...(browser?.runtimeId ? { runtimeId: browser.runtimeId } : {}),
+    ...(browser?.launchPolicy ? { launchPolicy: browser.launchPolicy } : {}),
   }
+}
+
+function sameBrowserRuntime(left: ManagedBrowserLaunchTarget, right: ManagedBrowserLaunchTarget) {
+  if (left.runtimeId || right.runtimeId) return left.runtimeId === right.runtimeId
+  return left.id === right.id && left.executablePath === right.executablePath
 }
 
 function normalizeRunWithProfileArgs<T>(

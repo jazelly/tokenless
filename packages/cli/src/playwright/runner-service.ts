@@ -15,6 +15,7 @@ import {
 } from './e2e-inspection.js'
 import type { E2EBrowserInspectionConfig } from './e2e-inspection.js'
 import type { ManagedBrowserLaunchTarget } from './browser/context-manager.js'
+import type { ManagedBrowserResolver } from './browser/context-manager.js'
 import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
@@ -33,6 +34,7 @@ import type {
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
+import type { BrowserConnectionMode } from '../browser-connection-mode.js'
 import type { VisibleAction, VisibleActionRequest } from './actions.js'
 import type { VisibleActionResponse } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
@@ -46,6 +48,8 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   daemonClient: ManagedDaemonClient
   contextManager?: PersistentContextManagerType | undefined
   browser?: ManagedBrowserLaunchTarget | undefined
+  browserConnectionMode?: BrowserConnectionMode | undefined
+  browserResolver?: ManagedBrowserResolver | undefined
   pollIdleMs?: number | undefined
   renewIntervalMs?: number | undefined
   cancelPollMs?: number | undefined
@@ -162,7 +166,9 @@ export class ManagedPlaywrightRunnerService {
     this.profileRegistry = options.profileRegistry ?? new ManagedProfileRegistry(options.homeDir)
     this.daemonClient = options.daemonClient
     this.contextManager = options.contextManager ?? new PersistentContextManager({
+      connectionMode: options.browserConnectionMode ?? 'playwright',
       ...(options.browser ? { browser: options.browser } : {}),
+      ...(options.browserResolver ? { browserResolver: options.browserResolver } : {}),
     })
     this.pollIdleMs = normalizedPositiveInteger(options.pollIdleMs, DEFAULT_POLL_IDLE_MS)
     this.renewIntervalMs = normalizedPositiveInteger(options.renewIntervalMs, DEFAULT_RENEW_INTERVAL_MS)
@@ -855,7 +861,7 @@ function safeFallbackRequest(
     fallback: remaining.length === 0 ? null : { ...plan, alternatives: remaining },
     browserVisibility: request.browserVisibility,
     ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
-    actions: alternative.actions,
+    actions: request.actions.map((action) => ({ ...action, provider: alternative.provider })),
   })
 }
 

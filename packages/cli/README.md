@@ -6,7 +6,7 @@
 
 ## Install
 
-Requires Node.js 22.13+ and Chrome, Brave, Edge, Arc, or Chromium.
+Requires Node.js 22.13+. Browser runtime management currently supports Apple Silicon macOS and x64 Windows.
 
 ```bash
 npm install --global tokenless@latest
@@ -14,7 +14,7 @@ tokenless setup
 tokenless doctor --json
 ```
 
-`setup` installs the required agent skills, prepares the local daemon, creates or imports a managed browser profile, and checks every enabled provider once. On first setup it also detects `en` or `zh-CN` from the system locale; use `tokenless config --language <en|zh-CN>` to override the saved preference.
+`setup` first resolves an exact browser runtime, creates or selects a runtime-bound managed profile, then installs the required agent skills, prepares the local daemon, and checks every enabled provider once. `auto` prefers an installed system browser and lazily downloads Tokenless-managed Chrome for Testing 145 only when none exists. `cloak` is explicit opt-in and downloads the platform pin from Cloak's official release into the Tokenless cache; Tokenless does not redistribute the Cloak binary. On first setup it also detects `en` or `zh-CN` from the system locale; use `tokenless config --language <en|zh-CN>` to override the saved preference.
 
 For a clean non-interactive profile:
 
@@ -22,7 +22,7 @@ For a clean non-interactive profile:
 tokenless setup --fresh --json
 ```
 
-Fresh setup creates or reuses `default`, selects an installed browser, and selects every provider whose registry stage is not `disabled`. This includes experimental Qwen and DeepSeek. It reports sign-in state without opening a sign-in handoff.
+Fresh setup creates or reuses a profile only when its runtime binding is compatible, resolves the selected browser, and selects every provider whose registry stage is not `disabled`. A runtime-family change creates a clean profile instead of opening existing data with another browser. This includes experimental Qwen and DeepSeek. It reports sign-in state without opening a sign-in handoff.
 
 ## Run
 
@@ -53,6 +53,8 @@ tokenless run \
 ```
 
 The catalog also contains future candidate outcomes so agents can inspect a stable vocabulary. A candidate is not routeable until its provider strategy and complete real-provider lifecycle are implemented and E2E-closed.
+
+Implicit normal runs persist compatible provider alternatives. Before prompt submission, a provider-scoped auth, CAPTCHA, capacity, or plan blocker can atomically requeue the same durable job on the next provider whose real-E2E-closed route satisfies the run's complete requirements. Explicit providers, exact continuation, provider-specific controls, completed non-reconstructable mutations, and ambiguous submissions fail closed instead. Inspect `providerAttempts` and `fallback` through JSON state output.
 
 ## Providers
 

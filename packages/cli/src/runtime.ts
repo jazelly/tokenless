@@ -3,7 +3,6 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
 import net from 'node:net'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,6 +19,7 @@ import {
 } from './schema-ids.js'
 import { tokenlessPackageVersion } from './platform-package.js'
 import { daemonReadyProof } from './daemon/ready-proof.js'
+import { BrowserRuntimeManager } from './browser-runtime/manager.js'
 import {
   DaemonRuntimeState,
   createStartupOwnerToken,
@@ -573,49 +573,30 @@ export function providerWakeUrl(provider: unknown, targetUrl?: unknown) {
   return target.href
 }
 
-export async function resolveChromiumBrowser(requested?: unknown): Promise<ChromiumBrowser> {
+export async function resolveChromiumBrowser(
+  requested?: unknown,
+  homeDir = tokenlessHome(),
+): Promise<ChromiumBrowser> {
   const requestedId = requested === undefined || requested === null || requested === ''
-    ? null
+    ? 'auto'
     : normalizeBrowserId(requested)
   if (requested !== undefined && requested !== null && requested !== '' && !requestedId) {
     throw runtimeError(
       'invalid_browser',
-      'Browser must be one of: chrome, chrome-for-testing, chromium, edge, arc, brave.',
+      'Browser must be auto, a supported system browser, managed-chromium, or cloak.',
       false
     )
   }
-  if (requestedId === 'profile') {
-    const executable = process.env.TOKENLESS_BROWSER_EXECUTABLE
-    if (!executable || !(await isExecutable(executable))) {
-      throw runtimeError(
-        'browser_not_found',
-        'The profile browser is test-only and requires TOKENLESS_BROWSER_EXECUTABLE.',
-        false
-      )
-    }
-    return {
-      browser: 'profile',
-      command: executable,
-      argsPrefix: [],
-      displayName: 'test browser profile',
-      playwrightExecutablePath: executable,
-    }
+  const runtime = await new BrowserRuntimeManager({ homeDir }).ensure(requestedId ?? 'auto', {
+    allowDownload: false,
+  })
+  return {
+    browser: runtime.browserId,
+    command: runtime.executablePath,
+    argsPrefix: [],
+    displayName: runtime.displayName,
+    playwrightExecutablePath: runtime.executablePath,
   }
-
-  const order = requestedId
-    ? [requestedId]
-    : ['chrome', 'brave', 'edge', 'arc', 'chromium']
-  for (const browser of order) {
-    const launch = await browserLaunch(browser)
-    if (launch) return launch
-  }
-  throw runtimeError(
-    'chromium_browser_not_found',
-    requestedId
-      ? `Configured Chromium browser "${requestedId}" is not installed or executable.`
-      : 'No supported Chromium browser was found. Install Chrome, Brave, Edge, Arc, or Chromium, then rerun tokenless setup.',
-    false
-  )
 }
 
 export async function openProviderUrl(url: string, browser: ChromiumBrowser) {
@@ -1117,100 +1098,6 @@ async function assertDaemonEntryRunnable(daemonEntryPath: string) {
 
 function cliPackageRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-}
-
-async function browserLaunch(browser: string): Promise<ChromiumBrowser | null> {
-  const displayNames: Record<string, string> = {
-    chrome: 'Google Chrome',
-    'chrome-for-testing': 'Google Chrome for Testing',
-    brave: 'Brave Browser',
-    edge: 'Microsoft Edge',
-    arc: 'Arc',
-    chromium: 'Chromium',
-  }
-  if (process.platform === 'darwin') {
-    const appNames: Record<string, string> = {
-      chrome: 'Google Chrome.app',
-      'chrome-for-testing': 'Google Chrome for Testing.app',
-      brave: 'Brave Browser.app',
-      edge: 'Microsoft Edge.app',
-      arc: 'Arc.app',
-      chromium: 'Chromium.app',
-    }
-    const appName = appNames[browser]
-    if (!appName) return null
-    const appPath = await firstExistingFile([path.join('/Applications', appName), path.join(os.homedir(), 'Applications', appName)])
-    if (!appPath) return null
-    const executableNames: Record<string, string> = {
-      chrome: 'Google Chrome',
-      'chrome-for-testing': 'Google Chrome for Testing',
-      brave: 'Brave Browser',
-      edge: 'Microsoft Edge',
-      arc: 'Arc',
-      chromium: 'Chromium',
-    }
-    const playwrightExecutablePath = path.join(appPath, 'Contents', 'MacOS', executableNames[browser] as string)
-    if (!(await isExecutable(playwrightExecutablePath))) return null
-    return {
-      browser,
-      command: '/usr/bin/open',
-      argsPrefix: ['-a', displayNames[browser] as string],
-      displayName: displayNames[browser] as string,
-      playwrightExecutablePath,
-    }
-  }
-
-  if (process.platform === 'win32') {
-    const relativeExecutables: Record<string, string[]> = {
-      chrome: ['Google/Chrome/Application/chrome.exe'],
-      brave: ['BraveSoftware/Brave-Browser/Application/brave.exe'],
-      edge: ['Microsoft/Edge/Application/msedge.exe'],
-      arc: ['TheBrowserCompany/Arc/Application/Arc.exe'],
-      chromium: ['Chromium/Application/chrome.exe'],
-    }
-    const roots = [process.env.LOCALAPPDATA, process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)']]
-      .filter((value): value is string => Boolean(value))
-    const candidates = roots.flatMap((root) => (relativeExecutables[browser] ?? []).map((relative) => path.join(root, relative)))
-    const executable = await firstExistingFile(candidates)
-    return executable
-      ? { browser, command: executable, argsPrefix: [], displayName: displayNames[browser] as string, playwrightExecutablePath: executable }
-      : null
-  }
-
-  const executableNames: Record<string, string[]> = {
-    chrome: ['google-chrome', 'google-chrome-stable'],
-    'chrome-for-testing': ['google-chrome-for-testing'],
-    brave: ['brave-browser', 'brave'],
-    edge: ['microsoft-edge', 'microsoft-edge-stable'],
-    arc: ['arc'],
-    chromium: ['chromium', 'chromium-browser'],
-  }
-  const executable = await findOnPath(executableNames[browser] ?? [])
-  return executable
-    ? { browser, command: executable, argsPrefix: [], displayName: displayNames[browser] as string, playwrightExecutablePath: executable }
-    : null
-}
-
-async function firstExistingFile(candidates: string[]) {
-  for (const candidate of candidates) {
-    try {
-      if ((await fs.stat(candidate)).isFile() || (await fs.stat(candidate)).isDirectory()) return candidate
-    } catch {
-      // Keep searching.
-    }
-  }
-  return null
-}
-
-async function findOnPath(names: string[]) {
-  const directories = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)
-  for (const name of names) {
-    for (const directory of directories) {
-      const candidate = path.join(directory, name)
-      if (await isExecutable(candidate)) return candidate
-    }
-  }
-  return null
 }
 
 function unwrapSnapshot(result: unknown): JsonRecord | null {
