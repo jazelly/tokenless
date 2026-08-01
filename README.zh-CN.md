@@ -115,3 +115,9 @@ Tokenless 会合并显式 capability 与结构化输入推导出的要求。普�
 ### 每个 provider 都支持所有功能吗？
 
 不支持。Tokenless 只启用已经在各 provider 可见网页上验证过的工作流；不支持或尚未验证的能力会明确报错并停止。
+
+### 为什么 Qwen 有时会报告 `provider_dns_unavailable`？
+
+这个错误表示 Chromium 在发出 HTTP 请求前无法解析 `chat.qwen.ai`。Tokenless 会把 Qwen 的这种情况记录为可重试的疑似 rate limit，因为 provider 边缘节点的间歇性 throttling 是可能原因之一；但同时会明确标记为尚未确认，因为仅凭 DNS 失败无法证明发生了 HTTP rate limit。
+
+请等待一段时间后手动重试命令，并检查当前网络能否解析该 hostname。不要把这类失败计作 provider E2E 通过或 skip，也不要用测试专用 DNS override 作为验收证据。只有 provider 页面上的可见证据，或 `429`、`Retry-After` 等 HTTP 响应，才能确认 rate limit。

@@ -1132,7 +1132,11 @@ async function navigateToTarget(page: unknown, url: string, signal: AbortSignal,
         throw tokenlessError(
           'provider_dns_unavailable',
           'The provider hostname could not be resolved by the current system DNS configuration.',
-          { retryable: true, cause: error }
+          {
+            retryable: true,
+            cause: error,
+            details: dnsUnavailableDetails(url),
+          }
         )
       }
       throw error
@@ -1140,6 +1144,26 @@ async function navigateToTarget(page: unknown, url: string, signal: AbortSignal,
   }
   if (foreground && typeof maybePage.bringToFront === 'function') {
     await maybePage.bringToFront()
+  }
+}
+
+function dnsUnavailableDetails(url: string) {
+  const hostname = new URL(url).hostname
+  if (hostname === 'chat.qwen.ai') {
+    return {
+      hostname,
+      networkFailure: 'dns_resolution',
+      accessClassification: 'suspected_rate_limit',
+      rateLimitConfirmed: false,
+      evidence: 'chromium_name_not_resolved',
+    }
+  }
+  return {
+    hostname,
+    networkFailure: 'dns_resolution',
+    accessClassification: 'network_unavailable',
+    rateLimitConfirmed: false,
+    evidence: 'chromium_name_not_resolved',
   }
 }
 

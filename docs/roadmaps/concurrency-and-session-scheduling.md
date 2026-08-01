@@ -215,12 +215,12 @@ The initial schema should have this shape:
           },
           "atLimit": {
             "kind": "provider_native_fallback",
-            "targetModelFamily": "gpt-5.5-instant-mini"
+            "targetModelFamily": "gpt-5.5-mini"
           },
           "evidence": [
             {
               "kind": "official_exact",
-              "url": "https://help.openai.com/en/articles/20001354",
+              "url": "https://help.openai.com/en/articles/11909943-gpt-5-3-and-gpt-55-in-chatgpt",
               "retrievedAt": "2026-07-31",
               "reviewAfter": "2026-08-31"
             }
@@ -249,7 +249,7 @@ The first catalog covers every currently supported visible provider:
 
 | Provider | Initial schedulable knowledge | Knowledge retained without invented numbers | Official source |
 | --- | --- | --- | --- |
-| ChatGPT | Published message and upload windows where the plan/model rule is exact | Dynamic Free access, reasoning allowances, guardrails, native fallback, and plan-dependent behavior | `https://help.openai.com/en/articles/20001354` and `https://help.openai.com/en/articles/8555545-file-uploads-faq` |
+| ChatGPT | Published message and upload windows where the plan/model rule is exact | Dynamic Free access, reasoning allowances, guardrails, native fallback, and plan-dependent behavior | `https://help.openai.com/en/articles/11909943-gpt-5-3-and-gpt-55-in-chatgpt` and `https://help.openai.com/en/articles/8555545-file-uploads-faq` |
 | Claude | Published five-hour session reset shape | Dynamic usage, weekly limits, Max plan multipliers, conversation length, attachments, model, effort, features, and optional paid overage | `https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work` and `https://support.claude.com/en/articles/11049762-choose-a-claude-plan` |
 | Gemini | Published compute-window and refresh behavior where current documentation states it | Compute-based dynamic allowance, weekly caps, plan multipliers, feature/model effects, and native fallback | `https://support.google.com/gemini/answer/16275805?hl=en` |
 | Grok | None until an official numeric consumer Web rule is available | Qualitative paid-plan statements such as higher limits | `https://x.ai/pricing` |
@@ -391,7 +391,7 @@ Exit: state output can explain exactly why a job is queued, which page/conversat
 
 ### Phase 1: Rate-Limit Catalog and Read-Only Capacity Projection
 
-- Add and package `provider-rate-limits.v1.json` with source, uncertainty, plan, model, feature, window, and review metadata for every supported provider.
+- Maintain and package the seeded `provider-rate-limits.v1.json` with source, uncertainty, plan, model, feature, window, and review metadata for every supported provider.
 - Add build-time schema validation and stale-review warnings without build-time network fetching.
 - Add immutable `provider_submitted_at` to the existing `jobs` table and write it at proven visible submission.
 - Add the provider/profile/window query and capacity policy module without introducing a usage ledger table.
