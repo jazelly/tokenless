@@ -41,6 +41,7 @@ const ZH_TEXT = new Map<string, string>([
   ['Reading config', '读取配置'],
   ['Checking npm version', '检查 npm 版本'],
   ['Finding browsers', '查找浏览器'],
+  ['Finding Chromium profiles', '查找 Chromium profiles'],
   ['Saving preferences', '保存偏好设置'],
   ['Upserting global Tokenless agent skills', '更新全局 Tokenless agent skills'],
   ['Reconciling current Tokenless daemon', '协调当前 Tokenless daemon'],
@@ -58,6 +59,8 @@ const ZH_TEXT = new Map<string, string>([
   ['Choose the browser Tokenless should use.', '选择 Tokenless 要使用的浏览器。'],
   ['Choose a browser runtime', '选择 browser runtime'],
   ['Choose the browser runtime Tokenless should use.', '选择 Tokenless 要使用的 browser runtime。'],
+  ['Anti-Detect mode', 'Anti-Detect 反爬模式'],
+  ['Chromium profile compatibility', 'Chromium profile 兼容性'],
   ['Preparing automatic browser selection', '准备自动 browser selection'],
   ['Preparing Tokenless-managed Chromium', '准备由 Tokenless 管理的 Chromium'],
   ['Preparing CloakBrowser', '准备 CloakBrowser'],
@@ -68,7 +71,13 @@ const ZH_TEXT = new Map<string, string>([
   ['Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.', '无效的 Tokenless browser；应为 auto、受支持的 system browser、managed-chromium 或 cloak。'],
   ['Keeps sign-ins between jobs inside a Tokenless-managed profile. Tokenless does not copy an existing browser profile or its authentication state.', '登录状态会保留在 Tokenless 管理的 profile 中并跨 job 复用。Tokenless 不会复制现有浏览器 profile 或其中的认证状态。'],
   ['Use Anti-Detect mode? Tokenless will use CloakBrowser.', '是否使用 Anti-Detect 模式？Tokenless 将使用 CloakBrowser。'],
-  ['Anti-Detect mode uses CloakBrowser.', 'Anti-Detect 模式使用 CloakBrowser。'],
+  ['Only profile directory names and browser versions are checked. Browser sign-ins are never read or copied.', '只检查 profile 目录名和浏览器版本；不会读取或复制浏览器登录状态。'],
+  ['No local Chromium profiles were found.', '未找到本机 Chromium profile。'],
+  ['Continue with a clean CloakBrowser profile? Listed browser profiles will not be imported.', '是否继续使用 clean CloakBrowser profile？上面列出的浏览器 profile 不会被导入。'],
+  ['Anti-Detect setup stopped before downloading CloakBrowser or creating a managed profile.', 'Anti-Detect setup 已在下载 CloakBrowser 或创建 managed profile 之前停止。'],
+  ['Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.', '非交互 CloakBrowser setup 必须通过显式的 --anti-detect 或 --browser cloak 进行确认。'],
+  ['--browser-user-data-dir requires one explicit browser instead of all.', '--browser-user-data-dir 必须指定一个具体浏览器，不能使用 all。'],
+  ['Browser profile discovery supports all, Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing.', 'Browser profile discovery 支持 all、Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing。'],
   ['Checks visible sign-in state without submitting a prompt.', '检查可见的登录状态，不会提交 prompt。'],
   ['Setup selection must be one of the displayed numbers.', '设置选项必须是界面显示的编号之一。'],
   ['Usage', '用法'],
@@ -108,6 +117,8 @@ const ZH_TEXT = new Map<string, string>([
   ['--proxy-bypass requires an existing proxy or --proxy-server.', '--proxy-bypass 需要已有 proxy 或同时提供 --proxy-server。'],
   ['Proxy must use HTTP, HTTPS, or SOCKS5 without embedded credentials.', 'Proxy 必须使用 HTTP、HTTPS 或 SOCKS5，且不能嵌入凭据。'],
   ['User action is required; inspect the structured result for the safe resume step.', '需要用户操作；请查看结构化结果中的安全恢复步骤。'],
+  ['The managed Chromium browser did not exit after shutdown.', '托管 Chromium browser 在关闭后仍未退出。'],
+  ['Too many managed browser profiles are active; existing profile browsers remain open.', '当前 active 的托管 browser profiles 过多；已有 profile browsers 会保持打开。'],
 ])
 
 export function localizeText(value: string, language = activeLanguage): string {
@@ -126,7 +137,11 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^Browser must be auto, a supported system browser, managed-chromium, or cloak\.$/, 'Browser 必须是 auto、受支持的 system browser、managed-chromium 或 cloak。')
     .replace(/^Automatic — (.+)$/, '自动 — $1')
     .replace(/^Enable (.+) for this profile\?$/, '为此 profile 启用 $1？')
-    .replace(/^Detected installed Chrome version: (.+)\.$/, '检测到的已安装 Chrome 版本：$1。')
+    .replace(/^CloakBrowser project: (.+)$/, 'CloakBrowser 项目：$1')
+    .replace(/^Supported CloakBrowser on this platform: artifact (.+) \(Chromium (.+)\)\.$/, '当前平台支持的 CloakBrowser：artifact $1（Chromium $2）。')
+    .replace(/^(.+) profile (.+) at (.+): version (.+); version-aligned \(reference only\)\.$/, '$1 profile $2（$3）：版本 $4；版本匹配（仅供参考）。')
+    .replace(/^(.+) profile (.+) at (.+): version (.+); not version-aligned\.$/, '$1 profile $2（$3）：版本 $4；版本不匹配。')
+    .replace(/^(.+) profile (.+) at (.+): version (.+); version unknown\.$/, '$1 profile $2（$3）：版本 $4；版本未知。')
     .replace(/^Opening (.+) review tab$/, '打开 $1 审核 tab')
     .replace(/^Opened (\d+) provider review tab\(s\)\.$/, '已打开 $1 个 provider 审核 tab。')
     .replace(/^Could not open (\d+) provider review tab\(s\)\.$/, '无法打开 $1 个 provider 审核 tab。')

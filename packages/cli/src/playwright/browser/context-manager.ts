@@ -47,7 +47,10 @@ export type ManagedContextLauncher = (
 
 export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>
 
+export const MAX_ACTIVE_BROWSER_PROFILES = 4
+
 export type PersistentContextManagerOptions = {
+  maxContexts?: number
   launcher?: ManagedContextLauncher
   connectionMode?: BrowserConnectionMode | undefined
   browser?: ManagedBrowserLaunchTarget
@@ -102,6 +105,7 @@ type ScheduledContextClose = {
 }
 
 export class PersistentContextManager {
+  private readonly maxContexts: number
   private readonly launcher: ManagedContextLauncher
   private readonly connectionMode: BrowserConnectionMode
   private readonly browser: ManagedBrowserLaunchTarget
@@ -115,11 +119,18 @@ export class PersistentContextManager {
   private shuttingDown = false
 
   constructor(options: PersistentContextManagerOptions = {}) {
+    this.maxContexts = options.maxContexts ?? MAX_ACTIVE_BROWSER_PROFILES
     this.launcher = options.launcher ?? ((userDataDir, launchOptions) => chromium.launchPersistentContext(userDataDir, launchOptions))
     this.connectionMode = options.connectionMode ?? 'playwright'
     this.browser = normalizeManagedBrowserLaunchTarget(options.browser)
     this.browserResolver = options.browserResolver ?? (async () => this.browser)
     this.timers = options.timers ?? nativeTimers()
+    if (!Number.isInteger(this.maxContexts) || this.maxContexts < 1 || this.maxContexts > MAX_ACTIVE_BROWSER_PROFILES) {
+      throw tokenlessError(
+        'invalid_context_limit',
+        `Managed Playwright context limit must be between one and ${MAX_ACTIVE_BROWSER_PROFILES}.`,
+      )
+    }
   }
 
   async runWithProfile<T>(
@@ -149,7 +160,7 @@ export class PersistentContextManager {
         return await operation(context)
       } catch (error) {
         if (isBrowserClosedError(error)) {
-          await this.closeProfile(profile.id)
+          await this.closeProfile(profile.id).catch(() => undefined)
           throw tokenlessError('playwright_browser_closed', 'The visible managed browser window was closed during the operation.', {
             retryable: true,
             cause: error,
@@ -179,6 +190,7 @@ export class PersistentContextManager {
     if (
       existing &&
       !existing.closing &&
+      isManagedBrowserConnected(existing) &&
       existing.effectiveVisibility === effectiveVisibility &&
       sameBrowserRuntime(existing.browserTarget, browserTarget) &&
       sameBrowserProxy(existing.profile.proxy, profile.proxy)
@@ -196,6 +208,7 @@ export class PersistentContextManager {
       if (
         current &&
         !current.closing &&
+        isManagedBrowserConnected(current) &&
         current.effectiveVisibility === effectiveVisibility &&
         sameBrowserRuntime(current.browserTarget, browserTarget) &&
         sameBrowserProxy(current.profile.proxy, profile.proxy)
@@ -209,7 +222,13 @@ export class PersistentContextManager {
       } else if (current?.closePromise) {
         await current.closePromise
       }
-      await this.closeOtherProfileBeforeLaunch(profile.id)
+      if (this.contexts.size >= this.maxContexts) {
+        throw tokenlessError(
+          'playwright_context_limit_reached',
+          'Too many managed browser profiles are active; existing profile browsers remain open.',
+          { retryable: true },
+        )
+      }
       if (browserTarget.e2eInspection) {
         await fs.unlink(path.join(profile.directory, 'DevToolsActivePort')).catch((error) => {
           if (!isMissingFileError(error)) throw error
@@ -238,7 +257,7 @@ export class PersistentContextManager {
       }
       this.contexts.set(profile.id, active)
       browserContext.once('close', () => {
-        if (!active.closing) void this.closeActiveContext(profile.id, active)
+        if (!active.closing) void this.closeActiveContext(profile.id, active).catch(() => undefined)
       })
       return this.wrap(active)
     })
@@ -288,7 +307,7 @@ export class PersistentContextManager {
         return
       }
       this.scheduledCloses.delete(profileId)
-      void this.closeActiveContext(profileId, active)
+      void this.closeActiveContext(profileId, active).catch(() => undefined)
     }, delayMs)
     unrefTimer(handle)
     this.scheduledCloses.set(profileId, {
@@ -378,9 +397,19 @@ export class PersistentContextManager {
     if (!active.closePromise) {
       active.closing = true
       active.closePromise = active.closeBrowser()
-        .catch(() => undefined)
-        .finally(() => {
+        .then(() => {
           if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
+        })
+        .catch((error) => {
+          if (this.contexts.get(profileId) === active) {
+            if (isManagedBrowserConnected(active)) {
+              active.closing = false
+              active.closePromise = undefined
+            } else {
+              this.contexts.delete(profileId)
+            }
+          }
+          throw error
         })
     }
     await active.closePromise
@@ -406,20 +435,6 @@ export class PersistentContextManager {
     if (!scheduled) return
     this.scheduledCloses.delete(profileId)
     this.timers.clearTimeout(scheduled.handle)
-  }
-
-  private async closeOtherProfileBeforeLaunch(nextProfileId: string) {
-    for (const [profileId, active] of this.contexts) {
-      if (profileId === nextProfileId) continue
-      if ((this.activeOperations.get(profileId) ?? 0) > 0) {
-        throw tokenlessError(
-          'playwright_browser_busy',
-          'The managed browser is busy with another profile; retry after its current job finishes.',
-          { retryable: true },
-        )
-      }
-      await this.closeActiveContext(profileId, active)
-    }
   }
 
   private incrementActiveOperation(profileId: string): void {
@@ -548,7 +563,24 @@ async function closeCdpManagedBrowser(
   ])
   if (!exited && browserProcess.exitCode === null && browserProcess.signalCode === null) {
     browserProcess.kill('SIGTERM')
-    await Promise.race([browserExit.promise, delay(2_000)])
+    const terminated = await Promise.race([
+      browserExit.promise.then(() => true),
+      delay(2_000).then(() => false),
+    ])
+    if (!terminated && browserProcess.exitCode === null && browserProcess.signalCode === null) {
+      browserProcess.kill('SIGKILL')
+      const killed = await Promise.race([
+        browserExit.promise.then(() => true),
+        delay(2_000).then(() => false),
+      ])
+      if (!killed && browserProcess.exitCode === null && browserProcess.signalCode === null) {
+        throw tokenlessError(
+          'playwright_browser_close_failed',
+          'The managed Chromium browser did not exit after shutdown.',
+          { retryable: true },
+        )
+      }
+    }
   }
 }
 
@@ -661,6 +693,10 @@ function sameBrowserProxy(
 ) {
   if (!left || !right) return !left && !right
   return left.server === right.server && left.bypass.join('\n') === right.bypass.join('\n')
+}
+
+function isManagedBrowserConnected(active: ActiveContext) {
+  return active.browserContext.browser()?.isConnected() === true
 }
 
 function normalizeManagedBrowserLaunchTarget(

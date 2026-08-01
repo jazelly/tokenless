@@ -867,7 +867,8 @@
           },
           "activeProfileCount": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "maximum": 4
           },
           "activeJobCount": {
             "type": "integer",

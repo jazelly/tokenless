@@ -8,7 +8,7 @@ import {
   tokenlessError,
 } from './errors.js'
 import { RUNNER_CHECKPOINT_SCHEMA_ID, USER_HANDOVER_SCHEMA_ID } from '../schema-ids.js'
-import { PersistentContextManager } from './browser/context-manager.js'
+import { MAX_ACTIVE_BROWSER_PROFILES, PersistentContextManager } from './browser/context-manager.js'
 import {
   e2eInspectionJobPrefix,
   resolveE2EBrowserInspectionConfig,
@@ -313,11 +313,11 @@ export class ManagedPlaywrightRunnerService {
   }
 
   private async startAvailableJobs(signal?: AbortSignal | undefined) {
-    if (this.inFlightProfiles.size > 0) return 0
+    if (this.inFlightProfiles.size >= MAX_ACTIVE_BROWSER_PROFILES) return 0
     let started = 0
     const profiles = await this.claimableProfiles(this.inFlightProfiles)
     for (const profile of profiles) {
-      if (this.stopped || signal?.aborted || this.inFlightProfiles.size > 0) break
+      if (this.stopped || signal?.aborted || this.inFlightProfiles.size >= MAX_ACTIVE_BROWSER_PROFILES) break
       if (this.inFlightProfiles.has(profile.id)) continue
       const claimed = await this.daemonClient.claimNextJob({
         executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
@@ -480,11 +480,25 @@ export class ManagedPlaywrightRunnerService {
   private async claimableProfiles(inFlightProfiles: ReadonlySet<string>): Promise<ManagedBrowserProfile[]> {
     const profiles = (await this.profileRegistry.listProfiles())
       .filter((profile) => profile.lifecycle === undefined || profile.lifecycle === 'ready')
-      .filter((profile) => !inFlightProfiles.has(profile.id))
     const activeProfileIds = new Set(this.contextManager.activeProfileIds())
-    return profiles.sort((left, right) => (
-      Number(activeProfileIds.has(right.id)) - Number(activeProfileIds.has(left.id))
-    ))
+    if (activeProfileIds.size >= MAX_ACTIVE_BROWSER_PROFILES) {
+      return profiles.filter((profile) => activeProfileIds.has(profile.id) && !inFlightProfiles.has(profile.id))
+    }
+    const remainingNewProfileSlots = MAX_ACTIVE_BROWSER_PROFILES - activeProfileIds.size - [...inFlightProfiles]
+      .filter((profileId) => !activeProfileIds.has(profileId)).length
+    let newProfiles = 0
+    const claimable: ManagedBrowserProfile[] = []
+    for (const profile of profiles) {
+      if (inFlightProfiles.has(profile.id)) continue
+      if (activeProfileIds.has(profile.id)) {
+        claimable.push(profile)
+        continue
+      }
+      if (newProfiles >= remainingNewProfileSlots) continue
+      newProfiles += 1
+      claimable.push(profile)
+    }
+    return claimable
   }
 
   private validateClaimedJob(profile: ManagedBrowserProfile, job: DaemonClaimedJob): ManagedPlaywrightJobRequest {

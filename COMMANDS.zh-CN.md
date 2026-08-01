@@ -16,7 +16,7 @@
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
-| `tokenless profiles discover` | 读取 Chrome 或 Brave 的非敏感 profile 元数据，但不启用复制。 | 否 |
+| `tokenless profiles discover` | 读取已知 Chromium profile 的安全目录/版本元数据，并按当前平台 Cloak pin 分类。 | 否 |
 | `tokenless profiles add` | 创建 clean managed browser profile。 | 否 |
 | `tokenless profiles list` | 列出 profiles 及其最后保存的 provider 检查结果。 | 否 |
 | `tokenless profiles status` | 实时检查一家 provider，并把结果保存到 profile registry。 | 是 |
@@ -153,7 +153,7 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 主要选项：
 
 - `--profile <slug>` 选择或命名 managed profile。
-- `--anti-detect` 显式选择 catalog 锁定的 CloakBrowser runtime。交互式 setup 会在普通 browser selection 之前询问此项。
+- `--anti-detect` 显式选择 catalog 锁定的 CloakBrowser runtime，并在非交互 setup 中确认使用 clean 且绑定 Cloak 的 profile。显式 `--browser cloak` 具有相同确认语义；仅有已保存的 Cloak preference 会在下载前失败。
 - `--preferred-providers <list>` 在非交互 setup 中设置该 profile 的 provider membership。
 - `--no-open` 完成 setup，但不打开控制台。
 - `--browser <browser>` 选择 `auto`、一个精确 system browser、`managed-chromium` 或 `cloak`。
@@ -165,6 +165,8 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 - `--set-default` 将所选 profile 设为默认。
 
 `auto` 是默认值，会优先使用已安装的 Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing executable。没有支持的 system browser 时，setup 才会把锁定的 Chrome for Testing 145 artifact 下载到 `~/.tokenless/browser/runtimes`。显式选择但不存在的 system browser 会失败，不会 fallback。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
+
+选择 Anti-Detect 后，交互式 setup 会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描已知 Chrome、Brave、Edge、Arc、Chromium 与 Chrome for Testing profile 目录。它只读取目录 key 和 `Last Version`，按完整四段版本做精确匹配，并在下载前再次询问是否继续使用 clean 且绑定 Cloak 的 profile。Inventory 仅供参考：Tokenless 不会解析 `Local State`、读取浏览器登录状态、导入列出的 profile，也不会使用 Cloak 打开这些 profile。
 
 Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 会创建 clean profile。用户在这个 Tokenless-managed profile 中手动登录，之后由该 profile 自己跨 job 保留 browser-managed session。旧版 profile-copy flags 只为兼容而继续被识别，并固定返回结构化错误 `browser_profile_copy_disabled`；它们不会复制数据。
 
@@ -268,11 +270,11 @@ tokenless daemon stop --json
 
 ### `tokenless profiles discover`
 
-只读取 Chrome 或 Brave 的非敏感 profile 元数据，不复制或修改 browser data。Discovery 不代表 profile 可以被导入。
+只读取 Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing 的安全 profile 目录/版本元数据，不复制或修改 browser data。每个 profile 都会根据当前平台 Cloak pin 返回 `aligned`、`not_aligned` 或 `unknown`。Discovery 不代表 profile 可以被导入，也不会解析 `Local State`。
 
 ```bash
-tokenless profiles discover --browser chrome --json
-tokenless profiles discover --browser brave --browser-user-data-dir /path/to/user-data --json
+tokenless profiles discover --browser all --json
+tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user-data --json
 ```
 
 ### `tokenless profiles add`

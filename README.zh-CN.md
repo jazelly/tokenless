@@ -31,6 +31,8 @@ Tokenless 让 AI Agent 把任务直接交给 ChatGPT、Claude、Gemini、Grok、
 
 在同一个 managed profile 中，Tokenless 会为不同 provider 和稳定 task 保留彼此独立的浏览器标签页。Project 和对话会按 task identity 回到自己的标签页，不会覆盖并导航掉另一个 provider 或对话。Local job API 默认使用 `pagePolicy: "preserve"`；只有 integration 显式请求 `pagePolicy: "replace"` 时，Tokenless 才允许把已有标签页改作另一个 task 使用。
 
+每个 active managed profile 都独占自己的 browser instance。Tokenless 会在该 profile 的 tabs 和 jobs 之间持续复用这个 instance，绝不会为了给另一个 profile 腾位置而关闭它；最多可同时保留四个 active profiles。
+
 | Provider | 状态 | 是否需要登录 |
 | --- | --- | --- |
 | ChatGPT | 可用 | 不需要 |
@@ -54,7 +56,7 @@ npm install --global tokenless@latest
 tokenless setup
 ```
 
-交互式 setup 会先询问是否使用 Anti-Detect 模式，再询问哪些 provider 属于当前 managed profile。它只检查这些 provider，为每个 provider 保留一个 headed 页面供用户直接审核登录状态，并在一个保留标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
+交互式 setup 会先询问是否使用 Anti-Detect 模式。选择后，setup 会说明并链接到 CloakBrowser、显示当前平台的精确锁定版本，只扫描本机已知 Chrome、Brave、Edge、Arc、Chromium 和 Chrome for Testing profile 的安全目录/版本元数据，标记精确版本是否匹配，然后再次询问是否继续使用 clean 且绑定 Cloak 的 profile；上面列出的 profile 永远不会被导入。非交互 setup 必须显式提供 `--anti-detect` 或 `--browser cloak`，它们等价于 clean-profile 确认；仅有已保存的 Cloak preference 不会触发下载。之后 setup 才会询问哪些 provider 属于当前 managed profile，只检查这些 provider，为每个 provider 保留一个 headed 页面供用户直接审核登录状态，并在一个保留标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
 
 ```bash
 tokenless dashboard

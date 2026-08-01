@@ -560,6 +560,126 @@ test('CLI rejects removed local fallback routes before network access', () => {
   assert.equal(JSON.parse(removedProjectRouteFlag.stdout).error.code, 'unknown_argument')
 })
 
+test('built CLI classifies Chromium profile directories without reading browser state', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-inventory-'))
+  const expectedCloakVersion = process.platform === 'win32'
+    ? '146.0.7680.177'
+    : '145.0.7632.109'
+  try {
+    fs.mkdirSync(path.join(root, 'Default'))
+    fs.mkdirSync(path.join(root, 'Profile 1'))
+    fs.mkdirSync(path.join(root, 'System Profile'))
+    fs.writeFileSync(path.join(root, 'Last Version'), expectedCloakVersion)
+    fs.writeFileSync(path.join(root, 'Local State'), 'intentionally invalid and never read')
+
+    const aligned = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'discover',
+      '--browser',
+      'edge',
+      '--browser-user-data-dir',
+      root,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(aligned.status, 0, aligned.stderr || aligned.stdout)
+    const alignedPayload = JSON.parse(aligned.stdout)
+    assert.equal(alignedPayload.cloak.browserVersion, expectedCloakVersion)
+    assert.equal(alignedPayload.roots[0].browser, 'edge')
+    assert.deepEqual(
+      alignedPayload.roots[0].profiles.map((profile) => ({
+        directoryKey: profile.directoryKey,
+        compatibility: profile.cloakCompatibility,
+      })),
+      [
+        { directoryKey: 'Default', compatibility: 'aligned' },
+        { directoryKey: 'Profile 1', compatibility: 'aligned' },
+      ],
+    )
+
+    fs.writeFileSync(path.join(root, 'Last Version'), '150.0.7871.187')
+    const mismatched = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'discover',
+      '--browser',
+      'edge',
+      '--browser-user-data-dir',
+      root,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(mismatched.status, 0, mismatched.stderr || mismatched.stdout)
+    assert.deepEqual(
+      JSON.parse(mismatched.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
+      ['not_aligned', 'not_aligned'],
+    )
+
+    fs.writeFileSync(path.join(root, 'Last Version'), '146.0.7680')
+    const incomplete = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'discover',
+      '--browser',
+      'edge',
+      '--browser-user-data-dir',
+      root,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(incomplete.status, 0, incomplete.stderr || incomplete.stdout)
+    assert.deepEqual(
+      JSON.parse(incomplete.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
+      ['unknown', 'unknown'],
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('non-interactive Cloak setup requires an explicit clean-profile confirmation', () => {
+  const homeDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tokenless-cloak-consent-'))
+  try {
+    const configured = spawnSync(process.execPath, [
+      cliEntry,
+      'config',
+      '--browser',
+      'cloak',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(configured.status, 0, configured.stderr || configured.stdout)
+
+    const implicit = spawnSync(process.execPath, [
+      cliEntry,
+      'setup',
+      '--defaults',
+      '--no-browser-download',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(implicit.status, 1, implicit.stderr || implicit.stdout)
+    assert.equal(JSON.parse(implicit.stdout).error.code, 'setup_cloak_confirmation_required')
+    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
+
+    const explicit = spawnSync(process.execPath, [
+      cliEntry,
+      'setup',
+      '--anti-detect',
+      '--fresh',
+      '--no-browser-download',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(explicit.status, 1, explicit.stderr || explicit.stdout)
+    assert.equal(JSON.parse(explicit.stdout).error.code, 'browser_runtime_download_required')
+    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(root, relativePath), 'utf8'))
 }

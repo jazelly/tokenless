@@ -15,6 +15,7 @@ import {
   createManagedPlaywrightJobRequest,
   createE2EInspectionJobId,
   discoverChromiumProfiles,
+  discoverKnownChromiumProfiles,
   getProviderDescriptorById,
   listProviderTaskCapabilityRoutes,
   listProviderDescriptors,
@@ -25,6 +26,8 @@ import {
   resolveChromeProfile,
   submitManagedPlaywrightJob,
   type ManagedProfileRecord,
+  type ManagedChromiumBrowserId,
+  type ChromiumUserDataRoot,
   type ProviderAccessClass,
   type ProviderAccountTier,
   type ProviderId,
@@ -191,7 +194,25 @@ type SetupCliVersionCheck = {
   } | undefined
 }
 
+type CloakProfileCompatibility = 'aligned' | 'not_aligned' | 'unknown'
+type SetupCloakProfileCandidate = {
+  browser: ManagedChromiumBrowserId
+  browserDisplayName: string
+  userDataDir: string
+  directoryKey: string
+  detectedVersion: string | null
+  versionSource: 'profile' | 'installed_browser' | 'unknown'
+  compatibility: CloakProfileCompatibility
+}
+type SetupCloakProfileInventory = {
+  projectUrl: string
+  artifactVersion: string
+  browserVersion: string
+  candidates: SetupCloakProfileCandidate[]
+}
+
 const DEFAULT_RUN_TIMEOUT_MS = 180_000
+const CLOAK_BROWSER_PROJECT_URL = 'https://github.com/CloakHQ/CloakBrowser'
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000
 const LONG_RUNNING_JOB_TIMEOUT_MS = 2_160_000
 const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
@@ -355,14 +376,29 @@ try {
 async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   if (subcommand === 'discover') {
     const browser = normalizeProfileDiscoveryBrowser(args.browser)
-    const roots = await discoverChromiumProfiles({
-      browser,
-      ...(args.chromeUserDataDir === undefined ? {} : { userDataDirs: [String(args.chromeUserDataDir)] }),
-    })
+    if (browser === 'all' && args.chromeUserDataDir !== undefined) {
+      throw usageError(
+        'profile_discovery_root_requires_browser',
+        '--browser-user-data-dir requires one explicit browser instead of all.',
+      )
+    }
+    const roots = browser === 'all'
+      ? await discoverKnownChromiumProfiles()
+      : await discoverChromiumProfiles({
+          browser,
+          ...(args.chromeUserDataDir === undefined ? {} : { userDataDirs: [String(args.chromeUserDataDir)] }),
+        })
+    const cloakInventory = buildCloakProfileInventory(roots, [])
     printPayload({
       ok: true,
       browser,
+      cloak: {
+        projectUrl: cloakInventory.projectUrl,
+        artifactVersion: cloakInventory.artifactVersion,
+        browserVersion: cloakInventory.browserVersion,
+      },
       roots: roots.map((root) => ({
+        browser: root.browser,
         userDataDir: root.userDataDir,
         browserVersion: root.browserVersion,
         profiles: root.profiles.map((profile) => ({
@@ -370,6 +406,11 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
           name: profile.name,
           isDefault: profile.isDefault,
           browserVersion: profile.browserVersion,
+          cloakCompatibility: cloakInventory.candidates.find((candidate) =>
+            candidate.browser === root.browser &&
+            candidate.userDataDir === root.userDataDir &&
+            candidate.directoryKey === profile.directoryKey
+          )?.compatibility ?? 'unknown',
         })),
       })),
     }, args)
@@ -1042,10 +1083,21 @@ function comparePrereleaseIdentifier(left: string, right: string) {
   return left < right ? -1 : (left > right ? 1 : 0)
 }
 
-function normalizeProfileDiscoveryBrowser(value: unknown): 'chrome' | 'brave' {
+function normalizeProfileDiscoveryBrowser(value: unknown): ManagedChromiumBrowserId | 'all' {
+  if (typeof value === 'string' && value.trim().toLowerCase() === 'all') return 'all'
   const browser = value === undefined ? 'chrome' : normalizeCliBrowser(value)
-  if (browser !== 'chrome' && browser !== 'brave') {
-    throw usageError('profile_discovery_browser_invalid', 'Browser profile discovery supports Chrome or Brave.')
+  if (
+    browser !== 'chrome' &&
+    browser !== 'brave' &&
+    browser !== 'edge' &&
+    browser !== 'arc' &&
+    browser !== 'chromium' &&
+    browser !== 'chrome-for-testing'
+  ) {
+    throw usageError(
+      'profile_discovery_browser_invalid',
+      'Browser profile discovery supports all, Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing.',
+    )
   }
   return browser
 }
@@ -2482,6 +2534,9 @@ async function setupCommand(args: CliArgs) {
         executablePath: selectedBrowser.runtime.executablePath,
         checksumVerified: selectedBrowser.runtime.checksumVerified,
         installed: true,
+        ...(selectedBrowser.cloakProfileInventory === null
+          ? {}
+          : { profileInventory: selectedBrowser.cloakProfileInventory }),
       },
       providers,
       readiness,
@@ -2777,6 +2832,94 @@ async function discoverSetupBrowsers(runtimeManager: BrowserRuntimeManager) {
   return await runtimeManager.discover()
 }
 
+async function discoverSetupCloakProfileInventory(
+  installedBrowsers: readonly BrowserCandidate[],
+): Promise<SetupCloakProfileInventory> {
+  return buildCloakProfileInventory(await discoverKnownChromiumProfiles(), installedBrowsers)
+}
+
+function buildCloakProfileInventory(
+  roots: readonly ChromiumUserDataRoot[],
+  installedBrowsers: readonly BrowserCandidate[],
+): SetupCloakProfileInventory {
+  const cloak = managedBrowserCatalogEntry('cloak')
+  const candidates = roots.flatMap((root) => {
+    const installedVersion = installedBrowsers.find((browser) => browser.browserId === root.browser)?.version ?? null
+    const detectedVersion = root.browserVersion ?? installedVersion
+    const versionSource: SetupCloakProfileCandidate['versionSource'] = root.browserVersion
+      ? 'profile'
+      : installedVersion
+      ? 'installed_browser'
+      : 'unknown'
+    const compatibility: CloakProfileCompatibility = detectedVersion === null
+      ? 'unknown'
+      : detectedVersion === cloak.browserVersion
+      ? 'aligned'
+      : 'not_aligned'
+    return root.profiles.map((profile): SetupCloakProfileCandidate => ({
+      browser: root.browser,
+      browserDisplayName: chromiumProfileBrowserDisplayName(root.browser),
+      userDataDir: root.userDataDir,
+      directoryKey: profile.directoryKey,
+      detectedVersion,
+      versionSource,
+      compatibility,
+    }))
+  }).sort((left, right) =>
+    left.browser.localeCompare(right.browser) ||
+    left.userDataDir.localeCompare(right.userDataDir) ||
+    left.directoryKey.localeCompare(right.directoryKey)
+  )
+  return {
+    projectUrl: CLOAK_BROWSER_PROJECT_URL,
+    artifactVersion: cloak.artifactVersion,
+    browserVersion: cloak.browserVersion,
+    candidates,
+  }
+}
+
+function presentSetupCloakProfileInventory(
+  inventory: SetupCloakProfileInventory,
+  presenter: SetupPresenter,
+) {
+  presenter.explain({
+    title: 'Anti-Detect mode',
+    lines: [
+      `CloakBrowser project: ${inventory.projectUrl}`,
+      `Supported CloakBrowser on this platform: artifact ${inventory.artifactVersion} (Chromium ${inventory.browserVersion}).`,
+      'Only profile directory names and browser versions are checked. Browser sign-ins are never read or copied.',
+    ],
+  })
+  if (inventory.candidates.length === 0) {
+    presenter.note('No local Chromium profiles were found.')
+    return
+  }
+  presenter.explain({
+    title: 'Chromium profile compatibility',
+    lines: inventory.candidates.map((candidate) => {
+      const version = candidate.detectedVersion ?? 'unknown'
+      const compatibility = candidate.compatibility === 'aligned'
+        ? 'version-aligned (reference only)'
+        : candidate.compatibility === 'not_aligned'
+        ? 'not version-aligned'
+        : 'version unknown'
+      return `${candidate.browserDisplayName} profile ${candidate.directoryKey} at ${candidate.userDataDir}: version ${version}; ${compatibility}.`
+    }),
+  })
+}
+
+function chromiumProfileBrowserDisplayName(browser: ManagedChromiumBrowserId) {
+  const names: Record<ManagedChromiumBrowserId, string> = {
+    chrome: 'Google Chrome',
+    brave: 'Brave Browser',
+    edge: 'Microsoft Edge',
+    arc: 'Arc',
+    chromium: 'Chromium',
+    'chrome-for-testing': 'Google Chrome for Testing',
+  }
+  return names[browser]
+}
+
 async function selectSetupBrowser({
   args,
   config,
@@ -2791,8 +2934,14 @@ async function selectSetupBrowser({
   runtimeManager: BrowserRuntimeManager
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
-}): Promise<{ selection: BrowserSelection; runtime: ResolvedBrowserRuntime; detectedChromeVersion: string | null }> {
+}): Promise<{
+  selection: BrowserSelection
+  runtime: ResolvedBrowserRuntime
+  detectedChromeVersion: string | null
+  cloakProfileInventory: SetupCloakProfileInventory | null
+}> {
   const explicit = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
+  const explicitCloakConsent = args.antiDetect === true || explicit === 'cloak'
   if (args.antiDetect === true && explicit && explicit !== 'cloak') {
     throw usageError('setup_anti_detect_browser_conflict', '--anti-detect requires --browser cloak when both flags are provided.')
   }
@@ -2800,7 +2949,6 @@ async function selectSetupBrowser({
   let selection: BrowserSelection
   if (args.antiDetect === true) {
     selection = 'cloak'
-    presenter.note('Anti-Detect mode uses CloakBrowser.')
   } else if (!prompt || explicit) {
     selection = configured
   } else {
@@ -2810,7 +2958,6 @@ async function selectSetupBrowser({
     )
     if (antiDetect) {
       selection = 'cloak'
-      presenter.note('Anti-Detect mode uses CloakBrowser.')
     } else {
       presenter.note('Choose the browser runtime Tokenless should use.')
       const choices = setupBrowserChoices(installedBrowsers).filter((choice) => choice.value !== 'cloak')
@@ -2823,8 +2970,27 @@ async function selectSetupBrowser({
     }
   }
   const detectedChromeVersion = installedBrowsers.find((browser) => browser.browserId === 'chrome')?.version ?? null
+  let cloakProfileInventory: SetupCloakProfileInventory | null = null
   if (selection === 'cloak') {
-    presenter.note(`Detected installed Chrome version: ${detectedChromeVersion ?? 'none'}.`)
+    cloakProfileInventory = await presenter.withProgress(
+      'Finding Chromium profiles',
+      () => discoverSetupCloakProfileInventory(installedBrowsers),
+    )
+    presentSetupCloakProfileInventory(cloakProfileInventory, presenter)
+    const cleanProfileApproved = prompt
+      ? await prompt.confirm(
+          'Continue with a clean CloakBrowser profile? Listed browser profiles will not be imported.',
+          true,
+        )
+      : explicitCloakConsent
+    if (!cleanProfileApproved) {
+      throw usageError(
+        prompt ? 'setup_cloak_profile_declined' : 'setup_cloak_confirmation_required',
+        prompt
+          ? 'Anti-Detect setup stopped before downloading CloakBrowser or creating a managed profile.'
+          : 'Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.',
+      )
+    }
   }
   const runtime = await presenter.withProgress(
     `Preparing ${setupBrowserSelectionLabel(selection)}`,
@@ -2837,7 +3003,7 @@ async function selectSetupBrowser({
     }),
   )
   presenter.success(`Using ${runtime.displayName} ${runtime.actualVersion} (${runtime.source}).`)
-  return { selection, runtime, detectedChromeVersion }
+  return { selection, runtime, detectedChromeVersion, cloakProfileInventory }
 }
 
 function setupBrowserChoices(installedBrowsers: readonly BrowserCandidate[]) {
@@ -3797,7 +3963,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'preferredProviders', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
-    { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <browser>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
+    { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <all|chrome|brave|edge|arc|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
     { command: 'profiles', subcommand: 'reset', usage: ['tokenless profiles reset [--profile <slug>] --json'], options: ['home', 'json', 'profile'] },
     { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
@@ -4602,7 +4768,7 @@ function usage() {
       description: 'Discover metadata or manage clean browser profiles.',
       commands: [
         'tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
-        'tokenless profiles discover [--browser <chrome|brave>] [--browser-user-data-dir <dir>] --json',
+        'tokenless profiles discover [--browser <all|chrome|brave|edge|arc|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json',
         'tokenless profiles clear (--profile <slug>|--all)',
         'tokenless profiles set-default --profile <slug> --json',
         'tokenless profiles remove --profile <slug> --confirm-delete --json',

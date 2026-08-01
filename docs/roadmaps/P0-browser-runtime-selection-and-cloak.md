@@ -23,7 +23,7 @@ The plan is saved in the root of `docs/roadmaps/`, which is the repository's aut
 | Runtime foundation | 5 / 5 | Production catalog, manager, exact executable resolution, transactional installation, and independent Playwright pin exist. |
 | Durable selection and profile binding | 6 / 6 | Production config/profile paths implement exact runtime binding, clean family changes, downgrade protection, and no profile/auth-state copying. |
 | Setup and daemon integration | 6 / 6 | Interactive and non-interactive setup, lazy download policy, atomic persistence ordering, and daemon resolution paths exist. |
-| Safe Chromium profile inventory | 0 / 5 | Setup does not yet enumerate known Chromium profile directories, map them to their owning browser version, classify them against the platform Cloak pin, or present a safe follow-up choice. |
+| Safe Chromium profile inventory | 5 / 5 | Setup enumerates known Chromium profile directories without browser state, resolves safe version metadata, classifies exact platform-pin alignment, presents bilingual results, and requires a clean-profile confirmation before download. |
 | Exact Playwright launch | 4 / 4 | The resolved executable and launch policy reach Playwright/CDP; sandboxing, test-only keychain neutrality, and cleanup are preserved. |
 | Inspection, recovery, and documentation | 5 / 5 | Doctor, cache reuse/repair, bilingual docs, licensing, and cross-platform release-gate launchers exist. |
 | Real-boundary acceptance | 10 / 15 | macOS positive runtime paths and the locally executable fail-closed paths are proven. Five environment-dependent release gates remain open; implementation completion is not release completion. |
@@ -187,7 +187,7 @@ Setup performs browser work before daemon readiness:
 10. atomically persist the browser preference, resolved runtime binding, and default profile;
 11. start the daemon, verify runtime/profile readiness, and leave one headed review tab open for every enabled provider.
 
-The prompt shows the exact version, platform, source, and whether a download is required. English and Simplified Chinese flows carry equivalent meaning. Non-interactive setup follows the same rules and produces structured errors rather than silently choosing a different runtime.
+The prompt shows the exact version, platform, source, and whether a download is required. English and Simplified Chinese flows carry equivalent meaning. Non-interactive setup follows the same rules: explicit `--anti-detect` or `--browser cloak` is the clean-profile confirmation, while an inherited Cloak preference without either flag fails before download with `setup_cloak_confirmation_required`.
 
 ### Playwright launch contract
 
@@ -229,11 +229,11 @@ This ledger is updated as implementation and evidence land. A checked code item 
 
 ### Milestone 3A: Safe Chromium profile inventory
 
-- [ ] Replace `Local State`-based setup discovery with directory-only profile enumeration that cannot read account or browser-secret fields.
-- [ ] Cover known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing roots on supported macOS and Windows platforms.
-- [ ] Map every candidate to the exact owning browser executable and four-component version; never infer Chrome's version for another Chromium browser.
-- [ ] Classify candidates against the production Cloak catalog and present aligned and non-aligned results in equivalent English and Simplified Chinese output, including the official CloakBrowser reference.
-- [ ] Add the safe second setup choice to create and visibly open a clean Cloak profile; keep profile/authentication-state import absent and legacy copy flags fail-closed.
+- [x] Replace `Local State`-based setup discovery with directory-only profile enumeration that cannot read account or browser-secret fields.
+- [x] Cover known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing roots on supported macOS and Windows platforms.
+- [x] Map every candidate to its safe profile `Last Version`, falling back to the exact owning installed-browser version when needed; never infer Chrome's version for another Chromium browser.
+- [x] Classify candidates against the production Cloak catalog and present aligned and non-aligned results in equivalent English and Simplified Chinese output, including the official CloakBrowser reference.
+- [x] Add the safe second setup choice to continue with a clean Cloak profile; keep profile/authentication-state import absent and legacy copy flags fail-closed.
 
 ### Milestone 4: Exact Playwright launch
 
@@ -287,6 +287,11 @@ This ledger is updated as implementation and evidence land. A checked code item 
 - The managed-artifact security integration called the same production verifier used immediately after a real download and before cache commit. With real tar.gz bytes, the real filesystem, the system `tar` executable, and a real version subprocess, it received exact `browser_runtime_checksum_mismatch`, `browser_runtime_archive_unsafe`, and `browser_runtime_version_mismatch` errors. The checksum case created no payload, the unsafe entry escaped nowhere, and config/profile sentinel files remained byte-for-byte unchanged in all three cases. The complete built-CLI browser-runtime gate passed again in 75 seconds after this refactor, proving the official managed Chrome and Cloak positive install paths still work. A later targeted managed-browser surface rerun also visited every provider successfully and isolated its current blockers to the Claude Cloudflare interstitial and Google `/sorry`.
 - The current selected user profile is bound to system Chrome rather than Cloak, and `doctor` reports no usable provider readiness observations for ChatGPT, Claude, Gemini, or Grok. Tokenless must not silently switch that profile or automate provider login. Authenticated cross-runtime closure therefore requires the user to explicitly select a clean runtime-bound profile, sign in visibly, and then invoke the manual provider gates.
 - The official release list now also exposes Cloak Pro Chromium 150 builds for macOS and Windows, but obtaining the current Pro binary requires a Cloak key. The current Tokenless scope remains the no-license-key catalog pins above; Pro 150 is not silently added to the supported set. See the [official CloakBrowser releases](https://github.com/CloakHQ/CloakBrowser/releases).
+- The built CLI's real filesystem inventory found the current macOS Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing roots without parsing `Local State`. Chrome `150.0.7871.127`, Brave `150.1.92.140`, Arc `150.0.7871.115`, and Chrome for Testing `147.0.7727.15` were non-aligned; Chromium `145.0.7632.109` was exactly aligned with the macOS Cloak pin. Edge had no standard persistent profile directory to list.
+- A real interactive built-CLI setup used an isolated Tokenless home, selected Anti-Detect, displayed the official project link, exact Cloak/Chromium pin, all discovered candidate classifications, and the second clean-profile confirmation. Declining that confirmation returned `setup_cloak_profile_declined` before any Cloak cache or managed profile was created; the temporary home was then removed.
+- The focused built-CLI filesystem integration passed with real `Default` and `Profile 1` directories, an exact aligned `Last Version`, a mismatched Chromium 150 version, and deliberately invalid `Local State` contents. It classified both versions correctly and succeeded without parsing the invalid browser-state file.
+- The positive interactive path accepted both Anti-Detect confirmations in an isolated home, reused the checksum-verified Cloak cache with downloads disabled, reported exact Cloak browser `145.0.7632.109`, and reached provider/profile selection. A separate built-CLI clean-profile boundary against that exact cache created a ready default profile bound to runtime `cloak:darwin-arm64:145.0.7632.109.2`, family/browser `cloak`, and created-with version `145.0.7632.109`; no source browser profile was copied or opened.
+- The non-interactive built-CLI contract now proves that a saved Cloak preference alone fails with `setup_cloak_confirmation_required` before runtime/profile mutation, while explicit `--anti-detect` passes consent handling and reaches the expected runtime ensure boundary. The same contract proves that incomplete two- or three-component `Last Version` metadata is `unknown` rather than a false non-aligned result.
 
 ## Release Gate
 

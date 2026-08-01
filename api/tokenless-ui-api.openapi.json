@@ -205,7 +205,7 @@
         "type": "object",
         "properties": {
           "status": { "type": "string" },
-          "activeProfileCount": { "type": "integer", "minimum": 0 },
+          "activeProfileCount": { "type": "integer", "minimum": 0, "maximum": 4 },
           "activeJobCount": { "type": "integer", "minimum": 0 },
           "pid": { "type": "integer", "minimum": 1 }
         },

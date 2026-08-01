@@ -29,6 +29,43 @@ for (const connectionMode of connectionModes) {
     })
   })
 
+  test(`${connectionMode} managed browser keeps one stable browser instance per active profile`, async () => {
+    await withManager(connectionMode, async ({ manager, profile, otherProfile }) => {
+      const first = await manager.ensureContext(profile, 'headless')
+      const firstBrowser = first.browserContext.browser()
+      const second = await manager.ensureContext(otherProfile, 'headless')
+      const secondBrowser = second.browserContext.browser()
+      const reusedFirst = await manager.ensureContext(profile, 'headless')
+
+      assert.deepEqual(manager.activeProfileIds(), [profile.id, otherProfile.id].sort())
+      assert.notEqual(secondBrowser, firstBrowser)
+      assert.equal(reusedFirst.browserContext, first.browserContext)
+      assert.equal(reusedFirst.browserContext.browser(), firstBrowser)
+      assert.equal(firstBrowser?.isConnected(), true)
+      assert.equal(secondBrowser?.isConnected(), true)
+    })
+  })
+
+  test(`${connectionMode} managed browser never evicts an active profile to make room`, async () => {
+    await withManager(connectionMode, async ({ manager, profile, otherProfile, overflowProfile }) => {
+      const first = await manager.ensureContext(profile, 'headless')
+      const second = await manager.ensureContext(otherProfile, 'headless')
+      const firstBrowser = first.browserContext.browser()
+      const secondBrowser = second.browserContext.browser()
+
+      await assert.rejects(
+        manager.ensureContext(overflowProfile, 'headless'),
+        (error) => error?.code === 'playwright_context_limit_reached' && error?.retryable === true,
+      )
+
+      assert.deepEqual(manager.activeProfileIds(), [profile.id, otherProfile.id].sort())
+      assert.equal((await manager.ensureContext(profile, 'headless')).browserContext, first.browserContext)
+      assert.equal((await manager.ensureContext(otherProfile, 'headless')).browserContext, second.browserContext)
+      assert.equal(firstBrowser?.isConnected(), true)
+      assert.equal(secondBrowser?.isConnected(), true)
+    })
+  })
+
   test(`${connectionMode} managed browser preserves independent logical tabs in one profile`, async () => {
     await withManager(connectionMode, async ({ manager, profile }) => {
       await manager.runWithProfile(profile, 'headless', async (context) => {
@@ -136,7 +173,10 @@ for (const connectionMode of connectionModes) {
 
 async function withManager(connectionMode, operation) {
   const profileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-capabilities-`))
+  const otherProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-other-profile-`))
+  const overflowProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-overflow-profile-`))
   const manager = new PersistentContextManager({
+    maxContexts: 2,
     connectionMode,
     browser: {
       id: 'profile',
@@ -144,11 +184,15 @@ async function withManager(connectionMode, operation) {
     },
   })
   const profile = { id: 'default', directory: profileDirectory, lifecycle: 'ready' }
+  const otherProfile = { id: 'secondary', directory: otherProfileDirectory, lifecycle: 'ready' }
+  const overflowProfile = { id: 'overflow', directory: overflowProfileDirectory, lifecycle: 'ready' }
   try {
-    return await operation({ manager, profile, profileDirectory })
+    return await operation({ manager, profile, otherProfile, overflowProfile, profileDirectory })
   } finally {
     await manager.shutdown()
     fs.rmSync(profileDirectory, { recursive: true, force: true })
+    fs.rmSync(otherProfileDirectory, { recursive: true, force: true })
+    fs.rmSync(overflowProfileDirectory, { recursive: true, force: true })
   }
 }
 

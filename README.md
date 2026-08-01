@@ -31,6 +31,8 @@ Capabilities are enabled only where Tokenless has verified the visible provider 
 
 Within one managed profile, Tokenless preserves separate browser tabs for different providers and stable tasks. Project and conversation task identities return to their own tab instead of navigating over another provider or conversation. The local job API defaults to `pagePolicy: "preserve"`; an integration must explicitly request `pagePolicy: "replace"` before Tokenless may reuse an existing tab for a different task.
 
+Each active managed profile owns its own browser instance. Tokenless reuses that instance across the profile's tabs and jobs, and never closes another active profile to make room; up to four profiles may remain active at once.
+
 | Provider | Status | Login |
 | --- | --- | --- |
 | ChatGPT | Available | Not required |
@@ -54,7 +56,7 @@ Then follow the interactive setup:
 tokenless setup
 ```
 
-Interactive setup first asks whether to use Anti-Detect mode, then asks which providers belong to the selected managed profile. It checks only those providers, leaves one headed provider page open per provider for visible sign-in review, and opens the local Tokenless dashboard in a reserved tab. Reopen the dashboard at any time with:
+Interactive setup first asks whether to use Anti-Detect mode. When selected, it identifies and links to CloakBrowser, shows the exact platform pin, scans safe directory/version metadata for known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing profiles, and marks exact version alignment before asking whether to continue with a clean Cloak-bound profile. It never imports the listed profiles. In non-interactive setup, explicit `--anti-detect` or `--browser cloak` is the equivalent clean-profile confirmation; a saved Cloak preference alone cannot start a download. Setup then asks which providers belong to the selected managed profile, checks only those providers, leaves one headed provider page open per provider for visible sign-in review, and opens the local Tokenless dashboard in a reserved tab. Reopen the dashboard at any time with:
 
 ```bash
 tokenless dashboard

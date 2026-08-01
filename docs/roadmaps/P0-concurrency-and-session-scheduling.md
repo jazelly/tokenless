@@ -12,7 +12,7 @@ Before provider mutation, Tokenless should also estimate each candidate provider
 
 The scheduler should allow useful concurrency:
 
-- different managed profiles remain isolated and take turns on one daemon-owned browser instance;
+- different managed profiles run independently in their own browser instances;
 - different conversations in the same provider profile may run concurrently when the provider capability and configured limit permit it;
 - the same conversation remains single-writer;
 - shared Project or workspace mutations are serialized; and
@@ -27,8 +27,8 @@ As of 2026-07-30, the current source implements several important foundations:
 - `claim-next` uses an atomic FIFO `UPDATE ... RETURNING` transaction scoped to execution backend and profile.
 - Claims have renewable leases; expired safe claims can be requeued, while ambiguous mutating outcomes fail closed.
 - Embedded browser-runtime startup is owned by the daemon and guarded by profile/job identity.
-- The embedded browser runtime owns one active managed profile and one browser instance at a time.
-- The scheduler allows one global in-flight browser job. A later profile closes the idle browser before launching its own persistent user-data directory.
+- The embedded browser runtime can execute multiple managed profiles under daemon-owned limits.
+- The scheduler allows at most one in-flight job per profile, regardless of provider, project, or conversation.
 - Each profile owns one persistent browser context. Its operations are also serialized by a profile lane.
 
 The current page and conversation behavior is more limited:
@@ -150,7 +150,7 @@ Initial safe defaults should be cautious without trying to guarantee that Tokenl
 
 - one mutating job per conversation;
 - one active job per provider profile until live evidence proves a higher safe value;
-- one active managed profile and browser instance on the current runner; and
+- up to four active managed profiles and profile-owned browser instances on the current runner; and
 - one shared workspace mutation per provider Project.
 
 Reaching a real provider rate limit is an expected recoverable condition, not a scheduler correctness failure. The scheduler should reduce avoidable limit hits and produce a useful next-eligible estimate, but it does not promise an exact replica of private provider enforcement.
@@ -437,16 +437,16 @@ Exit: jobs for two different conversations can retain distinct pages without cro
 
 Exit: two chats in one project can execute concurrently on separate pages while sharing one consistent provider mirror revision.
 
-### Phase 6: Adaptive Serialized Profile Scheduling
+### Phase 6: Adaptive Multi-Profile Scheduling
 
 - Add evidence-backed provider/profile concurrency caps.
 - Apply fair scheduling, dynamic rate-limit reduction, and capacity reservations.
 - Filter candidates through `preferredProviders` when configured, then apply the same capacity and fairness algorithm inside that scope.
 - Route an unsubmitted request to another eligible provider/profile candidate only when the caller's constraints and filtered routing scope allow it.
-- Preserve one browser instance while applying fair profile switching only at idle boundaries; never open two persistent profile directories concurrently.
+- Support additional browser-runtime workers only after daemon leases and profile ownership prevent the same persistent profile from opening in two workers.
 - Publish operational metrics without prompt, response, credential, or private path content.
 
-Exit: queued work remains fair across profiles and supported providers without weakening the single-browser, profile-isolation, or recovery invariants.
+Exit: concurrency scales across profiles and supported providers without weakening profile ownership, isolation, or recovery.
 
 ## Acceptance Criteria
 
