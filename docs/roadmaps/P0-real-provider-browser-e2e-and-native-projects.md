@@ -29,7 +29,7 @@ Redacted, provenance-bound provider DOM captures remain development aids for sel
 
 Provider E2E runs manually on this machine with the explicitly selected managed profile already provisioned through Tokenless setup. It does not create a separate test account, automate login, or silently select another profile. Provider-side mutations, retained test artifacts, and usage cost are acceptable. Every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
 
-On macOS, the live E2E helper preserves the operator's working focus around each headed browser launch. It records the frontmost application before starting the built CLI and restores that application only when a known Chromium browser became frontmost; if the operator moved to another non-browser application during startup, the helper leaves that newer choice untouched. The managed browser remains headed and visible for independent CDP observation.
+The live E2E suite starts one daemon-owned, headed browser for the explicitly selected profile and reuses that browser across every selected provider case. Playwright owns the browser lifecycle on every platform; each independent observer attaches through the loopback CDP endpoint for one case and then disconnects without closing or relaunching the product browser. The suite has no macOS-specific `open` launcher or foreground-application manipulation. The operating system may activate the browser on its one initial headed launch.
 
 ## Current Closure
 
@@ -118,6 +118,7 @@ Exit: capability declarations and live acceptance coverage cannot drift independ
 
 Under explicit `TOKENLESS_E2E_BROWSER_INSPECTION=1` activation:
 
+- launch the selected headed browser once through Playwright and reuse it across the suite;
 - launch the managed Chromium profile with an ephemeral remote debugging port and an explicit loopback address;
 - preserve the managed profile as a non-default user data directory;
 - discover the current endpoint from the profile's `DevToolsActivePort`;

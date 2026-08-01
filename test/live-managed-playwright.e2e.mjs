@@ -57,7 +57,6 @@ test.before(async () => {
     homeDir,
     profileSlug,
     daemonUrl,
-    strictConnectionMode: process.env.TOKENLESS_LIVE_BROWSER_CONNECTION_MODE !== undefined,
   })
 })
 

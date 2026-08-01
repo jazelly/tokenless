@@ -13,7 +13,6 @@ const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 const protocol = 'tokenless.e2e-browser-inspection.v2'
 const pollMs = 50
 const daemonStopTimeoutMs = 60_000
-const lsAppInfo = '/usr/bin/lsappinfo'
 
 export async function createLiveBrowserInspectionSession(options) {
   const homeDir = path.resolve(requiredString(options.homeDir, 'homeDir'))
@@ -26,7 +25,6 @@ export async function createLiveBrowserInspectionSession(options) {
     ...process.env,
     TOKENLESS_PROVIDER: '',
     TOKENLESS_E2E_BROWSER_INSPECTION: '1',
-    ...(options.strictConnectionMode ? { TOKENLESS_E2E_CONNECTION_MODE_MATRIX: '1' } : {}),
     TOKENLESS_E2E_RUN_ID: runId,
     TOKENLESS_E2E_NONCE: nonce,
     TOKENLESS_E2E_OBSERVER_TIMEOUT_MS: String(options.observerTimeoutMs ?? 30_000),
@@ -44,56 +42,50 @@ export async function createLiveBrowserInspectionSession(options) {
     homeDir,
     profileSlug,
     async startCli(args, startOptions = {}) {
-      const focusGuard = monitorFrontmostApplication()
-      try {
-        const commandArgs = [
-          ...args,
-          '--profile', profileSlug,
-          '--home', homeDir,
-          ...(daemonUrl ? ['--daemon-url', daemonUrl] : []),
-          '--json',
-        ]
-        const child = spawn(process.execPath, [cliEntry, ...commandArgs], {
-          cwd: root,
-          env,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-        const output = collectChildOutput(child)
-        const waiting = await waitForWaitingBarrier({
-          barrierRoot,
-          nonce,
-          jobPrefix,
-          seenJobs,
-          childOutput: output,
-          timeoutMs: startOptions.startTimeoutMs ?? 120_000,
-        })
-        seenJobs.add(waiting.jobId)
-        const observer = await connectObserver(waiting, startedAt)
-        observers.add(observer.browser)
-        if (!options.strictConnectionMode) focusGuard.assertUnchanged()
-        await startOptions.beforeRelease?.({ waiting, page: observer.page })
-        const observation = startOptions.observeAfterRelease === undefined
-          ? Promise.resolve(undefined)
-          : Promise.resolve().then(() => startOptions.observeAfterRelease({ waiting, page: observer.page }))
-        await releaseBarrier({ barrierRoot, waiting, runId, nonce })
-        return {
-          waiting,
-          page: observer.page,
-          async wait() {
-            const [result, observerResult] = await Promise.all([output.exit, observation])
-            return {
-              ...result,
-              payload: parseJsonOutput(result),
-              observerResult,
-            }
-          },
-          async close() {
-            await observer.browser.close()
-            observers.delete(observer.browser)
-          },
-        }
-      } finally {
-        focusGuard.stop()
+      const commandArgs = [
+        ...args,
+        '--profile', profileSlug,
+        '--home', homeDir,
+        ...(daemonUrl ? ['--daemon-url', daemonUrl] : []),
+        '--json',
+      ]
+      const child = spawn(process.execPath, [cliEntry, ...commandArgs], {
+        cwd: root,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      const output = collectChildOutput(child)
+      const waiting = await waitForWaitingBarrier({
+        barrierRoot,
+        nonce,
+        jobPrefix,
+        seenJobs,
+        childOutput: output,
+        timeoutMs: startOptions.startTimeoutMs ?? 120_000,
+      })
+      seenJobs.add(waiting.jobId)
+      const observer = await connectObserver(waiting, startedAt)
+      observers.add(observer.browser)
+      await startOptions.beforeRelease?.({ waiting, page: observer.page })
+      const observation = startOptions.observeAfterRelease === undefined
+        ? Promise.resolve(undefined)
+        : Promise.resolve().then(() => startOptions.observeAfterRelease({ waiting, page: observer.page }))
+      await releaseBarrier({ barrierRoot, waiting, runId, nonce })
+      return {
+        waiting,
+        page: observer.page,
+        async wait() {
+          const [result, observerResult] = await Promise.all([output.exit, observation])
+          return {
+            ...result,
+            payload: parseJsonOutput(result),
+            observerResult,
+          }
+        },
+        async close() {
+          await observer.browser.close()
+          observers.delete(observer.browser)
+        },
       }
     },
     async close() {
@@ -301,55 +293,6 @@ function runCliSync(args, env = process.env) {
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
     error: result.error,
-  }
-}
-
-function captureFrontmostApplication() {
-  if (process.platform !== 'darwin') return null
-  const result = spawnSync(lsAppInfo, ['front'], {
-    encoding: 'utf8',
-    timeout: 2_000,
-  })
-  if (result.status !== 0) {
-    throw new Error(`Unable to capture the frontmost macOS application before headed E2E launch:\n${summarizeProcess(result)}`)
-  }
-  const application = /\bASN:0x[0-9a-f]+-0x[0-9a-f]+:/iu.exec(result.stdout)?.[0]
-  if (!application) {
-    throw new Error(`Unable to parse the frontmost macOS application before headed E2E launch:\n${summarizeProcess(result)}`)
-  }
-  return application
-}
-
-function monitorFrontmostApplication() {
-  if (process.platform !== 'darwin') {
-    return { assertUnchanged() {}, stop() {} }
-  }
-  const expected = captureFrontmostApplication()
-  let actual = expected
-  let error
-  const sample = () => {
-    if (actual !== expected || error) return
-    try {
-      actual = captureFrontmostApplication()
-    } catch (caught) {
-      error = caught
-    }
-  }
-  const timer = setInterval(sample, 10)
-  return {
-    assertUnchanged() {
-      sample()
-      clearInterval(timer)
-      if (error) throw error
-      if (actual !== expected) {
-        throw new Error(
-          `Headed E2E launch changed the frontmost macOS application from ${expected} to ${actual}; focus stealing is a test failure.`,
-        )
-      }
-    },
-    stop() {
-      clearInterval(timer)
-    },
   }
 }
 

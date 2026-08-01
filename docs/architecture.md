@@ -109,6 +109,7 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 
 ## Browser boundary
 
+- One Tokenless daemon owns at most one active managed browser instance. Providers and conversations in the selected profile use independently keyed tabs inside that browser. A request for another profile closes the idle browser completely before launching that profile's separate persistent user-data directory; active profile work is never interrupted to switch.
 - Playwright launches the exact executable resolved from the profile's runtime binding with a persistent non-default user-data directory. The browser library and managed browser versions are independently pinned.
 - Automation uses approved provider origins, visible page controls, and visible postconditions.
 - Provider credentials and browser sign-in data stay opaque inside the managed profile; only visible account display and subscription labels cross the boundary.

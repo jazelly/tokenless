@@ -14,6 +14,21 @@ import {
 const connectionModes = ['playwright', 'cdp']
 
 for (const connectionMode of connectionModes) {
+  test(`${connectionMode} managed browser reuses one persistent browser for one selected profile`, async () => {
+    await withManager(connectionMode, async ({ manager, profile }) => {
+      const first = await manager.ensureContext(profile, 'headless')
+      const second = await manager.ensureContext(profile, 'headless')
+
+      assert.equal(second.browserContext, first.browserContext)
+      assert.equal(second.browserContext.browser(), first.browserContext.browser())
+
+      const firstPage = await first.acquirePage({ key: 'provider:chatgpt:task:first' })
+      const secondPage = await second.acquirePage({ key: 'provider:gemini:task:second' })
+      assert.notEqual(secondPage, firstPage)
+      assert.equal(first.browserContext.pages().length, 2)
+    })
+  })
+
   test(`${connectionMode} managed browser preserves independent logical tabs in one profile`, async () => {
     await withManager(connectionMode, async ({ manager, profile }) => {
       await manager.runWithProfile(profile, 'headless', async (context) => {

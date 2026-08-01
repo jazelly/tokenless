@@ -48,7 +48,6 @@ export type ManagedContextLauncher = (
 export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>
 
 export type PersistentContextManagerOptions = {
-  maxContexts?: number
   launcher?: ManagedContextLauncher
   connectionMode?: BrowserConnectionMode | undefined
   browser?: ManagedBrowserLaunchTarget
@@ -60,7 +59,6 @@ export type ManagedBrowserLaunchTarget = {
   id: string
   executablePath?: string | undefined
   e2eInspection?: boolean | undefined
-  e2eStrictConnectionMode?: boolean | undefined
   runtimeId?: string | undefined
   launchPolicy?: 'standard' | 'cloak' | 'test-profile' | undefined
 }
@@ -104,7 +102,6 @@ type ScheduledContextClose = {
 }
 
 export class PersistentContextManager {
-  private readonly maxContexts: number
   private readonly launcher: ManagedContextLauncher
   private readonly connectionMode: BrowserConnectionMode
   private readonly browser: ManagedBrowserLaunchTarget
@@ -118,15 +115,11 @@ export class PersistentContextManager {
   private shuttingDown = false
 
   constructor(options: PersistentContextManagerOptions = {}) {
-    this.maxContexts = options.maxContexts ?? 4
     this.launcher = options.launcher ?? ((userDataDir, launchOptions) => chromium.launchPersistentContext(userDataDir, launchOptions))
     this.connectionMode = options.connectionMode ?? 'playwright'
     this.browser = normalizeManagedBrowserLaunchTarget(options.browser)
     this.browserResolver = options.browserResolver ?? (async () => this.browser)
     this.timers = options.timers ?? nativeTimers()
-    if (!Number.isInteger(this.maxContexts) || this.maxContexts < 1 || this.maxContexts > 4) {
-      throw tokenlessError('invalid_context_limit', 'Managed Playwright context limit must be between one and four.')
-    }
   }
 
   async runWithProfile<T>(
@@ -216,9 +209,7 @@ export class PersistentContextManager {
       } else if (current?.closePromise) {
         await current.closePromise
       }
-      if (this.contexts.size >= this.maxContexts) {
-        throw tokenlessError('playwright_context_limit_reached', 'Too many managed browser profiles are active.', { retryable: true })
-      }
+      await this.closeOtherProfileBeforeLaunch(profile.id)
       if (browserTarget.e2eInspection) {
         await fs.unlink(path.join(profile.directory, 'DevToolsActivePort')).catch((error) => {
           if (!isMissingFileError(error)) throw error
@@ -227,7 +218,6 @@ export class PersistentContextManager {
       const launched = await this.launchContext(
         profile.directory,
         managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
-        effectiveVisibility,
         browserTarget,
       )
       const { browserContext } = launched
@@ -399,19 +389,10 @@ export class PersistentContextManager {
   private async launchContext(
     userDataDir: string,
     launchOptions: PersistentChromeLaunchOptions,
-    effectiveVisibility: EffectiveBrowserVisibility,
     browserTarget: ManagedBrowserLaunchTarget,
   ): Promise<LaunchedManagedContext> {
     if (this.connectionMode === 'cdp') {
       return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget)
-    }
-    if (
-      browserTarget.e2eInspection &&
-      !browserTarget.e2eStrictConnectionMode &&
-      process.platform === 'darwin' &&
-      effectiveVisibility === 'headed'
-    ) {
-      return await launchBackgroundMacOSContext(userDataDir, launchOptions, browserTarget)
     }
     const browserContext = await this.launcher(userDataDir, launchOptions)
     return {
@@ -425,6 +406,20 @@ export class PersistentContextManager {
     if (!scheduled) return
     this.scheduledCloses.delete(profileId)
     this.timers.clearTimeout(scheduled.handle)
+  }
+
+  private async closeOtherProfileBeforeLaunch(nextProfileId: string) {
+    for (const [profileId, active] of this.contexts) {
+      if (profileId === nextProfileId) continue
+      if ((this.activeOperations.get(profileId) ?? 0) > 0) {
+        throw tokenlessError(
+          'playwright_browser_busy',
+          'The managed browser is busy with another profile; retry after its current job finishes.',
+          { retryable: true },
+        )
+      }
+      await this.closeActiveContext(profileId, active)
+    }
   }
 
   private incrementActiveOperation(profileId: string): void {
@@ -493,7 +488,7 @@ function cdpChromiumArguments(
 ) {
   const configuredArgs = launchOptions.args ?? []
   return [
-    ...backgroundChromiumArguments(userDataDir, { ...launchOptions, args: [] }, browserTarget).slice(0, -1),
+    ...baseCdpChromiumArguments(userDataDir, { ...launchOptions, args: [] }, browserTarget),
     ...(launchOptions.headless ? ['--headless=new'] : []),
     ...(configuredArgs.some((argument) => argument.startsWith('--remote-debugging-address='))
       ? []
@@ -506,82 +501,7 @@ function cdpChromiumArguments(
   ]
 }
 
-async function closeCdpManagedBrowser(
-  browser: Browser | undefined,
-  browserProcess: ChildProcess,
-  browserExit: ReturnType<typeof observeChildExit>,
-) {
-  if (browser?.isConnected()) {
-    try {
-      const session = await browser.newBrowserCDPSession()
-      await session.send('Browser.close')
-    } catch {
-      await browser.close().catch(() => undefined)
-    }
-  }
-  const exited = await Promise.race([
-    browserExit.promise.then(() => true),
-    delay(5_000).then(() => false),
-  ])
-  if (!exited && browserProcess.exitCode === null && browserProcess.signalCode === null) {
-    browserProcess.kill('SIGTERM')
-    await Promise.race([browserExit.promise, delay(2_000)])
-  }
-}
-
-async function launchBackgroundMacOSContext(
-  userDataDir: string,
-  launchOptions: PersistentChromeLaunchOptions,
-  browserTarget: ManagedBrowserLaunchTarget,
-): Promise<LaunchedManagedContext> {
-  const executablePath = browserTarget.executablePath
-  const applicationPath = executablePath ? macOSApplicationPath(executablePath) : null
-  if (!executablePath || !applicationPath) {
-    throw tokenlessError(
-      'e2e_background_browser_executable_required',
-      'Headed macOS E2E inspection requires an installed browser application path.',
-    )
-  }
-
-  const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
-  const browserArguments = backgroundChromiumArguments(userDataDir, launchOptions, browserTarget)
-  const launcher = spawn('/usr/bin/open', [
-    '-g',
-    '-n',
-    '-W',
-    '-a', applicationPath,
-    '--args',
-    ...browserArguments,
-  ], {
-    stdio: 'ignore',
-  })
-  const launcherExit = observeChildExit(launcher)
-  await waitForChildSpawn(launcher)
-
-  let connectedBrowser: Browser | undefined
-  try {
-    const endpoint = await waitForDevToolsEndpoint(endpointFile, launcherExit)
-    connectedBrowser = await chromium.connectOverCDP(endpoint)
-    const contexts = connectedBrowser.contexts()
-    if (contexts.length !== 1 || !contexts[0]) {
-      throw new Error('Background managed browser must expose exactly one persistent context.')
-    }
-    const browser = connectedBrowser
-    let closing: Promise<void> | undefined
-    return {
-      browserContext: contexts[0],
-      closeBrowser() {
-        closing ??= closeBackgroundMacOSBrowser(browser, launcher, launcherExit)
-        return closing
-      },
-    }
-  } catch (error) {
-    await closeBackgroundMacOSBrowser(connectedBrowser, launcher, launcherExit).catch(() => undefined)
-    throw error
-  }
-}
-
-function backgroundChromiumArguments(
+function baseCdpChromiumArguments(
   userDataDir: string,
   launchOptions: PersistentChromeLaunchOptions,
   browserTarget: ManagedBrowserLaunchTarget,
@@ -606,15 +526,30 @@ function backgroundChromiumArguments(
       : []),
     ...(launchOptions.args ?? []),
     `--user-data-dir=${userDataDir}`,
-    'about:blank',
   ]
 }
 
-function macOSApplicationPath(executablePath: string) {
-  const marker = `${path.sep}Contents${path.sep}MacOS${path.sep}`
-  const index = executablePath.indexOf(marker)
-  if (index < 1) return null
-  return executablePath.slice(0, index)
+async function closeCdpManagedBrowser(
+  browser: Browser | undefined,
+  browserProcess: ChildProcess,
+  browserExit: ReturnType<typeof observeChildExit>,
+) {
+  if (browser?.isConnected()) {
+    try {
+      const session = await browser.newBrowserCDPSession()
+      await session.send('Browser.close')
+    } catch {
+      await browser.close().catch(() => undefined)
+    }
+  }
+  const exited = await Promise.race([
+    browserExit.promise.then(() => true),
+    delay(5_000).then(() => false),
+  ])
+  if (!exited && browserProcess.exitCode === null && browserProcess.signalCode === null) {
+    browserProcess.kill('SIGTERM')
+    await Promise.race([browserExit.promise, delay(2_000)])
+  }
 }
 
 async function waitForChildSpawn(child: ChildProcess) {
@@ -647,7 +582,7 @@ async function waitForDevToolsEndpoint(
   while (Date.now() <= deadline) {
     const exited = launcherExit.result()
     if (exited) {
-      throw new Error(`Background browser launcher exited before DevTools was ready (code ${exited.code}, signal ${exited.signal}).`)
+      throw new Error(`CDP managed browser exited before DevTools was ready (code ${exited.code}, signal ${exited.signal}).`)
     }
     try {
       const [port, websocketPath] = (await fs.readFile(endpointFile, 'utf8')).trim().split(/\r?\n/u)
@@ -659,30 +594,7 @@ async function waitForDevToolsEndpoint(
     }
     await delay(50)
   }
-  throw new Error('Timed out waiting for the background managed browser DevTools endpoint.')
-}
-
-async function closeBackgroundMacOSBrowser(
-  browser: Browser | undefined,
-  launcher: ChildProcess,
-  launcherExit: ReturnType<typeof observeChildExit>,
-) {
-  if (browser?.isConnected()) {
-    try {
-      const session = await browser.newBrowserCDPSession()
-      await session.send('Browser.close')
-    } catch {
-      await browser.close().catch(() => undefined)
-    }
-  }
-  const exited = await Promise.race([
-    launcherExit.promise.then(() => true),
-    delay(15_000).then(() => false),
-  ])
-  if (!exited && launcher.exitCode === null && launcher.signalCode === null) {
-    launcher.kill('SIGTERM')
-    await Promise.race([launcherExit.promise, delay(2_000)])
-  }
+  throw new Error('Timed out waiting for the CDP managed browser DevTools endpoint.')
 }
 
 export function managedBrowserLaunchOptions(
@@ -769,7 +681,6 @@ function normalizeManagedBrowserLaunchTarget(
     id,
     ...(executablePath ? { executablePath } : {}),
     ...(browser?.e2eInspection ? { e2eInspection: true } : {}),
-    ...(browser?.e2eStrictConnectionMode ? { e2eStrictConnectionMode: true } : {}),
     ...(browser?.runtimeId ? { runtimeId: browser.runtimeId } : {}),
     ...(browser?.launchPolicy ? { launchPolicy: browser.launchPolicy } : {}),
   }

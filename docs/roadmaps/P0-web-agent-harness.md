@@ -362,11 +362,11 @@ The two directions share durable run identity and policy types but not transport
 
 ### Southbound MCP V1
 
-V1 supports explicitly configured local `stdio` servers:
+V1 supports explicitly configured local `stdio` servers through the official MCP TypeScript SDK v2, with an explicit legacy, pinned modern `2026-07-28`, or opt-in auto-negotiation mode:
 
 - Tokenless launches each server with a minimal allowlisted environment and an explicit working directory;
-- each server receives one isolated MCP client session;
-- initialization and capability negotiation must complete before its tools enter the catalog;
+- each server receives one isolated MCP client and transport binding;
+- modern discovery or the configured legacy initialization and capability negotiation must complete before its tools enter the catalog;
 - `tools/list` is snapshotted and namespaced by a stable local server alias;
 - `tools/call` arguments and structured results are schema-validated and size-bounded;
 - server stderr is bounded diagnostic data and never becomes model context automatically;
@@ -591,8 +591,8 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 
 - [OpenAI Agents SDK runner lifecycle and tool loop](https://openai.github.io/openai-agents-js/guides/running-agents/)
 - [ChatGPT Projects, files, and Project instructions](https://help.openai.com/en/articles/10169521-using-projects-in-chatgpt)
-- [MCP architecture and host authorization responsibilities](https://modelcontextprotocol.io/specification/2025-06-18/architecture/index)
-- [MCP tools, schemas, results, annotations, and trust guidance](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
-- [MCP stdio and Streamable HTTP transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
-- [MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+- [MCP versioning and modern/legacy compatibility](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning)
+- [MCP tools, schemas, results, annotations, and trust guidance](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
+- [MCP stdio and Streamable HTTP transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)
+- [MCP elicitation and input-required behavior](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation)
 - [MCP security best practices](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices)

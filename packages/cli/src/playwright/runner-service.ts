@@ -313,11 +313,11 @@ export class ManagedPlaywrightRunnerService {
   }
 
   private async startAvailableJobs(signal?: AbortSignal | undefined) {
-    if (this.inFlightProfiles.size >= 4) return 0
+    if (this.inFlightProfiles.size > 0) return 0
     let started = 0
     const profiles = await this.claimableProfiles(this.inFlightProfiles)
     for (const profile of profiles) {
-      if (this.stopped || signal?.aborted || this.inFlightProfiles.size >= 4) break
+      if (this.stopped || signal?.aborted || this.inFlightProfiles.size > 0) break
       if (this.inFlightProfiles.has(profile.id)) continue
       const claimed = await this.daemonClient.claimNextJob({
         executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
@@ -480,24 +480,11 @@ export class ManagedPlaywrightRunnerService {
   private async claimableProfiles(inFlightProfiles: ReadonlySet<string>): Promise<ManagedBrowserProfile[]> {
     const profiles = (await this.profileRegistry.listProfiles())
       .filter((profile) => profile.lifecycle === undefined || profile.lifecycle === 'ready')
+      .filter((profile) => !inFlightProfiles.has(profile.id))
     const activeProfileIds = new Set(this.contextManager.activeProfileIds())
-    if (activeProfileIds.size >= 4) {
-      return profiles.filter((profile) => activeProfileIds.has(profile.id) && !inFlightProfiles.has(profile.id))
-    }
-    const remainingNewProfileSlots = 4 - activeProfileIds.size - [...inFlightProfiles].filter((profileId) => !activeProfileIds.has(profileId)).length
-    let newProfiles = 0
-    const claimable: ManagedBrowserProfile[] = []
-    for (const profile of profiles) {
-      if (inFlightProfiles.has(profile.id)) continue
-      if (activeProfileIds.has(profile.id)) {
-        claimable.push(profile)
-        continue
-      }
-      if (newProfiles >= remainingNewProfileSlots) continue
-      newProfiles += 1
-      claimable.push(profile)
-    }
-    return claimable
+    return profiles.sort((left, right) => (
+      Number(activeProfileIds.has(right.id)) - Number(activeProfileIds.has(left.id))
+    ))
   }
 
   private validateClaimedJob(profile: ManagedBrowserProfile, job: DaemonClaimedJob): ManagedPlaywrightJobRequest {
