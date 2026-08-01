@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline/promises'
 
 import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
+  MANAGED_CHROMIUM_BROWSER_IDS,
   PLAYWRIGHT_EXECUTION_BACKEND,
   TASK_CAPABILITIES,
   TASK_CAPABILITY_CATALOG_SCHEMA_ID,
@@ -14,6 +15,7 @@ import {
   TaskCapabilityRequestError,
   createManagedPlaywrightJobRequest,
   createE2EInspectionJobId,
+  copyOpaqueChromiumProfile,
   discoverChromiumProfiles,
   discoverKnownChromiumProfiles,
   getProviderDescriptorById,
@@ -25,6 +27,7 @@ import {
   resolveTaskCapabilityRoute,
   resolveChromeProfile,
   submitManagedPlaywrightJob,
+  validateChromeProfileDirectoryKey,
   type ManagedProfileRecord,
   type ManagedChromiumBrowserId,
   type ChromiumUserDataRoot,
@@ -422,28 +425,91 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 
   if (subcommand === 'add') {
     const slug = requiredAdminValue(args.profile, '--profile')
-    rejectBrowserProfileCopyOptions(args)
     const profileConfig = await readTokenlessConfig(homeDir)
     const profileRuntime = await new BrowserRuntimeManager({ homeDir }).ensure(
       args.browser === undefined ? profileConfig.browser : normalizeCliBrowser(args.browser),
       { allowDownload: false },
     )
-    const record = await registry.addProfile({
+    const importKey = args.importChromeProfile === undefined
+      ? null
+      : validateChromeProfileDirectoryKey(String(args.importChromeProfile))
+    if (importKey) requireOpaqueProfileCopyConsent(args)
+    const source = importKey ? await resolveOpaqueProfileSource(args, profileRuntime, importKey) : null
+    let record = await registry.addProfile({
       slug,
-      ...(args.label === undefined ? {} : { label: String(args.label) }),
+      ...(args.label === undefined ? (source ? { label: source.name, labelOrigin: 'import' as const } : {}) : { label: String(args.label) }),
       setDefault: args.setDefault === true,
-      lifecycle: 'ready',
+      lifecycle: source ? 'importing' : 'ready',
       runtimeBinding: browserRuntimeBinding(profileRuntime),
     })
+    let copiedFiles: number | null = null
+    try {
+      if (source) {
+        const copied = await copyOpaqueChromiumProfile({
+          sourceUserDataDir: source.userDataDir,
+          profileDirectoryKey: source.directoryKey,
+          destinationDir: record.directory,
+          tokenlessHome: homeDir,
+        })
+        copiedFiles = copied.copiedFiles
+        record = await registry.markImported(record.slug, {
+          source: source.userDataDir,
+          profileDirectoryKey: source.directoryKey,
+          profileName: source.name,
+          browser: source.browser,
+          browserVersion: source.browserVersion,
+        })
+      }
+    } catch (error) {
+      await registry.removeProfile(record.slug, { confirmDelete: true }).catch(() => undefined)
+      throw error
+    }
     printPayload({
       ok: true,
       profile: publicManagedProfile(record, await defaultProfileSlug(registry)),
+      ...(copiedFiles === null ? {} : { import: { copiedFiles, opaque: true } }),
     }, args)
     return
   }
 
   if (subcommand === 'reset') {
-    throw browserProfileCopyDisabledError()
+    requireOpaqueProfileCopyConsent(args)
+    const record = await registry.resolveProfile(args.profile === undefined ? undefined : String(args.profile))
+    if (!record.import) {
+      throw usageError('profile_reset_requires_import', `Managed profile '${record.slug}' was not imported and has no source to reset from.`)
+    }
+    const config = await readTokenlessConfig(homeDir)
+    const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir, daemonUrl: config.daemonUrl ?? undefined })
+    if (runner.state === 'unsafe') {
+      throw usageError('profile_reset_runner_unsafe', 'Cannot reset the managed profile while its Playwright runner identity is unverified.')
+    }
+    const source = await resolveChromeProfile(record.import.source, record.import.profileDirectoryKey)
+    await registry.updateLifecycle(record.slug, 'importing')
+    try {
+      const imported = await copyOpaqueChromiumProfile({
+        sourceUserDataDir: source.userDataDir,
+        profileDirectoryKey: source.directoryKey,
+        destinationDir: record.directory,
+        tokenlessHome: homeDir,
+      })
+      const updated = await registry.markImported(record.slug, {
+        source: source.userDataDir,
+        profileDirectoryKey: source.directoryKey,
+        profileName: source.name,
+        ...(record.import.browser ? { browser: record.import.browser } : {}),
+        browserVersion: source.browserVersion,
+      })
+      printPayload({
+        ok: true,
+        profile: publicManagedProfile(updated, await defaultProfileSlug(registry)),
+        import: { copiedFiles: imported.copiedFiles, opaque: true },
+        runner,
+      }, args)
+      return
+    } catch (error) {
+      await registry.updateLifecycle(record.slug, 'failed').catch(() => undefined)
+      throw error
+    }
   }
 
   if (subcommand === 'clear') {
@@ -1102,22 +1168,36 @@ function normalizeProfileDiscoveryBrowser(value: unknown): ManagedChromiumBrowse
   return browser
 }
 
-function browserProfileCopyDisabledError() {
-  return usageError(
-    'browser_profile_copy_disabled',
-    'Tokenless does not copy local browser profiles or authentication state. Create a clean managed profile and sign in inside that profile.',
+function requireOpaqueProfileCopyConsent(args: CliArgs) {
+  if (args.consentLocalProfileCopy === true) return
+  throw usageError(
+    'profile_import_consent_required',
+    'Copying a local browser profile requires --consent-local-profile-copy.',
   )
 }
 
-function rejectBrowserProfileCopyOptions(args: CliArgs) {
-  if (
-    args.importChromeProfile !== undefined ||
-    args.reimportProfile === true ||
-    args.consentLocalProfileCopy === true ||
-    args.chromeUserDataDir !== undefined
-  ) {
-    throw browserProfileCopyDisabledError()
+async function resolveOpaqueProfileSource(
+  args: CliArgs,
+  runtime: ResolvedBrowserRuntime,
+  directoryKey: string,
+) {
+  const browser: ManagedChromiumBrowserId = runtime.family === 'system' &&
+    MANAGED_CHROMIUM_BROWSER_IDS.includes(runtime.browserId as ManagedChromiumBrowserId)
+    ? runtime.browserId as ManagedChromiumBrowserId
+    : 'chrome'
+  const roots = await discoverChromiumProfiles({
+    browser,
+    ...(args.chromeUserDataDir === undefined ? {} : { userDataDirs: [path.resolve(String(args.chromeUserDataDir))] }),
+  })
+  const matches = roots.flatMap((root) => root.profiles.map((profile) => ({ ...profile, browser: root.browser })))
+    .filter((profile) => profile.directoryKey === directoryKey)
+  if (matches.length !== 1) {
+    throw usageError(
+      matches.length === 0 ? 'browser_profile_not_found' : 'browser_profile_ambiguous',
+      `Browser profile directory key '${directoryKey}' must resolve to exactly one discovered ${browser} profile.`,
+    )
   }
+  return matches[0]!
 }
 
 async function defaultProfileSlug(registry: ManagedProfileRegistry) {
@@ -2339,7 +2419,6 @@ async function installCommand(args: CliArgs) {
 }
 
 async function setupCommand(args: CliArgs) {
-  rejectBrowserProfileCopyOptions(args)
   const homeDir = tokenlessHome(args.home)
   let config = await readTokenlessConfig(homeDir)
   const languageConfigured = await hasConfiguredTokenlessLanguage(homeDir)
@@ -2664,7 +2743,6 @@ async function ensureSetupManagedProfile({
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
 }) {
-  rejectBrowserProfileCopyOptions(args)
   const runtimeBinding = browserRuntimeBinding(runtime)
   presenter.explain({
     title: 'Managed browser profile',
@@ -2719,6 +2797,44 @@ async function ensureSetupManagedProfile({
       selected = await registry.bindRuntime(selected.slug, runtimeBinding)
     }
     const selectedProfile = selected
+    if (args.reimportProfile === true || args.importChromeProfile !== undefined) {
+      requireOpaqueProfileCopyConsent(args)
+      const source = args.importChromeProfile === undefined
+        ? (selectedProfile.import
+          ? { ...await resolveChromeProfile(selectedProfile.import.source, selectedProfile.import.profileDirectoryKey), browser: selectedProfile.import.browser ?? 'chrome' }
+          : null)
+        : await resolveOpaqueProfileSource(
+          args,
+          runtime,
+          validateChromeProfileDirectoryKey(String(args.importChromeProfile)),
+        )
+      if (!source) {
+        throw usageError('setup_reimport_source_required', `Managed profile '${selectedProfile.slug}' has no recorded import source.`)
+      }
+      await quiesceBrowserRuntimeForProfileMutation({ homeDir })
+      await registry.updateLifecycle(selectedProfile.slug, 'importing')
+      try {
+        await presenter.withProgress(`Copying ${source.name} into managed profile ${selectedProfile.slug}`, () =>
+          copyOpaqueChromiumProfile({
+            sourceUserDataDir: source.userDataDir,
+            profileDirectoryKey: source.directoryKey,
+            destinationDir: selectedProfile.directory,
+            tokenlessHome: homeDir,
+          }))
+        selected = await registry.markImported(selectedProfile.slug, {
+          source: source.userDataDir,
+          profileDirectoryKey: source.directoryKey,
+          profileName: source.name,
+          browser: source.browser,
+          browserVersion: source.browserVersion,
+        })
+      } catch (error) {
+        await registry.updateLifecycle(selectedProfile.slug, 'failed').catch(() => undefined)
+        throw error
+      }
+      if (args.setDefault === true || prompt) await registry.setDefault(selected.slug)
+      return selected
+    }
     if (selectedProfile.lifecycle !== 'ready') {
       throw usageError(
         'setup_profile_not_ready',
@@ -2736,23 +2852,55 @@ async function ensureSetupManagedProfile({
     slug = existing.length === 0 ? 'default' : setupRuntimeProfileSlug(runtime, existing)
   }
   slug ??= 'default'
-  if (!prompt && args.freshProfile !== true && args.setupDefaults !== true) {
+  if (args.reimportProfile === true) {
+    throw usageError('setup_reimport_profile_not_found', `Cannot re-import unregistered managed profile '${slug}'.`)
+  }
+  const source = args.importChromeProfile === undefined
+    ? null
+    : await resolveOpaqueProfileSource(
+      args,
+      runtime,
+      validateChromeProfileDirectoryKey(String(args.importChromeProfile)),
+    )
+  if (source) requireOpaqueProfileCopyConsent(args)
+  if (!prompt && args.freshProfile !== true && args.setupDefaults !== true && !source) {
     throw usageError(
       'setup_profile_choice_required',
-      'Initial noninteractive setup requires --defaults or --fresh.'
+      'Initial noninteractive setup requires --defaults, --fresh, or --import-browser-profile with explicit copy consent.'
     )
   }
-  return await presenter.withProgress(
-    `Creating clean managed profile ${slug}`,
+  let record = await presenter.withProgress(
+    source ? `Creating managed profile ${slug} for import` : `Creating clean managed profile ${slug}`,
     () => registry.addProfile({
       slug,
-      label: args.label === undefined ? slug : String(args.label),
-      labelOrigin: args.label === undefined ? 'slug' : 'user',
+      label: args.label === undefined ? (source?.name ?? slug) : String(args.label),
+      labelOrigin: args.label === undefined ? (source ? 'import' : 'slug') : 'user',
       setDefault: true,
-      lifecycle: 'ready',
+      lifecycle: source ? 'importing' : 'ready',
       runtimeBinding,
     }),
   )
+  if (!source) return record
+  try {
+    await presenter.withProgress(`Copying ${source.name} into managed profile ${slug}`, () =>
+      copyOpaqueChromiumProfile({
+        sourceUserDataDir: source.userDataDir,
+        profileDirectoryKey: source.directoryKey,
+        destinationDir: record.directory,
+        tokenlessHome: homeDir,
+      }))
+    record = await registry.markImported(record.slug, {
+      source: source.userDataDir,
+      profileDirectoryKey: source.directoryKey,
+      profileName: source.name,
+      browser: source.browser,
+      browserVersion: source.browserVersion,
+    })
+    return record
+  } catch (error) {
+    await registry.removeProfile(record.slug, { confirmDelete: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 function browserRuntimeBinding(runtime: ResolvedBrowserRuntime): BrowserRuntimeBinding {

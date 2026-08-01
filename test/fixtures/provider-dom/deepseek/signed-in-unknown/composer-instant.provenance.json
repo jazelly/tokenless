@@ -1,0 +1,31 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "deepseek",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "composer-instant",
+  "routeClass": "new-chat",
+  "operationPhase": "mode-inspection",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-08-01",
+  "sanitizedUrl": "https://chat.deepseek.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "6c65a540a7403311d6d8af3a1b46432557fef015863a36c65aea2b69b9ebdac8",
+  "evidenceSelectors": [
+    { "capability": "deepseek.mode.instant", "selector": "[role=\"radio\"][aria-checked=\"true\"]", "expectedCount": 1 },
+    { "capability": "prompt.input", "selector": "textarea[name=\"search\"][placeholder=\"Message DeepSeek\"]", "expectedCount": 1 },
+    { "capability": "deepseek.deepthink", "selector": ".ds-toggle-button[aria-pressed=\"true\"]", "expectedCount": 2 },
+    { "capability": "deepseek.search", "selector": ".ds-toggle-button[aria-pressed=\"true\"]", "expectedCount": 2 },
+    { "capability": "file.upload", "selector": "input[type=\"file\"][multiple]", "expectedCount": 1 },
+    { "capability": "prompt.submit", "selector": "[role=\"button\"].ds-button--primary.ds-button--disabled", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "conversation history", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": [
+    "Instant, DeepThink, Search, file input, and the disabled empty-state submit control were observed together.",
+    "No account credentials, browser storage, or unrelated account content were inspected."
+  ]
+}

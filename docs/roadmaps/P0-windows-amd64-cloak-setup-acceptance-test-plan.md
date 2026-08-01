@@ -1,4 +1,4 @@
-# Windows Cloak Setup Acceptance Test Plan
+# Windows AMD64 Cloak Setup Acceptance Test Plan
 
 Status: ready for execution | Priority: P0 | Last reviewed: 2026-08-01
 
@@ -8,7 +8,7 @@ Tracks: [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-sel
 
 ## Objective
 
-Prove the complete Anti-Detect setup path on clean Windows x64 systems using the built Tokenless CLI, the official locked CloakBrowser artifact, real browser profile roots, the real filesystem, and real browser processes.
+Prove the complete Anti-Detect setup path on a clean Windows AMD x86-64 system using the built Tokenless CLI, the official locked CloakBrowser artifact, real browser profile roots, the real filesystem, and real browser processes.
 
 This plan verifies setup behavior and records release evidence. It does not add browser support, import a source browser profile, automate browser login, or claim CAPTCHA bypass. The implementation is complete enough to begin this plan, but Windows support remains unaccepted until the exit criteria below pass.
 
@@ -17,14 +17,14 @@ This plan verifies setup behavior and records release evidence. It does not add 
 | Item | Locked expectation |
 | --- | --- |
 | Operating system | Current supported Windows 10 or Windows 11 x64 |
-| CPU coverage | One Intel 64-bit machine and one AMD64 machine |
+| CPU coverage | AMD x86-64 (`AMD64` hardware, Node `x64`) |
 | Tokenless Cloak artifact | `146.0.7680.177.5` |
 | Cloak Chromium version | `146.0.7680.177` |
 | Cloak source | [Official CloakBrowser release](https://github.com/CloakHQ/CloakBrowser/releases/tag/chromium-v146.0.7680.177.5) |
 | Tokenless delivery | User-approved setup download into the private Tokenless cache; never bundled in Tokenless artifacts |
 | Playwright role | Existing browser-control layer using the exact resolved Cloak executable |
 
-Windows ARM64 and 32-bit Windows x86 are outside this plan. Intel 64-bit and AMD64 both use the `win32-x64` catalog entry.
+This plan is deliberately AMD-only. AMD64 is the 64-bit x86 architecture and resolves to the Tokenless `win32-x64` catalog entry. Windows ARM64, 32-bit Windows x86, and independent Intel-hardware certification are outside this test plan.
 
 ## Source Browser Matrix
 
@@ -124,17 +124,9 @@ Every matrix case must prove:
 
 The first cache-miss run must prove the download path. At least one later case must reuse the verified cache with `--no-browser-download`, and one deliberate missing-cache run with that flag must fail with `browser_runtime_download_required`.
 
-## Hardware Runs
+## AMD64 Hardware Run
 
-### Intel x64
-
-- [ ] Build and package boundaries complete on a clean Intel Windows x64 host.
-- [ ] Official Cloak download, checksum, extraction, version verification, cache commit, clean profile binding, launch, doctor, and cleanup pass.
-- [ ] At least Chrome 150, one Brave case, one Arc case, exact 146, and patch-mismatch classifications pass.
-
-### AMD64
-
-- [ ] Build and package boundaries complete on a clean AMD Windows x64 host.
+- [ ] Build and package boundaries complete on a clean Windows AMD x86-64 host.
 - [ ] Official Cloak download, checksum, extraction, version verification, cache commit, clean profile binding, launch, doctor, and cleanup pass.
 - [ ] At least Chrome 150, one Brave case, one Arc case, exact 146, and patch-mismatch classifications pass.
 
@@ -169,7 +161,7 @@ The official release notes establish the product-to-Chromium mappings, but the c
 
 Append one dated subsection per machine and case. Record:
 
-- Windows edition/build, `process.arch`, and CPU vendor class (`Intel` or `AMD`);
+- Windows edition/build, `process.arch`, and confirmation that the CPU vendor is AMD;
 - Tokenless commit SHA and Node/npm versions;
 - source browser product and safely reported version;
 - standard root and candidate directory keys;
@@ -185,7 +177,7 @@ Do not attach source profile contents, browser storage, credentials, full DOM, u
 
 This active test plan is complete only when:
 
-1. the core Cloak setup/runtime path passes on both Intel x64 and AMD64 Windows hardware;
+1. the core Cloak setup/runtime path passes on Windows AMD x86-64 hardware;
 2. every source-browser matrix classification is either passed or explicitly blocked only by unavailable official historical installation media;
 3. exact 146 alignment and one-patch mismatch behavior are proven;
 4. decline, fresh download, verified-cache reuse, and downloads-disabled failure paths are proven;

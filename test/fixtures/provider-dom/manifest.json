@@ -3,6 +3,42 @@
   "generatedBy": "test/helpers/build-provider-workflow-fixtures.mjs",
   "fixtures": [
     {
+      "provider": "deepseek",
+      "accountState": "signed-in-unknown",
+      "scenario": "composer-expert",
+      "routeClass": "new-chat",
+      "operationPhase": "mode-inspection",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.deepseek.com/",
+      "observedOn": "2026-08-01",
+      "htmlPath": "deepseek/signed-in-unknown/composer-expert.html",
+      "provenancePath": "deepseek/signed-in-unknown/composer-expert.provenance.json"
+    },
+    {
+      "provider": "deepseek",
+      "accountState": "signed-in-unknown",
+      "scenario": "composer-instant",
+      "routeClass": "new-chat",
+      "operationPhase": "mode-inspection",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.deepseek.com/",
+      "observedOn": "2026-08-01",
+      "htmlPath": "deepseek/signed-in-unknown/composer-instant.html",
+      "provenancePath": "deepseek/signed-in-unknown/composer-instant.provenance.json"
+    },
+    {
+      "provider": "deepseek",
+      "accountState": "signed-in-unknown",
+      "scenario": "composer-vision",
+      "routeClass": "new-chat",
+      "operationPhase": "mode-inspection",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.deepseek.com/",
+      "observedOn": "2026-08-01",
+      "htmlPath": "deepseek/signed-in-unknown/composer-vision.html",
+      "provenancePath": "deepseek/signed-in-unknown/composer-vision.provenance.json"
+    },
+    {
       "provider": "chatgpt",
       "accountState": "signed-in-paid",
       "scenario": "composer-idle",

@@ -33,6 +33,8 @@ The live E2E suite starts one daemon-owned, headed browser for the explicitly se
 
 ## Current Closure
 
+On 2026-08-01, the focused real-provider fallback gate passed against the explicitly selected `default` managed profile bound to system Chrome 150. Claude encountered the durable `visible_cloudflare_interstitial` blocker before submission; the same job ID atomically requeued to ChatGPT, ChatGPT returned the correlated unique marker, and the final CLI and SQLite state recorded ordered attempts `claude: blocked` then `chatgpt: succeeded`. The run used the real provider sites, packaged daemon, keychain-neutral headed browser launch, and independent CDP observation for both attempts, with no fixture, interception, simulation, skip, or internal retry.
+
 As of 2026-07-29, the implementation, capability matrix, CDP observer boundary, durable mappings, native Project strategies, public contracts, and manual gate commands are in place. Real runs additionally established these capability boundaries:
 
 - the selected Gemini guest profile does not restore prior-turn context when a second CLI process opens the mapped conversation URL;

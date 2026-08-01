@@ -30,7 +30,7 @@ The plan is saved in the root of `docs/roadmaps/`, which is the repository's aut
 
 The unchecked acceptance items are authoritative: macOS `auto` fallback on a host with no system browser, Windows x64 Intel, Windows x64 AMD, Windows Chrome 150 profile-inventory classification, and authenticated provider closure across the selected runtimes. Public-surface results remain observational even though the latest strict Cloak run completed successfully; they do not replace authenticated provider acceptance.
 
-Detailed Windows execution, source-browser version cases, evidence requirements, and completion state are tracked in the active [Windows Cloak Setup Acceptance Test Plan](P0-windows-cloak-setup-acceptance-test-plan.md). This parent roadmap remains the product-support authority; the test plan is its Windows evidence ledger.
+Detailed Windows AMD64 execution, source-browser version cases, evidence requirements, and completion state are tracked in the active [Windows AMD64 Cloak Setup Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). This parent roadmap remains the product-support authority; the test plan is its AMD-hardware evidence ledger. Intel-hardware acceptance remains a separate unchecked gate in this parent roadmap.
 
 ## Product Decisions
 
@@ -254,7 +254,7 @@ This ledger is updated as implementation and evidence land. A checked code item 
 
 ### Milestone 6: Real-boundary acceptance
 
-Windows execution for the following gates is specified and recorded in the active [Windows Cloak Setup Acceptance Test Plan](P0-windows-cloak-setup-acceptance-test-plan.md).
+Windows AMD64 execution for the following gates is specified and recorded in the active [Windows AMD64 Cloak Setup Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). The Intel gate remains tracked only in this parent roadmap.
 
 - [x] macOS Apple Silicon: the built-CLI browser-runtime gate proved `auto` resolves an installed system browser without a managed download and records its exact runtime.
 - [ ] macOS Apple Silicon: no system browser causes `auto` to install and launch managed Chrome for Testing 145.
