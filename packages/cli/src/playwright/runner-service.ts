@@ -468,7 +468,8 @@ export class ManagedPlaywrightRunnerService {
     const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
     const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (initialManagedContext) => {
       let managedContext = initialManagedContext
-      let page = await managedContext.page()
+      const pageKey = managedPageKey(job, request)
+      let page = await managedContext.acquirePage({ key: pageKey, policy: request.pagePolicy ?? 'preserve' })
       const provider = getProviderInstanceById(request.provider)
       if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
       const state = executionStateFromCheckpoint(restoredCheckpoint)
@@ -504,6 +505,7 @@ export class ManagedPlaywrightRunnerService {
           profile,
           job,
           request,
+          pageKey,
           claimBrowserVisibility,
           provider,
           state,
@@ -649,6 +651,7 @@ export class ManagedPlaywrightRunnerService {
     profile: ManagedBrowserProfile
     job: DaemonClaimedJob
     request: ManagedPlaywrightJobRequest
+    pageKey: string
     claimBrowserVisibility: BrowserVisibility
     provider: RunnerProvider
     state: RunnerExecutionState
@@ -698,7 +701,7 @@ export class ManagedPlaywrightRunnerService {
       const url = trustedSwitchUrl(page, options.provider, options.request.target.url)
       managedContext = await managedContext.switchVisibility('headed')
       options.onAutoEscalated(managedContext)
-      page = await managedContext.page()
+      page = await managedContext.acquirePage({ key: options.pageKey, policy: options.request.pagePolicy ?? 'preserve' })
       await navigateToTarget(page, url, options.signal, true)
       if (!options.state.submitted) {
         await reconstructCompletedPreSubmitActions(page, {
@@ -1292,6 +1295,14 @@ function taskIdFromRequest(value: unknown) {
   if (!value || typeof value !== 'object') return null
   const record = value as { taskId?: unknown }
   return typeof record.taskId === 'string' ? record.taskId : null
+}
+
+function managedPageKey(job: DaemonClaimedJob, request: ManagedPlaywrightJobRequest) {
+  return JSON.stringify([
+    request.provider,
+    request.taskId === null ? 'job' : 'task',
+    request.taskId ?? job.job_id,
+  ])
 }
 
 function fallbackBlocker(page: Page, provider: RunnerProvider): VisibleBlocker {

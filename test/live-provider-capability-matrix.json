@@ -249,6 +249,23 @@
         "workspace-response-citations": "covered_by_qwen_mode_workspace",
         "native-project": "native_project_not_proven"
       }
+    },
+    "deepseek": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft"
+      ],
+      "unavailable": {
+        "model-choice": "no_real_selection_closure",
+        "effort-choice": "no_independent_effort_control_declared",
+        "file-selection": "no_real_visible_attachment_closure",
+        "conversation-workflow": "baseline_submission_and_continuation_not_e2e_closed",
+        "workspace-response-citations": "search_and_citation_lifecycle_not_e2e_closed",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "native-project": "native_project_not_observed"
+      }
     }
   }
 }

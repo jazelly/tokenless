@@ -108,6 +108,7 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 - Sign-in, CAPTCHA, account limits, payment, consent, and confirmation remain user actions.
 - Every provider adapter has an explicit action and capability contract. Unverified behavior is unavailable rather than guessed.
 - Navigation and target URLs are canonicalized and checked before and after actions.
+- Pages are owned by a logical key derived from provider plus stable task identity, or provider plus job identity when no task exists. The default preserve policy never navigates an unrelated owned page; replacement requires an explicit job policy.
 
 ## Capability and Workspace strategy
 

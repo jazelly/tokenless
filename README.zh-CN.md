@@ -17,7 +17,7 @@
 
 ## Tokenless 能做什么
 
-Tokenless 让 AI Agent 把任务直接交给 ChatGPT、Claude、Gemini、Grok 和 Qwen 的网页版处理，从而减少 Agent 侧 token 消耗，也不需要配置这些服务的 API Key。
+Tokenless 让 AI Agent 把任务直接交给 ChatGPT、Claude、Gemini、Grok、Qwen 和实验阶段的 DeepSeek 网页版处理，从而减少 Agent 侧 token 消耗，也不需要配置这些服务的 API Key。
 
 它不只是把 prompt 填进网页。Tokenless 会把各家 provider 真正提供的网页工作流适配成一个供 Agent 使用的本地接口：
 
@@ -29,6 +29,8 @@ Tokenless 让 AI Agent 把任务直接交给 ChatGPT、Claude、Gemini、Grok �
 
 只有经过 Tokenless 可见验证的 provider 工作流才会启用。未支持或尚未证明的行为会明确报错，不会猜测执行。Provider 登录信息、浏览器状态和 job 数据都保留在用户本机。
 
+在同一个 managed profile 中，Tokenless 会为不同 provider 和稳定 task 保留彼此独立的浏览器标签页。Project 和对话会按 task identity 回到自己的标签页，不会覆盖并导航掉另一个 provider 或对话。Local job API 默认使用 `pagePolicy: "preserve"`；只有 integration 显式请求 `pagePolicy: "replace"` 时，Tokenless 才允许把已有标签页改作另一个 task 使用。
+
 | Provider | 状态 | 是否需要登录 |
 | --- | --- | --- |
 | ChatGPT | 可用 | 不需要 |
@@ -36,6 +38,7 @@ Tokenless 让 AI Agent 把任务直接交给 ChatGPT、Claude、Gemini、Grok �
 | Gemini | 可用 | 不需要 |
 | Grok | 可用 | 需要 |
 | Qwen / 千问 | Beta | 不需要 |
+| DeepSeek | 实验阶段 | 需要 |
 
 ## 安装与初始化
 

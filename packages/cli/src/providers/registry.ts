@@ -1,5 +1,6 @@
 import { ChatGptProvider } from './chatgpt-provider.js'
 import { ClaudeProvider } from './claude-provider.js'
+import { DeepSeekProvider } from './deepseek-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
 import { GrokProvider } from './grok-provider.js'
 import { QwenProvider } from './qwen-provider.js'
@@ -143,6 +144,7 @@ export const providerInstances = Object.freeze([
   new GeminiProvider(),
   new GrokProvider(),
   new QwenProvider(),
+  new DeepSeekProvider(),
 ] satisfies readonly ProviderInstance[])
 
 export const providerRegistry = ProviderRegistry.create(providerInstances)

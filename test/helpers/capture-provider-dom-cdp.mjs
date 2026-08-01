@@ -233,6 +233,48 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       projectLinks: [],
     },
   }),
+  deepseek: defineProvider({
+    id: 'deepseek',
+    label: 'DeepSeek',
+    origin: 'https://chat.deepseek.com',
+    url: 'https://chat.deepseek.com/',
+    outputName: 'deepseek-dom.sanitized.html',
+    selectors: {
+      composers: [
+        'textarea#chat-input',
+        'textarea[placeholder="Message DeepSeek"]',
+      ],
+      submits: [
+        'button[aria-label="Send message"]',
+        'div[role="button"].ds-button.ds-button--primary',
+      ],
+      answers: [
+        '.ds-markdown.ds-markdown--block',
+        '.ds-markdown',
+      ],
+      blockers: [
+        'input[placeholder="Phone number / email address"]',
+        'iframe[src*="captcha" i]',
+        '[aria-label*="captcha" i]',
+      ],
+      busy: [
+        'button[aria-label*="Stop" i]',
+        '.ds-loading',
+      ],
+      modelPickers: [
+        'button:has-text("Instant Mode")',
+        'button:has-text("Expert Mode")',
+        'div[role="button"]:has-text("Instant Mode")',
+        'div[role="button"]:has-text("Expert Mode")',
+      ],
+      fileInputs: [
+        'input[type="file"]',
+        'button[aria-label*="Attach" i]',
+        'button[aria-label*="Upload" i]',
+      ],
+      projectLinks: [],
+    },
+  }),
 })
 
 export const providerDefinitions = PROVIDER_DEFINITIONS

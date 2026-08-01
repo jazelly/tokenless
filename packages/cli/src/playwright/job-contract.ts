@@ -12,6 +12,7 @@ import {
 import { tokenlessError } from './errors.js'
 import { getProviderInstanceById, validateTaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
+import type { ManagedPagePolicy } from './browser/context-manager.js'
 import type { VisibleActionRequest, VisibleActionWireRequest } from './actions.js'
 import type { ProviderId, ProviderInstance, TaskCapabilityRoute } from '../providers/registry.js'
 
@@ -33,6 +34,7 @@ export type ManagedPlaywrightJobRequest = {
   taskId: string | null
   capabilityRoute: TaskCapabilityRoute | null
   browserVisibility: BrowserVisibility
+  pagePolicy?: ManagedPagePolicy | undefined
   actions: readonly VisibleActionRequest[]
 }
 
@@ -42,6 +44,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   taskId?: string | null | undefined
   capabilityRoute?: TaskCapabilityRoute | null | undefined
   browserVisibility?: unknown
+  pagePolicy?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
     requestId?: string | undefined
   }))[]
@@ -75,6 +78,7 @@ export function createManagedPlaywrightJobRequest(
     taskId: validateTaskId(input.taskId ?? null),
     capabilityRoute: input.capabilityRoute ?? null,
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
+    ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
     actions,
   })
 }
@@ -86,7 +90,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'],
-    ['capabilityRoute'],
+    ['capabilityRoute', 'pagePolicy'],
     'invalid_playwright_job_request',
   )
   if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
@@ -109,6 +113,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     ? null
     : validateJobCapabilityRoute(input.capabilityRoute, provider.id)
   const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
+  const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
   if (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 100) {
     throw tokenlessError('invalid_playwright_job_actions', 'Managed Playwright job requires one to one hundred actions.')
   }
@@ -131,6 +136,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     taskId,
     capabilityRoute,
     browserVisibility,
+    ...(pagePolicy === undefined ? {} : { pagePolicy }),
     actions,
   }
 }
@@ -185,6 +191,13 @@ function validateJobBrowserVisibility(value: unknown): BrowserVisibility {
     throw tokenlessError('invalid_playwright_job_browser_visibility', 'Managed Playwright job browserVisibility is invalid.')
   }
   return visibility
+}
+
+function validateManagedPagePolicy(value: unknown): ManagedPagePolicy {
+  if (value !== 'preserve' && value !== 'replace') {
+    throw tokenlessError('invalid_managed_page_policy', 'Managed browser page policy must be preserve or replace.')
+  }
+  return value
 }
 
 function validateJobCapabilityRoute(value: unknown, provider: ProviderId) {

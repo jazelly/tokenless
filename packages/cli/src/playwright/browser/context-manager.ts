@@ -22,9 +22,16 @@ export type ManagedBrowserContext = {
   browserVisibility: BrowserVisibility
   effectiveBrowserVisibility: EffectiveBrowserVisibility
   browserContext: BrowserContext
-  page(): Promise<Page>
+  acquirePage(request: ManagedPageRequest): Promise<Page>
   switchVisibility(visibility: BrowserVisibility): Promise<ManagedBrowserContext>
   close(): Promise<void>
+}
+
+export type ManagedPagePolicy = 'preserve' | 'replace'
+
+export type ManagedPageRequest = {
+  key: string
+  policy?: ManagedPagePolicy | undefined
 }
 
 export type ManagedContextLauncher = (
@@ -62,6 +69,7 @@ type ActiveContext = {
   requestedVisibility: BrowserVisibility
   effectiveVisibility: EffectiveBrowserVisibility
   browserContext: BrowserContext
+  pagesByKey: Map<string, Page>
   closeBrowser: () => Promise<void>
   closing: boolean
 }
@@ -194,6 +202,7 @@ export class PersistentContextManager {
         requestedVisibility,
         effectiveVisibility,
         browserContext,
+        pagesByKey: new Map(),
         closeBrowser: launched.closeBrowser,
         closing: false,
       }
@@ -273,10 +282,32 @@ export class PersistentContextManager {
       browserVisibility: active.requestedVisibility,
       effectiveBrowserVisibility: active.effectiveVisibility,
       browserContext: active.browserContext,
-      async page() {
-        const pages = active.browserContext.pages()
-        if (pages[0]) return pages[0]
-        return await active.browserContext.newPage()
+      async acquirePage(request) {
+        const key = validateManagedPageKey(request.key)
+        const policy = request.policy ?? 'preserve'
+        if (policy !== 'preserve' && policy !== 'replace') {
+          throw tokenlessError('invalid_managed_page_policy', 'Managed browser page policy must be preserve or replace.')
+        }
+        const existing = active.pagesByKey.get(key)
+        if (existing && !existing.isClosed()) return existing
+        if (existing) active.pagesByKey.delete(key)
+
+        const pages = active.browserContext.pages().filter((page) => !page.isClosed())
+        const claimedPages = new Set(active.pagesByKey.values())
+        const page = policy === 'replace'
+          ? pages.at(-1) ?? await active.browserContext.newPage()
+          : pages.find((candidate) => !claimedPages.has(candidate) && candidate.url() === 'about:blank')
+            ?? await active.browserContext.newPage()
+        if (policy === 'replace') {
+          for (const [claimedKey, claimedPage] of active.pagesByKey) {
+            if (claimedPage === page) active.pagesByKey.delete(claimedKey)
+          }
+        }
+        active.pagesByKey.set(key, page)
+        page.once('close', () => {
+          if (active.pagesByKey.get(key) === page) active.pagesByKey.delete(key)
+        })
+        return page
       },
       async switchVisibility(visibility) {
         return await manager.switchProfileVisibility(active.profile, visibility)
@@ -564,6 +595,21 @@ function normalizeRunWithProfileArgs<T>(
     visibility: validateRequestedVisibility(visibilityOrOperation),
     operation: maybeOperation,
   }
+}
+
+function validateManagedPageKey(value: unknown) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    Buffer.byteLength(value, 'utf8') > 512 ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw tokenlessError(
+      'invalid_managed_page_key',
+      'Managed browser page key must be a non-empty bounded string without control characters.',
+    )
+  }
+  return value
 }
 
 function validateRequestedVisibility(value: unknown): BrowserVisibility {

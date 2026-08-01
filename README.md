@@ -17,7 +17,7 @@
 
 ## What Tokenless Does
 
-Tokenless lets AI agents send work to ChatGPT, Claude, Gemini, Grok, and Qwen directly through their websites—reducing agent-side token use without provider API keys.
+Tokenless lets AI agents send work to ChatGPT, Claude, Gemini, Grok, Qwen, and experimental DeepSeek directly through their websites—reducing agent-side token use without provider API keys.
 
 It goes beyond sending prompts. Tokenless adapts each provider's real web workflows into one local interface for agents:
 
@@ -29,6 +29,8 @@ It goes beyond sending prompts. Tokenless adapts each provider's real web workfl
 
 Capabilities are enabled only where Tokenless has verified the visible provider workflow. Unsupported or unproven behavior stops with a clear error instead of being guessed. Provider credentials, browser state, and job data stay on the user's machine.
 
+Within one managed profile, Tokenless preserves separate browser tabs for different providers and stable tasks. Project and conversation task identities return to their own tab instead of navigating over another provider or conversation. The local job API defaults to `pagePolicy: "preserve"`; an integration must explicitly request `pagePolicy: "replace"` before Tokenless may reuse an existing tab for a different task.
+
 | Provider | Status | Login |
 | --- | --- | --- |
 | ChatGPT | Available | Not required |
@@ -36,6 +38,7 @@ Capabilities are enabled only where Tokenless has verified the visible provider 
 | Gemini | Available | Not required |
 | Grok | Available | Required |
 | Qwen / 千问 | Beta | Not required |
+| DeepSeek | Experimental | Required |
 
 ## Install and Setup
 

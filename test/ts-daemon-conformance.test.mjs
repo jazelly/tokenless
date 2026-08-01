@@ -651,6 +651,34 @@ test('built Playwright validators enforce the current internal schema IDs', {
   assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID)
   assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID_V3)
 
+  const forcedReplacement = playwright.createManagedPlaywrightJobRequest({
+    provider: 'qwen',
+    target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },
+    taskId: 'v3-explicit-tab-replacement',
+    pagePolicy: 'replace',
+    browserVisibility: 'headless',
+    actions: [
+      {
+        requestId: 'v3-explicit-tab-replacement-action',
+        action: playwright.VISIBLE_ACTIONS.AUTH_STATUS,
+        payload: {},
+      },
+    ],
+  })
+  assert.equal(forcedReplacement.pagePolicy, 'replace')
+  assert.equal(playwright.validateManagedPlaywrightJobRequest(forcedReplacement).pagePolicy, 'replace')
+  assert.throws(
+    () => playwright.createManagedPlaywrightJobRequest({
+      provider: 'qwen',
+      pagePolicy: 'reuse-any-tab',
+      actions: [{ action: playwright.VISIBLE_ACTIONS.AUTH_STATUS, payload: {} }],
+    }),
+    (error) => {
+      assert.equal(error.code, 'invalid_managed_page_policy')
+      return true
+    },
+  )
+
   const v3Validated = playwright.validateManagedPlaywrightJobRequest({
     protocol: runtime.MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
     provider: 'qwen',

@@ -2,7 +2,7 @@
 
 ## Capture Provider DOM With CDP
 
-Use `capture-provider-dom-cdp.mjs` to capture a sanitized DOM snapshot from a real provider page in a dedicated Chrome profile with the Chrome DevTools Protocol enabled. The helper supports `chatgpt`, `claude`, `gemini`, `grok`, and `qwen` through one provider-definition table. Each definition owns its allowed origin, launch URL, selector probes, and DOM artifact name.
+Use `capture-provider-dom-cdp.mjs` to capture a sanitized DOM snapshot from a real provider page in a dedicated Chrome profile with the Chrome DevTools Protocol enabled. The helper supports `chatgpt`, `claude`, `gemini`, `grok`, `qwen`, and `deepseek` through one provider-definition table. Each definition owns its allowed origin, launch URL, selector probes, and DOM artifact name.
 
 Start a dedicated Chrome profile at the provider page you want to inspect. For example, for Claude:
 

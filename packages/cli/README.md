@@ -22,7 +22,7 @@ For a clean non-interactive profile:
 tokenless setup --fresh --json
 ```
 
-Fresh setup creates or reuses `default`, selects an installed browser, and selects every provider whose registry stage is not `disabled`. This includes experimental Qwen. It reports sign-in state without opening a sign-in handoff.
+Fresh setup creates or reuses `default`, selects an installed browser, and selects every provider whose registry stage is not `disabled`. This includes experimental Qwen and DeepSeek. It reports sign-in state without opening a sign-in handoff.
 
 ## Run
 
@@ -63,6 +63,7 @@ The catalog also contains future candidate outcomes so agents can inspect a stab
 | Gemini | Supported | Guest supported |
 | Grok | Supported | Sign-in required |
 | Qwen / 千问 | Experimental | Guest supported |
+| DeepSeek | Experimental | Sign-in required |
 
 Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state.
 
@@ -106,6 +107,8 @@ Native Project support is currently implemented for Claude and Grok. All Workspa
 ## Managed Profiles
 
 One managed profile can hold sessions for all enabled providers. Use separate profiles for multiple accounts of the same provider.
+
+The managed runtime keeps different providers and stable task identities in separate tabs. Re-entering the same project or conversation task returns to its tab; a job can overwrite an existing tab only by explicitly setting `pagePolicy` to `replace` through the local job API.
 
 ```bash
 tokenless profiles list --json

@@ -1,6 +1,6 @@
 # Provider Capability Census
 
-Last reviewed: 2026-07-31
+Last reviewed: 2026-08-01
 
 This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence.
 
@@ -35,6 +35,7 @@ The product surface is broader than the current Tokenless evidence. The middle c
 | Gemini | Chat, web-grounded answers, Deep Research, file and image input, Deep Think, image/video/music generation, Canvas, Gems, notebooks, connected sources, and GitHub repository import | Supported baseline prompt and cited response for the selected profile; file acceptance, continuation, native workspace, Deep Research, generated media, and connected-source lifecycles are not yet closed |
 | Grok | Chat, X and web search with citations, reasoning modes, image input, and image generation | Supported baseline chat, model and effort selection, file acceptance, continuation, citations, and native Project lifecycle; generated-image lifecycle is not yet closed |
 | Qwen | Chat, web search, Deep Research Normal/Advanced, file-assisted research, image generation/editing, video generation, Web Dev, Artifacts, Slides, Learn, and travel planning modes | Experimental baseline chat, effort selection, and provider-specific mode selection; full Deep Research report, file acceptance, continuation, generated media, and native workspace remain unclosed |
+| DeepSeek | Signed-in web chat, Instant/Expert modes, thinking/non-thinking behavior, web search, file upload and text extraction, and synchronized chat history | Experimental registration and signed-out session detection; signed-in prompt, response, continuation, mode, file, search, and citation lifecycles remain unclosed and non-routeable |
 
 Official references:
 
@@ -43,6 +44,7 @@ Official references:
 - [Gemini Apps capability index](https://support.google.com/gemini) and [Gemini Deep Research](https://support.google.com/gemini/answer/15719111)
 - [Grok web search and citations](https://x.ai/news/grok-1212) and [Grok on the web](https://help.x.com/en/using-x/about-grok)
 - [Qwen Deep Research](https://qwen.ai/blog?id=qwen-deepresearch) and [Qwen Image](https://qwen.ai/blog?id=qwen-image-2.0)
+- [DeepSeek V4 web modes](https://api-docs.deepseek.com/news/news260424), [DeepSeek web search](https://api-docs.deepseek.com/news/news1210/), and [DeepSeek file upload and synchronized history](https://api-docs.deepseek.com/news/news250115/)
 
 ## Candidate Web Providers
 
@@ -52,7 +54,6 @@ Official references:
 | Z.ai / GLM | `https://chat.z.ai/` | GLM-5.2 web chat, 1M context, flexible effort levels, coding and long-horizon agent strengths | P1. Treat Z.ai and `chatglm.cn` as separate web surfaces until origin, account, and conversation identity are proven equivalent; begin with baseline, effort, long-context file, and coding reconnaissance |
 | Perplexity | `https://www.perplexity.ai/` | Web search with citations, Pro Search, Advanced Deep Research, file-aware research, Spaces, model selection, image generation/editing, and creation of documents, spreadsheets, presentations, and HTML apps | P1. Strong reference adapter for research, citation, source-scope, Space, and multi-format artifact semantics |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search and citations, Deep Research, Think mode, Projects and Libraries, files, code interpreter, image generation/editing, Canvas, agents, and MCP connectors | P1. Broad capability match with relatively clear official documentation; useful second adapter for research and artifact semantics |
-| DeepSeek Chat | `https://chat.deepseek.com/` | Web chat, Instant/Expert modes, 1M context, agent/search improvements, file upload, and webpage summarization | P1. High user value and likely compact baseline; product-specific search, file, and conversation behavior still require live web reconnaissance |
 | Doubao | `https://www.doubao.com/chat/` | The official web product and feature-introduction surface exist, but stable official web help does not currently provide enough detail to classify its advanced capability lifecycles | P2 pending policy and live reconnaissance. Review the product terms before automation work and treat every advanced capability as `unknown` until visibly proven |
 | Meta AI | `https://www.meta.ai/` | Web chat, voice, personalization, image generation and editing, multi-reference composition, search-grounded image creation, Discover, and limited document editor/import experiments | P2 image-first candidate. Do not infer Deep Research, stable file analysis, or document workflow from experiments |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | Web chat, Quick/Think Deeper/Smart modes, Deep Research, file upload, image generation/editing, Pages, connectors, voice, and browser-related experiences | P2. Rich canonical coverage, but Microsoft account, product-surface, and connector policy complexity raise the reconnaissance cost |
