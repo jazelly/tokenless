@@ -30,6 +30,8 @@ The plan is saved in the root of `docs/roadmaps/`, which is the repository's aut
 
 The unchecked acceptance items are authoritative: macOS `auto` fallback on a host with no system browser, Windows x64 Intel, Windows x64 AMD, Windows Chrome 150 profile-inventory classification, and authenticated provider closure across the selected runtimes. Public-surface results remain observational even though the latest strict Cloak run completed successfully; they do not replace authenticated provider acceptance.
 
+Detailed Windows execution, source-browser version cases, evidence requirements, and completion state are tracked in the active [Windows Cloak Setup Acceptance Test Plan](P0-windows-cloak-setup-acceptance-test-plan.md). This parent roadmap remains the product-support authority; the test plan is its Windows evidence ledger.
+
 ## Product Decisions
 
 ### Target platforms
@@ -251,6 +253,8 @@ This ledger is updated as implementation and evidence land. A checked code item 
 - [x] Make every live browser release-gate command portable across POSIX shells and Windows `cmd.exe` by setting gate variables inside Node launchers.
 
 ### Milestone 6: Real-boundary acceptance
+
+Windows execution for the following gates is specified and recorded in the active [Windows Cloak Setup Acceptance Test Plan](P0-windows-cloak-setup-acceptance-test-plan.md).
 
 - [x] macOS Apple Silicon: the built-CLI browser-runtime gate proved `auto` resolves an installed system browser without a managed download and records its exact runtime.
 - [ ] macOS Apple Silicon: no system browser causes `auto` to install and launch managed Chrome for Testing 145.

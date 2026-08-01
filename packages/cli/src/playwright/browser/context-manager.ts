@@ -420,6 +420,7 @@ export class PersistentContextManager {
     launchOptions: PersistentChromeLaunchOptions,
     browserTarget: ManagedBrowserLaunchTarget,
   ): Promise<LaunchedManagedContext> {
+    assertKeychainNeutralE2ELaunch(launchOptions, browserTarget)
     if (this.connectionMode === 'cdp') {
       return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget)
     }
@@ -536,7 +537,7 @@ function baseCdpChromiumArguments(
     ...(browserTarget.launchPolicy === 'cloak' ? [] : ['--enable-automation']),
     '--metrics-recording-only',
     '--no-service-autorun',
-    ...(browserTarget.id === 'profile'
+    ...(browserTarget.id === 'profile' || browserTarget.e2eInspection
       ? ['--password-store=basic', '--use-mock-keychain']
       : []),
     ...(launchOptions.args ?? []),
@@ -655,6 +656,8 @@ export function managedBrowserLaunchOptions(
       '--no-default-browser-check',
       ...(normalized.e2eInspection
         ? [
+            '--password-store=basic',
+            '--use-mock-keychain',
             '--remote-debugging-address=127.0.0.1',
             '--remote-debugging-port=0',
           ]
@@ -681,6 +684,22 @@ export function managedBrowserLaunchOptions(
     }
   }
   return launchOptions
+}
+
+function assertKeychainNeutralE2ELaunch(
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+) {
+  if (!browserTarget.e2eInspection) return
+  const args = new Set(launchOptions.args ?? [])
+  for (const required of ['--password-store=basic', '--use-mock-keychain']) {
+    if (!args.has(required)) {
+      throw tokenlessError(
+        'e2e_keychain_neutral_launch_required',
+        `Browser E2E requires ${required} before the browser process can start.`,
+      )
+    }
+  }
 }
 
 export function chromeLaunchOptions(): PersistentChromeLaunchOptions {

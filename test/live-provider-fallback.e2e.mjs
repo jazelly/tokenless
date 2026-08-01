@@ -5,6 +5,8 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
@@ -21,13 +23,25 @@ assert.equal(gate, 'real-provider-fallback', 'TOKENLESS_LIVE_FALLBACK_E2E_GATE m
 assert.notEqual(primaryProvider, fallbackProvider, 'fallback provider must differ from the primary provider')
 
 let runtime
+let inspection
+let restoreInspectionEnvironment
 
 test.after(async () => {
-  if (!runtime) return
-  await runtime.stopDaemon({ homeDir, daemonUrl, timeoutMs: 60_000 }).catch(() => undefined)
+  if (runtime) {
+    await runtime.stopDaemon({ homeDir, daemonUrl, timeoutMs: 60_000 }).catch(() => undefined)
+  }
+  await inspection?.close().catch(() => undefined)
+  restoreInspectionEnvironment?.()
 })
 
 test('real visible provider blocker falls back under one durable job', { timeout: 600_000 }, async () => {
+  inspection = await createLiveBrowserInspectionSession({
+    homeDir,
+    profileSlug,
+    daemonUrl,
+    observerTimeoutMs: 120_000,
+  })
+  restoreInspectionEnvironment = installInspectionEnvironment(inspection.environment)
   runtime = await import(cliIndex)
   const playwright = await import(playwrightIndex)
   const profile = await new playwright.ManagedProfileRegistry(homeDir).resolveProfile(profileSlug)
@@ -37,7 +51,7 @@ test('real visible provider blocker falls back under one durable job', { timeout
   const fallback = requiredProvider(playwright, fallbackProvider)
   const marker = `TOKENLESS_E2E_PROVIDER_FALLBACK_${new Date().toISOString().replace(/\W/gu, '')}_${randomUUID().slice(0, 8)}`
   const taskId = `provider-fallback:${marker}`
-  const jobId = `tlp_fallback_e2e_${randomUUID()}`
+  const jobId = inspection.createJobId()
   const request = playwright.createManagedPlaywrightJobRequest({
     provider: primary.id,
     target: { kind: 'provider_home', url: primary.descriptor.navigation.homeUrl },
@@ -87,13 +101,23 @@ test('real visible provider blocker falls back under one durable job', { timeout
     jobId,
   })
   assert.equal(created.job_id, jobId)
-  const completed = await runtime.waitDaemonJobResult({
+  let completionError
+  const completion = runtime.waitDaemonJobResult({
     daemonUrl: daemon.url,
     homeDir,
     jobId,
     timeoutMs: 480_000,
     pollMs: 250,
+  }).catch((error) => {
+    completionError = error
+    return null
   })
+  const primaryAttempt = await inspection.observeNextAttempt({ jobId })
+  assert.equal(primaryAttempt.waiting.provider, primary.id)
+  const fallbackAttempt = await inspection.observeNextAttempt({ jobId })
+  assert.equal(fallbackAttempt.waiting.provider, fallback.id)
+  const completed = await completion
+  if (!completed) throw completionError
 
   assert.equal(completed.ok, true, JSON.stringify(completed.error ?? completed, null, 2))
   assert.equal(completed.status, 'succeeded')
@@ -177,4 +201,19 @@ function requiredEnv(name) {
     code: 'e2e_activation_missing',
   })
   return value
+}
+
+function installInspectionEnvironment(environment) {
+  const previous = new Map()
+  for (const [name, value] of Object.entries(environment)) {
+    if (!name.startsWith('TOKENLESS_E2E_')) continue
+    previous.set(name, process.env[name])
+    process.env[name] = value
+  }
+  return () => {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
 }

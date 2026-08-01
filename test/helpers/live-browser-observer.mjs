@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 import { chromium } from 'playwright'
+import { getProviderInstanceForUrl } from '../../packages/cli/dist/src/playwright/index.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
@@ -32,15 +33,51 @@ export async function createLiveBrowserInspectionSession(options) {
   const barrierRoot = path.join(homeDir, 'e2e', 'browser-inspection', runId)
   const runKey = createHash('sha256').update(runId).digest('base64url').slice(0, 16)
   const jobPrefix = `tlp_e2e_${runKey}_`
-  const seenJobs = new Set()
+  const seenBarriers = new Set()
   const observers = new Set()
 
   await stopExistingDaemons({ homeDir, daemonUrl })
+
+  const observeNextAttempt = async (observeOptions = {}) => {
+    const waiting = await waitForWaitingBarrier({
+      barrierRoot,
+      nonce,
+      jobPrefix,
+      seenBarriers,
+      expectedJobId: observeOptions.jobId,
+      childOutput: observeOptions.childOutput,
+      timeoutMs: observeOptions.timeoutMs ?? 120_000,
+    })
+    seenBarriers.add(barrierIdentity(waiting))
+    const observer = await connectObserver(waiting, startedAt)
+    observers.add(observer.browser)
+    await observeOptions.beforeRelease?.({ waiting, page: observer.page })
+    const observation = observeOptions.observeAfterRelease === undefined
+      ? Promise.resolve(undefined)
+      : Promise.resolve().then(() => observeOptions.observeAfterRelease({ waiting, page: observer.page }))
+    await releaseBarrier({ barrierRoot, waiting, runId, nonce })
+    return {
+      waiting,
+      page: observer.page,
+      async wait() {
+        return await observation
+      },
+      async close() {
+        await observer.browser.close()
+        observers.delete(observer.browser)
+      },
+    }
+  }
 
   return {
     runId,
     homeDir,
     profileSlug,
+    environment: Object.freeze({ ...env }),
+    createJobId() {
+      return `${jobPrefix}${randomUUID()}`
+    },
+    observeNextAttempt,
     async startCli(args, startOptions = {}) {
       const commandArgs = [
         ...args,
@@ -55,27 +92,17 @@ export async function createLiveBrowserInspectionSession(options) {
         stdio: ['ignore', 'pipe', 'pipe'],
       })
       const output = collectChildOutput(child)
-      const waiting = await waitForWaitingBarrier({
-        barrierRoot,
-        nonce,
-        jobPrefix,
-        seenJobs,
+      const attempt = await observeNextAttempt({
         childOutput: output,
         timeoutMs: startOptions.startTimeoutMs ?? 120_000,
+        beforeRelease: startOptions.beforeRelease,
+        observeAfterRelease: startOptions.observeAfterRelease,
       })
-      seenJobs.add(waiting.jobId)
-      const observer = await connectObserver(waiting, startedAt)
-      observers.add(observer.browser)
-      await startOptions.beforeRelease?.({ waiting, page: observer.page })
-      const observation = startOptions.observeAfterRelease === undefined
-        ? Promise.resolve(undefined)
-        : Promise.resolve().then(() => startOptions.observeAfterRelease({ waiting, page: observer.page }))
-      await releaseBarrier({ barrierRoot, waiting, runId, nonce })
       return {
-        waiting,
-        page: observer.page,
+        waiting: attempt.waiting,
+        page: attempt.page,
         async wait() {
-          const [result, observerResult] = await Promise.all([output.exit, observation])
+          const [result, observerResult] = await Promise.all([output.exit, attempt.wait()])
           return {
             ...result,
             payload: parseJsonOutput(result),
@@ -83,8 +110,7 @@ export async function createLiveBrowserInspectionSession(options) {
           }
         },
         async close() {
-          await observer.browser.close()
-          observers.delete(observer.browser)
+          await attempt.close()
         },
       }
     },
@@ -138,8 +164,13 @@ function cancelRunJobs({ homeDir, daemonUrl, env, jobPrefix }) {
 async function waitForWaitingBarrier(options) {
   const deadline = Date.now() + options.timeoutMs
   while (Date.now() <= deadline) {
-    const exited = options.childOutput.settled()
-    const waiting = await findWaitingBarrier(options.barrierRoot, options.seenJobs, options.jobPrefix)
+    const exited = options.childOutput?.settled()
+    const waiting = await findWaitingBarrier(
+      options.barrierRoot,
+      options.seenBarriers,
+      options.jobPrefix,
+      options.expectedJobId,
+    )
     if (waiting) {
       assert.equal(waiting.protocol, protocol)
       assert.equal(waiting.nonce, options.nonce)
@@ -159,7 +190,7 @@ async function waitForWaitingBarrier(options) {
   throw new Error(`Timed out after ${options.timeoutMs}ms waiting for the browser observer barrier.`)
 }
 
-async function findWaitingBarrier(barrierRoot, seenJobs, jobPrefix) {
+async function findWaitingBarrier(barrierRoot, seenBarriers, jobPrefix, expectedJobId) {
   let entries
   try {
     entries = await fs.readdir(barrierRoot, { withFileTypes: true })
@@ -168,16 +199,23 @@ async function findWaitingBarrier(barrierRoot, seenJobs, jobPrefix) {
     throw error
   }
   for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith(jobPrefix) || seenJobs.has(entry.name)) continue
+    if (!entry.isDirectory() || !entry.name.startsWith(jobPrefix)) continue
+    if (expectedJobId !== undefined && entry.name !== expectedJobId) continue
     const waitingPath = path.join(barrierRoot, entry.name, 'waiting.json')
     try {
-      return JSON.parse(await fs.readFile(waitingPath, 'utf8'))
+      const waiting = JSON.parse(await fs.readFile(waitingPath, 'utf8'))
+      if (seenBarriers.has(barrierIdentity(waiting))) continue
+      return waiting
     } catch (error) {
       if (isMissingFileError(error) || error instanceof SyntaxError) continue
       throw error
     }
   }
   return null
+}
+
+function barrierIdentity(waiting) {
+  return `${String(waiting?.jobId ?? '')}:${String(waiting?.waitingAt ?? '')}`
 }
 
 async function connectObserver(waiting, sessionStartedAt) {
@@ -205,7 +243,7 @@ async function connectObserver(waiting, sessionStartedAt) {
   const contexts = browser.contexts()
   assert.equal(contexts.length, 1, 'managed persistent browser must expose exactly one CDP context')
   const expectedUrl = canonicalObservedUrl(waiting.url)
-  const page = await waitForExpectedPage(contexts[0], waiting.targetId, expectedUrl)
+  const page = await waitForExpectedPage(contexts[0], waiting.targetId, expectedUrl, waiting.provider)
   if (!page) {
     await browser.close()
     throw new Error(`CDP observer did not find the product page at ${expectedUrl}.`)
@@ -329,12 +367,16 @@ function canonicalObservedUrl(value) {
   return parsed.toString()
 }
 
-async function waitForExpectedPage(context, expectedTargetId, expectedUrl) {
+async function waitForExpectedPage(context, expectedTargetId, expectedUrl, expectedProvider) {
   const deadline = Date.now() + 10_000
   while (Date.now() <= deadline) {
     for (const page of context.pages()) {
       if (await pageTargetId(context, page) !== expectedTargetId) continue
-      if (canonicalObservedUrl(page.url()) !== expectedUrl) {
+      const observedUrl = canonicalObservedUrl(page.url())
+      if (
+        observedUrl !== expectedUrl &&
+        getProviderInstanceForUrl(observedUrl)?.id !== expectedProvider
+      ) {
         throw new Error(`CDP target ${expectedTargetId} resolved to an unexpected page URL.`)
       }
       return page

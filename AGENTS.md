@@ -42,8 +42,8 @@
 
 ### Credential and macOS Keychain Safety
 
-- Browser auth stays opaque in the user-controlled managed profile. Tokenless never needs, owns, or directly accesses passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets.
-- Never request, inspect, export, log, transmit, copy, decrypt, or dump those secrets; never use `security`, Keychain APIs, or equivalent tools.
+- Browser auth stays opaque in the user-controlled managed profile. After explicit user consent, Tokenless may copy a user-selected browser profile only as an opaque local filesystem tree between user-controlled profiles; it must not parse or expose individual authentication values.
+- Never request, inspect, export, log, transmit, decrypt, or dump passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets; never use `security`, Keychain APIs, or equivalent tools. An explicitly authorized opaque local profile copy is not secret extraction.
 - Never automate or encourage Keychain approval, including `Allow` or `Always Allow`.
 - Tests, helpers, and test browsers must not trigger Keychain prompts. Any prompt fails the run: stop the browser/test, tell the user to choose `Deny` or `Cancel` without a password, then fix launch settings before retrying.
 - Test target `profile` must retain `--password-store=basic` and `--use-mock-keychain`. Only non-`profile` production targets may remove them.
