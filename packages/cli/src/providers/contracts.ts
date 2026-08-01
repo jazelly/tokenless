@@ -19,6 +19,12 @@ export const VISIBLE_ACTIONS = Object.freeze({
   EFFORT_SELECT: 'effort.select',
   QWEN_MODE_INSPECT: 'qwen.mode.inspect',
   QWEN_MODE_SELECT: 'qwen.mode.select',
+  DEEPSEEK_MODE_INSPECT: 'deepseek.mode.inspect',
+  DEEPSEEK_MODE_SELECT: 'deepseek.mode.select',
+  DEEPSEEK_DEEPTHINK_INSPECT: 'deepseek.deepthink.inspect',
+  DEEPSEEK_DEEPTHINK_SELECT: 'deepseek.deepthink.select',
+  DEEPSEEK_SEARCH_INSPECT: 'deepseek.search.inspect',
+  DEEPSEEK_SEARCH_SELECT: 'deepseek.search.select',
   FILE_UPLOAD: 'file.upload',
   WORKSPACE_ENSURE: 'workspace.ensure',
   PROMPT_INPUT: 'prompt.input',
@@ -68,6 +74,13 @@ export type VisibleSelectionPayload = {
 export type QwenModeSelectionPayload = {
   mode: string
   variant?: string
+}
+export type DeepSeekMode = 'Instant' | 'Expert' | 'Vision'
+export type DeepSeekModeSelectionPayload = {
+  mode: DeepSeekMode
+}
+export type DeepSeekToggleSelectionPayload = {
+  enabled: boolean
 }
 export type FileUploadPayload = {
   attachments: readonly AttachmentInput[]
@@ -124,6 +137,30 @@ export type QwenModeSelectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.QWEN_MODE_SELECT,
   QwenModeSelectionPayload
 >
+export type DeepSeekModeInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DEEPSEEK_MODE_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type DeepSeekModeSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DEEPSEEK_MODE_SELECT,
+  DeepSeekModeSelectionPayload
+>
+export type DeepSeekDeepThinkInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type DeepSeekDeepThinkSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_SELECT,
+  DeepSeekToggleSelectionPayload
+>
+export type DeepSeekSearchInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DEEPSEEK_SEARCH_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type DeepSeekSearchSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DEEPSEEK_SEARCH_SELECT,
+  DeepSeekToggleSelectionPayload
+>
 export type FileUploadActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.FILE_UPLOAD,
   FileUploadPayload
@@ -170,6 +207,12 @@ export type VisibleActionRequest =
   | EffortSelectActionRequest
   | QwenModeInspectActionRequest
   | QwenModeSelectActionRequest
+  | DeepSeekModeInspectActionRequest
+  | DeepSeekModeSelectActionRequest
+  | DeepSeekDeepThinkInspectActionRequest
+  | DeepSeekDeepThinkSelectActionRequest
+  | DeepSeekSearchInspectActionRequest
+  | DeepSeekSearchSelectActionRequest
   | FileUploadActionRequest
   | WorkspaceEnsureActionRequest
   | PromptInputActionRequest

@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { tokenlessHome } from './job-store.js'
 import { DaemonRuntimeState } from './daemon/runtime-state.js'
+import type { ProviderCapacityProjection } from './providers/rate-limit-policy.js'
 
 export const DEFAULT_DAEMON_URL = 'http://127.0.0.1:7331'
 export const MAX_DAEMON_REQUEST_BYTES = 900 * 1024
@@ -30,6 +31,8 @@ export type DaemonJob = {
   error_json: unknown | null
   blocker_json: unknown | null
   provider_attempts_json: unknown
+  provider_submitted_at: string | null
+  eligible_at: string | null
   created_at: string
   updated_at: string
 }
@@ -94,6 +97,14 @@ export type ResolveProviderConversationOptions = DaemonClientOptions & {
   provider: string
   profileId: string
   taskId: string
+}
+
+export type GetProviderCapacityOptions = DaemonClientOptions & {
+  provider: string
+  profileId: string
+  accessClass: string
+  tierLabel?: string | null | undefined
+  subscriptionLabel?: string | null | undefined
 }
 
 export type CancelDaemonJobOptions = GetDaemonJobOptions & {
@@ -323,6 +334,35 @@ export async function getDaemonJob({
     daemonUrl: daemon.daemonUrl,
     method: 'GET',
     path: `/jobs/${encodeURIComponent(jobId)}`,
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function getProviderCapacity({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  provider,
+  profileId,
+  accessClass,
+  tierLabel,
+  subscriptionLabel,
+}: GetProviderCapacityOptions) {
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  const query = new URLSearchParams({
+    provider,
+    profile_id: profileId,
+    access_class: accessClass,
+  })
+  if (tierLabel) query.set('tier_label', tierLabel)
+  if (subscriptionLabel) query.set('subscription_label', subscriptionLabel)
+  return daemonRequest<ProviderCapacityProjection>({
+    daemonUrl: daemon.daemonUrl,
+    method: 'GET',
+    path: `/provider-capacity?${query.toString()}`,
     token: daemon.token,
     timeoutMs: requestTimeoutMs,
     signal,
@@ -716,11 +756,11 @@ function userHandoverAction(job: DaemonJob) {
   const windowOpen = browser.windowOpen !== false
   return {
     message: windowOpen
-      ? 'The visible managed browser is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.'
-      : 'This headless job requires user interaction and no browser window is open. Resume the same job with headed visibility.',
+      ? 'Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.'
+      : 'Your help is needed, but no browser window is open. Resume this same job in headed mode; do not create a replacement job.',
     resumeCommand: windowOpen ? jobIdStateCommand(job) : jobIdHeadedResumeCommand(job),
     queryGuidance: windowOpen
-      ? 'Run tokenless state --job-id <jobId> --json after the user confirms completion.'
+      ? 'After completing sign-in or verification, query this same job; Tokenless will continue from its saved checkpoint.'
       : 'Do not submit a replacement job; resume this exact job with headed visibility.',
   }
 }

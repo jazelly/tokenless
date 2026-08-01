@@ -35,6 +35,10 @@ The live E2E suite starts one daemon-owned, headed browser for the explicitly se
 
 On 2026-08-01, the focused real-provider fallback gate passed against the explicitly selected `default` managed profile bound to system Chrome 150. Claude encountered the durable `visible_cloudflare_interstitial` blocker before submission; the same job ID atomically requeued to ChatGPT, ChatGPT returned the correlated unique marker, and the final CLI and SQLite state recorded ordered attempts `claude: blocked` then `chatgpt: succeeded`. The run used the real provider sites, packaged daemon, keychain-neutral headed browser launch, and independent CDP observation for both attempts, with no fixture, interception, simulation, skip, or internal retry.
 
+The fallback gate now requires the complete multi-capability set `conversation.chat + file.upload`: both routes must satisfy both capabilities, the independent observer must prove both real provider attempts, the runtime protocol must report visible staged-attachment acceptance, and the correlated response must return a marker available only inside the file. The earlier conversation-only pass remains valid historical evidence for durable switching but does not satisfy this stronger gate; a fresh run is required before release.
+
+The strengthened gate was exercised again on 2026-08-01 and correctly reached the second provider under the same job ID, but the selected profile did not meet the file prerequisite. ChatGPT exposed a guest menu where `Add photos` was available while general `Add files` required login, and Grok reported `provider_sign_in_required`. The run therefore has no positive `conversation.chat + file.upload` acceptance result. The runtime now opens menu-backed upload capability UI during read-only preflight, treats sign-in-gated file controls as unavailable, prefers the visible file chooser over unrelated hidden inputs, and refuses to submit when it has only file-input selection without visible provider acceptance. A future positive gate must use an explicitly selected profile whose fallback provider is visibly eligible for general file upload; no login automation or silent profile switch is permitted.
+
 As of 2026-07-29, the implementation, capability matrix, CDP observer boundary, durable mappings, native Project strategies, public contracts, and manual gate commands are in place. Real runs additionally established these capability boundaries:
 
 - the selected Gemini guest profile does not restore prior-turn context when a second CLI process opens the mapped conversation URL;
@@ -305,7 +309,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - Provider browser E2E does not run in CI. Pull requests carry a non-enforced reminder for the author to run the applicable local E2E.
 - Every applicable provider E2E must pass manually before release. The release process relies on this checklist rather than an automated CI enforcement.
 - E2E suites do not retry internally. An operator may manually rerun the complete applicable suite after investigating a clear failure.
-- Run `npm run test:e2e:fallback` with the explicitly selected managed profile, daemon URL, primary provider, and fallback provider environment variables to prove that a real visible primary blocker atomically requeues one durable job and completes on a capability-compatible provider. This focused suite has no fixture route, interception, synthetic provider response, retry, or skip.
+- Run `npm run test:e2e:fallback` with the explicitly selected managed profile, daemon URL, primary provider, and fallback provider environment variables to prove that a real visible primary blocker atomically requeues one durable `conversation.chat + file.upload` job, visibly accepts the staged file on the capability-compatible fallback provider, and returns the correlated marker. This focused suite has no fixture route, interception, synthetic provider response, retry, or skip.
 - Do not manually publish packages or releases; repository automation owns changeset-driven publication.
 
 ## Acceptance Criteria
@@ -318,7 +322,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - All applicable E2E suites pass manually before release, without requiring CI enforcement.
 - CDP inspection is test-only, loopback-only, read-only, and absent from normal runs.
 - Runtime provider failures fail required tests rather than silently skipping them unless they match the declared Claude Cloudflare durable blocker known issue.
-- Runtime provider fallback evidence proves one unchanged job ID, a structured primary blocker, ordered durable attempt history, the fallback provider's correlated visible response, and the same final state through the built CLI.
+- Runtime provider fallback evidence proves one unchanged job ID, an implication-complete capability set, a structured primary blocker, ordered durable attempt history, independently observed provider attempts, protocol-level visible attachment acceptance, the fallback provider's correlated visible response, and the same final state through the built CLI.
 - Claude and Grok native Project creation and reuse are both exercised against fresh real Project identities.
 - Model, effort, upload, prompt, submit, and read actions execute after native Project alignment.
 - Project and conversation mappings use exact provider resource scope rather than display names.

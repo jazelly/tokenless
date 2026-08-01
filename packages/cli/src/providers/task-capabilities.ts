@@ -97,6 +97,7 @@ export type TaskCapabilityRouteCandidate = Readonly<{
   provider: ProviderId
   runtimeEligibility: 'eligible' | 'ineligible' | 'unchecked'
   reason?: string | null
+  preferenceRank?: number
 }>
 
 export type TaskCapabilityRouteEvaluation = Readonly<{
@@ -104,6 +105,13 @@ export type TaskCapabilityRouteEvaluation = Readonly<{
   runtimeEligibility: TaskCapabilityRouteCandidate['runtimeEligibility']
   compatible: boolean
   missingCapabilities: readonly TaskCapabilityId[]
+  support: 'experimental' | 'supported' | null
+  rank: number | null
+  score: Readonly<{
+    runtimeEligibility: number
+    evidenceMaturity: number
+    providerPreference: number
+  }> | null
   reason: string | null
 }>
 
@@ -117,19 +125,29 @@ export type TaskCapabilityRoute = Readonly<{
   runtimeEligibility: TaskCapabilityRouteCandidate['runtimeEligibility']
 }>
 
+export type TaskCapabilityRouteFailure = Readonly<{
+  ok: false
+  code: 'task_capability_route_unavailable'
+  message: string
+  requirements: readonly TaskCapabilityId[]
+  evaluated: readonly TaskCapabilityRouteEvaluation[]
+}>
+
 export type TaskCapabilityRouteDecision =
   | Readonly<{
       ok: true
       route: TaskCapabilityRoute
       evaluated: readonly TaskCapabilityRouteEvaluation[]
     }>
+  | TaskCapabilityRouteFailure
+
+export type TaskCapabilityRoutesDecision =
   | Readonly<{
-      ok: false
-      code: 'task_capability_route_unavailable'
-      message: string
-      requirements: readonly TaskCapabilityId[]
+      ok: true
+      routes: readonly TaskCapabilityRoute[]
       evaluated: readonly TaskCapabilityRouteEvaluation[]
     }>
+  | TaskCapabilityRouteFailure
 
 export class TaskCapabilityRequestError extends Error {
   readonly code: 'invalid_task_capability'
@@ -291,7 +309,6 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
     sideEffects: ['create_provider_resource', 'persist_provider_state'],
     requiredEvidence: ['exact_workspace_identity', 'created_or_reused', 'durable_mapping'],
     outputKinds: [],
-    stability: 'supported',
   }),
   defineCapability({
     id: TASK_CAPABILITIES.WORKSPACE_INSTRUCTIONS,
@@ -378,12 +395,12 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('chatgpt', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow']),
   route('claude', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
   route('claude', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow', 'native-project']),
-  route('claude', TASK_CAPABILITIES.WORKSPACE_NATIVE, 'supported', 'native-project-workspace', ['native-project']),
   route('gemini', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['workspace-response-citations']),
   route('grok', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
   route('grok', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow', 'native-project']),
-  route('grok', TASK_CAPABILITIES.WORKSPACE_NATIVE, 'supported', 'native-project-workspace', ['native-project']),
   route('qwen', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['qwen-mode-workspace']),
+  route('perplexity', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-citations']),
+  route('zai', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 
 const DEFINITION_BY_ID = new Map(TASK_CAPABILITY_CATALOG.map((definition) => [definition.id, definition]))
@@ -424,37 +441,81 @@ export function resolveTaskCapabilityRoute(options: {
   requirements: readonly TaskCapabilityId[]
   candidates: readonly TaskCapabilityRouteCandidate[]
 }): TaskCapabilityRouteDecision {
-  const requirements = expandImpliedCapabilities(options.requirements)
-  const evaluated: TaskCapabilityRouteEvaluation[] = []
+  const decision = resolveTaskCapabilityRoutes(options)
+  if (!decision.ok) return decision
+  const route = decision.routes[0]
+  if (!route) {
+    throw new Error('Capability route ranking returned no route for a successful decision.')
+  }
+  return Object.freeze({
+    ok: true,
+    route,
+    evaluated: decision.evaluated,
+  })
+}
 
-  for (const candidate of options.candidates) {
+export function resolveTaskCapabilityRoutes(options: {
+  requirements: readonly TaskCapabilityId[]
+  candidates: readonly TaskCapabilityRouteCandidate[]
+}): TaskCapabilityRoutesDecision {
+  const requirements = expandImpliedCapabilities(options.requirements)
+  const candidates = options.candidates.map((candidate, index) => ({
+    candidate,
+    preferenceRank: normalizedPreferenceRank(candidate.preferenceRank, index),
+  }))
+  const routeCandidates = candidates.flatMap(({ candidate, preferenceRank }) => {
     const routes = requirements.map((capability) => ROUTE_BY_KEY.get(routeKey(candidate.provider, capability)) ?? null)
     const missingCapabilities = requirements.filter((_capability, index) => routes[index] === null)
     const compatible = missingCapabilities.length === 0
-    const eligible = candidate.runtimeEligibility !== 'ineligible'
-    evaluated.push(Object.freeze({
-      provider: candidate.provider,
-      runtimeEligibility: candidate.runtimeEligibility,
-      compatible,
-      missingCapabilities: Object.freeze(missingCapabilities),
-      reason: !compatible
-        ? 'capability_not_e2e_closed'
-        : (!eligible ? candidate.reason ?? 'provider_runtime_ineligible' : null),
-    }))
-    if (!compatible || !eligible) continue
-
     const matchedRoutes = routes.filter((entry): entry is ProviderTaskCapabilityRoute => entry !== null)
+    const support = !compatible
+      ? null
+      : matchedRoutes.some((entry) => entry.support === 'experimental') ? 'experimental' as const : 'supported' as const
+    const score = !compatible
+      ? null
+      : Object.freeze({
+          runtimeEligibility: runtimeEligibilityScore(candidate.runtimeEligibility),
+          evidenceMaturity: support === 'supported' ? 1 : 0,
+          providerPreference: -preferenceRank,
+        })
+    const route = compatible && candidate.runtimeEligibility !== 'ineligible' && support
+      ? Object.freeze({
+          schema: TASK_CAPABILITY_ROUTE_SCHEMA_ID,
+          provider: candidate.provider,
+          requirements: Object.freeze([...requirements]),
+          strategies: Object.freeze([...new Set(matchedRoutes.map((entry) => entry.strategy))]),
+          support,
+          evidence: Object.freeze([...new Set(matchedRoutes.flatMap((entry) => entry.evidence))]),
+          runtimeEligibility: candidate.runtimeEligibility,
+        } satisfies TaskCapabilityRoute)
+      : null
+    return [{ candidate, missingCapabilities, compatible, support, score, preferenceRank, route }]
+  })
+  const ranked = routeCandidates
+    .filter((entry): entry is typeof entry & { route: TaskCapabilityRoute, score: NonNullable<typeof entry.score> } => (
+      entry.route !== null && entry.score !== null
+    ))
+    .sort((left, right) => compareRouteScore(left.score, right.score))
+  const rankByProvider = new Map(ranked.map((entry, index) => [entry.candidate.provider, index + 1]))
+  const evaluated = routeCandidates.map((entry) => Object.freeze({
+    provider: entry.candidate.provider,
+    runtimeEligibility: entry.candidate.runtimeEligibility,
+    compatible: entry.compatible,
+    missingCapabilities: Object.freeze(entry.missingCapabilities),
+    support: entry.support,
+    rank: rankByProvider.get(entry.candidate.provider) ?? null,
+    score: entry.score,
+    reason: !entry.compatible
+      ? 'capability_not_e2e_closed'
+      : (entry.candidate.runtimeEligibility === 'ineligible'
+          ? entry.candidate.reason ?? 'provider_runtime_ineligible'
+          : null),
+  } satisfies TaskCapabilityRouteEvaluation))
+
+  if (ranked.length > 0) {
     return Object.freeze({
       ok: true,
-      route: Object.freeze({
-        schema: TASK_CAPABILITY_ROUTE_SCHEMA_ID,
-        provider: candidate.provider,
-        requirements: Object.freeze([...requirements]),
-        strategies: Object.freeze([...new Set(matchedRoutes.map((entry) => entry.strategy))]),
-        support: matchedRoutes.some((entry) => entry.support === 'experimental') ? 'experimental' : 'supported',
-        evidence: Object.freeze([...new Set(matchedRoutes.flatMap((entry) => entry.evidence))]),
-        runtimeEligibility: candidate.runtimeEligibility,
-      }),
+      routes: Object.freeze(ranked.map((entry) => entry.route)),
       evaluated: Object.freeze(evaluated),
     })
   }
@@ -468,6 +529,25 @@ export function resolveTaskCapabilityRoute(options: {
     requirements: Object.freeze([...requirements]),
     evaluated: Object.freeze(evaluated),
   })
+}
+
+function normalizedPreferenceRank(value: number | undefined, fallback: number) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
+}
+
+function runtimeEligibilityScore(value: TaskCapabilityRouteCandidate['runtimeEligibility']) {
+  if (value === 'eligible') return 2
+  if (value === 'unchecked') return 1
+  return 0
+}
+
+function compareRouteScore(
+  left: NonNullable<TaskCapabilityRouteEvaluation['score']>,
+  right: NonNullable<TaskCapabilityRouteEvaluation['score']>,
+) {
+  return right.runtimeEligibility - left.runtimeEligibility ||
+    right.evidenceMaturity - left.evidenceMaturity ||
+    right.providerPreference - left.providerPreference
 }
 
 export function validateTaskCapabilityRoute(

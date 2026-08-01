@@ -7,7 +7,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI and a
 1. The `tokenless` CLI handles setup, profile management, job submission, state, cancellation, and diagnostics.
 2. The local TypeScript daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
 3. The Playwright worker claims managed-web jobs and runs them in persistent managed browser profiles.
-4. The provider registry declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, and Qwen.
+4. The provider registry declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, Qwen, DeepSeek, Perplexity, and Z.ai.
 5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
 7. Shared application services expose redacted config, profile, provider, capability, job, runtime, and diagnostic operations to the local control plane.
@@ -15,7 +15,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI and a
 
 ## Execution path
 
-`tokenless run` submits a managed Playwright job through the local daemon. Tokenless never resends a failed request through another provider or runtime path.
+`tokenless run` submits a managed Playwright job through the local daemon. For an implicit, provider-neutral, pre-submit run, the same durable job may move to another provider only through its capability-ranked fallback plan. It never switches runtime paths, degrades a required capability, or replays after an ambiguous or confirmed submission.
 
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
@@ -27,17 +27,26 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI and a
 
 ```text
 request
-  → resolve provider and managed profile
-  → validate target, actions, files, and limits
+  → derive the complete task capability set
+  → rank compatible providers by live eligibility, evidence maturity, and configured preference
+  → validate target, actions, context envelope, files, and limits
   → create an authenticated daemon job
   → Playwright worker claims the job for that profile
+  → recheck visible session and task-capability eligibility before mutation
   → provider adapter operates visible page controls
   → verify visible postconditions
+  → atomically requeue the same job on the next ranked provider only for a classified safe pre-submit failure
   → complete the daemon job
   → return normalized result and citations
 ```
 
 Jobs use explicit provider and profile identity. Unsupported controls, ambiguous pages, unexpected navigation, authentication blockers, and selector drift fail closed.
+
+The job contract derives requirements again from visible actions, attachment media types, and native workspace intent. A caller cannot under-declare `file.upload`, media input, chat, or native workspace requirements to manufacture an unsafe fallback route. Every alternative carries the identical implication-complete requirement set. Provider-specific conversation and Project URLs, provider controls, exact continuation, non-reconstructable mutations, and post-submission state suppress automatic fallback with a structured reason.
+
+Before opening a provider page, each attempt also projects known profile-scoped provider capacity from the checked-in official-source catalog and durable submission history. A known exhausted window consumes the next full-capability route when one exists; otherwise the same job is durably deferred until its calculated eligibility time. Unknown or non-numeric limits remain explicit uncertainty and never become invented quotas.
+
+Each routed job carries `tokenless.context-envelope.v1`. It records the task identity, normalized requirements, role-bearing instructions, attachment provenance, output and constraint contracts, upstream agent state, and hashes of the prompt actions that actually deliver the context. Provider changes replay the same validated envelope and action payloads from the start.
 
 ## Setup and profiles
 
@@ -57,7 +66,7 @@ Successful account observations retain only the visible account display name, su
 
 `profiles status` runs this provider-page inspection and persists the observation. `profiles list` is a registry read: it reports the last saved observation and never refreshes a provider page implicitly.
 
-Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT and Gemini may proceed in guest mode; experimental Qwen may proceed through its guest route. Claude and Grok hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
+Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT, Gemini, experimental Qwen, experimental Perplexity, and experimental Z.ai may proceed in guest mode. Claude, Grok, and DeepSeek hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
 
 ## Provider architecture and session state machine
 
@@ -83,13 +92,16 @@ Observation, account classification, decisions, and resolution live under `packa
 | Gemini | Supported | Google account ARIA label | Unknown until reliable visible plan evidence is available |
 | Grok | Sign-in required | Visible account control text | Derived from visible model entitlements as `Free` or `SuperGrok` |
 | Qwen | Supported | Visible account control text when signed in | Unknown until reliable visible plan evidence is available |
+| DeepSeek | Sign-in required | Visible account control text | Unknown until reliable visible plan evidence is available |
+| Perplexity | Supported | Visible menu or account control text when signed in | Unknown until reliable visible plan evidence is available |
+| Z.ai | Supported | Visible menu or account control text when signed in | Unknown until reliable visible plan evidence is available |
 
 The provider-session machine is intentionally separate from the daemon job state machine:
 
 - The provider-session machine handles one page observation cycle: `wait`, `continue_guest`, `ready(guest|account|unknown)`, `handoff`, or `terminal`.
 - The daemon state machine owns durable execution: `queued`, `claimed`, `running`, `waiting_for_user`, `succeeded`, `failed`, `canceled`, and `timed_out`.
 - A provider `handoff` becomes the daemon's durable `waiting_for_user` state. It does not create a replacement job.
-- A plan, quota, or rate-limit blocker remains terminal and is not collapsed into authentication.
+- A plan, quota, rate-limit, maintenance, region, capability-UI, navigation, or surface-readiness failure remains structurally classified and is not collapsed into authentication. A safe pre-submit provider-scoped failure may consume the next capability-compatible fallback route; ambiguous external state and post-submission failures never do.
 
 ## Local control plane
 
@@ -97,7 +109,7 @@ The daemon binds to loopback, stores its bearer token beside its SQLite database
 
 The bearer-protected machine endpoints remain an internal runtime control plane. Browser administration uses a separate `/ui-api/v1` surface documented in `api/tokenless-ui-api.openapi.json`. An authenticated CLI call mints a random, 60-second, single-use ticket; `/ui/bootstrap` consumes it, sets an `HttpOnly`, `SameSite=Strict`, path-scoped session cookie, and redirects to `/ui/` so the ticket leaves browser history. UI mutations require the exact daemon Origin and a per-session CSRF header. Sessions live only in daemon memory and are invalidated on restart.
 
-All UI routes enforce the daemon's exact loopback `Host`, a restrictive same-origin CSP, `frame-ancestors 'none'`, `nosniff`, and `Referrer-Policy: no-referrer`. Static assets are bundled in the npm package and load no remote JavaScript, fonts, analytics, or CDN resources. Purpose-built responses redact control tokens, claims, checkpoints, browser storage, raw DOM, legacy source paths, and private file paths. Bounded polling uses revision ETags and defers rendering while a form has uncommitted edits; there is no SSE or WebSocket transport.
+All UI routes enforce the daemon's exact loopback `Host`, a restrictive same-origin CSP, `frame-ancestors 'none'`, `nosniff`, and `Referrer-Policy: no-referrer`. The browser application lives under `packages/cli/src/daemon/ui`: `app.ts` is the single startup interface, the dashboard controller owns state and event orchestration, the HTTP client owns session/CSRF/ETag behavior, and page modules are pure renderers. A dedicated `tsconfig.ui.json` type-checks and emits browser-native ES modules separately from the Node daemon build. Static assets are still bundled in the same npm package, served by the daemon, and load no remote JavaScript, fonts, analytics, or CDN resources. Purpose-built responses redact control tokens, claims, checkpoints, browser storage, raw DOM, legacy source paths, and private file paths. Bounded polling uses revision ETags and defers rendering while a form has uncommitted edits; there is no SSE or WebSocket transport.
 
 The dashboard's reserved page key is `tokenless:control-plane:<daemon-home-id>`. It has a separate registry from provider page leases, cannot be selected by provider `pagePolicy: replace`, is focused rather than duplicated, and is recreated if the user closes it. Closing the tab does not stop the daemon or managed context.
 
@@ -121,11 +133,13 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 
 ## Capability and Workspace strategy
 
+The public capability vocabulary, provider mapping rules, evidence ladder, and extension process are defined in the [Capability Matrix](capability-matrix.md). This section describes how that contract is executed by the runtime.
+
 The current visible-action schema includes `capability.inspect`, `workspace.ensure`, and the Qwen-only `qwen.mode.inspect/select` actions. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every enabled provider.
 
 Subscription labels are diagnostic evidence, not authorization. Runtime decisions prefer an enabled visible control, then an explicit disabled, upgrade, or plan-limit state, and otherwise report `unknown`. Missing selectors never prove that a subscription lacks a capability.
 
-Native Project creation and reuse are capability-gated runtime behavior. Where the live provider matrix proves the native flow, `workspace.ensure` uses exact visible names, reports `created` or `reused`, and persists provider resource identity; otherwise `auto` can report conversation fallback only after stable visible native unavailability, `conversation` requires that strategy, and `native` fails before prompt or file mutation. `--project-name` remains metadata unless the caller opts in with `--workspace-mode`.
+Native Project creation and reuse are capability-gated runtime behavior. The implementation can use exact visible names, report `created` or `reused`, and persist provider resource identity, but `workspace.native` is not currently routeable because the complete real-provider Project gate has not passed. `auto` can report conversation fallback only after stable visible native unavailability, `conversation` requires that strategy, and `native` fails before prompt or file mutation. `--project-name` remains metadata unless the caller opts in with `--workspace-mode`.
 
 Conversation fallback is scoped to one provider, managed profile, and task identifier. Before reusing a previous provider URL, the CLI queries the authenticated daemon and accepts only a successful same-scope job result that passes provider URL validation.
 

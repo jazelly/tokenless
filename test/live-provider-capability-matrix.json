@@ -80,6 +80,71 @@
         "restore_original"
       ]
     },
+    "deepseek-controls": {
+      "gate": "non_submission",
+      "submissions": 0,
+      "actions": [
+        "deepseek.mode.inspect",
+        "deepseek.mode.select",
+        "deepseek.deepthink.inspect",
+        "deepseek.deepthink.select",
+        "deepseek.search.inspect",
+        "deepseek.search.select"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "durable_state",
+        "restore_original"
+      ]
+    },
+    "deepseek-search-reasoning": {
+      "gate": "mutation",
+      "submissions": 2,
+      "actions": [
+        "deepseek.mode.inspect",
+        "deepseek.mode.select",
+        "deepseek.deepthink.inspect",
+        "deepseek.deepthink.select",
+        "deepseek.search.inspect",
+        "deepseek.search.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_submission",
+        "visible_response",
+        "visible_citation",
+        "durable_state",
+        "restore_original"
+      ]
+    },
+    "deepseek-vision-input": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "deepseek.mode.inspect",
+        "deepseek.mode.select",
+        "deepseek.deepthink.inspect",
+        "deepseek.deepthink.select",
+        "file.upload",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_attachment",
+        "visible_submission",
+        "visible_response",
+        "durable_state",
+        "restore_original"
+      ]
+    },
     "file-selection": {
       "gate": "non_submission",
       "submissions": 0,
@@ -132,6 +197,23 @@
         "visible_submission",
         "visible_response",
         "visible_citation",
+        "durable_mapping"
+      ]
+    },
+    "workspace-response-baseline": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "workspace.ensure",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "conversation_fallback",
+        "visible_submission",
+        "visible_response",
         "durable_mapping"
       ]
     },
@@ -190,7 +272,11 @@
       "unavailable": {
         "model-choice": "no_visible_model_control_observed_2026_07_28",
         "effort-choice": "no_visible_effort_control_observed_2026_07_28",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
         "workspace-response-citations": "covered_by_conversation_workflow",
+        "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
         "native-project": "native_project_not_yet_proven"
       }
@@ -208,7 +294,11 @@
       ],
       "unavailable": {
         "effort-choice": "no_independent_effort_control_declared",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
         "workspace-response-citations": "covered_by_conversation_workflow",
+        "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability"
       }
     },
@@ -223,8 +313,12 @@
       "unavailable": {
         "model-choice": "no_enabled_alternate_model_in_selected_guest_profile",
         "effort-choice": "no_independent_effort_control_declared",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
         "file-selection": "no_visible_upload_control_in_selected_guest_profile_2026_07_28",
         "conversation-workflow": "no_upload_or_continuation_closure_in_selected_guest_profile",
+        "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
         "native-project": "native_project_not_yet_proven"
       }
@@ -242,7 +336,11 @@
         "native-project"
       ],
       "unavailable": {
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
         "workspace-response-citations": "covered_by_conversation_workflow",
+        "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability"
       }
     },
@@ -256,10 +354,14 @@
         "qwen-mode-workspace"
       ],
       "unavailable": {
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
         "model-choice": "no_real_selection_closure",
         "file-selection": "no_real_visible_attachment_closure",
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-citations": "covered_by_qwen_mode_workspace",
+        "workspace-response-baseline": "covered_by_qwen_mode_workspace",
         "native-project": "native_project_not_proven"
       }
     },
@@ -268,14 +370,60 @@
       "account": "signed_in_selected_setup_profile",
       "required": [
         "session-readiness",
-        "prompt-draft"
+        "prompt-draft",
+        "deepseek-controls",
+        "file-selection",
+        "deepseek-search-reasoning",
+        "deepseek-vision-input",
+        "conversation-workflow"
       ],
       "unavailable": {
         "model-choice": "no_real_selection_closure",
         "effort-choice": "no_independent_effort_control_declared",
+        "workspace-response-citations": "covered_by_conversation_workflow",
+        "workspace-response-baseline": "covered_by_conversation_workflow",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "native-project": "native_project_not_observed"
+      }
+    },
+    "perplexity": {
+      "stage": "experimental",
+      "account": "guest_or_signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "workspace-response-citations"
+      ],
+      "unavailable": {
+        "model-choice": "no_real_selection_closure",
+        "effort-choice": "no_independent_effort_control_declared",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
         "file-selection": "no_real_visible_attachment_closure",
-        "conversation-workflow": "baseline_submission_and_continuation_not_e2e_closed",
-        "workspace-response-citations": "search_and_citation_lifecycle_not_e2e_closed",
+        "conversation-workflow": "no_real_attachment_or_continuation_closure",
+        "workspace-response-baseline": "covered_by_workspace_response_citations",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "native-project": "native_space_not_proven"
+      }
+    },
+    "zai": {
+      "stage": "experimental",
+      "account": "guest_or_signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "workspace-response-baseline"
+      ],
+      "unavailable": {
+        "model-choice": "no_real_selection_closure",
+        "effort-choice": "no_real_selection_closure",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "file-selection": "no_real_visible_attachment_closure",
+        "conversation-workflow": "no_real_attachment_or_continuation_closure",
+        "workspace-response-citations": "no_real_visible_citation_closure",
         "qwen-mode-workspace": "provider_specific_capability",
         "native-project": "native_project_not_observed"
       }

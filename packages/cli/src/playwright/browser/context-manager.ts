@@ -20,6 +20,13 @@ export type ManagedBrowserProfile = {
   lifecycle?: 'created' | 'importing' | 'ready' | 'removed' | 'failed'
   runtimeBinding?: BrowserRuntimeBinding | undefined
   proxy?: { server: string, bypass: readonly string[] } | null | undefined
+  lastObservedAuth?: Partial<Record<string, {
+    access: string
+    account?: {
+      subscription: string | null
+      tier: { class: string, label: string | null }
+    } | undefined
+  }>> | undefined
 }
 
 export type ManagedBrowserContext = {
@@ -62,6 +69,7 @@ export type ManagedBrowserLaunchTarget = {
   id: string
   executablePath?: string | undefined
   e2eInspection?: boolean | undefined
+  e2eHostResolverRule?: string | undefined
   runtimeId?: string | undefined
   launchPolicy?: 'standard' | 'cloak' | 'test-profile' | undefined
 }
@@ -660,6 +668,9 @@ export function managedBrowserLaunchOptions(
             '--use-mock-keychain',
             '--remote-debugging-address=127.0.0.1',
             '--remote-debugging-port=0',
+            ...(normalized.e2eHostResolverRule
+              ? [`--host-resolver-rules=${normalized.e2eHostResolverRule}`]
+              : []),
           ]
         : []),
     ],
@@ -732,16 +743,33 @@ function normalizeManagedBrowserLaunchTarget(
       `Managed Playwright requires an executable path for browser '${id}'.`
     )
   }
+  const e2eHostResolverRule = browser?.e2eHostResolverRule?.trim()
+  if (e2eHostResolverRule && !browser?.e2eInspection) {
+    throw tokenlessError(
+      'invalid_e2e_host_resolver_rule',
+      'A managed browser host resolver rule is allowed only during E2E inspection.',
+    )
+  }
+  if (e2eHostResolverRule && !/^MAP [a-z0-9.-]+ (?:\d{1,3}\.){3}\d{1,3}$/u.test(e2eHostResolverRule)) {
+    throw tokenlessError(
+      'invalid_e2e_host_resolver_rule',
+      'The E2E host resolver rule must be a normalized MAP hostname IPv4 value.',
+    )
+  }
   return {
     id,
     ...(executablePath ? { executablePath } : {}),
     ...(browser?.e2eInspection ? { e2eInspection: true } : {}),
+    ...(e2eHostResolverRule ? { e2eHostResolverRule } : {}),
     ...(browser?.runtimeId ? { runtimeId: browser.runtimeId } : {}),
     ...(browser?.launchPolicy ? { launchPolicy: browser.launchPolicy } : {}),
   }
 }
 
 function sameBrowserRuntime(left: ManagedBrowserLaunchTarget, right: ManagedBrowserLaunchTarget) {
+  const inspectionMatches = left.e2eInspection === right.e2eInspection &&
+    left.e2eHostResolverRule === right.e2eHostResolverRule
+  if (!inspectionMatches) return false
   if (left.runtimeId || right.runtimeId) return left.runtimeId === right.runtimeId
   return left.id === right.id && left.executablePath === right.executablePath
 }

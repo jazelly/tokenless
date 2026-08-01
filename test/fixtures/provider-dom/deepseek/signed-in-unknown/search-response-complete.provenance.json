@@ -1,0 +1,26 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "deepseek",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "search-response-complete",
+  "routeClass": "conversation",
+  "operationPhase": "response-complete",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-08-01",
+  "sanitizedUrl": "https://chat.deepseek.com/a/chat/s/[redacted]",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "243a188d6d15dd54b0c03bba4951ee8ec1241dae77b6a2d8fec4f3f87ed70b1a",
+  "evidenceSelectors": [
+    { "capability": "deepseek.search", "selector": ".ds-toggle-button[aria-pressed=\"true\"]", "expectedCount": 1 },
+    { "capability": "response.read", "selector": ".ds-message > .ds-markdown.ds-assistant-message-main-content", "expectedCount": 1 },
+    { "capability": "response.citations", "selector": ".ds-assistant-message-main-content a[href=\"https://nodejs.org/\"]", "expectedCount": 1 },
+    { "capability": "response.citations", "selector": ".ds-assistant-message-main-content a[href^=\"https://raw.githubusercontent.com/nodejs/\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [],
+  "redactions": ["account identity", "conversation history", "prompt content", "response content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Search produced a grounded visible response containing direct and numbered public source links."]
+}

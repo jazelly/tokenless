@@ -9,10 +9,7 @@ import { promisify } from 'node:util'
 
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
-import { chromium } from 'playwright-core'
-
 import { startDaemon } from '../packages/cli/dist/src/daemon/lifecycle.js'
-import { PersistentContextManager } from '../packages/cli/dist/src/playwright/browser/context-manager.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
 
 const execFileAsync = promisify(execFile)
@@ -220,75 +217,6 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
   })
 })
 
-test('packaged SPA renders in real Chromium and reserved control-plane page survives provider replacement', async () => {
-  await withDaemon(async ({ daemon, homeDir }) => {
-    const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
-    const minted = await mintTicket(daemon.origin, token)
-    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-ui-browser-profile-'))
-    const manager = new PersistentContextManager({
-      browser: {
-        id: 'profile',
-        executablePath: chromium.executablePath(),
-      },
-    })
-    const profile = { id: 'ui-browser', directory: profileDir, lifecycle: 'ready' }
-    const consoleFailures = []
-    const snapshotStatuses = []
-    try {
-      const context = await manager.ensureContext(profile, 'headless')
-      const page = await context.acquireReservedPage({ key: 'tokenless:control-plane:test' })
-      page.on('console', (message) => {
-        if (message.type() === 'error' || message.type() === 'warning') consoleFailures.push(message.text())
-      })
-      page.on('pageerror', (error) => consoleFailures.push(error.message))
-      page.on('response', (response) => {
-        if (new URL(response.url()).pathname === '/ui-api/v1/snapshot') snapshotStatuses.push(response.status())
-      })
-      await page.goto(minted.body.bootstrapUrl, { waitUntil: 'networkidle' })
-      assert.equal(await page.title(), 'Tokenless local console')
-      await page.locator('button[data-nav="profiles"]').waitFor()
-      assert.equal(await page.locator('nav').getAttribute('aria-label'), 'Primary navigation')
-      assert.equal(await page.locator('.sidebar-language select').inputValue(), 'en')
-      await page.locator('.sidebar-language select').selectOption('zh-CN')
-      await page.waitForFunction(() => document.documentElement.lang === 'zh-CN')
-      assert.equal(await page.title(), 'Tokenless 本地控制台')
-      assert.equal(await page.locator('nav').getAttribute('aria-label'), '主要导航')
-      await page.locator('.sidebar-language select').selectOption('en')
-      await page.waitForFunction(() => document.documentElement.lang === 'en')
-
-      await page.setViewportSize({ width: 1280, height: 800 })
-      assert.equal(await hasDocumentOverflow(page), false)
-      await page.locator('button[data-nav="profiles"]').click()
-      await page.locator('[data-action="show-create-profile"]').click()
-      assert.equal(await page.locator('#profile-dialog').getAttribute('open'), '')
-      await page.locator('#profile-slug').fill('unsaved-draft')
-      await page.locator('#profile-label').fill('Unsaved draft')
-      await page.waitForTimeout(3300)
-      assert.equal(await page.locator('#profile-slug').inputValue(), 'unsaved-draft')
-      assert.equal(await page.locator('#profile-label').inputValue(), 'Unsaved draft')
-      assert.equal(snapshotStatuses.includes(304), true)
-      await page.locator('[data-action="close-dialog"]').click()
-
-      await page.setViewportSize({ width: 700, height: 900 })
-      assert.equal(await hasDocumentOverflow(page), false)
-      await page.setViewportSize({ width: 390, height: 844 })
-      assert.equal(await hasDocumentOverflow(page), false)
-
-      const providerPage = await context.acquirePage({
-        key: 'provider:chatgpt:task:replacement-proof',
-        policy: 'replace',
-      })
-      assert.notEqual(providerPage, page)
-      assert.equal(page.isClosed(), false)
-      assert.equal(new URL(page.url()).pathname, '/ui/')
-      assert.deepEqual(consoleFailures, [])
-    } finally {
-      await manager.shutdown()
-      fs.rmSync(profileDir, { recursive: true, force: true })
-    }
-  })
-})
-
 test('dashboard sessions are invalidated when the real daemon restarts', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-ui-restart-')))
   let daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
@@ -346,10 +274,6 @@ async function requestWithHost(port, host) {
     request.on('error', reject)
     request.end()
   })
-}
-
-async function hasDocumentOverflow(page) {
-  return await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)
 }
 
 function uiSchemaValidator(name) {

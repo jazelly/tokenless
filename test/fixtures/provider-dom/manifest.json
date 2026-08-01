@@ -39,6 +39,42 @@
       "provenancePath": "deepseek/signed-in-unknown/composer-vision.provenance.json"
     },
     {
+      "provider": "deepseek",
+      "accountState": "signed-in-unknown",
+      "scenario": "deepthink-response-complete",
+      "routeClass": "conversation",
+      "operationPhase": "response-complete",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.deepseek.com/a/chat/s/[redacted]",
+      "observedOn": "2026-08-01",
+      "htmlPath": "deepseek/signed-in-unknown/deepthink-response-complete.html",
+      "provenancePath": "deepseek/signed-in-unknown/deepthink-response-complete.provenance.json"
+    },
+    {
+      "provider": "deepseek",
+      "accountState": "signed-in-unknown",
+      "scenario": "response-complete",
+      "routeClass": "conversation",
+      "operationPhase": "response-complete",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.deepseek.com/a/chat/s/[redacted]",
+      "observedOn": "2026-08-01",
+      "htmlPath": "deepseek/signed-in-unknown/response-complete.html",
+      "provenancePath": "deepseek/signed-in-unknown/response-complete.provenance.json"
+    },
+    {
+      "provider": "deepseek",
+      "accountState": "signed-in-unknown",
+      "scenario": "search-response-complete",
+      "routeClass": "conversation",
+      "operationPhase": "response-complete",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://chat.deepseek.com/a/chat/s/[redacted]",
+      "observedOn": "2026-08-01",
+      "htmlPath": "deepseek/signed-in-unknown/search-response-complete.html",
+      "provenancePath": "deepseek/signed-in-unknown/search-response-complete.provenance.json"
+    },
+    {
       "provider": "chatgpt",
       "accountState": "signed-in-paid",
       "scenario": "composer-idle",

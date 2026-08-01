@@ -1,16 +1,15 @@
 # Provider Capability Census
 
-Last reviewed: 2026-08-01
+Last reviewed: 2026-08-02
 
-This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence.
+This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence. The normative naming, mapping, support, and extension rules live in the [Capability Matrix](capability-matrix.md).
 
 The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V1 routeable outcomes are:
 
-- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, and experimental Qwen;
-- `file.upload`: ChatGPT, Claude, and Grok; and
-- `workspace.native`: Claude and Grok.
+- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, experimental Qwen, experimental Perplexity, and experimental Z.ai;
+- `file.upload`: ChatGPT, Claude, and Grok.
 
-All other entries below remain discoverable candidates. In particular, `research.deep`, citations as a required production postcondition, continuation as an explicit capability, generated media, and generated work artifacts remain non-routeable until their complete execution contracts are implemented and real-provider E2E-closed.
+All other entries below remain discoverable candidates. In particular, `workspace.native`, `research.deep`, citations as a required production postcondition, continuation as an explicit capability, generated media, and generated work artifacts remain non-routeable until their complete execution contracts are implemented and real-provider E2E-closed.
 
 ## Evidence Ladder
 
@@ -31,11 +30,13 @@ The product surface is broader than the current Tokenless evidence. The middle c
 | Provider | Documented or live-observed web product capabilities relevant to Tokenless | Current Tokenless evidence |
 | --- | --- | --- |
 | ChatGPT | Chat, web search with citations, Deep Research, file and image input, image generation and editing, data analysis, Canvas, agent mode, and Projects with files and instructions | Supported baseline chat, file acceptance, response citations, and same-conversation continuation; native Project, Deep Research, image generation, and agent lifecycles are not yet closed |
-| Claude | Chat, web search, Research, files and images, Projects and project knowledge, Artifacts, model selection, extended thinking, and connectors | Supported baseline chat, model selection, file acceptance, continuation, citations, and native Project lifecycle; Research, Artifacts, and connector outcomes are not yet routeable |
+| Claude | Chat, web search, Research, files and images, Projects and project knowledge, Artifacts, model selection, extended thinking, and connectors | Supported baseline chat, model selection, file acceptance, continuation, and citations; native Project, Research, Artifacts, and connector outcomes are not yet routeable |
 | Gemini | Chat, web-grounded answers, Deep Research, file and image input, Deep Think, image/video/music generation, Canvas, Gems, notebooks, connected sources, and GitHub repository import | Supported baseline prompt and cited response for the selected profile; file acceptance, continuation, native workspace, Deep Research, generated media, and connected-source lifecycles are not yet closed |
-| Grok | Chat, X and web search with citations, reasoning modes, image input, and image generation | Supported baseline chat, model and effort selection, file acceptance, continuation, citations, and native Project lifecycle; generated-image lifecycle is not yet closed |
+| Grok | Chat, X and web search with citations, reasoning modes, image input, and image generation | Supported baseline chat, model and effort selection, file acceptance, continuation, and citations; native Project and generated-image lifecycles are not yet routeable |
 | Qwen | Chat, web search, Deep Research Normal/Advanced, file-assisted research, image generation/editing, video generation, Web Dev, Artifacts, Slides, Learn, and travel planning modes | Experimental baseline chat, effort selection, and provider-specific mode selection; full Deep Research report, file acceptance, continuation, generated media, and native workspace remain unclosed |
-| DeepSeek | Signed-in web chat, Instant/Expert modes, thinking/non-thinking behavior, web search, file upload and text extraction, and synchronized chat history | Experimental registration and signed-out session detection; signed-in prompt, response, continuation, mode, file, search, and citation lifecycles remain unclosed and non-routeable |
+| DeepSeek | Signed-in web chat, Instant/Expert/Vision modes, DeepThink, web search, broad file and image input, and synchronized chat history | Signed-in Instant/Expert/Vision controls and baseline, DeepThink, and Search response states are provenance-captured from the user-controlled Chrome session. Exact mode/toggle actions, correlated final-answer parsing, grounded citation parsing, mode-aware file behavior, and canonical run inference are implemented. Real baseline submission, same-conversation continuation, DeepThink output, and visible Search citations were observed in that session; routes and file/image acceptance remain gated on built-CLI managed-profile E2E |
+| Perplexity | Web search with citations, Pro Search, Advanced Deep Research, file-aware research, Spaces, model selection, image generation/editing, and multi-format asset creation | Experimental guest chat route with built-CLI managed-Cloak closure for readiness, prompt drafting, submission, completed response, normalized and visible citations, conversation mapping, and durable state; file acceptance, continuation, Deep Research, Spaces, model selection, and generated assets remain unadvertised |
+| Z.ai / GLM | GLM-5.2 web chat, 1M context, flexible effort levels, coding, and long-horizon agent strengths | Experimental guest chat route with built-CLI managed-Cloak closure for guest continuation, readiness, prompt drafting, submission, completed visible response, conversation mapping, and durable state; files, continuation, model or effort selection, and advanced GLM workflows remain unadvertised |
 
 Official references:
 
@@ -45,25 +46,24 @@ Official references:
 - [Grok web search and citations](https://x.ai/news/grok-1212) and [Grok on the web](https://help.x.com/en/using-x/about-grok)
 - [Qwen Deep Research](https://qwen.ai/blog?id=qwen-deepresearch) and [Qwen Image](https://qwen.ai/blog?id=qwen-image-2.0)
 - [DeepSeek V4 web modes](https://api-docs.deepseek.com/news/news260424), [DeepSeek web search](https://api-docs.deepseek.com/news/news1210/), and [DeepSeek file upload and synchronized history](https://api-docs.deepseek.com/news/news250115/)
+- [Perplexity overview](https://www.perplexity.ai/help-center/en/articles/10352895-how-does-perplexity-work), [Spaces](https://hub-prod.perplexity.ai/hub/faq/what-are-spaces), and [generated assets](https://www.perplexity.ai/help-center/en/articles/12528830-creating-assets-with-perplexity-overview)
+- [GLM-5.2 on Z.ai](https://z.ai/blog/glm-5.2)
 
 ## Candidate Web Providers
 
 | Candidate | Canonical web entry | Officially documented or currently confirmed surface | Recommended evaluation |
 | --- | --- | --- | --- |
 | Kimi | `https://www.kimi.com/` | Web chat, built-in web search and deep thinking, large file inputs, asynchronous Deep Research with clarification, progress, citations and multi-format reports, general Agent, Agent Swarm, Docs, Sheets, Slides, Websites, image generation, and coding products | P1. Best next provider for proving the complete `research.deep`, background-task, and generated-artifact contracts |
-| Z.ai / GLM | `https://chat.z.ai/` | GLM-5.2 web chat, 1M context, flexible effort levels, coding and long-horizon agent strengths | P1. Treat Z.ai and `chatglm.cn` as separate web surfaces until origin, account, and conversation identity are proven equivalent; begin with baseline, effort, long-context file, and coding reconnaissance |
-| Perplexity | `https://www.perplexity.ai/` | Web search with citations, Pro Search, Advanced Deep Research, file-aware research, Spaces, model selection, image generation/editing, and creation of documents, spreadsheets, presentations, and HTML apps | P1. Strong reference adapter for research, citation, source-scope, Space, and multi-format artifact semantics |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search and citations, Deep Research, Think mode, Projects and Libraries, files, code interpreter, image generation/editing, Canvas, agents, and MCP connectors | P1. Broad capability match with relatively clear official documentation; useful second adapter for research and artifact semantics |
 | Doubao | `https://www.doubao.com/chat/` | The official web product and feature-introduction surface exist, but stable official web help does not currently provide enough detail to classify its advanced capability lifecycles | P2 pending policy and live reconnaissance. Review the product terms before automation work and treat every advanced capability as `unknown` until visibly proven |
 | Meta AI | `https://www.meta.ai/` | Web chat, voice, personalization, image generation and editing, multi-reference composition, search-grounded image creation, Discover, and limited document editor/import experiments | P2 image-first candidate. Do not infer Deep Research, stable file analysis, or document workflow from experiments |
-| Microsoft Copilot | `https://copilot.microsoft.com/` | Web chat, Quick/Think Deeper/Smart modes, Deep Research, file upload, image generation/editing, Pages, connectors, voice, and browser-related experiences | P2. Rich canonical coverage, but Microsoft account, product-surface, and connector policy complexity raise the reconnaissance cost |
+| Microsoft Copilot | `https://copilot.microsoft.com/` | Web chat, Quick/Think Deeper/Smart modes, Deep Research, file upload, image generation/editing, Pages, connectors, voice, and browser-related experiences | Blocked in the 2026-08-01 Cloak precheck: the signed-out surface exposed Microsoft, Apple, and Google sign-in choices but no guest composer. Resume only with an explicitly selected setup-managed signed-in profile |
 | Tencent Yuanbao | `https://yuanbao.tencent.com/` | Web product, Tencent-enhanced web search, multi-format file reading, reasoning/model surfaces, and the broader Tencent content ecosystem | P2. Valuable Chinese search and file route; advanced artifact and workspace claims need official and live closure |
 | MiniMax Agent | `https://agent.minimax.io/` | Long-horizon planning, web and application generation, code execution, multimedia understanding and generation, and MCP integrations | P3 specialist adapter. Its autonomous-agent lifecycle is materially different from chat and should not be forced into the baseline provider contract |
 
 Official candidate references:
 
 - [Kimi overview](https://www.kimi.com/help/getting-started/overview), [Kimi Deep Research](https://www.kimi.com/help/deep-research/deep-research-overview), and [Kimi Agent](https://www.kimi.com/help/agent/agent-overview)
-- [GLM-5.2 on Z.ai](https://z.ai/blog/glm-5.2)
 - [Perplexity overview](https://www.perplexity.ai/help-center/en/articles/10352895-how-does-perplexity-work), [Spaces](https://hub-prod.perplexity.ai/hub/faq/what-are-spaces), [image generation](https://www.perplexity.ai/help-center/en/articles/10354781-generating-images-with-perplexity), and [generated assets](https://www.perplexity.ai/help-center/en/articles/12528830-creating-assets-with-perplexity-overview)
 - [Mistral Le Chat research and Projects](https://mistral.ai/news/le-chat-dives-deep/) and [Le Chat product surface](https://mistral.ai/news/all-new-le-chat/)
 - [DeepSeek V4 web modes](https://api-docs.deepseek.com/news/news260424) and [DeepSeek updates](https://api-docs.deepseek.com/updates/)
@@ -73,9 +73,15 @@ Official candidate references:
 - [Tencent Yuanbao web search](https://cloud.tencent.com/product/wsa) and [desktop file support](https://yuanbao.tencent.com/evt/dl)
 - [MiniMax Agent](https://www.minimax.io/news/minimax-agent)
 
+## 2026-08-01 to 2026-08-02 Cloak Expansion Checkpoint
+
+- Perplexity passed the real non-submission and mutation journeys through the built CLI, packaged daemon, runtime-bound Cloak profile, and provider network. Guest readiness, prompt drafting, completed response, normalized and visible citations, conversation mapping, and durable state are closed; `conversation.chat` is advertised as experimental. A later regression run declined the visible optional-cookie dialog but then reached `provider_sign_in_required`; no login was attempted, and that account-state-dependent rerun remains parked.
+- Z.ai passed its real non-submission and mutation journeys through the built CLI, packaged daemon, runtime-bound Cloak profile, and provider network. Guest continuation, readiness, prompt drafting, completed response, conversation mapping, and durable state are closed; `conversation.chat` is advertised as experimental. The test machine's system resolver still did not resolve `chat.z.ai`, so acceptance used a strict E2E-only process-local resolver mapping to the publicly resolved official origin. Production does not hardcode that address and fails closed when local DNS cannot resolve it.
+- Microsoft Copilot loaded without a challenge on both checks but exposed a sign-in surface and no guest composer. Per the authentication-skip policy, no login was attempted and no adapter was registered.
+
 ## Canonical Capability Schema
 
-The caller catalog must describe outcomes, not provider controls. `qwen.mode`, `model.choice`, `effort.choice`, DOM selectors, and marketing model names stay inside provider strategy adapters.
+The caller catalog must describe outcomes, not provider controls. `qwen.mode`, `deepseek.mode`, `deepseek.deepthink`, `deepseek.search`, `model.choice`, `effort.choice`, DOM selectors, and marketing model names stay inside provider strategy adapters. The DeepSeek adapter already prepares `reasoning.extended` as Instant plus DeepThink, `search.web` as Instant plus Search, and `image.input` as Vision before mutation. Those routes remain unadvertised until each complete visible lifecycle is independently E2E-closed through the built CLI and packaged daemon.
 
 ### Proposed Capability Families
 
@@ -171,5 +177,8 @@ Document, presentation, spreadsheet, and website capabilities must declare their
 - The router considers only implemented and real-E2E-closed provider strategies.
 - Account, region, rollout, and quota are runtime eligibility checks.
 - One V1 provider must satisfy the full requirement set.
-- Provider preference is evaluated after capability compatibility, so a later preferred provider may win when earlier entries cannot satisfy the request.
-- The result records the canonical requirements, selected provider, provider strategies, runtime observations, and evidence used for the decision.
+- Provider ranking happens only after full-set capability compatibility. Fresh runtime eligibility wins over unchecked state, supported evidence wins over experimental evidence, and configured provider preference breaks the remaining tie.
+- Stale cached access is `unchecked`, not trusted as live eligibility. Every attempt performs a read-only visible session and capability-UI preflight before mutation; no probe prompt is allowed.
+- The job contract independently derives requirements from actions, attachment MIME types, and native workspace intent. A route that omits an action-required capability is invalid even when an internal caller supplied it.
+- Automatic fallback consumes the ranked list without capability degradation. When no provider satisfies `research.deep` or another mandatory capability, routing stops with `task_capability_route_unavailable` rather than falling back to plain chat.
+- The result records the canonical requirements, selected provider, provider strategies, runtime observations, evidence, ranked remaining routes, structured attempt failures, and durable attempt history.

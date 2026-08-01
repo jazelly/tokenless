@@ -7,6 +7,7 @@ import {
 } from '../playwright/runner-service.js'
 import { isClaimRecoveryError, tokenlessError } from '../playwright/errors.js'
 import { resolveE2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
+import type { E2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
 import { readTokenlessConfig } from '../job-store.js'
 import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
 import type { JobStore } from './job-store.js'
@@ -147,7 +148,7 @@ export class BrowserRuntimeController {
   private async createRunner(): Promise<RunnerInstance> {
     const runtimeManager = new BrowserRuntimeManager({ homeDir: this.store.homeDir })
     const config = await readTokenlessConfig(this.store.homeDir)
-    const e2eInspection = resolveE2EBrowserInspectionConfig(this.store.homeDir) !== null
+    const e2eInspection = resolveE2EBrowserInspectionConfig(this.store.homeDir)
     const resolvedTargets = new Map<string, Promise<ManagedBrowserLaunchTarget>>()
     const browserResolver = async (profile: ManagedBrowserProfile) => {
       const cacheKey = profile.runtimeBinding?.runtimeId ?? `unbound:${profile.id}`
@@ -202,7 +203,7 @@ export class BrowserRuntimeController {
   private async resolveBrowserLaunchTarget(
     profile: ManagedBrowserProfile,
     runtimeManager: BrowserRuntimeManager,
-    e2eInspection: boolean,
+    e2eInspection: E2EBrowserInspectionConfig | null,
   ): Promise<ManagedBrowserLaunchTarget> {
     const runtime = profile.runtimeBinding
       ? await runtimeManager.resolveForProfile({
@@ -215,7 +216,12 @@ export class BrowserRuntimeController {
       executablePath: runtime.executablePath,
       runtimeId: runtime.runtimeId,
       launchPolicy: runtime.launchPolicy,
-      ...(e2eInspection ? { e2eInspection: true } : {}),
+      ...(e2eInspection ? {
+        e2eInspection: true,
+        ...(e2eInspection.hostResolverRule
+          ? { e2eHostResolverRule: e2eInspection.hostResolverRule.chromiumValue }
+          : {}),
+      } : {}),
     }
   }
 

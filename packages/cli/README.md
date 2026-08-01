@@ -2,7 +2,7 @@
 
 `tokenless` gives agents local CLI access to visible AI websites through managed Playwright browser profiles. Provider credentials and browser state stay on the user's machine.
 
-[Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
+[Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
 
 ## Install
 
@@ -22,7 +22,7 @@ For a clean non-interactive profile:
 tokenless setup --fresh --json
 ```
 
-Fresh setup creates or reuses a profile only when its runtime binding is compatible, resolves the selected browser, and selects every provider whose registry stage is not `disabled`. A runtime-family change creates a clean profile instead of opening existing data with another browser. This includes experimental Qwen and DeepSeek. It reports sign-in state without opening a sign-in handoff.
+Fresh setup creates or reuses a profile only when its runtime binding is compatible, resolves the selected browser, and selects every provider whose registry stage is not `disabled`. A runtime-family change creates a clean profile instead of opening existing data with another browser. This includes experimental Qwen, DeepSeek, Perplexity, and Z.ai. It reports sign-in state without opening a sign-in handoff.
 
 ## Run
 
@@ -41,6 +41,8 @@ List canonical task outcomes and their evidence-backed provider routes:
 ```bash
 tokenless capabilities list --json
 ```
+
+The public [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) explains the outcome vocabulary, current provider mappings, evidence ladder, and extension process.
 
 `--capability` is repeatable. Tokenless also infers `conversation.chat` for a normal run, `file.upload` plus the media-specific input capability from attachments, and `workspace.native` from native Workspace intent. One provider must satisfy the entire merged requirement set:
 
@@ -66,6 +68,8 @@ Implicit normal runs persist compatible provider alternatives. Before prompt sub
 | Grok | Supported | Sign-in required |
 | Qwen / 千问 | Experimental | Guest supported |
 | DeepSeek | Experimental | Sign-in required |
+| Perplexity | Experimental | Guest supported |
+| Z.ai / GLM | Experimental | Guest supported |
 
 Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state.
 
@@ -104,7 +108,7 @@ The experimental capability proves exact mode selection and the first correlated
 - `native` requires exact native creation or reuse.
 - `conversation` requires the conversation strategy.
 
-Native Project support is currently implemented for Claude and Grok. All Workspace behavior remains capability-gated and experimental.
+Native Project behavior is implemented experimentally for the explicit Claude and Grok real-provider gate, but `workspace.native` is not advertised as a router route until that complete gate passes. All Workspace behavior remains capability-gated.
 
 ## Managed Profiles
 

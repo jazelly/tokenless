@@ -10,6 +10,7 @@ import {
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import { TokenlessPlaywrightError, tokenlessError } from '../../playwright/errors.js'
 import { VISIBLE_ACTIONS } from '../contracts.js'
+import { providerCapabilityFailure } from '../capability-set.js'
 import { VISIBLE_ATTACHMENT_SCHEMA_ID, validateAttachmentInput } from '../../playwright/actions.js'
 import type { FileChooser, Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
@@ -65,31 +66,34 @@ async function uploadFiles(
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
   const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
   const visibleEvidenceBeforeUpload = await visibleAttachmentEvidence(page, attachments)
-  let fileInput = await firstFileInputLocator(page, provider.fileInputSelectors)
-  let selectedProof = 'hidden-file-input-filelist-selected'
-  if (!fileInput) {
-    const chooser = await openProviderFileChooser(page, provider)
-    if (chooser) {
-      await chooser.setFiles(files)
-      selectedProof = 'file-chooser-selected'
-    } else {
-      fileInput = await firstFileInputLocator(page, provider.fileInputSelectors)
-    }
+  let fileInput: Locator | null = null
+  const chooser = await openProviderFileChooser(page, provider)
+  if (chooser) {
+    await chooser.setFiles(files)
+  } else {
+    fileInput = await firstFileInputLocator(page, provider.fileInputSelectors)
   }
-  if (!fileInput && selectedProof !== 'file-chooser-selected') {
-    throw new Error('No visible provider file input is available.')
+  if (!fileInput && !chooser) {
+    throw providerCapabilityFailure(
+      'file_upload_unavailable',
+      'No visible provider file upload control is available for this account.',
+      { retryable: false },
+    )
   }
   if (fileInput) {
     await fileInput.setInputFiles(files)
-    selectedProof = await fileInputContainsNames(fileInput, attachments)
-      ? 'hidden-file-input-filelist-selected'
-      : 'set-input-files-completed'
   }
   const acceptedProof = await waitForVisibleAttachmentProof(page, attachments, visibleEvidenceBeforeUpload, context.signal)
-  const accepted = acceptedProof !== null
+  if (!acceptedProof) {
+    throw providerCapabilityFailure(
+      'file_upload_unavailable',
+      'The provider did not visibly accept the selected attachment.',
+      { retryable: true },
+    )
+  }
   return {
-    acceptance: accepted ? 'accepted' as const : 'selected' as const,
-    visibleProof: acceptedProof ?? selectedProof,
+    acceptance: 'accepted' as const,
+    visibleProof: acceptedProof,
     attachments: attachments.map((attachment) => ({
       protocol: VISIBLE_ATTACHMENT_SCHEMA_ID,
       bundleId: attachment.bundleId,
@@ -118,32 +122,44 @@ async function resolveAttachmentPayload(attachmentRoot: string | undefined, atta
 
 async function openProviderFileChooser(page: Page, provider: ProviderDomDefinition): Promise<FileChooser | null> {
   const trigger = await firstEnabledLocator(page, provider.fileUploadTriggerSelectors)
-  if (trigger) {
-    const expanded = await trigger.getAttribute('aria-expanded').catch(() => null)
-    if (expanded !== 'true') {
-      await trigger.click({ timeout: 2000 }).catch(() => undefined)
-    }
-  }
-  const localUpload = await firstEnabledLocator(page, provider.fileUploadLocalSelectors)
-  if (!localUpload) return null
-
   const waitForEvent = (page as Page & {
     waitForEvent?: (event: 'filechooser', options?: { timeout?: number }) => Promise<FileChooser>
   }).waitForEvent
+  if (trigger) {
+    const expanded = await trigger.getAttribute('aria-expanded').catch(() => null)
+    if (expanded !== 'true') {
+      const directChooser = typeof waitForEvent === 'function'
+        ? waitForEvent.call(page, 'filechooser', { timeout: 1000 }).catch(() => null)
+        : Promise.resolve(null)
+      await trigger.click({ timeout: 5000 }).catch(() => undefined)
+      const chooser = await directChooser
+      if (chooser) return chooser
+    }
+  }
+  const localUpload = await waitForEnabledLocator(page, provider.fileUploadLocalSelectors, 5000)
+  if (!localUpload) return null
+
   if (typeof waitForEvent !== 'function') {
-    await localUpload.click({ timeout: 2000 }).catch(() => undefined)
+    await localUpload.click({ timeout: 5000 }).catch(() => undefined)
     return null
   }
-  const chooser = waitForEvent.call(page, 'filechooser', { timeout: 1000 }).catch(() => null)
-  await localUpload.click({ timeout: 2000 }).catch(() => undefined)
+  const chooser = waitForEvent.call(page, 'filechooser', { timeout: 5000 }).catch(() => null)
+  await localUpload.click({ timeout: 5000 }).catch(() => undefined)
   return await chooser
 }
 
+async function waitForEnabledLocator(page: Page, selectors: readonly string[], timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const locator = await firstEnabledLocator(page, selectors)
+    if (locator) return locator
+    await waitForPageTimeout(page, 100)
+  }
+  return null
+}
+
 async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDefinition) {
-  const unavailable = await firstUnavailableLocator(page, [
-    ...provider.fileUploadLocalSelectors,
-    ...provider.fileUploadTriggerSelectors,
-  ])
+  let unavailable = await firstUnavailableLocator(page, provider.fileUploadLocalSelectors)
   if (unavailable) {
     return {
       availability: 'unavailable' as const,
@@ -161,10 +177,35 @@ async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDe
   }
   const trigger = await firstEnabledLocator(page, provider.fileUploadTriggerSelectors)
   if (trigger) {
+    const menuLike = await trigger.evaluate((element) => (
+      element.getAttribute('aria-haspopup') === 'menu' || element.hasAttribute('aria-expanded')
+    )).catch(() => false)
+    if (menuLike && await trigger.getAttribute('aria-expanded').catch(() => null) !== 'true') {
+      await trigger.click({ timeout: 5000 }).catch(() => undefined)
+    }
+    if (menuLike) {
+      await waitForPageTimeout(page, 500)
+      unavailable = await firstUnavailableLocator(page, provider.fileUploadLocalSelectors)
+      if (unavailable) {
+        return {
+          availability: 'unavailable' as const,
+          visibleProof: 'visible-upload-control-disabled-or-sign-in',
+          reason: 'visible_upload_control_disabled_or_requires_sign_in',
+        }
+      }
+      const openedLocalUpload = await firstEnabledLocator(page, provider.fileUploadLocalSelectors)
+      if (openedLocalUpload) {
+        return {
+          availability: 'available' as const,
+          visibleProof: 'visible-local-upload-control-enabled',
+          reason: null,
+        }
+      }
+    }
     return {
-      availability: 'available' as const,
-      visibleProof: 'visible-upload-trigger-enabled',
-      reason: null,
+      availability: 'unknown' as const,
+      visibleProof: 'visible-upload-trigger-without-file-acceptance-control',
+      reason: 'visible_upload_trigger_does_not_prove_file_acceptance',
     }
   }
   const input = await firstFileInputLocator(page, provider.fileInputSelectors)
@@ -180,15 +221,6 @@ async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDe
     visibleProof: 'no-visible-upload-control',
     reason: 'visible_upload_control_not_observed',
   }
-}
-
-async function fileInputContainsNames(fileInput: Locator, attachments: readonly AttachmentInput[]) {
-  const expected = attachments.map((attachment) => basename(attachment.name)).sort()
-  const actual = await fileInput.evaluate((element) => {
-    if (!(element instanceof HTMLInputElement) || !element.files) return []
-    return Array.from(element.files).map((file) => file.name).sort()
-  }).catch(() => [])
-  return expected.length === actual.length && expected.every((name, index) => name === actual[index])
 }
 
 async function visibleAttachmentEvidence(page: Page, attachments: readonly AttachmentInput[]) {
@@ -275,11 +307,11 @@ async function waitForVisibleAttachmentProof(
   evidenceBeforeUpload: ReadonlySet<string>,
   signal: AbortSignal | undefined,
 ) {
-  for (let attempt = 0; attempt <= 25; attempt += 1) {
+  for (let attempt = 0; attempt <= 75; attempt += 1) {
     assertNotAborted(signal)
     const proof = await visibleAttachmentProof(page, attachments, evidenceBeforeUpload)
     if (proof) return proof
-    if (attempt < 25) await waitForPageTimeout(page, 200)
+    if (attempt < 75) await waitForPageTimeout(page, 200)
   }
   return null
 }

@@ -9,12 +9,26 @@ import {
   createVisibleActionRequest,
   validateVisibleActionRequest,
 } from './actions.js'
+import {
+  createContextEnvelope,
+  validateContextEnvelope,
+  type ContextEnvelope,
+} from './context-envelope.js'
 import { tokenlessError } from './errors.js'
-import { getProviderInstanceById, validateTaskCapabilityRoute } from '../providers/registry.js'
+import { getVisibleActionCatalogDefinition } from '../providers/action-catalog.js'
+import {
+  TASK_CAPABILITIES,
+  getProviderInstanceById,
+  normalizeTaskCapabilityRequirements,
+  validateTaskCapabilityRoute,
+} from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 import type { ManagedPagePolicy } from './browser/context-manager.js'
 import type { VisibleActionRequest, VisibleActionWireRequest } from './actions.js'
-import type { ProviderId, ProviderInstance, TaskCapabilityRoute } from '../providers/registry.js'
+import type { ProviderId, ProviderInstance, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
+
+export { CONTEXT_ENVELOPE_SCHEMA_ID } from './context-envelope.js'
+export type { ContextEnvelope } from './context-envelope.js'
 
 export {
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
@@ -34,6 +48,7 @@ export type ManagedPlaywrightJobRequest = {
   taskId: string | null
   capabilityRoute: TaskCapabilityRoute | null
   fallback: ManagedPlaywrightFallbackPlan | null
+  context: ContextEnvelope
   browserVisibility: BrowserVisibility
   pagePolicy?: ManagedPagePolicy | undefined
   actions: readonly VisibleActionRequest[]
@@ -58,6 +73,8 @@ export type CreateManagedPlaywrightJobRequestInput = {
   taskId?: string | null | undefined
   capabilityRoute?: TaskCapabilityRoute | null | undefined
   fallback?: ManagedPlaywrightFallbackPlan | null | undefined
+  context?: ContextEnvelope | null | undefined
+  contextLanguage?: 'en' | 'zh-CN' | null | undefined
   browserVisibility?: unknown
   pagePolicy?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
@@ -101,6 +118,12 @@ export function createManagedPlaywrightJobRequest(
     taskId: validateTaskId(input.taskId ?? null),
     capabilityRoute: input.capabilityRoute ?? null,
     fallback: input.fallback ?? null,
+    context: input.context ?? createContextEnvelope({
+      taskId: validateTaskId(input.taskId ?? null),
+      requirements: input.capabilityRoute?.requirements ?? deriveTaskCapabilityRequirements(actions),
+      actions,
+      language: input.contextLanguage,
+    }),
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
     actions,
@@ -114,7 +137,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'fallback', 'pagePolicy'],
+    ['capabilityRoute', 'fallback', 'context', 'pagePolicy'],
     'invalid_playwright_job_request',
   )
   if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
@@ -133,14 +156,6 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
   const target = validateSafeTarget(input.target, provider)
   const taskId = validateTaskId(input.taskId)
-  const capabilityRoute = input.capabilityRoute === undefined || input.capabilityRoute === null
-    ? null
-    : validateJobCapabilityRoute(input.capabilityRoute, provider.id)
-  const fallback = input.fallback === undefined || input.fallback === null
-    ? null
-    : validateFallbackPlan(input.fallback, provider.id, capabilityRoute)
-  const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
-  const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
   if (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 100) {
     throw tokenlessError('invalid_playwright_job_actions', 'Managed Playwright job requires one to one hundred actions.')
   }
@@ -155,7 +170,30 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     if (!CORE_ACTIONS.has(action.action)) {
       throw tokenlessError('invalid_playwright_job_action', 'Managed Playwright job contains an unsupported action.')
     }
+    const unavailableCapabilities = getVisibleActionCatalogDefinition(action.action).requiredCapabilities
+      .filter((capability) => provider.declaredCapabilityAvailability(capability) === 'unavailable')
+    if (unavailableCapabilities.length > 0) {
+      throw tokenlessError(
+        'invalid_playwright_job_action_capability',
+        `Managed Playwright provider '${provider.id}' does not declare the capabilities required by action '${action.action}'.`,
+        { details: { provider: provider.id, action: action.action, unavailableCapabilities } },
+      )
+    }
   }
+  const derivedRequirements = deriveTaskCapabilityRequirements(actions)
+  const capabilityRoute = input.capabilityRoute === undefined || input.capabilityRoute === null
+    ? null
+    : validateJobCapabilityRoute(input.capabilityRoute, provider.id)
+  if (capabilityRoute) assertRouteCoversActionRequirements(capabilityRoute, derivedRequirements)
+  const fallback = input.fallback === undefined || input.fallback === null
+    ? null
+    : validateFallbackPlan(input.fallback, provider, target, capabilityRoute)
+  const contextRequirements = capabilityRoute?.requirements ?? derivedRequirements
+  const context = input.context === undefined || input.context === null
+    ? createContextEnvelope({ taskId, requirements: contextRequirements, actions })
+    : validateContextEnvelope(input.context, { taskId, requirements: contextRequirements, actions })
+  const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
+  const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
   if (fallback && actions.some((action) => !AUTOMATIC_FALLBACK_ACTIONS.has(action.action))) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback accepts only portable conversation actions.')
   }
@@ -166,6 +204,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     taskId,
     capabilityRoute,
     fallback,
+    context,
     browserVisibility,
     ...(pagePolicy === undefined ? {} : { pagePolicy }),
     actions,
@@ -174,7 +213,8 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
 
 function validateFallbackPlan(
   input: unknown,
-  currentProvider: ProviderId,
+  currentProvider: ProviderInstance,
+  currentTarget: ManagedPlaywrightSafeTarget,
   currentRoute: TaskCapabilityRoute | null,
 ): ManagedPlaywrightFallbackPlan {
   if (!isPlainRecord(input)) {
@@ -190,10 +230,13 @@ function validateFallbackPlan(
   if (currentRoute.requirements.includes('conversation.continue')) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Exact provider conversation continuation cannot fallback automatically.')
   }
+  if (!isProviderHomeTarget(currentTarget, currentProvider)) {
+    throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback requires provider-home targets, not provider-specific conversations or Projects.')
+  }
   if (!Array.isArray(input.alternatives) || input.alternatives.length < 1 || input.alternatives.length > 5) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback requires one to five alternatives.')
   }
-  const seen = new Set<ProviderId>([currentProvider])
+  const seen = new Set<ProviderId>([currentProvider.id])
   const alternatives = input.alternatives.map((value) => {
     if (!isPlainRecord(value)) {
       throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback alternative must be an object.')
@@ -209,14 +252,78 @@ function validateFallbackPlan(
       throw tokenlessError('invalid_playwright_job_fallback', 'Every fallback provider must satisfy the same run capability requirements.')
     }
     const target = validateSafeTarget(value.target, provider)
+    if (!isProviderHomeTarget(target, provider)) {
+      throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback alternatives must start from provider-home targets.')
+    }
     return { provider: provider.id, target, capabilityRoute: route }
   })
+  for (let index = 1; index < alternatives.length; index += 1) {
+    if (routeMaturityScore(alternatives[index - 1]!.capabilityRoute) < routeMaturityScore(alternatives[index]!.capabilityRoute)) {
+      throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback alternatives must be ordered by runtime eligibility and evidence maturity.')
+    }
+  }
   return {
     protocol: 'tokenless.provider-fallback.v1',
     mode: 'automatic',
     replay: 'from_start',
     alternatives,
   }
+}
+
+function deriveTaskCapabilityRequirements(actions: readonly VisibleActionRequest[]): readonly TaskCapabilityId[] {
+  const requirements: TaskCapabilityId[] = []
+  for (const action of actions) {
+    if (
+      action.action === VISIBLE_ACTIONS.PROMPT_INPUT ||
+      action.action === VISIBLE_ACTIONS.PROMPT_CLEAR ||
+      action.action === VISIBLE_ACTIONS.PROMPT_SUBMIT ||
+      action.action === VISIBLE_ACTIONS.RESPONSE_READ
+    ) {
+      requirements.push(TASK_CAPABILITIES.CONVERSATION_CHAT)
+    }
+    if (action.action === VISIBLE_ACTIONS.FILE_UPLOAD) {
+      requirements.push(TASK_CAPABILITIES.FILE_UPLOAD)
+      for (const attachment of action.payload.attachments) {
+        if (attachment.type.startsWith('image/')) requirements.push(TASK_CAPABILITIES.IMAGE_INPUT)
+        if (attachment.type.startsWith('audio/')) requirements.push(TASK_CAPABILITIES.AUDIO_INPUT)
+        if (attachment.type.startsWith('video/')) requirements.push(TASK_CAPABILITIES.VIDEO_INPUT)
+      }
+    }
+    if (action.action === VISIBLE_ACTIONS.WORKSPACE_ENSURE && action.payload.mode === 'native') {
+      requirements.push(TASK_CAPABILITIES.WORKSPACE_NATIVE)
+    }
+  }
+  return normalizeTaskCapabilityRequirements(requirements)
+}
+
+function assertRouteCoversActionRequirements(
+  route: TaskCapabilityRoute,
+  derivedRequirements: readonly TaskCapabilityId[],
+) {
+  const missing = derivedRequirements.filter((capability) => !route.requirements.includes(capability))
+  if (missing.length > 0) {
+    throw tokenlessError(
+      'invalid_playwright_job_capability_requirements',
+      `Managed Playwright capability route omits action-required capabilities: ${missing.join(', ')}.`,
+      { details: { provider: route.provider, declared: route.requirements, required: derivedRequirements, missing } },
+    )
+  }
+}
+
+function isProviderHomeTarget(target: ManagedPlaywrightSafeTarget, provider: ProviderInstance) {
+  return canonicalUrl(target.url) === canonicalUrl(provider.descriptor.navigation.homeUrl)
+}
+
+function canonicalUrl(value: string) {
+  const parsed = new URL(value)
+  parsed.search = ''
+  parsed.hash = ''
+  return parsed.toString()
+}
+
+function routeMaturityScore(route: TaskCapabilityRoute) {
+  return (route.runtimeEligibility === 'eligible' ? 20 : route.runtimeEligibility === 'unchecked' ? 10 : 0) +
+    (route.support === 'supported' ? 1 : 0)
 }
 
 function sameStringArray(left: readonly string[], right: readonly string[]) {

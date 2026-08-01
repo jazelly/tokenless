@@ -21,6 +21,29 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
         options.profileId ?? null
     )),
     markJobRunning: (options) => claimRequest(options, () => publicJobView(store.markRunning(options.jobId, options.claimToken))),
+    projectJobProviderCapacity: (options) => claimRequest(options, () => store.projectJobProviderCapacity(
+      options.jobId,
+      options.claimToken,
+      {
+        access_class: options.accessClass,
+        tier_label: options.tierLabel,
+        subscription_label: options.subscriptionLabel,
+      },
+    )),
+    deferJobForProviderCapacity: (options) => claimRequest(options, () => publicJobView(
+      store.deferJobForProviderCapacity(options.jobId, options.claimToken, options.projection)
+    )),
+    recordProviderSubmission: (options) => claimRequest(options, () => publicJobView(
+      store.recordProviderSubmission(options.jobId, options.claimToken)
+    )),
+    deferObservedProviderLimit: (options) => claimRequest(options, () => publicJobView(
+      store.deferObservedProviderLimit(
+        options.jobId,
+        options.claimToken,
+        options.blocker,
+        options.delaySeconds,
+      )
+    )),
     markJobWaitingForUser: (options) => waitingForUserRequest(options, () => publicJobView(
       store.markWaitingForUser(options.jobId, options.claimToken, options.blocker)
     )),

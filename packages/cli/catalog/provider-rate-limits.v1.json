@@ -1,9 +1,9 @@
 {
   "schema": "tokenless.provider-rate-limit-catalog.v1",
   "catalogVersion": 1,
-  "revision": "2026-07-31",
-  "reviewedAt": "2026-07-31",
-  "reviewAfter": "2026-08-31",
+  "revision": "2026-08-02",
+  "reviewedAt": "2026-08-02",
+  "reviewAfter": "2026-09-02",
   "scope": {
     "productSurface": "consumer_web",
     "capacityScope": "provider_profile",
@@ -18,6 +18,47 @@
     "numericValues": "require_official_exact_evidence",
     "relativeValues": "require_named_reference_allowance",
     "runtimeUse": "best_effort_only"
+  },
+  "runtimePolicy": {
+    "exactAllowanceHeadroomRatio": 0.9,
+    "headroomMinimumAllowance": 20,
+    "burstRatio": 0.05,
+    "minimumBurstUnits": 2,
+    "maximumBurstUnits": 8,
+    "providerDefaults": {
+      "chatgpt": {
+        "modelFamily": "gpt-5.5-instant",
+        "promptAction": "prompt.submit"
+      },
+      "claude": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "gemini": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "grok": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "qwen": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "deepseek": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "perplexity": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      },
+      "zai": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
+      }
+    }
   },
   "sources": {
     "openai-gpt55-chatgpt": {
@@ -103,6 +144,34 @@
       "url": "https://qwen.ai/usagepolicy",
       "authority": "official",
       "retrievedAt": "2026-07-31"
+    },
+    "deepseek-user-agreement": {
+      "publisher": "DeepSeek",
+      "title": "DeepSeek User Agreement",
+      "url": "https://chat.deepseek.com/downloads/DeepSeek%20User%20Agreement.pdf",
+      "authority": "official",
+      "retrievedAt": "2026-08-01"
+    },
+    "perplexity-plan-comparison": {
+      "publisher": "Perplexity",
+      "title": "Which Perplexity Subscription Plan is right for you?",
+      "url": "https://www.perplexity.ai/help-center/en/articles/11187416-which-perplexity-subscription-plan-is-right-for-you",
+      "authority": "official",
+      "retrievedAt": "2026-08-01"
+    },
+    "perplexity-pro": {
+      "publisher": "Perplexity",
+      "title": "What is Perplexity Pro?",
+      "url": "https://www.perplexity.ai/help-center/en/articles/10352901-what-is-perplexity-pro",
+      "authority": "official",
+      "retrievedAt": "2026-08-01"
+    },
+    "zai-glm52": {
+      "publisher": "Z.ai",
+      "title": "GLM-5.2: Built for Long-Horizon Tasks",
+      "url": "https://z.ai/blog/glm-5.2",
+      "authority": "official",
+      "retrievedAt": "2026-08-02"
     }
   },
   "providers": {
@@ -1512,6 +1581,324 @@
           "notes": [
             "No official numeric Qwen consumer Web allowance was found in the cited policy.",
             "Qwen policy prohibits creating multiple accounts to evade restrictions."
+          ]
+        }
+      ]
+    },
+    "deepseek": {
+      "label": "DeepSeek",
+      "plans": [
+        {
+          "id": "free",
+          "family": "free",
+          "labels": ["Free"]
+        },
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_mode",
+        "deepthink",
+        "search",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "deepseek.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["free", "signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_free", "signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["deepseek-user-agreement"]
+            }
+          ],
+          "notes": [
+            "No official numeric consumer Web allowance was found.",
+            "DeepSeek API concurrency documentation is intentionally excluded from this consumer Web rule."
+          ]
+        }
+      ]
+    },
+    "perplexity": {
+      "label": "Perplexity",
+      "plans": [
+        {
+          "id": "standard",
+          "family": "free",
+          "labels": ["Standard", "Free"]
+        },
+        {
+          "id": "pro",
+          "family": "individual_paid",
+          "labels": ["Pro", "Perplexity Pro"]
+        },
+        {
+          "id": "education_pro",
+          "family": "individual_paid",
+          "labels": ["Education Pro"]
+        },
+        {
+          "id": "max",
+          "family": "individual_paid",
+          "labels": ["Max", "Perplexity Max"]
+        },
+        {
+          "id": "enterprise_pro",
+          "family": "organization_paid",
+          "labels": ["Enterprise Pro"]
+        },
+        {
+          "id": "enterprise_max",
+          "family": "organization_paid",
+          "labels": ["Enterprise Max"]
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "search_mode",
+        "selected_model",
+        "feature",
+        "system_capacity"
+      ],
+      "runtimeSignals": [
+        {
+          "kind": "advanced_model_access_may_tighten_during_heavy_usage",
+          "appliesTo": ["pro", "education_pro", "max", "enterprise_pro", "enterprise_max"],
+          "sourceIds": ["perplexity-pro"]
+        }
+      ],
+      "rules": [
+        {
+          "id": "perplexity.standard.pro-search.daily",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["standard"],
+            "accessClasses": ["signed_in_free"],
+            "modelFamilies": ["*"],
+            "modes": ["pro_search"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "search"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 86400
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 3
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-plan-comparison"]
+            }
+          ],
+          "notes": [
+            "This rule applies to Pro Search, not practically unlimited basic searches or Best mode."
+          ]
+        },
+        {
+          "id": "perplexity.enterprise-pro.pro-search.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_pro"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "modes": ["pro_search"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "search"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 400
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-plan-comparison"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "perplexity.enterprise-max.pro-search.weekly",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["enterprise_max"],
+            "accessClasses": ["signed_in_paid"],
+            "modelFamilies": ["*"],
+            "modes": ["pro_search"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "count",
+            "unit": "search"
+          },
+          "window": {
+            "kind": "provider_managed",
+            "durationSeconds": 604800
+          },
+          "allowance": {
+            "kind": "exact",
+            "count": 4000
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_exact",
+              "sourceIds": ["perplexity-plan-comparison"]
+            }
+          ],
+          "notes": []
+        },
+        {
+          "id": "perplexity.consumer-web.general-usage",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["standard", "pro", "education_pro", "max", "enterprise_pro", "enterprise_max", "unknown"],
+            "accessClasses": ["guest", "signed_in_free", "signed_in_paid", "signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "official_dynamic",
+              "sourceIds": ["perplexity-plan-comparison", "perplexity-pro"]
+            }
+          ],
+          "notes": [
+            "Consumer Pro, Education Pro, and Max are described with average or advanced weekly limits but no single exact allowance.",
+            "Best mode is described as available without quota limits, while advanced-model access can tighten during heavy usage."
+          ]
+        }
+      ]
+    },
+    "zai": {
+      "label": "Z.ai / GLM",
+      "plans": [
+        {
+          "id": "guest",
+          "family": "guest",
+          "labels": []
+        },
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "zai.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["guest", "signed_in_unknown", "unknown"],
+            "accessClasses": ["guest", "signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["zai-glm52"]
+            }
+          ],
+          "notes": [
+            "The official product announcement confirms consumer Web availability but publishes no numeric Web allowance or reset window.",
+            "GLM Coding Plan quotas are intentionally excluded because they are separate from Z.ai consumer Web chat."
           ]
         }
       ]

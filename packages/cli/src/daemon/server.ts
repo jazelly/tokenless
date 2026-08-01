@@ -5,6 +5,10 @@ import { tokenlessPackageVersion } from '../platform-package.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import { listProviderInstances } from '../providers/registry.js'
 import {
+  MANAGED_PLAYWRIGHT_JOB_ACTION,
+  validateManagedPlaywrightJobRequest,
+} from '../playwright/job-contract.js'
+import {
   daemonReadyProof,
   isCanonicalReadyChallenge,
   READY_CHALLENGE_BYTES,
@@ -259,14 +263,19 @@ async function handleRequest(
         throw invalidInput('agent_kind and agent_session_id must be provided together')
       }
       const provider = requiredString(body.provider, 'provider')
+      const action = requiredString(body.action, 'action')
       const executionBackend = optionalExecutionBackend(body.execution_backend)
       if (executionBackend === 'playwright' && !supportedProviderSet().has(provider)) {
         throw invalidInput(`unsupported playwright provider: ${provider}`)
       }
+      const rawRequestJson = requireField(body, 'request_json')
+      const requestJson = action === MANAGED_PLAYWRIGHT_JOB_ACTION && hasManagedPlaywrightProtocol(rawRequestJson)
+        ? validateManagedPlaywrightRequestInput(rawRequestJson)
+        : rawRequestJson
       const job = store.createJob({
         provider,
-        action: requiredString(body.action, 'action'),
-        request_json: requireField(body, 'request_json'),
+        action,
+        request_json: requestJson,
         execution_backend: executionBackend,
         profile_id: optionalString(body.profile_id),
         agent_kind: hasAgentKind ? requiredString(body.agent_kind, 'agent_kind') : undefined,
@@ -309,6 +318,23 @@ async function handleRequest(
         limit: optionalLimit(url.searchParams.get('limit')),
       })
       writeJson(response, 200, jobs.map(publicView))
+      return
+    }
+
+    if (method === 'GET' && url.pathname === '/provider-capacity') {
+      const provider = requiredQueryString(url.searchParams.get('provider'), 'provider')
+      const projection = store.projectProviderCapacity({
+        provider,
+        profile_id: requiredQueryString(url.searchParams.get('profile_id'), 'profile_id'),
+        access_class: requiredQueryString(url.searchParams.get('access_class'), 'access_class'),
+        tier_label: optionalQueryString(url.searchParams.get('tier_label')),
+        subscription_label: optionalQueryString(url.searchParams.get('subscription_label')),
+        request_json: {
+          provider,
+          actions: [{ action: 'prompt.submit', payload: {} }],
+        },
+      })
+      writeJson(response, 200, projection)
       return
     }
 
@@ -379,6 +405,18 @@ async function handleRequest(
       return
     }
     writeDaemonError(response, toDaemonError(error))
+  }
+}
+
+function hasManagedPlaywrightProtocol(value: unknown) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'protocol'))
+}
+
+function validateManagedPlaywrightRequestInput(value: unknown) {
+  try {
+    return validateManagedPlaywrightJobRequest(value)
+  } catch (error) {
+    throw invalidInput(`request_json is invalid: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

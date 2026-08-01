@@ -1,6 +1,6 @@
 # Context Delivery and Workspace Alignment
 
-Status: proposed | Priority: P0
+Status: in progress | Priority: P0
 
 Depends on: provider capability inspection, conversation continuation, file staging, and workspace handling
 
@@ -9,6 +9,8 @@ Depends on: provider capability inspection, conversation continuation, file stag
 Tokenless can carry the right authorized context into the exact provider Project or conversation, including a completely new chat. The receiving web agent should understand the task, repository rules, relevant files, prior decisions, and completion criteria without relying on a guessed project name or an unstructured prompt dump.
 
 This roadmap concerns how Tokenless represents, filters, transports, verifies, and refreshes context. It does not attempt to reproduce every provider-specific feature.
+
+The first provider-neutral transport contract is implemented as `tokenless.context-envelope.v1` on every managed Playwright job. It binds task identity and the implication-complete capability set to role-bearing instructions, caller-selected attachment provenance, output language/format, token/deadline constraints, optional upstream agent state, and SHA-256 delivery receipts for the exact prompt actions. The job validator proves that instructions are present in delivered prompt actions and that references exactly match staged attachments; automatic provider fallback revalidates and replays the same envelope. Context transport planning, visible per-source acceptance receipts, native workspace mapping, incremental refresh, and source-level budgeting remain the broader phases below.
 
 ## Core Contract: Context Envelope
 

@@ -14,7 +14,7 @@ type UiServerOptions = {
   origin: () => string
 }
 
-const UI_ROOT = fileURLToPath(new URL('../ui/', import.meta.url))
+const UI_ROOT = fileURLToPath(new URL('./ui/', import.meta.url))
 
 export class TokenlessUiServer {
   private readonly services: TokenlessApplicationServices
@@ -56,16 +56,17 @@ export class TokenlessUiServer {
       this.writeAsset(response, 200, body, 'text/html; charset=utf-8')
       return
     }
-    if (method === 'GET' && url.pathname === '/ui/app.js') {
-      this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, 'app.js')), 'text/javascript; charset=utf-8')
-      return
-    }
     if (method === 'GET' && url.pathname === '/ui/styles.css') {
       this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, 'styles.css')), 'text/css; charset=utf-8')
       return
     }
     if (method === 'GET' && url.pathname === '/ui/mark.png') {
       this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, 'mark.png')), 'image/png')
+      return
+    }
+    const modulePath = method === 'GET' ? uiModulePath(url.pathname) : null
+    if (modulePath) {
+      this.writeAsset(response, 200, await fs.readFile(path.join(UI_ROOT, modulePath)), 'text/javascript; charset=utf-8')
       return
     }
 
@@ -216,6 +217,11 @@ export class TokenlessUiServer {
     })
     response.end(payload)
   }
+}
+
+function uiModulePath(pathname: string) {
+  const match = /^\/ui\/([a-z0-9-]+(?:\/[a-z0-9-]+)*)\.js$/.exec(pathname)
+  return match ? `${match[1]}.js` : null
 }
 
 async function readJson(request: IncomingMessage) {

@@ -24,10 +24,15 @@ import {
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
 import { getVisibleActionLifecycle } from '../providers/action-catalog.js'
+import {
+  classifyProviderFailure,
+  classifyVisibleProviderBlocker,
+  type ClassifiedProviderFailure,
+} from './provider-failure-classification.js'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersion } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
 import { readTokenlessConfig } from '../job-store.js'
-import { getProviderInstanceById } from '../providers/registry.js'
+import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
@@ -35,6 +40,7 @@ import type {
 } from './browser/context-manager.js'
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
+import type { ProviderCapabilityId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 import type { BrowserConnectionMode } from '../browser-connection-mode.js'
 import type { VisibleAction, VisibleActionRequest } from './actions.js'
@@ -42,6 +48,7 @@ import type { VisibleActionResponse } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
 import type { NativeWorkspaceEnsureResult } from './actions.js'
 import type { ProviderActionPreparation } from '../providers/contracts.js'
+import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 import type { BrowserContext, Page } from 'playwright-core'
 
 export type ManagedPlaywrightRunnerServiceOptions = {
@@ -72,7 +79,7 @@ export type ManagedProfileSource = {
 
 export type ManagedPlaywrightRunnerIteration =
   | { claimed: false }
-  | { claimed: true, jobId: string, status: 'succeeded' | 'failed' | 'canceled' | 'waiting_for_user' | 'fallback_queued' }
+  | { claimed: true, jobId: string, status: 'succeeded' | 'failed' | 'canceled' | 'waiting_for_user' | 'fallback_queued' | 'rate_limit_deferred' }
 
 export type ManagedPlaywrightJobResult = {
   protocol: typeof MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID
@@ -387,6 +394,46 @@ export class ManagedPlaywrightRunnerService {
 
     try {
       const request = this.validateClaimedJob(profile, job)
+      if (job.provider_submitted_at === null && !checkpointIndicatesSubmission(job.checkpoint_json)) {
+        const subscription = rateLimitSubscription(profile, job.provider)
+        const projection = await this.daemonClient.projectJobProviderCapacity({
+          jobId: job.job_id,
+          claimToken: job.claim_token,
+          accessClass: subscription.accessClass,
+          tierLabel: subscription.tierLabel,
+          subscriptionLabel: subscription.subscriptionLabel,
+          signal,
+        })
+        if (projection.decision === 'defer') {
+          const failure = providerCapacityFailure(projection)
+          const fallbackRequest = safeFallbackRequest(request, initialExecutionState(), failure)
+          if (fallbackRequest) {
+            await this.daemonClient.fallbackJob({
+              jobId: job.job_id,
+              claimToken: job.claim_token,
+              provider: fallbackRequest.provider,
+              request: fallbackRequest,
+              blocker: { code: 'provider_capacity_deferred', projection, failure },
+              signal,
+            })
+            throw new QueuedProviderFallback()
+          }
+          if (!projection.eligibleAt) {
+            throw tokenlessError(
+              'provider_capacity_request_exceeds_known_allowance',
+              'The request exceeds a known provider allowance and cannot become eligible by waiting.',
+              { retryable: false, details: projection },
+            )
+          }
+          await this.daemonClient.deferJobForProviderCapacity({
+            jobId: job.job_id,
+            claimToken: job.claim_token,
+            projection,
+            signal,
+          })
+          throw new DeferredProviderCapacity()
+        }
+      }
       attachmentRoot = await this.attachmentRootForJob?.(job)
       if (attachmentRoot) {
         assertSafeAttachmentCleanupRoot(attachmentRoot, job.job_id)
@@ -427,6 +474,10 @@ export class ManagedPlaywrightRunnerService {
       if (error instanceof QueuedProviderFallback) {
         attachmentRoot = undefined
         return { claimed: true, jobId: job.job_id, status: 'fallback_queued' }
+      }
+      if (error instanceof DeferredProviderCapacity) {
+        attachmentRoot = undefined
+        return { claimed: true, jobId: job.job_id, status: 'rate_limit_deferred' }
       }
       if (canceled || signal.aborted) {
         if (!renewError) {
@@ -538,8 +589,39 @@ export class ManagedPlaywrightRunnerService {
       const provider = getProviderInstanceById(request.provider)
       if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
       const state = executionStateFromCheckpoint(restoredCheckpoint)
+      if (state.submitted !== null && job.provider_submitted_at === null) {
+        await this.daemonClient.recordProviderSubmission({
+          jobId: job.job_id,
+          claimToken: job.claim_token,
+          signal,
+        })
+      }
+      const failOrFallback = async (failure: ClassifiedProviderFailure): Promise<never> => {
+        throwIfStopped(signal, isCanceled, renewalError)
+        const fallbackRequest = safeFallbackRequest(request, state, failure)
+        if (!fallbackRequest) {
+          throw classifiedFailureError(failure, providerFallbackStopReason(request, state, failure))
+        }
+        await this.daemonClient.fallbackJob({
+          jobId: job.job_id,
+          claimToken: job.claim_token,
+          provider: fallbackRequest.provider,
+          request: fallbackRequest,
+          blocker: providerFailurePayload(job, failure, {
+            requestedVisibility: claimBrowserVisibility,
+            effectiveVisibility: managedContext.effectiveBrowserVisibility,
+            windowOpen: claimBrowserVisibility !== 'headless',
+          }),
+        })
+        throw new QueuedProviderFallback()
+      }
       const startUrl = state.submitted?.providerUrl ?? request.target.url
-      await navigateToTarget(page, startUrl, signal, request.actions.some((action) => action.action === VISIBLE_ACTIONS.NAVIGATION_CHECK))
+      try {
+        await navigateToTarget(page, startUrl, signal, request.actions.some((action) => action.action === VISIBLE_ACTIONS.NAVIGATION_CHECK))
+      } catch (error) {
+        const failure = classifyProviderFailure({ error, submitted: state.submitted !== null })
+        await failOrFallback(failure)
+      }
       if (this.e2eInspection) {
         await waitForE2EBrowserObserver({
           config: this.e2eInspection,
@@ -586,34 +668,69 @@ export class ManagedPlaywrightRunnerService {
         page = cleared.page
         return cleared.waitedMs
       }
+      if (request.capabilityRoute && state.actionCursor === 0 && state.submitted === null) {
+        let failure: ClassifiedProviderFailure | null
+        try {
+          await clearBlocker(true)
+          failure = await inspectAttemptCapabilityEligibility(page, provider, request.capabilityRoute)
+          throwIfStopped(signal, isCanceled, renewalError)
+        } catch (error) {
+          throwRunnerControlFlow(error)
+          throwIfStopped(signal, isCanceled, renewalError)
+          failure = classifyProviderFailure({ error, submitted: false })
+        }
+        if (failure) await failOrFallback(failure)
+      }
       for (let actionIndex = state.actionCursor; actionIndex < request.actions.length; actionIndex += 1) {
         const action = request.actions[actionIndex]
         if (!action) throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner action cursor is invalid.')
         const lifecycle = getVisibleActionLifecycle(action.action)
         throwIfStopped(signal, isCanceled, renewalError)
         if (lifecycle.completion === 'records_submission') {
-          await clearBlocker(true)
-          state.preparation = await provider.prepareAction(page, action)
+          try {
+            await clearBlocker(true)
+            state.preparation = await provider.prepareAction(page, action)
+          } catch (error) {
+            throwRunnerControlFlow(error)
+            await failOrFallback(classifyProviderFailure({
+              error,
+              submitted: state.submitted !== null,
+            }))
+          }
         }
         if (lifecycle.completion === 'reads_response' && state.preparation !== null) {
-          await this.waitForPreparedActionReady(() => page, {
-            provider,
-            action,
-            preparation: state.preparation,
-            timeoutMs: this.responseWaitTimeoutMs,
-            pollMs: this.responseWaitPollMs,
-            signal,
-            isCanceled,
-            renewalError,
-            clearBlocker: () => clearBlocker(true),
-          })
+          try {
+            await this.waitForPreparedActionReady(() => page, {
+              provider,
+              action,
+              preparation: state.preparation,
+              timeoutMs: this.responseWaitTimeoutMs,
+              pollMs: this.responseWaitPollMs,
+              signal,
+              isCanceled,
+              renewalError,
+              clearBlocker: () => clearBlocker(true),
+            })
+          } catch (error) {
+            throwRunnerControlFlow(error)
+            const failure = classifyProviderFailure({ error, submitted: state.submitted !== null, actionLifecycle: lifecycle })
+            await failOrFallback(failure)
+          }
         }
         if (
           lifecycle.gated &&
           lifecycle.completion !== 'records_submission' &&
           lifecycle.completion !== 'reads_response'
         ) {
-          await clearBlocker(true)
+          try {
+            await clearBlocker(true)
+          } catch (error) {
+            throwRunnerControlFlow(error)
+            await failOrFallback(classifyProviderFailure({
+              error,
+              submitted: state.submitted !== null,
+            }))
+          }
         }
         await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('started', actionIndex, action, page, provider))
         const providerContext = {
@@ -623,9 +740,26 @@ export class ManagedPlaywrightRunnerService {
           now: this.now,
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),
         }
-        const response = await provider.executeAction(page, action, providerContext)
+        const response = await (async (): Promise<VisibleActionResponse> => {
+          try {
+            return await provider.executeAction(page, action, providerContext)
+          } catch (error) {
+            return await failOrFallback(classifyProviderFailure({
+              error,
+              submitted: state.submitted !== null,
+              actionLifecycle: lifecycle,
+            }))
+          }
+        })()
         if (!response.ok) {
-          throw tokenlessError(response.error.code, response.error.message, { retryable: response.error.retryable })
+          throwIfStopped(signal, isCanceled, renewalError)
+          const error = tokenlessError(response.error.code, response.error.message, { retryable: response.error.retryable })
+          const failure = classifyProviderFailure({
+            error,
+            submitted: state.submitted !== null,
+            actionLifecycle: lifecycle,
+          })
+          await failOrFallback(failure)
         }
         state.responses.push(response)
         if (lifecycle.completion === 'records_submission') {
@@ -638,6 +772,11 @@ export class ManagedPlaywrightRunnerService {
             providerUrl: validatedCurrentProviderUrl(page, provider, request.target.url),
             preparation: state.preparation,
           }
+          await this.daemonClient.recordProviderSubmission({
+            jobId: job.job_id,
+            claimToken: job.claim_token,
+            signal,
+          })
         }
         if (lifecycle.completion === 'reads_response') state.preparation = null
         state.actionCursor = actionIndex + 1
@@ -729,27 +868,60 @@ export class ManagedPlaywrightRunnerService {
     waitForGuestSurface: boolean
   }): Promise<ClearBlockerResult> {
     throwIfStopped(options.signal, options.isCanceled, options.renewalError)
-    const initial = await visibleBlockerState(options.page, options.provider, options.waitForGuestSurface)
+    const initial = await visibleBlockerState(
+      options.page,
+      options.provider,
+      options.waitForGuestSurface,
+      options.state.submitted !== null,
+    )
     if (!initial.blocked) {
       return { managedContext: options.managedContext, page: options.page, waitedMs: 0 }
     }
-    const fallbackRequest = safeFallbackRequest(options.request, options.state, initial.primary)
+    const failure = classifyVisibleProviderBlocker(initial.primary)
+    const fallbackRequest = safeFallbackRequest(options.request, options.state, failure)
     if (fallbackRequest) {
       await this.daemonClient.fallbackJob({
         jobId: options.job.job_id,
         claimToken: options.job.claim_token,
         provider: fallbackRequest.provider,
         request: fallbackRequest,
-        blocker: blockerPayload(options.job, initial.blockers, {
-          requestedVisibility: options.claimBrowserVisibility,
-          effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-          windowOpen: options.claimBrowserVisibility !== 'headless',
-        }),
+        blocker: {
+          ...blockerPayload(options.job, initial.blockers, {
+            requestedVisibility: options.claimBrowserVisibility,
+            effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
+            windowOpen: options.claimBrowserVisibility !== 'headless',
+          }),
+          failure,
+        },
       })
       throw new QueuedProviderFallback()
     }
+    const initialCapacityDelay = options.state.submitted === null
+      ? observedCapacityDelaySeconds(initial.primary)
+      : null
+    if (initialCapacityDelay !== null) {
+      await this.daemonClient.deferObservedProviderLimit({
+        jobId: options.job.job_id,
+        claimToken: options.job.claim_token,
+        blocker: {
+          ...blockerPayload(options.job, initial.blockers, {
+            requestedVisibility: options.claimBrowserVisibility,
+            effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
+            windowOpen: options.claimBrowserVisibility !== 'headless',
+          }),
+          failure,
+          retryAfterSeconds: initialCapacityDelay,
+        },
+        delaySeconds: initialCapacityDelay,
+        signal: options.signal,
+      })
+      throw new DeferredProviderCapacity()
+    }
     if (initial.terminal) {
-      throw tokenlessError(initial.primary.code, initial.primary.message, { retryable: initial.primary.retryable })
+      throw classifiedFailureError(
+        failure,
+        providerFallbackStopReason(options.request, options.state, failure),
+      )
     }
     const checkpoint = buildRunnerCheckpoint(
       options.profile,
@@ -767,11 +939,15 @@ export class ManagedPlaywrightRunnerService {
       await this.daemonClient.parkJob({
         jobId: options.job.job_id,
         claimToken: options.job.claim_token,
-        blocker: blockerPayload(options.job, initial.blockers, {
-          requestedVisibility: options.claimBrowserVisibility,
-          effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-          windowOpen: options.claimBrowserVisibility !== 'headless',
-        }),
+        blocker: {
+          ...blockerPayload(options.job, initial.blockers, {
+            requestedVisibility: options.claimBrowserVisibility,
+            effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
+            windowOpen: options.claimBrowserVisibility !== 'headless',
+          }),
+          failure,
+          fallbackStopped: providerFallbackStopReason(options.request, options.state, failure),
+        },
         checkpoint,
       })
       throw new ParkedPlaywrightJob()
@@ -803,19 +979,53 @@ export class ManagedPlaywrightRunnerService {
     await this.daemonClient.markJobWaitingForUser({
       jobId: options.job.job_id,
       claimToken: options.job.claim_token,
-      blocker: blockerPayload(options.job, initial.blockers, {
-        requestedVisibility: options.claimBrowserVisibility,
-        effectiveVisibility: managedContext.effectiveBrowserVisibility,
-        windowOpen: true,
-      }),
+      blocker: {
+        ...blockerPayload(options.job, initial.blockers, {
+          requestedVisibility: options.claimBrowserVisibility,
+          effectiveVisibility: managedContext.effectiveBrowserVisibility,
+          windowOpen: true,
+        }),
+        failure,
+        fallbackStopped: providerFallbackStopReason(options.request, options.state, failure),
+      },
     })
     const deadline = Date.now() + this.userHandoverTimeoutMs
     while (Date.now() <= deadline) {
       throwIfStopped(options.signal, options.isCanceled, options.renewalError)
       await delay(Math.min(this.userHandoverPollMs, Math.max(1, deadline - Date.now())), options.signal)
-      const latest = await visibleBlockerState(page, options.provider, options.waitForGuestSurface)
+      const latest = await visibleBlockerState(
+        page,
+        options.provider,
+        options.waitForGuestSurface,
+        options.state.submitted !== null,
+      )
       if (latest.terminal) {
-        throw tokenlessError(latest.primary.code, latest.primary.message, { retryable: latest.primary.retryable })
+        const latestFailure = classifyVisibleProviderBlocker(latest.primary)
+        const latestCapacityDelay = options.state.submitted === null
+          ? observedCapacityDelaySeconds(latest.primary)
+          : null
+        if (latestCapacityDelay !== null) {
+          await this.daemonClient.deferObservedProviderLimit({
+            jobId: options.job.job_id,
+            claimToken: options.job.claim_token,
+            blocker: {
+              ...blockerPayload(options.job, latest.blockers, {
+                requestedVisibility: options.claimBrowserVisibility,
+                effectiveVisibility: managedContext.effectiveBrowserVisibility,
+                windowOpen: true,
+              }),
+              failure: latestFailure,
+              retryAfterSeconds: latestCapacityDelay,
+            },
+            delaySeconds: latestCapacityDelay,
+            signal: options.signal,
+          })
+          throw new DeferredProviderCapacity()
+        }
+        throw classifiedFailureError(
+          latestFailure,
+          providerFallbackStopReason(options.request, options.state, latestFailure),
+        )
       }
       if (!latest.blocked && await hasStableComposer(
         page,
@@ -903,14 +1113,73 @@ class QueuedProviderFallback extends Error {
   }
 }
 
+class DeferredProviderCapacity extends Error {
+  constructor() {
+    super('Managed Playwright job deferred until provider capacity is available.')
+    this.name = 'DeferredProviderCapacity'
+  }
+}
+
+function throwRunnerControlFlow(error: unknown): void {
+  if (
+    error instanceof ParkedPlaywrightJob ||
+    error instanceof QueuedProviderFallback ||
+    error instanceof DeferredProviderCapacity
+  ) {
+    throw error
+  }
+}
+
+function initialExecutionState(): RunnerExecutionState {
+  return { actionCursor: 0, responses: [], preparation: null, submitted: null }
+}
+
+function providerCapacityFailure(projection: ProviderCapacityProjection): ClassifiedProviderFailure {
+  return Object.freeze({
+    classification: 'safe_pre_submit_provider_failure',
+    code: 'provider_capacity_deferred',
+    message: projection.reason,
+    retryable: true,
+    providerScoped: true,
+    automaticFallbackEligible: true,
+    details: projection,
+  })
+}
+
+function rateLimitSubscription(profile: ManagedBrowserProfile, provider: string) {
+  const observed = profile.lastObservedAuth?.[provider]
+  return {
+    accessClass: observed?.account?.tier.class ?? observed?.access ?? 'unknown',
+    tierLabel: observed?.account?.tier.label ?? null,
+    subscriptionLabel: observed?.account?.subscription ?? null,
+  }
+}
+
+function checkpointIndicatesSubmission(value: unknown) {
+  if (!isPlainRecord(value)) return false
+  if (value.submitted !== null && value.submitted !== undefined) return true
+  const phase = isPlainRecord(value.phase) ? value.phase : null
+  return phase?.state === 'started' && phase.mutating === true
+}
+
+function observedCapacityDelaySeconds(blocker: VisibleBlocker) {
+  if (blocker.family === 'rate_limit') {
+    return blocker.retryAfterSeconds === undefined
+      ? 300
+      : Math.min(3_600, Math.max(60, Math.floor(blocker.retryAfterSeconds)))
+  }
+  if (blocker.family === 'plan_limit') return 3_600
+  return null
+}
+
 function safeFallbackRequest(
   request: ManagedPlaywrightJobRequest,
   state: RunnerExecutionState,
-  blocker: VisibleBlocker,
+  failure: ClassifiedProviderFailure,
 ): ManagedPlaywrightJobRequest | null {
   const plan = request.fallback
   const alternative = plan?.alternatives[0]
-  if (!plan || !alternative || !fallbackEligibleBlocker(blocker) || state.submitted !== null) return null
+  if (!plan || !alternative || !failure.automaticFallbackEligible || state.submitted !== null) return null
   for (let index = 0; index < state.actionCursor; index += 1) {
     const action = request.actions[index]
     if (!action) return null
@@ -925,15 +1194,122 @@ function safeFallbackRequest(
     taskId: request.taskId,
     capabilityRoute: alternative.capabilityRoute,
     fallback: remaining.length === 0 ? null : { ...plan, alternatives: remaining },
+    context: request.context,
     browserVisibility: request.browserVisibility,
     ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
     actions: request.actions.map((action) => ({ ...action, provider: alternative.provider })),
   })
 }
 
-function fallbackEligibleBlocker(blocker: VisibleBlocker) {
-  return blocker.kind === 'challenge' || blocker.kind === 'auth' ||
-    blocker.family === 'rate_limit' || blocker.family === 'plan_limit'
+function providerFallbackStopReason(
+  request: ManagedPlaywrightJobRequest,
+  state: RunnerExecutionState,
+  failure: ClassifiedProviderFailure,
+) {
+  if (!request.fallback) return { code: 'fallback_plan_unavailable' }
+  if (request.fallback.alternatives.length === 0) return { code: 'fallback_alternatives_exhausted' }
+  if (state.submitted !== null) {
+    return {
+      code: 'post_submission_failure',
+      provider: request.provider,
+      submittedAction: state.submitted.requestId,
+    }
+  }
+  if (!failure.automaticFallbackEligible) {
+    return { code: 'unsafe_failure_classification', classification: failure.classification }
+  }
+  for (let index = 0; index < state.actionCursor; index += 1) {
+    const action = request.actions[index]
+    if (!action) return { code: 'invalid_action_cursor' }
+    const lifecycle = getVisibleActionLifecycle(action.action)
+    if (lifecycle.mutating && !lifecycle.reconstructablePreSubmit) {
+      const response = state.responses[index]
+      return {
+        code: 'non_reconstructable_provider_mutation',
+        provider: request.provider,
+        action: action.action,
+        requestId: action.requestId,
+        completedResult: response?.ok === true ? response.result : null,
+      }
+    }
+  }
+  return { code: 'fallback_not_selected' }
+}
+
+function classifiedFailureError(
+  failure: ClassifiedProviderFailure,
+  fallbackStopped: ReturnType<typeof providerFallbackStopReason>,
+) {
+  return tokenlessError(failure.code, failure.message, {
+    retryable: failure.retryable,
+    details: {
+      classification: failure.classification,
+      providerScoped: failure.providerScoped,
+      fallbackStopped,
+      ...(failure.details === undefined ? {} : { causeDetails: failure.details }),
+    },
+  })
+}
+
+async function inspectAttemptCapabilityEligibility(
+  page: Page,
+  provider: RunnerProvider,
+  route: TaskCapabilityRoute,
+): Promise<ClassifiedProviderFailure | null> {
+  const inspection = await provider.inspectCapabilities(page)
+  const observations = route.requirements.map((capability) => {
+    const target = liveInspectionTarget(capability)
+    if (!target) {
+      return {
+        capability,
+        availability: 'unavailable' as const,
+        visibleProof: null,
+        reason: 'task_capability_live_inspection_unimplemented',
+      }
+    }
+    const providerInspection = inspection.capabilities[target.providerCapability]
+    const observed = target.scope === 'native' ? providerInspection?.native : providerInspection
+    return {
+      capability,
+      availability: observed?.availability ?? 'unknown',
+      visibleProof: observed?.visibleProof ?? null,
+      reason: observed?.reason ?? null,
+    }
+  })
+  const unavailable = observations.filter((observation) => observation.availability === 'unavailable')
+  if (unavailable.length === 0) return null
+  return classifyProviderFailure({
+    error: tokenlessError(
+      'provider_capability_unavailable',
+      `Provider '${provider.id}' cannot currently satisfy every required task capability.`,
+      {
+        retryable: true,
+        details: {
+          provider: provider.id,
+          requirements: route.requirements,
+          unavailable,
+          observations,
+        },
+      },
+    ),
+    submitted: false,
+  })
+}
+
+function liveInspectionTarget(capability: TaskCapabilityId): {
+  providerCapability: ProviderCapabilityId
+  scope: 'overall' | 'native'
+} | null {
+  if (capability === TASK_CAPABILITIES.CONVERSATION_CHAT) {
+    return { providerCapability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE, scope: 'overall' }
+  }
+  if (capability === TASK_CAPABILITIES.FILE_UPLOAD) {
+    return { providerCapability: PROVIDER_CAPABILITIES.FILE_UPLOAD, scope: 'overall' }
+  }
+  if (capability === TASK_CAPABILITIES.WORKSPACE_NATIVE) {
+    return { providerCapability: PROVIDER_CAPABILITIES.WORKSPACE_ENSURE, scope: 'native' }
+  }
+  return null
 }
 
 function validateResumeVisibility(value: unknown): Extract<BrowserVisibility, 'headed'> | null {
@@ -1262,6 +1638,7 @@ async function navigateToTarget(page: unknown, url: string, signal: AbortSignal,
     try {
       await maybePage.goto(url, { waitUntil: 'domcontentloaded' })
     } catch (error) {
+      if (signal.aborted) throwIfStopped(signal, () => false)
       if (String(error).includes('net::ERR_NAME_NOT_RESOLVED')) {
         throw tokenlessError(
           'provider_dns_unavailable',
@@ -1273,7 +1650,15 @@ async function navigateToTarget(page: unknown, url: string, signal: AbortSignal,
           }
         )
       }
-      throw error
+      throw tokenlessError(
+        'provider_navigation_unavailable',
+        'The provider page could not be reached before any provider action started.',
+        {
+          retryable: true,
+          cause: error,
+          details: { url: new URL(url).origin, evidence: 'chromium_navigation_failed' },
+        },
+      )
     }
   }
   if (foreground && typeof maybePage.bringToFront === 'function') {
@@ -1343,7 +1728,8 @@ function assertSafeJobId(jobId: string) {
 async function visibleBlockerState(
   page: Page,
   provider: RunnerProvider,
-  waitForGuestSurface: boolean
+  waitForGuestSurface: boolean,
+  submissionRecorded: boolean,
 ) {
   const pageUrl = currentPageUrl(page)
   const classification = provider.navigation.classify(pageUrl)
@@ -1362,6 +1748,17 @@ async function visibleBlockerState(
       terminal: false,
       primary: fallbackBlocker(page, provider),
       blockers: [],
+    }
+  }
+  if (submissionRecorded) {
+    const inspection = await provider.inspectBlockers(page)
+    const terminal = inspection.blockers.find((blocker) => blocker.kind === 'terminal')
+    const userResolvable = inspection.blockers.find((blocker) => blocker.kind !== 'terminal')
+    return {
+      blocked: inspection.blocked,
+      terminal: Boolean(terminal),
+      primary: terminal ?? userResolvable ?? inspection.blockers[0] ?? fallbackBlocker(page, provider),
+      blockers: inspection.blockers,
     }
   }
   const resolution = await provider.resolveSession(page, {
@@ -1416,8 +1813,38 @@ function blockerPayload(
     blockers,
     userAction: {
       message: browser.windowOpen
-        ? 'The visible managed browser is open. Manually complete the provider verification or sign-in there; Tokenless will resume the same unfinished action after the composer is stable.'
-        : 'The managed browser is parked without opening a window. Resume this job in headed mode after you are ready to complete provider verification.',
+        ? 'Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will resume the same unfinished action after the composer is stable.'
+        : 'Your help is needed, but no browser window is open. Resume this same job in headed mode to complete provider verification.',
+    },
+  }
+}
+
+function providerFailurePayload(
+  job: DaemonClaimedJob,
+  failure: ClassifiedProviderFailure,
+  browser: {
+    requestedVisibility: BrowserVisibility
+    effectiveVisibility: Exclude<BrowserVisibility, 'auto'>
+    windowOpen: boolean
+  },
+) {
+  return {
+    protocol: 'tokenless.provider-attempt-failure.v1',
+    jobId: job.job_id,
+    taskId: taskIdFromRequest(job.request_json),
+    provider: job.provider,
+    profileId: job.profile_id,
+    browser,
+    failure,
+    blocker: {
+      kind: 'terminal',
+      code: failure.code,
+      message: failure.message,
+      userResolvable: false,
+      retryable: failure.retryable,
+      visibleProof: 'structured-provider-attempt-failure',
+      provider: job.provider,
+      url: null,
     },
   }
 }
@@ -1441,7 +1868,7 @@ function fallbackBlocker(page: Page, provider: RunnerProvider): VisibleBlocker {
   return {
     kind: 'auth',
     code: 'provider_user_handover_required',
-    message: 'Provider page requires user handover.',
+    message: 'Provider sign-in or verification requires user support.',
     userResolvable: true,
     retryable: true,
     visibleProof: 'visible-page-state',

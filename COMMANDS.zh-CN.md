@@ -26,6 +26,7 @@
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
+| `tokenless limits inspect` | 根据 packaged catalog 和本地 job 历史查看下一次 prompt 的 provider/profile 容量估算。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
 | `tokenless replay` | 为一个 agent recipient 报告此前未见过的 daemon outcome 摘要。 | 否 |
 | `tokenless state` | 查询 daemon 中持久化的 job 状态。 | 否 |
@@ -53,11 +54,14 @@ claude
 gemini
 grok
 qwen
+deepseek
+perplexity
+zai
 ```
 
-ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问目前为 experimental：其 Guest-session prompt 提交与 response 读取已得到证明；cross-process continuation 和尚未证明的可选 capability 保持 unavailable 或 unknown。
+ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity 和 Z.ai / GLM 目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
 
-Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc`、`brave`、`managed-chromium` 和 `cloak`。`auto` 优先使用已安装的 system browser，仅在没有可用项时使用锁定的 managed fallback；`cloak` 必须显式选择。Tokenless 新建的每个 profile 都是 clean 且绑定 runtime；Tokenless 不复制现有 browser profile 或其中的认证状态。
+Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc`、`brave`、`managed-chromium` 和 `cloak`。`auto` 优先使用已安装的 system browser，仅在没有可用项时使用锁定的 managed fallback；`cloak` 必须显式选择。Tokenless 新建的 profile 默认是 clean 且绑定 runtime。也可以在提供 `--consent-local-profile-copy` 后复制一个明确选定的本机 Chromium profile；Tokenless 会把其中内容作为 opaque 本地文件树处理。
 
 ### 短选项
 
@@ -160,15 +164,16 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 - `--no-browser-download` 在缺少 managed runtime 时直接失败，而不是下载。
 - `--repair-browser` 显式重新安装所选 `managed-chromium` 或 `cloak` runtime；不能与 `--no-browser-download` 同时使用。
 - `--fresh` 或 `-f` 创建 clean managed profile。
+- `--import-browser-profile <key> --consent-local-profile-copy` 把一个明确选定的本机 Chromium profile 复制进 managed profile，并且不解析认证值。
 - `--defaults` 选择非交互默认值。
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
 
 `auto` 是默认值，会优先使用已安装的 Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing executable。没有支持的 system browser 时，setup 才会把锁定的 Chrome for Testing 145 artifact 下载到 `~/.tokenless/browser/runtimes`。显式选择但不存在的 system browser 会失败，不会 fallback。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
 
-选择 Anti-Detect 后，交互式 setup 会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描已知 Chrome、Brave、Edge、Arc、Chromium 与 Chrome for Testing profile 目录。它只读取目录 key 和 `Last Version`，按完整四段版本做精确匹配，并在下载前再次询问是否继续使用 clean 且绑定 Cloak 的 profile。Inventory 仅供参考：Tokenless 不会解析 `Local State`、读取浏览器登录状态、导入列出的 profile，也不会使用 Cloak 打开这些 profile。
+选择 Anti-Detect 后，交互式 setup 会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描已知 Chrome、Brave、Edge、Arc、Chromium 与 Chrome for Testing profile 目录。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。只有用户明确选择并同意复制时才会复制列出的 profile。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。
 
-Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 会创建 clean profile。用户在这个 Tokenless-managed profile 中手动登录，之后由该 profile 自己跨 job 保留 browser-managed session。旧版 profile-copy flags 只为兼容而继续被识别，并固定返回结构化错误 `browser_profile_copy_disabled`；它们不会复制数据。
+Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 通常会创建 clean profile；显式 import 可以从选定的本机 Chromium profile 填充新建且绑定 runtime 的 profile。之后由 managed profile 自己跨 job 保留 browser-managed session。
 
 交互式 `setup` 会询问哪些 provider 属于当前 profile。非交互 setup 会依次使用 `--preferred-providers`、已有配置范围；没有任何范围时才使用全部非 `disabled` provider。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
 
@@ -279,13 +284,14 @@ tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user
 
 ### `tokenless profiles add`
 
-创建空的 managed profile：
+创建 clean managed profile，或在明确同意后复制选定的本机 Chromium profile：
 
 ```bash
 tokenless profiles add -P work --label "Work" --set-default --json
+tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
 ```
 
-新 profile 从 clean 状态开始。请打开可见浏览器并在其中手动登录；Tokenless 不会从其他 browser profile 复制认证状态。
+复制只发生在本机，并保持 opaque。Tokenless 会复制文件系统条目，但不会检查或报告 cookies、storage、密码、tokens 或 Keychain 数据。
 
 ### `tokenless profiles list`
 
@@ -329,10 +335,10 @@ tokenless profiles set-default -P work --json
 
 ### `tokenless profiles reset`
 
-这是为了兼容保留的旧命令，会固定返回 `browser_profile_copy_disabled`。Tokenless 不会重新复制本地 profile 或认证状态。
+使用记录的本机来源重新进行一次 opaque copy，并替换已导入的 managed profile。每次都必须再次明确同意。
 
 ```bash
-tokenless profiles reset -P work --json
+tokenless profiles reset -P work --consent-local-profile-copy --json
 ```
 
 ### `tokenless profiles clear`
@@ -362,6 +368,8 @@ tokenless profiles remove -P work --confirm-delete --json
 
 返回带版本的 canonical task-capability catalog，不会打开浏览器：
 
+Capability 语义、provider mapping、support state 与扩展流程见 [Capability Matrix](docs/capability-matrix.zh-CN.md)。
+
 ```bash
 tokenless capabilities list --json
 ```
@@ -369,6 +377,16 @@ tokenless capabilities list --json
 每个条目描述 caller outcome、parameter schema、lifecycle、side effects、required evidence、output kinds、stability 和已声明的 provider routes。`routeable: true` 表示至少一个已签入的 provider strategy 具有完整实现和真实 provider E2E 证据。Candidate 条目仍可通过 catalog 发现，但会标记为 `routeable: false`，不能用于 run。
 
 `model.choice`、`effort.choice` 和 `qwen.mode` 等 provider control 不会出现在这里；它们保留为 provider adapter 细节，而不是 canonical caller outcome。
+
+### `tokenless limits inspect`
+
+根据 profile 中已观察到的订阅、packaged provider 知识和不可变的本地提交历史，估算下一次 prompt：
+
+```sh
+tokenless limits inspect --profile default --provider chatgpt --json
+```
+
+结果会报告匹配的 catalog plan 和 rules、本地 usage、公开与生效 allowance、估算剩余额度、cadence、burst allowance、decision 和 `eligibleAt`。`unknown` 表示 Tokenless 没有可执行的官方数值，因此会放行；它不表示 provider 容量无限。该命令只读且只访问本地状态，不会打开 provider 网站或提交 prompt。
 
 ### `tokenless run`
 
@@ -387,12 +405,13 @@ Provider 选择：
 - 显式 `--provider <provider>` 或 `TOKENLESS_PROVIDER` 会保持精确匹配，不会因为缓存可用性而被替换。
 - `--capability <capability>` 可以重复使用，用于请求 canonical caller outcome，而不是 provider 专属控件。
 - Tokenless 会合并显式 capabilities 与结构化推导：普通 `submit_and_read` run 要求 `conversation.chat`，`--attach-file` 要求 `file.upload`，并在适用时增加 `image.input`、`audio.input` 或 `video.input`；`--workspace-mode native` 要求 `workspace.native`。
-- 未显式指定 provider 时，Tokenless 会选择第一家能够满足完整 requirement set，且 resolved profile 的 cached access 为 `guest` 或以 `signed_in_` 开头的 configured provider。
+- 未显式指定 provider 时，配置的 provider list 会过滤 membership。Tokenless 会再筛出满足完整 implication-expanded requirement set 的 providers，并按照 fresh cached eligibility 和 evidence maturity（`supported` 优先于 `experimental`）对 routes 排序；配置 list 的 position 仅作为最终 tie-breaker，不能覆盖这些更强的信号。过期但曾可用的 observation 会保持为 `unchecked`，直到 runner 执行实时只读 preflight。
 - 显式 provider 无法满足完整 requirement set 时，会在提交 daemon job 前失败，不会静默切换。
 - Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
 - 已知 capability 如果没有完整 route，会在 browser mutation 前返回 `task_capability_route_unavailable`。`--capability` 当前只支持正常的 `submit_and_read` action。
 - 成功提交会返回并持久化 `capabilityRoute`，其中包含规范化 requirements、所选 strategies、support level、evidence identifiers 和 runtime eligibility；`tokenless state` 会返回同一 route。
-- 隐式 `submit_and_read` run 可以持久化 automatic fallback plan。提交前遇到 provider-scoped 登录、CAPTCHA、限流或套餐 blocker 时，只有下一个 provider 满足本次 run 的完整 requirements，且此前完成的 mutation 都可安全重建，daemon 才会在同一个 job 上重新排队。显式 provider 和提交状态不确定时绝不会自动切换。JSON state 包含 `fallback` 与 `providerAttempts`。
+- 隐式 `submit_and_read` run 可以持久化 automatic fallback plan。每次 attempt 都会在 mutation 前只读复核已知本地 provider capacity、可见 session 和 capability-specific UI，不发送 probe prompt。已分类的 safe pre-submit capacity、登录、CAPTCHA、rate/plan、维护、区域、导航、稳定 surface 和 capability availability failure，只有在下一条 ranked route 满足完全相同的完整 requirements，且此前 mutation 都可重建时，才会让同一个 job 重新排队。精确或已映射 continuation、显式 provider、provider-specific controls、不可重建 mutation、ambiguous external state 和 post-submission failure 都绝不会自动切换。JSON state 包含排序后的 `fallback.routes`、结构化停止原因和 `providerAttempts`。
+- Job validator 会再次根据 actions、attachment MIME types 和 native workspace intent 推导 capabilities，因此 internal 或 agent caller 无法少报 fallback requirement。Routed job 携带 `tokenless.context-envelope.v1`，其中的 instructions、references、output/constraint contract、可选 upstream state 和 delivery hashes 会在每次 attempt 原样重放；JSON state 只公开脱敏后的 envelope 摘要。
 
 Prompt 输入：
 
@@ -409,6 +428,10 @@ Provider 控件：
 - `--thinking-effort <label>` 是另一种 effort 参数形式。
 - `--qwen-mode <exact-visible-label>` 选择 Qwen 专属的 composer mode。
 - `--qwen-mode-variant <exact-visible-label>` 选择该 Qwen mode 的可见 variant，并要求同时提供 `--qwen-mode`。
+- `--deepseek-mode <Instant|Expert|Vision>` 选择精确的 DeepSeek mode。
+- `--deepseek-deepthink <on|off>` 控制当前 DeepSeek mode 中的 DeepThink。
+- `--deepseek-search <on|off>` 控制 Search；该控件只在 DeepSeek Instant mode 中可用。
+- DeepSeek canonical requirements 会在 mutation 前准备所需控件：`search.web` 选择 Instant 并启用 Search，`reasoning.extended` 启用 DeepThink，`image.input` 选择 Vision。显式冲突组合会在页面变化前失败。
 - `--browser-visibility <auto|headed|headless>` 覆盖已配置的可见性策略。
 
 Identity 与 continuity：
@@ -429,8 +452,9 @@ Identity 与 continuity：
 
 Workspace modes：
 
-- `auto` 在 Claude 和 Grok 中优先使用可见的原生 Project。只有 provider 明确显示原生能力稳定不可用时才 fallback；临时 UI、导航、网络、blocker 和 selector 故障仍然返回错误。
-- `native` 强制要求精确创建或复用原生 Project，不允许 fallback；出现重复的精确可见名称时 fail closed。
+- 使用 `auto` 或 `native` 的 routed `run` request 都要求 canonical `workspace.native` capability。目前没有 provider route 被公开，因此在 native Project release gate 完成前，这类 request 会在 browser mutation 之前失败。
+- Claude 与 Grok 的 lower-level adapter 已为显式真实 provider acceptance suite 实现实验性的可见原生 Project 创建/复用；仅有 implementation 不构成 router support 声明。
+- `workspace.native` 可路由后，`native` 将强制要求精确创建或复用原生 Project，绝不会降级到 conversation scope；出现重复的精确可见名称时 fail closed。
 - `conversation` 强制使用 conversation-scoped strategy；只有真实 provider capability matrix 已证明的 provider/profile 才支持跨进程恢复。
 - 原生结果会报告 `created` 或 `reused`、canonical provider resource identity、provider/profile scope 和 instruction outcome；conversation 结果会报告 `fallback`。
 - Project 和 task conversation target 会作为精确 SQLite mapping 持久化，不再通过扫描历史 job result 恢复。
@@ -476,6 +500,8 @@ tokenless resume \
 ```
 
 必须提供 `--job-id` 和 `--browser-visibility headed`。Resume 会保留原始 job 与 task identity。
+
+当 provider 登录、hCaptcha、MFA 或其他可见人工验证成为必要条件时，Tokenless 会报告 `waiting_for_user`，并明确提示“需要你的协助”。请完成可见步骤，然后查询或恢复同一个 job；不要提交替代 job。
 
 ### `tokenless cancel`
 
@@ -568,6 +594,12 @@ tokenless provider-action \
 | `effort.select` | 选择一个精确的可见 effort。 | `--effort` 或 `--thinking-effort` |
 | `qwen.mode.inspect` | 列出 Qwen 专属的可见 composer modes。 | 无；仅限 Qwen |
 | `qwen.mode.select` | 选择一个 Qwen 专属 mode 和可选的可见 variant。 | `--qwen-mode`；`--qwen-mode-variant` 可选 |
+| `deepseek.mode.inspect` | 检查 DeepSeek Instant、Expert、Vision 及其随 mode 变化的控件。 | 无；仅限 DeepSeek |
+| `deepseek.mode.select` | 选择一个精确的 DeepSeek mode。 | `--deepseek-mode` |
+| `deepseek.deepthink.inspect` | 检查当前 DeepSeek mode 中的 DeepThink。 | 无；仅限 DeepSeek |
+| `deepseek.deepthink.select` | 启用或关闭 DeepThink。 | `--deepseek-deepthink on|off` |
+| `deepseek.search.inspect` | 检查当前 DeepSeek mode 中的 Search。 | 无；仅限 DeepSeek |
+| `deepseek.search.select` | 在 Instant mode 中启用或关闭 Search。 | `--deepseek-search on|off` |
 | `file.upload` | 通过可见 file controls 上传文件。 | 一个或多个 `--attach-file` |
 | `workspace.ensure` | 确保存在原生或 conversation-scoped Workspace。 | `--project-name`；`--workspace-mode` 和 instructions 可选 |
 | `prompt.clear` | 清空可见 composer。 | 无 |

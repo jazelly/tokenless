@@ -6,5 +6,6 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.mts"]
+  "include": ["src/**/*.ts", "src/**/*.mts"],
+  "exclude": ["src/daemon/ui/**/*.ts"]
 }

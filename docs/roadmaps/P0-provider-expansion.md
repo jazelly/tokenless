@@ -10,7 +10,7 @@ Tokenless supports a broader set of high-value AI web providers while preserving
 
 ## Current Implementation State
 
-As of 2026-08-01:
+As of 2026-08-02:
 
 - the shared registry extraction and OOP provider seam are complete and recorded in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md) roadmap;
 - Qwen / 千问 is registered as an `experimental` provider through one provider module and one registry entry;
@@ -22,9 +22,18 @@ As of 2026-08-01:
 - the visible Auto/Thinking/Fast selector is exposed through the provider-neutral `effort.choice` capability; and
 - the versioned canonical task-capability catalog and evidence-backed provider routing matrix are implemented in the CLI, with `conversation.chat`, `file.upload`, and `workspace.native` as the first routeable outcomes; and
 - unproven Qwen model, file-upload, native workspace, and generated-media lifecycles remain `unknown` or `unavailable` rather than being inferred from visible controls.
-- DeepSeek is registered as an `experimental`, sign-in-required provider with canonical navigation, signed-out session detection, initial visible chat contracts, capture tooling, and an explicit live acceptance classification;
+- DeepSeek is registered as an `experimental`, sign-in-required provider with canonical navigation, signed-out session detection, visible chat contracts, capture tooling, and an explicit live acceptance classification;
 - a real signed-out browser observation confirmed that `https://chat.deepseek.com/` redirects to `/sign_in` and exposes email/password, Google, and Apple login choices; and
-- DeepSeek remains non-routeable until a selected signed-in managed profile closes prompt drafting, correlated submission and response reading, exact conversation continuation, and the required live matrix cases.
+- a real signed-in Chrome session captured provenance-bound Instant, Expert, and Vision fixtures and proved that DeepThink is present in all three modes, Search only in Instant, file input in Instant and Vision, and no file input in Expert;
+- exact `deepseek.mode`, `deepseek.deepthink`, and `deepseek.search` inspect/select actions are implemented, including restoration-oriented live acceptance coverage and mode-aware capability results;
+- the authenticated Chrome session completed exact-marker baseline and continuation turns, a DeepThink response with a distinct reasoning container and correlated final answer, and a Search response with visible public source links; reduced response fixtures retain those selector boundaries without private conversation identifiers;
+- the observed file input explicitly accepts representative text, document, and image formats in Instant and Vision, while the declared real-provider gate keeps visible file/image acceptance separate from control presence;
+- the shared blocker observer and DeepSeek provider selectors detect a visible hCaptcha, surface `visible_hcaptcha`, and require user support without attempting challenge interaction; the signed-out login/hCaptcha fixture remains an explicit evidence gap because the temporary signed-out session was closed before a redacted capture and the authenticated Chrome profile must not be logged out to recreate it;
+- generic model selection is no longer advertised for DeepSeek, and the submit selector excludes DeepSeek's visible disabled class; and
+- DeepSeek remains non-routeable until a selected signed-in managed profile independently closes the declared built-CLI and packaged-daemon baseline, continuation, Search/DeepThink, and file/image gates.
+- Perplexity is registered as an experimental guest provider, with readiness, prompt drafting, real submission, completed response, visible normalized citations, conversation mapping, and durable state closed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network;
+- Z.ai is registered as an experimental guest provider, with guest continuation, readiness, prompt drafting, real submission, completed response, conversation mapping, and durable state closed through the same managed-Cloak boundary; and
+- Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
 
 | Qwen capability | Current state | Evidence boundary |
 | --- | --- | --- |
@@ -40,15 +49,23 @@ As of 2026-08-01:
 | Native workspace | Unavailable | No proven native creation or exact identity closure |
 | Image generation | Unavailable | No proven generation lifecycle |
 
+| DeepSeek capability | Current state | Evidence boundary |
+| --- | --- | --- |
+| Signed-in composer | Live observed, implementation available | User-controlled authenticated Chrome session; managed-profile E2E still required |
+| Mode selection | Implemented for Instant, Expert, and Vision | Real visible radio controls plus provenance-bound reduced fixtures |
+| DeepThink | Implemented as a provider-specific toggle | Real visible toggle in all three modes and correlated reasoning/final response observed; canonical `reasoning.extended` remains unrouteable pending managed E2E closure |
+| Search | Implemented as a provider-specific toggle in Instant | Grounded response with visible public links observed; canonical `search.web` and citations remain unrouteable pending managed E2E closure |
+| File and image input | Visible in Instant and Vision; absent in Expert | Real input accept list includes text, document, and image formats; visible selection and semantic response gates remain pending |
+| Conversation and continuation | Implemented, release gate pending | Same-conversation two-turn behavior was observed in authenticated Chrome; built-CLI packaged-daemon continuation remains the acceptance boundary |
+| Native workspace | Unavailable | No native workspace observed; conversation fallback only |
+
 The maintained [Provider Capability Census](../provider-capability-census.md) records official product surfaces, current Tokenless evidence, candidate providers, and the proposed canonical capability schema.
 
 The next evaluation wave is:
 
 1. Kimi web, prioritizing the complete asynchronous Deep Research lifecycle;
-2. Z.ai with GLM-5.2, prioritizing baseline chat, effort control, long-context inputs, and coding workflows;
-3. Perplexity, prioritizing research, citations, source scope, Spaces, and generated artifacts;
-4. Mistral Le Chat, prioritizing a second independent research/Project/artifact implementation; and
-5. DeepSeek Chat signed-in closure, prioritizing the compact baseline first, then mode selection, search, and files as independent capabilities.
+2. Mistral Le Chat, prioritizing a second independent research/Project/artifact implementation; and
+3. DeepSeek Chat signed-in closure, prioritizing the compact baseline first, then mode selection, search, and files as independent capabilities.
 
 Doubao, Meta AI, Microsoft Copilot, Tencent Yuanbao, and MiniMax Agent remain scored candidates. Doubao requires product-policy review and live web reconnaissance before implementation. Meta AI is currently strongest as an image-generation/editing candidate rather than a Deep Research provider. MiniMax Agent requires a distinct long-horizon agent lifecycle and must not distort the baseline chat contract. This is a discovery order, not a claim that every candidate is already suitable for automation or will ship.
 

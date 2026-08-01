@@ -88,7 +88,15 @@ function resolveDefinition(name, arguments_) {
     }
   }
 
-  failUsage('suite must be browser-runtime, managed-playwright, or provider-fallback')
+  if (name === 'web-ui-provider') {
+    if (arguments_.length !== 0) failUsage('web-ui-provider does not accept a gate argument')
+    return {
+      testPath: 'test/live-web-ui-provider.e2e.mjs',
+      environment: { TOKENLESS_LIVE_WEB_UI_GATE: 'representative-provider' },
+    }
+  }
+
+  failUsage('suite must be browser-runtime, managed-playwright, provider-fallback, or web-ui-provider')
 }
 
 function failUsage(message) {
@@ -96,5 +104,6 @@ function failUsage(message) {
   console.error('Usage: node test/run-gated-e2e.mjs browser-runtime [--expected-auto system|managed-chromium]')
   console.error('   or: node test/run-gated-e2e.mjs managed-playwright <all|non_submission|mutation|project>')
   console.error('   or: node test/run-gated-e2e.mjs provider-fallback')
+  console.error('   or: node test/run-gated-e2e.mjs web-ui-provider')
   process.exit(2)
 }

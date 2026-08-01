@@ -42,12 +42,16 @@ export type {
   VisibleActionWireRequest,
   VisibleSelectionPayload,
   QwenModeSelectionPayload,
+  DeepSeekMode,
+  DeepSeekModeSelectionPayload,
+  DeepSeekToggleSelectionPayload,
   WorkspaceEnsureActionRequest,
   WorkspaceEnsurePayload,
 } from '../providers/contracts.js'
 
 import type {
   AttachmentInput,
+  DeepSeekMode,
   VisibleAction,
   VisibleActionProtocolVersion,
   VisibleActionRequest,
@@ -181,6 +185,57 @@ export type QwenModeSelectResult = {
 } | {
   supported: false
   reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_mode_not_found' | 'exact_variant_not_found'
+}
+
+export type DeepSeekModeChoice = {
+  mode: DeepSeekMode
+  enabled: boolean
+  selected: boolean
+  controls: {
+    deepThink: boolean
+    search: boolean
+    fileUpload: boolean
+    imageFileSelection: boolean
+  }
+}
+
+export type DeepSeekModeInspectResult = {
+  supported: true
+  activeMode: DeepSeekMode
+  modes: readonly DeepSeekModeChoice[]
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available'
+}
+
+export type DeepSeekModeSelectResult = {
+  supported: true
+  selectedMode: DeepSeekMode
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_mode_not_found'
+}
+
+export type DeepSeekToggleInspectResult = {
+  supported: true
+  activeMode: DeepSeekMode
+  enabled: boolean
+} | {
+  supported: false
+  activeMode: DeepSeekMode | null
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'unavailable_in_mode'
+}
+
+export type DeepSeekToggleSelectResult = {
+  supported: true
+  activeMode: DeepSeekMode
+  enabled: boolean
+  visibleProof: string
+} | {
+  supported: false
+  activeMode: DeepSeekMode | null
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'unavailable_in_mode'
 }
 
 export type FileUploadResult = {
@@ -371,7 +426,8 @@ export type VisibleBlocker = {
   visibleProof: string
   provider: ProviderId
   url: string
-  family?: 'recaptcha' | 'cloudflare' | 'hcaptcha' | 'arkose' | 'provider_sign_in' | 'rate_limit' | 'plan_limit'
+  family?: 'recaptcha' | 'cloudflare' | 'hcaptcha' | 'arkose' | 'provider_sign_in' | 'rate_limit' | 'plan_limit' | 'availability'
+  retryAfterSeconds?: number | undefined
 }
 
 export type BlockerCheckResult = {
@@ -392,6 +448,10 @@ export type VisibleActionResult = (
   | ChoiceSelectResult
   | QwenModeInspectResult
   | QwenModeSelectResult
+  | DeepSeekModeInspectResult
+  | DeepSeekModeSelectResult
+  | DeepSeekToggleInspectResult
+  | DeepSeekToggleSelectResult
   | FileUploadResult
   | WorkspaceEnsureResult
   | PromptInputResult

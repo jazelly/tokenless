@@ -20,16 +20,14 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.equal(byId.get('conversation.chat').routeable, true)
   assert.deepEqual(
     byId.get('conversation.chat').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'qwen'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'qwen', 'perplexity', 'zai'],
   )
   assert.deepEqual(
     byId.get('file.upload').routes.map((route) => route.provider),
     ['chatgpt', 'claude', 'grok'],
   )
-  assert.deepEqual(
-    byId.get('workspace.native').routes.map((route) => route.provider),
-    ['claude', 'grok'],
-  )
+  assert.equal(byId.get('workspace.native').routeable, false)
+  assert.deepEqual(byId.get('workspace.native').routes, [])
   assert.equal(byId.get('research.deep').routeable, false)
   assert.deepEqual(byId.get('research.deep').routes, [])
   assert.equal(byId.has('qwen.mode'), false)
@@ -48,7 +46,7 @@ test('implicit run routing chooses the first usable cached provider in setup ord
       gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
       grok: observedProvider('grok', 'authenticated', 'signed_in_paid'),
     })
-    writeConfig(homeDir, ['chatgpt', 'claude', 'gemini', 'grok'], daemonUrl)
+    writeConfig(homeDir, ['chatgpt', 'claude', 'grok', 'gemini'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -64,7 +62,7 @@ test('implicit run routing chooses the first usable cached provider in setup ord
     daemonStarted = result.status === 0
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
-    assert.equal(payload.provider, 'gemini')
+    assert.equal(payload.provider, 'grok')
     assert.equal(payload.status, 'no_wait')
     const state = runCli([
       'state', '--home', homeDir, '--daemon-url', daemonUrl,
@@ -76,9 +74,18 @@ test('implicit run routing chooses the first usable cached provider in setup ord
       protocol: 'tokenless.provider-fallback.v1',
       mode: 'automatic',
       replay: 'from_start',
-      providers: ['grok'],
+      providers: ['gemini'],
+      routes: [{
+        rank: 1,
+        provider: 'gemini',
+        requirements: ['conversation.chat'],
+        support: 'supported',
+        runtimeEligibility: 'eligible',
+        strategies: ['visible-conversation'],
+        evidence: ['workspace-response-citations'],
+      }],
     })
-    assert.equal(latest.providerAttempts[0].provider, 'gemini')
+    assert.equal(latest.providerAttempts[0].provider, 'grok')
   } finally {
     if (daemonStarted) runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
     fs.rmSync(homeDir, { recursive: true, force: true })

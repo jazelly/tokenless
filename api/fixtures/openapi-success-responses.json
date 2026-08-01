@@ -42,6 +42,8 @@
         "error_json": null,
         "blocker_json": null,
         "provider_attempts_json": [],
+        "provider_submitted_at": null,
+        "eligible_at": null,
         "created_at": "2026-07-26T00:00:00Z",
         "updated_at": "2026-07-26T00:00:00Z"
       }
@@ -116,6 +118,8 @@
         "error_json": null,
         "blocker_json": null,
         "provider_attempts_json": [],
+        "provider_submitted_at": "2026-07-26T00:00:30Z",
+        "eligible_at": null,
         "created_at": "2026-07-26T00:00:00Z",
         "updated_at": "2026-07-26T00:01:00Z"
       }
@@ -312,6 +316,8 @@
           "error_json": null,
           "blocker_json": null,
           "provider_attempts_json": [],
+          "provider_submitted_at": "2026-07-26T00:00:30Z",
+          "eligible_at": null,
           "created_at": "2026-07-26T00:00:00Z",
           "updated_at": "2026-07-26T00:00:00Z"
         }

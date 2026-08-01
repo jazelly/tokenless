@@ -40,7 +40,7 @@ const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 const REPLACE_TERMINAL_LINE = '\u001b[2K\u001b[1G'
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
-  'Keeps sign-ins between jobs inside a Tokenless-managed profile. Tokenless does not copy an existing browser profile or its authentication state.',
+  'Keeps sign-ins between jobs inside a Tokenless-managed profile. With explicit consent, setup can copy a selected local profile as an opaque filesystem tree without reading its authentication values.',
 ])
 
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([

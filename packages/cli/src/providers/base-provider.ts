@@ -103,6 +103,10 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
     return this.inspectVisibleComposer(page)
   }
 
+  declaredCapabilityAvailability(capability: ProviderCapabilityId) {
+    return this.definition.capabilities[capability].availability
+  }
+
   prepareAction(page: Page, request: VisibleActionRequest): Promise<ProviderActionPreparation | null> {
     if (request.action === VISIBLE_ACTIONS.PROMPT_SUBMIT) return this.prepareResponseCursor(page)
     return Promise.resolve(null)
@@ -208,7 +212,7 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
     return inspectDomProviderAccount(this.definition, page, signal)
   }
 
-  protected inspectBlockers(page: Page): Promise<BlockerCheckResult> {
+  inspectBlockers(page: Page): Promise<BlockerCheckResult> {
     return inspectDomProviderBlockers(this.definition, page)
   }
 

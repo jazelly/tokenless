@@ -24,6 +24,31 @@ test('checked-in live provider capability matrix classifies every registered pro
   }])
 })
 
+test('built capability routes stay provenance-bound to required live provider matrix cases', () => {
+  const matrix = loadLiveProviderCapabilityMatrix()
+  const result = spawnSync(process.execPath, [cliEntry, 'capabilities', 'list', '--json'], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  const payload = JSON.parse(result.stdout)
+  for (const capability of payload.capabilities) {
+    for (const route of capability.routes) {
+      const provider = matrix.providers[route.provider]
+      assert.ok(provider, `route provider ${route.provider} must exist in the live matrix`)
+      assert.ok(route.evidence.length > 0, `${route.provider}/${capability.id} must declare live evidence cases`)
+      for (const evidence of route.evidence) {
+        assert.ok(matrix.cases[evidence], `${route.provider}/${capability.id} references unknown live case ${evidence}`)
+        assert.ok(
+          provider.required.includes(evidence),
+          `${route.provider}/${capability.id} evidence ${evidence} must be required for that provider`,
+        )
+        assert.equal(provider.unavailable[evidence], undefined)
+      }
+    }
+  }
+})
+
 test('persistent config defaults, stores, and validates browser connection mode through the filesystem boundary', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-connection-mode-'))
   const runtime = await import('../packages/cli/dist/src/index.js')
@@ -403,10 +428,12 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.d.ts'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/daemon-entry.mjs'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/tokenless.mjs'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/ui/index.html'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/ui/app.js'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/ui/styles.css'))
-    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/ui/mark.png'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/index.html'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/app.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/styles.css'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/mark.png'))
+    assert.equal(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/dashboard.js'), false)
+    assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/src/daemon/ui/pages/')), false)
     assert.ok(universalPack.files.some((file) => file.path === 'README.md'))
     assert.equal(universalPack.files.some((file) => file.path === 'dist/src/playwright/runner-entry.mjs'), false)
     assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/bin/')), false)
@@ -483,21 +510,20 @@ test('CLI rejects removed local fallback routes before network access', () => {
   assert.equal(reimportConflict.status, 1)
   assert.equal(JSON.parse(reimportConflict.stdout).error.code, 'setup_profile_choice_conflict')
 
-  const copyPolicyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-copy-policy-'))
-  const copyPolicyHome = path.join(copyPolicyRoot, 'home')
+  const copyConsentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-copy-consent-'))
+  const copyConsentHome = path.join(copyConsentRoot, 'home')
   try {
     for (const args of [
-      ['setup', '--import-browser-profile', 'Default', '--home', copyPolicyHome, '--json'],
-      ['profiles', 'add', '--profile', 'copied', '--import-browser-profile', 'Default', '--home', copyPolicyHome, '--json'],
-      ['profiles', 'reset', '--profile', 'legacy', '--home', copyPolicyHome, '--json'],
+      ['setup', '--import-browser-profile', 'Default', '--home', copyConsentHome, '--json'],
+      ['profiles', 'add', '--profile', 'copied', '--import-browser-profile', 'Default', '--home', copyConsentHome, '--json'],
     ]) {
       const result = spawnSync(process.execPath, [cliEntry, ...args], { cwd: root, encoding: 'utf8' })
       assert.equal(result.status, 1, result.stderr || result.stdout)
-      assert.equal(JSON.parse(result.stdout).error.code, 'browser_profile_copy_disabled')
-      assert.equal(fs.existsSync(copyPolicyHome), false, 'copy policy must fail before local profile mutation')
+      assert.equal(JSON.parse(result.stdout).error.code, 'profile_import_consent_required')
+      assert.equal(fs.existsSync(copyConsentHome), false, 'missing consent must fail before local profile mutation')
     }
   } finally {
-    fs.rmSync(copyPolicyRoot, { recursive: true, force: true })
+    fs.rmSync(copyConsentRoot, { recursive: true, force: true })
   }
 
   const compatibilityAlias = spawnSync(process.execPath, [

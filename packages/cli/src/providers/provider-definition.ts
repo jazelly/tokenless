@@ -207,6 +207,7 @@ export function createProviderOptionalCapabilities(
 export function providerCapabilities(options: {
   nativeWorkspace?: boolean
   qwenMode?: boolean
+  deepSeekControls?: boolean
 } = {}): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
   return Object.freeze({
     [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT]: Object.freeze({
@@ -391,6 +392,46 @@ export function providerCapabilities(options: {
       }),
       stability: 'experimental',
     }),
+    [PROVIDER_CAPABILITIES.DEEPSEEK_MODE]: deepSeekCapabilityStrategy(
+      PROVIDER_CAPABILITIES.DEEPSEEK_MODE,
+      options.deepSeekControls === true,
+    ),
+    [PROVIDER_CAPABILITIES.DEEPSEEK_DEEPTHINK]: deepSeekCapabilityStrategy(
+      PROVIDER_CAPABILITIES.DEEPSEEK_DEEPTHINK,
+      options.deepSeekControls === true,
+    ),
+    [PROVIDER_CAPABILITIES.DEEPSEEK_SEARCH]: deepSeekCapabilityStrategy(
+      PROVIDER_CAPABILITIES.DEEPSEEK_SEARCH,
+      options.deepSeekControls === true,
+    ),
+  })
+}
+
+function deepSeekCapabilityStrategy(
+  capability: ProviderCapabilityId,
+  enabled: boolean,
+): ProviderCapabilityStrategy {
+  return Object.freeze({
+    capability,
+    availability: enabled ? 'unknown' : 'unavailable',
+    visibleProof: enabled
+      ? 'runtime-visible-deepseek-control-evidence-required'
+      : 'deepseek-provider-strategy-unavailable',
+    reason: enabled ? 'availability_depends_on_visible_provider_controls' : 'unsupported_by_provider',
+    native: Object.freeze({
+      resourceKind: enabled ? 'visible_action' : null,
+      availability: enabled ? 'unknown' : 'unavailable',
+      visibleProof: enabled ? 'runtime-visible-deepseek-control-evidence-required' : null,
+      reason: enabled ? null : 'unsupported_by_provider',
+    }),
+    fallback: Object.freeze({
+      resourceKind: null,
+      availability: 'unavailable',
+      mode: null,
+      visibleProof: null,
+      reason: 'no_provider_neutral_deepseek_control_fallback',
+    }),
+    stability: 'experimental',
   })
 }
 

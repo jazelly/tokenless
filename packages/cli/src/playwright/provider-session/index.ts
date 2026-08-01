@@ -60,7 +60,7 @@ export async function resolveProviderSession(
 
     if (decision.kind === 'wait') {
       const authOffer = observation.blockers.find((blocker) => blocker.kind === 'auth')
-      if (authOffer) {
+      if (authOffer && provider.access.guest !== 'supported') {
         return {
           decision: {
             kind: 'handoff',

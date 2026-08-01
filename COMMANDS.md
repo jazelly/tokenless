@@ -26,6 +26,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
+| `tokenless limits inspect` | Inspect the next-prompt provider/profile capacity estimate from the packaged catalog and local job history. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
 | `tokenless replay` | Report previously unseen daemon outcome summaries for one agent recipient. | None |
 | `tokenless state` | Inspect durable daemon job state. | None |
@@ -53,11 +54,14 @@ claude
 gemini
 grok
 qwen
+deepseek
+perplexity
+zai
 ```
 
-ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问 is experimental: its guest-session prompt submission and response reading are proven, while cross-process continuation and unproven optional capabilities remain unavailable or unknown.
+ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, and Z.ai / GLM are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
 
-Runtime browser values are `auto`, `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, `brave`, `managed-chromium`, and `cloak`. `auto` prefers an installed system browser and uses the locked managed fallback only when none exists. `cloak` is explicit opt-in. Every newly created Tokenless profile is clean and runtime-bound; Tokenless does not copy an existing browser profile or its authentication state.
+Runtime browser values are `auto`, `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, `brave`, `managed-chromium`, and `cloak`. `auto` prefers an installed system browser and uses the locked managed fallback only when none exists. `cloak` is explicit opt-in. New Tokenless profiles are clean by default and runtime-bound. An explicitly selected local Chromium profile can instead be copied after `--consent-local-profile-copy`; Tokenless treats its contents as an opaque local filesystem tree.
 
 ### Short options
 
@@ -160,15 +164,16 @@ Main options:
 - `--no-browser-download` fails instead of downloading a missing managed runtime.
 - `--repair-browser` explicitly reinstalls a selected `managed-chromium` or `cloak` runtime. It cannot be combined with `--no-browser-download`.
 - `--fresh` or `-f` creates a clean managed profile.
+- `--import-browser-profile <key> --consent-local-profile-copy` copies one explicitly selected local Chromium profile into the managed profile without parsing authentication values.
 - `--defaults` selects non-interactive defaults.
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
 
 `auto` is the default and prefers an installed Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing executable. If no supported system browser exists, setup downloads the locked Chrome for Testing 145 artifact into `~/.tokenless/browser/runtimes`. An explicit missing system-browser choice fails rather than falling back. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first runtime targets are Apple Silicon macOS and Windows x64 (Intel and AMD); Windows remains prerelease until its real-hardware gates pass.
 
-After Anti-Detect is selected, interactive setup links to the official CloakBrowser project, shows the exact platform artifact and Chromium version, and scans known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing profile directories. It reads only the directory key and `Last Version`, classifies an exact four-component match, and then asks whether to continue with a clean Cloak-bound profile before downloading. The inventory is reference-only: Tokenless never parses `Local State`, reads browser sign-ins, imports a listed profile, or opens it with Cloak.
+After Anti-Detect is selected, interactive setup links to the official CloakBrowser project, shows the exact platform artifact and Chromium version, and scans known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing profile directories. Discovery reads only the directory key and `Last Version` and classifies an exact four-component match. A listed profile is not copied unless the user selects it and gives explicit copy consent. Copying is opaque: Tokenless does not parse `Local State`, cookies, browser storage, or authentication values.
 
-Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing runtime family creates a clean profile. The user signs in inside that Tokenless-managed profile, and the profile then preserves its own browser-managed session across jobs. Legacy profile-copy flags remain recognized only to return the structured `browser_profile_copy_disabled` error; they never copy data.
+Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing runtime family normally creates a clean profile; an explicit import can populate the new runtime-bound profile from a selected local Chromium profile. The managed profile then preserves its browser-managed session across jobs.
 
 Interactive `setup` asks which providers belong to the selected profile. Non-interactive setup uses `--preferred-providers`, the existing configured scope, or all non-disabled providers when no scope exists. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
 
@@ -279,13 +284,14 @@ tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user
 
 ### `tokenless profiles add`
 
-Creates an empty managed profile:
+Creates a clean managed profile or, after explicit consent, copies a selected local Chromium profile:
 
 ```bash
 tokenless profiles add -P work --label "Work" --set-default --json
+tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
 ```
 
-The profile starts clean. Open it and sign in through the visible browser; Tokenless never copies authentication state from another browser profile.
+The copy remains local and opaque. Tokenless copies filesystem entries but does not inspect or report cookies, storage, passwords, tokens, or Keychain data.
 
 ### `tokenless profiles list`
 
@@ -329,10 +335,10 @@ tokenless profiles set-default -P work --json
 
 ### `tokenless profiles reset`
 
-This legacy command is retained only for compatibility and fails with `browser_profile_copy_disabled`. Tokenless does not recopy local profiles or authentication state.
+Replaces an imported managed profile with a fresh opaque copy from its recorded local source. Explicit consent is required again.
 
 ```bash
-tokenless profiles reset -P work --json
+tokenless profiles reset -P work --consent-local-profile-copy --json
 ```
 
 ### `tokenless profiles clear`
@@ -362,6 +368,8 @@ tokenless profiles remove -P work --confirm-delete --json
 
 Returns the versioned canonical task-capability catalog without opening a browser:
 
+See the [Capability Matrix](docs/capability-matrix.md) for capability semantics, provider mappings, support states, and the extension process.
+
 ```bash
 tokenless capabilities list --json
 ```
@@ -369,6 +377,16 @@ tokenless capabilities list --json
 Each entry describes the caller outcome, parameter schema, lifecycle, side effects, required evidence, output kinds, stability, and declared provider routes. `routeable: true` means at least one checked-in provider strategy has complete implementation and real-provider E2E evidence. Candidate entries remain discoverable with `routeable: false`; they cannot be selected for a run.
 
 Provider controls such as `model.choice`, `effort.choice`, and `qwen.mode` are intentionally absent. They remain provider adapter details rather than canonical caller outcomes.
+
+### `tokenless limits inspect`
+
+Inspect the next prompt against the observed profile subscription, packaged provider knowledge, and immutable local submission history:
+
+```sh
+tokenless limits inspect --profile default --provider chatgpt --json
+```
+
+The projection reports the matched catalog plan and rules, local usage, published and effective allowance, estimated remaining units, cadence, burst allowance, decision, and `eligibleAt`. `unknown` means Tokenless has no enforceable official number and will allow execution; it does not mean unlimited provider capacity. This command is local and read-only and does not open or submit to a provider website.
 
 ### `tokenless run`
 
@@ -387,12 +405,13 @@ Provider selection:
 - Explicit `--provider <provider>` or `TOKENLESS_PROVIDER` is exact and is not replaced based on cached usability.
 - `--capability <capability>` is repeatable and requests canonical caller outcomes rather than provider-specific controls.
 - Tokenless merges explicit capabilities with structural inference: a normal `submit_and_read` run requires `conversation.chat`, `--attach-file` requires `file.upload` plus `image.input`, `audio.input`, or `video.input` when applicable, and `--workspace-mode native` requires `workspace.native`.
-- When no provider is explicit, Tokenless chooses the first configured provider that satisfies the full requirement set and whose cached access for the resolved profile is `guest` or starts with `signed_in_`.
+- When no provider is explicit, the configured provider list filters membership. Tokenless then filters for providers that satisfy the full implication-expanded requirement set and ranks routes by fresh cached eligibility and evidence maturity (`supported` before `experimental`); configured list position is the final tie-breaker and cannot override those stronger signals. Stale usable observations remain `unchecked` until the runner performs its live read-only preflight.
 - An explicit provider that cannot satisfy the full requirement set fails before daemon submission instead of silently switching.
 - Unknown and sign-in-required observations are not usable for implicit routing. If no cached provider is usable, the CLI returns `provider_unavailable` with provider observation context before creating a daemon job.
 - A known capability with no complete route returns `task_capability_route_unavailable` before browser mutation. `--capability` currently requires the normal `submit_and_read` action.
 - Successful submissions return and durably store `capabilityRoute`, including normalized requirements, selected strategies, support level, evidence identifiers, and runtime eligibility; `tokenless state` returns the same route.
-- Implicit `submit_and_read` runs may persist an automatic fallback plan. Before submission, provider-scoped auth, CAPTCHA, rate-limit, or plan blockers requeue the same job on the next eligible provider only when it satisfies the run's complete requirements and all completed mutations are reconstructable. Explicit providers and ambiguous submissions never switch automatically. JSON state includes `fallback` and `providerAttempts`.
+- Implicit `submit_and_read` runs may persist an automatic fallback plan. Before mutation, every attempt rechecks known local provider capacity, the visible session, and capability-specific UI without a probe prompt. Classified safe pre-submit capacity, auth, CAPTCHA, rate/plan, maintenance, region, navigation, stable-surface, and capability-availability failures requeue the same job on the next ranked provider only when it satisfies the identical complete requirements and all completed mutations are reconstructable. Exact or mapped continuation, explicit providers, provider-specific controls, non-reconstructable mutations, ambiguous external state, and post-submission failures never switch automatically. JSON state includes ranked `fallback.routes`, structured stop reasons, and `providerAttempts`.
+- The job validator independently derives capabilities from actions, attachment MIME types, and native workspace intent, so internal or agent callers cannot under-declare a fallback requirement. Routed jobs carry `tokenless.context-envelope.v1`; its instructions, references, output/constraint contract, optional upstream state, and delivery hashes are replayed unchanged on every attempt. JSON state exposes only a redacted envelope summary.
 
 Prompt input:
 
@@ -409,6 +428,10 @@ Provider controls:
 - `--thinking-effort <label>` is an alternative effort option.
 - `--qwen-mode <exact-visible-label>` selects a Qwen-specific composer mode.
 - `--qwen-mode-variant <exact-visible-label>` selects a visible variant of that Qwen mode and requires `--qwen-mode`.
+- `--deepseek-mode <Instant|Expert|Vision>` selects an exact DeepSeek mode.
+- `--deepseek-deepthink <on|off>` controls DeepThink in the active DeepSeek mode.
+- `--deepseek-search <on|off>` controls Search; the control is available only in DeepSeek Instant mode.
+- DeepSeek canonical requirements prepare their required controls before mutation: `search.web` selects Instant and enables Search, `reasoning.extended` enables DeepThink, and `image.input` selects Vision. Explicit incompatible combinations fail before changing the page.
 - `--browser-visibility <auto|headed|headless>` overrides the configured visibility policy.
 
 Identity and continuity:
@@ -429,8 +452,9 @@ Execution:
 
 Workspace modes:
 
-- `auto` prefers a visible native Project for Claude and Grok. It falls back only when the provider visibly reports stable native unavailability; transient UI, navigation, network, blocker, and selector failures remain errors.
-- `native` requires exact native Project creation or reuse and fails instead of falling back. Duplicate exact visible names fail closed.
+- Routed `run` requests using `auto` or `native` require the canonical `workspace.native` capability. No provider route is currently advertised, so these requests fail before browser mutation until the native Project release gate is complete.
+- The lower-level Claude and Grok adapters implement experimental visible native Project create/reuse behavior for their explicit real-provider acceptance suite; implementation alone is not a router support claim.
+- After `workspace.native` becomes routeable, `native` will require exact native Project creation or reuse and will never degrade to conversation scope. Duplicate exact visible names fail closed.
 - `conversation` requires the conversation-scoped strategy; cross-process restoration is supported only where the real-provider capability matrix proves it.
 - Native results report `created` or `reused`, canonical provider resource identity, provider/profile scope, and the instruction outcome. Conversation results report `fallback`.
 - Project and task conversation targets are persisted as exact SQLite mappings rather than recovered by scanning historical job results.
@@ -476,6 +500,8 @@ tokenless resume \
 ```
 
 `--job-id` and `--browser-visibility headed` are required. Resume preserves the original job and task identity.
+
+When provider sign-in, hCaptcha, MFA, or another visible human verification is required, Tokenless reports `waiting_for_user` and explicitly says that your help is needed. Complete the visible step, then query or resume the same job; do not submit a replacement job.
 
 ### `tokenless cancel`
 
@@ -568,6 +594,12 @@ tokenless provider-action \
 | `effort.select` | Select one exact visible effort. | `--effort` or `--thinking-effort` |
 | `qwen.mode.inspect` | List Qwen-specific visible composer modes. | None; Qwen only |
 | `qwen.mode.select` | Select one Qwen-specific mode and optional visible variant. | `--qwen-mode`; optional `--qwen-mode-variant` |
+| `deepseek.mode.inspect` | Inspect DeepSeek Instant, Expert, and Vision plus their mode-dependent controls. | None; DeepSeek only |
+| `deepseek.mode.select` | Select one exact DeepSeek mode. | `--deepseek-mode` |
+| `deepseek.deepthink.inspect` | Inspect DeepThink in the active DeepSeek mode. | None; DeepSeek only |
+| `deepseek.deepthink.select` | Enable or disable DeepThink. | `--deepseek-deepthink on|off` |
+| `deepseek.search.inspect` | Inspect Search in the active DeepSeek mode. | None; DeepSeek only |
+| `deepseek.search.select` | Enable or disable Search in Instant mode. | `--deepseek-search on|off` |
 | `file.upload` | Upload files through visible file controls. | One or more `--attach-file` |
 | `workspace.ensure` | Ensure a native or conversation-scoped Workspace. | `--project-name`; optional `--workspace-mode` and instructions |
 | `prompt.clear` | Clear the visible composer. | None |

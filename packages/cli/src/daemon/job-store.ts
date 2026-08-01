@@ -10,6 +10,11 @@ import {
   validateVisibleAttachmentDescriptor,
 } from '../visible-attachments.js'
 import {
+  providerCapacityPolicy,
+  providerRateLimitCatalog,
+  type ProviderCapacityProjection,
+} from '../providers/rate-limit-policy.js'
+import {
   claimExpired,
   claimRejected,
   controlAuthRejected,
@@ -46,6 +51,8 @@ export type Job = {
   checkpoint_json: unknown | null
   resume_json: unknown | null
   provider_attempts_json: unknown
+  provider_submitted_at: string | null
+  eligible_at: string | null
   created_at: string
   updated_at: string
   claim_expires_at_ms: number | null
@@ -101,6 +108,18 @@ export type ClaimNextInput = {
   provider?: string | undefined
   action?: string | undefined
   job_id_prefix?: string | undefined
+}
+
+export type ProviderCapacitySubscription = {
+  access_class: string
+  tier_label?: string | null | undefined
+  subscription_label?: string | null | undefined
+}
+
+export type ProjectProviderCapacityInput = ProviderCapacitySubscription & {
+  provider: string
+  profile_id: string
+  request_json: unknown
 }
 
 export type ProviderProjectMapping = {
@@ -403,6 +422,7 @@ export class JobStore {
       jobs.provider, jobs.action, jobs.status, jobs.request_json, jobs.result_json,
       jobs.error_json, jobs.blocker_json, jobs.checkpoint_json, jobs.resume_json,
       jobs.provider_attempts_json,
+      jobs.provider_submitted_at, jobs.eligible_at,
       jobs.created_at, jobs.updated_at, jobs.claim_expires_at
       FROM jobs`
     const params: SQLInputValue[] = []
@@ -652,14 +672,16 @@ export class JobStore {
     const expiresAt = saturatingAdd(nowMs, this.claimLeaseMs)
     const result = this.run(
       `UPDATE jobs
-       SET status = ?, updated_at = ?, claim_expires_at = ?
-       WHERE job_id = ? AND claim_token = ? AND status = ?`,
+       SET status = ?, updated_at = ?, claim_expires_at = ?, eligible_at = NULL
+       WHERE job_id = ? AND claim_token = ? AND status = ?
+         AND (eligible_at IS NULL OR eligible_at <= ?)`,
       'claimed',
       now,
       expiresAt,
       jobId,
       claimToken,
-      'queued'
+      'queued',
+      now,
     )
     if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
     return this.explainClaimFailure(jobId, claimToken)
@@ -684,11 +706,12 @@ export class JobStore {
     const nextClaimToken = generateSecretToken()
     const row = this.get(
       `UPDATE jobs
-       SET status = ?, updated_at = ?, claim_expires_at = ?, claim_token = ?
+       SET status = ?, updated_at = ?, claim_expires_at = ?, claim_token = ?, eligible_at = NULL
        WHERE job_id = (
          SELECT job_id
          FROM jobs
          WHERE status = ?
+           AND (eligible_at IS NULL OR eligible_at <= ?)
            AND execution_backend = ?
            AND ((? IS NULL AND profile_id IS NULL) OR profile_id = ?)
            AND (? IS NULL OR provider = ?)
@@ -701,12 +724,14 @@ export class JobStore {
          job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
          provider, action, status, request_json, result_json, error_json,
          blocker_json, checkpoint_json, resume_json, provider_attempts_json,
+         provider_submitted_at, eligible_at,
          created_at, updated_at, claim_expires_at`,
       'claimed',
       now,
       expiresAt,
       nextClaimToken,
       'queued',
+      now,
       executionBackend,
       profileId,
       profileId,
@@ -719,6 +744,111 @@ export class JobStore {
       jobIdPrefix
     )
     return row ? rowToJob(row) : null
+  }
+
+  projectProviderCapacity(input: ProjectProviderCapacityInput): ProviderCapacityProjection {
+    const provider = normalizeNonempty(input.provider, 'provider')
+    const profileId = normalizeProfileId(input.profile_id, 'profile_id')
+    const accessClass = normalizeNonempty(input.access_class, 'access_class')
+    const now = nowRfc3339()
+    return providerCapacityPolicy.project({
+      provider,
+      profileId,
+      accessClass,
+      tierLabel: normalizeOptionalText(input.tier_label),
+      subscriptionLabel: normalizeOptionalText(input.subscription_label),
+      requestJson: input.request_json,
+      history: this.providerSubmissionHistory(provider, profileId, now),
+      now,
+    })
+  }
+
+  projectJobProviderCapacity(
+    jobId: string,
+    claimToken: string,
+    subscription: ProviderCapacitySubscription,
+  ): ProviderCapacityProjection {
+    const nowMs = nowUnixMillis()
+    const job = this.getJobWithoutRecovery(jobId)
+    assertActiveClaim(job, claimToken, nowMs)
+    if (job.profile_id === null) throw invalidInput('provider capacity requires a profile-scoped job')
+    if (job.provider_submitted_at !== null) {
+      return providerCapacityPolicy.project({
+        provider: job.provider,
+        profileId: job.profile_id,
+        accessClass: normalizeNonempty(subscription.access_class, 'access_class'),
+        tierLabel: normalizeOptionalText(subscription.tier_label),
+        subscriptionLabel: normalizeOptionalText(subscription.subscription_label),
+        requestJson: { actions: [] },
+        history: [],
+      })
+    }
+    return this.projectProviderCapacity({
+      provider: job.provider,
+      profile_id: job.profile_id,
+      access_class: subscription.access_class,
+      tier_label: subscription.tier_label,
+      subscription_label: subscription.subscription_label,
+      request_json: job.request_json,
+    })
+  }
+
+  deferJobForProviderCapacity(jobId: string, claimToken: string, projection: ProviderCapacityProjection) {
+    const nowMs = nowUnixMillis()
+    const job = this.getJobWithoutRecovery(jobId)
+    assertActiveClaim(job, claimToken, nowMs)
+    if (
+      projection.decision !== 'defer' ||
+      projection.provider !== job.provider ||
+      projection.profileId !== job.profile_id ||
+      !projection.eligibleAt
+    ) {
+      throw invalidInput('provider capacity projection cannot defer this job')
+    }
+    return this.deferClaimedJob(job, claimToken, projection.eligibleAt, {
+      code: 'provider_capacity_deferred',
+      projection,
+    }, nowMs)
+  }
+
+  recordProviderSubmission(jobId: string, claimToken: string) {
+    const nowMs = nowUnixMillis()
+    const now = nowRfc3339()
+    const job = this.getJobWithoutRecovery(jobId)
+    assertActiveClaim(job, claimToken, nowMs)
+    if (job.provider_submitted_at !== null) return job
+    const result = this.run(
+      `UPDATE jobs
+       SET provider_submitted_at = ?, updated_at = ?
+       WHERE job_id = ? AND claim_token = ?
+         AND provider_submitted_at IS NULL
+         AND status IN ('claimed', 'running', 'waiting_for_user')
+         AND claim_expires_at > ?`,
+      now,
+      now,
+      jobId,
+      claimToken,
+      nowMs,
+    )
+    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
+    return this.explainActiveClaimFailure(jobId, claimToken, nowMs)
+  }
+
+  deferObservedProviderLimit(jobId: string, claimToken: string, blockerJson: unknown, delaySeconds = 300) {
+    const nowMs = nowUnixMillis()
+    const job = this.getJobWithoutRecovery(jobId)
+    assertActiveClaim(job, claimToken, nowMs)
+    if (job.provider_submitted_at !== null) {
+      throw invalidInput('a job cannot be rerouted or deferred after provider submission')
+    }
+    const boundedDelayMs = Math.min(3_600_000, Math.max(60_000, Math.floor(delaySeconds * 1000)))
+    return this.deferClaimedJob(
+      job,
+      claimToken,
+      new Date(nowMs + boundedDelayMs).toISOString(),
+      blockerJson,
+      nowMs,
+    )
   }
 
   renewClaim(jobId: string, claimToken: string) {
@@ -875,6 +1005,7 @@ export class JobStore {
         throw invalidJobState(job.job_id, 'active claimed playwright job', job.status)
       }
       if (job.execution_backend !== 'playwright') throw invalidInput('only playwright jobs can fallback providers')
+      if (job.provider_submitted_at !== null) throw invalidInput('jobs cannot fallback after provider submission')
       if (job.provider === provider) throw invalidInput('fallback provider must differ from the current provider')
       const attempts = providerAttempts(job.provider_attempts_json)
       const current = attempts.at(-1) ?? providerAttempt(1, job.provider, 'queued', job.created_at)
@@ -890,6 +1021,7 @@ export class JobStore {
          SET provider = ?, request_json = ?, status = 'queued', claim_token = ?,
              result_json = NULL, error_json = NULL, blocker_json = NULL,
              checkpoint_json = NULL, resume_json = NULL, claim_expires_at = NULL,
+             eligible_at = NULL,
              provider_attempts_json = ?, updated_at = ?,
              outcome_revision = outcome_revision + 1
          WHERE job_id = ? AND claim_token = ?
@@ -1025,6 +1157,7 @@ export class JobStore {
           job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
           provider, action, status, request_json, result_json, error_json,
           blocker_json, checkpoint_json, resume_json, provider_attempts_json,
+          provider_submitted_at, eligible_at,
           created_at, updated_at, claim_expires_at
          FROM jobs
          WHERE job_id = ?`,
@@ -1203,6 +1336,63 @@ export class JobStore {
     ).changes
   }
 
+  private providerSubmissionHistory(providerId: string, profileId: string, now: string) {
+    const provider = providerRateLimitCatalog().providers[providerId]
+    const maximumWindowSeconds = provider?.rules.reduce(
+      (maximum, rule) => Math.max(maximum, rule.window.durationSeconds ?? 0),
+      0,
+    ) ?? 0
+    if (maximumWindowSeconds <= 0) return []
+    const since = new Date(Date.parse(now) - maximumWindowSeconds * 1000).toISOString()
+    return this.all(
+      `SELECT provider_submitted_at, request_json
+       FROM jobs
+       WHERE provider = ? AND profile_id = ?
+         AND provider_submitted_at IS NOT NULL
+         AND provider_submitted_at > ? AND provider_submitted_at <= ?
+       ORDER BY provider_submitted_at ASC, job_id ASC`,
+      providerId,
+      profileId,
+      since,
+      now,
+    ).map((row) => ({
+      submittedAt: String(row.provider_submitted_at),
+      requestJson: parseJson(row.request_json),
+    }))
+  }
+
+  private deferClaimedJob(
+    job: Job,
+    claimToken: string,
+    eligibleAtInput: string,
+    blockerJson: unknown,
+    nowMs: number,
+  ) {
+    const eligibleMs = Date.parse(eligibleAtInput)
+    if (!Number.isFinite(eligibleMs) || eligibleMs <= nowMs) {
+      throw invalidInput('eligible_at must be a future RFC 3339 timestamp')
+    }
+    const now = new Date(nowMs).toISOString()
+    const result = this.run(
+      `UPDATE jobs
+       SET status = 'queued', claim_token = ?, claim_expires_at = NULL,
+           blocker_json = ?, eligible_at = ?, updated_at = ?
+       WHERE job_id = ? AND claim_token = ?
+         AND provider_submitted_at IS NULL
+         AND status IN ('claimed', 'running', 'waiting_for_user')
+         AND claim_expires_at > ?`,
+      generateSecretToken(),
+      stringifyJson(blockerJson),
+      new Date(eligibleMs).toISOString(),
+      now,
+      job.job_id,
+      claimToken,
+      nowMs,
+    )
+    if (result.changes === 1) return this.getJobWithoutRecovery(job.job_id)
+    return this.explainActiveClaimFailure(job.job_id, claimToken, nowMs)
+  }
+
   private initialize() {
     this.execWithBusyRetry(`
       PRAGMA journal_mode = WAL;
@@ -1252,6 +1442,8 @@ export class JobStore {
         checkpoint_json TEXT,
         resume_json TEXT,
         provider_attempts_json TEXT NOT NULL DEFAULT '[]',
+        provider_submitted_at TEXT,
+        eligible_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         claim_expires_at INTEGER,
@@ -1329,6 +1521,17 @@ export class JobStore {
         ON jobs(claim_expires_at);
       CREATE INDEX IF NOT EXISTS jobs_backend_profile_status_fifo_idx
         ON jobs(execution_backend, profile_id, status, created_at, job_id);
+      CREATE INDEX IF NOT EXISTS jobs_backend_profile_status_eligible_fifo_idx
+        ON jobs(execution_backend, profile_id, status, eligible_at, created_at, job_id);
+      CREATE INDEX IF NOT EXISTS jobs_provider_profile_submitted_idx
+        ON jobs(provider, profile_id, provider_submitted_at);
+      CREATE TRIGGER IF NOT EXISTS jobs_provider_submitted_at_immutable
+        BEFORE UPDATE OF provider_submitted_at ON jobs
+        WHEN OLD.provider_submitted_at IS NOT NULL
+          AND NEW.provider_submitted_at IS NOT OLD.provider_submitted_at
+        BEGIN
+          SELECT RAISE(ABORT, 'provider_submitted_at is immutable');
+        END;
       CREATE INDEX IF NOT EXISTS job_task_keys_task_id_idx
         ON job_task_keys(task_id, job_id);
       CREATE INDEX IF NOT EXISTS jobs_replay_outcome_recipient_idx
@@ -1349,6 +1552,8 @@ export class JobStore {
         ['checkpoint_json', 'TEXT'],
         ['resume_json', 'TEXT'],
         ['provider_attempts_json', "TEXT NOT NULL DEFAULT '[]'"],
+        ['provider_submitted_at', 'TEXT'],
+        ['eligible_at', 'TEXT'],
         ['claim_expires_at', 'INTEGER'],
         ['summary_task_id', 'TEXT CHECK (summary_task_id IS NULL OR length(summary_task_id) <= 256)'],
         ['summary_project_name', 'TEXT CHECK (summary_project_name IS NULL OR length(summary_project_name) <= 256)'],
@@ -1405,6 +1610,7 @@ export class JobStore {
         provider, action, status, request_json, result_json, error_json,
         blocker_json, checkpoint_json, resume_json,
         provider_attempts_json,
+        provider_submitted_at, eligible_at,
         created_at, updated_at, claim_expires_at
        FROM jobs
        WHERE job_id = ?`,
@@ -1536,6 +1742,8 @@ export function publicView(job: Job): JobView {
     error_json: job.error_json,
     blocker_json: job.blocker_json,
     provider_attempts_json: job.provider_attempts_json,
+    provider_submitted_at: job.provider_submitted_at,
+    eligible_at: job.eligible_at,
     created_at: job.created_at,
     updated_at: job.updated_at,
   }
@@ -1557,6 +1765,8 @@ export function withClaimToken(job: Job): JobWithClaimToken {
     checkpoint_json: job.checkpoint_json,
     resume_json: job.resume_json,
     provider_attempts_json: job.provider_attempts_json,
+    provider_submitted_at: job.provider_submitted_at,
+    eligible_at: job.eligible_at,
     created_at: job.created_at,
     updated_at: job.updated_at,
   }
@@ -1628,6 +1838,8 @@ function rowToJob(row: Record<string, unknown>): Job {
     checkpoint_json: parseOptionalJson(row.checkpoint_json),
     resume_json: parseOptionalJson(row.resume_json),
     provider_attempts_json: parseJson(row.provider_attempts_json),
+    provider_submitted_at: nullableString(row.provider_submitted_at),
+    eligible_at: nullableString(row.eligible_at),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     claim_expires_at_ms: nullableNumber(row.claim_expires_at),
@@ -1908,6 +2120,19 @@ function normalizeNonempty(value: string, field: string) {
   const trimmed = value.trim()
   if (!trimmed) throw invalidInput(`${field} must be a nonempty string`)
   return trimmed
+}
+
+function normalizeOptionalText(value: string | null | undefined) {
+  if (value === undefined || value === null) return null
+  return normalizeNonempty(String(value), 'optional text').slice(0, 120)
+}
+
+function assertActiveClaim(job: Job, claimToken: string, nowMs: number) {
+  if (job.claim_token !== claimToken) throw claimRejected(job.job_id)
+  if (!ACTIVE_STATUSES.has(job.status)) {
+    throw invalidJobState(job.job_id, 'claimed, running, or waiting_for_user', job.status)
+  }
+  if (job.claim_expires_at_ms === null || job.claim_expires_at_ms <= nowMs) throw claimExpired(job.job_id)
 }
 
 function normalizeSummaryFilter(value: string, field: string) {

@@ -44,7 +44,10 @@ export async function observeDomResponseAction(
 ): Promise<ProviderActionObservation> {
   const baseline = validateDomResponsePreparation(provider, preparation)
   const observation = await observeDomResponseCursor(provider, page)
-  const hasNewAnswer = observation.answerCount > baseline.answerCount ||
+  const hasNewAnswer = (
+    observation.answerCount > baseline.answerCount &&
+    observation.latestAnswerFingerprint !== null
+  ) ||
     (
       baseline.latestAnswerFingerprint !== null &&
       observation.latestAnswerFingerprint !== null &&

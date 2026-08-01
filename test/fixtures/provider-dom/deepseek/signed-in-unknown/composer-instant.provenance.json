@@ -13,7 +13,7 @@
   "artifactKind": "redacted-reduced-dom",
   "containsProviderJavaScript": false,
   "containsSyntheticBehavior": false,
-  "contentSha256": "6c65a540a7403311d6d8af3a1b46432557fef015863a36c65aea2b69b9ebdac8",
+  "contentSha256": "304c3fad4501ba99fba3cbce2a551bc0371a564ec1d267008507e78a33e09a07",
   "evidenceSelectors": [
     { "capability": "deepseek.mode.instant", "selector": "[role=\"radio\"][aria-checked=\"true\"]", "expectedCount": 1 },
     { "capability": "prompt.input", "selector": "textarea[name=\"search\"][placeholder=\"Message DeepSeek\"]", "expectedCount": 1 },
@@ -26,6 +26,7 @@
   "redactions": ["account identity", "conversation history", "message content", "private route identifiers", "scripts", "styles"],
   "notes": [
     "Instant, DeepThink, Search, file input, and the disabled empty-state submit control were observed together.",
+    "The real file input accept list included text, document, and image formats; the reduced fixture retains representative .txt, .pdf, .png, and .jpg entries.",
     "No account credentials, browser storage, or unrelated account content were inspected."
   ]
 }

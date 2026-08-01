@@ -7,6 +7,11 @@ import {
 } from './provider-definition.js'
 import { MenuTextAccountInspector } from './account-inspectors.js'
 import { waitForVisibleLocator } from './dom-locators.js'
+import {
+  DeepSeekAttachmentCapability,
+  DeepSeekModeCapability,
+  DeepSeekToggleCapability,
+} from './capabilities/deepseek-controls.js'
 import type { Page } from 'playwright-core'
 
 const DEEPSEEK_SESSION_HYDRATION_TIMEOUT_MS = 10_000
@@ -44,41 +49,30 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
       }),
       account: Object.freeze({
         inspector: new MenuTextAccountInspector(),
-        freePlanLabels: Object.freeze([]),
+        freePlanLabels: Object.freeze(['Free']),
         paidPlanLabels: Object.freeze([]),
       }),
       composerSelectors: Object.freeze([
-        'textarea#chat-input',
-        'textarea[placeholder="Message DeepSeek"]',
+        'textarea[name="search"][placeholder="Message DeepSeek"]',
       ]),
       submitSelectors: Object.freeze([
-        'button[aria-label="Send message"]',
-        'button[aria-label*="Send" i]',
-        'div[role="button"].ds-button.ds-button--primary',
+        'div[role="button"].ds-button.ds-button--primary:not(.ds-button--disabled)',
       ]),
       answerSelectors: Object.freeze([
-        '.ds-markdown.ds-markdown--block',
-        '.ds-markdown',
+        '.ds-markdown.ds-assistant-message-main-content',
+        '.ds-message > .ds-markdown',
       ]),
       fileInputSelectors: Object.freeze([
-        'input[type="file"]',
+        'input[type="file"][multiple]',
       ]),
       fileUploadTriggerSelectors: Object.freeze([
-        'button[aria-label*="Attach" i]',
-        'button[aria-label*="Upload" i]',
-        'div[role="button"][aria-label*="Attach" i]',
-        'div[role="button"][aria-label*="Upload" i]',
+        'div[role="button"].ds-button.ds-button--iconLabelPrimary',
       ]),
       fileUploadLocalSelectors: Object.freeze([]),
-      modelControlSelectors: Object.freeze([
-        'button:has-text("Instant Mode")',
-        'button:has-text("Expert Mode")',
-        'div[role="button"]:has-text("Instant Mode")',
-        'div[role="button"]:has-text("Expert Mode")',
-      ]),
+      modelControlSelectors: Object.freeze([]),
       effortControlSelectors: Object.freeze([]),
       authIndicators: Object.freeze([
-        'textarea#chat-input',
+        'textarea[name="search"][placeholder="Message DeepSeek"]',
       ]),
       loginIndicators: Object.freeze([
         'input[placeholder="Phone number / email address"]',
@@ -86,8 +80,9 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
         'div[role="button"]:has-text("Log in")',
       ]),
       blockerSelectors: Object.freeze([
-        'iframe[src*="captcha" i]',
-        '[aria-label*="captcha" i]',
+        'iframe[src*="hcaptcha.com" i]',
+        'iframe[title*="hcaptcha" i]',
+        '.h-captcha',
         'text=/server is busy|server busy|please try again later/i',
         'text=/rate limit|too many requests/i',
       ]),
@@ -97,9 +92,16 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
         '.ds-loading',
       ]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
-      capabilities: providerCapabilities(),
+      capabilities: providerCapabilities({ deepSeekControls: true }),
     })
-    super(provider)
+    super(provider, {
+      fileUpload: new DeepSeekAttachmentCapability(provider),
+      extensions: Object.freeze([
+        new DeepSeekModeCapability(provider),
+        new DeepSeekToggleCapability(provider, 'DeepThink'),
+        new DeepSeekToggleCapability(provider, 'Search'),
+      ]),
+    })
   }
 
   protected override async inspectAccount(page: Page, signal: AbortSignal | undefined) {

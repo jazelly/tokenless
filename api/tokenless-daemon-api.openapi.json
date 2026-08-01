@@ -372,6 +372,56 @@
         }
       }
     },
+    "/provider-capacity": {
+      "get": {
+        "operationId": "getProviderCapacity",
+        "summary": "Project the next prompt against known provider capacity",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1 }
+          },
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 128 }
+          },
+          {
+            "name": "access_class",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1 }
+          },
+          {
+            "name": "tier_label",
+            "in": "query",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 120 }
+          },
+          {
+            "name": "subscription_label",
+            "in": "query",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 120 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider capacity projection",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ProviderCapacityProjection" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
     "/jobs/{job_id}": {
       "get": {
         "operationId": "getJob",
@@ -941,6 +991,256 @@
           }
         }
       },
+      "ManagedOrLegacyRequestJson": {
+        "oneOf": [
+          {
+            "type": "object",
+            "not": {
+              "required": ["protocol"]
+            }
+          },
+          {
+            "$ref": "#/components/schemas/ManagedPlaywrightJobRequest"
+          }
+        ]
+      },
+      "ManagedPlaywrightJobRequest": {
+        "type": "object",
+        "required": [
+          "protocol",
+          "provider",
+          "target",
+          "taskId",
+          "browserVisibility",
+          "actions"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "const": "tokenless.playwright.job.v3"
+          },
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ManagedPlaywrightTarget"
+          },
+          "taskId": {
+            "type": ["string", "null"],
+            "maxLength": 256
+          },
+          "capabilityRoute": {
+            "oneOf": [
+              { "type": "null" },
+              { "$ref": "#/components/schemas/TaskCapabilityRoute" }
+            ]
+          },
+          "fallback": {
+            "oneOf": [
+              { "type": "null" },
+              { "$ref": "#/components/schemas/ProviderFallbackPlan" }
+            ]
+          },
+          "context": {
+            "oneOf": [
+              { "type": "null" },
+              { "$ref": "#/components/schemas/ContextEnvelope" }
+            ]
+          },
+          "browserVisibility": {
+            "$ref": "#/components/schemas/BrowserVisibility"
+          },
+          "pagePolicy": {
+            "enum": ["preserve", "replace"]
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/VisibleActionRequest"
+            }
+          }
+        }
+      },
+      "ManagedPlaywrightTarget": {
+        "type": "object",
+        "required": ["kind", "url"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "const": "provider_home" },
+          "url": { "type": "string", "format": "uri", "maxLength": 2048 }
+        }
+      },
+      "TaskCapabilityRoute": {
+        "type": "object",
+        "required": ["schema", "provider", "requirements", "strategies", "support", "evidence", "runtimeEligibility"],
+        "additionalProperties": false,
+        "properties": {
+          "schema": { "const": "tokenless.task-capability-route.v1" },
+          "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+          "requirements": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "strategies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "support": { "enum": ["experimental", "supported"] },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "runtimeEligibility": { "enum": ["eligible", "ineligible", "unchecked"] }
+        }
+      },
+      "ProviderFallbackPlan": {
+        "type": "object",
+        "required": ["protocol", "mode", "replay", "alternatives"],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": { "const": "tokenless.provider-fallback.v1" },
+          "mode": { "const": "automatic" },
+          "replay": { "const": "from_start" },
+          "alternatives": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "required": ["provider", "target", "capabilityRoute"],
+              "additionalProperties": false,
+              "properties": {
+                "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+                "target": { "$ref": "#/components/schemas/ManagedPlaywrightTarget" },
+                "capabilityRoute": { "$ref": "#/components/schemas/TaskCapabilityRoute" }
+              }
+            }
+          }
+        }
+      },
+      "ContextEnvelope": {
+        "type": "object",
+        "required": ["schema", "taskId", "requirements", "instructions", "references", "outputContract", "constraints", "upstream", "delivery"],
+        "additionalProperties": false,
+        "properties": {
+          "schema": { "const": "tokenless.context-envelope.v1" },
+          "taskId": { "type": ["string", "null"], "maxLength": 256 },
+          "requirements": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "instructions": {
+            "type": "array",
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/ContextInstruction" }
+          },
+          "references": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "$ref": "#/components/schemas/ContextAttachmentReference" }
+          },
+          "outputContract": { "$ref": "#/components/schemas/ContextOutputContract" },
+          "constraints": { "$ref": "#/components/schemas/ContextConstraints" },
+          "upstream": { "$ref": "#/components/schemas/ContextUpstream" },
+          "delivery": { "$ref": "#/components/schemas/ContextDelivery" }
+        }
+      },
+      "ContextInstruction": {
+        "type": "object",
+        "required": ["role", "content", "provenance"],
+        "additionalProperties": false,
+        "properties": {
+          "role": { "enum": ["system", "developer", "user"] },
+          "content": { "type": "string", "minLength": 1, "maxLength": 1000000 },
+          "provenance": { "enum": ["compiled_cli", "caller", "upstream_agent"] }
+        }
+      },
+      "ContextAttachmentReference": {
+        "type": "object",
+        "required": ["kind", "attachmentId", "name", "mediaType", "size", "sha256", "provenance"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "const": "attachment" },
+          "attachmentId": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "mediaType": { "type": "string", "minLength": 1 },
+          "size": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "provenance": { "const": "caller_selected_file" }
+        }
+      },
+      "ContextOutputContract": {
+        "type": "object",
+        "required": ["language", "format"],
+        "additionalProperties": false,
+        "properties": {
+          "language": { "type": ["string", "null"], "enum": ["en", "zh-CN", null] },
+          "format": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 }
+        }
+      },
+      "ContextConstraints": {
+        "type": "object",
+        "required": ["tokenBudget", "deadline"],
+        "additionalProperties": false,
+        "properties": {
+          "tokenBudget": { "type": ["integer", "null"], "minimum": 1 },
+          "deadline": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "ContextUpstream": {
+        "type": "object",
+        "required": ["agentKind", "sessionId", "state"],
+        "additionalProperties": false,
+        "properties": {
+          "agentKind": { "type": ["string", "null"], "minLength": 1, "maxLength": 240 },
+          "sessionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 240 },
+          "state": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "object", "additionalProperties": true }
+            ]
+          }
+        }
+      },
+      "ContextDelivery": {
+        "type": "object",
+        "required": ["mode", "promptActions"],
+        "additionalProperties": false,
+        "properties": {
+          "mode": { "const": "visible_actions" },
+          "promptActions": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "$ref": "#/components/schemas/ContextPromptActionReceipt" }
+          }
+        }
+      },
+      "ContextPromptActionReceipt": {
+        "type": "object",
+        "required": ["requestId", "sha256", "bytes"],
+        "additionalProperties": false,
+        "properties": {
+          "requestId": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "bytes": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "VisibleActionRequest": {
+        "type": "object",
+        "required": ["protocol", "requestId", "provider", "action", "payload"],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": { "const": "tokenless.playwright.visible-action.v3" },
+          "requestId": { "type": "string", "minLength": 1 },
+          "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+          "action": { "type": "string", "minLength": 1 },
+          "payload": { "type": "object" }
+        }
+      },
       "ExecutionBackend": {
         "enum": [
           "playwright"
@@ -972,6 +1272,8 @@
           "error_json",
           "blocker_json",
           "provider_attempts_json",
+          "provider_submitted_at",
+          "eligible_at",
           "created_at",
           "updated_at"
         ],
@@ -1001,7 +1303,9 @@
           "status": {
             "$ref": "#/components/schemas/JobStatus"
           },
-          "request_json": {},
+          "request_json": {
+            "$ref": "#/components/schemas/ManagedOrLegacyRequestJson"
+          },
           "result_json": {},
           "error_json": {},
           "blocker_json": {},
@@ -1028,6 +1332,14 @@
               }
             }
           },
+          "provider_submitted_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "eligible_at": {
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -1036,6 +1348,65 @@
             "type": "string",
             "format": "date-time"
           }
+        }
+      },
+      "ProviderCapacityProjection": {
+        "type": "object",
+        "required": [
+          "schema", "catalogVersion", "catalogRevision", "provider", "profileId",
+          "evaluatedAt", "subscription", "decision", "eligibleAt", "reason", "rules"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema": { "const": "tokenless.provider-capacity-projection.v1" },
+          "catalogVersion": { "type": "integer", "minimum": 1 },
+          "catalogRevision": { "type": "string", "format": "date" },
+          "provider": { "type": "string", "minLength": 1 },
+          "profileId": { "type": "string", "minLength": 1 },
+          "evaluatedAt": { "type": "string", "format": "date-time" },
+          "subscription": {
+            "type": "object",
+            "required": ["accessClass", "observedLabel", "planId", "match"],
+            "additionalProperties": false,
+            "properties": {
+              "accessClass": { "type": "string", "minLength": 1 },
+              "observedLabel": { "type": ["string", "null"] },
+              "planId": { "type": "string", "minLength": 1 },
+              "match": { "enum": ["label", "access_class", "unknown"] }
+            }
+          },
+          "decision": { "enum": ["admit", "defer", "unknown"] },
+          "eligibleAt": { "type": ["string", "null"], "format": "date-time" },
+          "reason": { "type": "string", "minLength": 1 },
+          "rules": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ProviderRuleCapacityProjection" }
+          }
+        }
+      },
+      "ProviderRuleCapacityProjection": {
+        "type": "object",
+        "required": [
+          "ruleId", "knowledge", "action", "windowSeconds", "publishedAllowance",
+          "effectiveAllowance", "usedUnits", "requestedUnits", "remainingUnits",
+          "burstUnits", "cadenceSeconds", "decision", "eligibleAt", "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "ruleId": { "type": "string", "minLength": 1 },
+          "knowledge": { "enum": ["official_exact", "non_numeric"] },
+          "action": { "type": "string", "minLength": 1 },
+          "windowSeconds": { "type": ["integer", "null"], "minimum": 1 },
+          "publishedAllowance": { "type": ["integer", "null"], "minimum": 1 },
+          "effectiveAllowance": { "type": ["integer", "null"], "minimum": 1 },
+          "usedUnits": { "type": ["integer", "null"], "minimum": 0 },
+          "requestedUnits": { "type": "integer", "minimum": 0 },
+          "remainingUnits": { "type": ["integer", "null"], "minimum": 0 },
+          "burstUnits": { "type": ["integer", "null"], "minimum": 1 },
+          "cadenceSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+          "decision": { "enum": ["admit", "defer", "unknown"] },
+          "eligibleAt": { "type": ["string", "null"], "format": "date-time" },
+          "reason": { "type": "string", "minLength": 1 }
         }
       },
       "ProviderProjectMapping": {
@@ -1717,7 +2088,9 @@
             "type": "string",
             "minLength": 1
           },
-          "request_json": {},
+          "request_json": {
+            "$ref": "#/components/schemas/ManagedOrLegacyRequestJson"
+          },
           "execution_backend": {
             "$ref": "#/components/schemas/ExecutionBackend"
           },

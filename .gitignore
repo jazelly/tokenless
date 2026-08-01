@@ -12,6 +12,11 @@ packages/*/dist/
 docs/
 !docs/
 docs/*
+!docs/README.md
+!docs/README.zh-CN.md
+!docs/capability-matrix.md
+!docs/capability-matrix.zh-CN.md
 !docs/provider-capability-census.md
+!docs/provider-rate-limits.md
 !docs/roadmaps/
 !docs/roadmaps/**

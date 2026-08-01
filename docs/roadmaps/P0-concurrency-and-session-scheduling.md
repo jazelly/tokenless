@@ -1,8 +1,10 @@
 # Concurrency and Session Scheduling
 
-Status: proposed | Priority: P0
+Status: in progress | Priority: P0
 
 Depends on: Local daemon job persistence, claim leases, managed profile lifecycle, provider access and subscription observation, capability routing, embedded browser-runtime supervision, and exact workspace/conversation identity
+
+Rate-limit slice: implemented and algorithmically verified on 2026-08-01. The versioned catalog, packaged validation, subscription-aware capacity policy, immutable submission facts, cadence admission, bounded deferral, in-scope provider fallback, capability-safe provider preference tie-breaking, CLI diagnostics, and focused real-boundary simulation are delivered. The broader concurrency roadmap remains active for idempotency, bounded queues, conversation lanes, page leases, and multi-profile fairness. See [Provider Rate-Limit Knowledge and Runtime Policy](../provider-rate-limits.md).
 
 ## Outcome
 
@@ -179,10 +181,19 @@ The initial schema should have this shape:
 ```json
 {
   "schema": "tokenless.provider-rate-limit-catalog.v1",
+  "catalogVersion": 1,
   "revision": "2026-07-31",
   "reviewedAt": "2026-07-31",
-  "defaults": {
-    "unknownLimitStrategy": "observe_only"
+  "reviewAfter": "2026-08-31",
+  "runtimePolicy": {
+    "exactAllowanceHeadroomRatio": 0.9,
+    "burstRatio": 0.05
+  },
+  "sources": {
+    "openai-gpt55-chatgpt": {
+      "authority": "official",
+      "url": "https://help.openai.com/en/articles/11909943-gpt-5-3-and-gpt-55-in-chatgpt"
+    }
   },
   "providers": {
     "chatgpt": {
@@ -197,7 +208,8 @@ The initial schema should have this shape:
           "id": "chatgpt.instant.plus-go.messages",
           "scope": "provider_profile",
           "appliesTo": {
-            "plans": ["go", "plus"],
+            "planIds": ["go", "plus"],
+            "accessClasses": ["signed_in_paid"],
             "modelFamilies": ["gpt-5.5-instant"],
             "actions": ["prompt.submit"]
           },
@@ -206,23 +218,21 @@ The initial schema should have this shape:
             "unit": "message"
           },
           "window": {
-            "kind": "rolling",
-            "seconds": 10800
+            "kind": "provider_managed",
+            "durationSeconds": 10800
           },
           "allowance": {
             "kind": "exact",
             "count": 160
           },
-          "atLimit": {
+          "limitBehavior": {
             "kind": "provider_native_fallback",
             "targetModelFamily": "gpt-5.5-mini"
           },
           "evidence": [
             {
               "kind": "official_exact",
-              "url": "https://help.openai.com/en/articles/11909943-gpt-5-3-and-gpt-55-in-chatgpt",
-              "retrievedAt": "2026-07-31",
-              "reviewAfter": "2026-08-31"
+              "sourceIds": ["openai-gpt55-chatgpt"]
             }
           ]
         }
@@ -254,6 +264,8 @@ The first catalog covers every currently supported visible provider:
 | Gemini | Published compute-window and refresh behavior where current documentation states it | Compute-based dynamic allowance, weekly caps, plan multipliers, feature/model effects, and native fallback | `https://support.google.com/gemini/answer/16275805?hl=en` |
 | Grok | None until an official numeric consumer Web rule is available | Qualitative paid-plan statements such as higher limits | `https://x.ai/pricing` |
 | Qwen | None until an official numeric consumer Web rule is available | Unknown numeric Web limits and the prohibition on account creation to evade restrictions | `https://qwen.ai/usagepolicy` |
+| DeepSeek | None until an official numeric consumer Web rule is available | Unknown numeric Web limits; API concurrency limits are excluded | `https://chat.deepseek.com/downloads/DeepSeek%20User%20Agreement.pdf` |
+| Perplexity | Exact published Pro Search counts for Free and Enterprise tiers, retained by mode and observe-only until the run can prove that mode | Consumer paid-plan weekly descriptions, Best mode, feature usage, uploads, and heavy-usage behavior where no single exact allowance is published | `https://www.perplexity.ai/help-center/en/articles/11187416-which-perplexity-subscription-plan-is-right-for-you` |
 
 Catalog maintenance is explicit and reviewable:
 
@@ -329,13 +341,13 @@ The policy follows these rules:
 2. For an exact numeric rule, calculate a true sliding-window count from `jobs.provider_submitted_at`.
 3. Spread admitted requests with a GCRA or equivalent cadence derived from the window and allowance instead of allowing the entire known quota as an immediate burst.
 4. Use only modest configurable headroom for exact limits; an initial target near 90% is reasonable, but it is Tokenless scheduling policy rather than provider fact.
-5. For relative, dynamic, qualitative, or unknown limits, avoid fabricated counts. Use lightweight configurable cadence plus provider-visible evidence.
+5. For relative, dynamic, qualitative, or unknown limits, avoid fabricated counts and allow execution while retaining provider-visible evidence.
 6. Let a freshly observed provider reset time or cooldown override the static estimate for that provider/profile.
 7. Return explanations and estimates; do not claim that admission guarantees provider acceptance.
 
 When the provider visibly reports a rate limit:
 
-- before proven submission, defer the candidate until the visible reset time when available, otherwise apply bounded exponential backoff with jitter;
+- before proven submission, defer the candidate until the visible reset duration when available, otherwise apply a bounded local cooldown;
 - before proven submission, the router may choose another eligible candidate inside the caller's filtered scope;
 - after submission becomes ambiguous or proven, never replay the request elsewhere;
 - record the blocker and observed reset evidence in the existing job result/blocker history rather than a new ledger table; and
@@ -391,6 +403,8 @@ Exit: state output can explain exactly why a job is queued, which page/conversat
 
 ### Phase 1: Rate-Limit Catalog and Read-Only Capacity Projection
 
+Implementation status: completed on 2026-08-01.
+
 - Maintain and package the seeded `provider-rate-limits.v1.json` with source, uncertainty, plan, model, feature, window, and review metadata for every supported provider.
 - Add build-time schema validation and stale-review warnings without build-time network fetching.
 - Add immutable `provider_submitted_at` to the existing `jobs` table and write it at proven visible submission.
@@ -400,6 +414,8 @@ Exit: state output can explain exactly why a job is queued, which page/conversat
 Exit: the built and packed CLI can explain the matched subscription rule, locally observed usage, estimated remaining capacity, confidence, and next eligible time for every supported provider/profile without changing scheduling.
 
 ### Phase 2: Transactional Idempotency and Capacity-Aware Admission
+
+Implementation status: the rate-limit admission portion is completed; transactional idempotency, general queue limits, queue position, and pre-staging backpressure remain planned.
 
 - Add scoped idempotency records and unique constraints in the daemon.
 - Return an existing job for duplicate submissions.
@@ -467,6 +483,7 @@ Exit: concurrency scales across profiles and supported providers without weakeni
 - Lease fencing prevents stale workers from mutating durable state.
 - Cancellation, timeout, waiting-for-user, and shutdown release or retain lanes according to documented state transitions.
 - Focused integration and browser E2E tests launch concurrent built CLI processes against the real local daemon, real filesystem, real local Chromium, and gated real provider sessions. They assert durable jobs, exact page/conversation outcomes, and visible submissions without mocks or invented provider DOM.
+- Rate-limit estimator acceptance is intentionally limited to the built CLI, built daemon, real HTTP boundary, real SQLite, and controlled historical timestamps. It must not exhaust or spam provider websites to prove a published quota.
 
 ## Required Concurrency Proofs
 

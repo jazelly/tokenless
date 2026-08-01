@@ -16,6 +16,8 @@
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node dist/scripts/test-all.mjs",
     "test:ts-daemon-conformance": "npm run build && node --test --test-concurrency=1 test/ts-daemon-conformance.test.mjs",
+    "test:e2e:web": "npm run build && node --test --test-concurrency=1 test/local-web-ui.e2e.mjs",
+    "test:e2e:web-provider": "npm run build && node test/run-gated-e2e.mjs web-ui-provider",
     "test:e2e": "npm run build && node test/run-gated-e2e.mjs managed-playwright all",
     "test:e2e:browser-runtime": "npm run build && node test/run-gated-e2e.mjs browser-runtime",
     "test:e2e:browser-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs",

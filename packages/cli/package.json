@@ -24,8 +24,8 @@
   },
   "scripts": {
     "build": "npm run build:js",
-    "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/src/ui',{recursive:true}); fs.copyFileSync('src/ui/index.html','dist/src/ui/index.html'); fs.copyFileSync('src/ui/styles.css','dist/src/ui/styles.css'); fs.copyFileSync('../../assets/tokenless-mark.png','dist/src/ui/mark.png'); fs.chmodSync('dist/src/tokenless.mjs',0o755); fs.chmodSync('dist/src/daemon/daemon-entry.mjs',0o755)\"",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && vite build --config vite.ui.config.ts --logLevel error && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/src/providers',{recursive:true}); fs.copyFileSync('../../assets/tokenless-mark.png','dist/src/daemon/ui/mark.png'); fs.copyFileSync('catalog/provider-rate-limits.v1.json','dist/src/providers/provider-rate-limits.v1.json'); fs.chmodSync('dist/src/tokenless.mjs',0o755); fs.chmodSync('dist/src/daemon/daemon-entry.mjs',0o755)\" && node dist/src/providers/rate-limit-catalog-check.mjs",
+    "lint": "tsc -p tsconfig.json --noEmit && svelte-check --tsconfig ./tsconfig.ui.json",
     "prepack": "npm run build:js"
   },
   "dependencies": {
@@ -33,5 +33,12 @@
   },
   "engines": {
     "node": ">=22.13.0"
+  },
+  "devDependencies": {
+    "@lucide/svelte": "1.28.0",
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "svelte": "5.56.8",
+    "svelte-check": "4.7.4",
+    "vite": "8.2.0"
   }
 }

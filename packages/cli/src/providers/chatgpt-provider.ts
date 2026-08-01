@@ -80,12 +80,22 @@ export class ChatGptProvider extends BaseProvider<'chatgpt'> {
         'input[type="file"]',
       ]),
       fileUploadTriggerSelectors: Object.freeze([
-        'button[data-testid="composer-plus-btn"][aria-label="Add files and more"]',
+        'button[data-testid="composer-plus-btn"]',
         'button[aria-label="Add files and more"]',
+        'button[aria-label*="Add photos" i]',
+        'button[aria-label*="Add files" i]',
+        'button[aria-label*="Attach" i]',
+        'button[aria-label*="Upload" i]',
       ]),
       fileUploadLocalSelectors: Object.freeze([
         '[role="menuitem"]:has-text("Upload from computer")',
         '.__menu-item:has-text("Upload from computer")',
+        '[role="menuitem"]:has-text("Add photos & files")',
+        '[role="menuitem"]:has-text("Add photos and files")',
+        '[role="menuitem"]:has-text("Add files or photos")',
+        '[role="menuitem"]:has-text("Add files")',
+        '[role="menuitem"]:has-text("Upload files")',
+        'button[role="menuitem"][aria-label*="Upload files" i]',
       ]),
       modelControlSelectors: Object.freeze([
         'button[data-testid="model-switcher-dropdown-button"]',

@@ -17,6 +17,9 @@ export const PROVIDER_CAPABILITIES = Object.freeze({
   DIAGNOSTICS: 'diagnostics',
   IMAGE_GENERATION: 'image.generation',
   QWEN_MODE: 'qwen.mode',
+  DEEPSEEK_MODE: 'deepseek.mode',
+  DEEPSEEK_DEEPTHINK: 'deepseek.deepthink',
+  DEEPSEEK_SEARCH: 'deepseek.search',
 })
 
 export type ProviderCapabilityId = typeof PROVIDER_CAPABILITIES[keyof typeof PROVIDER_CAPABILITIES]

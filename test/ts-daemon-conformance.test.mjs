@@ -84,6 +84,70 @@ test('TS daemon rejects unsupported Playwright providers', {
   }
 })
 
+test('TS daemon rejects under-declared capability routes before durable job creation', {
+  timeout: 60_000,
+}, async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-ts-capability-route-validation-')
+  const daemon = await startTsDaemon(homeDir)
+  try {
+    const token = readControlToken(homeDir)
+    const playwright = await importPlaywright()
+    const route = playwright.resolveTaskCapabilityRoute({
+      requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
+      candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
+    })
+    assert.equal(route.ok, true)
+    const rejected = await fetch(`${daemon.url}/jobs`, {
+      method: 'POST',
+      headers: jsonHeaders(token),
+      body: JSON.stringify({
+        provider: 'chatgpt',
+        action: managedPlaywrightJobAction,
+        execution_backend: 'playwright',
+        profile_id: randomUUID(),
+        job_id: randomUUID(),
+        request_json: {
+          protocol: 'tokenless.playwright.job.v3',
+          provider: 'chatgpt',
+          target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
+          taskId: 'under-declared-route',
+          capabilityRoute: route.route,
+          fallback: null,
+          browserVisibility: 'headless',
+          actions: [{
+            protocol: 'tokenless.playwright.visible-action.v3',
+            requestId: 'under-declared-route:file',
+            provider: 'chatgpt',
+            action: playwright.VISIBLE_ACTIONS.FILE_UPLOAD,
+            payload: {
+              attachments: [{
+                protocol: 'tokenless.visible-attachment.v1',
+                bundleId: 'under-declared-route-bundle',
+                attachmentId: 'under-declared-route-attachment',
+                name: 'evidence.txt',
+                type: 'text/plain',
+                size: 8,
+                sha256: 'c'.repeat(64),
+              }],
+            },
+          }],
+        },
+      }),
+    })
+    assert.equal(rejected.status, 400)
+    const body = await rejected.json()
+    assert.equal(body.error.code, 'invalid_input')
+    assert.match(body.error.message, /omits action-required capabilities: file\.upload/)
+    const jobs = await daemonRequest(daemon.url, token, 'GET', '/jobs?limit=10')
+    assert.deepEqual(jobs, [])
+  } finally {
+    await shutdownDaemon(daemon).catch(() => undefined)
+    await terminateChildrenForHome(homeDir)
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('agent replay drains each durable job once, survives restart, and keeps full job state queryable', {
   timeout: 60_000,
 }, async () => {
@@ -704,6 +768,32 @@ test('built Playwright validators enforce the current internal schema IDs', {
     candidates: [{ provider: 'qwen', runtimeEligibility: 'unchecked' }],
   })
   assert.equal(routeDecision.ok, true)
+  const rankedRoutes = playwright.resolveTaskCapabilityRoutes({
+    requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
+    candidates: [
+      { provider: 'qwen', runtimeEligibility: 'eligible', preferenceRank: 0 },
+      { provider: 'chatgpt', runtimeEligibility: 'eligible', preferenceRank: 1 },
+    ],
+  })
+  assert.equal(rankedRoutes.ok, true)
+  assert.deepEqual(rankedRoutes.routes.map((route) => route.provider), ['chatgpt', 'qwen'])
+  assert.deepEqual(
+    rankedRoutes.evaluated.map((evaluation) => [evaluation.provider, evaluation.rank, evaluation.support]),
+    [['qwen', 2, 'experimental'], ['chatgpt', 1, 'supported']],
+  )
+  const completeSetRoutes = playwright.resolveTaskCapabilityRoutes({
+    requirements: [
+      playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+      playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+    ],
+    candidates: [
+      { provider: 'gemini', runtimeEligibility: 'eligible', preferenceRank: 0 },
+      { provider: 'chatgpt', runtimeEligibility: 'eligible', preferenceRank: 1 },
+    ],
+  })
+  assert.equal(completeSetRoutes.ok, true)
+  assert.deepEqual(completeSetRoutes.routes.map((route) => route.provider), ['chatgpt'])
+  assert.deepEqual(completeSetRoutes.evaluated[0].missingCapabilities, [playwright.TASK_CAPABILITIES.FILE_UPLOAD])
   const routed = playwright.createManagedPlaywrightJobRequest({
     provider: 'qwen',
     target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },
@@ -719,6 +809,8 @@ test('built Playwright validators enforce the current internal schema IDs', {
     ],
   })
   assert.deepEqual(routed.capabilityRoute, routeDecision.route)
+  assert.equal(routed.context.schema, 'tokenless.context-envelope.v1')
+  assert.deepEqual(routed.context.requirements, [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT])
 
   assert.throws(
     () => playwright.validateManagedPlaywrightJobRequest({
@@ -732,6 +824,72 @@ test('built Playwright validators enforce the current internal schema IDs', {
       assert.equal(error.code, 'invalid_playwright_job_capability_route')
       return true
     }
+  )
+
+  const chatgptPortableRoute = playwright.resolveTaskCapabilityRoute({
+    requirements: [
+      playwright.TASK_CAPABILITIES.CONVERSATION_CHAT,
+      playwright.TASK_CAPABILITIES.FILE_UPLOAD,
+    ],
+    candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
+  })
+  assert.equal(chatgptPortableRoute.ok, true)
+  const chatgptChatRoute = playwright.resolveTaskCapabilityRoute({
+    requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
+    candidates: [{ provider: 'chatgpt', runtimeEligibility: 'eligible' }],
+  })
+  assert.equal(chatgptChatRoute.ok, true)
+  assert.throws(
+    () => playwright.createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      capabilityRoute: chatgptChatRoute.route,
+      actions: [{
+        requestId: 'under-declared-file-action',
+        action: playwright.VISIBLE_ACTIONS.FILE_UPLOAD,
+        payload: {
+          attachments: [{
+            protocol: runtime.VISIBLE_ATTACHMENT_SCHEMA_ID,
+            bundleId: 'under-declared-bundle',
+            attachmentId: 'under-declared-attachment',
+            name: 'evidence.txt',
+            type: 'text/plain',
+            size: 8,
+            sha256: 'a'.repeat(64),
+          }],
+        },
+      }],
+    }),
+    (error) => {
+      assert.equal(error.code, 'invalid_playwright_job_capability_requirements')
+      assert.deepEqual(error.details.missing, [playwright.TASK_CAPABILITIES.FILE_UPLOAD])
+      return true
+    },
+  )
+  assert.throws(
+    () => playwright.createManagedPlaywrightJobRequest({
+      provider: 'chatgpt',
+      capabilityRoute: chatgptPortableRoute.route,
+      actions: [{
+        requestId: 'semantic-image-action',
+        action: playwright.VISIBLE_ACTIONS.FILE_UPLOAD,
+        payload: {
+          attachments: [{
+            protocol: runtime.VISIBLE_ATTACHMENT_SCHEMA_ID,
+            bundleId: 'semantic-image-bundle',
+            attachmentId: 'semantic-image-attachment',
+            name: 'evidence.png',
+            type: 'image/png',
+            size: 8,
+            sha256: 'b'.repeat(64),
+          }],
+        },
+      }],
+    }),
+    (error) => {
+      assert.equal(error.code, 'invalid_playwright_job_capability_requirements')
+      assert.deepEqual(error.details.missing, [playwright.TASK_CAPABILITIES.IMAGE_INPUT])
+      return true
+    },
   )
 
   assert.throws(
@@ -781,7 +939,7 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
       capabilityRoute: claudeRoute.route,
       actions: [{ requestId: 'fallback-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'fallback' } }],
     })
-    const request = playwright.createManagedPlaywrightJobRequest({
+    const baseRequest = playwright.createManagedPlaywrightJobRequest({
       provider: 'chatgpt',
       taskId: 'fallback-store-task',
       capabilityRoute: chatgptRoute.route,
@@ -797,6 +955,16 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
       },
       actions: [{ requestId: 'primary-prompt', action: playwright.VISIBLE_ACTIONS.PROMPT_INPUT, payload: { text: 'fallback' } }],
     })
+    const request = playwright.validateManagedPlaywrightJobRequest({
+      ...baseRequest,
+      context: {
+        ...baseRequest.context,
+        instructions: [{ role: 'developer', content: 'fallback', provenance: 'upstream_agent' }],
+        outputContract: { language: 'en', format: 'plain_text' },
+        constraints: { tokenBudget: 64, deadline: '2030-01-01T00:00:00.000Z' },
+        upstream: { agentKind: 'codex', sessionId: 'fallback-session', state: { phase: 'portable' } },
+      },
+    })
     const created = store.createJob({
       provider: request.provider,
       action: managedPlaywrightJobAction,
@@ -806,9 +974,13 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
     const claimed = store.claimJob(created.job_id, created.claim_token)
     store.markRunning(claimed.job_id, claimed.claim_token)
     const fallbackRequest = playwright.validateManagedPlaywrightJobRequest({
-      ...alternative,
+      ...request,
+      provider: alternative.provider,
+      target: alternative.target,
+      capabilityRoute: alternative.capabilityRoute,
       fallback: null,
-      browserVisibility: request.browserVisibility,
+      context: request.context,
+      actions: request.actions.map((action) => ({ ...action, provider: alternative.provider })),
     })
     const queued = store.fallbackJob({
       job_id: claimed.job_id,
@@ -823,6 +995,7 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
     assert.equal(queued.provider_attempts_json.length, 2)
     assert.equal(queued.provider_attempts_json[0].status, 'blocked')
     assert.equal(queued.provider_attempts_json[0].blocker.blocker.code, 'visible_cloudflare_turnstile')
+    assert.deepEqual(queued.request_json.context, request.context)
     const fallbackClaim = store.claimJob(queued.job_id, queued.claim_token)
     store.markRunning(fallbackClaim.job_id, fallbackClaim.claim_token)
     store.completeJob(fallbackClaim.job_id, fallbackClaim.claim_token, { result_json: { provider: 'claude' } })
@@ -830,6 +1003,7 @@ test('SQLite atomically preserves provider fallback attempts under one durable j
     store = await JobStore.open(homeDir)
     const completed = store.getJob(created.job_id)
     assert.equal(completed.status, 'succeeded')
+    assert.deepEqual(completed.request_json.context, request.context)
     assert.deepEqual(completed.provider_attempts_json.map((attempt) => [attempt.provider, attempt.status]), [
       ['chatgpt', 'blocked'],
       ['claude', 'succeeded'],

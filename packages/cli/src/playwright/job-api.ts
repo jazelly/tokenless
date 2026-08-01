@@ -28,6 +28,7 @@ export type SubmitManagedPlaywrightJobOptions = ManagedPlaywrightJobApiOptions &
   request: ManagedPlaywrightJobRequest | CreateManagedPlaywrightJobRequestInput
   agentKind?: string | undefined
   agentSessionId?: string | undefined
+  upstreamState?: Readonly<Record<string, unknown>> | undefined
   jobId?: string | undefined
 }
 
@@ -51,7 +52,20 @@ export type CancelManagedPlaywrightJobOptions = GetManagedPlaywrightJobOptions &
 export type ResumeManagedPlaywrightJobOptions = GetManagedPlaywrightJobOptions
 
 export async function submitManagedPlaywrightJob(options: SubmitManagedPlaywrightJobOptions) {
-  const request = normalizeJobRequest(options.request)
+  const normalized = normalizeJobRequest(options.request)
+  const request = options.agentKind === undefined && options.agentSessionId === undefined && options.upstreamState === undefined
+    ? normalized
+    : validateManagedPlaywrightJobRequest({
+        ...normalized,
+        context: {
+          ...normalized.context,
+          upstream: {
+            agentKind: options.agentKind ?? null,
+            sessionId: options.agentSessionId ?? null,
+            state: options.upstreamState ?? null,
+          },
+        },
+      })
   return createDaemonJob({
     ...daemonOptions(options),
     provider: request.provider,

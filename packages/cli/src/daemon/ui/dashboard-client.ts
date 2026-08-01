@@ -4,7 +4,7 @@ import type { JsonRecord, Language, SnapshotResult } from './types.js'
 export class DashboardRequestError extends Error {
   readonly code: string
   readonly sessionExpired: boolean
-  readonly status?: number
+  readonly status: number | undefined
 
   constructor(message: string, options: { code?: string, sessionExpired?: boolean, status?: number } = {}) {
     super(message)
@@ -23,6 +23,7 @@ export class DashboardClient {
 
   async authenticate() {
     const session = await this.request('/session', { method: 'GET' })
+    if (!session) throw new DashboardRequestError(translate(this.currentLanguage(), 'requestFailed'))
     this.csrf = String(session.csrf)
   }
 

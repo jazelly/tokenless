@@ -118,9 +118,9 @@ The router returns one `CapabilityRoute` containing the selected provider, profi
 7. Select an eligible provider through the general capacity, fairness, and route-selection algorithm.
 8. If no single provider satisfies the complete request, fail with every evaluated provider and structured reasons.
 
-V1 never splits one successful execution across multiple providers and never submits trial prompts while routing. Runtime fallback replays the authorized request from the beginning only before submission and only when completed mutations are reconstructable; it does not treat provider-local partial work as portable completion. `preferredProviders` filters candidate membership only: list position does not override capability eligibility, rate-limit capacity, fairness, profile health, or the rest of route selection. Fallback never escapes the configured provider set.
+V1 never splits one successful execution across multiple providers and never submits trial prompts while routing. Runtime fallback replays the authorized request from the beginning only before submission and only when completed mutations are reconstructable; it does not treat provider-local partial work as portable completion. `preferredProviders` defines candidate membership and supplies the final deterministic tie-breaker after capability compatibility, runtime eligibility, rate-limit capacity, evidence maturity, fairness, and profile health. Fallback never escapes the configured provider set.
 
-The existing `preferredProviders` name is weaker than this behavior because “preferred” often implies ordered ranking or fallback outside the list. Before making capability routing a public contract, either document its filter semantics explicitly or migrate to an unambiguous name such as `providerRoutingScope`.
+The existing `preferredProviders` name does not imply that preference can override safety or capability evidence. Its order affects only otherwise equivalent routes; the public routing contract must keep that precedence explicit.
 
 For example, if `research.deep` is currently closed only for Qwen:
 

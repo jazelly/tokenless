@@ -12,6 +12,8 @@ import type {
   VisibleActionPayloadForAction,
   VisibleSelectionPayload,
   QwenModeSelectionPayload,
+  DeepSeekModeSelectionPayload,
+  DeepSeekToggleSelectionPayload,
   WorkspaceEnsurePayload,
 } from './contracts.js'
 
@@ -89,25 +91,25 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
   [VISIBLE_ACTIONS.MODEL_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.MODEL_INSPECT,
     lifecycle: gatedReadOnly,
-    requiredCapabilities: [],
+    requiredCapabilities: [PROVIDER_CAPABILITIES.MODEL_CHOICE],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.MODEL_SELECT]: defineAction({
     action: VISIBLE_ACTIONS.MODEL_SELECT,
     lifecycle: reconstructableGatedMutation,
-    requiredCapabilities: [],
+    requiredCapabilities: [PROVIDER_CAPABILITIES.MODEL_CHOICE],
     validatePayload: validateSelectionPayload,
   }),
   [VISIBLE_ACTIONS.EFFORT_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.EFFORT_INSPECT,
     lifecycle: gatedReadOnly,
-    requiredCapabilities: [],
+    requiredCapabilities: [PROVIDER_CAPABILITIES.EFFORT_CHOICE],
     validatePayload: validateEmptyPayload,
   }),
   [VISIBLE_ACTIONS.EFFORT_SELECT]: defineAction({
     action: VISIBLE_ACTIONS.EFFORT_SELECT,
     lifecycle: reconstructableGatedMutation,
-    requiredCapabilities: [],
+    requiredCapabilities: [PROVIDER_CAPABILITIES.EFFORT_CHOICE],
     validatePayload: validateSelectionPayload,
   }),
   [VISIBLE_ACTIONS.QWEN_MODE_INSPECT]: defineAction({
@@ -121,6 +123,42 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.QWEN_MODE],
     validatePayload: validateQwenModeSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.DEEPSEEK_MODE_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.DEEPSEEK_MODE_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DEEPSEEK_MODE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.DEEPSEEK_MODE_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.DEEPSEEK_MODE_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DEEPSEEK_MODE],
+    validatePayload: validateDeepSeekModeSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DEEPSEEK_DEEPTHINK],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DEEPSEEK_DEEPTHINK],
+    validatePayload: validateDeepSeekToggleSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.DEEPSEEK_SEARCH_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.DEEPSEEK_SEARCH_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DEEPSEEK_SEARCH],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.DEEPSEEK_SEARCH_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.DEEPSEEK_SEARCH_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DEEPSEEK_SEARCH],
+    validatePayload: validateDeepSeekToggleSelectionPayload,
   }),
   [VISIBLE_ACTIONS.FILE_UPLOAD]: defineAction({
     action: VISIBLE_ACTIONS.FILE_UPLOAD,
@@ -262,6 +300,22 @@ function validateQwenModeSelectionPayload(payload: Record<string, unknown>): Qwe
   validateVisibleLabel(payload.mode)
   if (Object.hasOwn(payload, 'variant')) validateVisibleLabel(payload.variant)
   return payload as QwenModeSelectionPayload
+}
+
+function validateDeepSeekModeSelectionPayload(payload: Record<string, unknown>): DeepSeekModeSelectionPayload {
+  requireExactKeys(payload, ['mode'], 'invalid_visible_action_payload')
+  if (payload.mode !== 'Instant' && payload.mode !== 'Expert' && payload.mode !== 'Vision') {
+    throw tokenlessError('invalid_visible_action_payload', 'DeepSeek mode must be Instant, Expert, or Vision.')
+  }
+  return payload as DeepSeekModeSelectionPayload
+}
+
+function validateDeepSeekToggleSelectionPayload(payload: Record<string, unknown>): DeepSeekToggleSelectionPayload {
+  requireExactKeys(payload, ['enabled'], 'invalid_visible_action_payload')
+  if (typeof payload.enabled !== 'boolean') {
+    throw tokenlessError('invalid_visible_action_payload', 'DeepSeek toggle enabled must be a boolean.')
+  }
+  return payload as DeepSeekToggleSelectionPayload
 }
 
 function validateFileUploadPayload(payload: Record<string, unknown>): FileUploadPayload {

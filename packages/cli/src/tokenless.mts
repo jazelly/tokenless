@@ -24,7 +24,7 @@ import {
   listTaskCapabilityDefinitions,
   normalizeTaskCapabilityRequirements,
   readManagedProfileRegistryReadOnly,
-  resolveTaskCapabilityRoute,
+  resolveTaskCapabilityRoutes,
   resolveChromeProfile,
   submitManagedPlaywrightJob,
   validateChromeProfileDirectoryKey,
@@ -52,6 +52,7 @@ import {
   drainDaemonReplay,
   ensureDaemonReady,
   getDaemonJob,
+  getProviderCapacity,
   inspectManagedRuntime,
   listDaemonJobs,
   markDaemonJobReported,
@@ -218,6 +219,7 @@ const DEFAULT_RUN_TIMEOUT_MS = 180_000
 const CLOAK_BROWSER_PROJECT_URL = 'https://github.com/CloakHQ/CloakBrowser'
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000
 const LONG_RUNNING_JOB_TIMEOUT_MS = 2_160_000
+const PROVIDER_OBSERVATION_FRESHNESS_MS = 5 * 60 * 1000
 const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'capability.inspect',
   'auth.status',
@@ -227,6 +229,12 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'effort.select',
   'qwen.mode.inspect',
   'qwen.mode.select',
+  'deepseek.mode.inspect',
+  'deepseek.mode.select',
+  'deepseek.deepthink.inspect',
+  'deepseek.deepthink.select',
+  'deepseek.search.inspect',
+  'deepseek.search.select',
   'file.upload',
   'workspace.ensure',
   'prompt.clear',
@@ -246,6 +254,7 @@ const TOP_LEVEL_USAGE = [
   'tokenless <command> [options]',
   `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
   'tokenless capabilities list --json',
+  'tokenless limits inspect --profile <slug> --provider <provider> --json',
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless dashboard [--no-open] [--json]',
@@ -270,7 +279,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   assertKnownTopLevelCommand(command)
@@ -309,6 +318,8 @@ try {
     await runCommand(args)
   } else if (command === 'capabilities') {
     await capabilitiesCommand(subcommand, args)
+  } else if (command === 'limits') {
+    await limitsCommand(subcommand, args)
   } else if (command === 'replay') {
     await replayCommand(args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
@@ -420,6 +431,13 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     return
   }
 
+  if (
+    (subcommand === 'add' && args.importChromeProfile !== undefined) ||
+    subcommand === 'reset'
+  ) {
+    requireOpaqueProfileCopyConsent(args)
+  }
+
   const homeDir = tokenlessHome(args.home)
   const registry = new ManagedProfileRegistry(homeDir)
 
@@ -433,7 +451,6 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const importKey = args.importChromeProfile === undefined
       ? null
       : validateChromeProfileDirectoryKey(String(args.importChromeProfile))
-    if (importKey) requireOpaqueProfileCopyConsent(args)
     const source = importKey ? await resolveOpaqueProfileSource(args, profileRuntime, importKey) : null
     let record = await registry.addProfile({
       slug,
@@ -473,7 +490,6 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   }
 
   if (subcommand === 'reset') {
-    requireOpaqueProfileCopyConsent(args)
     const record = await registry.resolveProfile(args.profile === undefined ? undefined : String(args.profile))
     if (!record.import) {
       throw usageError('profile_reset_requires_import', `Managed profile '${record.slug}' was not imported and has no source to reset from.`)
@@ -1258,6 +1274,7 @@ function resolveDaemonJobCapabilityRoutes({
         provider: explicitProvider,
         observed: profile.lastObservedAuth?.[explicitProvider] !== undefined,
         usable: true,
+        runtimeEligibility: 'unchecked' as const,
         auth: profile.lastObservedAuth?.[explicitProvider]?.auth ?? 'unknown',
         access: profile.lastObservedAuth?.[explicitProvider]?.access ?? 'unknown',
         checkedAt: profile.lastObservedAuth?.[explicitProvider]?.checkedAt ?? null,
@@ -1266,33 +1283,20 @@ function resolveDaemonJobCapabilityRoutes({
     : providerObservationContext(implicitProviderCandidates(
         config.profilePreferences[profile.slug]?.enabledProviders ?? config.preferredProviders,
       ), profile)
-  const decision = resolveTaskCapabilityRoute({
+  const decision = resolveTaskCapabilityRoutes({
     requirements,
-    candidates: providers.map((provider) => ({
+    candidates: providers.map((provider, preferenceRank) => ({
       provider: provider.provider,
-      runtimeEligibility: explicitProvider
-        ? 'unchecked'
-        : (provider.usable ? 'eligible' : 'ineligible'),
+      runtimeEligibility: explicitProvider ? 'unchecked' : provider.runtimeEligibility,
       reason: provider.usable ? null : `provider_access_${provider.access}`,
+      preferenceRank,
     })),
   })
   if (decision.ok) {
-    return providers.flatMap((candidate) => {
-      const candidateDecision = resolveTaskCapabilityRoute({
-        requirements,
-        candidates: [{
-          provider: candidate.provider,
-          runtimeEligibility: explicitProvider
-            ? 'unchecked'
-            : (candidate.usable ? 'eligible' : 'ineligible'),
-          reason: candidate.usable ? null : `provider_access_${candidate.access}`,
-        }],
-      })
-      return candidateDecision.ok ? [candidateDecision.route] : []
-    })
+    return decision.routes
   }
 
-  const runtimeProviderUnavailable = !explicitProvider && providers.every((provider) => !provider.usable)
+  const runtimeProviderUnavailable = !explicitProvider && providers.every((provider) => provider.runtimeEligibility === 'ineligible')
   const providerUnavailable = requirements.length === 0 || runtimeProviderUnavailable
   const error = usageError(
     providerUnavailable ? 'provider_unavailable' : decision.code,
@@ -1331,16 +1335,24 @@ function providerObservationContext(
     const observed = profile.lastObservedAuth?.[provider]
     const access = observed?.access ?? (observed?.auth === 'authenticated' ? 'signed_in_unknown' : 'unknown')
     const usable = isUsableProviderAccess(access)
+    const fresh = observationIsFresh(observed?.checkedAt)
     return {
       provider,
       observed: observed !== undefined,
       usable,
+      runtimeEligibility: usable ? (fresh ? 'eligible' as const : 'unchecked' as const) : 'ineligible' as const,
       auth: observed?.auth ?? 'unknown',
       access,
       checkedAt: observed?.checkedAt ?? null,
       tier: observed?.account?.tier ?? null,
     }
   })
+}
+
+function observationIsFresh(value: unknown) {
+  if (typeof value !== 'string') return false
+  const checkedAt = Date.parse(value)
+  return Number.isFinite(checkedAt) && Date.now() - checkedAt <= PROVIDER_OBSERVATION_FRESHNESS_MS
 }
 
 function isUsableProviderAccess(access: unknown): access is ProviderAccessClass {
@@ -1435,6 +1447,9 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (action.startsWith('qwen.mode.') && normalizeProvider(args.provider) !== 'qwen') {
     throw usageError('qwen_mode_unsupported', 'qwen.mode actions are available only for the Qwen provider.')
   }
+  if (action.startsWith('deepseek.') && normalizeProvider(args.provider) !== 'deepseek') {
+    throw usageError('deepseek_control_unsupported', 'deepseek actions are available only for the DeepSeek provider.')
+  }
 
   if (action === 'capability.inspect') {
     assertProviderActionPayloadOptions(args, new Set())
@@ -1445,7 +1460,10 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     action === 'auth.status' ||
     action === 'model.inspect' ||
     action === 'effort.inspect' ||
-    action === 'qwen.mode.inspect'
+    action === 'qwen.mode.inspect' ||
+    action === 'deepseek.mode.inspect' ||
+    action === 'deepseek.deepthink.inspect' ||
+    action === 'deepseek.search.inspect'
   ) {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
@@ -1506,6 +1524,39 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     }
   }
 
+  if (action === 'deepseek.mode.select') {
+    assertProviderActionPayloadOptions(args, new Set(['deepSeekMode']))
+    if (args.deepSeekMode === undefined) {
+      throw usageError('missing_visible_action_deepseek_mode', 'deepseek.mode.select requires --deepseek-mode <Instant|Expert|Vision>.')
+    }
+    return {
+      action,
+      payload: { mode: normalizeDeepSeekMode(args.deepSeekMode) },
+    }
+  }
+
+  if (action === 'deepseek.deepthink.select') {
+    assertProviderActionPayloadOptions(args, new Set(['deepSeekDeepThink']))
+    if (args.deepSeekDeepThink === undefined) {
+      throw usageError('missing_visible_action_deepseek_deepthink', 'deepseek.deepthink.select requires --deepseek-deepthink <on|off>.')
+    }
+    return {
+      action,
+      payload: { enabled: normalizeDeepSeekToggle(args.deepSeekDeepThink, '--deepseek-deepthink') },
+    }
+  }
+
+  if (action === 'deepseek.search.select') {
+    assertProviderActionPayloadOptions(args, new Set(['deepSeekSearch']))
+    if (args.deepSeekSearch === undefined) {
+      throw usageError('missing_visible_action_deepseek_search', 'deepseek.search.select requires --deepseek-search <on|off>.')
+    }
+    return {
+      action,
+      payload: { enabled: normalizeDeepSeekToggle(args.deepSeekSearch, '--deepseek-search') },
+    }
+  }
+
   if (action === 'file.upload') {
     assertProviderActionPayloadOptions(args, new Set(['attachFiles']))
     if (args.attachFiles.length < 1) {
@@ -1559,6 +1610,9 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['thinkingEffort', '--thinking-effort'],
     ['qwenMode', '--qwen-mode'],
     ['qwenModeVariant', '--qwen-mode-variant'],
+    ['deepSeekMode', '--deepseek-mode'],
+    ['deepSeekDeepThink', '--deepseek-deepthink'],
+    ['deepSeekSearch', '--deepseek-search'],
     ['chatSurface', '--chat-surface'],
     ['projectName', '--project-name'],
     ['projectInstructions', '--project-instructions'],
@@ -1615,7 +1669,7 @@ async function executeDaemonJob({
   const explicitProviderId = explicitProvider ? normalizeProvider(explicitProvider) : undefined
   const taskCapabilities = taskCapabilityRequirementsForExecution(args, action, visibleAction)
   const explicitProviderControls = explicitProviderId && !visibleAction
-    ? resolveProviderControls({ args, provider: explicitProviderId, action })
+    ? resolveProviderControls({ args, provider: explicitProviderId, action, requirements: taskCapabilities })
     : undefined
   const registry = new ManagedProfileRegistry(homeDir)
   const profileForTarget = await registry.resolveProfile(args.profile)
@@ -1631,7 +1685,7 @@ async function executeDaemonJob({
   const recordedCapabilityRoute = taskCapabilities.length === 0 ? null : capabilityRoute
   const providerControls = visibleAction
     ? {}
-    : explicitProviderControls ?? resolveProviderControls({ args, provider, action })
+    : explicitProviderControls ?? resolveProviderControls({ args, provider, action, requirements: taskCapabilities })
   const projectName = args.projectName || process.env.TOKENLESS_PROJECT_NAME
   const chatName = args.chatName || process.env.TOKENLESS_CHAT_NAME || (action === 'snapshot_dom' ? 'DOM snapshot' : undefined)
   const taskId = deriveTaskId({
@@ -1711,6 +1765,7 @@ async function executeDaemonJob({
       },
       taskId: taskId ?? null,
       capabilityRoute: recordedCapabilityRoute,
+      contextLanguage: config.language,
       fallback: fallbackAlternatives.length === 0 ? null : {
         protocol: 'tokenless.provider-fallback.v1',
         mode: 'automatic',
@@ -1840,11 +1895,15 @@ function automaticProviderFallbackAllowed({
   if (explicitProvider || visibleAction || action !== 'submit_and_read' || taskCapabilities.length === 0) return false
   if (taskCapabilities.includes(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) return false
   if (args.targetUrl !== undefined) return false
+  if (args.workspaceMode !== undefined) return false
   return args.model === undefined &&
     args.effort === undefined &&
     args.thinkingEffort === undefined &&
     args.qwenMode === undefined &&
     args.qwenModeVariant === undefined &&
+    args.deepSeekMode === undefined &&
+    args.deepSeekDeepThink === undefined &&
+    args.deepSeekSearch === undefined &&
     args.chatSurface === undefined
 }
 
@@ -1873,6 +1932,23 @@ async function executeManagedPlaywrightJob({
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   const statusReporter = createCliStatusReporter(args)
   const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+  const effectiveTaskId = taskId === undefined ? request.taskId : taskId
+  const alignedRequest = request.taskId === effectiveTaskId
+    ? request
+    : createManagedPlaywrightJobRequest({
+        provider: request.provider,
+        target: request.target,
+        taskId: effectiveTaskId,
+        capabilityRoute: request.capabilityRoute,
+        fallback: request.fallback,
+        context: {
+          ...request.context,
+          taskId: effectiveTaskId,
+        },
+        browserVisibility: request.browserVisibility,
+        ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
+        actions: request.actions,
+      })
   const daemon = await ensureDaemonReady({
     homeDir,
     daemonUrl: configuredDaemonUrl,
@@ -1904,8 +1980,7 @@ async function executeManagedPlaywrightJob({
     profileId: profile.id,
     ...agentRecipientFromArgs(args),
     request: {
-      ...request,
-      taskId: taskId ?? null,
+      ...alignedRequest,
       browserVisibility,
     },
     ...(jobId === undefined ? {} : { jobId }),
@@ -1915,7 +1990,7 @@ async function executeManagedPlaywrightJob({
     status: job.status,
     backend: PLAYWRIGHT_EXECUTION_BACKEND,
     jobId: job.job_id,
-    taskId,
+    taskId: effectiveTaskId,
     provider,
     action: job.action,
   })
@@ -1925,7 +2000,7 @@ async function executeManagedPlaywrightJob({
         status: 'no_wait',
         backend: PLAYWRIGHT_EXECUTION_BACKEND,
         jobId: job.job_id,
-        taskId,
+        taskId: effectiveTaskId,
         provider,
         action: job.action,
       }), null)
@@ -2018,6 +2093,14 @@ function managedVisibleActions({
     return actions
   }
   if (action === 'inspect_controls' || action === 'inspect_chatgpt_controls') {
+    if (provider === 'deepseek') {
+      actions.push(
+        { requestId: `${requestId}:deepseek-mode`, action: VISIBLE_ACTIONS.DEEPSEEK_MODE_INSPECT, payload: {} },
+        { requestId: `${requestId}:deepseek-deepthink`, action: VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_INSPECT, payload: {} },
+        { requestId: `${requestId}:deepseek-search`, action: VISIBLE_ACTIONS.DEEPSEEK_SEARCH_INSPECT, payload: {} },
+      )
+      return actions
+    }
     actions.push(
       { requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_INSPECT, payload: {} },
       { requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_INSPECT, payload: {} },
@@ -2025,6 +2108,15 @@ function managedVisibleActions({
     return actions
   }
   if (action === 'configure_controls' || action === 'configure_chatgpt') {
+    if (providerControls.deepSeekMode !== undefined) {
+      actions.push({ requestId: `${requestId}:deepseek-mode`, action: VISIBLE_ACTIONS.DEEPSEEK_MODE_SELECT, payload: { mode: providerControls.deepSeekMode } })
+    }
+    if (providerControls.deepSeekDeepThink !== undefined) {
+      actions.push({ requestId: `${requestId}:deepseek-deepthink`, action: VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_SELECT, payload: { enabled: providerControls.deepSeekDeepThink } })
+    }
+    if (providerControls.deepSeekSearch !== undefined) {
+      actions.push({ requestId: `${requestId}:deepseek-search`, action: VISIBLE_ACTIONS.DEEPSEEK_SEARCH_SELECT, payload: { enabled: providerControls.deepSeekSearch } })
+    }
     if (providerControls.model !== undefined) {
       actions.push({ requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: providerControls.model } })
     }
@@ -2051,6 +2143,15 @@ function managedVisibleActions({
           : { variant: providerControls.qwenModeVariant }),
       },
     })
+  }
+  if (providerControls.deepSeekMode !== undefined) {
+    actions.push({ requestId: `${requestId}:deepseek-mode`, action: VISIBLE_ACTIONS.DEEPSEEK_MODE_SELECT, payload: { mode: providerControls.deepSeekMode } })
+  }
+  if (providerControls.deepSeekDeepThink !== undefined) {
+    actions.push({ requestId: `${requestId}:deepseek-deepthink`, action: VISIBLE_ACTIONS.DEEPSEEK_DEEPTHINK_SELECT, payload: { enabled: providerControls.deepSeekDeepThink } })
+  }
+  if (providerControls.deepSeekSearch !== undefined) {
+    actions.push({ requestId: `${requestId}:deepseek-search`, action: VISIBLE_ACTIONS.DEEPSEEK_SEARCH_SELECT, payload: { enabled: providerControls.deepSeekSearch } })
   }
   if (providerControls.model !== undefined) {
     actions.push({ requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: providerControls.model } })
@@ -2233,6 +2334,38 @@ async function stateCommand(args: CliArgs) {
     profile: publicManagedProfile(profile, profile.slug),
     latest,
     jobs: jobs.slice(0, Math.max(1, Number(args.limit) || 10)),
+  }, args)
+}
+
+async function limitsCommand(subcommand: string | undefined, args: CliArgs) {
+  if (subcommand !== 'inspect') throw usageError('invalid_limits_command', 'Usage: tokenless limits inspect --profile <slug> --provider <provider> --json')
+  const homeDir = tokenlessHome(args.home)
+  const provider = normalizeProvider(requiredAdminValue(args.provider, '--provider'))
+  const registry = new ManagedProfileRegistry(homeDir)
+  const profile = await registry.resolveProfile(args.profile)
+  const observation = profile.lastObservedAuth[provider]
+  const config = await readTokenlessConfig(homeDir)
+  const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+  const daemon = await ensureDaemonReady({
+    homeDir,
+    daemonUrl: configuredDaemonUrl,
+    timeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+  })
+  const capacity = await getProviderCapacity({
+    homeDir,
+    daemonUrl: daemon.url,
+    provider,
+    profileId: profile.id,
+    accessClass: observation?.account?.tier.class ?? observation?.access ?? 'unknown',
+    tierLabel: observation?.account?.tier.label ?? null,
+    subscriptionLabel: observation?.account?.subscription ?? null,
+  })
+  const eligible = capacity.eligibleAt ? `; next eligible ${capacity.eligibleAt}` : ''
+  printPayload({
+    ok: true,
+    profile: publicManagedProfile(profile, profile.slug),
+    capacity,
+    compactOutput: `Provider capacity for ${provider} / ${profile.slug}: ${capacity.decision}${eligible}.`,
   }, args)
 }
 
@@ -2419,6 +2552,9 @@ async function installCommand(args: CliArgs) {
 }
 
 async function setupCommand(args: CliArgs) {
+  if (args.importChromeProfile !== undefined || args.reimportProfile === true) {
+    requireOpaqueProfileCopyConsent(args)
+  }
   const homeDir = tokenlessHome(args.home)
   let config = await readTokenlessConfig(homeDir)
   const languageConfigured = await hasConfiguredTokenlessLanguage(homeDir)
@@ -3035,7 +3171,7 @@ function presentSetupCloakProfileInventory(
     lines: [
       `CloakBrowser project: ${inventory.projectUrl}`,
       `Supported CloakBrowser on this platform: artifact ${inventory.artifactVersion} (Chromium ${inventory.browserVersion}).`,
-      'Only profile directory names and browser versions are checked. Browser sign-ins are never read or copied.',
+      'Discovery checks only profile directory names and browser versions. A selected profile is copied only after explicit consent, without reading authentication values.',
     ],
   })
   if (inventory.candidates.length === 0) {
@@ -3125,13 +3261,15 @@ async function selectSetupBrowser({
       () => discoverSetupCloakProfileInventory(installedBrowsers),
     )
     presentSetupCloakProfileInventory(cloakProfileInventory, presenter)
-    const cleanProfileApproved = prompt
+    const cloakProfileApproved = prompt
       ? await prompt.confirm(
-          'Continue with a clean CloakBrowser profile? Listed browser profiles will not be imported.',
+          args.importChromeProfile === undefined
+            ? 'Continue with a clean CloakBrowser profile?'
+            : 'Continue and copy the explicitly selected browser profile into CloakBrowser?',
           true,
         )
       : explicitCloakConsent
-    if (!cleanProfileApproved) {
+    if (!cloakProfileApproved) {
       throw usageError(
         prompt ? 'setup_cloak_profile_declined' : 'setup_cloak_confirmation_required',
         prompt
@@ -3823,7 +3961,10 @@ function publicDaemonJobState(job: Record<string, any>) {
     action: job.action,
     capabilityRoute: request.capabilityRoute ?? null,
     fallback: fallbackState(request.fallback),
+    context: contextEnvelopeState(request.context),
     providerAttempts: job.provider_attempts_json ?? [],
+    providerSubmittedAt: job.provider_submitted_at ?? null,
+    eligibleAt: job.eligible_at ?? null,
     browserVisibility: request.browserVisibility,
     projectName: metadata.projectName,
     chatName: metadata.chatName,
@@ -3846,15 +3987,70 @@ function publicDaemonJobState(job: Record<string, any>) {
   }
 }
 
+function contextEnvelopeState(value: unknown) {
+  const context = objectRecord(value)
+  if (context.schema !== 'tokenless.context-envelope.v1') return null
+  const instructions = Array.isArray(context.instructions) ? context.instructions : []
+  const references = Array.isArray(context.references) ? context.references : []
+  const upstream = objectRecord(context.upstream)
+  return {
+    schema: context.schema,
+    taskId: context.taskId,
+    requirements: context.requirements,
+    instructions: instructions.map((entry) => {
+      const instruction = objectRecord(entry)
+      return {
+        role: instruction.role,
+        provenance: instruction.provenance,
+        bytes: typeof instruction.content === 'string' ? Buffer.byteLength(instruction.content, 'utf8') : null,
+      }
+    }),
+    references: references.map((entry) => {
+      const reference = objectRecord(entry)
+      return {
+        kind: reference.kind,
+        attachmentId: reference.attachmentId,
+        name: reference.name,
+        mediaType: reference.mediaType,
+        size: reference.size,
+        sha256: reference.sha256,
+        provenance: reference.provenance,
+      }
+    }),
+    outputContract: context.outputContract,
+    constraints: context.constraints,
+    upstream: {
+      agentKind: upstream.agentKind,
+      sessionId: upstream.sessionId,
+      statePresent: upstream.state !== null && upstream.state !== undefined,
+    },
+    delivery: context.delivery,
+  }
+}
+
 function fallbackState(value: unknown) {
   const fallback = objectRecord(value)
   const alternatives = Array.isArray(fallback.alternatives) ? fallback.alternatives : []
   if (alternatives.length === 0) return null
+  const routes = alternatives.map((entry, index) => {
+    const alternative = objectRecord(entry)
+    const capabilityRoute = objectRecord(alternative.capabilityRoute)
+    return {
+      rank: index + 1,
+      provider: alternative.provider,
+      requirements: capabilityRoute.requirements,
+      support: capabilityRoute.support,
+      runtimeEligibility: capabilityRoute.runtimeEligibility,
+      strategies: capabilityRoute.strategies,
+      evidence: capabilityRoute.evidence,
+    }
+  }).filter((route) => typeof route.provider === 'string')
   return {
     protocol: fallback.protocol,
     mode: fallback.mode,
     replay: fallback.replay,
-    providers: alternatives.map((entry) => objectRecord(entry).provider).filter((provider) => typeof provider === 'string'),
+    providers: routes.map((route) => route.provider),
+    routes,
   }
 }
 
@@ -3895,13 +4091,13 @@ function waitingForUserPayload({
     browser,
     userAction: {
       ...(waitResult?.userAction ?? {}),
-      message: windowOpen
-        ? 'The visible managed browser is open. Manually complete the provider verification or sign-in there, then query the same Tokenless task again.'
-        : 'This headless job requires user interaction and no browser window is open. Resume the same job with headed visibility; do not submit a replacement job.',
+      message: localizeText(windowOpen
+        ? 'Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.'
+        : 'Your help is needed, but no browser window is open. Resume this same job in headed mode; do not create a replacement job.'),
       resumeCommand,
       queryGuidance: windowOpen
-        ? 'Do not submit a replacement job; query the same job/task after user confirmation.'
-        : 'Resume this exact job with headed visibility, then complete the visible verification in the opened browser.',
+        ? localizeText('After completing sign-in or verification, query this same job or task; Tokenless will continue from its saved checkpoint.')
+        : localizeText('Your help is needed, but no browser window is open. Resume this same job in headed mode; do not create a replacement job.'),
     },
     result: publicDaemonResult(waitResult),
     statusLog,
@@ -4066,6 +4262,7 @@ function createCommandContracts(): CommandContract[] {
     'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
+    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch',
     'chatSurface', 'noWait',
     'agentKind', 'agentSessionId',
   ] as const
@@ -4080,6 +4277,7 @@ function createCommandContracts(): CommandContract[] {
   ] as const
   const providerConfigureOptions = [
     ...providerInspectOptions, 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface',
+    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch',
   ] as const
 
   const contracts: CommandContract[] = [
@@ -4087,6 +4285,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'version', usage: ['tokenless --version', 'tokenless -V', 'tokenless version'], options: [] },
     { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`], options: runOptions },
     { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },
+    { command: 'limits', subcommand: 'inspect', usage: ['tokenless limits inspect --profile <slug> --provider <provider> --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'replay', usage: ['tokenless replay --agent-kind <kind> --agent-session-id <id> [--limit <count>] --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs', 'agentKind', 'agentSessionId', 'limit'] },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -4096,7 +4295,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'inspect-chatgpt-controls', usage: ['tokenless inspect-chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
     { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
     { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant'] },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
@@ -4113,7 +4312,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
     { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <all|chrome|brave|edge|arc|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
-    { command: 'profiles', subcommand: 'reset', usage: ['tokenless profiles reset [--profile <slug>] --json'], options: ['home', 'json', 'profile'] },
+    { command: 'profiles', subcommand: 'reset', usage: ['tokenless profiles reset [--profile <slug>] --consent-local-profile-copy --json'], options: ['home', 'json', 'profile', 'consentLocalProfileCopy'] },
     { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
     { command: 'profiles', subcommand: 'open', usage: ['tokenless profiles open [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
     { command: 'profiles', subcommand: 'set-default', usage: ['tokenless profiles set-default --profile <slug> --json'], options: ['home', 'json', 'profile'] },
@@ -4195,6 +4394,9 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--thinking-effort': 'thinkingEffort',
     '--qwen-mode': 'qwenMode',
     '--qwen-mode-variant': 'qwenModeVariant',
+    '--deepseek-mode': 'deepSeekMode',
+    '--deepseek-deepthink': 'deepSeekDeepThink',
+    '--deepseek-search': 'deepSeekSearch',
     '--chat-surface': 'chatSurface',
   }
   const booleanFlags: Record<string, string> = {
@@ -4582,13 +4784,16 @@ function assertProviderConfigureArguments(args: CliArgs, command: string) {
     args.modelFallbacks === undefined &&
     args.effort === undefined &&
     args.thinkingEffort === undefined &&
+    args.deepSeekMode === undefined &&
+    args.deepSeekDeepThink === undefined &&
+    args.deepSeekSearch === undefined &&
     args.chatSurface === undefined
   ) {
     throw usageError(
       command === 'chatgpt-configure' ? 'missing_chatgpt_control' : 'missing_provider_control',
       `${command} requires --model${command === 'chatgpt-configure'
         ? ', --effort, or --chat-surface chat'
-        : ' or --effort'}.`
+        : ', --effort, or a DeepSeek control'}.`
     )
   }
 }
@@ -4597,14 +4802,21 @@ function resolveProviderControls({
   args,
   provider,
   action,
+  requirements,
 }: {
   args: CliArgs
   provider: string
   action: string
+  requirements: readonly TaskCapabilityId[]
 }) {
   const hasRequestedModelControl = args.model !== undefined || args.modelFallbacks !== undefined
   const hasRequestedEffortControl = args.effort !== undefined || args.thinkingEffort !== undefined
   const hasRequestedQwenMode = args.qwenMode !== undefined || args.qwenModeVariant !== undefined
+  const hasRequestedDeepSeekControl = (
+    args.deepSeekMode !== undefined ||
+    args.deepSeekDeepThink !== undefined ||
+    args.deepSeekSearch !== undefined
+  )
   const hasRequestedChatGptControl = (
     args.chatSurface !== undefined
   )
@@ -4613,7 +4825,7 @@ function resolveProviderControls({
     action === 'inspect_controls' ||
     action === 'inspect_chatgpt_controls'
   )
-  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedChatGptControl)) {
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedDeepSeekControl || hasRequestedChatGptControl)) {
     throw usageError(
       'controls_unsupported_for_action',
       'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
@@ -4629,6 +4841,12 @@ function resolveProviderControls({
     throw usageError(
       'qwen_mode_unsupported',
       '--qwen-mode and --qwen-mode-variant are available only for the Qwen provider.'
+    )
+  }
+  if (provider !== 'deepseek' && hasRequestedDeepSeekControl) {
+    throw usageError(
+      'deepseek_control_unsupported',
+      '--deepseek-mode, --deepseek-deepthink, and --deepseek-search are available only for the DeepSeek provider.'
     )
   }
   if (inspectionAction) return {}
@@ -4658,8 +4876,64 @@ function resolveProviderControls({
     throw usageError('qwen_mode_variant_requires_mode', '--qwen-mode-variant requires --qwen-mode.')
   }
 
+  const requestedCapabilities = new Set(requirements)
+  const requiresDeepSeekSearch = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB)
+  const requiresDeepSeekVision = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT)
+  const requiresDeepSeekReasoning = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.REASONING_EXTENDED)
+  if (requiresDeepSeekSearch && requiresDeepSeekVision) {
+    throw usageError(
+      'deepseek_capability_combination_unavailable',
+      'DeepSeek search.web requires Instant while image.input requires Vision; one run cannot require both.',
+    )
+  }
+  const inferredDeepSeekMode = provider !== 'deepseek'
+    ? undefined
+    : requiresDeepSeekSearch
+      ? 'Instant' as const
+      : requiresDeepSeekVision
+        ? 'Vision' as const
+        : args.attachFiles.length > 0
+          ? 'Instant' as const
+          : undefined
+  const deepSeekMode = args.deepSeekMode === undefined
+    ? inferredDeepSeekMode
+    : normalizeDeepSeekMode(args.deepSeekMode)
+  const deepSeekDeepThink = args.deepSeekDeepThink === undefined
+    ? (requiresDeepSeekReasoning ? true : undefined)
+    : normalizeDeepSeekToggle(args.deepSeekDeepThink, '--deepseek-deepthink')
+  const deepSeekSearch = args.deepSeekSearch === undefined
+    ? (requiresDeepSeekSearch ? true : undefined)
+    : normalizeDeepSeekToggle(args.deepSeekSearch, '--deepseek-search')
+  if (requiresDeepSeekVision && deepSeekMode !== 'Vision') {
+    throw usageError('deepseek_image_requires_vision', 'DeepSeek image.input requires Vision mode.')
+  }
+  if (requiresDeepSeekSearch && deepSeekSearch !== true) {
+    throw usageError('deepseek_search_required', 'DeepSeek search.web requires Search to remain enabled.')
+  }
+  if (requiresDeepSeekReasoning && deepSeekDeepThink !== true) {
+    throw usageError('deepseek_deepthink_required', 'DeepSeek reasoning.extended requires DeepThink to remain enabled.')
+  }
+  if (provider === 'deepseek' && deepSeekSearch !== undefined && deepSeekMode === undefined) {
+    throw usageError('deepseek_search_requires_instant', '--deepseek-search requires --deepseek-mode Instant or a search.web capability route.')
+  }
+  if (provider === 'deepseek' && deepSeekSearch !== undefined && deepSeekMode !== 'Instant') {
+    throw usageError('deepseek_search_requires_instant', 'DeepSeek Search is available only in Instant mode.')
+  }
+  if (provider === 'deepseek' && args.attachFiles.length > 0 && deepSeekMode === 'Expert') {
+    throw usageError('deepseek_file_unavailable_in_expert', 'DeepSeek file upload is unavailable in Expert mode; use Instant or Vision.')
+  }
+
   if (!providerSupportsChatSurface(provider)) {
-    return { model, modelFallbacks, effort, qwenMode, qwenModeVariant }
+    return {
+      model,
+      modelFallbacks,
+      effort,
+      qwenMode,
+      qwenModeVariant,
+      deepSeekMode,
+      deepSeekDeepThink,
+      deepSeekSearch,
+    }
   }
 
   const chatSurface = args.chatSurface === undefined ? 'chat' : String(args.chatSurface).trim().toLowerCase()
@@ -4683,6 +4957,21 @@ function qwenModeSelectionPayload(args: CliArgs) {
     mode,
     ...(variant === undefined ? {} : { variant }),
   }
+}
+
+function normalizeDeepSeekMode(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'instant') return 'Instant' as const
+  if (normalized === 'expert') return 'Expert' as const
+  if (normalized === 'vision') return 'Vision' as const
+  throw usageError('invalid_deepseek_mode', '--deepseek-mode must be Instant, Expert, or Vision.')
+}
+
+function normalizeDeepSeekToggle(value: unknown, flag: string) {
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'on' || normalized === 'true' || normalized === 'enabled') return true
+  if (normalized === 'off' || normalized === 'false' || normalized === 'disabled') return false
+  throw usageError('invalid_deepseek_toggle', `${flag} must be on or off.`)
 }
 
 function normalizeVisibleModelLabel(value: unknown, flag: string, errorCode = 'invalid_model') {
@@ -4797,7 +5086,7 @@ function formatStatusEvent(event: StatusEvent) {
       event.jobId ? `job=${String(event.jobId).slice(0, 8)}` : '',
       event.elapsedMs !== undefined ? `elapsed=${formatElapsed(event.elapsedMs)}` : '',
     ].filter(Boolean).join(' ')
-    return `[tokenless] waiting_for_user ${context} ${localizeText('User action is required; inspect the structured result for the safe resume step.')}`
+    return `[tokenless] waiting_for_user ${context} ${localizeText('Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.')}`
   }
   const parts = ['[tokenless]', event.event]
   for (const [key, value] of [
@@ -4872,6 +5161,7 @@ function usage() {
       description: 'Manage AI providers and their visible controls.',
       commands: [
         `tokenless provider-status --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --json`,
+        `tokenless limits inspect --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --json`,
         `tokenless provider-controls --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --json`,
         `tokenless provider-configure --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} [--model <exact-visible-model>] [--effort <exact-visible-effort>] --json`,
       ],

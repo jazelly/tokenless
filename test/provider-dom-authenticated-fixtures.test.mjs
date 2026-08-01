@@ -245,6 +245,70 @@ test('provider DOM manifest inventories every fixture with its sanitized page UR
   assert.deepEqual([...listed].sort(), [...actual].sort())
 })
 
+test('DeepSeek fixtures preserve mode-dependent visible control topology', { timeout: 30000 }, async () => {
+  const accountRoot = path.join(fixtureRoot, 'deepseek', 'signed-in-unknown')
+  const expected = {
+    'composer-instant': { mode: 'Instant', toggles: ['DeepThink', 'Search'], fileInput: 1 },
+    'composer-expert': { mode: 'Expert', toggles: ['DeepThink'], fileInput: 0 },
+    'composer-vision': { mode: 'Vision', toggles: ['DeepThink'], fileInput: 1 },
+  }
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  try {
+    for (const [scenario, topology] of Object.entries(expected)) {
+      const htmlPath = path.join(accountRoot, `${scenario}.html`)
+      const provenancePath = path.join(accountRoot, `${scenario}.provenance.json`)
+      const [htmlBytes, provenanceText] = await Promise.all([
+        fs.readFile(htmlPath),
+        fs.readFile(provenancePath, 'utf8'),
+      ])
+      const provenance = JSON.parse(provenanceText)
+      assert.equal(provenance.provider, 'deepseek')
+      assert.equal(provenance.source, 'authenticated-user-visible-chrome-session')
+      assert.equal(provenance.containsSyntheticBehavior, false)
+      assert.equal(provenance.contentSha256, sha256(htmlBytes))
+      await page.setContent(htmlBytes.toString('utf8'))
+      assert.equal(await page.locator('textarea[name="search"][placeholder="Message DeepSeek"]').count(), 1)
+      assert.equal(await page.getByRole('radio', { name: topology.mode, exact: true }).getAttribute('aria-checked'), 'true')
+      assert.deepEqual(
+        await page.locator('.ds-toggle-button').allTextContents(),
+        topology.toggles,
+      )
+      assert.equal(await page.locator('input[type="file"][multiple]').count(), topology.fileInput)
+      if (topology.fileInput === 1) {
+        const accept = await page.locator('input[type="file"][multiple]').getAttribute('accept')
+        assert.match(accept ?? '', /(?:^|,)\.txt(?:,|$)/u)
+        assert.match(accept ?? '', /(?:^|,)\.png(?:,|$)/u)
+      }
+      assert.equal(await page.locator('[role="button"].ds-button--primary.ds-button--disabled').count(), 1)
+      for (const evidence of provenance.evidenceSelectors) {
+        assert.equal(await page.locator(evidence.selector).count(), evidence.expectedCount)
+      }
+      for (const absence of provenance.absenceSelectors) {
+        assert.equal(await page.locator(absence.selector).count(), absence.expectedCount)
+      }
+    }
+
+    for (const scenario of ['response-complete', 'deepthink-response-complete', 'search-response-complete']) {
+      const htmlPath = path.join(accountRoot, `${scenario}.html`)
+      const provenancePath = path.join(accountRoot, `${scenario}.provenance.json`)
+      const [htmlBytes, provenanceText] = await Promise.all([
+        fs.readFile(htmlPath),
+        fs.readFile(provenancePath, 'utf8'),
+      ])
+      const provenance = JSON.parse(provenanceText)
+      assert.equal(provenance.contentSha256, sha256(htmlBytes))
+      await page.setContent(htmlBytes.toString('utf8'))
+      for (const evidence of provenance.evidenceSelectors) {
+        assert.equal(await page.locator(evidence.selector).count(), evidence.expectedCount)
+      }
+      assert.equal(await page.locator('.ds-message > .ds-markdown.ds-assistant-message-main-content').count(), 1)
+    }
+  } finally {
+    await browser.close()
+  }
+})
+
 test('Qwen guest fixtures preserve provenance-bound composer, mode, and completed-response evidence', {
   timeout: 30000,
 }, async () => {

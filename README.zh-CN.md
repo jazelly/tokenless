@@ -17,7 +17,7 @@
 
 ## Tokenless 能做什么
 
-Tokenless 让 AI Agent 把任务直接交给 ChatGPT、Claude、Gemini、Grok、Qwen 和实验阶段的 DeepSeek 网页版处理，从而减少 Agent 侧 token 消耗，也不需要配置这些服务的 API Key。
+Tokenless 为 AI Agent 提供一个统一的本地浏览器接口，用来访问 ChatGPT、Claude、Gemini、Grok、Qwen，以及实验阶段的 DeepSeek、Perplexity 和 Z.ai adapter，从而减少 Agent 侧 token 消耗，也不需要配置这些服务的 API Key。
 
 它不只是把 prompt 填进网页。Tokenless 会把各家 provider 真正提供的网页工作流适配成一个供 Agent 使用的本地接口：
 
@@ -41,6 +41,8 @@ Tokenless 让 AI Agent 把任务直接交给 ChatGPT、Claude、Gemini、Grok、
 | Grok | 可用 | 需要 |
 | Qwen / 千问 | Beta | 不需要 |
 | DeepSeek | 实验阶段 | 需要 |
+| Perplexity | 实验阶段 | 不需要 |
+| Z.ai / GLM | 实验阶段 | 不需要 |
 
 ## 安装与初始化
 
@@ -90,6 +92,7 @@ Agent 可以发现 canonical outcome catalog，并请求一个或多个已有证
 
 ```bash
 tokenless capabilities list --json
+tokenless limits inspect --profile default --provider chatgpt --json
 
 tokenless run \
   --capability file.upload \
@@ -97,13 +100,25 @@ tokenless run \
   --prompt "Review the attached proposal."
 ```
 
-Tokenless 会合并显式 capability 与结构化输入推导出的要求。普通 run 要求 `conversation.chat`，attachments 要求 `file.upload` 及对应的 media-specific input capability，`--workspace-mode native` 要求 `workspace.native`。Router 会在 configured provider scope 内选择一家能完整满足全部要求的 provider。`research.deep` 等 candidate capabilities 仍会列在 catalog 中，但在完整 provider lifecycle 通过真实 E2E closure 前，会在浏览器 mutation 之前明确失败。
+Tokenless 会合并显式 capability 与结构化输入推导出的要求。普通 run 要求 `conversation.chat`，attachments 要求 `file.upload` 及对应的 media-specific input capability，`--workspace-mode native` 要求 `workspace.native`。配置的 provider list 会限制候选成员。在这个集合内部，Router 会剔除无法满足完整 implication-expanded requirement set 的 provider，再按照新鲜 runtime eligibility 和 evidence maturity 对剩余 routes 排序；配置列表顺序仅作为最终 tie-breaker，绝不会覆盖 capability compatibility、runtime eligibility 或 evidence maturity。目前可路由的是 `conversation.chat` 和 text-file `file.upload`；`workspace.native`、`research.deep` 及其他 candidate outcomes 在完整 lifecycle 通过真实 provider E2E closure 前，会在 browser mutation 之前明确失败。
 
-对于未显式指定 provider 的 run，Tokenless 会记录已有证据闭环的候选 route；当当前 provider 遇到登录、CAPTCHA、限流或套餐限制等 provider-scoped blocker 时，会先自动尝试下一个 eligible provider，再请求人工介入。每个候选 provider 都必须满足本次 run 的完整 capability set。显式 `--provider`、精确 conversation continuation、provider-specific controls，以及提交后状态不确定的情况绝不会自动切换。`tokenless state --json` 会报告剩余 fallback plan 和持久化的 provider attempt 历史。
+对于未显式指定 provider 的 run，Tokenless 会记录排序后的 evidence-backed alternatives，并在 mutation 前根据当前本地 capacity 与真实 provider 页面重新检查当前 route。已知 capacity window、登录、CAPTCHA、限流或套餐限制、维护、区域不可用、导航失败、稳定 surface 缺失或 capability UI 明确不可用等已分类的 safe pre-submit provider failure，可以让同一个 job 原子切换到下一条 route。每个 alternative 都必须满足完全相同的完整 capability set。显式 `--provider`、精确或已映射 continuation、provider-specific controls、不可重建 mutation、外部状态不明确以及任何 post-submission failure 都绝不会自动切换。`tokenless state --json` 会报告排序后的 fallback routes、结构化停止原因和持久化的 provider attempt 历史。
+
+每个 routed job 还会保存带版本、provider-neutral 的 context envelope，包含 task identity、规范化 requirements、带 role 的 instructions、attachment provenance、输出约束、可选 upstream agent state 和 delivery hashes；不同 provider attempts 会原样重放同一个已验证 envelope。`tokenless state --json` 只公开不含 instruction 正文与 upstream state 内容的脱敏 envelope 摘要。
 
 可以使用 `tokenless provider-action --action capability.inspect --provider <provider> --json` 检查某家 provider 当前可用的具体能力。
 
-高级选项和实现细节见 [CLI 命令](COMMANDS.zh-CN.md)、[隐私政策](PRIVACY.md)和[架构](docs/architecture.md)。
+DeepSeek 提供 provider-specific 的 `Instant`、`Expert`、`Vision` mode，以及独立的 `DeepThink` 与 `Search` 控件。可分别使用 `deepseek.mode.inspect`、`deepseek.deepthink.inspect` 和 `deepseek.search.inspect` 检查；Search 与文件能力会随 mode 变化，Tokenless 不会只根据 mode 名称推断能力。
+
+对于显式 DeepSeek run，`search.web` 会在浏览器 mutation 前准备 Instant 并启用 Search，`reasoning.extended` 会启用 DeepThink，`image.input` 会准备 Vision。在声明的真实 provider release gate 通过之前，这些 canonical route 仍会 fail closed。
+
+## 文档
+
+- [文档索引](docs/README.zh-CN.md)
+- [Capability Matrix](docs/capability-matrix.zh-CN.md)
+- [CLI 命令](COMMANDS.zh-CN.md)
+- [隐私政策](PRIVACY.md)
+- [架构](docs/architecture.md)
 
 ## 补充说明
 
@@ -136,6 +151,8 @@ Tokenless 会合并显式 capability 与结构化输入推导出的要求。普�
 ### 每个 provider 都支持所有功能吗？
 
 不支持。Tokenless 只启用已经在各 provider 可见网页上验证过的工作流；不支持或尚未验证的能力会明确报错并停止。
+
+当前 provider mappings 与 evidence rules 见 [Capability Matrix](docs/capability-matrix.zh-CN.md)。
 
 ### 为什么 Qwen 有时会报告 `provider_dns_unavailable`？
 

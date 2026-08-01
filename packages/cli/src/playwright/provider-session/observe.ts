@@ -67,6 +67,7 @@ async function detectStructuredBlockers(
       message: string
       family?: string
       proof: string
+      retryAfterSeconds?: number
     }
     const isVisibleElement = (element: Element | null): element is HTMLElement | SVGElement => {
       if (!element || !(element instanceof HTMLElement || element instanceof SVGElement)) return false
@@ -95,6 +96,14 @@ async function detectStructuredBlockers(
       .join(' ')
     const text = visibleText().replace(/\s+/g, ' ').slice(0, 20_000)
     const lowerText = text.toLowerCase()
+    const retryDuration = lowerText.match(/(?:try again|reset(?:s|ting)?|available again)[^.!]{0,80}?\b(?:in|after)\s+(\d{1,4})\s*(seconds?|minutes?|hours?|days?)\b/i)
+    const retryAfterSeconds = retryDuration
+      ? Math.min(7 * 24 * 60 * 60, Number(retryDuration[1]) * (
+          retryDuration[2]?.startsWith('day') ? 86_400 :
+            retryDuration[2]?.startsWith('hour') ? 3_600 :
+              retryDuration[2]?.startsWith('minute') ? 60 : 1
+        ))
+      : undefined
     const raw: RawBlocker[] = []
     const visibleFrames = Array.from(document.querySelectorAll('iframe')).filter(isVisibleElement)
     const visibleInputs = Array.from(document.querySelectorAll('input, button, a, [role="button"], [role="textbox"]')).filter(isVisibleElement)
@@ -141,8 +150,14 @@ async function detectStructuredBlockers(
         ? { kind: 'auth', code: 'provider_sign_in_required', family: 'provider_sign_in', message: 'A visible sign-in dialog is blocking the requested action.', proof: 'visible-provider-sign-in-dialog' }
         : { kind: 'auth', code: 'provider_sign_in_visible', family: 'provider_sign_in', message: 'Provider sign-in is visible but may be optional.', proof: 'visible-provider-sign-in-control' })
     }
+    if (/(not available in (?:your|this) (?:country|region|location)|unsupported region|region is not supported)/i.test(lowerText)) {
+      raw.push({ kind: 'terminal', code: 'provider_region_unavailable', family: 'availability', message: 'The provider is visibly unavailable in the current region.', proof: 'visible-region-unavailable-text' })
+    }
+    if (/(scheduled maintenance|under maintenance|service maintenance|maintenance in progress)/i.test(lowerText)) {
+      raw.push({ kind: 'terminal', code: 'provider_maintenance', family: 'availability', message: 'The provider is visibly under maintenance.', proof: 'visible-provider-maintenance-text' })
+    }
     if (/(rate limit|too many requests|try again later|temporarily unavailable)/i.test(lowerText)) {
-      raw.push({ kind: 'terminal', code: 'provider_rate_limited', family: 'rate_limit', message: 'The provider is showing a visible rate limit or temporary capacity blocker.', proof: 'visible-rate-limit-text' })
+      raw.push({ kind: 'terminal', code: 'provider_rate_limited', family: 'rate_limit', message: 'The provider is showing a visible rate limit or temporary capacity blocker.', proof: 'visible-rate-limit-text', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) })
     }
     if (/(upgrade required|upgrade your plan|subscribe to|requires a paid plan|plan limit|usage limit)/i.test(lowerText)) {
       raw.push({ kind: 'terminal', code: 'provider_plan_limited', family: 'plan_limit', message: 'The provider is showing a visible plan or quota blocker.', proof: 'visible-plan-limit-text' })
@@ -169,21 +184,26 @@ async function detectStructuredBlockers(
     const reason = selectorReason(selector)
     const requiresAuth = provider.loginIndicators.includes(selector)
     const terminal = /rate|upgrade|plan|too many requests/i.test(selector)
+    const challenge = selectorChallenge(selector)
     selectorBlockers.push(createBlocker({
       provider,
       url,
       kind: requiresAuth ? 'auth' : (terminal ? 'terminal' : 'challenge'),
       code: requiresAuth
         ? 'provider_sign_in_required'
-        : (terminal ? (/upgrade|plan/i.test(selector) ? 'provider_plan_limited' : 'provider_rate_limited') : 'visible_provider_blocker'),
+        : (terminal
+            ? (/upgrade|plan/i.test(selector) ? 'provider_plan_limited' : 'provider_rate_limited')
+            : challenge?.code ?? 'visible_provider_blocker'),
       family: requiresAuth
         ? 'provider_sign_in'
-        : (terminal ? (/upgrade|plan/i.test(selector) ? 'plan_limit' : 'rate_limit') : undefined),
+        : (terminal
+            ? (/upgrade|plan/i.test(selector) ? 'plan_limit' : 'rate_limit')
+            : challenge?.family),
       message: requiresAuth
         ? 'Provider sign-in is blocking the requested action and requires the user.'
         : terminal
           ? 'The provider is showing a visible terminal account or capacity blocker.'
-          : 'A visible provider challenge or blocker is present.',
+          : challenge?.message ?? 'A visible provider challenge or blocker is present.',
       visibleProof: `visible-selector:${reason}`,
     }))
   }
@@ -207,6 +227,7 @@ async function detectStructuredBlockers(
       family: raw.family as VisibleBlocker['family'],
       message: raw.message,
       visibleProof: raw.proof,
+      retryAfterSeconds: raw.retryAfterSeconds,
     })),
     ...selectorBlockers,
   ]
@@ -227,6 +248,7 @@ function createBlocker(input: {
   message: string
   visibleProof: string
   family?: VisibleBlocker['family']
+  retryAfterSeconds?: number | undefined
 }): VisibleBlocker {
   const userResolvable = input.kind === 'challenge' || input.kind === 'auth'
   return {
@@ -234,11 +256,12 @@ function createBlocker(input: {
     code: input.code,
     message: input.message,
     userResolvable,
-    retryable: userResolvable,
+    retryable: userResolvable || input.family === 'rate_limit',
     visibleProof: input.visibleProof,
     provider: input.provider.id,
     url: sanitizedNavigationOrigin(input.provider, input.url),
     ...(input.family ? { family: input.family } : {}),
+    ...(input.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: input.retryAfterSeconds }),
   }
 }
 
@@ -271,6 +294,42 @@ function selectorReason(selector: string) {
   if (/rate limit|too many/i.test(selector)) return 'rate_limit'
   if (/upgrade|paywall|subscribe/i.test(selector)) return 'upgrade_or_paywall'
   return 'visible_blocker'
+}
+
+function selectorChallenge(selector: string): Readonly<{
+  code: string
+  family: NonNullable<VisibleBlocker['family']>
+  message: string
+}> | null {
+  if (/hcaptcha/i.test(selector)) {
+    return {
+      code: 'visible_hcaptcha',
+      family: 'hcaptcha',
+      message: 'Visible hCaptcha verification is blocking the provider page.',
+    }
+  }
+  if (/recaptcha/i.test(selector)) {
+    return {
+      code: 'visible_recaptcha',
+      family: 'recaptcha',
+      message: 'Visible reCAPTCHA verification is blocking the provider page.',
+    }
+  }
+  if (/cloudflare|turnstile/i.test(selector)) {
+    return {
+      code: 'visible_cloudflare_turnstile',
+      family: 'cloudflare',
+      message: 'Visible Cloudflare verification is blocking the provider page.',
+    }
+  }
+  if (/arkose|funcaptcha/i.test(selector)) {
+    return {
+      code: 'visible_arkose_funcaptcha',
+      family: 'arkose',
+      message: 'Visible Arkose/FunCaptcha verification is blocking the provider page.',
+    }
+  }
+  return null
 }
 
 function sanitizedNavigationOrigin(provider: ProviderDomDefinition, value: string) {

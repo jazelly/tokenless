@@ -20,6 +20,7 @@ const gate = requiredGate()
 const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
 const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
 const browserConnectionMode = optionalConnectionMode(process.env.TOKENLESS_LIVE_BROWSER_CONNECTION_MODE)
+const providerFilter = optionalProviderFilter(process.env.TOKENLESS_LIVE_E2E_PROVIDER)
 const suiteRunMarker = `${compactTimestamp(new Date())}_${randomUUID().slice(0, 8)}`
 const submissionTrackers = new WeakMap()
 const handlers = {
@@ -30,7 +31,11 @@ const handlers = {
   'file-selection': fileSelection,
   'conversation-workflow': conversationWorkflow,
   'workspace-response-citations': workspaceResponseCitations,
+  'workspace-response-baseline': workspaceResponseBaseline,
   'qwen-mode-workspace': qwenModeWorkspace,
+  'deepseek-controls': deepSeekControls,
+  'deepseek-search-reasoning': deepSeekSearchReasoning,
+  'deepseek-vision-input': deepSeekVisionInput,
   'native-project': nativeProject,
 }
 
@@ -42,6 +47,7 @@ const selectedProviders = Object.entries(matrix.providers)
       (caseId) => gate === 'all' || matrix.cases[caseId].gate === gate,
     ),
   }))
+  .filter(({ provider }) => providerFilter === null || provider === providerFilter)
   .filter(({ caseIds }) => caseIds.length > 0)
 
 assert.ok(selectedProviders.length > 0, `TOKENLESS_LIVE_E2E_GATE=${gate} selected no required providers`)
@@ -237,6 +243,134 @@ async function qwenModeWorkspace({ provider, journey }) {
   await restored.close()
 }
 
+async function deepSeekControls({ provider, journey }) {
+  assert.equal(provider, 'deepseek')
+  const modeInspection = await journey.action('deepseek.mode.inspect')
+  const modes = responseResult(modeInspection.payload, 'deepseek.mode.inspect')
+  assert.equal(modes?.supported, true)
+  assert.deepEqual(modes?.modes?.map((choice) => choice.mode), ['Instant', 'Expert', 'Vision'])
+  assert.equal(modes?.modes?.find((choice) => choice.mode === 'Instant')?.controls.search, true)
+  assert.equal(modes?.modes?.find((choice) => choice.mode === 'Expert')?.controls.fileUpload, false)
+  assert.equal(modes?.modes?.find((choice) => choice.mode === 'Vision')?.controls.imageFileSelection, true)
+  const originalMode = modes.activeMode
+  await modeInspection.close()
+
+  const deepThinkInspection = await journey.action('deepseek.deepthink.inspect')
+  const originalDeepThink = responseResult(deepThinkInspection.payload, 'deepseek.deepthink.inspect')?.enabled
+  assert.equal(typeof originalDeepThink, 'boolean')
+  await deepThinkInspection.close()
+
+  let originalSearch
+  try {
+    const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+    assert.equal(responseResult(instant.payload, 'deepseek.mode.select')?.selectedMode, 'Instant')
+    await instant.close()
+
+    const searchInspection = await journey.action('deepseek.search.inspect')
+    originalSearch = responseResult(searchInspection.payload, 'deepseek.search.inspect')?.enabled
+    assert.equal(typeof originalSearch, 'boolean')
+    await searchInspection.close()
+
+    const searchChanged = await journey.action('deepseek.search.select', [
+      '--deepseek-search', originalSearch ? 'off' : 'on',
+    ])
+    assert.equal(responseResult(searchChanged.payload, 'deepseek.search.select')?.enabled, !originalSearch)
+    await searchChanged.close()
+
+    const deepThinkChanged = await journey.action('deepseek.deepthink.select', [
+      '--deepseek-deepthink', originalDeepThink ? 'off' : 'on',
+    ])
+    assert.equal(responseResult(deepThinkChanged.payload, 'deepseek.deepthink.select')?.enabled, !originalDeepThink)
+    await deepThinkChanged.close()
+
+    for (const mode of ['Expert', 'Vision']) {
+      const selected = await journey.action('deepseek.mode.select', ['--deepseek-mode', mode])
+      assert.equal(responseResult(selected.payload, 'deepseek.mode.select')?.selectedMode, mode)
+      await selected.close()
+      const search = await journey.action('deepseek.search.inspect')
+      assert.deepEqual(responseResult(search.payload, 'deepseek.search.inspect'), {
+        supported: false,
+        activeMode: mode,
+        reason: 'unavailable_in_mode',
+      })
+      await search.close()
+    }
+  } finally {
+    const restoredMode = await journey.action('deepseek.mode.select', ['--deepseek-mode', originalMode])
+    await restoredMode.close()
+    const restoredDeepThink = await journey.action('deepseek.deepthink.select', [
+      '--deepseek-deepthink', originalDeepThink ? 'on' : 'off',
+    ])
+    await restoredDeepThink.close()
+    if (originalMode === 'Instant' && typeof originalSearch === 'boolean') {
+      const restoredSearch = await journey.action('deepseek.search.select', [
+        '--deepseek-search', originalSearch ? 'on' : 'off',
+      ])
+      await restoredSearch.close()
+    }
+  }
+}
+
+async function deepSeekSearchReasoning({ provider, journey }) {
+  assert.equal(provider, 'deepseek')
+  const modeInspection = await journey.action('deepseek.mode.inspect')
+  const originalMode = responseResult(modeInspection.payload, 'deepseek.mode.inspect')?.activeMode
+  assert.ok(['Instant', 'Expert', 'Vision'].includes(originalMode))
+  await modeInspection.close()
+  const deepThinkInspection = await journey.action('deepseek.deepthink.inspect')
+  const originalDeepThink = responseResult(deepThinkInspection.payload, 'deepseek.deepthink.inspect')?.enabled
+  assert.equal(typeof originalDeepThink, 'boolean')
+  await deepThinkInspection.close()
+  const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+  await instant.close()
+  const searchInspection = await journey.action('deepseek.search.inspect')
+  const originalSearch = responseResult(searchInspection.payload, 'deepseek.search.inspect')?.enabled
+  assert.equal(typeof originalSearch, 'boolean')
+  await searchInspection.close()
+
+  try {
+    const reasoningMarker = markerFor(provider, 'DEEPTHINK_RESPONSE')
+    const reasoning = await journey.run([
+      '--deepseek-mode', 'Instant',
+      '--deepseek-deepthink', 'on',
+      '--deepseek-search', 'off',
+      '--prompt', `Use DeepThink to calculate 37 multiplied by 43. Include this exact marker in the final answer: ${reasoningMarker}`,
+    ])
+    assert.equal(responseResult(reasoning.payload, 'deepseek.mode.select')?.selectedMode, 'Instant')
+    assert.equal(responseResult(reasoning.payload, 'deepseek.deepthink.select')?.enabled, true)
+    assert.equal(responseResult(reasoning.payload, 'deepseek.search.select')?.enabled, false)
+    assert.match(responseResult(reasoning.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(reasoningMarker)))
+    await reasoning.close()
+
+    const searchMarker = markerFor(provider, 'SEARCH_RESPONSE')
+    const search = await journey.run([
+      '--deepseek-mode', 'Instant',
+      '--deepseek-deepthink', 'off',
+      '--deepseek-search', 'on',
+      '--prompt', `Use web search to identify the official Node.js homepage. Include this exact marker: ${searchMarker}. Provide visible source links.`,
+    ])
+    const response = responseResult(search.payload, 'response.read')
+    assert.equal(responseResult(search.payload, 'deepseek.search.select')?.enabled, true)
+    assert.match(response?.text ?? '', new RegExp(escapeRegExp(searchMarker)))
+    assert.ok(Array.isArray(response?.citations) && response.citations.length > 0)
+    assert.ok(await visibleCitationCount(search.page, response.citations) > 0)
+    await search.close()
+  } finally {
+    const restoreInstant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+    await restoreInstant.close()
+    const restoreSearch = await journey.action('deepseek.search.select', [
+      '--deepseek-search', originalSearch ? 'on' : 'off',
+    ])
+    await restoreSearch.close()
+    const restoreMode = await journey.action('deepseek.mode.select', ['--deepseek-mode', originalMode])
+    await restoreMode.close()
+    const restoreDeepThink = await journey.action('deepseek.deepthink.select', [
+      '--deepseek-deepthink', originalDeepThink ? 'on' : 'off',
+    ])
+    await restoreDeepThink.close()
+  }
+}
+
 async function choiceCase({ provider, journey }, kind) {
   const inspectAction = `${kind}.inspect`
   const selectAction = `${kind}.select`
@@ -267,7 +401,13 @@ async function fileSelection({ provider, journey }) {
   const file = path.join(root, 'test-results', 'live-provider-inputs', name)
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
   await fs.writeFile(file, `${name}\n`, { mode: 0o600 })
+  const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
   try {
+    if (deepSeekState) {
+      const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+      assert.equal(responseResult(instant.payload, 'deepseek.mode.select')?.selectedMode, 'Instant')
+      await instant.close()
+    }
     const uploaded = await journey.action('file.upload', ['--attach-file', file], 180_000)
     const result = responseResult(uploaded.payload, 'file.upload')
     assert.ok(result?.attachments?.some((attachment) => attachment.name === name))
@@ -277,6 +417,7 @@ async function fileSelection({ provider, journey }) {
     await cleared.close()
   } finally {
     await fs.rm(file, { force: true })
+    if (deepSeekState) await restoreDeepSeekState(journey, deepSeekState)
   }
 }
 
@@ -289,10 +430,16 @@ async function conversationWorkflow({ provider, journey }) {
   const attachment = path.join(root, 'test-results', 'live-provider-inputs', attachmentName)
   await fs.mkdir(path.dirname(attachment), { recursive: true, mode: 0o700 })
   await fs.writeFile(attachment, `${attachmentMarker}\n`, { mode: 0o600 })
+  const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
   try {
     const first = await journey.run([
       '--project-name', name,
       '--workspace-mode', 'conversation',
+      ...(provider === 'deepseek' ? [
+        '--deepseek-mode', 'Instant',
+        '--deepseek-deepthink', 'off',
+        '--deepseek-search', 'on',
+      ] : []),
       '--attach-file', attachment,
       '--prompt', [
         'Read the attached file and include its exact marker in your response.',
@@ -319,6 +466,11 @@ async function conversationWorkflow({ provider, journey }) {
     const second = await journey.run([
       '--project-name', name,
       '--workspace-mode', 'conversation',
+      ...(provider === 'deepseek' ? [
+        '--deepseek-mode', 'Instant',
+        '--deepseek-deepthink', 'off',
+        '--deepseek-search', 'on',
+      ] : []),
       '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
     ])
     const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
@@ -328,7 +480,73 @@ async function conversationWorkflow({ provider, journey }) {
     await second.close()
   } finally {
     await fs.rm(attachment, { force: true })
+    if (deepSeekState) await restoreDeepSeekState(journey, deepSeekState)
   }
+}
+
+async function deepSeekVisionInput({ provider, journey }) {
+  assert.equal(provider, 'deepseek')
+  const original = await captureDeepSeekState(journey)
+  const image = path.join(root, 'assets', 'tokenless-mark.png')
+  const marker = markerFor(provider, 'VISION_RESPONSE')
+  try {
+    const run = await journey.run([
+      '--deepseek-mode', 'Vision',
+      '--deepseek-deepthink', 'off',
+      '--attach-file', image,
+      '--prompt', [
+        'Describe the central mark in the attached image in one short sentence.',
+        `Include this exact marker: ${marker}`,
+      ].join(' '),
+    ], 360_000, ({ page }) => waitForExactText(page, path.basename(image), 180_000))
+    assert.equal(responseResult(run.payload, 'deepseek.mode.select')?.selectedMode, 'Vision')
+    assert.ok(responseResult(run.payload, 'file.upload')?.attachments?.some(
+      (attachment) => attachment.name === path.basename(image),
+    ))
+    assert.equal(run.observerResult, true, 'DeepSeek observer must see the selected Vision image')
+    assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
+    await run.close()
+  } finally {
+    await restoreDeepSeekState(journey, original)
+  }
+}
+
+async function captureDeepSeekState(journey) {
+  const modeInspection = await journey.action('deepseek.mode.inspect')
+  const mode = responseResult(modeInspection.payload, 'deepseek.mode.inspect')?.activeMode
+  assert.ok(['Instant', 'Expert', 'Vision'].includes(mode))
+  await modeInspection.close()
+
+  const deepThinkInspection = await journey.action('deepseek.deepthink.inspect')
+  const deepThink = responseResult(deepThinkInspection.payload, 'deepseek.deepthink.inspect')?.enabled
+  assert.equal(typeof deepThink, 'boolean')
+  await deepThinkInspection.close()
+
+  let search = null
+  if (mode === 'Instant') {
+    const searchInspection = await journey.action('deepseek.search.inspect')
+    search = responseResult(searchInspection.payload, 'deepseek.search.inspect')?.enabled
+    assert.equal(typeof search, 'boolean')
+    await searchInspection.close()
+  }
+  return { mode, deepThink, search }
+}
+
+async function restoreDeepSeekState(journey, state) {
+  const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+  await instant.close()
+  if (typeof state.search === 'boolean') {
+    const search = await journey.action('deepseek.search.select', [
+      '--deepseek-search', state.search ? 'on' : 'off',
+    ])
+    await search.close()
+  }
+  const mode = await journey.action('deepseek.mode.select', ['--deepseek-mode', state.mode])
+  await mode.close()
+  const deepThink = await journey.action('deepseek.deepthink.select', [
+    '--deepseek-deepthink', state.deepThink ? 'on' : 'off',
+  ])
+  await deepThink.close()
 }
 
 async function workspaceResponseCitations({ provider, journey }) {
@@ -344,6 +562,21 @@ async function workspaceResponseCitations({ provider, journey }) {
   assert.equal(await pageContains(run.page, responseMarker, 2), true)
   assert.ok(Array.isArray(response?.citations) && response.citations.length > 0, `${provider} must return normalized real citations`)
   assert.ok(await visibleCitationCount(run.page, response.citations) > 0, `${provider} observer must see a returned citation link`)
+  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  await run.close()
+}
+
+async function workspaceResponseBaseline({ provider, journey }) {
+  const name = markerFor(provider, 'WORKSPACE_RESPONSE')
+  const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
+  const run = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--prompt', `Reply with this exact marker: ${responseMarker}`,
+  ])
+  const response = responseResult(run.payload, 'response.read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
+  assert.equal(await pageContains(run.page, responseMarker, 2), true)
   assertConversationWorkspaceResult(provider, journey.taskId, run)
   await run.close()
 }
@@ -768,6 +1001,18 @@ function optionalConnectionMode(value) {
     )
   }
   return connectionMode
+}
+
+function optionalProviderFilter(value) {
+  const provider = value?.trim()
+  if (!provider) return null
+  if (!Object.hasOwn(matrix.providers, provider)) {
+    throw e2eFailure(
+      'e2e_provider_filter_invalid',
+      `TOKENLESS_LIVE_E2E_PROVIDER must name a provider declared in the live capability matrix: ${provider}`,
+    )
+  }
+  return provider
 }
 
 function requiredEnv(name) {

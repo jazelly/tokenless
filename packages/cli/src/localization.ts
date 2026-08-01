@@ -69,11 +69,12 @@ const ZH_TEXT = new Map<string, string>([
   ['--repair-browser cannot be combined with --no-browser-download.', '--repair-browser 不能与 --no-browser-download 同时使用。'],
   ['Browser must be auto, chrome, chrome-for-testing, chromium, edge, arc, brave, managed-chromium, or cloak.', 'Browser 必须是 auto、chrome、chrome-for-testing、chromium、edge、arc、brave、managed-chromium 或 cloak。'],
   ['Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.', '无效的 Tokenless browser；应为 auto、受支持的 system browser、managed-chromium 或 cloak。'],
-  ['Keeps sign-ins between jobs inside a Tokenless-managed profile. Tokenless does not copy an existing browser profile or its authentication state.', '登录状态会保留在 Tokenless 管理的 profile 中并跨 job 复用。Tokenless 不会复制现有浏览器 profile 或其中的认证状态。'],
+  ['Keeps sign-ins between jobs inside a Tokenless-managed profile. With explicit consent, setup can copy a selected local profile as an opaque filesystem tree without reading its authentication values.', '登录状态会保留在 Tokenless 管理的 profile 中并跨 job 复用。获得明确同意后，setup 可以把选定的本机 profile 作为 opaque 文件树复制，不读取其中的认证值。'],
   ['Use Anti-Detect mode? Tokenless will use CloakBrowser.', '是否使用 Anti-Detect 模式？Tokenless 将使用 CloakBrowser。'],
-  ['Only profile directory names and browser versions are checked. Browser sign-ins are never read or copied.', '只检查 profile 目录名和浏览器版本；不会读取或复制浏览器登录状态。'],
+  ['Discovery checks only profile directory names and browser versions. A selected profile is copied only after explicit consent, without reading authentication values.', '发现阶段只检查 profile 目录名和浏览器版本。只有获得明确同意后才复制选定的 profile，并且不读取认证值。'],
   ['No local Chromium profiles were found.', '未找到本机 Chromium profile。'],
-  ['Continue with a clean CloakBrowser profile? Listed browser profiles will not be imported.', '是否继续使用 clean CloakBrowser profile？上面列出的浏览器 profile 不会被导入。'],
+  ['Continue with a clean CloakBrowser profile?', '是否继续使用 clean CloakBrowser profile？'],
+  ['Continue and copy the explicitly selected browser profile into CloakBrowser?', '是否继续并把明确选定的 browser profile 复制到 CloakBrowser？'],
   ['Anti-Detect setup stopped before downloading CloakBrowser or creating a managed profile.', 'Anti-Detect setup 已在下载 CloakBrowser 或创建 managed profile 之前停止。'],
   ['Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.', '非交互 CloakBrowser setup 必须通过显式的 --anti-detect 或 --browser cloak 进行确认。'],
   ['--browser-user-data-dir requires one explicit browser instead of all.', '--browser-user-data-dir 必须指定一个具体浏览器，不能使用 all。'],
@@ -116,7 +117,9 @@ const ZH_TEXT = new Map<string, string>([
   ['--clear-proxy cannot be combined with --proxy-server or --proxy-bypass.', '--clear-proxy 不能与 --proxy-server 或 --proxy-bypass 同时使用。'],
   ['--proxy-bypass requires an existing proxy or --proxy-server.', '--proxy-bypass 需要已有 proxy 或同时提供 --proxy-server。'],
   ['Proxy must use HTTP, HTTPS, or SOCKS5 without embedded credentials.', 'Proxy 必须使用 HTTP、HTTPS 或 SOCKS5，且不能嵌入凭据。'],
-  ['User action is required; inspect the structured result for the safe resume step.', '需要用户操作；请查看结构化结果中的安全恢复步骤。'],
+  ['Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.', '需要你的协助：请在可见浏览器中完成 provider 登录或验证。Tokenless 会保留当前 job，完成后继续。'],
+  ['Your help is needed, but no browser window is open. Resume this same job in headed mode; do not create a replacement job.', '需要你的协助，但当前没有打开浏览器窗口。请以 headed mode 恢复同一个 job，不要创建替代 job。'],
+  ['After completing sign-in or verification, query this same job or task; Tokenless will continue from its saved checkpoint.', '完成登录或验证后，请查询同一个 job 或 task；Tokenless 会从已保存的 checkpoint 继续。'],
   ['The managed Chromium browser did not exit after shutdown.', '托管 Chromium browser 在关闭后仍未退出。'],
   ['Too many managed browser profiles are active; existing profile browsers remain open.', '当前 active 的托管 browser profiles 过多；已有 profile browsers 会保持打开。'],
 ])
@@ -133,6 +136,7 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^(\S+) requires a value\.$/, '$1 需要一个值。')
     .replace(/^(\S+) is required\.$/, '必须提供 $1。')
     .replace(/^Provider must be one of: (.+)\.$/, 'Provider 必须是以下值之一：$1。')
+    .replace(/^Provider capacity for (.+) \/ (.+): (.+)\.$/, 'Provider $1 / profile $2 的容量：$3。')
     .replace(/^Browser must be one of: (.+)\.$/, 'Browser 必须是以下值之一：$1。')
     .replace(/^Browser must be auto, a supported system browser, managed-chromium, or cloak\.$/, 'Browser 必须是 auto、受支持的 system browser、managed-chromium 或 cloak。')
     .replace(/^Automatic — (.+)$/, '自动 — $1')
@@ -163,7 +167,6 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^(.+) (\S+) is not installed\. Run tokenless setup with browser downloads enabled\.$/, '$1 $2 尚未安装。请启用 browser download 后重新运行 tokenless setup。')
     .replace(/^Configured system browser '(.+)' is not installed or executable\.$/, "配置的 system browser '$1' 尚未安装或不可执行。")
     .replace(/^Managed profile '(.+)' cannot use (.+); create a clean profile for that browser runtime\.$/, "Managed profile '$1' 不能使用 $2；请为该 browser runtime 创建 clean profile。")
-    .replace(/^Tokenless does not copy local browser profiles or authentication state\. Create a clean managed profile and sign in inside that profile\.$/, 'Tokenless 不复制本地浏览器 profile 或认证状态。请创建 clean managed profile，并在其中手动登录。')
     .replace(/^Unsupported Tokenless browser platform: (.+)\. Supported platforms are darwin-arm64 and win32-x64\.$/, 'Tokenless 不支持 browser platform：$1。支持 darwin-arm64 和 win32-x64。')
     .replace(/^Managed profile '(.+)' predates browser runtime binding\. Rerun tokenless setup and explicitly select a compatible browser\.$/, "Managed profile '$1' 尚未记录 browser runtime binding。请重新运行 tokenless setup 并显式选择兼容的 browser。")
     .replace(/^Managed profile '(.+)' is bound to (.+), but Tokenless resolved (.+)\.$/, "Managed profile '$1' 绑定到 $2，但 Tokenless 解析出 $3。")

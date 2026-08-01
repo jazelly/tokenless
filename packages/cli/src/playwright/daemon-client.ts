@@ -1,4 +1,5 @@
 import type { DaemonJob } from '../daemon-client.js'
+import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 
 export type { DaemonJob } from '../daemon-client.js'
 
@@ -28,6 +29,19 @@ export type ManagedDaemonClient = {
   }): Promise<{ job: DaemonClaimedJob | null }>
   getJob(options: JobOptions): Promise<DaemonJob>
   markJobRunning(options: ClaimedJobOptions): Promise<DaemonJob>
+  projectJobProviderCapacity(options: ClaimedJobOptions & {
+    accessClass: string
+    tierLabel?: string | null | undefined
+    subscriptionLabel?: string | null | undefined
+  }): Promise<ProviderCapacityProjection>
+  deferJobForProviderCapacity(options: ClaimedJobOptions & {
+    projection: ProviderCapacityProjection
+  }): Promise<DaemonJob>
+  recordProviderSubmission(options: ClaimedJobOptions): Promise<DaemonJob>
+  deferObservedProviderLimit(options: ClaimedJobOptions & {
+    blocker: unknown
+    delaySeconds?: number | undefined
+  }): Promise<DaemonJob>
   markJobWaitingForUser(options: ClaimedJobOptions & { blocker: unknown }): Promise<DaemonJob>
   checkpointJob(options: ClaimedJobOptions & { checkpoint: unknown }): Promise<DaemonJob>
   parkJob(options: ClaimedJobOptions & { blocker: unknown, checkpoint: unknown }): Promise<DaemonJob>

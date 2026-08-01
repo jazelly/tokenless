@@ -132,6 +132,6 @@ async function locatorIsUnavailable(locator: Locator) {
     return element.hasAttribute('disabled') ||
       element.getAttribute('aria-disabled') === 'true' ||
       (dataDisabled !== null && dataDisabled !== 'false') ||
-      /upgrade|subscribe|requires paid|plan limit/.test(`${text} ${aria}`)
+      /upgrade|subscribe|requires paid|plan limit|log in|sign in/.test(`${text} ${aria}`)
   }).catch(() => false)
 }

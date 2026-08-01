@@ -17,7 +17,7 @@
 
 ## What Tokenless Does
 
-Tokenless lets AI agents send work to ChatGPT, Claude, Gemini, Grok, Qwen, and experimental DeepSeek directly through their websites—reducing agent-side token use without provider API keys.
+Tokenless gives AI agents one local browser interface for ChatGPT, Claude, Gemini, Grok, Qwen, and experimental DeepSeek, Perplexity, and Z.ai adapters—reducing agent-side token use without provider API keys.
 
 It goes beyond sending prompts. Tokenless adapts each provider's real web workflows into one local interface for agents:
 
@@ -41,6 +41,8 @@ Each active managed profile owns its own browser instance. Tokenless reuses that
 | Grok | Available | Required |
 | Qwen / 千问 | Beta | Not required |
 | DeepSeek | Experimental | Required |
+| Perplexity | Experimental | Not required |
+| Z.ai / GLM | Experimental | Not required |
 
 ## Install and Setup
 
@@ -90,6 +92,7 @@ Agents can discover the canonical outcome catalog and request one or more eviden
 
 ```bash
 tokenless capabilities list --json
+tokenless limits inspect --profile default --provider chatgpt --json
 
 tokenless run \
   --capability file.upload \
@@ -97,13 +100,25 @@ tokenless run \
   --prompt "Review the attached proposal."
 ```
 
-Tokenless combines explicit capabilities with requirements inferred from structured inputs. A normal run requires `conversation.chat`, attachments require `file.upload` plus their media-specific input capability, and `--workspace-mode native` requires `workspace.native`. The router selects one provider that satisfies the complete requirement set inside the configured provider scope. Candidate capabilities such as `research.deep` remain listed but fail before browser mutation until their full provider lifecycle has real E2E closure.
+Tokenless combines explicit capabilities with requirements inferred from structured inputs. A normal run requires `conversation.chat`, attachments require `file.upload` plus their media-specific input capability, and `--workspace-mode native` requires `workspace.native`. The configured provider list restricts candidate membership. Inside that set, the router removes every provider that cannot satisfy the complete implication-expanded requirement set, then ranks the remaining routes by fresh runtime eligibility and evidence maturity; configured list order is only the final tie-breaker and can never override capability compatibility, runtime eligibility, or evidence maturity. `conversation.chat` and text-file `file.upload` are currently routeable; `workspace.native`, `research.deep`, and other candidate outcomes fail before browser mutation until their complete lifecycle has real-provider E2E closure.
 
-For an implicit provider run, Tokenless records evidence-backed alternatives and automatically tries the next eligible provider before requesting human help when a provider-scoped sign-in, CAPTCHA, rate-limit, or plan blocker occurs. Every alternative must satisfy the complete capability set for that run. Explicit `--provider`, exact-conversation continuation, provider-specific controls, and ambiguous post-submission state never switch providers automatically. `tokenless state --json` reports the remaining fallback plan and durable provider-attempt history.
+For an implicit provider run, Tokenless records the ranked evidence-backed alternatives and rechecks the selected route against current local capacity plus the live provider page before mutation. A classified safe pre-submit provider failure—such as a known capacity window, sign-in, CAPTCHA, rate or plan limits, maintenance, regional unavailability, navigation failure, a missing stable surface, or visibly unavailable capability UI—can atomically move the same job to the next route. Every alternative must satisfy the identical complete capability set. Explicit `--provider`, exact or mapped continuation, provider-specific controls, non-reconstructable mutations, ambiguous state, and any post-submission failure never switch automatically. `tokenless state --json` reports ranked fallback routes, structured stop reasons, and the durable provider-attempt history.
+
+Each routed job also stores a versioned provider-neutral context envelope with task identity, normalized requirements, role-bearing instructions, attachment provenance, output constraints, optional upstream agent state, and delivery hashes. The same validated envelope is replayed unchanged across provider attempts; `tokenless state --json` exposes a redacted envelope summary without instruction text or upstream state contents.
 
 Inspect provider-specific availability with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
 
-See [CLI Commands](COMMANDS.md), [Privacy](PRIVACY.md), and [Architecture](docs/architecture.md) for advanced options and implementation details.
+DeepSeek exposes provider-specific `Instant`, `Expert`, and `Vision` modes plus independent `DeepThink` and `Search` controls. Inspect them with `deepseek.mode.inspect`, `deepseek.deepthink.inspect`, and `deepseek.search.inspect`; Search and file availability are mode-dependent and are never inferred from the mode label alone.
+
+For explicit DeepSeek runs, `search.web` prepares Instant with Search enabled, `reasoning.extended` enables DeepThink, and `image.input` prepares Vision before browser mutation. These canonical routes remain fail-closed until their declared real-provider release gates pass.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Capability Matrix](docs/capability-matrix.md)
+- [CLI Commands](COMMANDS.md)
+- [Privacy](PRIVACY.md)
+- [Architecture](docs/architecture.md)
 
 ## Current Status
 
@@ -136,6 +151,8 @@ No. It sends the prompt, selected files, and task context needed for the delegat
 ### Does every provider support every feature?
 
 No. Tokenless enables only workflows verified against each provider's visible website. Unsupported or unverified capabilities stop with a clear error.
+
+See the [Capability Matrix](docs/capability-matrix.md) for the current provider mappings and evidence rules.
 
 ### Why does Qwen sometimes report `provider_dns_unavailable`?
 

@@ -3,7 +3,9 @@ import { ClaudeProvider } from './claude-provider.js'
 import { DeepSeekProvider } from './deepseek-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
 import { GrokProvider } from './grok-provider.js'
+import { PerplexityProvider } from './perplexity-provider.js'
 import { QwenProvider } from './qwen-provider.js'
+import { ZaiProvider } from './zai-provider.js'
 import { PROVIDER_CAPABILITIES, isProviderIdSyntax } from './provider-identity.js'
 import type { BaseProvider } from './base-provider.js'
 import type {
@@ -31,6 +33,7 @@ export {
   listTaskCapabilityDefinitions,
   normalizeTaskCapabilityRequirements,
   resolveTaskCapabilityRoute,
+  resolveTaskCapabilityRoutes,
   taskCapabilityDefinition,
   validateTaskCapabilityRoute,
 } from './task-capabilities.js'
@@ -67,7 +70,9 @@ export type {
   TaskCapabilityRoute,
   TaskCapabilityRouteCandidate,
   TaskCapabilityRouteDecision,
+  TaskCapabilityRouteFailure,
   TaskCapabilityRouteEvaluation,
+  TaskCapabilityRoutesDecision,
   TaskCapabilitySideEffect,
   TaskCapabilityStability,
 } from './task-capabilities.js'
@@ -145,6 +150,8 @@ export const providerInstances = Object.freeze([
   new GrokProvider(),
   new QwenProvider(),
   new DeepSeekProvider(),
+  new PerplexityProvider(),
+  new ZaiProvider(),
 ] satisfies readonly ProviderInstance[])
 
 export const providerRegistry = ProviderRegistry.create(providerInstances)

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
+import { isIP } from 'node:net'
 import path from 'node:path'
 import process from 'node:process'
 
@@ -13,6 +14,11 @@ export type E2EBrowserInspectionConfig = {
   nonce: string
   rootDir: string
   timeoutMs: number
+  hostResolverRule: Readonly<{
+    hostname: string
+    address: string
+    chromiumValue: string
+  }> | null
 }
 
 type ObserverRelease = {
@@ -61,6 +67,7 @@ export function resolveE2EBrowserInspectionConfig(
     DEFAULT_OBSERVER_TIMEOUT_MS,
     'TOKENLESS_E2E_OBSERVER_TIMEOUT_MS',
   )
+  const hostResolverRule = optionalHostResolverRule(env.TOKENLESS_E2E_HOST_RESOLVER_RULE)
   const resolvedHome = path.resolve(homeDir)
   return Object.freeze({
     protocol: E2E_BROWSER_INSPECTION_PROTOCOL,
@@ -68,6 +75,26 @@ export function resolveE2EBrowserInspectionConfig(
     nonce,
     rootDir: path.join(resolvedHome, 'e2e', 'browser-inspection', runId),
     timeoutMs,
+    hostResolverRule,
+  })
+}
+
+function optionalHostResolverRule(value: string | undefined) {
+  if (value === undefined || value.trim() === '') return null
+  const match = /^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)=([^=\s]+)$/iu.exec(value.trim())
+  const hostname = match?.[1]?.toLowerCase()
+  const address = match?.[2]
+  if (!hostname || !address || isIP(address) !== 4) {
+    throw tokenlessError(
+      'invalid_e2e_browser_inspection',
+      'TOKENLESS_E2E_HOST_RESOLVER_RULE must be one hostname=IPv4 mapping.',
+      { retryable: false },
+    )
+  }
+  return Object.freeze({
+    hostname,
+    address,
+    chromiumValue: `MAP ${hostname} ${address}`,
   })
 }
 
