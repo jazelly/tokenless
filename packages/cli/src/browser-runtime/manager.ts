@@ -103,6 +103,12 @@ export class BrowserRuntimeManager {
       )
     }
     const platform = supportedPlatform()
+    if (options.repair === true && selection !== 'managed-chromium' && selection !== 'cloak') {
+      throw tokenlessError(
+        'browser_runtime_repair_requires_managed_selection',
+        'Browser runtime repair requires an explicit managed-chromium or cloak selection.',
+      )
+    }
     if (selection === 'auto') {
       for (const browserId of SYSTEM_BROWSER_IDS) {
         const resolved = await this.resolveSystemBrowser(browserId, platform).catch(() => null)
@@ -173,10 +179,12 @@ export class BrowserRuntimeManager {
     options: EnsureBrowserRuntimeOptions,
   ) {
     const entry = managedBrowserCatalogEntry(family, platform)
-    const cached = await this.resolveCachedManagedRuntime(entry).catch((error) => {
-      if (errorCode(error) === 'browser_runtime_not_installed') return null
-      throw error
-    })
+    const cached = options.repair === true
+      ? null
+      : await this.resolveCachedManagedRuntime(entry).catch((error) => {
+          if (errorCode(error) === 'browser_runtime_not_installed') return null
+          throw error
+        })
     if (cached) return cached
     if (options.allowDownload !== true) {
       throw tokenlessError(
@@ -185,13 +193,45 @@ export class BrowserRuntimeManager {
       )
     }
     return await withPrivateSqliteWriterLock(this.installLockFile, async () => {
-      const afterLock = await this.resolveCachedManagedRuntime(entry).catch((error) => {
-        if (errorCode(error) === 'browser_runtime_not_installed') return null
-        throw error
-      })
-      if (afterLock) return afterLock
-      return await this.installManagedRuntime(entry, options)
+      if (options.repair !== true) {
+        const afterLock = await this.resolveCachedManagedRuntime(entry).catch((error) => {
+          if (errorCode(error) === 'browser_runtime_not_installed') return null
+          throw error
+        })
+        if (afterLock) return afterLock
+        return await this.installManagedRuntime(entry, options)
+      }
+      return await this.reinstallManagedRuntime(entry, options)
     }, options.signal ? { signal: options.signal } : {})
+  }
+
+  private async reinstallManagedRuntime(
+    entry: ManagedBrowserCatalogEntry,
+    options: EnsureBrowserRuntimeOptions,
+  ) {
+    const finalDirectory = this.managedRuntimeDirectory(entry)
+    const backupDirectory = path.join(
+      path.dirname(finalDirectory),
+      `.${path.basename(finalDirectory)}.repair-${randomUUID()}`,
+    )
+    let backupCreated = false
+    try {
+      await fs.rename(finalDirectory, backupDirectory)
+      backupCreated = true
+    } catch (error) {
+      if (!isErrno(error, 'ENOENT')) throw error
+    }
+    try {
+      const runtime = await this.installManagedRuntime(entry, options)
+      if (backupCreated) await fs.rm(backupDirectory, { recursive: true, force: true })
+      return runtime
+    } catch (error) {
+      if (backupCreated) {
+        await fs.rm(finalDirectory, { recursive: true, force: true }).catch(() => undefined)
+        await fs.rename(backupDirectory, finalDirectory).catch(() => undefined)
+      }
+      throw error
+    }
   }
 
   private async installManagedRuntime(

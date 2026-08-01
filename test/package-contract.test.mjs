@@ -24,6 +24,25 @@ test('checked-in live provider capability matrix classifies every registered pro
   }])
 })
 
+test('persistent config defaults, stores, and validates browser connection mode through the filesystem boundary', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-connection-mode-'))
+  const runtime = await import('../packages/cli/dist/src/index.js')
+  try {
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'playwright')
+    assert.equal(
+      (await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'cdp' })).browserConnectionMode,
+      'cdp',
+    )
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'cdp')
+    await assert.rejects(
+      runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'webdriver' }),
+      (error) => error?.code === 'tokenless_config_invalid',
+    )
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('workspace packages keep standalone product names', () => {
   const cli = readJson('packages/cli/package.json')
   assert.equal(cli.name, 'tokenless')

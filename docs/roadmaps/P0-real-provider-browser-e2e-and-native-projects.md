@@ -2,9 +2,9 @@
 
 Status: in progress | Priority: P0
 
-Depends on: the completed [Provider Architecture and Registry](archived/provider-architecture-and-registry.md), the managed Playwright runtime, durable daemon jobs, managed profile lifecycle, attachment staging, and conversation continuation
+Depends on: the completed [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md), the managed Playwright runtime, durable daemon jobs, managed profile lifecycle, attachment staging, and conversation continuation
 
-Supports: [Provider Expansion and Parity](provider-expansion.md) and [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md)
+Supports: [Provider Expansion and Parity](P0-provider-expansion.md) and [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md)
 
 ## Outcome
 

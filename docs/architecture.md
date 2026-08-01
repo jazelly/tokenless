@@ -11,7 +11,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI today
 5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
 7. A public local API is planned as a second interface to the same application and job contracts.
-8. The planned [Local Web Control Plane](roadmaps/local-web-control-plane.md) provides a browser-facing localhost console over shared application services without exposing the daemon control bearer token to browser JavaScript.
+8. The planned [Local Web Control Plane](roadmaps/P0-local-web-control-plane.md) provides a browser-facing localhost console over shared application services without exposing the daemon control bearer token to browser JavaScript.
 
 ## Execution path
 
@@ -97,7 +97,7 @@ The provider-session machine is intentionally separate from the daemon job state
 
 The daemon binds to loopback, stores its bearer token beside its SQLite database, and protects job and control endpoints with that token. The daemon home and token use restrictive filesystem permissions on supported systems. User configuration stores a preferred loopback origin. The daemon may scan upward from that port when it is occupied, while a single SQLite runtime-state row records the current actual origin, startup generation, and owner. CLI processes probe that row and coordinate startup through a compare-and-swap lease; no operating-system service actively restarts the daemon.
 
-These HTTP endpoints are an internal runtime control plane, not the planned browser-facing API. The planned [Local Web Control Plane](roadmaps/local-web-control-plane.md) adds a separate browser session and `/ui-api/v1` surface while keeping the daemon bearer token inside the trusted local process rather than exposing it to browser JavaScript.
+These HTTP endpoints are an internal runtime control plane, not the planned browser-facing API. The planned [Local Web Control Plane](roadmaps/P0-local-web-control-plane.md) adds a separate browser session and `/ui-api/v1` surface while keeping the daemon bearer token inside the trusted local process rather than exposing it to browser JavaScript.
 
 Job creation, claim, lease renewal, completion, cancellation, state queries, and agent replay are daemon-backed. Before readiness is activated, startup reconciles expired claims and durable Playwright checkpoints, then starts the runner. Claims are correlated to one worker and expire safely. CLI cancellation is reported as complete only after the authenticated control endpoint confirms `canceled`.
 
@@ -128,6 +128,8 @@ Conversation fallback is scoped to one provider, managed profile, and task ident
 ## Browser visibility policy
 
 Tokenless stores browser visibility in config and defaults omitted values to `auto`. The same policy can be overridden per job, but the runner resolves it into the same managed-browser contract every time.
+
+The persistent config also stores `browserConnectionMode`, with `playwright` as the backward-compatible default and `cdp` as an experimental capability-evaluation mode. This is a daemon-runner setting rather than a job field or CLI flag. Native mode uses `launchPersistentContext`; CDP mode launches the exact profile-bound Chromium executable with an ephemeral loopback DevTools endpoint and then uses `connectOverCDP`. Both modes preserve the same profile, visibility, page-key, provider, and durable-mapping contracts. The daemon must be restarted after this config value changes.
 
 - `auto` starts headless. If the provider page becomes blocked by user-resolvable sign-in, CAPTCHA, MFA, consent, or confirmation, the runner switches the same managed profile into headed mode and marks the job `waiting_for_user`.
 - Terminal errors do not trigger a visible window.

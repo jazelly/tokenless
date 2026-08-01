@@ -914,7 +914,8 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
   }
 })
 
-test('profiles open without provider opens the default managed profile through daemon browser runtime control', {
+for (const browserConnectionMode of ['playwright', 'cdp']) {
+test(`profiles open without provider uses ${browserConnectionMode} through daemon browser runtime control`, {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -928,7 +929,7 @@ test('profiles open without provider opens the default managed profile through d
   process.env.TOKENLESS_PROVIDER = 'claude'
   let daemon
   try {
-    await runtime.writeTokenlessConfig({ homeDir, browser: 'profile' })
+    await runtime.writeTokenlessConfig({ homeDir, browser: 'profile', browserConnectionMode })
     daemon = await startTsDaemon(homeDir)
     await runtime.writeTokenlessConfig({ homeDir, daemonUrl: daemon.url })
 
@@ -969,6 +970,7 @@ test('profiles open without provider opens the default managed profile through d
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
+}
 
 test('profile removal quiesces the TS browser runtime while preserving the old runner JSON shape', {
   timeout: 60_000,

@@ -79,6 +79,7 @@ export type BrowserRuntimeProgress = {
 
 export type EnsureBrowserRuntimeOptions = {
   allowDownload?: boolean
+  repair?: boolean
   signal?: AbortSignal
   onProgress?: (progress: BrowserRuntimeProgress) => void
 }

@@ -208,6 +208,9 @@ export class BrowserRuntimeController {
       runtimeId: runtime.runtimeId,
       launchPolicy: runtime.launchPolicy,
       ...(e2eInspection ? { e2eInspection: true } : {}),
+      ...(e2eInspection && process.env.TOKENLESS_E2E_CONNECTION_MODE_MATRIX === '1'
+        ? { e2eStrictConnectionMode: true }
+        : {}),
     }
   }
 

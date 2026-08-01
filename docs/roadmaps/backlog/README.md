@@ -2,7 +2,7 @@
 
 This directory contains accepted product or engineering roadmap ideas that are intentionally not active.
 
-The directory is the lifecycle source of truth. A roadmap belongs here when its direction remains potentially valuable but the repository is not currently committing planning or implementation attention to it. Backlog placement is not a delivery promise or priority assignment.
+The directory is the lifecycle source of truth. A roadmap belongs here when its direction remains potentially valuable but the repository is not currently committing planning or implementation attention to it. Backlog placement is not a delivery promise; the required `P0-` through `P3-` filename prefix records product importance, not active sequencing.
 
 When adding or moving a roadmap here:
 

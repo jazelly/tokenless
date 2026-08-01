@@ -22,6 +22,7 @@ const accountConditions = new Set([
   'signed_in_selected_setup_profile',
   'guest_or_signed_in_selected_setup_profile',
 ])
+const connectionModes = new Set(['playwright', 'cdp'])
 const closures = new Set([
   'cli',
   'visible_dom',
@@ -53,10 +54,11 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
   assert.equal(isRecord(matrix), true, 'live capability matrix must be an object')
   assert.deepEqual(
     Object.keys(matrix).sort(),
-    ['cases', 'knownIssueSkips', 'providers', 'schema'],
+    ['cases', 'connectionModes', 'knownIssueSkips', 'providers', 'schema'],
     'live capability matrix fields must be exact',
   )
   assert.equal(matrix.schema, schema)
+  assert.deepEqual(matrix.connectionModes, [...connectionModes])
   assert.equal(isRecord(matrix.cases), true, 'live capability matrix cases must be an object')
   assert.equal(isRecord(matrix.providers), true, 'live capability matrix providers must be an object')
   assert.equal(Array.isArray(matrix.knownIssueSkips), true, 'live capability matrix knownIssueSkips must be an array')

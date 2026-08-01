@@ -126,6 +126,7 @@ tokenless install --browsers chrome,brave --json
 
 - `--browser <browser>` 选择一个 browser preference。Managed selection 只会在 install 或 setup 期间下载。
 - `--browsers <list>` 验证逗号分隔的浏览器列表。
+- `--repair-browser` 显式替换所选 managed Chromium 或 Cloak cache；只有新下载的 replacement 通过全部校验后才会替换，repair 失败时会恢复原 cache。
 - `--daemon-url`、`--daemon-start-timeout-ms`、`--home` 和 `--json` 控制本地 runtime。
 
 该命令不会配置 managed profile，也不会检查 provider 登录状态。完成后仍需运行 `tokenless setup`。
@@ -164,6 +165,7 @@ tokenless setup \
 - `--profile <slug>` 选择或命名 managed profile。
 - `--browser <browser>` 选择 `auto`、一个精确 system browser、`managed-chromium` 或 `cloak`。
 - `--no-browser-download` 在缺少 managed runtime 时直接失败，而不是下载。
+- `--repair-browser` 显式重新安装所选 `managed-chromium` 或 `cloak` runtime；不能与 `--no-browser-download` 同时使用。
 - `--fresh` 或 `-f` 创建 clean managed profile。
 - `--defaults` 选择非交互默认值。
 - `--import-browser-profile <directory-key>` 导入 Chrome 或 Brave profile。
@@ -222,6 +224,8 @@ tokenless config \
 - `--home <path>`
 
 面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
+
+Config 文件还接受实验性的 `browserConnectionMode`，值为 `playwright` 或 `cdp`；省略时默认使用 `playwright`。该设置刻意不提供 CLI flag。仅在 capability evaluation 时编辑这个 JSON 值，之后重启 daemon。CDP 不会改变所选 profile、browser runtime、visibility policy 或 provider mappings。
 
 ### `tokenless upgrade`
 

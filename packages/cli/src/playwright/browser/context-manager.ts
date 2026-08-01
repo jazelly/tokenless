@@ -57,6 +57,7 @@ export type ManagedBrowserLaunchTarget = {
   id: string
   executablePath?: string | undefined
   e2eInspection?: boolean | undefined
+  e2eStrictConnectionMode?: boolean | undefined
   runtimeId?: string | undefined
   launchPolicy?: 'standard' | 'cloak' | 'test-profile' | undefined
 }
@@ -372,7 +373,12 @@ export class PersistentContextManager {
     if (this.connectionMode === 'cdp') {
       return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget)
     }
-    if (browserTarget.e2eInspection && process.platform === 'darwin' && effectiveVisibility === 'headed') {
+    if (
+      browserTarget.e2eInspection &&
+      !browserTarget.e2eStrictConnectionMode &&
+      process.platform === 'darwin' &&
+      effectiveVisibility === 'headed'
+    ) {
       return await launchBackgroundMacOSContext(userDataDir, launchOptions, browserTarget)
     }
     const browserContext = await this.launcher(userDataDir, launchOptions)
@@ -483,7 +489,7 @@ async function closeCdpManagedBrowser(
   }
   const exited = await Promise.race([
     browserExit.promise.then(() => true),
-    delay(15_000).then(() => false),
+    delay(5_000).then(() => false),
   ])
   if (!exited && browserProcess.exitCode === null && browserProcess.signalCode === null) {
     browserProcess.kill('SIGTERM')
@@ -712,6 +718,7 @@ function normalizeManagedBrowserLaunchTarget(
     id,
     ...(executablePath ? { executablePath } : {}),
     ...(browser?.e2eInspection ? { e2eInspection: true } : {}),
+    ...(browser?.e2eStrictConnectionMode ? { e2eStrictConnectionMode: true } : {}),
     ...(browser?.runtimeId ? { runtimeId: browser.runtimeId } : {}),
     ...(browser?.launchPolicy ? { launchPolicy: browser.launchPolicy } : {}),
   }

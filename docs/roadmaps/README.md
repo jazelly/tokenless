@@ -13,13 +13,13 @@ The roadmap's directory is the source of truth for its lifecycle:
 ```text
 docs/roadmaps/
 ├── README.md             # Index and lifecycle rules
-├── *.md                  # Active roadmaps
+├── P[0-3]-*.md           # Active roadmaps
 ├── backlog/
 │   ├── README.md         # Backlog index
-│   └── *.md              # Accepted but intentionally inactive roadmaps
+│   └── P[0-3]-*.md       # Accepted but intentionally inactive roadmaps
 └── archived/
     ├── README.md         # Archive index
-    └── *.md              # Completed, superseded, cancelled, or retired roadmaps
+    └── P[0-3]-*.md       # Completed, superseded, cancelled, or retired roadmaps
 ```
 
 There is intentionally no `active/` directory. Every root-level Markdown file other than this index is active. An active roadmap can still have an internal delivery status such as `proposed`; lifecycle placement describes whether the direction is currently active, while the document status describes its delivery maturity.
@@ -30,20 +30,21 @@ Move a roadmap to:
 - [`archived/`](archived/README.md) when it is completed, superseded, cancelled, or no longer planned; or
 - this directory's root when it becomes active.
 
-Every addition, rename, move, or lifecycle change must update this index, all repository links, and the roadmap's lifecycle or disposition note. A superseded roadmap must link to its replacement. Archived roadmaps retain their historical content.
+Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`, or `P3-`), and that prefix must match the priority declared in the document. A priority change therefore requires a rename. Every addition, rename, move, priority change, or lifecycle change must update this index, all repository links, and the roadmap's lifecycle or disposition note. A superseded roadmap must link to its replacement. Archived roadmaps retain their historical content.
 
 ## Active Roadmaps
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
-| [Browser Runtime Selection and Cloak Integration](browser-runtime-selection-and-cloak.md) | Use an exact profile-bound Chromium runtime, prefer the user's installed browser, provide a locked managed fallback, and add explicit verified Cloak installation on supported platforms. | P0 |
-| [Real Provider Browser E2E and Native Projects](real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
-| [Provider Expansion and Parity](provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
-| [Context Delivery and Workspace Alignment](context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
-| [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
-| [Local Web Control Plane](local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
-| [Agent Session Integrations](agent-session-integrations.md) | Route caller-requested task capabilities to evidence-backed provider strategies through a safe local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration. | P1 |
-| [Project Knowledge Graph and Provider Mirroring](project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
+| [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-selection-and-cloak.md) | Use an exact profile-bound Chromium runtime, prefer the user's installed browser, provide a locked managed fallback, and add explicit verified Cloak installation on supported platforms. | P0 |
+| [Browser Connection Mode Capability Evaluation](P0-browser-connection-mode-capability-evaluation.md) | Compare native Playwright and CDP connections against the same local-browser and real-provider capability matrices without changing the default. | P0 |
+| [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
+| [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
+| [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
+| [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
+| [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
+| [Agent Session Integrations](P1-agent-session-integrations.md) | Route caller-requested task capabilities to evidence-backed provider strategies through a safe local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration. | P1 |
+| [Project Knowledge Graph and Provider Mirroring](P1-project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 
 Priority describes product importance, not a promise that all work proceeds serially.
 
@@ -84,7 +85,7 @@ flowchart LR
 
 The shared contracts should be built before provider-specific shortcuts:
 
-1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap.
+1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md) roadmap.
 2. Establish exact, profile-bound browser runtime selection and verified system, managed, and Cloak launch paths.
 3. Establish the real-provider browser E2E evidence plane and close Claude and Grok native Project identity before depending on those capabilities for broader context delivery.
 4. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.

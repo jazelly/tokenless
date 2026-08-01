@@ -66,7 +66,8 @@ Important gaps are:
 - the internal daemon bearer token cannot safely be placed in browser JavaScript;
 - setup does not open a durable local status and management page;
 - there is no reserved control-plane page identity in the managed browser page registry;
-- provider and browser errors are not presented as one actionable health model; and
+- provider and browser errors are not presented as one actionable health model;
+- language bootstrap detects the system locale before first-time `setup`, but a different first command can still read the empty config default and present English before the user has had any chance to choose; and
 - global `preferredProviders` is too coarse for multiple browser identities and its name does not communicate that it is a routing membership filter.
 
 ## Product State Model
@@ -101,6 +102,21 @@ type ManagedProfilePreferences = {
 The initial proxy field accepts only a user-managed local HTTP, HTTPS, or SOCKS5 endpoint. Tokenless does not infer upstream protocols such as VLESS Reality and does not claim that a configured endpoint is reachable until a real browser navigation proves it. Credential-bearing proxies require a later secret-storage design and are not part of the first proxy slice.
 
 ## Information Architecture
+
+### Language Bootstrap
+
+Language selection happens before the first user-facing byte is rendered. It is not a step inside setup and it does not depend on geolocation.
+
+Every CLI process uses this precedence before full argument parsing, help, validation, error formatting, or command dispatch:
+
+1. an explicit language supplied through a supported bootstrap override;
+2. a valid persisted `config.language`;
+3. the first recognized system locale from `LC_ALL`, `LC_MESSAGES`, `LANG`, and the runtime locale; and
+4. English when no supported language can be recognized.
+
+Locale detection is an initial guess, not identity or geography. A Chinese locale selects Simplified Chinese because that is the currently supported Chinese surface; an imperfect guess is recoverable through an always-visible language switch. The absence of a completed setup must never force English.
+
+The web control plane follows the same persisted preference. If no language has been persisted yet, the daemon selects the first response language from the browser request language and system locale before serving the initial HTML. The page must not render English first and switch after JavaScript loads. The first screen always exposes `English` and `简体中文` as language choices, and a user selection becomes the persisted preference shared by the CLI, control plane, and default provider response language.
 
 ### Overview
 
@@ -307,6 +323,7 @@ Build a bundled TypeScript single-page application under the CLI package and cop
 The implementation should:
 
 - support English and Simplified Chinese from the same message catalog as the CLI where practical;
+- select the response language before rendering the initial HTML so the first screen never flashes the wrong default language;
 - follow keyboard and screen-reader accessible navigation and forms;
 - use native browser controls for basic settings rather than custom widgets;
 - provide deterministic empty, loading, stale, waiting, error, and offline states;
@@ -388,4 +405,3 @@ The provider-configuration release is accepted only after the real selected-prof
 - Include a changeset for every user-visible release slice.
 - Preserve CLI equivalents for recovery and automation.
 - Do not advertise localhost administration as remote access.
-

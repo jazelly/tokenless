@@ -1,5 +1,9 @@
 {
   "schema": "tokenless.live-provider-capability-matrix.v1",
+  "connectionModes": [
+    "playwright",
+    "cdp"
+  ],
   "knownIssueSkips": [
     {
       "provider": "claude",

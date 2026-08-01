@@ -2,7 +2,7 @@
 
 Status: proposed | Priority: P0
 
-Depends on: completed [Provider Architecture and Registry](archived/provider-architecture-and-registry.md), existing managed Playwright, provider action protocol, fixture provenance, and profile lifecycle
+Depends on: completed [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md), existing managed Playwright, provider action protocol, fixture provenance, and profile lifecycle
 
 ## Outcome
 
@@ -12,7 +12,7 @@ Tokenless supports a broader set of high-value AI web providers while preserving
 
 As of 2026-08-01:
 
-- the shared registry extraction and OOP provider seam are complete and recorded in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md) roadmap;
+- the shared registry extraction and OOP provider seam are complete and recorded in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md) roadmap;
 - Qwen / 千问 is registered as an `experimental` provider through one provider module and one registry entry;
 - a fresh real managed guest profile completed prompt input, visible submission, and correlated response reading through the built CLI and TypeScript daemon;
 - the canonical Qwen Studio entry is `https://chat.qwen.ai/`; a real built-CLI run navigated the same visible page to the shared `/c/guest` route and returned an exact correlated marker;
@@ -121,7 +121,7 @@ Exit: the candidate has an approved origin model, an evidence plan, and no unres
 
 ### Phase 1: Shared Registry Extraction — completed 2026-07-27
 
-- Follow the object model, capability composition, registry seam, TypeScript daemon negotiation, and phased migration defined in the archived [Provider Architecture and Registry](archived/provider-architecture-and-registry.md).
+- Follow the object model, capability composition, registry seam, TypeScript daemon negotiation, and phased migration defined in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md).
 - Replace duplicated provider allowlists with one typed provider registry consumed by config, runtime validation, profile handling, navigation, capture tooling, and tests.
 - Represent every provider as a concrete `BaseProvider` subclass.
 - Keep provider-specific selectors and behavior inside provider-owned subclasses and optional capability implementations.

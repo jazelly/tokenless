@@ -62,6 +62,8 @@ const ZH_TEXT = new Map<string, string>([
   ['Preparing Tokenless-managed Chromium', '准备由 Tokenless 管理的 Chromium'],
   ['Preparing CloakBrowser', '准备 CloakBrowser'],
   ['At least one browser runtime selection is required.', '至少需要选择一个 browser runtime。'],
+  ['Browser runtime repair requires an explicit managed-chromium or cloak selection.', 'Browser runtime repair 需要显式选择 managed-chromium 或 cloak。'],
+  ['--repair-browser cannot be combined with --no-browser-download.', '--repair-browser 不能与 --no-browser-download 同时使用。'],
   ['Browser must be auto, chrome, chrome-for-testing, chromium, edge, arc, brave, managed-chromium, or cloak.', 'Browser 必须是 auto、chrome、chrome-for-testing、chromium、edge、arc、brave、managed-chromium 或 cloak。'],
   ['Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.', '无效的 Tokenless browser；应为 auto、受支持的 system browser、managed-chromium 或 cloak。'],
   ['Keeps sign-ins between jobs. Imports copy selected provider cookies and limited browser compatibility state; other browser data is excluded.', '在不同 job 之间保留登录状态。导入时会复制所选 provider 的 cookie 和有限的浏览器兼容性状态，其他浏览器数据不会导入。'],

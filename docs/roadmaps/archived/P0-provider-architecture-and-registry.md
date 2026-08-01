@@ -6,7 +6,7 @@ Disposition: completed on 2026-07-27 and archived after the registry seam was pr
 
 Depends on: completion of the TypeScript daemon consolidation, managed Playwright, provider action contracts, managed profiles, fixture provenance, and the existing four-provider behavior baseline
 
-Enables: [Provider Expansion and Parity](../provider-expansion.md), [Context Delivery and Workspace Alignment](../context-delivery-and-workspace-alignment.md), and [Project Knowledge Graph and Provider Mirroring](../project-knowledge-graph-and-provider-mirroring.md)
+Enables: [Provider Expansion and Parity](../P0-provider-expansion.md), [Context Delivery and Workspace Alignment](../P0-context-delivery-and-workspace-alignment.md), and [Project Knowledge Graph and Provider Mirroring](../P1-project-knowledge-graph-and-provider-mirroring.md)
 
 ## Delivered Outcome
 
@@ -64,11 +64,11 @@ The implementation differs from some proposed filenames below, but preserves the
 | Existing-provider regression boundary | Provenance-bound real-Chromium provider fixtures, daemon lifecycle, conformance, protocol, build, lint, and repository integration coverage preserve the existing baseline. |
 | First-provider seam proof | A fresh Qwen guest profile completed prompt input, submit, exact-marker response reading, and a second same-task continuation through the built CLI and real TypeScript daemon. |
 
-The Qwen integration remains `experimental`; architecture completion proves the extension seam, not every optional Qwen capability. Ongoing provider rollout and promotion criteria remain active in [Provider Expansion and Parity](../provider-expansion.md).
+The Qwen integration remains `experimental`; architecture completion proves the extension seam, not every optional Qwen capability. Ongoing provider rollout and promotion criteria remain active in [Provider Expansion and Parity](../P0-provider-expansion.md).
 
 ## Scope
 
-This roadmap is the detailed architecture and implementation plan for the provider seam. It does not itself commit Tokenless to shipping any candidate provider or advanced capability. Provider selection and release sequencing remain in [Provider Expansion and Parity](../provider-expansion.md).
+This roadmap is the detailed architecture and implementation plan for the provider seam. It does not itself commit Tokenless to shipping any candidate provider or advanced capability. Provider selection and release sequencing remain in [Provider Expansion and Parity](../P0-provider-expansion.md).
 
 This work covers:
 

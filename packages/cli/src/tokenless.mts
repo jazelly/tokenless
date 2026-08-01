@@ -2922,6 +2922,7 @@ async function selectSetupBrowser({
     `Preparing ${setupBrowserSelectionLabel(selection)}`,
     () => runtimeManager.ensure(selection, {
       allowDownload: args.noBrowserDownload !== true,
+      repair: args.repairBrowser === true,
       onProgress: (progress) => presenter.note(
         `${progress.displayName} ${progress.version}: ${progress.phase}.`,
       ),
@@ -3114,7 +3115,10 @@ async function provisionRuntime(args: CliArgs) {
   const selections: BrowserSelection[] = []
   for (const requested of requestedBrowsers) {
     const selection = normalizeCliBrowser(requested)
-    const browser = await runtimeManager.ensure(selection, { allowDownload: true })
+    const browser = await runtimeManager.ensure(selection, {
+      allowDownload: true,
+      repair: args.repairBrowser === true,
+    })
     if (!resolvedBrowsers.some((candidate) => candidate.runtimeId === browser.runtimeId)) {
       resolvedBrowsers.push(browser)
       selections.push(selection)
@@ -3735,8 +3739,8 @@ function createCommandContracts(): CommandContract[] {
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--profile <slug>] [--browser <browser>] [--no-browser-download] (--defaults|--fresh|--import-browser-profile <key>) --json'], options: ['home', 'json', 'quiet', 'profile', 'browser', 'noBrowserDownload', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
-    { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] --json'], options: ['home', 'json', 'browser', 'browsers', 'daemonUrl', 'daemonStartTimeoutMs'] },
+    { command: 'setup', usage: ['tokenless setup [--profile <slug>] [--browser <browser>] [--no-browser-download] [--repair-browser] (--defaults|--fresh|--import-browser-profile <key>) --json'], options: ['home', 'json', 'quiet', 'profile', 'browser', 'noBrowserDownload', 'repairBrowser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
+    { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
     { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--preferred-providers <list>] [--browser <browser>] [--browser-visibility <mode>] [--daemon-url <url>] --json'], options: ['home', 'json', 'language', 'preferredProviders', 'browser', 'browserVisibility', 'daemonUrl'] },
@@ -3835,6 +3839,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--quiet': 'quiet',
     '--no-open': 'noOpen',
     '--no-browser-download': 'noBrowserDownload',
+    '--repair-browser': 'repairBrowser',
     '--no-wait': 'noWait',
     '--long-running': 'longRunning',
     '--set-default': 'setDefault',
@@ -4113,6 +4118,12 @@ function assertCommandRoutingArguments(command: string, subcommand: string | und
     if (args.reimportProfile === true) {
       throw usageError('setup_profile_choice_conflict', '--fresh cannot be combined with --reimport-profile.')
     }
+  }
+  if (command === 'setup' && args.noBrowserDownload === true && args.repairBrowser === true) {
+    throw usageError(
+      'browser_runtime_repair_download_conflict',
+      '--repair-browser cannot be combined with --no-browser-download.',
+    )
   }
 }
 
@@ -4709,6 +4720,7 @@ function optionUsageLabel(option: string) {
     promptFile: '--prompt-file <path>',
     provider: '-p, --provider <provider>',
     quiet: '--quiet',
+    repairBrowser: '--repair-browser',
     reimportProfile: '--reimport-profile',
     runnerHeartbeatTimeoutMs: '--runner-heartbeat-timeout-ms <ms>',
     setDefault: '--set-default',

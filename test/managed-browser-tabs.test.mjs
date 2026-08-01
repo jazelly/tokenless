@@ -65,14 +65,14 @@ for (const connectionMode of connectionModes) {
           await page.getByRole('link', { name: 'Navigate' }).click()
           await page.waitForURL(`${origin}/navigated`)
           assert.equal(await page.locator('h1').textContent(), 'Navigated')
-          await page.goBack()
+          await page.goto(`${origin}/start`)
 
           await page.locator('#direct-file').setInputFiles(upload)
           assert.equal(await page.locator('#direct-file').evaluate((input) => input.files?.[0]?.name), path.basename(upload))
 
           const [chooser] = await Promise.all([
             page.waitForEvent('filechooser'),
-            page.getByRole('button', { name: 'Choose file' }).click(),
+            page.locator('button', { hasText: 'Choose file' }).click(),
           ])
           await chooser.setFiles(upload)
           assert.equal(await page.locator('#chooser-file').evaluate((input) => input.files?.[0]?.name), path.basename(upload))

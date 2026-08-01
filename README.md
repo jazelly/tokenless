@@ -60,6 +60,8 @@ Every managed profile is bound to the browser runtime that created it. Tokenless
 
 On first setup, Tokenless selects English or Simplified Chinese from the system locale and saves the choice as `language` in `~/.tokenless/config.json`. English is the fallback. The preference controls human-readable CLI text and the default provider response language; an explicit language request in the prompt still wins. Change it later with `tokenless config --language en` or `tokenless config --language zh-CN`.
 
+For browser capability evaluation, the config file accepts experimental `browserConnectionMode: "playwright" | "cdp"`; it defaults to `playwright`, has no CLI flag, and takes effect after the daemon restarts.
+
 Requires Node.js 22.13+. Browser runtime management currently supports Apple Silicon macOS and x64 Windows; Windows x64 covers Intel and AMD processors.
 
 ## Run

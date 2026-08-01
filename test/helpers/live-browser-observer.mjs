@@ -26,6 +26,7 @@ export async function createLiveBrowserInspectionSession(options) {
     ...process.env,
     TOKENLESS_PROVIDER: '',
     TOKENLESS_E2E_BROWSER_INSPECTION: '1',
+    ...(options.strictConnectionMode ? { TOKENLESS_E2E_CONNECTION_MODE_MATRIX: '1' } : {}),
     TOKENLESS_E2E_RUN_ID: runId,
     TOKENLESS_E2E_NONCE: nonce,
     TOKENLESS_E2E_OBSERVER_TIMEOUT_MS: String(options.observerTimeoutMs ?? 30_000),
@@ -69,7 +70,7 @@ export async function createLiveBrowserInspectionSession(options) {
         seenJobs.add(waiting.jobId)
         const observer = await connectObserver(waiting, startedAt)
         observers.add(observer.browser)
-        focusGuard.assertUnchanged()
+        if (!options.strictConnectionMode) focusGuard.assertUnchanged()
         await startOptions.beforeRelease?.({ waiting, page: observer.page })
         const observation = startOptions.observeAfterRelease === undefined
           ? Promise.resolve(undefined)

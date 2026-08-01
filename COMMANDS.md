@@ -126,6 +126,7 @@ Main options:
 
 - `--browser <browser>` selects one browser preference. Managed selections download only during install or setup.
 - `--browsers <list>` verifies a comma-separated browser list.
+- `--repair-browser` replaces the explicitly selected managed-Chromium or Cloak cache only after a newly downloaded replacement passes every verification step; a failed repair restores the previous cache.
 - `--daemon-url`, `--daemon-start-timeout-ms`, `--home`, and `--json` control the local runtime.
 
 This command does not configure a managed profile or check provider sign-in. Run `tokenless setup` afterward.
@@ -164,6 +165,7 @@ Main options:
 - `--profile <slug>` selects or names the managed profile.
 - `--browser <browser>` selects `auto`, one exact system browser, `managed-chromium`, or `cloak`.
 - `--no-browser-download` fails instead of downloading a missing managed runtime.
+- `--repair-browser` explicitly reinstalls a selected `managed-chromium` or `cloak` runtime. It cannot be combined with `--no-browser-download`.
 - `--fresh` or `-f` creates a clean managed profile.
 - `--defaults` selects non-interactive defaults.
 - `--import-browser-profile <directory-key>` imports a Chrome or Brave profile.
@@ -222,6 +224,8 @@ Configurable values:
 - `--home <path>`
 
 Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
+
+The config file also accepts the experimental `browserConnectionMode` value `playwright` or `cdp`; omitted values default to `playwright`. It intentionally has no CLI flag. Edit the JSON value only for capability evaluation, then restart the daemon. CDP does not change the selected profile, browser runtime, visibility policy, or provider mappings.
 
 ### `tokenless upgrade`
 

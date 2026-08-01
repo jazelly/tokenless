@@ -60,6 +60,8 @@ tokenless setup
 
 首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制面向用户的 CLI 文案和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可通过 `tokenless config --language en` 或 `tokenless config --language zh-CN` 修改。
 
+为评估 browser capability，config 文件接受实验性的 `browserConnectionMode: "playwright" | "cdp"`；默认值为 `playwright`，不提供 CLI flag，并在 daemon 重启后生效。
+
 需要 Node.js 22.13+。Browser runtime management 当前支持 Apple Silicon Mac 和 Windows x64；Windows x64 同时覆盖 Intel 与 AMD CPU。
 
 ## 执行

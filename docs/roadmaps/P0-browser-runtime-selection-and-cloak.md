@@ -4,7 +4,7 @@ Status: in progress | Priority: P0 | Last reviewed: 2026-08-01
 
 Depends on: Tokenless setup, managed profile lifecycle, the Playwright runner, the packaged daemon, browser E2E infrastructure, and real-provider acceptance gates
 
-Supports: [Real Provider Browser E2E and Native Projects](real-provider-browser-e2e-and-native-projects.md), [Provider Expansion and Parity](provider-expansion.md), and [Concurrency and Session Scheduling](concurrency-and-session-scheduling.md)
+Supports: [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md), [Provider Expansion and Parity](P0-provider-expansion.md), and [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md)
 
 ## Outcome
 
@@ -201,7 +201,7 @@ This ledger is updated as implementation and evidence land. A checked code item 
 ### Milestone 5: Inspection, recovery, and documentation
 
 - [x] Extend doctor output with preference, runtime family, actual/expected version, executable source, checksum state, and profile compatibility.
-- [ ] Support verified-cache reuse and explicit repair/reinstall through setup.
+- [x] Support verified-cache reuse and explicit repair/reinstall through setup; a failed replacement restores the previous cache.
 - [x] Align `README.md`, `README.zh-CN.md`, CLI package documentation, command reference, and changeset.
 - [x] Document Cloak licensing accurately: Tokenless downloads from the official source on user selection and does not redistribute the proprietary binary.
 
