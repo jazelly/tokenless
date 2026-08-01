@@ -59,6 +59,7 @@ import {
   probeDaemonReady,
   providerWakeUrl,
   readTokenlessConfig,
+  hasConfiguredTokenlessLanguage,
   removeStagedVisibleAttachmentBundle,
   resolveChromiumBrowser,
   resolveProviderConversation,
@@ -71,6 +72,12 @@ import {
   waitDaemonJobResult,
   writeTokenlessConfig,
 } from './index.js'
+import {
+  activeTokenlessLanguage,
+  detectSystemLanguage,
+  localizeText,
+  setActiveLanguage,
+} from './localization.js'
 import { DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
 import {
   inspectTokenlessSkills,
@@ -213,6 +220,8 @@ const TOP_LEVEL_USAGE = [
 ]
 let args: CliArgs = { attachFiles: [], capabilities: [], files: [], json: process.argv.includes('--json') }
 
+await initializeCliLanguage(process.argv.slice(2))
+
 try {
   const argv = process.argv.slice(2)
   const versionRequested = argv.length === 1 && (argv[0] === '-V' || argv[0] === '--version')
@@ -292,11 +301,11 @@ try {
     await installCommand(args)
   } else if (command === 'upgrade') {
     const humanOutput = args.json !== true
-    if (humanOutput) console.error('Tokenless upgrade')
+    if (humanOutput) console.error(localizeText('Tokenless upgrade'))
     const result = await runUpgradeCommand(args, humanOutput
-      ? { onProgress: (event) => console.error(formatUpgradeProgress(event)) }
+      ? { onProgress: (event) => console.error(localizeText(formatUpgradeProgress(event))) }
       : undefined)
-    if (humanOutput) console.log(formatUpgradeSummary(result))
+    if (humanOutput) console.log(localizeText(formatUpgradeSummary(result)))
     else printPayload(result, args)
     if (!result.ok) process.exitCode = 1
   } else if (command === 'doctor') {
@@ -315,7 +324,7 @@ try {
     ok: false,
     error: {
       code: cliError.code || 'tokenless_cli_error',
-      message: cliError.message || 'Tokenless CLI failed.',
+      message: localizeText(cliError.message || 'Tokenless CLI failed.'),
       retryable: Boolean(cliError.retryable),
     },
   }
@@ -1155,7 +1164,7 @@ function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string
   }
 }
 
-function resolveDaemonJobCapabilityRoute({
+function resolveDaemonJobCapabilityRoutes({
   config,
   profile,
   explicitProvider,
@@ -1165,7 +1174,7 @@ function resolveDaemonJobCapabilityRoute({
   profile: ManagedProfileRecord
   explicitProvider?: ProviderId | undefined
   requirements: readonly TaskCapabilityId[]
-}): TaskCapabilityRoute {
+}): readonly TaskCapabilityRoute[] {
   const providers = explicitProvider
     ? [{
         provider: explicitProvider,
@@ -1187,7 +1196,21 @@ function resolveDaemonJobCapabilityRoute({
       reason: provider.usable ? null : `provider_access_${provider.access}`,
     })),
   })
-  if (decision.ok) return decision.route
+  if (decision.ok) {
+    return providers.flatMap((candidate) => {
+      const candidateDecision = resolveTaskCapabilityRoute({
+        requirements,
+        candidates: [{
+          provider: candidate.provider,
+          runtimeEligibility: explicitProvider
+            ? 'unchecked'
+            : (candidate.usable ? 'eligible' : 'ineligible'),
+          reason: candidate.usable ? null : `provider_access_${candidate.access}`,
+        }],
+      })
+      return candidateDecision.ok ? [candidateDecision.route] : []
+    })
+  }
 
   const runtimeProviderUnavailable = !explicitProvider && providers.every((provider) => !provider.usable)
   const providerUnavailable = requirements.length === 0 || runtimeProviderUnavailable
@@ -1516,12 +1539,14 @@ async function executeDaemonJob({
     : undefined
   const registry = new ManagedProfileRegistry(homeDir)
   const profileForTarget = await registry.resolveProfile(args.profile)
-  const capabilityRoute = resolveDaemonJobCapabilityRoute({
+  const capabilityRoutes = resolveDaemonJobCapabilityRoutes({
     config,
     profile: profileForTarget,
     explicitProvider: explicitProviderId,
     requirements: taskCapabilities,
   })
+  const capabilityRoute = capabilityRoutes[0]
+  if (!capabilityRoute) throw usageError('task_capability_route_unavailable', 'No provider capability route is available.')
   const provider = capabilityRoute.provider
   const recordedCapabilityRoute = taskCapabilities.length === 0 ? null : capabilityRoute
   const providerControls = visibleAction
@@ -2242,6 +2267,12 @@ async function installCommand(args: CliArgs) {
 
 async function setupCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
+  let config = await readTokenlessConfig(homeDir)
+  const languageConfigured = await hasConfiguredTokenlessLanguage(homeDir)
+  if (!languageConfigured) {
+    config = await writeTokenlessConfig({ homeDir, language: detectSystemLanguage() })
+  }
+  setActiveLanguage(config.language)
   const setupTerminal = resolveSetupTerminalCapabilities({
     json: args.json === true || args.setupDefaults === true,
     stdin: process.stdin,
@@ -2256,7 +2287,7 @@ async function setupCommand(args: CliArgs) {
   const prompt = setupTerminal.canPrompt ? createSetupPrompt() : null
   try {
     presenter.welcome()
-    const config = await presenter.withProgress('Reading config', () => readTokenlessConfig(homeDir))
+    presenter.success('Reading config')
     const cliVersion = await presenter.withProgress('Checking npm version', setupCliVersionCheck)
     noteSetupCliVersion(cliVersion, presenter)
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
@@ -2280,6 +2311,7 @@ async function setupCommand(args: CliArgs) {
         browser: browser.browser,
         preferredProviders: providers,
         daemonUrl: configuredDaemonUrl,
+        language: config.language,
       })
     })
     const profile = await ensureSetupManagedProfile({
@@ -2637,23 +2669,23 @@ function createSetupPrompt() {
   return {
     async text(message: string, defaultValue?: string) {
       const suffix = defaultValue ? ` [${defaultValue}]` : ''
-      const value = (await terminal.question(`${message}${suffix}: `)).trim()
+      const value = (await terminal.question(`${localizeText(message)}${suffix}: `)).trim()
       return value || defaultValue || ''
     },
     async confirm(message: string, defaultValue: boolean) {
       const hint = defaultValue ? 'Y/n' : 'y/N'
-      const value = (await terminal.question(`${message} [${hint}]: `)).trim().toLowerCase()
+      const value = (await terminal.question(`${localizeText(message)} [${hint}]: `)).trim().toLowerCase()
       if (!value) return defaultValue
-      return value === 'y' || value === 'yes'
+      return value === 'y' || value === 'yes' || value === '是' || value === '对'
     },
     async select<T extends string>(
       message: string,
       choices: readonly { label: string; value: T }[],
       defaultIndex = 0
     ): Promise<T> {
-      console.error(message)
-      choices.forEach((choice, index) => console.error(`  ${index + 1}. ${choice.label}`))
-      const answer = (await terminal.question(`Choose [${defaultIndex + 1}]: `)).trim()
+      console.error(localizeText(message))
+      choices.forEach((choice, index) => console.error(`  ${index + 1}. ${localizeText(choice.label)}`))
+      const answer = (await terminal.question(localizeText(`Choose [${defaultIndex + 1}]: `))).trim()
       const index = answer ? Number(answer) - 1 : defaultIndex
       if (!Number.isInteger(index) || !choices[index]) {
         throw usageError('setup_selection_invalid', 'Setup selection must be one of the displayed numbers.')
@@ -3089,7 +3121,7 @@ async function readManagedProfileReadOnly(homeDir: string) {
 
 async function configCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  if (args.preferredProviders !== undefined || args.browser !== undefined || args.browserVisibility !== undefined || args.daemonUrl !== undefined) {
+  if (args.preferredProviders !== undefined || args.browser !== undefined || args.browserVisibility !== undefined || args.daemonUrl !== undefined || args.language !== undefined) {
     const browser = args.browser === undefined ? undefined : normalizeCliBrowser(args.browser)
     const config = await writeTokenlessConfig({
       homeDir,
@@ -3097,7 +3129,9 @@ async function configCommand(args: CliArgs) {
       browser,
       browserVisibility: args.browserVisibility === undefined ? undefined : requiredBrowserVisibility(args.browserVisibility),
       daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
+      language: args.language,
     })
+    setActiveLanguage(config.language)
     printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args)
     return
   }
@@ -3119,11 +3153,13 @@ async function promptFromArgs(args: CliArgs) {
   const turnContext = args.contextFile || args.turnContextFile
     ? await fs.readFile(args.contextFile || args.turnContextFile, 'utf8')
     : args.context
+  const config = await readTokenlessConfig(tokenlessHome(args.home))
   return buildTokenlessPrompt({
     userPrompt,
     projectRoot: args.projectRoot,
     files: args.files,
     turnContext,
+    responseLanguage: config.language,
   })
 }
 
@@ -3445,7 +3481,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] --json'], options: ['home', 'json', 'browser', 'browsers', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
-    { command: 'config', usage: ['tokenless config [--preferred-providers <list>] [--browser <browser>] [--browser-visibility <mode>] [--daemon-url <url>] --json'], options: ['home', 'json', 'preferredProviders', 'browser', 'browserVisibility', 'daemonUrl'] },
+    { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--preferred-providers <list>] [--browser <browser>] [--browser-visibility <mode>] [--daemon-url <url>] --json'], options: ['home', 'json', 'language', 'preferredProviders', 'browser', 'browserVisibility', 'daemonUrl'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'preferredProviders', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
@@ -3516,6 +3552,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--browsers': 'browsers',
     '--home': 'home',
     '--daemon-url': 'daemonUrl',
+    '--language': 'language',
     '--timeout-ms': 'timeoutMs',
     '--daemon-start-timeout-ms': 'daemonStartTimeoutMs',
     '--cancel-timeout-ms': 'cancelTimeoutMs',
@@ -4122,7 +4159,7 @@ function formatStatusEvent(event: StatusEvent) {
       event.jobId ? `job=${String(event.jobId).slice(0, 8)}` : '',
       event.elapsedMs !== undefined ? `elapsed=${formatElapsed(event.elapsedMs)}` : '',
     ].filter(Boolean).join(' ')
-    return `[tokenless] waiting_for_user ${context} User action is required; inspect the structured result for the safe resume step.`
+    return `[tokenless] waiting_for_user ${context} ${localizeText('User action is required; inspect the structured result for the safe resume step.')}`
   }
   const parts = ['[tokenless]', event.event]
   for (const [key, value] of [
@@ -4147,7 +4184,7 @@ function formatStatusEvent(event: StatusEvent) {
 
 function printPayload(payload: Record<string, any>, args: CliArgs) {
   if (args.json) console.log(JSON.stringify(payload, null, 2))
-  else if (payload.compactOutput) console.log(payload.compactOutput)
+  else if (payload.compactOutput) console.log(localizeText(String(payload.compactOutput)))
   else console.log(JSON.stringify(payload, null, 2))
 }
 
@@ -4261,7 +4298,7 @@ function usage() {
       title: 'Other',
       description: 'Inspect or update persistent Tokenless configuration.',
       commands: [
-        `tokenless config --preferred-providers ${supportedVisibleProviderIds().join(',')} --browser chrome --browser-visibility auto --json`,
+        `tokenless config --language <en|zh-CN> --preferred-providers ${supportedVisibleProviderIds().join(',')} --browser chrome --browser-visibility auto --json`,
         'tokenless daemon stop --daemon-url <loopback-url> --json',
       ],
     },
@@ -4272,23 +4309,23 @@ function usage() {
     '',
     formatUsageGroup('Advanced Usage', 'Less common commands for detailed control and maintenance.', advancedSections),
     '',
-    'Short options:',
-    '  -P, --profile <slug>        Select a managed browser profile.',
-    '  -p, --provider <provider>   Select an AI provider.',
+    localizeText('Short options:'),
+    `  -P, --profile <slug>        ${localizeText('Select a managed browser profile.')}`,
+    `  -p, --provider <provider>   ${localizeText('Select an AI provider.')}`,
     '',
-    'Command reference:',
-    '  https://github.com/jazelly/tokenless/blob/main/COMMANDS.md',
+    localizeText('Command reference:'),
+    `  https://github.com/jazelly/tokenless/blob/main/${activeTokenlessLanguage() === 'zh-CN' ? 'COMMANDS.zh-CN.md' : 'COMMANDS.md'}`,
   ].join('\n'))
 }
 
 function formatUsageGroup(title: string, description: string, sections: UsageSection[]) {
   return [
-    `${title}:`,
-    `  ${description}`,
+    `${localizeText(title)}${localizeText(title) === title ? ':' : '：'}`,
+    `  ${localizeText(description)}`,
     ...sections.flatMap((section) => [
       '',
-      `  ${section.title}:`,
-      `    ${section.description}`,
+      `  ${localizeText(section.title)}${localizeText(section.title) === section.title ? ':' : '：'}`,
+      `    ${localizeText(section.description)}`,
       ...section.commands.map((command) => `    ${command}`),
     ]),
   ].join('\n')
@@ -4394,6 +4431,7 @@ function optionUsageLabel(option: string) {
     json: '--json',
     jobId: '--job-id <job-id>',
     label: '--label <name>',
+    language: '--language <en|zh-CN>',
     limit: '--limit <n>',
     longRunning: '--long-running',
     model: '--model <label>',
@@ -4428,42 +4466,59 @@ function printCommandHelp(context: CommandContext) {
   const details = usageDetailsForContext(context)
   const optionLines = details.validOptions.filter((option) => !details.commonOptions.includes(option))
   const lines = [
-    'Usage:',
+    localizeText('Usage:'),
     ...details.usage.map((entry) => `  ${entry}`),
     '',
-    'Common options:',
+    localizeText('Common options:'),
     ...details.commonOptions.map((entry) => `  ${entry}`),
   ]
   if (optionLines.length > 0) {
-    lines.push('', 'Options:', ...optionLines.map((entry) => `  ${entry}`))
+    lines.push('', localizeText('Options:'), ...optionLines.map((entry) => `  ${entry}`))
   }
   if (details.validCommands && details.validCommands.length > 0) {
-    lines.push('', 'Valid commands:', ...details.validCommands.map((entry) => `  ${entry}`))
+    lines.push('', localizeText('Valid commands:'), ...details.validCommands.map((entry) => `  ${entry}`))
   }
   console.error(lines.join('\n'))
 }
 
 function formatCliError(payload: Record<string, any>, usageDetails?: CliUsageDetails | undefined) {
   const error = objectRecord(payload.error)
-  const lines = [`error: ${String(error.code || 'tokenless_cli_error')}: ${String(error.message || 'Tokenless CLI failed.')}`]
+  const lines = [`${localizeText('error:')} ${String(error.code || 'tokenless_cli_error')}: ${localizeText(String(error.message || 'Tokenless CLI failed.'))}`]
   if (!usageDetails) return lines.join('\n')
-  lines.push('', 'Usage:', ...usageDetails.usage.map((entry) => `  ${entry}`), '', 'Common options:')
+  lines.push('', localizeText('Usage:'), ...usageDetails.usage.map((entry) => `  ${entry}`), '', localizeText('Common options:'))
   if (usageDetails.commonOptions.length > 0) {
     lines.push(...usageDetails.commonOptions.map((entry) => `  ${entry}`))
   } else {
-    lines.push('  (none)')
+    lines.push(`  ${localizeText('(none)')}`)
   }
   if (usageDetails.validCommands && usageDetails.validCommands.length > 0) {
-    lines.push('', 'Valid commands:', ...usageDetails.validCommands.map((entry) => `  ${entry}`))
+    lines.push('', localizeText('Valid commands:'), ...usageDetails.validCommands.map((entry) => `  ${entry}`))
   }
   return lines.join('\n')
 }
 
 function usageError(code: string, message: string): CliError {
-  const error: CliError = new Error(message)
+  const error: CliError = new Error(localizeText(message))
   error.code = code
   error.retryable = false
   return error
+}
+
+async function initializeCliLanguage(argv: string[]) {
+  const homeFlagIndex = argv.indexOf('--home')
+  const explicitHome = homeFlagIndex >= 0 && argv[homeFlagIndex + 1] && !argv[homeFlagIndex + 1]!.startsWith('-')
+    ? argv[homeFlagIndex + 1]
+    : undefined
+  const homeDir = tokenlessHome(explicitHome)
+  try {
+    if (argv[0] === 'setup' && !await hasConfiguredTokenlessLanguage(homeDir)) {
+      setActiveLanguage(detectSystemLanguage())
+      return
+    }
+    setActiveLanguage((await readTokenlessConfig(homeDir)).language)
+  } catch {
+    setActiveLanguage('en')
+  }
 }
 
 function setupBridgeUnavailable({

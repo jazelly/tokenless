@@ -1,6 +1,7 @@
 import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { TokenlessLanguage } from './localization.js'
 
 export {
   DEFAULT_DAEMON_URL,
@@ -61,7 +62,16 @@ export {
   TOKENLESS_CONFIG_SCHEMA_ID,
   tokenlessHome,
   writeTokenlessConfig,
+  hasConfiguredTokenlessLanguage,
 } from './job-store.js'
+
+export {
+  TOKENLESS_LANGUAGES,
+  detectSystemLanguage,
+  normalizeTokenlessLanguage,
+} from './localization.js'
+
+export type { TokenlessLanguage } from './localization.js'
 
 export {
   DAEMON_LOG_FILE,
@@ -123,6 +133,7 @@ type TokenlessPromptOptions = {
   turnContext?: unknown
   maxFileBytes?: number
   maxTotalBytes?: number
+  responseLanguage?: TokenlessLanguage
 }
 
 type CollectedFile = {
@@ -138,6 +149,7 @@ export async function buildTokenlessPrompt({
   turnContext,
   maxFileBytes = DEFAULT_MAX_FILE_BYTES,
   maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
+  responseLanguage = 'en',
 }: TokenlessPromptOptions = {}) {
   if (typeof userPrompt !== 'string' || userPrompt.trim() === '') {
     throw new TypeError('userPrompt must be a nonempty string.')
@@ -151,6 +163,11 @@ export async function buildTokenlessPrompt({
     '',
     '## User Prompt',
     userPrompt.trim(),
+    '',
+    '## Response Language',
+    responseLanguage === 'zh-CN'
+      ? 'Respond in Simplified Chinese unless the user prompt explicitly requests another language.'
+      : 'Respond in English unless the user prompt explicitly requests another language.',
     '',
     '## Shareable Turn Context',
     sanitizeText(turnContext ?? 'No additional shareable turn context was provided.'),

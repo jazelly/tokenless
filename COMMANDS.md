@@ -131,7 +131,7 @@ This command does not configure a managed profile or check provider sign-in. Run
 
 ### `tokenless setup`
 
-Runs the complete onboarding flow: unconditionally upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version through the shared maintenance module, chooses a browser, saves provider preferences, creates or selects a managed profile, and performs one live sign-in check for every enabled provider.
+Runs the complete onboarding flow: unconditionally upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version through the shared maintenance module, chooses a browser, saves provider preferences, creates or selects a managed profile, and performs one live sign-in check for every enabled provider. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
 
 Interactive setup:
 
@@ -194,6 +194,7 @@ Updates one or more persistent values when options are supplied:
 
 ```bash
 tokenless config \
+  --language zh-CN \
   --preferred-providers chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
   --browser-visibility auto \
@@ -202,13 +203,14 @@ tokenless config \
 
 Configurable values:
 
+- `--language <en|zh-CN>`
 - `--preferred-providers <list>`
 - `--browser <browser>`
 - `--browser-visibility <auto|headed|headless>`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
-`daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
+Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
 
 ### `tokenless upgrade`
 

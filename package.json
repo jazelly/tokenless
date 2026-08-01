@@ -13,6 +13,7 @@
     "api:check": "node scripts/check-api-contract.mjs",
     "release:version": "node scripts/release/version.mjs",
     "prototype:cloakbrowser": "node scripts/prototypes/cloakbrowser-spike.mjs",
+    "prototype:cloakbrowser-profile-compat": "node scripts/prototypes/cloakbrowser-profile-compat-spike.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node dist/scripts/test-all.mjs",
     "test:ts-daemon-conformance": "npm run build && node --test --test-concurrency=1 test/ts-daemon-conformance.test.mjs",

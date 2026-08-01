@@ -131,7 +131,7 @@ tokenless install --browsers chrome,brave --json
 
 ### `tokenless setup`
 
-执行完整 onboarding：无条件 upsert 全局 Tokenless agent skills，通过共享 maintenance 模块将 daemon 对齐已安装 CLI 版本、选择浏览器、保存 provider preferences、创建或选择 managed profile，并对所有 enabled providers 各执行一次实时登录检查。
+执行完整 onboarding：无条件 upsert 全局 Tokenless agent skills，通过共享 maintenance 模块将 daemon 对齐已安装 CLI 版本、选择浏览器、保存 provider preferences、创建或选择 managed profile，并对所有 enabled providers 各执行一次实时登录检查。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
 
 交互式 setup：
 
@@ -194,6 +194,7 @@ tokenless config --json
 
 ```bash
 tokenless config \
+  --language zh-CN \
   --preferred-providers chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
   --browser-visibility auto \
@@ -202,13 +203,14 @@ tokenless config \
 
 可配置内容：
 
+- `--language <en|zh-CN>`
 - `--preferred-providers <list>`
 - `--browser <browser>`
 - `--browser-visibility <auto|headed|headless>`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
-`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
+面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
 
 ### `tokenless upgrade`
 

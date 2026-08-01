@@ -31,6 +31,11 @@ export type ManagedDaemonClient = {
   markJobWaitingForUser(options: ClaimedJobOptions & { blocker: unknown }): Promise<DaemonJob>
   checkpointJob(options: ClaimedJobOptions & { checkpoint: unknown }): Promise<DaemonJob>
   parkJob(options: ClaimedJobOptions & { blocker: unknown, checkpoint: unknown }): Promise<DaemonJob>
+  fallbackJob(options: ClaimedJobOptions & {
+    provider: string
+    request: unknown
+    blocker: unknown
+  }): Promise<DaemonJob>
   renewJobClaim(options: ClaimedJobOptions): Promise<DaemonJob>
   completeJob(options: ClaimedJobOptions & { result?: unknown, error?: unknown }): Promise<DaemonJob>
   upsertProviderProject(options: ClaimedJobOptions & {

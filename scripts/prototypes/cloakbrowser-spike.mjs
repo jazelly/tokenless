@@ -3,8 +3,8 @@
  * PROTOTYPE — delete after the CloakBrowser feasibility question is answered.
  *
  * Question: can Tokenless drive the official no-key CloakBrowser legacy binary
- * through its existing test-only executable seam and pass real, non-submission
- * provider E2E checks without changing the production browser runtime?
+ * across every declared provider through the production daemon/runner, and can
+ * the same launch path reach ordinary Google Search without a CAPTCHA blocker?
  */
 
 import { spawn } from 'node:child_process'
@@ -13,25 +13,32 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { chromium } from 'playwright-core'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const artifactRoot = path.join(root, 'test-results', 'cloakbrowser-spike')
 const runtimeCache = path.join(artifactRoot, 'runtime-cache')
 const tokenlessHome = path.join(artifactRoot, 'tokenless-home')
+const googleProfile = path.join(artifactRoot, 'google-search-profile')
 const resultFile = path.join(artifactRoot, 'last-run.json')
 const profileSlug = 'cloak-spike'
 const wrapperVersion = '0.5.3'
+const observeMs = parseDurationArg(process.argv.slice(2), '--observe-ms=')
+const googleObserveMs = parseDurationArg(process.argv.slice(2), '--observe-google-ms=')
+const providers = Object.freeze(['chatgpt', 'claude', 'gemini', 'grok', 'qwen', 'deepseek'])
 
-const platformVersions = new Map([
-  ['darwin-arm64', '145.0.7632.109.2'],
-  ['darwin-x64', '145.0.7632.109.2'],
-  ['linux-arm64', '146.0.7680.177.3'],
-  ['linux-x64', '146.0.7680.177.5'],
-  ['win32-x64', '146.0.7680.177.5'],
+const legacyBrowserVersion = '145.0.7632.109.2'
+const supportedLegacyPlatforms = new Set([
+  'darwin-arm64',
+  'darwin-x64',
+  'linux-x64',
+  'win32-x64',
 ])
 
 const platformKey = `${process.platform}-${process.arch}`
-const browserVersion = platformVersions.get(platformKey)
+const browserVersion = supportedLegacyPlatforms.has(platformKey)
+  ? legacyBrowserVersion
+  : undefined
 const state = {
   prototype: 'cloakbrowser-legacy-no-key',
   platform: platformKey,
@@ -39,16 +46,10 @@ const state = {
   browserVersion: browserVersion ?? null,
   browserPath: null,
   browserLaunchVersion: null,
-  providerCases: [
-    'normal path: auth.status',
-    'normal path: blocker.check',
-    'normal path: prompt.input',
-    'normal path: prompt.clear',
-    'real provider gemini: session-readiness',
-    'real provider gemini: prompt-draft',
-  ],
-  normalPathResults: [],
-  observerE2E: null,
+  providerCases: providers.map((provider) => `${provider}: readiness, draft, blocker, conditional submit-and-read`),
+  providerResults: [],
+  googleSearch: null,
+  directObservation: null,
   status: 'starting',
   startedAt: new Date().toISOString(),
   finishedAt: null,
@@ -94,13 +95,16 @@ try {
   render('building', 'Build the current dirty worktree without changing browser runtime code.')
   await run('npm', ['run', 'build'], { cwd: root })
 
-  render('preparing', 'Create an isolated Tokenless home and a clean guest profile.')
+  render('google-search', 'Run a real Google Search in an isolated CloakBrowser Playwright context.')
+  state.googleSearch = await runGoogleSearchProbe(binary.path, googleObserveMs)
+
+  render('preparing', 'Create an isolated Tokenless home and one clean guest profile for every provider.')
   await fs.rm(tokenlessHome, { recursive: true, force: true })
   await fs.mkdir(tokenlessHome, { recursive: true, mode: 0o700 })
   await fs.writeFile(path.join(tokenlessHome, 'config.json'), `${JSON.stringify({
     protocol: 'tokenless.config.v1',
     updatedAt: new Date().toISOString(),
-    preferredProviders: ['gemini'],
+    preferredProviders: providers,
     browser: 'profile',
     browserVisibility: 'auto',
     daemonUrl: null,
@@ -123,75 +127,290 @@ try {
     },
   })
 
-  render('normal-path', 'Run real Gemini provider actions through the standard Playwright launch path.')
-  state.normalPathResults = await runNormalProviderChecks(cliEntry, binary.path)
-  await stopScratchDaemon()
+  render('provider-sweep', 'Probe every declared provider through the production daemon/runner browser path.')
+  state.providerResults = await runProviderSweep(cliEntry, binary.path)
 
-  render('testing', 'Run real Gemini guest readiness and prompt-draft E2E cases.')
-  try {
-    await run(process.execPath, [
-      '--test',
-      '--test-concurrency=1',
-      '--test-name-pattern=^real provider gemini: (session-readiness|prompt-draft)$',
-      'test/live-managed-playwright.e2e.mjs',
-    ], {
-      cwd: root,
-      env: {
-        ...cloakEnv,
-        TOKENLESS_BROWSER_EXECUTABLE: binary.path,
-        TOKENLESS_LIVE_E2E_GATE: 'non_submission',
-        TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME: tokenlessHome,
-        TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE: profileSlug,
-      },
-    })
-    state.observerE2E = 'passed'
-  } catch (error) {
-    state.observerE2E = 'failed'
-    throw error
+  if (observeMs > 0) {
+    await holdForDirectObservation(cliEntry, binary.path, observeMs)
   }
 
-  state.status = 'passed'
-  render('passed', 'CloakBrowser passed the selected real provider E2E cases.')
+  state.status = 'completed'
+  render('completed', 'CloakBrowser completed the all-provider and Google Search sweep.')
 } catch (error) {
   state.status = 'failed'
   state.error = error instanceof Error ? error.message : String(error)
   render('failed', state.error)
+  if (observeMs > 0 && state.providerResults.length > 0 && state.browserPath) {
+    try {
+      await holdForDirectObservation(
+        path.join(root, 'packages/cli/dist/src/tokenless.mjs'),
+        state.browserPath,
+        observeMs,
+        false,
+      )
+    } catch (observationError) {
+      state.directObservation = {
+        requestedMs: observeMs,
+        status: 'failed',
+        error: observationError instanceof Error ? observationError.message : String(observationError),
+      }
+    }
+    state.status = 'failed'
+  }
   process.exitCode = 1
 } finally {
   await stopScratchDaemon().catch(() => undefined)
   await fs.rm(tokenlessHome, { recursive: true, force: true }).catch(() => undefined)
+  await fs.rm(googleProfile, { recursive: true, force: true }).catch(() => undefined)
   state.finishedAt = new Date().toISOString()
   await fs.mkdir(artifactRoot, { recursive: true, mode: 0o700 })
   await fs.writeFile(resultFile, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 })
   console.log(`\nPrototype result: ${resultFile}`)
 }
 
-async function runNormalProviderChecks(cliEntry, browserPath) {
-  const marker = `TOKENLESS_CLOAK_SPIKE_${Date.now()}`
-  const checks = [
-    { action: 'auth.status', expected: (value) => typeof value?.state === 'string' },
-    { action: 'blocker.check', expected: (value) => value?.blocked === false },
-    {
-      action: 'prompt.input',
-      args: ['--prompt', marker],
-      expected: (value) => value?.visible === true && value?.inputProof === 'prompt-text-visible',
-    },
-    {
-      action: 'prompt.clear',
-      expected: (value) => value?.visible === true && value?.inputProof === 'empty',
-    },
-  ]
+async function runProviderSweep(cliEntry, browserPath) {
   const results = []
-  for (const check of checks) {
+  for (const provider of providers) {
+    render('provider', `Probe ${provider} through the production runtime.`)
+    const draftMarker = `TOKENLESS_CLOAK_${provider.toUpperCase()}_DRAFT_${Date.now()}`
+    const auth = await runProviderAction(cliEntry, browserPath, provider, 'auth.status')
+    const blocker = await runProviderAction(cliEntry, browserPath, provider, 'blocker.check')
+    const promptInput = await runProviderAction(
+      cliEntry,
+      browserPath,
+      provider,
+      'prompt.input',
+      ['--prompt', draftMarker],
+    )
+    const promptClear = promptInput.succeeded
+      ? await runProviderAction(cliEntry, browserPath, provider, 'prompt.clear')
+      : { action: 'prompt.clear', status: 'not_attempted', succeeded: false, reason: 'prompt_input_failed' }
+    const canSubmit = promptInput.succeeded && promptClear.succeeded && blocker.result?.blocked !== true
+    const conversation = canSubmit
+      ? await runProviderConversation(cliEntry, browserPath, provider)
+      : {
+          status: 'not_attempted',
+          succeeded: false,
+          reason: blocker.result?.blocked === true ? 'visible_provider_blocker' : 'prompt_surface_unavailable',
+        }
+    results.push({
+      provider,
+      reached: Boolean(auth.payload || blocker.payload || promptInput.payload),
+      auth,
+      blocker,
+      promptInput,
+      promptClear,
+      conversation,
+    })
+    state.providerResults = [...results]
+  }
+  return results
+}
+
+async function runProviderAction(cliEntry, browserPath, provider, action, extraArgs = []) {
+  const command = await run(process.execPath, [
+    cliEntry,
+    'provider-action',
+    '--provider', provider,
+    '--action', action,
+    ...extraArgs,
+    '--profile', profileSlug,
+    '--home', tokenlessHome,
+    '--browser-visibility', 'headed',
+    '--timeout-ms', '120000',
+    '--json',
+  ], {
+    cwd: root,
+    env: {
+      ...cloakEnv,
+      TOKENLESS_BROWSER_EXECUTABLE: browserPath,
+    },
+    capture: true,
+    allowFailure: true,
+  })
+  const payload = parseOptionalJsonOutput(command.stdout)
+  const succeeded = payload?.ok === true && payload?.status === 'succeeded'
+  return {
+    action,
+    exitCode: command.code,
+    status: payload?.status ?? 'failed',
+    succeeded,
+    result: responseResult(payload, action),
+    blocker: payload?.blocker ?? null,
+    error: succeeded || payload ? payload?.error ?? null : compactCommandError(command),
+    payload: payload ? { ok: payload.ok, jobId: payload.jobId ?? null } : null,
+  }
+}
+
+async function runProviderConversation(cliEntry, browserPath, provider) {
+  const marker = `TOKENLESS_CLOAK_${provider.toUpperCase()}_E2E_${Date.now()}`
+  const taskId = `cloak-${provider}-e2e-${Date.now()}`
+  const command = await run(process.execPath, [
+    cliEntry,
+    'run',
+    '--provider', provider,
+    '--profile', profileSlug,
+    '--task-id', taskId,
+    '--prompt', `Reply with exactly ${marker} and no other text.`,
+    '--home', tokenlessHome,
+    '--browser-visibility', 'headed',
+    '--timeout-ms', '300000',
+    '--json',
+  ], {
+    cwd: root,
+    env: {
+      ...cloakEnv,
+      TOKENLESS_BROWSER_EXECUTABLE: browserPath,
+    },
+    capture: true,
+    allowFailure: true,
+  })
+  const payload = parseOptionalJsonOutput(command.stdout)
+  if (!payload) {
+    return {
+      taskId,
+      marker,
+      exitCode: command.code,
+      status: 'failed',
+      succeeded: false,
+      error: compactCommandError(command),
+    }
+  }
+  if (payload.status !== 'succeeded' || typeof payload.jobId !== 'string') {
+    return {
+      taskId,
+      marker,
+      jobId: payload.jobId ?? null,
+      exitCode: command.code,
+      status: payload.status ?? 'failed',
+      succeeded: false,
+      blocker: payload.blocker ?? null,
+      error: payload.error ?? null,
+    }
+  }
+
+  const response = responseResult(payload, 'response.read')
+  const responseMatched = typeof response?.text === 'string' && response.text.includes(marker)
+  const durableCommand = await run(process.execPath, [
+    cliEntry,
+    'state',
+    '--job-id', payload.jobId,
+    '--home', tokenlessHome,
+    '--json',
+  ], {
+    cwd: root,
+    env: {
+      ...cloakEnv,
+      TOKENLESS_BROWSER_EXECUTABLE: browserPath,
+    },
+    capture: true,
+    allowFailure: true,
+  })
+  const durablePayload = parseOptionalJsonOutput(durableCommand.stdout)
+  return {
+    taskId,
+    marker,
+    jobId: payload.jobId,
+    exitCode: command.code,
+    status: payload.status,
+    succeeded: responseMatched && durablePayload?.latest?.status === 'succeeded',
+    responseMatched,
+    durableStatus: durablePayload?.latest?.status ?? null,
+  }
+}
+
+async function runGoogleSearchProbe(browserPath, durationMs) {
+  await fs.rm(googleProfile, { recursive: true, force: true })
+  await fs.mkdir(googleProfile, { recursive: true, mode: 0o700 })
+  const context = await chromium.launchPersistentContext(googleProfile, {
+    executablePath: browserPath,
+    headless: false,
+    chromiumSandbox: true,
+    args: [
+      '--password-store=basic',
+      '--use-mock-keychain',
+      '--disable-sync',
+      '--no-first-run',
+      '--no-default-browser-check',
+    ],
+  })
+  try {
+    const page = context.pages()[0] ?? await context.newPage()
+    const query = 'OpenAI API documentation'
+    const target = new URL('https://www.google.com/search')
+    target.searchParams.set('q', query)
+    const response = await page.goto(target.toString(), {
+      waitUntil: 'domcontentloaded',
+      timeout: 120_000,
+    })
+    await page.waitForLoadState('load', { timeout: 30_000 }).catch(() => undefined)
+    await page.waitForTimeout(3_000)
+    const finalUrl = new URL(page.url())
+    const challenge = await googleChallenge(page)
+    const resultsVisible = challenge === null && await anyVisible(page, [
+      '#search',
+      '#rso',
+      'a h3',
+    ])
+    const result = {
+      query,
+      httpStatus: response?.status() ?? null,
+      finalOrigin: finalUrl.origin,
+      finalPath: finalUrl.pathname,
+      title: await page.title(),
+      resultsVisible,
+      challenge,
+      captchaTriggered: challenge?.family === 'recaptcha',
+    }
+    state.googleSearch = result
+    if (durationMs > 0) {
+      render('observing-google', `The real Google Search window will remain open for ${durationMs}ms.`)
+      await delay(durationMs)
+    }
+    return result
+  } finally {
+    await context.close().catch(() => undefined)
+    await fs.rm(googleProfile, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+async function googleChallenge(page) {
+  if (page.url().includes('/sorry/')) {
+    return { family: 'recaptcha', code: 'google_sorry_url' }
+  }
+  if (await anyVisible(page, [
+    'iframe[src*="recaptcha"]',
+    'form#captcha-form',
+    '.g-recaptcha',
+    'text=/our systems have detected unusual traffic/i',
+  ])) {
+    return { family: 'recaptcha', code: 'visible_google_recaptcha' }
+  }
+  if (await anyVisible(page, [
+    'text=/before you continue to google/i',
+    'form[action*="consent.google"]',
+  ])) {
+    return { family: 'consent', code: 'visible_google_consent' }
+  }
+  return null
+}
+
+async function anyVisible(page, selectors) {
+  for (const selector of selectors) {
+    if (await page.locator(selector).first().isVisible().catch(() => false)) return true
+  }
+  return false
+}
+
+async function holdForDirectObservation(cliEntry, browserPath, durationMs, openProvider = true) {
+  if (openProvider) {
     const command = await run(process.execPath, [
       cliEntry,
-      'provider-action',
-      '--provider', 'gemini',
-      '--action', check.action,
-      ...(check.args ?? []),
+      'profiles',
+      'open',
       '--profile', profileSlug,
+      '--provider', 'grok',
       '--home', tokenlessHome,
-      '--browser-visibility', 'headed',
       '--timeout-ms', '120000',
       '--json',
     ], {
@@ -203,16 +422,22 @@ async function runNormalProviderChecks(cliEntry, browserPath) {
       capture: true,
     })
     const payload = parseJsonOutput(command.stdout)
-    if (payload?.ok !== true || payload?.status !== 'succeeded') {
-      throw new Error(`Normal provider action ${check.action} did not succeed: ${command.stdout}`)
+    if (payload?.ok !== true) {
+      throw new Error(`Could not retain the managed Grok window for observation: ${command.stdout}`)
     }
-    const value = responseResult(payload, check.action)
-    if (!check.expected(value)) {
-      throw new Error(`Normal provider action ${check.action} returned an unexpected result: ${JSON.stringify(value)}`)
-    }
-    results.push({ action: check.action, result: value })
   }
-  return results
+
+  state.directObservation = {
+    requestedMs: durationMs,
+    status: 'available',
+    observer: 'macOS accessibility and process inspection only',
+    externalObserverPlaywright: false,
+    externalCdpAttach: false,
+    googleProbeOwnsItsContext: true,
+  }
+  render('observing', `The runtime-managed CloakBrowser window will remain open for ${durationMs}ms.`)
+  await delay(durationMs)
+  state.directObservation.status = 'completed'
 }
 
 function responseResult(payload, actionName) {
@@ -235,9 +460,35 @@ function render(status, message) {
     browserPath: state.browserPath,
     browserLaunchVersion: state.browserLaunchVersion,
     providerCases: state.providerCases,
-    normalPathResults: state.normalPathResults,
-    observerE2E: state.observerE2E,
+    providerResults: state.providerResults.map((result) => ({
+      provider: result.provider,
+      reached: result.reached,
+      authStatus: result.auth.status,
+      authState: result.auth.result?.state ?? null,
+      blockerStatus: result.blocker.status,
+      blocked: result.blocker.result?.blocked ?? null,
+      promptInputStatus: result.promptInput.status,
+      promptClearStatus: result.promptClear.status,
+      conversationStatus: result.conversation.status,
+      conversationSucceeded: result.conversation.succeeded,
+    })),
+    googleSearch: state.googleSearch,
+    directObservation: state.directObservation,
   }, null, 2))
+}
+
+function parseDurationArg(args, prefix) {
+  const entry = args.find((value) => value.startsWith(prefix))
+  if (!entry) return 0
+  const value = Number(entry.slice(prefix.length))
+  if (!Number.isInteger(value) || value < 0 || value > 600_000) {
+    throw new Error(`${prefix.slice(0, -1)} must be an integer from 0 through 600000.`)
+  }
+  return value
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 async function cloakCli(args, options = {}) {
@@ -293,6 +544,20 @@ function parseJsonOutput(output) {
   const end = output.lastIndexOf('}')
   if (start === -1 || end < start) throw new Error(`Expected JSON output, received: ${output}`)
   return JSON.parse(output.slice(start, end + 1))
+}
+
+function parseOptionalJsonOutput(output) {
+  if (!output.includes('{')) return null
+  try {
+    return parseJsonOutput(output)
+  } catch {
+    return null
+  }
+}
+
+function compactCommandError(command) {
+  const message = command.stderr.trim() || command.stdout.trim()
+  return message ? message.slice(0, 1_000) : `Command exited with code ${command.code}.`
 }
 
 function run(command, args, options = {}) {

@@ -66,7 +66,7 @@ export type ManagedProfileSource = {
 
 export type ManagedPlaywrightRunnerIteration =
   | { claimed: false }
-  | { claimed: true, jobId: string, status: 'succeeded' | 'failed' | 'canceled' | 'waiting_for_user' }
+  | { claimed: true, jobId: string, status: 'succeeded' | 'failed' | 'canceled' | 'waiting_for_user' | 'fallback_queued' }
 
 export type ManagedPlaywrightJobResult = {
   protocol: typeof MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID
@@ -363,6 +363,10 @@ export class ManagedPlaywrightRunnerService {
       if (error instanceof ParkedPlaywrightJob) {
         attachmentRoot = undefined
         return { claimed: true, jobId: job.job_id, status: 'waiting_for_user' }
+      }
+      if (error instanceof QueuedProviderFallback) {
+        attachmentRoot = undefined
+        return { claimed: true, jobId: job.job_id, status: 'fallback_queued' }
       }
       if (canceled || signal.aborted) {
         if (!renewError) {
@@ -667,6 +671,21 @@ export class ManagedPlaywrightRunnerService {
     if (!initial.blocked) {
       return { managedContext: options.managedContext, page: options.page, waitedMs: 0 }
     }
+    const fallbackRequest = safeFallbackRequest(options.request, options.state, initial.primary)
+    if (fallbackRequest) {
+      await this.daemonClient.fallbackJob({
+        jobId: options.job.job_id,
+        claimToken: options.job.claim_token,
+        provider: fallbackRequest.provider,
+        request: fallbackRequest,
+        blocker: blockerPayload(options.job, initial.blockers, {
+          requestedVisibility: options.claimBrowserVisibility,
+          effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
+          windowOpen: options.claimBrowserVisibility !== 'headless',
+        }),
+      })
+      throw new QueuedProviderFallback()
+    }
     if (initial.terminal) {
       throw tokenlessError(initial.primary.code, initial.primary.message, { retryable: initial.primary.retryable })
     }
@@ -803,6 +822,46 @@ class ParkedPlaywrightJob extends Error {
   constructor() {
     super('Managed Playwright job parked waiting for user.')
   }
+}
+
+class QueuedProviderFallback extends Error {
+  constructor() {
+    super('Managed Playwright job queued a provider fallback attempt.')
+    this.name = 'QueuedProviderFallback'
+  }
+}
+
+function safeFallbackRequest(
+  request: ManagedPlaywrightJobRequest,
+  state: RunnerExecutionState,
+  blocker: VisibleBlocker,
+): ManagedPlaywrightJobRequest | null {
+  const plan = request.fallback
+  const alternative = plan?.alternatives[0]
+  if (!plan || !alternative || !fallbackEligibleBlocker(blocker) || state.submitted !== null) return null
+  for (let index = 0; index < state.actionCursor; index += 1) {
+    const action = request.actions[index]
+    if (!action) return null
+    const lifecycle = getVisibleActionLifecycle(action.action)
+    if (lifecycle.mutating && !lifecycle.reconstructablePreSubmit) return null
+  }
+  const remaining = plan.alternatives.slice(1)
+  return validateManagedPlaywrightJobRequest({
+    protocol: request.protocol,
+    provider: alternative.provider,
+    target: alternative.target,
+    taskId: request.taskId,
+    capabilityRoute: alternative.capabilityRoute,
+    fallback: remaining.length === 0 ? null : { ...plan, alternatives: remaining },
+    browserVisibility: request.browserVisibility,
+    ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
+    actions: alternative.actions,
+  })
+}
+
+function fallbackEligibleBlocker(blocker: VisibleBlocker) {
+  return blocker.kind === 'challenge' || blocker.kind === 'auth' ||
+    blocker.family === 'rate_limit' || blocker.family === 'plan_limit'
 }
 
 function validateResumeVisibility(value: unknown): Extract<BrowserVisibility, 'headed'> | null {

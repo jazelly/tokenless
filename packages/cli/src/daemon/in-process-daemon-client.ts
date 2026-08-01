@@ -30,6 +30,13 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
     parkJob: (options) => parkRequest(options, () => publicJobView(
       store.parkJob(options.jobId, options.claimToken, options.blocker, options.checkpoint)
     )),
+    fallbackJob: (options) => fallbackRequest(options, () => publicJobView(store.fallbackJob({
+      job_id: options.jobId,
+      claim_token: options.claimToken,
+      provider: options.provider,
+      request_json: options.request,
+      blocker_json: options.blocker,
+    }))),
     renewJobClaim: (options) => claimRequest(options, () => publicJobView(store.renewClaim(options.jobId, options.claimToken))),
     completeJob: (options) => completeRequest(options, () => {
       const hasResult = options.result !== undefined && options.result !== null
@@ -84,6 +91,7 @@ type ClaimLifecycleDaemonJobOptions = Parameters<ManagedDaemonClient['markJobRun
 type WaitingForUserDaemonJobOptions = Parameters<ManagedDaemonClient['markJobWaitingForUser']>[0]
 type CheckpointDaemonJobOptions = Parameters<ManagedDaemonClient['checkpointJob']>[0]
 type ParkDaemonJobOptions = Parameters<ManagedDaemonClient['parkJob']>[0]
+type FallbackDaemonJobOptions = Parameters<ManagedDaemonClient['fallbackJob']>[0]
 type CompleteDaemonJobOptions = Parameters<ManagedDaemonClient['completeJob']>[0]
 
 function claimRequest<T>(options: ClaimLifecycleDaemonJobOptions, operation: () => T): Promise<T> {
@@ -99,6 +107,10 @@ function checkpointRequest<T>(options: CheckpointDaemonJobOptions, operation: ()
 }
 
 function parkRequest<T>(options: ParkDaemonJobOptions, operation: () => T): Promise<T> {
+  return inProcessDaemonRequest(options.signal, operation)
+}
+
+function fallbackRequest<T>(options: FallbackDaemonJobOptions, operation: () => T): Promise<T> {
   return inProcessDaemonRequest(options.signal, operation)
 }
 

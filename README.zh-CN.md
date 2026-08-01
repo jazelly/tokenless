@@ -54,7 +54,7 @@ npm install --global tokenless@latest
 tokenless setup
 ```
 
-安装 npm package 只是第一步。使用 Tokenless 前必须完成 `tokenless setup`；它会准备本地运行环境，创建或导入浏览器 profile，并检查所有已启用的 providers。
+安装 npm package 只是第一步。使用 Tokenless 前必须完成 `tokenless setup`；它会准备本地运行环境，创建或导入浏览器 profile，并检查所有已启用的 providers。首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制面向用户的 CLI 文案和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可通过 `tokenless config --language en` 或 `tokenless config --language zh-CN` 修改。
 
 需要 Node.js 22.13+，以及 Chrome、Brave、Edge、Arc 或 Chromium。
 

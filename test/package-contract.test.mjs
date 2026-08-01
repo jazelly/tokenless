@@ -104,6 +104,52 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(result.stderr, /^  https:\/\/github\.com\/jazelly\/tokenless\/blob\/main\/COMMANDS\.md$/m)
 })
 
+test('CLI localizes human output from system setup locale and persistent language config', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-language-'))
+  try {
+    const systemLocalizedSetupHelp = runCli(['setup', '--help'], {
+      env: {
+        ...process.env,
+        TOKENLESS_HOME: homeDir,
+        LC_ALL: 'zh_CN.UTF-8',
+      },
+    })
+    assert.equal(systemLocalizedSetupHelp.status, 0, systemLocalizedSetupHelp.stderr)
+    assert.match(systemLocalizedSetupHelp.stderr, /^用法：$/m)
+    assert.match(systemLocalizedSetupHelp.stderr, /^通用选项：$/m)
+
+    const configured = runCli(['config', '--home', homeDir, '--language', 'zh-CN', '--json'])
+    assert.equal(configured.status, 0, configured.stderr || configured.stdout)
+    assert.equal(JSON.parse(configured.stdout).config.language, 'zh-CN')
+
+    const localizedHelp = runCli(['help'], {
+      env: { ...process.env, TOKENLESS_HOME: homeDir, LC_ALL: 'en_US.UTF-8' },
+    })
+    assert.equal(localizedHelp.status, 0, localizedHelp.stderr)
+    assert.match(localizedHelp.stderr, /^用法：$/m)
+    assert.match(localizedHelp.stderr, /^高级用法：$/m)
+    assert.match(localizedHelp.stderr, /选择托管浏览器 profile。/)
+    assert.match(localizedHelp.stderr, /tokenless run --provider/)
+    assert.match(localizedHelp.stderr, /COMMANDS\.zh-CN\.md/)
+
+    const localizedPrompt = runCli(['prompt', '--prompt', 'Summarize this.'], {
+      env: { ...process.env, TOKENLESS_HOME: homeDir },
+    })
+    assert.equal(localizedPrompt.status, 0, localizedPrompt.stderr)
+    assert.match(localizedPrompt.stdout, /^## Response Language$/m)
+    assert.match(localizedPrompt.stdout, /Respond in Simplified Chinese unless the user prompt explicitly requests another language\./)
+
+    const localizedError = runCli(['run', '--all'], {
+      env: { ...process.env, TOKENLESS_HOME: homeDir },
+    })
+    assert.equal(localizedError.status, 2)
+    assert.match(localizedError.stderr, /^错误： invalid_option: tokenless run 不接受选项：--all。/)
+    assert.match(localizedError.stderr, /^用法：$/m)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('CLI accepts distinct case-sensitive short options for profile and provider', () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-short-options-')))
   try {

@@ -45,6 +45,7 @@ export type Job = {
   blocker_json: unknown | null
   checkpoint_json: unknown | null
   resume_json: unknown | null
+  provider_attempts_json: unknown
   created_at: string
   updated_at: string
   claim_expires_at_ms: number | null
@@ -233,6 +234,7 @@ export class JobStore {
     const now = nowRfc3339()
     const summary = requestSummaryMetadata(input.request_json)
     const requestJson = stringifyJson(input.request_json)
+    const providerAttemptsJson = stringifyJson([providerAttempt(1, provider, 'queued', now)])
 
     this.transaction(() => {
       this.run(
@@ -240,11 +242,12 @@ export class JobStore {
           job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
           provider, action, status, request_json,
           result_json, error_json, blocker_json, created_at, updated_at,
+          provider_attempts_json,
           summary_task_id, summary_project_name, summary_chat_name,
           summary_idempotency_key
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?,
-          ?, ?, ?, ?
+          ?, ?, ?, ?, ?
         )`,
         jobId,
         claimToken,
@@ -258,6 +261,7 @@ export class JobStore {
         requestJson,
         now,
         now,
+        providerAttemptsJson,
         summary.task_id,
         summary.project_name,
         summary.chat_name,
@@ -398,6 +402,7 @@ export class JobStore {
       jobs.agent_kind, jobs.agent_session_id,
       jobs.provider, jobs.action, jobs.status, jobs.request_json, jobs.result_json,
       jobs.error_json, jobs.blocker_json, jobs.checkpoint_json, jobs.resume_json,
+      jobs.provider_attempts_json,
       jobs.created_at, jobs.updated_at, jobs.claim_expires_at
       FROM jobs`
     const params: SQLInputValue[] = []
@@ -695,7 +700,7 @@ export class JobStore {
        RETURNING
          job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
          provider, action, status, request_json, result_json, error_json,
-         blocker_json, checkpoint_json, resume_json,
+         blocker_json, checkpoint_json, resume_json, provider_attempts_json,
          created_at, updated_at, claim_expires_at`,
       'claimed',
       now,
@@ -844,6 +849,59 @@ export class JobStore {
     )
   }
 
+  fallbackJob(input: {
+    job_id: string
+    claim_token: string
+    provider: string
+    request_json: unknown
+    blocker_json: unknown
+  }) {
+    const nowMs = nowUnixMillis()
+    const now = nowRfc3339()
+    const provider = normalizeNonempty(input.provider, 'provider')
+    const replacementToken = generateSecretToken()
+    const requestJson = stringifyJson(input.request_json)
+    return this.transaction(() => {
+      const job = this.getJobWithoutRecovery(input.job_id)
+      if (job.claim_token !== input.claim_token) throw claimRejected(input.job_id)
+      if (!ACTIVE_STATUSES.has(job.status) || job.claim_expires_at_ms === null || job.claim_expires_at_ms <= nowMs) {
+        throw invalidJobState(job.job_id, 'active claimed playwright job', job.status)
+      }
+      if (job.execution_backend !== 'playwright') throw invalidInput('only playwright jobs can fallback providers')
+      if (job.provider === provider) throw invalidInput('fallback provider must differ from the current provider')
+      const attempts = providerAttempts(job.provider_attempts_json)
+      const current = attempts.at(-1) ?? providerAttempt(1, job.provider, 'queued', job.created_at)
+      const completed = {
+        ...current,
+        status: 'blocked',
+        completedAt: now,
+        blocker: input.blocker_json,
+      }
+      const next = providerAttempt(current.attempt + 1, provider, 'queued', now)
+      const result = this.run(
+        `UPDATE jobs
+         SET provider = ?, request_json = ?, status = 'queued', claim_token = ?,
+             result_json = NULL, error_json = NULL, blocker_json = NULL,
+             checkpoint_json = NULL, resume_json = NULL, claim_expires_at = NULL,
+             provider_attempts_json = ?, updated_at = ?,
+             outcome_revision = outcome_revision + 1
+         WHERE job_id = ? AND claim_token = ?
+           AND status IN ('claimed', 'running', 'waiting_for_user')
+           AND claim_expires_at > ?`,
+        provider,
+        requestJson,
+        replacementToken,
+        stringifyJson([...attempts.slice(0, -1), completed, next]),
+        now,
+        input.job_id,
+        input.claim_token,
+        nowMs,
+      )
+      if (result.changes !== 1) return this.explainActiveClaimFailure(input.job_id, input.claim_token, nowMs)
+      return this.getJobWithoutRecovery(input.job_id)
+    })
+  }
+
   resumeJob(jobId: string, resumeJson: unknown) {
     const nowMs = nowUnixMillis()
     this.requeueExpiredClaimsAt(nowMs)
@@ -895,11 +953,18 @@ export class JobStore {
     const status: JobStatus = 'result_json' in completion ? 'succeeded' : 'failed'
     const resultJson = 'result_json' in completion ? stringifyJson(completion.result_json) : null
     const errorJson = 'error_json' in completion ? stringifyJson(completion.error_json) : null
+    const job = this.getJobWithoutRecovery(jobId)
+    const attempts = providerAttempts(job.provider_attempts_json)
+    const current = attempts.at(-1) ?? providerAttempt(1, job.provider, 'queued', job.created_at)
+    const completedAttempts = [
+      ...attempts.slice(0, -1),
+      { ...current, status, completedAt: now },
+    ]
     const result = this.run(
       `UPDATE jobs
        SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL,
            checkpoint_json = NULL, resume_json = NULL,
-           updated_at = ?, claim_expires_at = NULL,
+           provider_attempts_json = ?, updated_at = ?, claim_expires_at = NULL,
            outcome_revision = outcome_revision + 1
        WHERE job_id = ?
          AND claim_token = ?
@@ -908,6 +973,7 @@ export class JobStore {
       status,
       resultJson,
       errorJson,
+      stringifyJson(completedAttempts),
       now,
       jobId,
       claimToken,
@@ -949,7 +1015,7 @@ export class JobStore {
         `SELECT
           job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
           provider, action, status, request_json, result_json, error_json,
-          blocker_json, checkpoint_json, resume_json,
+          blocker_json, checkpoint_json, resume_json, provider_attempts_json,
           created_at, updated_at, claim_expires_at
          FROM jobs
          WHERE job_id = ?`,
@@ -1176,6 +1242,7 @@ export class JobStore {
         blocker_json TEXT,
         checkpoint_json TEXT,
         resume_json TEXT,
+        provider_attempts_json TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         claim_expires_at INTEGER,
@@ -1272,6 +1339,7 @@ export class JobStore {
       for (const [column, definition] of [
         ['checkpoint_json', 'TEXT'],
         ['resume_json', 'TEXT'],
+        ['provider_attempts_json', "TEXT NOT NULL DEFAULT '[]'"],
         ['claim_expires_at', 'INTEGER'],
         ['summary_task_id', 'TEXT CHECK (summary_task_id IS NULL OR length(summary_task_id) <= 256)'],
         ['summary_project_name', 'TEXT CHECK (summary_project_name IS NULL OR length(summary_project_name) <= 256)'],
@@ -1327,6 +1395,7 @@ export class JobStore {
         job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
         provider, action, status, request_json, result_json, error_json,
         blocker_json, checkpoint_json, resume_json,
+        provider_attempts_json,
         created_at, updated_at, claim_expires_at
        FROM jobs
        WHERE job_id = ?`,
@@ -1457,6 +1526,7 @@ export function publicView(job: Job): JobView {
     result_json: job.result_json,
     error_json: job.error_json,
     blocker_json: job.blocker_json,
+    provider_attempts_json: job.provider_attempts_json,
     created_at: job.created_at,
     updated_at: job.updated_at,
   }
@@ -1477,6 +1547,7 @@ export function withClaimToken(job: Job): JobWithClaimToken {
     blocker_json: job.blocker_json,
     checkpoint_json: job.checkpoint_json,
     resume_json: job.resume_json,
+    provider_attempts_json: job.provider_attempts_json,
     created_at: job.created_at,
     updated_at: job.updated_at,
   }
@@ -1547,10 +1618,35 @@ function rowToJob(row: Record<string, unknown>): Job {
     blocker_json: parseOptionalJson(row.blocker_json),
     checkpoint_json: parseOptionalJson(row.checkpoint_json),
     resume_json: parseOptionalJson(row.resume_json),
+    provider_attempts_json: parseJson(row.provider_attempts_json),
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     claim_expires_at_ms: nullableNumber(row.claim_expires_at),
   }
+}
+
+type ProviderAttempt = {
+  attempt: number
+  provider: string
+  status: string
+  startedAt: string
+  completedAt: string | null
+  blocker: unknown | null
+}
+
+function providerAttempt(attempt: number, provider: string, status: string, startedAt: string): ProviderAttempt {
+  return { attempt, provider, status, startedAt, completedAt: null, blocker: null }
+}
+
+function providerAttempts(value: unknown): ProviderAttempt[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is ProviderAttempt => Boolean(
+    entry && typeof entry === 'object' &&
+    Number.isSafeInteger((entry as ProviderAttempt).attempt) &&
+    typeof (entry as ProviderAttempt).provider === 'string' &&
+    typeof (entry as ProviderAttempt).status === 'string' &&
+    typeof (entry as ProviderAttempt).startedAt === 'string'
+  ))
 }
 
 function rowToProviderProject(row: Record<string, unknown>): ProviderProjectMapping {

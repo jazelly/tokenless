@@ -3,7 +3,9 @@
 ## Language
 
 - Write source code, identifiers, package names, configuration keys, and inline code comments in English.
-- Support both Chinese-speaking and English-speaking users in user-facing documentation whenever practical.
+- Treat English and Simplified Chinese as required product languages. Every user-facing surface that can reasonably be localized—including CLI help, prompts, progress, errors, summaries, setup flows, configuration descriptions, and documentation—must support both languages; do not ship a new or changed user-facing message in only one language.
+- Never assume that a user can understand the other supported language. Each localized experience must be usable on its own by an English-only or Chinese-only user, while command names, flags, identifiers, protocol fields, provider/model names, and other necessary technical terms may remain stable when translation would reduce clarity or compatibility.
+- Keep language selection and fallback behavior explicit and consistent across features. When changing localized behavior, add or update real-boundary coverage for both languages where the behavior is externally observable.
 - Keep paired documentation, such as `README.md` and `README.zh-CN.md`, aligned in structure and meaning. When updating one language, update its counterpart as part of the same change whenever possible.
 - Internal technical documentation may remain in English when a bilingual version would not benefit users.
 

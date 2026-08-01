@@ -1,3 +1,5 @@
+import { localizeText } from './localization.js'
+
 type WritableStream = {
   columns?: number
   write(chunk: string): unknown
@@ -76,25 +78,25 @@ export class SetupPresenter {
     if (!this.enabled) return
     this.write([
       '',
-      this.paint('brightCyan', 'Tokenless setup'),
+      this.paint('brightCyan', localizeText('Tokenless setup')),
       '',
     ].join('\n'))
   }
 
   explain({ title, lines }: ExplainOptions) {
     if (!this.enabled) return
-    this.write(`${this.paint('bright', title)}\n`)
-    for (const line of lines) this.write(`  ${this.paint('dim', '-')} ${line}\n`)
+    this.write(`${this.paint('bright', localizeText(title))}\n`)
+    for (const line of lines) this.write(`  ${this.paint('dim', '-')} ${localizeText(line)}\n`)
   }
 
   note(message: string) {
     if (!this.enabled) return
-    this.write(`  ${this.paint('yellow', '*')} ${message}\n`)
+    this.write(`  ${this.paint('yellow', '*')} ${localizeText(message)}\n`)
   }
 
   success(message: string) {
     if (!this.enabled) return
-    this.write(`  ${this.paint('green', 'OK')} ${message}\n`)
+    this.write(`  ${this.paint('green', 'OK')} ${localizeText(message)}\n`)
   }
 
   async withProgress<T>(message: string, task: () => Promise<T>): Promise<T> {
@@ -106,7 +108,7 @@ export class SetupPresenter {
       const prefix = this.animationEnabled
         ? `${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]}`
         : '-'
-      this.writeProgress(prefix, message)
+      this.writeProgress(prefix, localizeText(message))
     }
 
     if (this.animationEnabled) {
@@ -117,20 +119,20 @@ export class SetupPresenter {
     try {
       const result = await task()
       if (timer !== null) this.timers.clearInterval(timer)
-      if (this.animationEnabled) this.finishProgress('OK', message, 'green')
+      if (this.animationEnabled) this.finishProgress('OK', localizeText(message), 'green')
       else this.success(message)
       return result
     } catch (error) {
       if (timer !== null) this.timers.clearInterval(timer)
-      if (this.animationEnabled) this.finishProgress('X', message, 'red')
-      else this.write(`  ${this.paint('red', 'X')} ${message}\n`)
+      if (this.animationEnabled) this.finishProgress('X', localizeText(message), 'red')
+      else this.write(`  ${this.paint('red', 'X')} ${localizeText(message)}\n`)
       throw error
     }
   }
 
   summary(message: string) {
     if (!this.enabled) return
-    this.write(`\n${this.paint('brightGreen', message)}\n`)
+    this.write(`\n${this.paint('brightGreen', localizeText(message))}\n`)
   }
 
   private writeProgress(prefix: string, message: string) {

@@ -33,9 +33,24 @@ export type ManagedPlaywrightJobRequest = {
   target: ManagedPlaywrightSafeTarget
   taskId: string | null
   capabilityRoute: TaskCapabilityRoute | null
+  fallback: ManagedPlaywrightFallbackPlan | null
   browserVisibility: BrowserVisibility
   pagePolicy?: ManagedPagePolicy | undefined
   actions: readonly VisibleActionRequest[]
+}
+
+export type ManagedPlaywrightFallbackAlternative = {
+  provider: ProviderId
+  target: ManagedPlaywrightSafeTarget
+  capabilityRoute: TaskCapabilityRoute
+  actions: readonly VisibleActionRequest[]
+}
+
+export type ManagedPlaywrightFallbackPlan = {
+  protocol: 'tokenless.provider-fallback.v1'
+  mode: 'automatic'
+  replay: 'from_start'
+  alternatives: readonly ManagedPlaywrightFallbackAlternative[]
 }
 
 export type CreateManagedPlaywrightJobRequestInput = {
@@ -43,6 +58,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   target?: Partial<ManagedPlaywrightSafeTarget> | undefined
   taskId?: string | null | undefined
   capabilityRoute?: TaskCapabilityRoute | null | undefined
+  fallback?: ManagedPlaywrightFallbackPlan | null | undefined
   browserVisibility?: unknown
   pagePolicy?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
@@ -77,6 +93,7 @@ export function createManagedPlaywrightJobRequest(
     target,
     taskId: validateTaskId(input.taskId ?? null),
     capabilityRoute: input.capabilityRoute ?? null,
+    fallback: input.fallback ?? null,
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
     actions,
@@ -90,7 +107,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'pagePolicy'],
+    ['capabilityRoute', 'fallback', 'pagePolicy'],
     'invalid_playwright_job_request',
   )
   if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
@@ -112,6 +129,9 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   const capabilityRoute = input.capabilityRoute === undefined || input.capabilityRoute === null
     ? null
     : validateJobCapabilityRoute(input.capabilityRoute, provider.id)
+  const fallback = input.fallback === undefined || input.fallback === null
+    ? null
+    : validateFallbackPlan(input.fallback, provider.id, capabilityRoute)
   const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
   const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
   if (!Array.isArray(input.actions) || input.actions.length < 1 || input.actions.length > 100) {
@@ -135,10 +155,66 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     target,
     taskId,
     capabilityRoute,
+    fallback,
     browserVisibility,
     ...(pagePolicy === undefined ? {} : { pagePolicy }),
     actions,
   }
+}
+
+function validateFallbackPlan(
+  input: unknown,
+  currentProvider: ProviderId,
+  currentRoute: TaskCapabilityRoute | null,
+): ManagedPlaywrightFallbackPlan {
+  if (!isPlainRecord(input)) {
+    throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback plan must be an object.')
+  }
+  requireExactKeys(input, ['protocol', 'mode', 'replay', 'alternatives'], 'invalid_playwright_job_fallback')
+  if (input.protocol !== 'tokenless.provider-fallback.v1' || input.mode !== 'automatic' || input.replay !== 'from_start') {
+    throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback policy is invalid.')
+  }
+  if (!currentRoute) {
+    throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback requires a capability route.')
+  }
+  if (!Array.isArray(input.alternatives) || input.alternatives.length < 1 || input.alternatives.length > 5) {
+    throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback requires one to five alternatives.')
+  }
+  const seen = new Set<ProviderId>([currentProvider])
+  const alternatives = input.alternatives.map((value) => {
+    if (!isPlainRecord(value)) {
+      throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback alternative must be an object.')
+    }
+    requireExactKeys(value, ['provider', 'target', 'capabilityRoute', 'actions'], 'invalid_playwright_job_fallback')
+    const provider = getProviderInstanceById(value.provider)
+    if (!provider || seen.has(provider.id)) {
+      throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback providers must be supported and unique.')
+    }
+    seen.add(provider.id)
+    const route = validateJobCapabilityRoute(value.capabilityRoute, provider.id)
+    if (!sameStringArray(route.requirements, currentRoute.requirements)) {
+      throw tokenlessError('invalid_playwright_job_fallback', 'Every fallback provider must satisfy the same run capability requirements.')
+    }
+    const target = validateSafeTarget(value.target, provider)
+    if (!Array.isArray(value.actions) || value.actions.length < 1 || value.actions.length > 100) {
+      throw tokenlessError('invalid_playwright_job_fallback', 'Managed Playwright fallback actions are invalid.')
+    }
+    const actions = value.actions.map((action) => validateVisibleActionRequest(action))
+    if (actions.some((action) => action.provider !== provider.id || !CORE_ACTIONS.has(action.action))) {
+      throw tokenlessError('invalid_playwright_job_fallback', 'Every fallback action must target its alternative provider.')
+    }
+    return { provider: provider.id, target, capabilityRoute: route, actions }
+  })
+  return {
+    protocol: 'tokenless.provider-fallback.v1',
+    mode: 'automatic',
+    replay: 'from_start',
+    alternatives,
+  }
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 function validateSafeTarget(input: unknown, provider: ProviderInstance): ManagedPlaywrightSafeTarget {

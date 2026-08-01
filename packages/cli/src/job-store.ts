@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeBrowserVisibility } from './browser-visibility.js'
+import { normalizeTokenlessLanguage, type TokenlessLanguage } from './localization.js'
 import { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 import { providerRegistry } from './providers/registry.js'
 import type { BrowserVisibility } from './browser-visibility.js'
@@ -27,6 +28,7 @@ export type TokenlessConfig = {
   browser: string | null
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
+  language: TokenlessLanguage
 }
 
 export function tokenlessHome(explicitHome = process.env.TOKENLESS_HOME) {
@@ -106,6 +108,9 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.daemonUrl !== undefined && payload.daemonUrl !== null && !normalizeDaemonUrl(payload.daemonUrl)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.language !== undefined && !normalizeTokenlessLanguage(payload.language)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   return {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
@@ -113,6 +118,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     browser: normalizeBrowserId(payload.browser),
     browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
+    language: normalizeTokenlessLanguage(payload.language) ?? 'en',
   }
 }
 
@@ -122,12 +128,14 @@ export async function writeTokenlessConfig({
   browser,
   browserVisibility,
   daemonUrl,
+  language,
 }: {
   homeDir?: string
   preferredProviders?: unknown
   browser?: unknown
   browserVisibility?: unknown
   daemonUrl?: unknown
+  language?: unknown
 } = {}) {
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
   await fs.chmod(homeDir, 0o700).catch(() => undefined)
@@ -143,6 +151,7 @@ export async function writeTokenlessConfig({
       ? current.browserVisibility
       : validateConfigBrowserVisibility(browserVisibility),
     daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
+    language: language === undefined ? current.language : validateConfigLanguage(language),
   }
   await writeJsonAtomic(configPath(homeDir), config, 0o600)
   return config
@@ -156,6 +165,23 @@ function emptyTokenlessConfig(): TokenlessConfig {
     browser: null,
     browserVisibility: 'auto',
     daemonUrl: null,
+    language: 'en',
+  }
+}
+
+function validateConfigLanguage(value: unknown): TokenlessLanguage {
+  const language = normalizeTokenlessLanguage(value)
+  if (!language) throw configError('tokenless_config_invalid', 'Invalid Tokenless language; expected en or zh-CN.')
+  return language
+}
+
+export async function hasConfiguredTokenlessLanguage(homeDir = tokenlessHome()) {
+  try {
+    const payload = JSON.parse(await fs.readFile(configPath(homeDir), 'utf8')) as unknown
+    return isJsonRecord(payload) && Object.hasOwn(payload, 'language')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
   }
 }
 

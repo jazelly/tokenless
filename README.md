@@ -54,7 +54,7 @@ Then follow the interactive setup:
 tokenless setup
 ```
 
-Installing the package is only the first step. Complete `tokenless setup` before using Tokenless; it prepares the local runtime, creates or imports a browser profile, and checks every enabled provider.
+Installing the package is only the first step. Complete `tokenless setup` before using Tokenless; it prepares the local runtime, creates or imports a browser profile, and checks every enabled provider. On first setup, Tokenless selects English or Simplified Chinese from the system locale and saves the choice as `language` in `~/.tokenless/config.json`. English is the fallback. The preference controls human-readable CLI text and the default provider response language; an explicit language request in the prompt still wins. Change it later with `tokenless config --language en` or `tokenless config --language zh-CN`.
 
 Requires Node.js 22.13+ and Chrome, Brave, Edge, Arc, or Chromium.
 

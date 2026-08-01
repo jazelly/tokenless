@@ -14,7 +14,7 @@ tokenless setup
 tokenless doctor --json
 ```
 
-`setup` installs the required agent skills, prepares the local daemon, creates or imports a managed browser profile, and checks every enabled provider once.
+`setup` installs the required agent skills, prepares the local daemon, creates or imports a managed browser profile, and checks every enabled provider once. On first setup it also detects `en` or `zh-CN` from the system locale; use `tokenless config --language <en|zh-CN>` to override the saved preference.
 
 For a clean non-interactive profile:
 
