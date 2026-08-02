@@ -44,6 +44,8 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('setup-label').fill('Work')
       await page.getByTestId('setup-role').fill('Research')
       await page.getByTestId('setup-visibility').selectOption('headless')
+      assert.equal(await page.locator('.provider-pill').filter({ hasText: 'ChatGPT' }).locator('input').isChecked(), true)
+      assert.equal(await page.locator('.provider-pill').filter({ hasText: 'Gemini' }).locator('input').isChecked(), false)
       await page.getByTestId('finish-setup').click()
       await page.getByTestId('profiles-view').waitFor()
 

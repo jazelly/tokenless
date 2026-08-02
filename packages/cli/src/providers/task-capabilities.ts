@@ -10,6 +10,7 @@ export const TASK_CAPABILITIES = Object.freeze({
   FILE_UPLOAD: 'file.upload',
   IMAGE_INPUT: 'image.input',
   AUDIO_INPUT: 'audio.input',
+  AUDIO_TRANSCRIPTION: 'audio.transcription',
   VIDEO_INPUT: 'video.input',
   URL_INPUT: 'url.input',
   REPOSITORY_IMPORT: 'repository.import',
@@ -203,6 +204,17 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
   }),
   inputCapability(TASK_CAPABILITIES.IMAGE_INPUT, 'Image input', 'Deliver an image as provider input.'),
   inputCapability(TASK_CAPABILITIES.AUDIO_INPUT, 'Audio input', 'Deliver audio as provider input.'),
+  defineCapability({
+    id: TASK_CAPABILITIES.AUDIO_TRANSCRIPTION,
+    title: 'Audio transcription',
+    description: 'Produce a completed visible transcript correlated to caller-selected audio.',
+    family: 'retrieval_reasoning',
+    lifecycle: 'interactive',
+    sideEffects: ['upload_content', 'submit_prompt', 'persist_provider_state'],
+    implies: [TASK_CAPABILITIES.AUDIO_INPUT],
+    requiredEvidence: ['source_audio_correlation', 'completed_visible_transcript'],
+    outputKinds: ['text'],
+  }),
   inputCapability(TASK_CAPABILITIES.VIDEO_INPUT, 'Video input', 'Deliver video as provider input.'),
   defineCapability({
     id: TASK_CAPABILITIES.URL_INPUT,
@@ -401,6 +413,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('qwen', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['qwen-mode-workspace']),
   route('perplexity', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-citations']),
   route('zai', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
+  route('doubao', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
+  route('doubao', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 
 const DEFINITION_BY_ID = new Map(TASK_CAPABILITY_CATALOG.map((definition) => [definition.id, definition]))

@@ -104,7 +104,7 @@ try {
   await fs.writeFile(path.join(tokenlessHome, 'config.json'), `${JSON.stringify({
     protocol: 'tokenless.config.v1',
     updatedAt: new Date().toISOString(),
-    preferredProviders: providers,
+    providerWhitelist: providers,
     browser: 'profile',
     browserVisibility: 'auto',
     daemonUrl: null,

@@ -75,6 +75,7 @@ const capabilityZh: Record<string, readonly [string, string]> = {
   'file.upload': ['上传文件', '附加调用方选择的文件，并证明 provider 已在可见界面接收。'],
   'image.input': ['图片输入', '把图片作为 provider 输入。'],
   'audio.input': ['音频输入', '把音频作为 provider 输入。'],
+  'audio.transcription': ['音频转写', '生成与调用方所选音频对应的完整可见文字稿。'],
   'video.input': ['视频输入', '把视频作为 provider 输入。'],
   'url.input': ['URL 输入', '把调用方授权的 URL 作为 provider 输入。'],
   'repository.import': ['导入代码仓库', '通过 provider 原生流程导入已授权的代码仓库。'],

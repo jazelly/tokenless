@@ -253,6 +253,7 @@ async function visibleAttachmentEvidence(page: Page, attachments: readonly Attac
       '[aria-label*="attachment" i]',
       '[aria-label*="upload" i]',
       '[aria-label*="file" i]',
+      '[class*="attachment-node-"]',
       '[title]',
       '[role="listitem"]',
       '[role="status"]',

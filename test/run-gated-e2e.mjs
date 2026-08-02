@@ -89,10 +89,14 @@ function resolveDefinition(name, arguments_) {
   }
 
   if (name === 'web-ui-provider') {
-    if (arguments_.length !== 0) failUsage('web-ui-provider does not accept a gate argument')
+    const options = parseWebUiFixtureArguments(arguments_)
     return {
       testPath: 'test/live-web-ui-provider.e2e.mjs',
-      environment: { TOKENLESS_LIVE_WEB_UI_GATE: 'representative-provider' },
+      environment: {
+        TOKENLESS_LIVE_WEB_UI_GATE: 'representative-provider',
+        TOKENLESS_LIVE_WEB_UI_FIXTURE_FILE: options.fixtureFile,
+        TOKENLESS_LIVE_WEB_UI_FIXTURE: options.fixture,
+      },
     }
   }
 
@@ -104,6 +108,32 @@ function failUsage(message) {
   console.error('Usage: node test/run-gated-e2e.mjs browser-runtime [--expected-auto system|managed-chromium]')
   console.error('   or: node test/run-gated-e2e.mjs managed-playwright <all|non_submission|mutation|project>')
   console.error('   or: node test/run-gated-e2e.mjs provider-fallback')
-  console.error('   or: node test/run-gated-e2e.mjs web-ui-provider')
+  console.error('   or: node test/run-gated-e2e.mjs web-ui-provider [--fixture <case-or-suite>] [--fixture-file <path>]')
   process.exit(2)
+}
+
+function parseWebUiFixtureArguments(arguments_) {
+  let fixture = 'smoke'
+  let fixtureFile = path.join(root, 'test/fixtures/local/web-ui.json')
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index]
+    const value = arguments_[index + 1]
+    if (argument === '--fixture') {
+      if (!value || value.startsWith('--')) failUsage('web-ui-provider --fixture requires a case or suite name')
+      fixture = value
+      index += 1
+      continue
+    }
+    if (argument === '--fixture-file') {
+      if (!value || value.startsWith('--')) failUsage('web-ui-provider --fixture-file requires a path')
+      fixtureFile = path.resolve(root, value)
+      index += 1
+      continue
+    }
+    failUsage(`web-ui-provider does not support '${argument}'`)
+  }
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(fixture)) {
+    failUsage('web-ui-provider fixture selection must use lowercase letters, numbers, and hyphens')
+  }
+  return { fixture, fixtureFile }
 }

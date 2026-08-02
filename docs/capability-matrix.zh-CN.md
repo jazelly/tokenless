@@ -46,10 +46,10 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 下表概括 checked-in routes；CLI 输出是当前列表的权威来源。
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental |
-| `file.upload` | Supported | Supported | — | Supported | — | — | — | — |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental |
+| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental |
 
 `—` 表示目前没有公开 route，不一定代表 provider 产品没有该功能；也可能是 implementation 或真实 provider evidence 尚未完成。
 
@@ -71,6 +71,27 @@ Perplexity `conversation.chat` 已作为 experimental route 对外提供。Guest
 
 Z.ai `conversation.chat` 已作为 experimental route 对外提供。Guest continuation、prompt draft、submission、completed visible answer、conversation mapping 与 durable state 已通过 built CLI、packaged daemon、runtime-bound Cloak profile 和真实 provider network。由于测试机器的 system resolver 无法解析官方 `chat.z.ai` origin，acceptance run 使用了仅限 E2E 的 process-local resolver mapping；production 不会硬编码该地址，并会在本机 DNS 无法解析时 fail closed。Continuation、files、model 或 effort selection 及 GLM 高级工作流仍不公开。
 
+Doubao `file.upload` 已作为 experimental route 对外提供文件选择能力。可见加号控件、provider 文件 input 与显示已接收文件名的卡片，均已通过 built CLI、packaged daemon、runtime-bound Cloak profile 和真实 provider network。`conversation.chat` 仍注册为需要登录的 experimental route：同一产品链路中的 readiness 与 prompt drafting 已通过，两次直接提交也得到了关联的可见 marker 回复。由于附着 E2E observer 时豆包显示 provider 自有的可见验证 iframe，所需 built-product mutation gate 尚未达到 release closure；challenge detection 会以 `visible_provider_blocker` fail closed。
+
+豆包还公开 provider-specific 的 `doubao.mode` 与 `doubao.skill` actions。真实 non-submission gate 已检查、选择、在可见 DOM 中确认并恢复快速、专家、工作任务 Turbo，以及每一个适合 coding 工作流且可用的 Web 技能。可见 UI 要求升级时，工作任务 Pro 会报告 unavailable；录音转写的 Web 入口只提供桌面版下载流程，因此也报告 unavailable。这些 controls 会映射到 canonical candidates，但选择控件本身不能证明完整 outcome lifecycle，所以 generation、research、reasoning、background-task、transcription 与 spreadsheet routes 目前均不公开。
+
+豆包 `auth.status` 也会读取可见账号控件，且只打开它的账号菜单。可见的“升级到专业版”会被派生为 `免费版` / `signed_in_free`；尚未观察的付费账号状态仍返回 `signed_in_unknown`，不会把购买页默认选中的报价误当成已购套餐。
+
+| Doubao control | Canonical outcome candidates | Public route state |
+| --- | --- | --- |
+| 快速 | `conversation.chat` | Chat mutation gate pending |
+| 专家 | `reasoning.extended` | Control 已闭环；outcome gate pending |
+| 工作任务 Turbo / Pro | `task.background`, `task.interactive` | Turbo control 已闭环；Pro 可见要求升级；outcome gates pending |
+| 帮我写作 | `document.generation` | Control 已闭环；artifact gate pending |
+| PPT 生成 | `presentation.generation` | Control 已闭环；artifact gate pending |
+| 图像生成 | `image.generation` | Control 已闭环；artifact gate pending |
+| 视频生成 | `video.generation` | Control 已闭环；artifact gate pending |
+| 深入研究 | `research.deep` | Control 已闭环；research lifecycle gate pending |
+| AI 播客 / 音乐生成 | `audio.generation` | Controls 已闭环；artifact gates pending |
+| 解题答疑 | `conversation.chat`, `reasoning.extended` | Control 已闭环；reasoning outcome gate pending |
+| AI 表格 | `spreadsheet.generation`, `data.analyze` | Control 已闭环；artifact 与 analysis gates pending |
+| 录音转写 | `audio.transcription` | Web 不可用；需要桌面版 |
+
 ## Capability families
 
 V1 catalog 按持久语义分组，而不是按 provider marketing category 分组：
@@ -79,7 +100,7 @@ V1 catalog 按持久语义分组，而不是按 provider marketing category 分�
 | --- | --- |
 | Conversation | `conversation.chat`, `conversation.continue` |
 | Input | `file.upload`, `image.input`, `audio.input`, `video.input`, `url.input`, `repository.import` |
-| Retrieval and reasoning | `search.web`, `research.deep`, `reasoning.extended`, `code.execute`, `data.analyze` |
+| Retrieval and reasoning | `search.web`, `research.deep`, `reasoning.extended`, `audio.transcription`, `code.execute`, `data.analyze` |
 | Media generation | `image.generation`, `image.edit`, `video.generation`, `audio.generation` |
 | Artifact generation | `document.generation`, `presentation.generation`, `spreadsheet.generation`, `website.generation` |
 | Workspace and knowledge | `workspace.native`, `workspace.instructions`, `workspace.knowledge`, `source.connected` |

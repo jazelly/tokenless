@@ -111,22 +111,21 @@ The router returns one `CapabilityRoute` containing the selected provider, profi
 
 1. Validate the requested capability set and infer structurally required capabilities. Attachments imply `file.upload`; native workspace intent implies `workspace.native`.
 2. If the caller supplied an explicit provider constraint, evaluate only that provider and fail rather than silently switching.
-3. Otherwise, if `preferredProviders` is configured, use membership in that list as the complete provider filter.
-4. Otherwise, use every enabled provider in stable setup order.
-5. Remove providers without implemented and real-E2E-closed mappings for every required capability.
-6. Evaluate current profile access, visible availability, blockers, subscription-aware capacity, and plan limits through read-only inspection and the scheduler capacity policy.
-7. Select an eligible provider through the general capacity, fairness, and route-selection algorithm.
-8. If no single provider satisfies the complete request, fail with every evaluated provider and structured reasons.
+3. Otherwise, use profile membership or `providerWhitelist` as the complete provider filter; the persisted default contains every non-disabled provider except Gemini.
+4. Remove providers without implemented and real-E2E-closed mappings for every required capability.
+5. Evaluate current profile access, visible availability, blockers, subscription-aware capacity, and plan limits through read-only inspection and the scheduler capacity policy.
+6. Select an eligible provider through the general capacity, fairness, and route-selection algorithm.
+7. If no single provider satisfies the complete request, fail with every evaluated provider and structured reasons.
 
-V1 never splits one successful execution across multiple providers and never submits trial prompts while routing. Runtime fallback replays the authorized request from the beginning only before submission and only when completed mutations are reconstructable; it does not treat provider-local partial work as portable completion. `preferredProviders` defines candidate membership and supplies the final deterministic tie-breaker after capability compatibility, runtime eligibility, rate-limit capacity, evidence maturity, fairness, and profile health. Fallback never escapes the configured provider set.
+V1 never splits one successful execution across multiple providers and never submits trial prompts while routing. Runtime fallback replays the authorized request from the beginning only before submission and only when completed mutations are reconstructable; it does not treat provider-local partial work as portable completion. `providerWhitelist` defines candidate membership and supplies the final deterministic tie-breaker after capability compatibility, runtime eligibility, rate-limit capacity, evidence maturity, fairness, and profile health. Fallback never escapes the configured provider set.
 
-The existing `preferredProviders` name does not imply that preference can override safety or capability evidence. Its order affects only otherwise equivalent routes; the public routing contract must keep that precedence explicit.
+`providerWhitelist` defines membership rather than preference. Its order affects only otherwise equivalent routes; the public routing contract must keep that precedence explicit.
 
 For example, if `research.deep` is currently closed only for Qwen:
 
-- preferences `[chatgpt, qwen]` route to Qwen;
-- preferences `[chatgpt, claude]` fail without escaping the configured scope;
-- no preferences route to Qwen if the selected profile can use the proven strategy; and
+- whitelist `[chatgpt, qwen]` routes to Qwen;
+- whitelist `[chatgpt, claude]` fails without escaping the configured scope;
+- the default whitelist routes to Qwen if the selected profile can use the proven strategy; and
 - an explicit `provider=chatgpt` constraint fails rather than switching to Qwen.
 
 Provider-specific tuning remains secondary. A canonical capability uses a documented default provider strategy. Add cross-provider parameters only when their semantics can be defined honestly. Advanced low-level CLI controls may remain for diagnostics and explicit human use, but agents should not need them for the primary flow.
@@ -370,7 +369,7 @@ Exit: a second agent can complete the same exact-binding and context-handoff wor
 | Plugin surface changes | Keep the agent-neutral local protocol independently usable |
 | MCP host caches tools or ignores list-change notifications | Keep the v1 tool list stable and return runtime provider eligibility in route results |
 | Agent invents or edits a provider option label | Accept canonical capability identifiers and keep provider labels out of the primary MCP interface |
-| Preferred providers cannot satisfy the request | Fail with candidate reasons; do not silently escape the configured scope |
+| Provider whitelist cannot satisfy the request | Fail with candidate reasons; do not silently escape the configured scope |
 | Provider availability changes during routing | Re-check visible route preconditions before the first mutation |
 | Similar provider features do not have equivalent outcomes | Define capability semantics by required evidence and keep non-equivalent strategies provider-specific |
 | Tool annotations are treated as authorization | Enforce authorization and mutation policy inside Tokenless; annotations remain hints |

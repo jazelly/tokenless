@@ -45,6 +45,10 @@ export type {
   DeepSeekMode,
   DeepSeekModeSelectionPayload,
   DeepSeekToggleSelectionPayload,
+  DoubaoMode,
+  DoubaoModeSelectionPayload,
+  DoubaoSkill,
+  DoubaoSkillSelectionPayload,
   WorkspaceEnsureActionRequest,
   WorkspaceEnsurePayload,
 } from '../providers/contracts.js'
@@ -52,6 +56,8 @@ export type {
 import type {
   AttachmentInput,
   DeepSeekMode,
+  DoubaoMode,
+  DoubaoSkill,
   VisibleAction,
   VisibleActionProtocolVersion,
   VisibleActionRequest,
@@ -236,6 +242,63 @@ export type DeepSeekToggleSelectResult = {
   supported: false
   activeMode: DeepSeekMode | null
   reason: 'unsupported_by_provider' | 'selector_not_available' | 'unavailable_in_mode'
+}
+
+export type DoubaoModeChoice = {
+  mode: DoubaoMode
+  nativeLabel: string
+  description: string
+  canonicalCapabilities: readonly string[]
+  enabled: boolean
+  selected: boolean
+  reason: 'upgrade_required' | null
+}
+
+export type DoubaoModeInspectResult = {
+  supported: true
+  activeMode: DoubaoMode
+  modes: readonly DoubaoModeChoice[]
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available'
+}
+
+export type DoubaoModeSelectResult = {
+  supported: true
+  selectedMode: DoubaoMode
+  nativeLabel: string
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_mode_not_found' | 'mode_unavailable'
+}
+
+export type DoubaoSkillChoice = {
+  skill: DoubaoSkill
+  nativeLabel: string
+  canonicalCapabilities: readonly string[]
+  enabled: boolean
+  selected: boolean
+  reason: 'desktop_app_required' | null
+}
+
+export type DoubaoSkillInspectResult = {
+  supported: true
+  activeSkill: DoubaoSkill
+  skills: readonly DoubaoSkillChoice[]
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available'
+}
+
+export type DoubaoSkillSelectResult = {
+  supported: true
+  selectedSkill: DoubaoSkill
+  nativeLabel: string
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_skill_not_found' | 'skill_unavailable'
 }
 
 export type FileUploadResult = {
@@ -452,6 +515,10 @@ export type VisibleActionResult = (
   | DeepSeekModeSelectResult
   | DeepSeekToggleInspectResult
   | DeepSeekToggleSelectResult
+  | DoubaoModeInspectResult
+  | DoubaoModeSelectResult
+  | DoubaoSkillInspectResult
+  | DoubaoSkillSelectResult
   | FileUploadResult
   | WorkspaceEnsureResult
   | PromptInputResult

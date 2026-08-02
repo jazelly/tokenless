@@ -238,6 +238,22 @@
         "restore_original"
       ]
     },
+    "doubao-controls": {
+      "gate": "non_submission",
+      "submissions": 0,
+      "actions": [
+        "doubao.mode.inspect",
+        "doubao.mode.select",
+        "doubao.skill.inspect",
+        "doubao.skill.select"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "durable_state",
+        "restore_original"
+      ]
+    },
     "native-project": {
       "gate": "project",
       "submissions": 2,
@@ -278,6 +294,7 @@
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_yet_proven"
       }
     },
@@ -299,7 +316,8 @@
         "deepseek-vision-input": "provider_specific_capability",
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
-        "qwen-mode-workspace": "provider_specific_capability"
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability"
       }
     },
     "gemini": {
@@ -320,6 +338,7 @@
         "conversation-workflow": "no_upload_or_continuation_closure_in_selected_guest_profile",
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_yet_proven"
       }
     },
@@ -341,7 +360,8 @@
         "deepseek-vision-input": "provider_specific_capability",
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
-        "qwen-mode-workspace": "provider_specific_capability"
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability"
       }
     },
     "qwen": {
@@ -362,6 +382,7 @@
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-citations": "covered_by_qwen_mode_workspace",
         "workspace-response-baseline": "covered_by_qwen_mode_workspace",
+        "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_proven"
       }
     },
@@ -383,6 +404,7 @@
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_observed"
       }
     },
@@ -404,6 +426,7 @@
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
         "native-project": "native_space_not_proven"
       }
     },
@@ -422,6 +445,29 @@
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
         "file-selection": "no_real_visible_attachment_closure",
+        "conversation-workflow": "no_real_attachment_or_continuation_closure",
+        "workspace-response-citations": "no_real_visible_citation_closure",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
+        "native-project": "native_project_not_observed"
+      }
+    },
+    "doubao": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "file-selection",
+        "doubao-controls",
+        "workspace-response-baseline"
+      ],
+      "unavailable": {
+        "model-choice": "no_real_selection_closure",
+        "effort-choice": "no_real_selection_closure",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-citations": "no_real_visible_citation_closure",
         "qwen-mode-workspace": "provider_specific_capability",

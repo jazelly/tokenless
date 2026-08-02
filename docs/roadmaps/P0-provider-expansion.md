@@ -33,6 +33,7 @@ As of 2026-08-02:
 - DeepSeek remains non-routeable until a selected signed-in managed profile independently closes the declared built-CLI and packaged-daemon baseline, continuation, Search/DeepThink, and file/image gates.
 - Perplexity is registered as an experimental guest provider, with readiness, prompt drafting, real submission, completed response, visible normalized citations, conversation mapping, and durable state closed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network;
 - Z.ai is registered as an experimental guest provider, with guest continuation, readiness, prompt drafting, real submission, completed response, conversation mapping, and durable state closed through the same managed-Cloak boundary; and
+- Doubao is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak non-submission gate closes readiness, prompt drafting, visible file acceptance, exact Fast/Expert/Work Task mode selection, nine coding-relevant Web skill selections, unavailable-state reporting, and restoration. Text-file `file.upload` is experimental and routeable. The same anti-detect configuration completed two direct correlated marker responses, while the built-product chat mutation release gate remains blocked by a visible provider verification iframe and fails closed as `visible_provider_blocker`; and
 - Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
 
 | Qwen capability | Current state | Evidence boundary |
@@ -59,6 +60,16 @@ As of 2026-08-02:
 | Conversation and continuation | Implemented, release gate pending | Same-conversation two-turn behavior was observed in authenticated Chrome; built-CLI packaged-daemon continuation remains the acceptance boundary |
 | Native workspace | Unavailable | No native workspace observed; conversation fallback only |
 
+| Doubao capability | Current state | Evidence boundary |
+| --- | --- | --- |
+| Signed-in composer | Experimental, available | Runtime-bound Cloak profile through built CLI and packaged daemon |
+| File upload | Experimental, routeable for text files | Visible plus control, provider input, and accepted filename card passed the real non-submission gate |
+| Mode selection | Experimental provider control | Fast, Expert, and Work Task Turbo selected and restored; Work Task Pro reports visible upgrade requirement |
+| Skill selection | Experimental provider control | Writing, presentation, image, video, deep research, podcast, music, problem solving, and spreadsheet skills selected and restored |
+| Audio transcription | Unavailable on Web | The visible Web entry presents a Doubao desktop-app download flow |
+| Generated and long-running outcomes | Candidate only | Control selection is closed; terminal artifacts, citations, progress, clarification, and background durability are not |
+| Chat mutation | Release gate blocked | Provider verification iframe is classified as `visible_provider_blocker`; no bypass or simulation |
+
 The maintained [Provider Capability Census](../provider-capability-census.md) records official product surfaces, current Tokenless evidence, candidate providers, and the proposed canonical capability schema.
 
 The next evaluation wave is:
@@ -67,7 +78,7 @@ The next evaluation wave is:
 2. Mistral Le Chat, prioritizing a second independent research/Project/artifact implementation; and
 3. DeepSeek Chat signed-in closure, prioritizing the compact baseline first, then mode selection, search, and files as independent capabilities.
 
-Doubao, Meta AI, Microsoft Copilot, Tencent Yuanbao, and MiniMax Agent remain scored candidates. Doubao requires product-policy review and live web reconnaissance before implementation. Meta AI is currently strongest as an image-generation/editing candidate rather than a Deep Research provider. MiniMax Agent requires a distinct long-horizon agent lifecycle and must not distort the baseline chat contract. This is a discovery order, not a claim that every candidate is already suitable for automation or will ship.
+Meta AI, Microsoft Copilot, Tencent Yuanbao, and MiniMax Agent remain scored candidates. Meta AI is currently strongest as an image-generation/editing candidate rather than a Deep Research provider. MiniMax Agent requires a distinct long-horizon agent lifecycle and must not distort the baseline chat contract. This is a discovery order, not a claim that every candidate is already suitable for automation or will ship.
 
 Official product entry points:
 

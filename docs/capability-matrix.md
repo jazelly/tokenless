@@ -46,10 +46,10 @@ Implications are expanded before provider selection. One provider must satisfy t
 
 This table summarizes checked-in routes. The CLI output is the authoritative current list.
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental |
-| `file.upload` | Supported | Supported | — | Supported | — | — | — | — |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental |
+| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental |
 
 `—` means no route is advertised. It does not necessarily mean the provider product lacks the feature; the implementation or real-provider evidence may still be incomplete.
 
@@ -71,6 +71,27 @@ Perplexity `conversation.chat` is experimental and routeable. Its guest session,
 
 Z.ai `conversation.chat` is experimental and routeable. Its guest continuation, prompt draft, submission, completed visible answer, conversation mapping, and durable state passed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network. The acceptance run used an E2E-only process-local resolver mapping because the test machine's system resolver did not resolve the official `chat.z.ai` origin; production never hardcodes that address and fails closed when local DNS cannot resolve it. Continuation, files, model or effort selection, and advanced GLM workflows remain unadvertised.
 
+Doubao `file.upload` is experimental and routeable for file selection. Its visible plus control, provider file input, and accepted filename card passed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network. `conversation.chat` remains registered as an experimental signed-in route: readiness and prompt drafting passed in the same product path, and two direct submissions completed with correlated visible marker responses. The required built-product mutation gate is not release-closed because Doubao presented its visible provider-owned verification iframe when the E2E observer was attached. Challenge detection fails closed as `visible_provider_blocker`.
+
+Doubao also exposes provider-specific `doubao.mode` and `doubao.skill` actions. The real non-submission gate inspected, selected, visibly verified, and restored Fast, Expert, Work Task Turbo, and every available coding-relevant Web skill. Work Task Pro is reported unavailable when the visible UI requires an upgrade; Audio Transcription is reported unavailable because the Web entry presents a desktop-app download flow. These controls map to canonical candidates, but selecting a control does not prove the complete outcome lifecycle, so no generation, research, reasoning, background-task, transcription, or spreadsheet route is advertised yet.
+
+Doubao `auth.status` also reads the visible account control and opens only its account menu. A visible `升级到专业版` item is derived as `免费版` / `signed_in_free`; unobserved paid-account states remain `signed_in_unknown` rather than being inferred from the purchase page's default selected offer.
+
+| Doubao control | Canonical outcome candidates | Public route state |
+| --- | --- | --- |
+| Fast | `conversation.chat` | Chat mutation gate pending |
+| Expert | `reasoning.extended` | Control closed; outcome gate pending |
+| Work Task Turbo / Pro | `task.background`, `task.interactive` | Turbo control closed; Pro visibly requires upgrade; outcome gates pending |
+| Help Me Write | `document.generation` | Control closed; artifact gate pending |
+| PPT Generation | `presentation.generation` | Control closed; artifact gate pending |
+| Image Generation | `image.generation` | Control closed; artifact gate pending |
+| Video Generation | `video.generation` | Control closed; artifact gate pending |
+| Deep Research | `research.deep` | Control closed; research lifecycle gate pending |
+| AI Podcast / Music Generation | `audio.generation` | Controls closed; artifact gates pending |
+| Problem Solving | `conversation.chat`, `reasoning.extended` | Control closed; reasoning outcome gate pending |
+| AI Spreadsheet | `spreadsheet.generation`, `data.analyze` | Control closed; artifact and analysis gates pending |
+| Audio Transcription | `audio.transcription` | Unavailable on Web; desktop app required |
+
 ## Capability Families
 
 The V1 catalog groups outcomes by durable semantics, not by provider marketing categories:
@@ -79,7 +100,7 @@ The V1 catalog groups outcomes by durable semantics, not by provider marketing c
 | --- | --- |
 | Conversation | `conversation.chat`, `conversation.continue` |
 | Input | `file.upload`, `image.input`, `audio.input`, `video.input`, `url.input`, `repository.import` |
-| Retrieval and reasoning | `search.web`, `research.deep`, `reasoning.extended`, `code.execute`, `data.analyze` |
+| Retrieval and reasoning | `search.web`, `research.deep`, `reasoning.extended`, `audio.transcription`, `code.execute`, `data.analyze` |
 | Media generation | `image.generation`, `image.edit`, `video.generation`, `audio.generation` |
 | Artifact generation | `document.generation`, `presentation.generation`, `spreadsheet.generation`, `website.generation` |
 | Workspace and knowledge | `workspace.native`, `workspace.instructions`, `workspace.knowledge`, `source.connected` |

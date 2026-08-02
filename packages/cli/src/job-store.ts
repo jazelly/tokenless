@@ -23,7 +23,7 @@ type JsonRecord = Record<string, unknown>
 export type TokenlessConfig = {
   protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
-  preferredProviders: string[]
+  providerWhitelist: string[]
   profilePreferences: Record<string, ManagedProfilePreferences>
   browser: BrowserSelection
   browserConnectionMode: BrowserConnectionMode
@@ -94,6 +94,9 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (!isJsonRecord(payload) || payload.protocol !== TOKENLESS_CONFIG_SCHEMA_ID) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.providerWhitelist !== undefined && !Array.isArray(payload.providerWhitelist)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   if (payload.preferredProviders !== undefined && !Array.isArray(payload.preferredProviders)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
@@ -118,7 +121,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   return {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
-    preferredProviders: normalizeProviderList(payload.preferredProviders),
+    providerWhitelist: configuredProviderWhitelist(payload),
     profilePreferences: normalizeProfilePreferences(payload.profilePreferences),
     browser: normalizeBrowserId(payload.browser) ?? 'auto',
     browserConnectionMode: normalizeBrowserConnectionMode(payload.browserConnectionMode) ?? 'playwright',
@@ -130,7 +133,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
 
 export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
-  preferredProviders,
+  providerWhitelist,
   profilePreferences,
   browser,
   browserConnectionMode,
@@ -139,7 +142,7 @@ export async function writeTokenlessConfig({
   language,
 }: {
   homeDir?: string
-  preferredProviders?: unknown
+  providerWhitelist?: unknown
   profilePreferences?: unknown
   browser?: unknown
   browserConnectionMode?: unknown
@@ -155,9 +158,9 @@ export async function writeTokenlessConfig({
     const config: TokenlessConfig = {
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
-      preferredProviders: preferredProviders === undefined
-        ? current.preferredProviders
-        : normalizeProviderList(preferredProviders),
+      providerWhitelist: providerWhitelist === undefined
+        ? current.providerWhitelist
+        : normalizeProviderList(providerWhitelist),
       profilePreferences: profilePreferences === undefined
         ? current.profilePreferences
         : validateProfilePreferences(profilePreferences),
@@ -180,7 +183,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
   return {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
-    preferredProviders: [],
+    providerWhitelist: defaultProviderWhitelist(),
     profilePreferences: {},
     browser: 'auto',
     browserConnectionMode: 'playwright',
@@ -188,6 +191,21 @@ function emptyTokenlessConfig(): TokenlessConfig {
     daemonUrl: null,
     language: 'en',
   }
+}
+
+function defaultProviderWhitelist() {
+  return [...providerRegistry.descriptors()]
+    .filter((provider) => provider.stage !== 'disabled' && provider.id !== 'gemini')
+    .sort((left, right) => left.setupOrder - right.setupOrder)
+    .map((provider) => provider.id)
+}
+
+function configuredProviderWhitelist(payload: JsonRecord) {
+  if (payload.providerWhitelist !== undefined) {
+    return normalizeProviderList(payload.providerWhitelist)
+  }
+  const legacyProviders = normalizeProviderList(payload.preferredProviders)
+  return legacyProviders.length > 0 ? legacyProviders : defaultProviderWhitelist()
 }
 
 function validateProfilePreferences(value: unknown) {

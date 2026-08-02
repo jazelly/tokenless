@@ -22,7 +22,7 @@ For a clean non-interactive profile:
 tokenless setup --fresh --json
 ```
 
-Fresh setup creates or reuses a profile only when its runtime binding is compatible, resolves the selected browser, and selects every provider whose registry stage is not `disabled`. A runtime-family change creates a clean profile instead of opening existing data with another browser. This includes experimental Qwen, DeepSeek, Perplexity, and Z.ai. It reports sign-in state without opening a sign-in handoff.
+Fresh setup creates or reuses a profile only when its runtime binding is compatible, resolves the selected browser, and uses the persisted `providerWhitelist`. Its default contains every provider whose registry stage is not `disabled` except Gemini; add Gemini explicitly with `--provider-whitelist` or through the dashboard. A runtime-family change creates a clean profile instead of opening existing data with another browser. The default includes experimental Qwen, DeepSeek, Perplexity, Z.ai, and Doubao. Setup reports sign-in state without opening a sign-in handoff.
 
 ## Run
 
@@ -70,8 +70,9 @@ Implicit normal runs persist compatible provider alternatives. Before prompt sub
 | DeepSeek | Experimental | Sign-in required |
 | Perplexity | Experimental | Guest supported |
 | Z.ai / GLM | Experimental | Guest supported |
+| Doubao / 豆包 | Experimental | Sign-in required |
 
-Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state.
+Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state. Doubao text-file selection is experimentally routeable; its advanced modes and Web skills are exposed as provider controls without advertising their still-unclosed outcome lifecycles.
 
 Inspect the current runtime capability state:
 
@@ -99,6 +100,10 @@ tokenless run \
 ```
 
 The experimental capability proves exact mode selection and the first correlated visible response. It does not yet claim Qwen's complete multi-turn final-report lifecycle. Auto, Thinking, and Fast remain effort choices selected with `--effort`.
+
+## Doubao Modes and Skills
+
+Doubao exposes exact provider controls through `doubao.mode.inspect/select` and `doubao.skill.inspect/select`. Stable English action payloads select the Chinese visible UI labels, and every selection requires a visible selected-state postcondition. Work Task Pro reports `upgrade_required`; Audio Transcription reports `desktop_app_required` because the Web entry offers a desktop-app download instead of a Web workflow. Translation is intentionally outside the coding-oriented skill inventory. Canonical mappings remain candidates until their complete generation, research, reasoning, transcription, or task lifecycle passes a separate real-provider gate.
 
 ## Workspaces
 

@@ -17,7 +17,7 @@
 
 ## Tokenless 能做什么
 
-Tokenless 为 AI Agent 提供一个统一的本地浏览器接口，用来访问 ChatGPT、Claude、Gemini、Grok、Qwen，以及实验阶段的 DeepSeek、Perplexity 和 Z.ai adapter，从而减少 Agent 侧 token 消耗，也不需要配置这些服务的 API Key。
+Tokenless 为 AI Agent 提供一个统一的本地浏览器接口，用来访问 ChatGPT、Claude、Gemini、Grok、Qwen，以及实验阶段的 DeepSeek、Perplexity、Z.ai 和 Doubao / 豆包 adapter，从而减少 Agent 侧 token 消耗，也不需要配置这些服务的 API Key。
 
 它不只是把 prompt 填进网页。Tokenless 会把各家 provider 真正提供的网页工作流适配成一个供 Agent 使用的本地接口：
 
@@ -43,6 +43,7 @@ Tokenless 为 AI Agent 提供一个统一的本地浏览器接口，用来访问
 | DeepSeek | 实验阶段 | 需要 |
 | Perplexity | 实验阶段 | 不需要 |
 | Z.ai / GLM | 实验阶段 | 不需要 |
+| Doubao / 豆包 | 实验阶段 | 需要 |
 
 ## 安装与初始化
 
@@ -71,6 +72,8 @@ tokenless dashboard
 每个 managed profile 都会绑定创建它的 browser runtime。Tokenless 不会把 system-browser profile 静默改用 Cloak 或 managed fallback 打开；切换 runtime family 会创建 clean profile。Tokenless 不会把现有 Chrome、Brave 或 Cloak profile 及其中的 cookies 和认证状态复制进 managed profile。请打开 clean managed profile 并在其中手动登录；之后由浏览器自己跨 job 保留 session。
 
 首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制 CLI、控制台和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可在控制台中修改，也可运行 `tokenless config --language en` 或 `tokenless config --language zh-CN`。
+
+Config 使用 `providerWhitelist` 作为 provider routing 边界。默认值包含除 Gemini 外的所有非 `disabled` provider；可以在 setup 中、通过 `tokenless config --provider-whitelist ...`，或在控制台中显式启用 Gemini。
 
 为评估 browser capability，config 文件接受实验性的 `browserConnectionMode: "playwright" | "cdp"`；默认值为 `playwright`，不提供 CLI flag，并在 daemon 重启后生效。
 
@@ -109,6 +112,8 @@ Tokenless 会合并显式 capability 与结构化输入推导出的要求。普�
 可以使用 `tokenless provider-action --action capability.inspect --provider <provider> --json` 检查某家 provider 当前可用的具体能力。
 
 DeepSeek 提供 provider-specific 的 `Instant`、`Expert`、`Vision` mode，以及独立的 `DeepThink` 与 `Search` 控件。可分别使用 `deepseek.mode.inspect`、`deepseek.deepthink.inspect` 和 `deepseek.search.inspect` 检查；Search 与文件能力会随 mode 变化，Tokenless 不会只根据 mode 名称推断能力。
+
+豆包通过 `doubao.mode.inspect/select` 与 `doubao.skill.inspect/select` 公开 provider-specific modes 和适合 coding 工作流的 Web skills。Runtime 会报告可见的升级限制与 desktop-only 限制，不会强行点击受限流程。Text-file `file.upload` 已作为 experimental route 提供；在每种生成或长任务 outcome 分别通过真实 provider release gate 前，skill selection 仅作为 control evidence。
 
 对于显式 DeepSeek run，`search.web` 会在浏览器 mutation 前准备 Instant 并启用 Search，`reasoning.extended` 会启用 DeepThink，`image.input` 会准备 Vision。在声明的真实 provider release gate 通过之前，这些 canonical route 仍会 fail closed。
 

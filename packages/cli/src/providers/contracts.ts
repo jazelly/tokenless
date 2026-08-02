@@ -25,6 +25,10 @@ export const VISIBLE_ACTIONS = Object.freeze({
   DEEPSEEK_DEEPTHINK_SELECT: 'deepseek.deepthink.select',
   DEEPSEEK_SEARCH_INSPECT: 'deepseek.search.inspect',
   DEEPSEEK_SEARCH_SELECT: 'deepseek.search.select',
+  DOUBAO_MODE_INSPECT: 'doubao.mode.inspect',
+  DOUBAO_MODE_SELECT: 'doubao.mode.select',
+  DOUBAO_SKILL_INSPECT: 'doubao.skill.inspect',
+  DOUBAO_SKILL_SELECT: 'doubao.skill.select',
   FILE_UPLOAD: 'file.upload',
   WORKSPACE_ENSURE: 'workspace.ensure',
   PROMPT_INPUT: 'prompt.input',
@@ -81,6 +85,25 @@ export type DeepSeekModeSelectionPayload = {
 }
 export type DeepSeekToggleSelectionPayload = {
   enabled: boolean
+}
+export type DoubaoMode = 'fast' | 'expert' | 'work-task-turbo' | 'work-task-pro'
+export type DoubaoModeSelectionPayload = {
+  mode: DoubaoMode
+}
+export type DoubaoSkill =
+  | 'chat'
+  | 'document-writing'
+  | 'presentation-generation'
+  | 'image-generation'
+  | 'video-generation'
+  | 'deep-research'
+  | 'audio-podcast'
+  | 'music-generation'
+  | 'problem-solving'
+  | 'spreadsheet-generation'
+  | 'audio-transcription'
+export type DoubaoSkillSelectionPayload = {
+  skill: DoubaoSkill
 }
 export type FileUploadPayload = {
   attachments: readonly AttachmentInput[]
@@ -161,6 +184,22 @@ export type DeepSeekSearchSelectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.DEEPSEEK_SEARCH_SELECT,
   DeepSeekToggleSelectionPayload
 >
+export type DoubaoModeInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DOUBAO_MODE_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type DoubaoModeSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DOUBAO_MODE_SELECT,
+  DoubaoModeSelectionPayload
+>
+export type DoubaoSkillInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DOUBAO_SKILL_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type DoubaoSkillSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.DOUBAO_SKILL_SELECT,
+  DoubaoSkillSelectionPayload
+>
 export type FileUploadActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.FILE_UPLOAD,
   FileUploadPayload
@@ -213,6 +252,10 @@ export type VisibleActionRequest =
   | DeepSeekDeepThinkSelectActionRequest
   | DeepSeekSearchInspectActionRequest
   | DeepSeekSearchSelectActionRequest
+  | DoubaoModeInspectActionRequest
+  | DoubaoModeSelectActionRequest
+  | DoubaoSkillInspectActionRequest
+  | DoubaoSkillSelectActionRequest
   | FileUploadActionRequest
   | WorkspaceEnsureActionRequest
   | PromptInputActionRequest

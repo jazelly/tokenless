@@ -1,5 +1,6 @@
 node_modules/
 test-results/
+test/fixtures/local/
 packages/cli/npm/*/bin/
 dist/
 packages/*/dist/

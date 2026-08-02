@@ -6,8 +6,8 @@ This is a product reconnaissance record, not a Tokenless support declaration. Of
 
 The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V1 routeable outcomes are:
 
-- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, experimental Qwen, experimental Perplexity, and experimental Z.ai;
-- `file.upload`: ChatGPT, Claude, and Grok.
+- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, experimental Qwen, experimental Perplexity, experimental Z.ai, and experimental Doubao;
+- `file.upload`: ChatGPT, Claude, Grok, and experimental Doubao.
 
 All other entries below remain discoverable candidates. In particular, `workspace.native`, `research.deep`, citations as a required production postcondition, continuation as an explicit capability, generated media, and generated work artifacts remain non-routeable until their complete execution contracts are implemented and real-provider E2E-closed.
 
@@ -37,6 +37,7 @@ The product surface is broader than the current Tokenless evidence. The middle c
 | DeepSeek | Signed-in web chat, Instant/Expert/Vision modes, DeepThink, web search, broad file and image input, and synchronized chat history | Signed-in Instant/Expert/Vision controls and baseline, DeepThink, and Search response states are provenance-captured from the user-controlled Chrome session. Exact mode/toggle actions, correlated final-answer parsing, grounded citation parsing, mode-aware file behavior, and canonical run inference are implemented. Real baseline submission, same-conversation continuation, DeepThink output, and visible Search citations were observed in that session; routes and file/image acceptance remain gated on built-CLI managed-profile E2E |
 | Perplexity | Web search with citations, Pro Search, Advanced Deep Research, file-aware research, Spaces, model selection, image generation/editing, and multi-format asset creation | Experimental guest chat route with built-CLI managed-Cloak closure for readiness, prompt drafting, submission, completed response, normalized and visible citations, conversation mapping, and durable state; file acceptance, continuation, Deep Research, Spaces, model selection, and generated assets remain unadvertised |
 | Z.ai / GLM | GLM-5.2 web chat, 1M context, flexible effort levels, coding, and long-horizon agent strengths | Experimental guest chat route with built-CLI managed-Cloak closure for guest continuation, readiness, prompt drafting, submission, completed visible response, conversation mapping, and durable state; files, continuation, model or effort selection, and advanced GLM workflows remain unadvertised |
+| Doubao / 豆包 | Signed-in Chinese web chat; visible free-account discrimination; Fast, Expert, and Work Task modes; writing, presentation, image, video, deep-research, podcast, music, problem-solving, and spreadsheet Web skills; broad file input; desktop-only recording transcription entry | Experimental signed-in adapter with built-CLI managed-Cloak closure for readiness, prompt drafting, account-name and free-tier inspection, file acceptance, exact mode/skill selection, unavailable-state reporting, and restoration. Text-file `file.upload` is routeable. Advanced skill outcomes remain unadvertised until their full lifecycles close; the chat mutation gate remains release-blocked by a visible provider verification iframe |
 
 Official references:
 
@@ -48,6 +49,8 @@ Official references:
 - [DeepSeek V4 web modes](https://api-docs.deepseek.com/news/news260424), [DeepSeek web search](https://api-docs.deepseek.com/news/news1210/), and [DeepSeek file upload and synchronized history](https://api-docs.deepseek.com/news/news250115/)
 - [Perplexity overview](https://www.perplexity.ai/help-center/en/articles/10352895-how-does-perplexity-work), [Spaces](https://hub-prod.perplexity.ai/hub/faq/what-are-spaces), and [generated assets](https://www.perplexity.ai/help-center/en/articles/12528830-creating-assets-with-perplexity-overview)
 - [GLM-5.2 on Z.ai](https://z.ai/blog/glm-5.2)
+- [Doubao official feature introduction](https://www.doubao.com/legal/feature_intro)
+- [Doubao paid service agreement](https://www.doubao.com/legal/ey01)
 
 ## Candidate Web Providers
 
@@ -55,7 +58,6 @@ Official references:
 | --- | --- | --- | --- |
 | Kimi | `https://www.kimi.com/` | Web chat, built-in web search and deep thinking, large file inputs, asynchronous Deep Research with clarification, progress, citations and multi-format reports, general Agent, Agent Swarm, Docs, Sheets, Slides, Websites, image generation, and coding products | P1. Best next provider for proving the complete `research.deep`, background-task, and generated-artifact contracts |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search and citations, Deep Research, Think mode, Projects and Libraries, files, code interpreter, image generation/editing, Canvas, agents, and MCP connectors | P1. Broad capability match with relatively clear official documentation; useful second adapter for research and artifact semantics |
-| Doubao | `https://www.doubao.com/chat/` | The official web product and feature-introduction surface exist, but stable official web help does not currently provide enough detail to classify its advanced capability lifecycles | P2 pending policy and live reconnaissance. Review the product terms before automation work and treat every advanced capability as `unknown` until visibly proven |
 | Meta AI | `https://www.meta.ai/` | Web chat, voice, personalization, image generation and editing, multi-reference composition, search-grounded image creation, Discover, and limited document editor/import experiments | P2 image-first candidate. Do not infer Deep Research, stable file analysis, or document workflow from experiments |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | Web chat, Quick/Think Deeper/Smart modes, Deep Research, file upload, image generation/editing, Pages, connectors, voice, and browser-related experiences | Blocked in the 2026-08-01 Cloak precheck: the signed-out surface exposed Microsoft, Apple, and Google sign-in choices but no guest composer. Resume only with an explicitly selected setup-managed signed-in profile |
 | Tencent Yuanbao | `https://yuanbao.tencent.com/` | Web product, Tencent-enhanced web search, multi-format file reading, reasoning/model surfaces, and the broader Tencent content ecosystem | P2. Valuable Chinese search and file route; advanced artifact and workspace claims need official and live closure |
@@ -67,7 +69,6 @@ Official candidate references:
 - [Perplexity overview](https://www.perplexity.ai/help-center/en/articles/10352895-how-does-perplexity-work), [Spaces](https://hub-prod.perplexity.ai/hub/faq/what-are-spaces), [image generation](https://www.perplexity.ai/help-center/en/articles/10354781-generating-images-with-perplexity), and [generated assets](https://www.perplexity.ai/help-center/en/articles/12528830-creating-assets-with-perplexity-overview)
 - [Mistral Le Chat research and Projects](https://mistral.ai/news/le-chat-dives-deep/) and [Le Chat product surface](https://mistral.ai/news/all-new-le-chat/)
 - [DeepSeek V4 web modes](https://api-docs.deepseek.com/news/news260424) and [DeepSeek updates](https://api-docs.deepseek.com/updates/)
-- [Doubao official web product terms](https://www.doubao.com/legal/ey01) and [official feature introduction](https://www.doubao.com/legal/feature_intro)
 - [Meta AI web product](https://about.fb.com/news/2025/04/introducing-meta-ai-app-new-way-access-ai-assistant/) and [Muse Image on meta.ai](https://ai.meta.com/blog/introducing-muse-image-muse-video-msl/)
 - [Microsoft Copilot capabilities](https://support.microsoft.com/en-gb/microsoft-copilot), [Deep Research](https://support.microsoft.com/en-us/Microsoft-Copilot/deep-research-in-microsoft-copilot), and [file upload](https://support.microsoft.com/en-US/microsoft-copilot/file-upload-in-microsoft-copilot)
 - [Tencent Yuanbao web search](https://cloud.tencent.com/product/wsa) and [desktop file support](https://yuanbao.tencent.com/evt/dl)
@@ -77,11 +78,12 @@ Official candidate references:
 
 - Perplexity passed the real non-submission and mutation journeys through the built CLI, packaged daemon, runtime-bound Cloak profile, and provider network. Guest readiness, prompt drafting, completed response, normalized and visible citations, conversation mapping, and durable state are closed; `conversation.chat` is advertised as experimental. A later regression run declined the visible optional-cookie dialog but then reached `provider_sign_in_required`; no login was attempted, and that account-state-dependent rerun remains parked.
 - Z.ai passed its real non-submission and mutation journeys through the built CLI, packaged daemon, runtime-bound Cloak profile, and provider network. Guest continuation, readiness, prompt drafting, completed response, conversation mapping, and durable state are closed; `conversation.chat` is advertised as experimental. The test machine's system resolver still did not resolve `chat.z.ai`, so acceptance used a strict E2E-only process-local resolver mapping to the publicly resolved official origin. Production does not hardcode that address and fails closed when local DNS cannot resolve it.
+- Doubao was added as an experimental signed-in adapter after a user completed login in the runtime-bound Cloak profile. The expanded real non-submission journey passed readiness, prompt drafting, visible account-name and free-tier inspection, visible file acceptance, three available mode selections, nine Web skill selections, explicit upgrade/desktop-only unavailable states, and restoration through the built CLI and packaged daemon. `file.upload` is advertised as experimental. Two direct submissions through the same anti-detect configuration produced completed correlated marker responses, but the built-product mutation journey reached Doubao's visible provider verification iframe and correctly stopped as `visible_provider_blocker`; the chat gate remains a release prerequisite rather than being skipped or simulated.
 - Microsoft Copilot loaded without a challenge on both checks but exposed a sign-in surface and no guest composer. Per the authentication-skip policy, no login was attempted and no adapter was registered.
 
 ## Canonical Capability Schema
 
-The caller catalog must describe outcomes, not provider controls. `qwen.mode`, `deepseek.mode`, `deepseek.deepthink`, `deepseek.search`, `model.choice`, `effort.choice`, DOM selectors, and marketing model names stay inside provider strategy adapters. The DeepSeek adapter already prepares `reasoning.extended` as Instant plus DeepThink, `search.web` as Instant plus Search, and `image.input` as Vision before mutation. Those routes remain unadvertised until each complete visible lifecycle is independently E2E-closed through the built CLI and packaged daemon.
+The caller catalog must describe outcomes, not provider controls. `qwen.mode`, `deepseek.mode`, `deepseek.deepthink`, `deepseek.search`, `doubao.mode`, `doubao.skill`, `model.choice`, `effort.choice`, DOM selectors, and marketing model names stay inside provider strategy adapters. Doubao control inspection reports candidate mappings without making them routes: Expert maps to `reasoning.extended`; Work Task maps to background and interactive task semantics; the Web skills map to research, media, document, presentation, spreadsheet, data-analysis, and audio-transcription outcomes. The DeepSeek adapter already prepares `reasoning.extended` as Instant plus DeepThink, `search.web` as Instant plus Search, and `image.input` as Vision before mutation. Those routes remain unadvertised until each complete visible lifecycle is independently E2E-closed through the built CLI and packaged daemon.
 
 ### Proposed Capability Families
 
@@ -89,7 +91,7 @@ The caller catalog must describe outcomes, not provider controls. `qwen.mode`, `
 | --- | --- |
 | Conversation | `conversation.chat`, `conversation.continue` |
 | Inputs | `file.upload`, `image.input`, `audio.input`, `video.input`, `url.input`, `repository.import` |
-| Retrieval and reasoning | `search.web`, `research.deep`, `reasoning.extended`, `code.execute`, `data.analyze` |
+| Retrieval and reasoning | `search.web`, `research.deep`, `reasoning.extended`, `audio.transcription`, `code.execute`, `data.analyze` |
 | Media generation | `image.generation`, `image.edit`, `video.generation`, `audio.generation` |
 | Artifact generation | `document.generation`, `presentation.generation`, `spreadsheet.generation`, `website.generation` |
 | Workspace and knowledge | `workspace.native`, `workspace.instructions`, `workspace.knowledge`, `source.connected` |
@@ -165,6 +167,7 @@ Mode selection and the first correlated response are insufficient. Closure requi
 - `image.generation`: prove a completed visible image result and return a bounded artifact reference; text claiming that an image was created is not closure.
 - `image.edit`: prove that the edited result belongs to the submitted source image and instruction.
 - `video.generation` and `audio.generation`: handle long-running progress and return the completed playable or downloadable artifact.
+- `audio.transcription`: prove source-audio correlation and return the completed visible transcript rather than a file-selection or desktop-download prompt.
 - `file.upload`: a populated `FileList` proves selection only; a visible provider attachment state proves acceptance.
 
 ### Generated Work Artifacts

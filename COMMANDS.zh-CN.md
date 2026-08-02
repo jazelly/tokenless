@@ -57,9 +57,10 @@ qwen
 deepseek
 perplexity
 zai
+doubao
 ```
 
-ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity 和 Z.ai / GLM 目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
+ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM 和 Doubao / 豆包目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
 
 Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc`、`brave`、`managed-chromium` 和 `cloak`。`auto` 优先使用已安装的 system browser，仅在没有可用项时使用锁定的 managed fallback；`cloak` 必须显式选择。Tokenless 新建的 profile 默认是 clean 且绑定 runtime。也可以在提供 `--consent-local-profile-copy` 后复制一个明确选定的本机 Chromium profile；Tokenless 会把其中内容作为 opaque 本地文件树处理。
 
@@ -158,7 +159,7 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 
 - `--profile <slug>` 选择或命名 managed profile。
 - `--anti-detect` 显式选择 catalog 锁定的 CloakBrowser runtime，并在非交互 setup 中确认使用 clean 且绑定 Cloak 的 profile。显式 `--browser cloak` 具有相同确认语义；仅有已保存的 Cloak preference 会在下载前失败。
-- `--preferred-providers <list>` 在非交互 setup 中设置该 profile 的 provider membership。
+- `--provider-whitelist <list>` 在非交互 setup 中设置该 profile 的 provider membership。
 - `--no-open` 完成 setup，但不打开控制台。
 - `--browser <browser>` 选择 `auto`、一个精确 system browser、`managed-chromium` 或 `cloak`。
 - `--no-browser-download` 在缺少 managed runtime 时直接失败，而不是下载。
@@ -175,7 +176,9 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 
 Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 通常会创建 clean profile；显式 import 可以从选定的本机 Chromium profile 填充新建且绑定 runtime 的 profile。之后由 managed profile 自己跨 job 保留 browser-managed session。
 
-交互式 `setup` 会询问哪些 provider 属于当前 profile。非交互 setup 会依次使用 `--preferred-providers`、已有配置范围；没有任何范围时才使用全部非 `disabled` provider。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
+交互式 `setup` 会询问哪些 provider 属于当前 profile。非交互 setup 会依次使用 `--provider-whitelist`、已有 profile 范围或持久化的默认 whitelist。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
+
+默认 `providerWhitelist` 包含除 Gemini 外的所有非 `disabled` provider。Gemini 仍然可用，可通过 `--provider-whitelist` 或控制台显式加入。
 
 ### `tokenless dashboard`
 
@@ -192,7 +195,7 @@ tokenless dashboard --profile work --no-open --json
 控制台包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 
 ```bash
-tokenless config --profile work --preferred-providers chatgpt,claude --browser-visibility headed --json
+tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
 tokenless config --profile work --proxy-server socks5://127.0.0.1:1080 --proxy-bypass localhost --json
 tokenless profiles open --profile work --json
 tokenless state --profile work --json
@@ -223,7 +226,7 @@ tokenless config --json
 ```bash
 tokenless config \
   --language zh-CN \
-  --preferred-providers chatgpt,claude,gemini,grok,qwen \
+  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
   --browser-visibility auto \
   --json
@@ -232,7 +235,7 @@ tokenless config \
 可配置内容：
 
 - `--language <en|zh-CN>`
-- `--preferred-providers <list>`
+- `--provider-whitelist <list>`
 - `--browser <browser>`
 - `--browser-visibility <auto|headed|headless>`
 - `--proxy-server <http|https|socks5-url>`，可搭配 `--proxy-bypass <逗号分隔列表>`
@@ -240,7 +243,9 @@ tokenless config \
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
-增加 `--profile <slug>` 后，`--preferred-providers`、`--browser-visibility` 和不带凭据的 proxy 设置会只作用于一个 managed profile。Proxy 选项必须搭配 `--profile`；`--clear-proxy` 会移除该 profile 的 endpoint。全局 `preferredProviders` 会继续作为旧 caller 的兼容 union；路由会读取当前 profile 的 membership。
+增加 `--profile <slug>` 后，`--provider-whitelist`、`--browser-visibility` 和不带凭据的 proxy 设置会只作用于一个 managed profile。Proxy 选项必须搭配 `--profile`；`--clear-proxy` 会移除该 profile 的 endpoint。全局 `providerWhitelist` 会继续作为旧 caller 的兼容 union；路由会读取当前 profile 的 membership。
+
+持久化 JSON key 现在是 `providerWhitelist`。Tokenless 仍会读取旧 `preferredProviders` key，并在下一次配置更新时将其改写为 `providerWhitelist`。迁移期间，未写入文档的旧 `--preferred-providers` flag 仍作为 alias 接受。
 
 面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
 
@@ -376,7 +381,7 @@ tokenless capabilities list --json
 
 每个条目描述 caller outcome、parameter schema、lifecycle、side effects、required evidence、output kinds、stability 和已声明的 provider routes。`routeable: true` 表示至少一个已签入的 provider strategy 具有完整实现和真实 provider E2E 证据。Candidate 条目仍可通过 catalog 发现，但会标记为 `routeable: false`，不能用于 run。
 
-`model.choice`、`effort.choice` 和 `qwen.mode` 等 provider control 不会出现在这里；它们保留为 provider adapter 细节，而不是 canonical caller outcome。
+`model.choice`、`effort.choice`、`qwen.mode`、`doubao.mode` 和 `doubao.skill` 等 provider control 不会出现在这里；它们保留为 provider adapter 细节，而不是 canonical caller outcome。
 
 ### `tokenless limits inspect`
 
@@ -600,6 +605,10 @@ tokenless provider-action \
 | `deepseek.deepthink.select` | 启用或关闭 DeepThink。 | `--deepseek-deepthink on|off` |
 | `deepseek.search.inspect` | 检查当前 DeepSeek mode 中的 Search。 | 无；仅限 DeepSeek |
 | `deepseek.search.select` | 在 Instant mode 中启用或关闭 Search。 | `--deepseek-search on|off` |
+| `doubao.mode.inspect` | 检查快速、专家、工作任务 Turbo，以及可见受限的工作任务 Pro。 | 无；仅限 Doubao |
+| `doubao.mode.select` | 选择一个精确的 Doubao mode。 | `--doubao-mode fast|expert|work-task-turbo|work-task-pro` |
+| `doubao.skill.inspect` | 检查 Doubao Web skills 及其 canonical candidate mapping。 | 无；仅限 Doubao |
+| `doubao.skill.select` | 选择一个 Doubao skill，或恢复普通对话。 | `--doubao-skill <skill>` |
 | `file.upload` | 通过可见 file controls 上传文件。 | 一个或多个 `--attach-file` |
 | `workspace.ensure` | 确保存在原生或 conversation-scoped Workspace。 | `--project-name`；`--workspace-mode` 和 instructions 可选 |
 | `prompt.clear` | 清空可见 composer。 | 无 |
@@ -611,6 +620,8 @@ tokenless provider-action \
 | `blocker.check` | 检查登录或 CAPTCHA 等可见 blocker。 | 无 |
 
 Action payload 是严格校验的：与所选 action 无关的选项会被拒绝。
+
+Doubao skill ids 为 `chat`、`document-writing`、`presentation-generation`、`image-generation`、`video-generation`、`deep-research`、`audio-podcast`、`music-generation`、`problem-solving`、`spreadsheet-generation` 与 `audio-transcription`。最后一项可以 inspect，但可见 Web UI 要求桌面版时，select 会返回 unavailable。翻译被明确排除在这个面向 coding 的 control surface 之外。
 
 `workspace.ensure` 在省略 mode 时默认使用 `--workspace-mode auto`。
 

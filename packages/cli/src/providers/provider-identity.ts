@@ -20,6 +20,8 @@ export const PROVIDER_CAPABILITIES = Object.freeze({
   DEEPSEEK_MODE: 'deepseek.mode',
   DEEPSEEK_DEEPTHINK: 'deepseek.deepthink',
   DEEPSEEK_SEARCH: 'deepseek.search',
+  DOUBAO_MODE: 'doubao.mode',
+  DOUBAO_SKILL: 'doubao.skill',
 })
 
 export type ProviderCapabilityId = typeof PROVIDER_CAPABILITIES[keyof typeof PROVIDER_CAPABILITIES]

@@ -158,7 +158,7 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
       'config',
       '--home', homeDir,
       '--profile', 'work',
-      '--preferred-providers', 'chatgpt,claude',
+      '--provider-whitelist', 'chatgpt,claude',
       '--browser-visibility', 'headed',
       '--proxy-server', 'socks5://127.0.0.1:1080',
       '--proxy-bypass', 'localhost,127.0.0.1',

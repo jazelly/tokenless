@@ -177,7 +177,7 @@ export class TokenlessApplicationServices {
     const preferences = {
       roleLabel: optionalRoleLabel(input.roleLabel) ?? '',
       enabledProviders: input.enabledProviders === undefined
-        ? (config.preferredProviders.length > 0 ? config.preferredProviders : supportedProviderIds())
+        ? config.providerWhitelist
         : providerList(input.enabledProviders),
       browserVisibility: input.browserVisibility === undefined
         ? config.browserVisibility
@@ -350,9 +350,7 @@ export class TokenlessApplicationServices {
     const profiles = await this.profiles.listProfiles()
     const missing = profiles.filter((profile) => !config.profilePreferences[profile.slug])
     if (missing.length === 0) return config
-    const enabledProviders = config.preferredProviders.length > 0
-      ? config.preferredProviders
-      : supportedProviderIds()
+    const enabledProviders = config.providerWhitelist
     const profilePreferences = { ...config.profilePreferences }
     for (const profile of missing) {
       profilePreferences[profile.slug] = {
@@ -375,12 +373,12 @@ export class TokenlessApplicationServices {
       ...config.profilePreferences,
       [profile.slug]: { profileId: profile.slug, ...next },
     }
-    const preferredProviders = [...new Set(Object.values(profilePreferences)
+    const providerWhitelist = [...new Set(Object.values(profilePreferences)
       .flatMap((preferences) => preferences.enabledProviders))]
     await writeTokenlessConfig({
       homeDir: this.store.homeDir,
       profilePreferences,
-      preferredProviders,
+      providerWhitelist,
     })
   }
 
@@ -456,6 +454,7 @@ export class TokenlessApplicationServices {
 function publicConfig(config: TokenlessConfig) {
   return {
     updatedAt: config.updatedAt,
+    providerWhitelist: config.providerWhitelist,
     browser: config.browser,
     browserConnectionMode: config.browserConnectionMode,
     browserVisibility: config.browserVisibility,
@@ -608,7 +607,7 @@ function profilePreferences(config: TokenlessConfig, profile: ManagedProfileReco
   return config.profilePreferences[profile.slug] ?? {
     profileId: profile.slug,
     roleLabel: '',
-    enabledProviders: config.preferredProviders.length > 0 ? config.preferredProviders : supportedProviderIds(),
+    enabledProviders: config.providerWhitelist,
     browserVisibility: config.browserVisibility,
     proxy: null,
   }

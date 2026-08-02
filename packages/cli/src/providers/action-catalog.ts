@@ -14,6 +14,8 @@ import type {
   QwenModeSelectionPayload,
   DeepSeekModeSelectionPayload,
   DeepSeekToggleSelectionPayload,
+  DoubaoModeSelectionPayload,
+  DoubaoSkillSelectionPayload,
   WorkspaceEnsurePayload,
 } from './contracts.js'
 
@@ -159,6 +161,30 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.DEEPSEEK_SEARCH],
     validatePayload: validateDeepSeekToggleSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.DOUBAO_MODE_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.DOUBAO_MODE_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DOUBAO_MODE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.DOUBAO_MODE_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.DOUBAO_MODE_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DOUBAO_MODE],
+    validatePayload: validateDoubaoModeSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.DOUBAO_SKILL_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.DOUBAO_SKILL_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DOUBAO_SKILL],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.DOUBAO_SKILL_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.DOUBAO_SKILL_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.DOUBAO_SKILL],
+    validatePayload: validateDoubaoSkillSelectionPayload,
   }),
   [VISIBLE_ACTIONS.FILE_UPLOAD]: defineAction({
     action: VISIBLE_ACTIONS.FILE_UPLOAD,
@@ -317,6 +343,44 @@ function validateDeepSeekToggleSelectionPayload(payload: Record<string, unknown>
   }
   return payload as DeepSeekToggleSelectionPayload
 }
+
+function validateDoubaoModeSelectionPayload(payload: Record<string, unknown>): DoubaoModeSelectionPayload {
+  requireExactKeys(payload, ['mode'], 'invalid_visible_action_payload')
+  if (
+    payload.mode !== 'fast' &&
+    payload.mode !== 'expert' &&
+    payload.mode !== 'work-task-turbo' &&
+    payload.mode !== 'work-task-pro'
+  ) {
+    throw tokenlessError(
+      'invalid_visible_action_payload',
+      'Doubao mode must be fast, expert, work-task-turbo, or work-task-pro.',
+    )
+  }
+  return payload as DoubaoModeSelectionPayload
+}
+
+function validateDoubaoSkillSelectionPayload(payload: Record<string, unknown>): DoubaoSkillSelectionPayload {
+  requireExactKeys(payload, ['skill'], 'invalid_visible_action_payload')
+  if (!DOUBAO_SKILLS.has(String(payload.skill))) {
+    throw tokenlessError('invalid_visible_action_payload', 'Doubao skill is not recognized.')
+  }
+  return payload as DoubaoSkillSelectionPayload
+}
+
+const DOUBAO_SKILLS = new Set([
+  'chat',
+  'document-writing',
+  'presentation-generation',
+  'image-generation',
+  'video-generation',
+  'deep-research',
+  'audio-podcast',
+  'music-generation',
+  'problem-solving',
+  'spreadsheet-generation',
+  'audio-transcription',
+])
 
 function validateFileUploadPayload(payload: Record<string, unknown>): FileUploadPayload {
   requireExactKeys(payload, ['attachments'], 'invalid_visible_action_payload')

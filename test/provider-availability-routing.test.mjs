@@ -20,16 +20,18 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.equal(byId.get('conversation.chat').routeable, true)
   assert.deepEqual(
     byId.get('conversation.chat').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'qwen', 'perplexity', 'zai'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'qwen', 'perplexity', 'zai', 'doubao'],
   )
   assert.deepEqual(
     byId.get('file.upload').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'grok'],
+    ['chatgpt', 'claude', 'grok', 'doubao'],
   )
   assert.equal(byId.get('workspace.native').routeable, false)
   assert.deepEqual(byId.get('workspace.native').routes, [])
   assert.equal(byId.get('research.deep').routeable, false)
   assert.deepEqual(byId.get('research.deep').routes, [])
+  assert.equal(byId.get('audio.transcription').routeable, false)
+  assert.deepEqual(byId.get('audio.transcription').routes, [])
   assert.equal(byId.has('qwen.mode'), false)
   assert.equal(byId.has('model.choice'), false)
   assert.equal(byId.has('effort.choice'), false)
@@ -357,12 +359,12 @@ test('doctor reports observation health separately from cached provider usabilit
   }
 })
 
-function writeConfig(homeDir, preferredProviders, daemonUrl) {
+function writeConfig(homeDir, providerWhitelist, daemonUrl) {
   fs.mkdirSync(homeDir, { recursive: true, mode: 0o700 })
   fs.writeFileSync(path.join(homeDir, 'config.json'), `${JSON.stringify({
     protocol: 'tokenless.config.v1',
     updatedAt: new Date().toISOString(),
-    preferredProviders,
+    providerWhitelist,
     browser: null,
     browserVisibility: 'auto',
     daemonUrl,

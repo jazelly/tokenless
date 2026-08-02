@@ -53,7 +53,19 @@ test('persistent config defaults, stores, and validates browser connection mode 
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-connection-mode-'))
   const runtime = await import('../packages/cli/dist/src/index.js')
   try {
-    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'playwright')
+    const defaults = await runtime.readTokenlessConfig(homeDir)
+    assert.equal(defaults.browserConnectionMode, 'playwright')
+    assert.deepEqual(defaults.providerWhitelist, [
+      'chatgpt',
+      'claude',
+      'grok',
+      'qwen',
+      'deepseek',
+      'perplexity',
+      'zai',
+      'doubao',
+    ])
+    assert.equal(Object.hasOwn(defaults, 'preferredProviders'), false)
     assert.equal(
       (await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'cdp' })).browserConnectionMode,
       'cdp',
@@ -63,6 +75,26 @@ test('persistent config defaults, stores, and validates browser connection mode 
       runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'webdriver' }),
       (error) => error?.code === 'tokenless_config_invalid',
     )
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('persistent config migrates the legacy preferredProviders key to providerWhitelist', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-provider-whitelist-migration-'))
+  const configPath = path.join(homeDir, 'config.json')
+  const runtime = await import('../packages/cli/dist/src/index.js')
+  try {
+    fs.writeFileSync(configPath, `${JSON.stringify({
+      protocol: 'tokenless.config.v1',
+      preferredProviders: ['gemini', 'chatgpt'],
+    }, null, 2)}\n`, { mode: 0o600 })
+    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).providerWhitelist, ['gemini', 'chatgpt'])
+
+    await runtime.writeTokenlessConfig({ homeDir, language: 'zh-CN' })
+    const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    assert.deepEqual(persisted.providerWhitelist, ['gemini', 'chatgpt'])
+    assert.equal(Object.hasOwn(persisted, 'preferredProviders'), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }

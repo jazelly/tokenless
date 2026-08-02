@@ -57,9 +57,10 @@ qwen
 deepseek
 perplexity
 zai
+doubao
 ```
 
-ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, and Z.ai / GLM are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
+ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, and Doubao / 豆包 are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
 
 Runtime browser values are `auto`, `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, `brave`, `managed-chromium`, and `cloak`. `auto` prefers an installed system browser and uses the locked managed fallback only when none exists. `cloak` is explicit opt-in. New Tokenless profiles are clean by default and runtime-bound. An explicitly selected local Chromium profile can instead be copied after `--consent-local-profile-copy`; Tokenless treats its contents as an opaque local filesystem tree.
 
@@ -158,7 +159,7 @@ Main options:
 
 - `--profile <slug>` selects or names the managed profile.
 - `--anti-detect` explicitly selects the catalog-pinned CloakBrowser runtime and confirms a clean Cloak-bound profile in non-interactive setup. Explicit `--browser cloak` carries the same confirmation; a stored Cloak preference alone fails before download.
-- `--preferred-providers <list>` selects provider membership for that profile during non-interactive setup.
+- `--provider-whitelist <list>` selects provider membership for that profile during non-interactive setup.
 - `--no-open` completes setup without opening the dashboard.
 - `--browser <browser>` selects `auto`, one exact system browser, `managed-chromium`, or `cloak`.
 - `--no-browser-download` fails instead of downloading a missing managed runtime.
@@ -175,7 +176,9 @@ After Anti-Detect is selected, interactive setup links to the official CloakBrow
 
 Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing runtime family normally creates a clean profile; an explicit import can populate the new runtime-bound profile from a selected local Chromium profile. The managed profile then preserves its browser-managed session across jobs.
 
-Interactive `setup` asks which providers belong to the selected profile. Non-interactive setup uses `--preferred-providers`, the existing configured scope, or all non-disabled providers when no scope exists. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
+Interactive `setup` asks which providers belong to the selected profile. Non-interactive setup uses `--provider-whitelist`, the existing profile scope, or the persisted default whitelist. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
+
+The default `providerWhitelist` contains every non-disabled provider except Gemini. Gemini remains available and can be added explicitly with `--provider-whitelist` or through the dashboard.
 
 ### `tokenless dashboard`
 
@@ -192,7 +195,7 @@ tokenless dashboard --profile work --no-open --json
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
 
 ```bash
-tokenless config --profile work --preferred-providers chatgpt,claude --browser-visibility headed --json
+tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
 tokenless config --profile work --proxy-server socks5://127.0.0.1:1080 --proxy-bypass localhost --json
 tokenless profiles open --profile work --json
 tokenless state --profile work --json
@@ -223,7 +226,7 @@ Updates one or more persistent values when options are supplied:
 ```bash
 tokenless config \
   --language zh-CN \
-  --preferred-providers chatgpt,claude,gemini,grok,qwen \
+  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
   --browser-visibility auto \
   --json
@@ -232,7 +235,7 @@ tokenless config \
 Configurable values:
 
 - `--language <en|zh-CN>`
-- `--preferred-providers <list>`
+- `--provider-whitelist <list>`
 - `--browser <browser>`
 - `--browser-visibility <auto|headed|headless>`
 - `--proxy-server <http|https|socks5-url>` with optional `--proxy-bypass <comma-separated-list>`
@@ -240,7 +243,9 @@ Configurable values:
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
-Add `--profile <slug>` to scope `--preferred-providers`, `--browser-visibility`, and credential-free proxy settings to one managed profile. Proxy options require `--profile`; `--clear-proxy` removes that profile's endpoint. Global `preferredProviders` remains a compatibility union for older callers, while routing reads the selected profile's membership.
+Add `--profile <slug>` to scope `--provider-whitelist`, `--browser-visibility`, and credential-free proxy settings to one managed profile. Proxy options require `--profile`; `--clear-proxy` removes that profile's endpoint. Global `providerWhitelist` remains a compatibility union for older callers, while routing reads the selected profile's membership.
+
+The persisted JSON key is `providerWhitelist`. Tokenless still reads the legacy `preferredProviders` key and rewrites it as `providerWhitelist` on the next config update. The undocumented legacy `--preferred-providers` flag remains accepted as an alias during migration.
 
 Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
 
@@ -376,7 +381,7 @@ tokenless capabilities list --json
 
 Each entry describes the caller outcome, parameter schema, lifecycle, side effects, required evidence, output kinds, stability, and declared provider routes. `routeable: true` means at least one checked-in provider strategy has complete implementation and real-provider E2E evidence. Candidate entries remain discoverable with `routeable: false`; they cannot be selected for a run.
 
-Provider controls such as `model.choice`, `effort.choice`, and `qwen.mode` are intentionally absent. They remain provider adapter details rather than canonical caller outcomes.
+Provider controls such as `model.choice`, `effort.choice`, `qwen.mode`, `doubao.mode`, and `doubao.skill` are intentionally absent. They remain provider adapter details rather than canonical caller outcomes.
 
 ### `tokenless limits inspect`
 
@@ -600,6 +605,10 @@ tokenless provider-action \
 | `deepseek.deepthink.select` | Enable or disable DeepThink. | `--deepseek-deepthink on|off` |
 | `deepseek.search.inspect` | Inspect Search in the active DeepSeek mode. | None; DeepSeek only |
 | `deepseek.search.select` | Enable or disable Search in Instant mode. | `--deepseek-search on|off` |
+| `doubao.mode.inspect` | Inspect Fast, Expert, Work Task Turbo, and visibly restricted Work Task Pro. | None; Doubao only |
+| `doubao.mode.select` | Select one exact Doubao mode. | `--doubao-mode fast|expert|work-task-turbo|work-task-pro` |
+| `doubao.skill.inspect` | Inspect Doubao Web skills and their canonical candidate mappings. | None; Doubao only |
+| `doubao.skill.select` | Select a Doubao skill or restore ordinary chat. | `--doubao-skill <skill>` |
 | `file.upload` | Upload files through visible file controls. | One or more `--attach-file` |
 | `workspace.ensure` | Ensure a native or conversation-scoped Workspace. | `--project-name`; optional `--workspace-mode` and instructions |
 | `prompt.clear` | Clear the visible composer. | None |
@@ -611,6 +620,8 @@ tokenless provider-action \
 | `blocker.check` | Inspect visible blockers such as sign-in or CAPTCHA. | None |
 
 Action payloads are strict: options that do not apply to the selected action are rejected.
+
+Doubao skill ids are `chat`, `document-writing`, `presentation-generation`, `image-generation`, `video-generation`, `deep-research`, `audio-podcast`, `music-generation`, `problem-solving`, `spreadsheet-generation`, and `audio-transcription`. The last value is inspectable but selection returns unavailable when the visible Web UI requires the desktop app. Translation is intentionally excluded from this coding-oriented control surface.
 
 `workspace.ensure` defaults to `--workspace-mode auto` when the mode is omitted.
 

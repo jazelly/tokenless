@@ -57,6 +57,10 @@
       "zai": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
+      },
+      "doubao": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
       }
     }
   },
@@ -170,6 +174,13 @@
       "publisher": "Z.ai",
       "title": "GLM-5.2: Built for Long-Horizon Tasks",
       "url": "https://z.ai/blog/glm-5.2",
+      "authority": "official",
+      "retrievedAt": "2026-08-02"
+    },
+    "doubao-feature-intro": {
+      "publisher": "Doubao",
+      "title": "Feature Introduction",
+      "url": "https://www.doubao.com/legal/feature_intro",
       "authority": "official",
       "retrievedAt": "2026-08-02"
     }
@@ -1899,6 +1910,63 @@
           "notes": [
             "The official product announcement confirms consumer Web availability but publishes no numeric Web allowance or reset window.",
             "GLM Coding Plan quotas are intentionally excluded because they are separate from Z.ai consumer Web chat."
+          ]
+        }
+      ]
+    },
+    "doubao": {
+      "label": "Doubao / 豆包",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "doubao.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["doubao-feature-intro"]
+            }
+          ],
+          "notes": [
+            "The official consumer Web feature page publishes no numeric allowance or reset window.",
+            "API and enterprise product quotas are intentionally excluded from this consumer Web rule."
           ]
         }
       ]

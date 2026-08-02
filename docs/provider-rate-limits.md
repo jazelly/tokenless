@@ -20,8 +20,9 @@ One managed browser profile is one independent provider-capacity scope. Reaching
 | DeepSeek | None | Unknown numeric consumer Web limits; API concurrency numbers are explicitly excluded |
 | Perplexity | Free Pro Search: 3/day; Enterprise Pro Search: 400/week; Enterprise Max Pro Search: 4000/week | Exact rules remain observe-only until the run can distinguish Pro Search; general/Best-mode behavior, consumer paid weekly ranges, feature usage, uploads, and heavy-usage reductions remain non-numeric |
 | Z.ai / GLM | None | Unknown numeric consumer Web limits; separate GLM Coding Plan quotas are explicitly excluded |
+| Doubao / 豆包 | None | Unknown numeric signed-in consumer Web limits; API and enterprise product quotas are explicitly excluded |
 
-The catalog links every fact to an official source. Its current primary sources are OpenAI Help, Anthropic Help, Google Gemini Help, xAI pricing, the Qwen usage policy, the DeepSeek user agreement, Perplexity Help, and the official Z.ai GLM announcement. Exact numbers are executable only when the catalog contains `official_exact` evidence; relative, dynamic, qualitative, guarded, consumption-based, and unknown allowances remain non-numeric at runtime.
+The catalog links every fact to an official source. Its current primary sources are OpenAI Help, Anthropic Help, Google Gemini Help, xAI pricing, the Qwen usage policy, the DeepSeek user agreement, Perplexity Help, the official Z.ai GLM announcement, and the Doubao feature introduction. Exact numbers are executable only when the catalog contains `official_exact` evidence; relative, dynamic, qualitative, guarded, consumption-based, and unknown allowances remain non-numeric at runtime.
 
 ## Runtime Interpretation
 

@@ -17,7 +17,7 @@
 
 ## What Tokenless Does
 
-Tokenless gives AI agents one local browser interface for ChatGPT, Claude, Gemini, Grok, Qwen, and experimental DeepSeek, Perplexity, and Z.ai adapters—reducing agent-side token use without provider API keys.
+Tokenless gives AI agents one local browser interface for ChatGPT, Claude, Gemini, Grok, Qwen, and experimental DeepSeek, Perplexity, Z.ai, and Doubao adapters—reducing agent-side token use without provider API keys.
 
 It goes beyond sending prompts. Tokenless adapts each provider's real web workflows into one local interface for agents:
 
@@ -43,6 +43,7 @@ Each active managed profile owns its own browser instance. Tokenless reuses that
 | DeepSeek | Experimental | Required |
 | Perplexity | Experimental | Not required |
 | Z.ai / GLM | Experimental | Not required |
+| Doubao / 豆包 | Experimental | Required |
 
 ## Install and Setup
 
@@ -71,6 +72,8 @@ Installing the package is only the first step. Complete `tokenless setup` before
 Every managed profile is bound to the browser runtime that created it. Tokenless does not silently open a system-browser profile with Cloak or the managed fallback. A runtime-family change creates a clean profile. Tokenless never copies an existing Chrome, Brave, or Cloak profile—or its cookies and authentication state—into a managed profile. Open the clean managed profile and sign in there; its browser-managed session then persists across jobs.
 
 On first setup, Tokenless selects English or Simplified Chinese from the system locale and saves the choice as `language` in `~/.tokenless/config.json`. English is the fallback. The preference controls the CLI, dashboard, and default provider response language; an explicit language request in the prompt still wins. Change it later in the dashboard or with `tokenless config --language en` or `tokenless config --language zh-CN`.
+
+The config uses `providerWhitelist` for the provider routing boundary. Its default contains every non-disabled provider except Gemini; Gemini can be enabled explicitly during setup, with `tokenless config --provider-whitelist ...`, or in the dashboard.
 
 For browser capability evaluation, the config file accepts experimental `browserConnectionMode: "playwright" | "cdp"`; it defaults to `playwright`, has no CLI flag, and takes effect after the daemon restarts.
 
@@ -109,6 +112,8 @@ Each routed job also stores a versioned provider-neutral context envelope with t
 Inspect provider-specific availability with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
 
 DeepSeek exposes provider-specific `Instant`, `Expert`, and `Vision` modes plus independent `DeepThink` and `Search` controls. Inspect them with `deepseek.mode.inspect`, `deepseek.deepthink.inspect`, and `deepseek.search.inspect`; Search and file availability are mode-dependent and are never inferred from the mode label alone.
+
+Doubao exposes provider-specific modes and coding-relevant Web skills through `doubao.mode.inspect/select` and `doubao.skill.inspect/select`. The runtime reports visible upgrade and desktop-only restrictions instead of clicking through them. Text-file `file.upload` is experimentally routeable; skill selection is control evidence only until each generated or long-running outcome completes its own real-provider release gate.
 
 For explicit DeepSeek runs, `search.web` prepares Instant with Search enabled, `reasoning.extended` enables DeepThink, and `image.input` prepares Vision before browser mutation. These canonical routes remain fail-closed until their declared real-provider release gates pass.
 

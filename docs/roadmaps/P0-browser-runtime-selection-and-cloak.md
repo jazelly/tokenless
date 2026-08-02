@@ -195,9 +195,9 @@ The prompt shows the exact version, platform, source, and whether a download is 
 
 Playwright remains the automation layer, but it always launches the exact `executablePath` supplied by `ResolvedBrowserRuntime`. Production code must not switch back to `channel: 'chrome'` or `channel: 'msedge'` after setup has resolved a particular executable.
 
-The standard policy preserves existing production behavior. The Cloak policy supplies only the arguments required for Tokenless operation and avoids Playwright defaults that disable or overwrite browser-managed fingerprint behavior. Both policies preserve Chromium sandboxing and process cleanup.
+The standard policy preserves the browser-managed session while supplying the arguments required for Tokenless operation. The Cloak policy also avoids Playwright defaults that disable or overwrite browser-managed fingerprint behavior. Both policies preserve Chromium sandboxing and process cleanup.
 
-The test-only `profile` target retains `--password-store=basic` and `--use-mock-keychain`. Production targets must not inherit test-only credential settings, and no test may trigger or automate a macOS Keychain prompt.
+Every production and test Chromium launch retains `--password-store=basic` and `--use-mock-keychain`, regardless of its configured executable. A managed profile therefore keeps one keychain-neutral storage mode across Playwright and CDP launches, and no test may trigger or automate a macOS Keychain prompt.
 
 ## Delivery Plan and Alignment Ledger
 

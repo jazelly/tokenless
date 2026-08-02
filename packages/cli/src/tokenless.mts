@@ -235,6 +235,10 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'deepseek.deepthink.select',
   'deepseek.search.inspect',
   'deepseek.search.select',
+  'doubao.mode.inspect',
+  'doubao.mode.select',
+  'doubao.skill.inspect',
+  'doubao.skill.select',
   'file.upload',
   'workspace.ensure',
   'prompt.clear',
@@ -1281,7 +1285,7 @@ function resolveDaemonJobCapabilityRoutes({
         tier: profile.lastObservedAuth?.[explicitProvider]?.account?.tier ?? null,
       }]
     : providerObservationContext(implicitProviderCandidates(
-        config.profilePreferences[profile.slug]?.enabledProviders ?? config.preferredProviders,
+        config.profilePreferences[profile.slug]?.enabledProviders ?? config.providerWhitelist,
       ), profile)
   const decision = resolveTaskCapabilityRoutes({
     requirements,
@@ -1321,10 +1325,8 @@ function resolveDaemonJobCapabilityRoutes({
   throw error
 }
 
-function implicitProviderCandidates(preferredProviders: readonly string[]): ProviderId[] {
-  const configured = preferredProviders.map(normalizeProvider)
-  if (configured.length > 0) return configured
-  return supportedVisibleProviderIds()
+function implicitProviderCandidates(providerWhitelist: readonly string[]): ProviderId[] {
+  return providerWhitelist.map(normalizeProvider)
 }
 
 function providerObservationContext(
@@ -1450,6 +1452,9 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (action.startsWith('deepseek.') && normalizeProvider(args.provider) !== 'deepseek') {
     throw usageError('deepseek_control_unsupported', 'deepseek actions are available only for the DeepSeek provider.')
   }
+  if (action.startsWith('doubao.') && normalizeProvider(args.provider) !== 'doubao') {
+    throw usageError('doubao_control_unsupported', 'doubao actions are available only for the Doubao provider.')
+  }
 
   if (action === 'capability.inspect') {
     assertProviderActionPayloadOptions(args, new Set())
@@ -1463,7 +1468,9 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     action === 'qwen.mode.inspect' ||
     action === 'deepseek.mode.inspect' ||
     action === 'deepseek.deepthink.inspect' ||
-    action === 'deepseek.search.inspect'
+    action === 'deepseek.search.inspect' ||
+    action === 'doubao.mode.inspect' ||
+    action === 'doubao.skill.inspect'
   ) {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
@@ -1557,6 +1564,28 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     }
   }
 
+  if (action === 'doubao.mode.select') {
+    assertProviderActionPayloadOptions(args, new Set(['doubaoMode']))
+    if (args.doubaoMode === undefined) {
+      throw usageError('missing_visible_action_doubao_mode', 'doubao.mode.select requires --doubao-mode <mode>.')
+    }
+    return {
+      action,
+      payload: { mode: normalizeDoubaoMode(args.doubaoMode) },
+    }
+  }
+
+  if (action === 'doubao.skill.select') {
+    assertProviderActionPayloadOptions(args, new Set(['doubaoSkill']))
+    if (args.doubaoSkill === undefined) {
+      throw usageError('missing_visible_action_doubao_skill', 'doubao.skill.select requires --doubao-skill <skill>.')
+    }
+    return {
+      action,
+      payload: { skill: normalizeDoubaoSkill(args.doubaoSkill) },
+    }
+  }
+
   if (action === 'file.upload') {
     assertProviderActionPayloadOptions(args, new Set(['attachFiles']))
     if (args.attachFiles.length < 1) {
@@ -1613,6 +1642,8 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['deepSeekMode', '--deepseek-mode'],
     ['deepSeekDeepThink', '--deepseek-deepthink'],
     ['deepSeekSearch', '--deepseek-search'],
+    ['doubaoMode', '--doubao-mode'],
+    ['doubaoSkill', '--doubao-skill'],
     ['chatSurface', '--chat-surface'],
     ['projectName', '--project-name'],
     ['projectInstructions', '--project-instructions'],
@@ -2283,7 +2314,7 @@ async function stateCommand(args: CliArgs) {
     : await registry.resolveProfile(args.profile)
   const providerValue = explicitProviderValue || (args.jobId
     ? undefined
-    : config.profilePreferences[profile.slug]?.enabledProviders[0] || config.preferredProviders[0] || defaultVisibleProviderId())
+    : config.profilePreferences[profile.slug]?.enabledProviders[0] || config.providerWhitelist[0] || defaultVisibleProviderId())
   const provider = providerValue ? normalizeProvider(providerValue) : undefined
   const listedDaemonJobs = daemonJobs ?? await listDaemonJobs({
         daemonUrl: actualDaemonUrl,
@@ -2547,7 +2578,7 @@ async function installCommand(args: CliArgs) {
       pid: provisioned.daemon.pid,
       executable: provisioned.installed.daemonExecutable,
     },
-    nextStep: 'Run "tokenless setup" to configure skills, a managed browser profile, preferred providers, and a one-time visible sign-in status report.',
+    nextStep: 'Run "tokenless setup" to configure skills, a managed browser profile, the provider whitelist, and a one-time visible sign-in status report.',
   }, args)
 }
 
@@ -2623,7 +2654,7 @@ async function setupCommand(args: CliArgs) {
       await writeTokenlessConfig({
         homeDir,
         browser: selectedBrowser.selection,
-        preferredProviders: [...new Set(Object.values(profilePreferences).flatMap((preferences) => preferences.enabledProviders))],
+        providerWhitelist: [...new Set(Object.values(profilePreferences).flatMap((preferences) => preferences.enabledProviders))],
         profilePreferences,
         daemonUrl: configuredDaemonUrl,
         language: config.language,
@@ -3342,19 +3373,19 @@ async function selectSetupProviders({
   presenter: SetupPresenter
 }): Promise<ProviderId[]> {
   const available = setupVisibleProviders()
-  if (args.preferredProviders !== undefined) {
-    const providers = requireSetupProviders(parseProviderList(args.preferredProviders) as ProviderId[])
+  if (args.providerWhitelist !== undefined) {
+    const providers = requireSetupProviders(parseProviderList(args.providerWhitelist) as ProviderId[])
     presenter.success(`Checking providers: ${providers.join(', ')}.`)
     return providers
   }
   const configuredScope = await setupConfiguredProviderScope({ args, config, homeDir })
   if (!prompt) {
     const configured = configuredScope.filter((provider): provider is ProviderId => available.includes(provider as ProviderId))
-    const providers = configured.length > 0 ? configured : available
+    const providers = requireSetupProviders(configured)
     presenter.success(`Checking providers: ${providers.join(', ')}.`)
     return providers
   }
-  const defaults = new Set(configuredScope.length > 0 ? configuredScope : available)
+  const defaults = new Set(configuredScope)
   const providers: ProviderId[] = []
   for (const provider of available) {
     const descriptor = getProviderDescriptorById(provider)
@@ -3380,9 +3411,9 @@ async function setupConfiguredProviderScope({
     const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(
       args.profile === undefined ? undefined : String(args.profile),
     )
-    return config.profilePreferences[profile.slug]?.enabledProviders ?? config.preferredProviders
+    return config.profilePreferences[profile.slug]?.enabledProviders ?? config.providerWhitelist
   } catch {
-    return config.preferredProviders
+    return config.providerWhitelist
   }
 }
 
@@ -3580,7 +3611,7 @@ async function provisionRuntime(args: CliArgs) {
 
 async function doctorCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  let config: Record<string, any> = { preferredProviders: [], browser: null, daemonUrl: null }
+  let config: Record<string, any> = { providerWhitelist: [], browser: null, daemonUrl: null }
   let configCheck: Record<string, any>
   try {
     config = await readTokenlessConfig(homeDir)
@@ -3715,7 +3746,7 @@ async function doctorCommand(args: CliArgs) {
         runtime: await runtimeManager.inspect(profile),
       }
       profileRuntime = managedProfile.runtime
-      const providers = config.profilePreferences[profile.slug]?.enabledProviders ?? config.preferredProviders
+      const providers = config.profilePreferences[profile.slug]?.enabledProviders ?? config.providerWhitelist
       const observations = providerObservationContext(providers.map(normalizeProvider), profile)
       const statuses = Object.fromEntries(observations.map((observation) => [observation.provider, {
         ok: observation.observed,
@@ -3806,7 +3837,7 @@ async function configCommand(args: CliArgs) {
     const existing = current.profilePreferences[profile.slug] ?? {
       profileId: profile.slug,
       roleLabel: '',
-      enabledProviders: current.preferredProviders.length > 0 ? current.preferredProviders : supportedVisibleProviderIds(),
+      enabledProviders: current.providerWhitelist,
       browserVisibility: current.browserVisibility,
       proxy: null,
     }
@@ -3815,9 +3846,9 @@ async function configCommand(args: CliArgs) {
       ...current.profilePreferences,
       [profile.slug]: {
         ...existing,
-        enabledProviders: args.preferredProviders === undefined
+        enabledProviders: args.providerWhitelist === undefined
           ? existing.enabledProviders
-          : parseProviderList(args.preferredProviders),
+          : parseProviderList(args.providerWhitelist),
         browserVisibility: args.browserVisibility === undefined
           ? existing.browserVisibility
           : requiredBrowserVisibility(args.browserVisibility),
@@ -3827,7 +3858,7 @@ async function configCommand(args: CliArgs) {
     const config = await writeTokenlessConfig({
       homeDir,
       profilePreferences,
-      preferredProviders: [...new Set(Object.values(profilePreferences).flatMap((preferences) => preferences.enabledProviders))],
+      providerWhitelist: [...new Set(Object.values(profilePreferences).flatMap((preferences) => preferences.enabledProviders))],
     })
     printPayload({
       ok: true,
@@ -3837,21 +3868,21 @@ async function configCommand(args: CliArgs) {
     }, args)
     return
   }
-  if (args.preferredProviders !== undefined || args.browser !== undefined || args.browserVisibility !== undefined || args.daemonUrl !== undefined || args.language !== undefined) {
+  if (args.providerWhitelist !== undefined || args.browser !== undefined || args.browserVisibility !== undefined || args.daemonUrl !== undefined || args.language !== undefined) {
     const current = await readTokenlessConfig(homeDir)
     const browser = args.browser === undefined ? undefined : normalizeCliBrowser(args.browser)
-    const preferredProviders = args.preferredProviders === undefined ? undefined : parseProviderList(args.preferredProviders)
+    const providerWhitelist = args.providerWhitelist === undefined ? undefined : parseProviderList(args.providerWhitelist)
     const browserVisibility = args.browserVisibility === undefined ? undefined : requiredBrowserVisibility(args.browserVisibility)
-    const profilePreferences = preferredProviders === undefined && browserVisibility === undefined
+    const profilePreferences = providerWhitelist === undefined && browserVisibility === undefined
       ? undefined
       : Object.fromEntries(Object.entries(current.profilePreferences).map(([profileId, preferences]) => [profileId, {
           ...preferences,
-          enabledProviders: preferredProviders ?? preferences.enabledProviders,
+          enabledProviders: providerWhitelist ?? preferences.enabledProviders,
           browserVisibility: browserVisibility ?? preferences.browserVisibility,
         }]))
     const config = await writeTokenlessConfig({
       homeDir,
-      preferredProviders,
+      providerWhitelist,
       profilePreferences,
       browser,
       browserVisibility,
@@ -4295,20 +4326,20 @@ function createCommandContracts(): CommandContract[] {
     { command: 'inspect-chatgpt-controls', usage: ['tokenless inspect-chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
     { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
     { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch'] },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--anti-detect|--browser <browser>] [--profile <slug>] [--preferred-providers <list>] [--no-open] [--no-browser-download] [--repair-browser] [--defaults|--fresh] --json'], options: ['home', 'json', 'quiet', 'profile', 'antiDetect', 'browser', 'preferredProviders', 'noOpen', 'noBrowserDownload', 'repairBrowser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
+    { command: 'setup', usage: ['tokenless setup [--anti-detect|--browser <browser>] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--no-browser-download] [--repair-browser] [--defaults|--fresh] --json'], options: ['home', 'json', 'quiet', 'profile', 'antiDetect', 'browser', 'providerWhitelist', 'noOpen', 'noBrowserDownload', 'repairBrowser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
-    { command: 'config', usage: ['tokenless config [--profile <slug>] [--preferred-providers <list>] [--browser-visibility <mode>] [--proxy-server <url> --proxy-bypass <list>|--clear-proxy] [--language <en|zh-CN>] [--browser <browser>] [--daemon-url <url>] --json'], options: ['home', 'json', 'profile', 'language', 'preferredProviders', 'browser', 'browserVisibility', 'proxyServer', 'proxyBypass', 'clearProxy', 'daemonUrl'] },
+    { command: 'config', usage: ['tokenless config [--profile <slug>] [--provider-whitelist <list>] [--browser-visibility <mode>] [--proxy-server <url> --proxy-bypass <list>|--clear-proxy] [--language <en|zh-CN>] [--browser <browser>] [--daemon-url <url>] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserVisibility', 'proxyServer', 'proxyBypass', 'clearProxy', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
-    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'preferredProviders', 'setDefault'] },
+    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
     { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <all|chrome|brave|edge|arc|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
@@ -4362,7 +4393,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--import-browser-profile': 'importChromeProfile',
     '--chrome-user-data-dir': 'chromeUserDataDir',
     '--browser-user-data-dir': 'chromeUserDataDir',
-    '--preferred-providers': 'preferredProviders',
+    '--preferred-providers': 'providerWhitelist',
+    '--provider-whitelist': 'providerWhitelist',
     '--action': 'action',
     '--target-url': 'targetUrl',
     '--idempotency-key': 'idempotencyKey',
@@ -4397,6 +4429,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--deepseek-mode': 'deepSeekMode',
     '--deepseek-deepthink': 'deepSeekDeepThink',
     '--deepseek-search': 'deepSeekSearch',
+    '--doubao-mode': 'doubaoMode',
+    '--doubao-skill': 'doubaoSkill',
     '--chat-surface': 'chatSurface',
   }
   const booleanFlags: Record<string, string> = {
@@ -4974,6 +5008,39 @@ function normalizeDeepSeekToggle(value: unknown, flag: string) {
   throw usageError('invalid_deepseek_toggle', `${flag} must be on or off.`)
 }
 
+function normalizeDoubaoMode(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  if (
+    normalized === 'fast' ||
+    normalized === 'expert' ||
+    normalized === 'work-task-turbo' ||
+    normalized === 'work-task-pro'
+  ) return normalized
+  throw usageError(
+    'invalid_doubao_mode',
+    '--doubao-mode must be fast, expert, work-task-turbo, or work-task-pro.',
+  )
+}
+
+function normalizeDoubaoSkill(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  const skills = new Set([
+    'chat',
+    'document-writing',
+    'presentation-generation',
+    'image-generation',
+    'video-generation',
+    'deep-research',
+    'audio-podcast',
+    'music-generation',
+    'problem-solving',
+    'spreadsheet-generation',
+    'audio-transcription',
+  ])
+  if (skills.has(normalized)) return normalized
+  throw usageError('invalid_doubao_skill', '--doubao-skill is not recognized.')
+}
+
 function normalizeVisibleModelLabel(value: unknown, flag: string, errorCode = 'invalid_model') {
   const normalized = String(value).trim()
   if (normalized.length === 0 || normalized.length > 120 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
@@ -5226,7 +5293,7 @@ function usage() {
       title: 'Other',
       description: 'Inspect or update persistent Tokenless configuration.',
       commands: [
-        `tokenless config --language <en|zh-CN> --preferred-providers ${supportedVisibleProviderIds().join(',')} --browser chrome --browser-visibility auto --json`,
+        `tokenless config --language <en|zh-CN> --provider-whitelist ${supportedVisibleProviderIds().join(',')} --browser chrome --browser-visibility auto --json`,
         'tokenless dashboard [--profile <slug>] [--no-open] --json',
         'tokenless daemon stop --daemon-url <loopback-url> --json',
       ],
@@ -5370,7 +5437,7 @@ function optionUsageLabel(option: string) {
     noBrowserDownload: '--no-browser-download',
     noWait: '--no-wait',
     output: '--output <path>',
-    preferredProviders: '--preferred-providers <list>',
+    providerWhitelist: '--provider-whitelist <list>',
     proxyServer: '--proxy-server <url>',
     proxyBypass: '--proxy-bypass <list>',
     clearProxy: '--clear-proxy',

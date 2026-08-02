@@ -56,6 +56,11 @@ export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromi
 
 export const MAX_ACTIVE_BROWSER_PROFILES = 4
 
+const KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS = [
+  '--password-store=basic',
+  '--use-mock-keychain',
+] as const
+
 export type PersistentContextManagerOptions = {
   maxContexts?: number
   launcher?: ManagedContextLauncher
@@ -545,9 +550,6 @@ function baseCdpChromiumArguments(
     ...(browserTarget.launchPolicy === 'cloak' ? [] : ['--enable-automation']),
     '--metrics-recording-only',
     '--no-service-autorun',
-    ...(browserTarget.id === 'profile' || browserTarget.e2eInspection
-      ? ['--password-store=basic', '--use-mock-keychain']
-      : []),
     ...(launchOptions.args ?? []),
     `--user-data-dir=${userDataDir}`,
   ]
@@ -662,10 +664,9 @@ export function managedBrowserLaunchOptions(
       '--disable-sync',
       '--no-first-run',
       '--no-default-browser-check',
+      ...KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS,
       ...(normalized.e2eInspection
         ? [
-            '--password-store=basic',
-            '--use-mock-keychain',
             '--remote-debugging-address=127.0.0.1',
             '--remote-debugging-port=0',
             ...(normalized.e2eHostResolverRule
@@ -675,18 +676,8 @@ export function managedBrowserLaunchOptions(
         : []),
     ],
   }
-  if (normalized.id !== 'profile') {
-    launchOptions.ignoreDefaultArgs = [
-      ...(normalized.e2eInspection
-        ? []
-        : [
-            '--password-store=basic',
-            '--use-mock-keychain',
-          ]),
-      ...(normalized.launchPolicy === 'cloak'
-        ? ['--enable-automation', '--enable-unsafe-swiftshader']
-        : []),
-    ]
+  if (normalized.launchPolicy === 'cloak') {
+    launchOptions.ignoreDefaultArgs = ['--enable-automation', '--enable-unsafe-swiftshader']
   }
   if (proxy) {
     launchOptions.proxy = {
@@ -703,7 +694,7 @@ function assertKeychainNeutralE2ELaunch(
 ) {
   if (!browserTarget.e2eInspection) return
   const args = new Set(launchOptions.args ?? [])
-  for (const required of ['--password-store=basic', '--use-mock-keychain']) {
+  for (const required of KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS) {
     if (!args.has(required)) {
       throw tokenlessError(
         'e2e_keychain_neutral_launch_required',

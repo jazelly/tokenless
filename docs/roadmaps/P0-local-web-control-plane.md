@@ -71,7 +71,7 @@ Important gaps are:
 - there is no reserved control-plane page identity in the managed browser page registry;
 - provider and browser errors are not presented as one actionable health model;
 - language bootstrap detects the system locale before first-time `setup`, but a different first command can still read the empty config default and present English before the user has had any chance to choose; and
-- global `preferredProviders` is too coarse for multiple browser identities and its name does not communicate that it is a routing membership filter.
+- global `preferredProviders` was too coarse for multiple browser identities and its name did not communicate that it was a routing membership filter.
 
 ## Product State Model
 

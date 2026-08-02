@@ -36,6 +36,7 @@ const handlers = {
   'deepseek-controls': deepSeekControls,
   'deepseek-search-reasoning': deepSeekSearchReasoning,
   'deepseek-vision-input': deepSeekVisionInput,
+  'doubao-controls': doubaoControls,
   'native-project': nativeProject,
 }
 
@@ -311,6 +312,121 @@ async function deepSeekControls({ provider, journey }) {
   }
 }
 
+async function doubaoControls({ provider, journey }) {
+  assert.equal(provider, 'doubao')
+  const modeInspection = await journey.action('doubao.mode.inspect')
+  const modes = responseResult(modeInspection.payload, 'doubao.mode.inspect')
+  assert.equal(modes?.supported, true)
+  assert.equal(modes?.activeMode, 'fast')
+  assert.deepEqual(modes?.modes?.map((choice) => choice.mode), [
+    'fast',
+    'expert',
+    'work-task-turbo',
+    'work-task-pro',
+  ])
+  assert.deepEqual(modes?.modes?.find((choice) => choice.mode === 'work-task-pro'), {
+    mode: 'work-task-pro',
+    nativeLabel: '工作任务 Pro',
+    description: '执行 agent 任务 - 2.1 Pro',
+    canonicalCapabilities: ['task.background', 'task.interactive'],
+    enabled: false,
+    selected: false,
+    reason: 'upgrade_required',
+  })
+  const originalMode = modes.activeMode
+  await modeInspection.close()
+
+  try {
+    for (const mode of ['expert', 'work-task-turbo']) {
+      const selected = await journey.action('doubao.mode.select', ['--doubao-mode', mode])
+      const result = responseResult(selected.payload, 'doubao.mode.select')
+      assert.equal(result?.selectedMode, mode)
+      assert.equal(await doubaoModeVisible(selected.page, result.nativeLabel), true)
+      await selected.close()
+    }
+    const unavailable = await journey.action('doubao.mode.select', ['--doubao-mode', 'work-task-pro'])
+    assert.deepEqual(responseResult(unavailable.payload, 'doubao.mode.select'), {
+      supported: false,
+      reason: 'mode_unavailable',
+    })
+    await unavailable.close()
+  } finally {
+    const restored = await journey.action('doubao.mode.select', ['--doubao-mode', originalMode])
+    assert.equal(responseResult(restored.payload, 'doubao.mode.select')?.selectedMode, originalMode)
+    await restored.close()
+  }
+
+  const skillInspection = await journey.action('doubao.skill.inspect')
+  const skills = responseResult(skillInspection.payload, 'doubao.skill.inspect')
+  assert.equal(skills?.supported, true)
+  assert.equal(skills?.activeSkill, 'chat')
+  assert.deepEqual(
+    skills?.skills?.find((choice) => choice.skill === 'audio-transcription'),
+    {
+      skill: 'audio-transcription',
+      nativeLabel: '录音转写',
+      canonicalCapabilities: ['audio.transcription'],
+      enabled: false,
+      selected: false,
+      reason: 'desktop_app_required',
+    },
+  )
+  const selectableSkills = skills.skills.filter((choice) => choice.enabled && choice.skill !== 'chat')
+  assert.deepEqual(selectableSkills.map((choice) => choice.skill), [
+    'document-writing',
+    'presentation-generation',
+    'image-generation',
+    'video-generation',
+    'deep-research',
+    'audio-podcast',
+    'music-generation',
+    'problem-solving',
+    'spreadsheet-generation',
+  ])
+  await skillInspection.close()
+
+  try {
+    for (const choice of selectableSkills) {
+      const selected = await journey.action('doubao.skill.select', ['--doubao-skill', choice.skill])
+      const result = responseResult(selected.payload, 'doubao.skill.select')
+      assert.equal(result?.selectedSkill, choice.skill)
+      assert.equal(await doubaoSkillVisible(selected.page, choice.nativeLabel), true)
+      await selected.close()
+    }
+    const unavailable = await journey.action('doubao.skill.select', ['--doubao-skill', 'audio-transcription'])
+    assert.deepEqual(responseResult(unavailable.payload, 'doubao.skill.select'), {
+      supported: false,
+      reason: 'skill_unavailable',
+    })
+    await unavailable.close()
+  } finally {
+    const restored = await journey.action('doubao.skill.select', ['--doubao-skill', 'chat'])
+    assert.deepEqual(responseResult(restored.payload, 'doubao.skill.select'), {
+      supported: true,
+      selectedSkill: 'chat',
+      nativeLabel: '普通对话',
+      visibleProof: 'doubao-default-composer-visible',
+    })
+    assert.equal(await restored.page.locator('textarea.semi-input-textarea').filter({ visible: true }).count(), 1)
+    await restored.close()
+  }
+}
+
+async function doubaoModeVisible(page, nativeLabel) {
+  const trigger = page.locator(
+    'button[aria-haspopup="menu"][aria-expanded]:has([data-valid-btn="mode-select-action-btn"])',
+  ).filter({ visible: true }).last()
+  return await trigger.count() > 0 && (await trigger.innerText()).replace(/\s+/gu, ' ').trim().startsWith(nativeLabel)
+}
+
+async function doubaoSkillVisible(page, nativeLabel) {
+  const token = page.locator('div[data-input-engine-action-source="actionbar"][data-value]')
+    .filter({ visible: true })
+    .filter({ hasText: new RegExp(`^${escapeRegExp(nativeLabel)}$`) })
+    .last()
+  return await token.count() > 0
+}
+
 async function deepSeekSearchReasoning({ provider, journey }) {
   assert.equal(provider, 'deepseek')
   const modeInspection = await journey.action('deepseek.mode.inspect')
@@ -569,10 +685,13 @@ async function workspaceResponseCitations({ provider, journey }) {
 async function workspaceResponseBaseline({ provider, journey }) {
   const name = markerFor(provider, 'WORKSPACE_RESPONSE')
   const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
+  const prompt = provider === 'doubao'
+    ? `请只在代码块中原样回复：\`${responseMarker}\``
+    : `Reply with this exact marker: ${responseMarker}`
   const run = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
-    '--prompt', `Reply with this exact marker: ${responseMarker}`,
+    '--prompt', prompt,
   ])
   const response = responseResult(run.payload, 'response.read')
   assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))

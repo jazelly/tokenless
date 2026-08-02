@@ -208,6 +208,7 @@ export function providerCapabilities(options: {
   nativeWorkspace?: boolean
   qwenMode?: boolean
   deepSeekControls?: boolean
+  doubaoControls?: boolean
 } = {}): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
   return Object.freeze({
     [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT]: Object.freeze({
@@ -404,6 +405,45 @@ export function providerCapabilities(options: {
       PROVIDER_CAPABILITIES.DEEPSEEK_SEARCH,
       options.deepSeekControls === true,
     ),
+    [PROVIDER_CAPABILITIES.DOUBAO_MODE]: providerSpecificControlStrategy(
+      PROVIDER_CAPABILITIES.DOUBAO_MODE,
+      'doubao',
+      options.doubaoControls === true,
+    ),
+    [PROVIDER_CAPABILITIES.DOUBAO_SKILL]: providerSpecificControlStrategy(
+      PROVIDER_CAPABILITIES.DOUBAO_SKILL,
+      'doubao',
+      options.doubaoControls === true,
+    ),
+  })
+}
+
+function providerSpecificControlStrategy(
+  capability: ProviderCapabilityId,
+  provider: string,
+  enabled: boolean,
+): ProviderCapabilityStrategy {
+  return Object.freeze({
+    capability,
+    availability: enabled ? 'unknown' : 'unavailable',
+    visibleProof: enabled
+      ? `runtime-visible-${provider}-control-evidence-required`
+      : `${provider}-provider-strategy-unavailable`,
+    reason: enabled ? 'availability_depends_on_visible_provider_controls' : 'unsupported_by_provider',
+    native: Object.freeze({
+      resourceKind: enabled ? 'visible_action' : null,
+      availability: enabled ? 'unknown' : 'unavailable',
+      visibleProof: enabled ? `runtime-visible-${provider}-control-evidence-required` : null,
+      reason: enabled ? null : 'unsupported_by_provider',
+    }),
+    fallback: Object.freeze({
+      resourceKind: null,
+      availability: 'unavailable',
+      mode: null,
+      visibleProof: null,
+      reason: `no_provider_neutral_${provider}_control_fallback`,
+    }),
+    stability: 'experimental',
   })
 }
 

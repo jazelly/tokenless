@@ -23,9 +23,11 @@
   let slug = $state('default')
   let label = $state(untrack(() => language === 'zh-CN' ? '默认' : 'Default'))
   let roleLabel = $state('')
-  let enabledProviders = $state<string[]>(untrack(() => snapshot.providers
-    .filter((provider: JsonRecord) => provider.stage !== 'disabled')
-    .map((provider: JsonRecord) => provider.id)))
+  let enabledProviders = $state<string[]>(untrack(() => Array.isArray(snapshot.config.providerWhitelist)
+    ? [...snapshot.config.providerWhitelist]
+    : snapshot.providers
+      .filter((provider: JsonRecord) => provider.stage !== 'disabled' && provider.id !== 'gemini')
+      .map((provider: JsonRecord) => provider.id)))
 
   function toggleProvider(provider: string, checked: boolean) {
     enabledProviders = checked

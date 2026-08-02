@@ -7,7 +7,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI and a
 1. The `tokenless` CLI handles setup, profile management, job submission, state, cancellation, and diagnostics.
 2. The local TypeScript daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
 3. The Playwright worker claims managed-web jobs and runs them in persistent managed browser profiles.
-4. The provider registry declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, Qwen, DeepSeek, Perplexity, and Z.ai.
+4. The provider registry declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, Qwen, DeepSeek, Perplexity, Z.ai, and Doubao.
 5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
 7. Shared application services expose redacted config, profile, provider, capability, job, runtime, and diagnostic operations to the local control plane.
@@ -66,7 +66,7 @@ Successful account observations retain only the visible account display name, su
 
 `profiles status` runs this provider-page inspection and persists the observation. `profiles list` is a registry read: it reports the last saved observation and never refreshes a provider page implicitly.
 
-Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT, Gemini, experimental Qwen, experimental Perplexity, and experimental Z.ai may proceed in guest mode. Claude, Grok, and DeepSeek hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
+Normal provider actions do not run the setup authentication report. Before a gated action, the provider-session state machine waits up to 15 seconds for the page to expose a stable account, guest composer, sign-in surface, challenge, or terminal blocker. ChatGPT, Gemini, experimental Qwen, experimental Perplexity, and experimental Z.ai may proceed in guest mode. Claude, Grok, DeepSeek, and experimental Doubao hand off before the adapter enters or submits task content when no authenticated session is established. A visible exact guest-continuation control may be accepted once, followed by a fresh observation.
 
 ## Provider architecture and session state machine
 
@@ -74,7 +74,7 @@ Normal provider actions do not run the setup authentication report. Before a gat
 
 `BaseProvider` owns the public execution template and the invariant ordering for navigation validation, authentication, blocker checks, prompt operations, response observation, and normalized failures. Its protected TypeScript hooks provide the shared DOM implementation and use normal dynamic dispatch, so a provider subclass overrides only behavior that differs. The runner calls the stable public provider contract and does not select child-class methods itself.
 
-Optional behavior is composed through typed structural capability slots. File upload, model and effort selection, workspace handling, diagnostics, conversation continuation, and image generation can be replaced independently without widening the mandatory base-class contract. Provider-specific extensions can register their own typed capability and actions without promoting a provider-only concept into the shared slots; Qwen's `qwen.mode` capability is the first such extension. A capability object must satisfy the relevant TypeScript interface; it does not need to inherit from a framework class.
+Optional behavior is composed through typed structural capability slots. File upload, model and effort selection, workspace handling, diagnostics, conversation continuation, and image generation can be replaced independently without widening the mandatory base-class contract. Provider-specific extensions can register their own typed capability and actions without promoting a provider-only concept into the shared slots; current examples are Qwen's `qwen.mode` and Doubao's `doubao.mode` plus `doubao.skill`. A capability object must satisfy the relevant TypeScript interface; it does not need to inherit from a framework class.
 
 Adding a provider therefore normally requires:
 
@@ -95,6 +95,7 @@ Observation, account classification, decisions, and resolution live under `packa
 | DeepSeek | Sign-in required | Visible account control text | Unknown until reliable visible plan evidence is available |
 | Perplexity | Supported | Visible menu or account control text when signed in | Unknown until reliable visible plan evidence is available |
 | Z.ai | Supported | Visible menu or account control text when signed in | Unknown until reliable visible plan evidence is available |
+| Doubao | Sign-in required | Visible account control image | Unknown until reliable visible plan evidence is available |
 
 The provider-session machine is intentionally separate from the daemon job state machine:
 
@@ -135,7 +136,7 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 
 The public capability vocabulary, provider mapping rules, evidence ladder, and extension process are defined in the [Capability Matrix](capability-matrix.md). This section describes how that contract is executed by the runtime.
 
-The current visible-action schema includes `capability.inspect`, `workspace.ensure`, and the Qwen-only `qwen.mode.inspect/select` actions. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every enabled provider.
+The current visible-action schema includes `capability.inspect`, `workspace.ensure`, Qwen-only `qwen.mode.inspect/select`, DeepSeek control actions, and Doubao-only `doubao.mode.inspect/select` plus `doubao.skill.inspect/select`. Capability inspection reports `available`, `unavailable`, or `unknown` with visible proof, native resource information, fallback information, and experimental stability for every enabled provider. Provider-control results may include canonical candidate mappings, but only independently E2E-closed outcome lifecycles enter the route table.
 
 Subscription labels are diagnostic evidence, not authorization. Runtime decisions prefer an enabled visible control, then an explicit disabled, upgrade, or plan-limit state, and otherwise report `unknown`. Missing selectors never prove that a subscription lacks a capability.
 

@@ -20,7 +20,7 @@ This work protects capability fidelity, not an assumed notion of more realistic 
 
 The supported values are `playwright` and `cdp`. Omitted values resolve to `playwright` for backward compatibility. The daemon reads the value when it creates its embedded browser runner, so changing it requires the daemon to be restarted. Profiles, browser runtime bindings, visibility policy, provider mappings, and job contracts do not change.
 
-In `cdp` mode Tokenless launches the exact profile-bound Chromium executable with a loopback-only ephemeral DevTools endpoint, connects through Playwright, owns the browser process, and closes or terminates that process during cleanup. Test target `profile` retains `--password-store=basic` and `--use-mock-keychain`; production non-`profile` targets retain their existing launch policy. Chromium sandboxing remains enabled.
+In `cdp` mode Tokenless launches the exact profile-bound Chromium executable with a loopback-only ephemeral DevTools endpoint, connects through Playwright, owns the browser process, and closes or terminates that process during cleanup. Every production and test executable retains `--password-store=basic` and `--use-mock-keychain`, matching Playwright mode. Chromium sandboxing remains enabled.
 
 ## Capability Matrix
 
