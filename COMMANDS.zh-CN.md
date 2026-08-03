@@ -120,7 +120,7 @@ tokenless -V
 
 ### `tokenless install`
 
-解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 版本一致。
+解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 的版本和 control API revision 一致。如果同一 Tokenless home 下通过 proof 验证的 daemon 任一值已过期，当前 CLI package 会优雅重启它；foreign 或未经验证的 listener 绝不会被停止。
 
 ```bash
 tokenless install --browser auto --json
@@ -742,7 +742,7 @@ npm run test:e2e -- --browser cloak
 npm run test:e2e:connection-matrix -- --browser cloak
 ```
 
-已认证 profile 支持 `chrome`、`brave`、`edge`、`arc`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-home tab，然后立即退出，不等待 page load、登录或 Playwright target observation。Detached daemon 会继续持有 browser，Chromium 则照常把状态持久化到 dedicated profile。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，在 Playwright mode 下执行其中声明的 provider journeys；`connection-matrix` 会用同一个 selected profile 依次运行 Playwright 与 CDP mode。两者都会真实修改 provider 侧状态，并可能产生使用费用。
+已认证 profile 支持 `chrome`、`brave`、`edge`、`arc`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。Detached daemon 会继续持有 browser，Chromium 则照常把状态持久化到 dedicated profile。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，在 Playwright mode 下执行其中声明的 provider journeys；`connection-matrix` 会用同一个 selected profile 依次运行 Playwright 与 CDP mode。两者都会真实修改 provider 侧状态，并可能产生使用费用。
 
 Browser runtime 与 provider surface 验收是显式本地 gate，不会在 CI 中运行：
 

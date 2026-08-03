@@ -2,6 +2,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import net from 'node:net'
 
 import { tokenlessPackageVersion } from '../platform-package.js'
+import { DAEMON_CONTROL_API_REVISION } from '../schema-ids.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import { listProviderInstances } from '../providers/registry.js'
 import {
@@ -131,6 +132,7 @@ export function daemonBuildInfo(binary: string) {
   return {
     binary,
     version: tokenlessPackageVersion(),
+    controlApiRevision: DAEMON_CONTROL_API_REVISION,
     platform: process.platform === 'darwin' ? 'darwin' : process.platform,
     arch: process.arch === 'x64' ? 'x64' : process.arch,
   }
@@ -166,6 +168,7 @@ async function handleRequest(
       const active = isActive()
       writeJson(response, active ? 200 : 503, {
         version: tokenlessPackageVersion(),
+        control_api_revision: DAEMON_CONTROL_API_REVISION,
         ready: active,
         home_dir: store.homeDir,
         pid: process.pid,

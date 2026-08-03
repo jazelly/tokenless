@@ -31,8 +31,8 @@ async function readJson(filePath) {
 function validateOpenApiDocument(artifactPath, parsed) {
   if (!isRecord(parsed)) throw new Error(`${artifactPath} must be an object`)
   if (parsed.openapi !== '3.1.0') throw new Error(`${artifactPath} must be OpenAPI 3.1.0`)
-  if (!isRecord(parsed.info) || typeof parsed.info.title !== 'string' || parsed.info.version !== '1.0.0') {
-    throw new Error(`${artifactPath} must include info.title and API version 1.0.0`)
+  if (!isRecord(parsed.info) || typeof parsed.info.title !== 'string' || parsed.info.version !== '1.1.0') {
+    throw new Error(`${artifactPath} must include info.title and API version 1.1.0`)
   }
   if (!isRecord(parsed.paths)) throw new Error(`${artifactPath} must include paths`)
 

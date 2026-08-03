@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Tokenless daemon HTTP API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Local loopback daemon HTTP API. Every daemon route, readiness proof, error envelope, job payload, and browser runtime control response belongs to this OpenAPI contract."
   },
   "servers": [
@@ -909,6 +909,7 @@
         "type": "object",
         "required": [
           "version",
+          "control_api_revision",
           "ready",
           "home_dir",
           "pid",
@@ -919,6 +920,10 @@
           "version": {
             "type": "string",
             "minLength": 1
+          },
+          "control_api_revision": {
+            "type": "integer",
+            "const": 1
           },
           "ready": {
             "const": true

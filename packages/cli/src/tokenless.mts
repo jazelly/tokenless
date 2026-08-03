@@ -85,7 +85,7 @@ import {
   localizeText,
   setActiveLanguage,
 } from './localization.js'
-import { DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
+import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
 import {
   inspectTokenlessSkills,
 } from './setup-workflow.js'
@@ -1147,9 +1147,10 @@ function setupCliVersionCompact(check: SetupCliVersionCheck) {
 }
 
 function setupDaemonCompact(daemon: {
+  runningControlApiRevision: number | null
   runningVersion: string | null
 }) {
-  return `Daemon: ready on tokenless ${daemon.runningVersion ?? 'unknown'} (exact package version required).`
+  return `Daemon: ready on tokenless ${daemon.runningVersion ?? 'unknown'} / control API r${daemon.runningControlApiRevision ?? 'unknown'} (exact match required).`
 }
 
 function compareSemanticVersions(left: string, right: string) {
@@ -3795,6 +3796,13 @@ async function doctorCommand(args: CliArgs) {
     const expectedMajor = semanticVersionMajor(expectedVersion)
     const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
     const versionCompatible = runningVersion === null ? null : runningVersion === expectedVersion
+    const runningControlApiRevisionValue = ready.body?.control_api_revision
+    const runningControlApiRevision = Number.isSafeInteger(runningControlApiRevisionValue)
+      ? runningControlApiRevisionValue as number
+      : null
+    const controlApiCompatible = runningControlApiRevision === null
+      ? null
+      : runningControlApiRevision === DAEMON_CONTROL_API_REVISION
     if (!ready.ok) {
       const normallyStopped = ready.code === 'daemon_unavailable'
       daemon = {
@@ -3812,6 +3820,9 @@ async function doctorCommand(args: CliArgs) {
         expectedMajor,
         runningMajor,
         versionCompatible,
+        expectedControlApiRevision: DAEMON_CONTROL_API_REVISION,
+        runningControlApiRevision,
+        controlApiCompatible,
       }
     } else {
       daemon = {
@@ -3828,6 +3839,9 @@ async function doctorCommand(args: CliArgs) {
         expectedMajor,
         runningMajor,
         versionCompatible,
+        expectedControlApiRevision: DAEMON_CONTROL_API_REVISION,
+        runningControlApiRevision,
+        controlApiCompatible,
         pid: ready.body?.pid ?? null,
       }
     }

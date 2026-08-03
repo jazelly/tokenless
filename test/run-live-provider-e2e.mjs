@@ -4,8 +4,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  ensureDaemonReady,
   openBrowserRuntimeProviderTabs,
   readTokenlessConfig,
+  stopDaemon,
 } from '../packages/cli/dist/src/index.js'
 import {
   LIVE_PROVIDER_TEST_BROWSERS,
@@ -114,15 +116,13 @@ async function prepareTarget(target, options) {
     return
   }
 
-  const review = await openBrowserRuntimeProviderTabs({
+  const opened = await openProviderLoginTabs({
     daemonUrl: installed.daemon.url,
-    homeDir: target.homeDir,
+    target,
     profileId: validated.profile.id,
     providers,
-    browserVisibility: 'headed',
-    requestTimeoutMs: 5_000,
-    signal: interruptController.signal,
   })
+  const review = opened.review
   const requestedProviders = review.tabs.map((tab) => tab.provider)
   const newTabCount = review.tabs.filter((tab) => !tab.reused).length
   const reusedTabCount = review.tabs.length - newTabCount
@@ -134,7 +134,7 @@ async function prepareTarget(target, options) {
   console.log('Sign in manually, then stop its daemon before starting provider automation:')
   console.log(
     `${process.execPath} ${cliEntry} daemon stop --home ${JSON.stringify(target.homeDir)} ` +
-    `--daemon-url ${JSON.stringify(installed.daemon.url)} --json`,
+    `--daemon-url ${JSON.stringify(opened.daemonUrl)} --json`,
   )
   if (review.failures.length > 0) {
     for (const failure of review.failures) {
@@ -142,6 +142,32 @@ async function prepareTarget(target, options) {
     }
     throw new Error(`Failed to open ${review.failures.length} provider login tab(s).`)
   }
+}
+
+async function openProviderLoginTabs({ daemonUrl, target, profileId, providers }) {
+  const request = (currentDaemonUrl) => openBrowserRuntimeProviderTabs({
+    daemonUrl: currentDaemonUrl,
+    homeDir: target.homeDir,
+    profileId,
+    providers,
+    browserVisibility: 'headed',
+    requestTimeoutMs: 5_000,
+    signal: interruptController.signal,
+  })
+  try {
+    return { daemonUrl, review: await request(daemonUrl) }
+  } catch (error) {
+    if (error?.status !== 404 || error?.code !== 'daemon_request_failed') throw error
+  }
+
+  await stopDaemon({ homeDir: target.homeDir, daemonUrl, timeoutMs: 10_000 })
+  const replacement = await ensureDaemonReady({
+    homeDir: target.homeDir,
+    daemonUrl,
+    timeoutMs: 10_000,
+  })
+  console.log('Replaced a stale dedicated E2E daemon that did not expose the provider-tab handoff endpoint.')
+  return { daemonUrl: replacement.url, review: await request(replacement.url) }
 }
 
 async function runProviderSuite(target, options) {

@@ -110,6 +110,7 @@ export type {
 } from './browser-runtime/index.js'
 
 export {
+  DAEMON_CONTROL_API_REVISION,
   DAEMON_LOG_FILE,
   DAEMON_PID_FILE,
   DAEMON_PROCESS_SCHEMA_ID,

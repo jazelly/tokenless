@@ -1066,7 +1066,7 @@ async function authenticatedDaemonAccess({
   requestTimeoutMs,
 }: DaemonClientOptions) {
   const token = await readDaemonToken({ homeDir })
-  const { probeDaemonReady } = await import('./runtime.js')
+  const { ensureDaemonReady, probeDaemonReady } = await import('./runtime.js')
   const timeoutMs = Math.min(normalizedTimeoutMs(requestTimeoutMs), 1_000)
   let lastReady: Awaited<ReturnType<typeof probeDaemonReady>> | null = null
   for (const candidateUrl of await daemonEndpointCandidates({ explicitDaemonUrl, homeDir })) {
@@ -1078,6 +1078,21 @@ async function authenticatedDaemonAccess({
     })
     lastReady = ready
     if (ready.ok) return { token, daemonUrl: ready.url }
+    if (
+      ready.identityVerified === true &&
+      ready.sameHomeVerified === true &&
+      (ready.code === 'daemon_version_mismatch' || ready.code === 'daemon_control_api_revision_mismatch')
+    ) {
+      const replacement = await ensureDaemonReady({
+        homeDir,
+        daemonUrl: ready.url,
+        timeoutMs: Math.max(10_000, normalizedTimeoutMs(requestTimeoutMs)),
+      })
+      return {
+        token: await readDaemonToken({ homeDir }),
+        daemonUrl: replacement.url,
+      }
+    }
   }
   const failedReady = lastReady && !lastReady.ok ? lastReady : null
   throw daemonClientError(

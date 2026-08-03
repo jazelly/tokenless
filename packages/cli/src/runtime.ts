@@ -14,6 +14,7 @@ import {
 import { daemonUrl as normalizeDaemonUrl, readDaemonToken, shutdownDaemon } from './daemon-client.js'
 import { getProviderInstanceById, getProviderInstanceForUrl, listProviderDescriptors } from './providers/registry.js'
 import {
+  DAEMON_CONTROL_API_REVISION,
   DAEMON_PROCESS_SCHEMA_ID,
   DAEMON_SNAPSHOT_SCHEMA_ID,
 } from './schema-ids.js'
@@ -27,6 +28,7 @@ import {
 } from './daemon/runtime-state.js'
 
 export {
+  DAEMON_CONTROL_API_REVISION,
   DAEMON_PROCESS_SCHEMA_ID,
   DAEMON_SNAPSHOT_SCHEMA_ID,
   MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
@@ -131,6 +133,9 @@ export type SetupDaemonReadyResult = Awaited<ReturnType<typeof ensureDaemonReady
   runningVersion: string | null
   runningMajor: number | null
   versionCompatible: boolean
+  expectedControlApiRevision: number
+  runningControlApiRevision: number | null
+  controlApiCompatible: boolean
 }
 
 export function bundledTypeScriptDaemonEntryPath(packageRoot?: string) {
@@ -265,6 +270,22 @@ export async function probeDaemonReady({
       body,
       code: 'daemon_version_mismatch',
       message: `Tokenless daemon version is ${runningVersion ?? 'missing'}; expected ${expectedVersion}.`,
+    }
+  }
+
+  const runningControlApiRevision = body.control_api_revision
+  if (runningControlApiRevision !== DAEMON_CONTROL_API_REVISION) {
+    return {
+      ok: false,
+      reachable: true,
+      url,
+      expectedHome,
+      actualHome,
+      identityVerified,
+      sameHomeVerified,
+      body,
+      code: 'daemon_control_api_revision_mismatch',
+      message: `Tokenless daemon control API revision is ${Number.isSafeInteger(runningControlApiRevision) ? runningControlApiRevision : 'missing'}; expected ${DAEMON_CONTROL_API_REVISION}.`,
     }
   }
 
@@ -489,7 +510,7 @@ export async function stopDaemon({
     )
   })
   const ready = await probeDaemonReady({ homeDir, daemonUrl: url, daemonToken: token, timeoutMs: Math.min(stopTimeoutMs, 1_000) })
-  const verifiedStoppableMismatch = !ready.ok && ready.code === 'daemon_version_mismatch'
+  const verifiedStoppableMismatch = !ready.ok && isReplaceableDaemonCompatibilityMismatch(ready)
   if (!ready.ok && !verifiedStoppableMismatch) {
     const stillReachable = await probeDaemonReachable(url, Math.min(stopTimeoutMs, 1_000))
     if (ready.code === 'daemon_unavailable' && !stillReachable.reachable) {
@@ -829,6 +850,9 @@ function setupDaemonReadyResult(
   const expectedMajor = semanticVersionMajor(expectedVersion)
   const runningMajor = runningVersion === null ? null : semanticVersionMajor(runningVersion)
   const versionCompatible = runningVersion === expectedVersion
+  const runningControlApiRevision = Number.isSafeInteger(ready.body?.control_api_revision)
+    ? ready.body.control_api_revision as number
+    : null
   return {
     ...ready,
     expectedVersion,
@@ -836,6 +860,9 @@ function setupDaemonReadyResult(
     runningVersion,
     runningMajor,
     versionCompatible,
+    expectedControlApiRevision: DAEMON_CONTROL_API_REVISION,
+    runningControlApiRevision,
+    controlApiCompatible: runningControlApiRevision === DAEMON_CONTROL_API_REVISION,
   }
 }
 
@@ -857,7 +884,7 @@ async function probeDaemonEndpointCandidates({
     const probe = await probeDaemonReady({ daemonUrl: candidateUrl, homeDir })
     lastProbe = probe
     if (probe.ok) return { ready: probe, replaceable: null, failedRunningEndpoint: null, lastProbe: probe }
-    if (!replaceable && shouldReplaceVersionMismatchedDaemon(probe)) replaceable = probe
+    if (!replaceable && isReplaceableDaemonCompatibilityMismatch(probe)) replaceable = probe
     if (
       !failedRunningEndpoint &&
       endpoint &&
@@ -884,7 +911,7 @@ function daemonEndpointCandidates(endpoint: DaemonRuntimeEndpoint | null, prefer
 
 function shouldTakeOverFailedRunningEndpoint(probe: DaemonReadyProbe) {
   if (probe.ok) return false
-  if (shouldReplaceVersionMismatchedDaemon(probe)) return false
+  if (isReplaceableDaemonCompatibilityMismatch(probe)) return false
   if (probe.reachable && probe.code === 'daemon_not_ready') return false
   return true
 }
@@ -938,6 +965,7 @@ async function readTypeScriptDaemonBuildInfo(daemonEntryPath: string) {
   const valid = isRecord(buildInfo) &&
     buildInfo.binary === 'tokenless-daemon' &&
     buildInfo.version === expectedVersion &&
+    buildInfo.controlApiRevision === DAEMON_CONTROL_API_REVISION &&
     buildInfo.platform === process.platform &&
     buildInfo.arch === process.arch
   if (!valid) {
@@ -966,9 +994,9 @@ function pidIsAlive(pid: number) {
   }
 }
 
-function shouldReplaceVersionMismatchedDaemon(probe: DaemonReadyProbe) {
+function isReplaceableDaemonCompatibilityMismatch(probe: DaemonReadyProbe) {
   return !probe.ok &&
-    probe.code === 'daemon_version_mismatch' &&
+    (probe.code === 'daemon_version_mismatch' || probe.code === 'daemon_control_api_revision_mismatch') &&
     probe.identityVerified === true &&
     probe.sameHomeVerified === true
 }

@@ -30,6 +30,7 @@ test('ensureDaemonReady installs the packaged daemon and reports OpenAPI v1 read
     assert.equal(ready.identityVerified, true)
     assert.equal(Object.hasOwn(ready.body, 'protocol'), false)
     assert.equal(ready.body.version, packageVersion)
+    assert.equal(ready.body.control_api_revision, runtime.DAEMON_CONTROL_API_REVISION)
     assert.equal(ready.binaryPath, process.execPath)
     assert.equal(fs.existsSync(ready.daemonEntryPath), true)
     assert.equal(typeof ready.body.proof, 'string')
@@ -38,6 +39,7 @@ test('ensureDaemonReady installs the packaged daemon and reports OpenAPI v1 read
     const inspection = await runtime.inspectManagedRuntime(homeDir)
     assert.equal(inspection.ok, true)
     assert.equal(inspection.daemon.buildInfo.version, packageVersion)
+    assert.equal(inspection.daemon.buildInfo.controlApiRevision, runtime.DAEMON_CONTROL_API_REVISION)
     assert.equal(Object.hasOwn(inspection.daemon.buildInfo, 'protocol'), false)
     assert.equal(inspection.daemon.path, ready.daemonEntryPath)
   } finally {

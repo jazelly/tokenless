@@ -220,7 +220,7 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^CLI: tokenless (.+); npm latest check unavailable \((.+), non-blocking\)\.$/, 'CLI：tokenless $1；无法检查 npm 最新版本（$2，不阻塞）。')
     .replace(/^CLI: tokenless (.+); npm latest (.+) is available\.$/, 'CLI：tokenless $1；npm 上已有最新版本 $2。')
     .replace(/^CLI: tokenless (.+); npm latest (.+) is up to date\.$/, 'CLI：tokenless $1；已是 npm 最新版本 $2。')
-    .replace(/^Daemon: ready on tokenless (.+) \(exact package version required\)\.$/, 'Daemon：已就绪，tokenless $1（要求 package 版本完全一致）。')
+    .replace(/^Daemon: ready on tokenless (.+) \/ control API r(.+) \(exact match required\)\.$/, 'Daemon：已就绪，tokenless $1 / control API r$2（要求完全一致）。')
     .replace(/^Tokenless (.+) is up to date\. Skills and local runtime are current; doctor is healthy\.$/, 'Tokenless $1 已是最新版本。Skills 和本地 runtime 均为最新；doctor 状态健康。')
     .replace(/^Tokenless upgraded from (.+) to (.+)\. Skills and local runtime are current; doctor is healthy\.$/, 'Tokenless 已从 $1 升级到 $2。Skills 和本地 runtime 均为最新；doctor 状态健康。')
     .replace(/^Tokenless upgrade did not complete\. Rerun tokenless upgrade for a full diagnostic\.$/, 'Tokenless 升级未完成。请重新运行 tokenless upgrade 获取完整诊断。')
