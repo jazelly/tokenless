@@ -4,6 +4,17 @@
 
 Every live provider suite writes a private JSON report under `test-results/live-provider-e2e/`. The report groups results by provider, records readiness separately, and then lists every capability as required, unavailable, selected, passed, failed, known issue, or not run. Observable reachability failures use the `network_or_navigation` classification; the report does not infer a firewall, region, or policy cause. Reports contain no DOM, screenshots, storage, credentials, account content, or raw CLI output.
 
+## Real Web UI Provider E2E
+
+The representative Web UI provider test reuses the dedicated live-provider harness and its Cloak-bound `live-provider-cloak` profile. Prepare that profile and authenticate manually before running:
+
+```bash
+npm run test:e2e:prepare -- --browser cloak
+npm run test:e2e:web-provider
+```
+
+The test submits one real ChatGPT job through the dedicated profile, then verifies the completed job in the local Web UI using the same managed browser context. It does not use a local configuration-combination fixture.
+
 ## Capture Provider DOM With CDP
 
 Use `capture-provider-dom-cdp.mjs` to capture a sanitized DOM snapshot from a real provider page in a dedicated Chrome profile with the Chrome DevTools Protocol enabled. The helper supports `chatgpt`, `claude`, `gemini`, `grok`, `qwen`, and `deepseek` through one provider-definition table. Each definition owns its allowed origin, launch URL, selector probes, and DOM artifact name.

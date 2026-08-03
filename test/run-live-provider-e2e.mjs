@@ -178,6 +178,9 @@ async function runProviderSuite(target, options) {
     TOKENLESS_LIVE_PROVIDER_TEST_BROWSER: target.browserSelection,
     TOKENLESS_LIVE_E2E_GATE: options.gate,
   }
+  if (options.command === 'web-ui') {
+    return await runInherited(process.execPath, ['test/run-gated-e2e.mjs', 'web-ui-provider'], environment)
+  }
   const script = options.command === 'connection-matrix'
     ? ['test/run-live-connection-mode-matrix.mjs']
     : ['test/run-gated-e2e.mjs', 'managed-playwright', options.gate]
@@ -250,7 +253,7 @@ function reportTarget(target) {
 
 function parseArguments(arguments_) {
   const command = arguments_[0]
-  if (!['prepare', 'run', 'connection-matrix', 'status'].includes(command)) failUsage()
+  if (!['prepare', 'run', 'connection-matrix', 'web-ui', 'status'].includes(command)) failUsage()
   const parsed = {
     command,
     browser: null,
@@ -282,7 +285,7 @@ function parseArguments(arguments_) {
 function failUsage(message) {
   if (message) console.error(message)
   console.error(
-    `Usage: node test/run-live-provider-e2e.mjs <prepare|run|connection-matrix|status> ` +
+    `Usage: node test/run-live-provider-e2e.mjs <prepare|run|connection-matrix|web-ui|status> ` +
     `--browser <${LIVE_PROVIDER_TEST_BROWSERS.join('|')}> ` +
     '[--home <test-home>] [--gate <all|non_submission|mutation|project>] [--no-open]',
   )
