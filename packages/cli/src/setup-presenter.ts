@@ -1,7 +1,9 @@
 import { localizeText } from './localization.js'
+import { paintCliText, resolveCliColorEnabled } from './cli-output.js'
 
 type WritableStream = {
   columns?: number
+  isTTY?: boolean
   write(chunk: string): unknown
 }
 
@@ -14,6 +16,7 @@ export type SetupPresenterOptions = {
   enabled?: boolean
   stream?: WritableStream
   env?: NodeJS.ProcessEnv
+  color?: boolean
   timers?: TimerApi
   animation?: boolean
   intervalMs?: number
@@ -58,11 +61,11 @@ export class SetupPresenter {
   constructor(options: SetupPresenterOptions = {}) {
     const env = options.env ?? process.env
     this.enabled = options.enabled ?? true
-    this.colorEnabled = this.enabled && supportsAnsi(env)
+    this.stream = options.stream ?? process.stderr
+    this.colorEnabled = this.enabled && (options.color ?? resolveCliColorEnabled({}, { env, stream: this.stream }))
     this.animationEnabled = this.enabled &&
       options.animation !== false &&
       supportsAnimation(env)
-    this.stream = options.stream ?? process.stderr
     this.timers = options.timers ?? {
       setInterval: (callback, ms) => setInterval(callback, ms),
       clearInterval: (timer) => clearInterval(timer as NodeJS.Timeout),
@@ -156,9 +159,7 @@ export class SetupPresenter {
   }
 
   private paint(color: keyof typeof ANSI_COLORS, value: string) {
-    if (!this.colorEnabled) return value
-    const code = ANSI_COLORS[color]
-    return `\u001b[${code}m${value}\u001b[0m`
+    return paintCliText(value, color, this.colorEnabled)
   }
 }
 
@@ -176,9 +177,10 @@ export function resolveSetupTerminalCapabilities(options: SetupTerminalCapabilit
   }
 }
 
-export function supportsAnsi(env: NodeJS.ProcessEnv = process.env) {
+export function supportsAnsi(env: NodeJS.ProcessEnv = process.env, stream?: WritableStream) {
   if ('NO_COLOR' in env) return false
   if (env.TERM === 'dumb') return false
+  if (stream?.isTTY === false) return false
   return true
 }
 

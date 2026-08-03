@@ -71,6 +71,7 @@ Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromiu
 - `-P <slug>` 是 `--profile <slug>` 的短形式。
 - `-p <provider>` 是 `--provider <provider>` 的短形式。
 - Setup 中的 `-f` 是 `--fresh` 的短形式。
+- `-v` 是 `--verbose` 的短形式。
 - `-V` 是 `--version` 的短形式。
 
 ### 常用执行选项
@@ -80,8 +81,11 @@ Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromiu
 | 选项 | 含义 |
 | --- | --- |
 | `-h`, `--help` | 显示所选命令或子命令的用法。 |
-| `--json` | 将最终结果输出为结构化 JSON。除非使用 `--quiet`，实时进度仍写入 stderr。 |
+| `--json` | 将最终结果作为结构化 JSON 写入 stdout。除非使用 `--quiet`，实时 status event 仍写入 stderr。 |
+| `-v`, `--verbose` | 最终 human result 仍保持简洁，但会在 stderr 显示实时 status event 和结构化诊断详情。JSON stdout 保持不变。 |
 | `--quiet` | 禁止输出实时状态事件。 |
+| `--color` | 强制 human-readable output 使用 ANSI 颜色；对 JSON stdout 无效。 |
+| `--no-color` | 禁用 ANSI 颜色，即使输出连接到 terminal 也不启用。 |
 | `--home <path>` | 使用非默认的 Tokenless 状态目录。 |
 | `--daemon-url <url>` | 设置首选 loopback daemon URL。若其端口被占用，Tokenless 可顺延到下一个空闲端口，并把实际 endpoint 记录到 SQLite。 |
 | `--agent-kind <kind>` | 将 job 或 replay drain 定向到显式 agent kind；必须与 `--agent-session-id` 同时使用。 |
@@ -92,6 +96,8 @@ Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromiu
 | `--runner-heartbeat-timeout-ms <ms>` | 为兼容保留；embedded Playwright runtime 会忽略它。 |
 | `--cancel-timeout-ms <ms>` | 覆盖取消确认等待时间。 |
 | `--target-url <url>` | 从所选 provider 域名下允许的 URL 开始执行。 |
+
+Human output 默认保持简洁：命令结果尽量使用一行摘要；prompt 正文和 provider 回复仍保留其内容。普通 status event 只会在使用 `--verbose`（或请求 JSON 输出）时显示；`--quiet` 会禁止这些事件。颜色只会在支持颜色的 TTY 中自动启用；pipe、redirect、`NO_COLOR`、`TERM=dumb` 和 JSON 输出都会禁用颜色。Node 的 terminal detection 覆盖 macOS terminal 以及现代 Windows Terminal/Console；旧版 terminal 或严格日志采集可使用 `--no-color`。
 
 并非所有通用选项都适用于所有命令。下面各命令章节只列出对应工作流中有意义的选项。
 
@@ -742,7 +748,7 @@ npm run test:e2e -- --browser cloak
 npm run test:e2e:connection-matrix -- --browser cloak
 ```
 
-已认证 profile 支持 `chrome`、`brave`、`edge`、`arc`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。Detached daemon 会继续持有 browser，Chromium 则照常把状态持久化到 dedicated profile。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，在 Playwright mode 下执行其中声明的 provider journeys；`connection-matrix` 会用同一个 selected profile 依次运行 Playwright 与 CDP mode。两者都会真实修改 provider 侧状态，并可能产生使用费用。
+已认证 profile 支持 `chrome`、`brave`、`edge`、`arc`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Fresh config 会包含所有已注册且未 disabled 的 provider，包括 Gemini；区域或网络可达性应作为 E2E evidence 报告，而不是从 preparation 中排除 provider 的理由。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。Detached daemon 会继续持有 browser，Chromium 则照常把状态持久化到 dedicated profile。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，在 Playwright mode 下执行其中声明的 provider journeys；`connection-matrix` 会用同一个 selected profile 依次运行 Playwright 与 CDP mode。每次调用都会在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。两种 run mode 都会真实修改 provider 侧状态，并可能产生使用费用。
 
 Browser runtime 与 provider surface 验收是显式本地 gate，不会在 CI 中运行：
 

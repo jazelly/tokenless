@@ -86,6 +86,7 @@ test('persistent config defaults, stores, and validates browser runtime fields t
     assert.deepEqual(defaults.providerWhitelist, [
       'chatgpt',
       'claude',
+      'gemini',
       'grok',
       'qwen',
       'deepseek',
@@ -454,6 +455,38 @@ test('CLI command help is a supported common option for commands and subcommands
     assert.match(result.stderr, /^Usage:$/m)
     assert.match(result.stderr, /^Common options:$/m)
     assert.match(result.stderr, /^  -h, --help$/m)
+  }
+})
+
+test('CLI keeps human output succinct and exposes verbose diagnostics with controllable color', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-output-contract-'))
+  try {
+    const concise = runCli(['config', '--home', homeDir])
+    assert.equal(concise.status, 0, concise.stderr)
+    assert.match(concise.stdout, /^Completed: config=/)
+    assert.doesNotMatch(concise.stdout, /^\{/)
+    assert.equal(concise.stderr, '')
+
+    const verbose = runCli(['config', '--home', homeDir, '--verbose'])
+    assert.equal(verbose.status, 0, verbose.stderr)
+    assert.match(verbose.stdout, /^Completed: config=/)
+    assert.match(verbose.stderr, /^Details:$/m)
+    assert.match(verbose.stderr, /"config": \{/)
+
+    const forcedColor = runCli(['config', '--home', homeDir, '--color'])
+    assert.equal(forcedColor.status, 0, forcedColor.stderr)
+    assert.match(forcedColor.stdout, /\u001b\[/)
+
+    const disabledColor = runCli(['config', '--home', homeDir, '--color', '--no-color'])
+    assert.equal(disabledColor.status, 0, disabledColor.stderr)
+    assert.doesNotMatch(disabledColor.stdout, /\u001b\[/)
+
+    const json = runCli(['config', '--home', homeDir, '--json', '--color'])
+    assert.equal(json.status, 0, json.stderr)
+    assert.doesNotMatch(json.stdout, /\u001b\[/)
+    assert.deepEqual(JSON.parse(json.stdout).config.browserVisibility, 'auto')
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 

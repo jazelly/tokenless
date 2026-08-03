@@ -71,6 +71,7 @@ Short options are case-sensitive:
 - `-P <slug>` is short for `--profile <slug>`.
 - `-p <provider>` is short for `--provider <provider>`.
 - `-f` is short for `--fresh` during setup.
+- `-v` is short for `--verbose`.
 - `-V` is short for `--version`.
 
 ### Common execution options
@@ -80,8 +81,11 @@ These options are available where the command needs the corresponding runtime be
 | Option | Meaning |
 | --- | --- |
 | `-h`, `--help` | Show usage for the selected command or subcommand. |
-| `--json` | Write the final result as structured JSON. Live progress remains on stderr unless `--quiet` is used. |
+| `--json` | Write the final result as structured JSON to stdout. Live status events remain on stderr unless `--quiet` is used. |
+| `-v`, `--verbose` | Keep the final human result concise, but show live status events and a structured diagnostic details block on stderr. JSON stdout is unchanged. |
 | `--quiet` | Suppress live status events. |
+| `--color` | Force ANSI colors for human-readable output. It has no effect on JSON stdout. |
+| `--no-color` | Disable ANSI colors, including when output is attached to a terminal. |
 | `--home <path>` | Use a non-default Tokenless state directory. |
 | `--daemon-url <url>` | Set the preferred loopback daemon URL. If its port is occupied, Tokenless may bind the next free port and records the actual endpoint in SQLite. |
 | `--agent-kind <kind>` | Address a job or replay drain to an explicit agent kind; use with `--agent-session-id`. |
@@ -92,6 +96,8 @@ These options are available where the command needs the corresponding runtime be
 | `--runner-heartbeat-timeout-ms <ms>` | Accepted for compatibility; the embedded Playwright runtime ignores it. |
 | `--cancel-timeout-ms <ms>` | Override cancellation confirmation waiting. |
 | `--target-url <url>` | Start from a provider-approved URL on the selected provider domain. |
+
+Human output is succinct by default: command results use a one-line summary when possible, while prompt text and provider responses retain their content. Routine status events are shown only with `--verbose` (or when JSON output is requested); `--quiet` suppresses them. Color is automatic only for a color-capable TTY, and is disabled for pipes, redirects, `NO_COLOR`, `TERM=dumb`, and JSON. Node's terminal detection covers macOS terminals and modern Windows Terminal/Console hosts; use `--no-color` for legacy terminals or strict log capture.
 
 Not every common option is accepted by every command. The command sections below list the meaningful options for each workflow.
 
@@ -742,7 +748,7 @@ npm run test:e2e -- --browser cloak
 npm run test:e2e:connection-matrix -- --browser cloak
 ```
 
-Supported authenticated-profile selections are `chrome`, `brave`, `edge`, `arc`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. `prepare` installs or resolves the exact browser, keeps its maintenance skill output inside the test-only home, and creates or reuses only its deterministic profile slug. Its login-page list is the profile's effective provider whitelist: `profilePreferences[slug].enabledProviders` when present, otherwise the top-level `providerWhitelist`. Preparation preserves that configured order and never rewrites either list. It requests every listed provider-entry tab in one concurrent Chromium background-tab batch, then exits without waiting for page load, login, or Playwright target observation. If a proof-verified daemon for the same dedicated home predates the provider-tab endpoint, preparation gracefully replaces it with the current built daemon and retries the handoff once. The detached daemon remains the browser owner while Chromium persists the dedicated profile normally. The browser may take focus on its initial launch but does not foreground every provider tab in sequence. Preparation does not read the capability matrix, run provider jobs, call `setup` or `profiles status`, automate login, or inspect authentication data. Use `--no-open` for preparation validation without provider navigation or the manual browser handoff. The `run` command uses the live capability matrix to execute declared provider journeys once in Playwright mode; `connection-matrix` runs the same selected profile sequentially in Playwright and CDP modes. Both perform real provider mutations and may incur usage cost.
+Supported authenticated-profile selections are `chrome`, `brave`, `edge`, `arc`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. `prepare` installs or resolves the exact browser, keeps its maintenance skill output inside the test-only home, and creates or reuses only its deterministic profile slug. Its login-page list is the profile's effective provider whitelist: `profilePreferences[slug].enabledProviders` when present, otherwise the top-level `providerWhitelist`. Fresh configs include every registered non-disabled provider, including Gemini; regional or network reachability is evidence reported by E2E rather than a reason to remove a provider from preparation. Preparation preserves the configured order and never rewrites either list. It requests every listed provider-entry tab in one concurrent Chromium background-tab batch, then exits without waiting for page load, login, or Playwright target observation. If a proof-verified daemon for the same dedicated home predates the provider-tab endpoint, preparation gracefully replaces it with the current built daemon and retries the handoff once. The detached daemon remains the browser owner while Chromium persists the dedicated profile normally. The browser may take focus on its initial launch but does not foreground every provider tab in sequence. Preparation does not read the capability matrix, run provider jobs, call `setup` or `profiles status`, automate login, or inspect authentication data. Use `--no-open` for preparation validation without provider navigation or the manual browser handoff. The `run` command uses the live capability matrix to execute declared provider journeys once in Playwright mode; `connection-matrix` runs the same selected profile sequentially in Playwright and CDP modes. Each invocation writes a private JSON report under `test-results/live-provider-e2e/`, grouped first by provider and then by capability. Readiness failures are classified separately from capability assertions; `network_or_navigation` records observable reachability failure without claiming a particular firewall or regional cause. Both run modes perform real provider mutations and may incur usage cost.
 
 Browser-runtime and provider-surface acceptance tests are explicit local gates and do not run in CI:
 

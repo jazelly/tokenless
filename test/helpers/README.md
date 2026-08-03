@@ -1,5 +1,9 @@
 # Test Helpers
 
+## Live Provider E2E Reports
+
+Every live provider suite writes a private JSON report under `test-results/live-provider-e2e/`. The report groups results by provider, records readiness separately, and then lists every capability as required, unavailable, selected, passed, failed, known issue, or not run. Observable reachability failures use the `network_or_navigation` classification; the report does not infer a firewall, region, or policy cause. Reports contain no DOM, screenshots, storage, credentials, account content, or raw CLI output.
+
 ## Capture Provider DOM With CDP
 
 Use `capture-provider-dom-cdp.mjs` to capture a sanitized DOM snapshot from a real provider page in a dedicated Chrome profile with the Chrome DevTools Protocol enabled. The helper supports `chatgpt`, `claude`, `gemini`, `grok`, `qwen`, and `deepseek` through one provider-definition table. Each definition owns its allowed origin, launch URL, selector probes, and DOM artifact name.
@@ -45,7 +49,7 @@ Promoted regression evidence lives under `test/fixtures/provider-dom/<provider>/
 The authenticated deep-workflow reductions are maintained by:
 
 ```bash
-node test/helpers/build-provider-workflow-fixtures.mjs
+npm run fixtures:build
 ```
 
 That helper rewrites the reduced workflow fixtures, recalculates their provenance digests, and inventories the full corpus. It never replaces the capture step: refresh visible evidence through Chrome or CDP first, inspect and redact it, then update the descriptor.

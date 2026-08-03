@@ -13,6 +13,13 @@ import {
   loadLiveProviderCapabilityMatrix,
   structuredBlockerCodes,
 } from './helpers/live-provider-capability-matrix.mjs'
+import {
+  createLiveProviderE2eReport,
+  finalizeLiveProviderE2eReport,
+  formatLiveProviderE2eReport,
+  recordLiveProviderCapability,
+  writeLiveProviderE2eReport,
+} from './helpers/live-provider-e2e-report.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const matrix = loadLiveProviderCapabilityMatrix()
@@ -52,6 +59,15 @@ const selectedProviders = Object.entries(matrix.providers)
   .filter(({ caseIds }) => caseIds.length > 0)
 
 assert.ok(selectedProviders.length > 0, `TOKENLESS_LIVE_E2E_GATE=${gate} selected no required providers`)
+const suiteReport = createLiveProviderE2eReport({
+  runId: suiteRunMarker,
+  startedAt: new Date().toISOString(),
+  gate,
+  connectionMode: browserConnectionMode,
+  profileSlug,
+  matrix,
+  selectedProviders,
+})
 let sharedSession
 let originalBrowserConnectionMode
 
@@ -68,13 +84,30 @@ test.before(async () => {
 })
 
 test.after(async () => {
+  const cleanupErrors = []
   try {
     await sharedSession?.close()
-  } finally {
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  try {
     if (originalBrowserConnectionMode) {
       const runtime = await import('../packages/cli/dist/src/index.js')
       await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: originalBrowserConnectionMode })
     }
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  try {
+    finalizeLiveProviderE2eReport(suiteReport, new Date().toISOString())
+    const reportPath = await writeLiveProviderE2eReport(suiteReport, path.join(root, 'test-results'))
+    console.log(formatLiveProviderE2eReport(suiteReport, path.relative(root, reportPath)))
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  if (cleanupErrors.length === 1) throw cleanupErrors[0]
+  if (cleanupErrors.length > 1) {
+    throw new AggregateError(cleanupErrors, 'Live provider E2E cleanup or report generation failed.')
   }
 })
 
@@ -85,7 +118,15 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
     const journey = createProviderJourney(session, provider)
     for (const caseId of caseIds) {
       await t.test(`${provider}: ${caseId}`, { timeout: 1_200_000 }, async (step) => {
+        const caseStartedAt = Date.now()
         if (journey.skipReason) {
+          recordLiveProviderCapability(suiteReport, {
+            provider,
+            capability: caseId,
+            status: 'known_issue',
+            error: e2eSkip('e2e_known_issue_provider_blocker', journey.skipReason),
+            durationMs: Date.now() - caseStartedAt,
+          })
           step.skip(journey.skipReason)
           return
         }
@@ -106,12 +147,32 @@ for (const { provider, declaration, caseIds } of selectedProviders) {
           }
           await handler({ provider, declaration, journey })
           assertSubmissionBudget(journey)
+          recordLiveProviderCapability(suiteReport, {
+            provider,
+            capability: caseId,
+            status: 'passed',
+            durationMs: Date.now() - caseStartedAt,
+          })
         } catch (error) {
           if (isKnownIssueSkip(error)) {
             journey.skipReason = `${caseId}: ${error.message}`
+            recordLiveProviderCapability(suiteReport, {
+              provider,
+              capability: caseId,
+              status: 'known_issue',
+              error,
+              durationMs: Date.now() - caseStartedAt,
+            })
             step.skip(journey.skipReason)
             return
           }
+          recordLiveProviderCapability(suiteReport, {
+            provider,
+            capability: caseId,
+            status: 'failed',
+            error,
+            durationMs: Date.now() - caseStartedAt,
+          })
           throw Object.assign(
             new Error(`${provider} journey step ${caseId}: ${error instanceof Error ? error.message : String(error)}`),
             { cause: error },

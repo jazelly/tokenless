@@ -85,6 +85,7 @@ import {
   localizeText,
   setActiveLanguage,
 } from './localization.js'
+import { paintCliText, resolveCliColorEnabled, type CliColor } from './cli-output.js'
 import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
 import {
   inspectTokenlessSkills,
@@ -100,7 +101,7 @@ import {
   type SetupPresenter,
 } from './setup-presenter.js'
 import { tokenlessPackageVersion } from './platform-package.js'
-import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand } from './upgrade.js'
+import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand, type UpgradeProgressEvent } from './upgrade.js'
 import {
   BrowserRuntimeManager,
   isSystemBrowserId,
@@ -271,7 +272,15 @@ const TOP_LEVEL_USAGE = [
   'tokenless daemon stop [--json]',
   'tokenless help',
 ]
-let args: CliArgs = { attachFiles: [], capabilities: [], files: [], json: process.argv.includes('--json') }
+let args: CliArgs = {
+  attachFiles: [],
+  capabilities: [],
+  files: [],
+  json: process.argv.includes('--json'),
+  verbose: process.argv.includes('--verbose') || process.argv.includes('-v'),
+  color: process.argv.includes('--color'),
+  noColor: process.argv.includes('--no-color'),
+}
 
 await initializeCliLanguage(process.argv.slice(2))
 
@@ -295,7 +304,7 @@ try {
   assertKnownTopLevelCommand(command)
   args = parseArgs(argv, { command, subcommand })
   if (helpRequested) {
-    printCommandHelp({ command: 'tokenless' })
+    printCommandHelp({ command: 'tokenless' }, args)
     process.exit(0)
   }
   if (args.help === true && !COMMAND_CONTRACT_BY_KEY.has(commandContractKey({ command, subcommand })) && validSubcommandsFor(command).length > 0) {
@@ -308,12 +317,12 @@ try {
         unsupported,
       )
     }
-    printCommandHelp({ command })
+    printCommandHelp({ command }, args)
     process.exit(0)
   }
   assertCommandRoutingArguments(command, subcommand, args)
   if (args.help === true) {
-    printCommandHelp({ command, subcommand })
+    printCommandHelp({ command, subcommand }, args)
     process.exit(0)
   }
   if (command === 'version') {
@@ -358,11 +367,14 @@ try {
     await installCommand(args)
   } else if (command === 'upgrade') {
     const humanOutput = args.json !== true
-    if (humanOutput) console.error(localizeText('Tokenless upgrade'))
-    const result = await runUpgradeCommand(args, humanOutput
-      ? { onProgress: (event) => console.error(localizeText(formatUpgradeProgress(event))) }
+    if (humanOutput && !args.quiet) console.error(localizeText('Tokenless upgrade'))
+    const result = await runUpgradeCommand(args, humanOutput && args.verbose
+      ? { onProgress: (event) => console.error(formatUpgradeProgressLine(event, args)) }
       : undefined)
-    if (humanOutput) console.log(localizeText(formatUpgradeSummary(result)))
+    if (humanOutput) {
+      console.log(formatHumanLine(localizeText(formatUpgradeSummary(result)), result.ok === true, args))
+      if (args.verbose) printVerbosePayload(result, args)
+    }
     else printPayload(result, args)
     if (!result.ok) process.exitCode = 1
   } else if (command === 'doctor') {
@@ -372,7 +384,7 @@ try {
   } else if (command === 'prompt') {
     await promptCommand(args)
   } else {
-    usage()
+    usage(args)
     process.exit(command === 'help' ? 0 : 2)
   }
 } catch (error) {
@@ -393,7 +405,7 @@ try {
   if (cliError.usage) payload.error.usage = cliError.usage
   if (cliError.context) payload.error.context = cliError.context
   if (args.json) console.log(JSON.stringify(payload, null, 2))
-  else console.error(formatCliError(payload, cliError.usage))
+  else console.error(formatCliError(payload, cliError.usage, args))
   process.exit(cliError.exitCode ?? 1)
 }
 
@@ -2652,8 +2664,11 @@ async function setupCommand(args: CliArgs) {
     enabled: setupTerminal.canPresent,
     stream: process.stderr,
     env: process.env,
+    color: cliColorEnabled(args, process.stderr),
   })
-  const prompt = setupTerminal.canPrompt ? createSetupPrompt() : null
+  const prompt = setupTerminal.canPrompt
+    ? createSetupPrompt(cliColorEnabled(args, process.stdout))
+    : null
   try {
     presenter.welcome()
     presenter.success('Reading config')
@@ -3173,7 +3188,7 @@ function setupRuntimeProfileSlug(
   throw usageError('setup_profile_name_unavailable', `Cannot allocate a managed profile name for ${runtime.runtimeId}.`)
 }
 
-function createSetupPrompt() {
+function createSetupPrompt(colorEnabled = false) {
   const terminal = createInterface({ input: process.stdin, output: process.stdout })
   return {
     async text(message: string, defaultValue?: string) {
@@ -3192,9 +3207,9 @@ function createSetupPrompt() {
       choices: readonly { label: string; value: T }[],
       defaultIndex = 0
     ): Promise<T> {
-      console.error(localizeText(message))
-      choices.forEach((choice, index) => console.error(`  ${index + 1}. ${localizeText(choice.label)}`))
-      const answer = (await terminal.question(localizeText(`Choose [${defaultIndex + 1}]: `))).trim()
+      console.error(paintCliText(localizeText(message), 'cyan', colorEnabled))
+      choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${localizeText(choice.label)}`))
+      const answer = (await terminal.question(paintCliText(localizeText(`Choose [${defaultIndex + 1}]: `), 'cyan', colorEnabled))).trim()
       const index = answer ? Number(answer) - 1 : defaultIndex
       if (!Number.isInteger(index) || !choices[index]) {
         throw usageError('setup_selection_invalid', 'Setup selection must be one of the displayed numbers.')
@@ -4551,7 +4566,7 @@ function createCommandContracts(): CommandContract[] {
   ]
   return contracts.map((contract) => ({
     ...contract,
-    options: [...new Set([...contract.options, 'help'])],
+    options: [...new Set([...contract.options, 'help', 'verbose', 'color', 'noColor'])],
   }))
 }
 
@@ -4639,6 +4654,10 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '-h': 'help',
     '--json': 'json',
     '--quiet': 'quiet',
+    '--verbose': 'verbose',
+    '-v': 'verbose',
+    '--color': 'color',
+    '--no-color': 'noColor',
     '--anti-detect': 'antiDetect',
     '--no-open': 'noOpen',
     '--clear-proxy': 'clearProxy',
@@ -5308,9 +5327,8 @@ function createCliStatusReporter(args: CliArgs): StatusReporter {
   const report = (event: StatusEvent) => {
     const normalized = normalizeStatusEvent(event, startedAt)
     events.push(normalized)
-    if (!args.quiet) {
-      const write = args.json ? console.error : console.log
-      write(formatStatusEvent(normalized))
+    if (!args.quiet && (args.json || args.verbose || normalized.status === 'waiting_for_user')) {
+      console.error(formatStatusEvent(normalized, args))
     }
   }
   return { events, report, lastStatus: () => events.at(-1)?.status }
@@ -5346,7 +5364,15 @@ function normalizeStatusEvent(event: StatusEvent, startedAt: number) {
   }
 }
 
-function formatStatusEvent(event: StatusEvent) {
+function formatStatusEvent(event: StatusEvent, args: CliArgs) {
+  const colorEnabled = !args.json && cliColorEnabled(args, process.stderr)
+  const eventColor: CliColor = event.status === 'failed' || event.status === 'timed_out' || event.status === 'canceled'
+    ? 'red'
+    : event.status === 'waiting_for_user'
+      ? 'yellow'
+      : 'cyan'
+  const prefix = paintCliText('[tokenless]', 'dim', colorEnabled)
+  const eventName = paintCliText(String(event.event), eventColor, colorEnabled)
   if (event.status === 'waiting_for_user') {
     const context = [
       event.provider ? `provider=${formatStatusValue(event.provider)}` : '',
@@ -5354,9 +5380,9 @@ function formatStatusEvent(event: StatusEvent) {
       event.jobId ? `job=${String(event.jobId).slice(0, 8)}` : '',
       event.elapsedMs !== undefined ? `elapsed=${formatElapsed(event.elapsedMs)}` : '',
     ].filter(Boolean).join(' ')
-    return `[tokenless] waiting_for_user ${context} ${localizeText('Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.')}`
+    return `${prefix} ${eventName} ${context} ${localizeText('Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.')}`
   }
-  const parts = ['[tokenless]', event.event]
+  const parts = [prefix, eventName]
   for (const [key, value] of [
     ['status', event.status],
     ['mode', event.mode],
@@ -5369,6 +5395,13 @@ function formatStatusEvent(event: StatusEvent) {
     ['effectiveBrowserVisibility', event.effectiveBrowserVisibility],
     ['url', event.providerUrl],
     ['errorCode', event.errorCode],
+    ...(args.verbose ? [
+      ['transport', event.transport],
+      ['daemonUrl', event.daemonUrl],
+      ['daemonPid', event.daemonPid],
+      ['bridgeSession', event.bridgeSession],
+      ['errorMessage', event.errorMessage],
+    ] : []),
     ['elapsed', formatElapsed(event.elapsedMs)],
   ]) {
     if (value !== undefined && value !== null && value !== '') parts.push(`${key}=${formatStatusValue(value)}`)
@@ -5379,8 +5412,103 @@ function formatStatusEvent(event: StatusEvent) {
 
 function printPayload(payload: Record<string, any>, args: CliArgs) {
   if (args.json) console.log(JSON.stringify(payload, null, 2))
-  else if (payload.compactOutput) console.log(localizeText(String(payload.compactOutput)))
-  else console.log(JSON.stringify(payload, null, 2))
+  else {
+    const summary = payload.compactOutput
+      ? localizeText(String(payload.compactOutput))
+      : formatCompactPayload(payload)
+    console.log(formatHumanLine(summary, payload.ok !== false, args, payload.status))
+    if (args.verbose) printVerbosePayload(payload, args)
+  }
+}
+
+function formatCompactPayload(payload: Record<string, any>) {
+  if (payload.waitingForUser === true) {
+    const userAction = objectRecord(payload.userAction)
+    const message = typeof userAction.message === 'string'
+      ? userAction.message
+      : localizeText('Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.')
+    const resumeCommand = typeof userAction.resumeCommand === 'string'
+      ? ` ${localizeText('Resume:')} ${userAction.resumeCommand}`
+      : ''
+    return `${message}${resumeCommand}`
+  }
+
+  const command = typeof payload.command === 'string'
+    ? `tokenless ${payload.command}`
+    : payload.checks && typeof payload.checks === 'object'
+      ? 'tokenless doctor'
+      : 'Tokenless command'
+  const details: string[] = []
+  const profile = typeof payload.profile === 'string'
+    ? payload.profile
+    : objectRecord(payload.profile).slug
+  if (typeof profile === 'string' && profile) details.push(`profile=${formatStatusValue(profile)}`)
+  if (typeof payload.provider === 'string' && payload.provider) details.push(`provider=${formatStatusValue(payload.provider)}`)
+  if (typeof payload.status === 'string' && payload.status !== 'succeeded' && payload.status !== 'reported') {
+    details.push(`status=${formatStatusValue(payload.status)}`)
+  }
+  if (typeof payload.jobId === 'string') details.push(`job=${formatIdentifier(payload.jobId)}`)
+  if (typeof payload.taskId === 'string') details.push(`task=${formatIdentifier(payload.taskId)}`)
+  if (typeof payload.configPath === 'string') details.push(`config=${formatStatusValue(payload.configPath)}`)
+  if (typeof payload.snapshot?.metadataPath === 'string') details.push(`snapshot=${formatStatusValue(payload.snapshot.metadataPath)}`)
+  if (payload.browser && typeof payload.browser === 'object') {
+    const browser = objectRecord(payload.browser)
+    const browserId = browser.id ?? browser.preference
+    if (typeof browserId === 'string' && browserId) details.push(`browser=${formatStatusValue(browserId)}`)
+  }
+  if (payload.daemon && typeof payload.daemon === 'object') {
+    const daemon = objectRecord(payload.daemon)
+    const daemonStatus = daemon.status ?? (daemon.ready === true ? 'ready' : undefined)
+    if (typeof daemonStatus === 'string' && daemonStatus) details.push(`daemon=${formatStatusValue(daemonStatus)}`)
+  }
+  for (const [key, label] of [
+    ['profiles', 'profiles'],
+    ['capabilities', 'capabilities'],
+    ['routes', 'routes'],
+    ['roots', 'browser-roots'],
+    ['browsers', 'browsers'],
+    ['cleared', 'cleared'],
+    ['providerAttempts', 'provider-attempts'],
+  ] as const) {
+    if (Array.isArray(payload[key])) details.push(`${label}=${payload[key].length}`)
+  }
+  if (payload.checks && typeof payload.checks === 'object') {
+    const checks = Object.values(payload.checks as Record<string, any>)
+    const failed = checks.filter((check) => objectRecord(check).ok !== true).length
+    details.push(failed === 0 ? `checks=${checks.length}` : `checks=${checks.length},failed=${failed}`)
+  }
+  if (details.length === 0) return command
+  return command === 'Tokenless command' ? details.join(', ') : `${command}: ${details.join(', ')}`
+}
+
+function formatIdentifier(value: string) {
+  return formatStatusValue(value.length > 12 ? value.slice(0, 12) : value)
+}
+
+function formatHumanLine(message: string, ok: boolean, args: CliArgs, status?: unknown) {
+  const waiting = status === 'waiting_for_user'
+  const label = waiting ? 'Waiting for user' : ok ? 'Completed' : 'Failed'
+  const color: CliColor = waiting ? 'yellow' : ok ? 'green' : 'red'
+  return `${paintCliText(localizeText(label), color, cliColorEnabled(args, process.stdout))}: ${message}`
+}
+
+function printVerbosePayload(payload: Record<string, any>, args: CliArgs) {
+  const details = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'compactOutput'))
+  console.error(paintCliText(localizeText('Details:'), 'dim', cliColorEnabled(args, process.stderr)))
+  console.error(JSON.stringify(details, null, 2))
+}
+
+function formatUpgradeProgressLine(event: UpgradeProgressEvent, args: CliArgs) {
+  const color: CliColor = event.status === 'failed' ? 'red' : event.status === 'succeeded' ? 'green' : 'cyan'
+  return paintCliText(localizeText(formatUpgradeProgress(event)), color, cliColorEnabled(args, process.stderr))
+}
+
+function cliColorEnabled(args: CliArgs, stream: { isTTY?: boolean; hasColors?: (...args: any[]) => boolean }) {
+  return resolveCliColorEnabled({
+    json: args.json === true,
+    color: args.color === true,
+    noColor: args.noColor === true,
+  }, { stream })
 }
 
 function attachStatusLog(error: CliError, statusReporter: StatusReporter) {
@@ -5395,7 +5523,8 @@ type UsageSection = {
   commands: string[]
 }
 
-function usage() {
+function usage(args: CliArgs) {
+  const colorEnabled = cliColorEnabled(args, process.stderr)
   const canonicalSections: UsageSection[] = [
     {
       title: 'Run',
@@ -5502,26 +5631,28 @@ function usage() {
   ]
 
   console.error([
-    formatUsageGroup('Usage', 'Canonical commands for everyday workflows.', canonicalSections),
+    formatUsageGroup('Usage', 'Canonical commands for everyday workflows.', canonicalSections, colorEnabled),
     '',
-    formatUsageGroup('Advanced Usage', 'Less common commands for detailed control and maintenance.', advancedSections),
+    formatUsageGroup('Advanced Usage', 'Less common commands for detailed control and maintenance.', advancedSections, colorEnabled),
     '',
-    localizeText('Short options:'),
+    paintCliText(localizeText('Short options:'), 'bright', colorEnabled),
     `  -P, --profile <slug>        ${localizeText('Select a managed browser profile.')}`,
     `  -p, --provider <provider>   ${localizeText('Select an AI provider.')}`,
+    `  -v, --verbose               ${localizeText('Show live status and diagnostic details.')}`,
     '',
-    localizeText('Command reference:'),
+    paintCliText(localizeText('Command reference:'), 'bright', colorEnabled),
     `  https://github.com/jazelly/tokenless/blob/main/${activeTokenlessLanguage() === 'zh-CN' ? 'COMMANDS.zh-CN.md' : 'COMMANDS.md'}`,
   ].join('\n'))
 }
 
-function formatUsageGroup(title: string, description: string, sections: UsageSection[]) {
+function formatUsageGroup(title: string, description: string, sections: UsageSection[], colorEnabled: boolean) {
+  const localizedTitle = localizeText(title)
   return [
-    `${localizeText(title)}${localizeText(title) === title ? ':' : '：'}`,
+    paintCliText(`${localizedTitle}${localizedTitle === title ? ':' : '：'}`, 'bright', colorEnabled),
     `  ${localizeText(description)}`,
     ...sections.flatMap((section) => [
       '',
-      `  ${localizeText(section.title)}${localizeText(section.title) === section.title ? ':' : '：'}`,
+      `  ${paintCliText(`${localizeText(section.title)}${localizeText(section.title) === section.title ? ':' : '：'}`, 'cyan', colorEnabled)}`,
       `    ${localizeText(section.description)}`,
       ...section.commands.map((command) => `    ${command}`),
     ]),
@@ -5562,14 +5693,16 @@ function usageDetailsForContext(
   const validOptions = contract
     ? contract.options.map(optionUsageLabel)
     : context.command === 'tokenless'
-      ? ['-h, --help', '--json']
+      ? ['-h, --help', '--json', '-v, --verbose', '--color', '--no-color']
       : validSubcommands.length > 0
         ? ['-h, --help']
         : []
   return {
     command: commandDisplayName(context),
     usage: contract?.usage ?? usageForMissingContract(context),
-    commonOptions: commonOptionsFor(contract?.options ?? (context.command === 'tokenless' || validSubcommands.length > 0 ? ['help', 'json'] : ['help'])),
+    commonOptions: commonOptionsFor(contract?.options ?? (context.command === 'tokenless' || validSubcommands.length > 0
+      ? ['help', 'json', 'verbose', 'color', 'noColor']
+      : ['help', 'verbose', 'color', 'noColor'])),
     validOptions,
     ...(invalidOptions.length === 0 ? {} : { invalidOptions }),
     ...(validSubcommands.length === 0 ? {} : { validCommands: validSubcommands }),
@@ -5594,7 +5727,7 @@ function validSubcommandsFor(command: string) {
 }
 
 function commonOptionsFor(options: readonly string[]) {
-  const common = ['help', 'json', 'home', 'quiet', 'profile', 'provider'] as const
+  const common = ['help', 'json', 'verbose', 'color', 'noColor', 'home', 'quiet', 'profile', 'provider'] as const
   return common.filter((option) => options.includes(option)).map(optionUsageLabel)
 }
 
@@ -5610,6 +5743,7 @@ function optionUsageLabel(option: string) {
     capabilities: '--capability <capability>',
     bridgeTimeoutMs: '--bridge-timeout-ms <ms>',
     cancelTimeoutMs: '--cancel-timeout-ms <ms>',
+    color: '--color',
     chatName: '--chat-name <name>',
     chatSurface: '--chat-surface <surface>',
     chromeUserDataDir: '--browser-user-data-dir <dir>',
@@ -5634,6 +5768,7 @@ function optionUsageLabel(option: string) {
     longRunning: '--long-running',
     model: '--model <label>',
     modelFallbacks: '--model-fallback <label>',
+    noColor: '--no-color',
     noOpen: '--no-open',
     antiDetect: '--anti-detect',
     noBrowserDownload: '--no-browser-download',
@@ -5663,41 +5798,59 @@ function optionUsageLabel(option: string) {
     thinkingEffort: '--thinking-effort <label>',
     timeoutMs: '--timeout-ms <ms>',
     turnContextFile: '--turn-context-file <path>',
+    verbose: '-v, --verbose',
     workspaceMode: '--workspace-mode <auto|native|conversation>',
   } as Record<string, string>)[option] ?? `--${option.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`
 }
 
-function printCommandHelp(context: CommandContext) {
+function printCommandHelp(context: CommandContext, args: CliArgs) {
   const details = usageDetailsForContext(context)
+  const colorEnabled = cliColorEnabled(args, process.stderr)
   const optionLines = details.validOptions.filter((option) => !details.commonOptions.includes(option))
   const lines = [
-    localizeText('Usage:'),
+    paintCliText(localizeText('Usage:'), 'bright', colorEnabled),
     ...details.usage.map((entry) => `  ${entry}`),
     '',
-    localizeText('Common options:'),
+    paintCliText(localizeText('Common options:'), 'bright', colorEnabled),
     ...details.commonOptions.map((entry) => `  ${entry}`),
   ]
   if (optionLines.length > 0) {
-    lines.push('', localizeText('Options:'), ...optionLines.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(localizeText('Options:'), 'bright', colorEnabled), ...optionLines.map((entry) => `  ${entry}`))
   }
   if (details.validCommands && details.validCommands.length > 0) {
-    lines.push('', localizeText('Valid commands:'), ...details.validCommands.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(localizeText('Valid commands:'), 'bright', colorEnabled), ...details.validCommands.map((entry) => `  ${entry}`))
   }
   console.error(lines.join('\n'))
 }
 
-function formatCliError(payload: Record<string, any>, usageDetails?: CliUsageDetails | undefined) {
+function formatCliError(payload: Record<string, any>, usageDetails: CliUsageDetails | undefined, args: CliArgs) {
   const error = objectRecord(payload.error)
-  const lines = [`${localizeText('error:')} ${String(error.code || 'tokenless_cli_error')}: ${localizeText(String(error.message || 'Tokenless CLI failed.'))}`]
-  if (!usageDetails) return lines.join('\n')
-  lines.push('', localizeText('Usage:'), ...usageDetails.usage.map((entry) => `  ${entry}`), '', localizeText('Common options:'))
+  const colorEnabled = cliColorEnabled(args, process.stderr)
+  const lines = [`${paintCliText(localizeText('error:'), 'red', colorEnabled)} ${String(error.code || 'tokenless_cli_error')}: ${localizeText(String(error.message || 'Tokenless CLI failed.'))}`]
+  if (!usageDetails) {
+    if (args.verbose) {
+      lines.push('', paintCliText(localizeText('Details:'), 'dim', colorEnabled), JSON.stringify(payload, null, 2))
+    }
+    return lines.join('\n')
+  }
+  lines.push('', paintCliText(localizeText('Usage:'), 'bright', colorEnabled), ...usageDetails.usage.map((entry) => `  ${entry}`), '', paintCliText(localizeText('Common options:'), 'bright', colorEnabled))
   if (usageDetails.commonOptions.length > 0) {
     lines.push(...usageDetails.commonOptions.map((entry) => `  ${entry}`))
   } else {
     lines.push(`  ${localizeText('(none)')}`)
   }
   if (usageDetails.validCommands && usageDetails.validCommands.length > 0) {
-    lines.push('', localizeText('Valid commands:'), ...usageDetails.validCommands.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(localizeText('Valid commands:'), 'bright', colorEnabled), ...usageDetails.validCommands.map((entry) => `  ${entry}`))
+  }
+  if (args.verbose) {
+    const detailPayload = {
+      ...payload,
+      error: {
+        ...error,
+        usage: undefined,
+      },
+    }
+    lines.push('', paintCliText(localizeText('Details:'), 'dim', colorEnabled), JSON.stringify(detailPayload, null, 2))
   }
   return lines.join('\n')
 }

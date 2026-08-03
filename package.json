@@ -10,11 +10,14 @@
     "build:scripts": "node -e \"require('node:fs').rmSync('dist/scripts',{recursive:true,force:true})\" && tsc -p tsconfig.scripts.json",
     "changeset": "changeset",
     "lint": "npm run api:check && npm run lint --workspaces --if-present && tsc -p tsconfig.scripts.json --noEmit",
+    "check": "npm run lint && npm test",
     "api:check": "node scripts/check-api-contract.mjs",
     "release:version": "node scripts/release/version.mjs",
     "prototype:cloakbrowser": "node scripts/prototypes/cloakbrowser-spike.mjs",
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node dist/scripts/test-all.mjs",
+    "test:file": "npm run build && node --test --test-concurrency=1",
+    "fixtures:build": "node test/helpers/build-provider-workflow-fixtures.mjs",
     "test:ts-daemon-conformance": "npm run build && node --test --test-concurrency=1 test/ts-daemon-conformance.test.mjs",
     "test:e2e:web": "npm run build && node --test --test-concurrency=1 test/local-web-ui.e2e.mjs",
     "test:e2e:web-provider": "npm run build && node test/run-gated-e2e.mjs web-ui-provider",
@@ -26,10 +29,10 @@
     "test:e2e:managed-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs --selection managed-chromium",
     "test:e2e:cloak-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs --selection cloak",
     "test:e2e:connection-matrix": "npm run build && node test/run-live-provider-e2e.mjs connection-matrix --gate all",
-    "test:e2e:non-submission": "node test/run-live-provider-e2e.mjs run --gate non_submission",
-    "test:e2e:mutation": "node test/run-live-provider-e2e.mjs run --gate mutation",
-    "test:e2e:project": "node test/run-live-provider-e2e.mjs run --gate project",
-    "test:e2e:fallback": "node test/run-gated-e2e.mjs provider-fallback"
+    "test:e2e:non-submission": "npm run build && node test/run-live-provider-e2e.mjs run --gate non_submission",
+    "test:e2e:mutation": "npm run build && node test/run-live-provider-e2e.mjs run --gate mutation",
+    "test:e2e:project": "npm run build && node test/run-live-provider-e2e.mjs run --gate project",
+    "test:e2e:fallback": "npm run build && node test/run-gated-e2e.mjs provider-fallback"
   },
   "workspaces": [
     "packages/*"

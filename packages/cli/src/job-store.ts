@@ -217,7 +217,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
 
 function defaultProviderWhitelist() {
   return [...providerRegistry.descriptors()]
-    .filter((provider) => provider.stage !== 'disabled' && provider.id !== 'gemini')
+    .filter((provider) => provider.stage !== 'disabled')
     .sort((left, right) => left.setupOrder - right.setupOrder)
     .map((provider) => provider.id)
 }
