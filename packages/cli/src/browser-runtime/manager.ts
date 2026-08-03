@@ -118,11 +118,16 @@ export class BrowserRuntimeManager {
       return await this.ensureManagedRuntime('managed-chromium', platform, options)
     }
     if (selection === 'profile') return await this.resolveTestProfile(platform)
-    if (isSystemBrowserId(selection)) return await this.requireSystemBrowser(selection, platform)
+    if (isSystemBrowserId(selection)) {
+      return await this.requireSystemBrowser(selection, platform, options.browserExecutablePath)
+    }
     return await this.ensureManagedRuntime(selection, platform, options)
   }
 
-  async resolveForProfile(profile: ProfileWithRuntimeBinding): Promise<ResolvedBrowserRuntime> {
+  async resolveForProfile(
+    profile: ProfileWithRuntimeBinding,
+    options: EnsureBrowserRuntimeOptions = {},
+  ): Promise<ResolvedBrowserRuntime> {
     const binding = profile.runtimeBinding
     if (!binding) {
       throw tokenlessError(
@@ -131,7 +136,7 @@ export class BrowserRuntimeManager {
       )
     }
     const selection = selectionForBinding(binding)
-    const runtime = await this.ensure(selection, { allowDownload: false })
+    const runtime = await this.ensure(selection, { ...options, allowDownload: false })
     if (runtime.runtimeId !== binding.runtimeId || runtime.family !== binding.family || runtime.browserId !== binding.browserId) {
       throw tokenlessError(
         'profile_runtime_mismatch',
@@ -149,11 +154,12 @@ export class BrowserRuntimeManager {
 
   async inspect(
     selectionOrProfile: BrowserSelection | string | ProfileWithRuntimeBinding,
+    options: EnsureBrowserRuntimeOptions = {},
   ): Promise<BrowserRuntimeInspection> {
     try {
       const runtime = typeof selectionOrProfile === 'object'
-        ? await this.resolveForProfile(selectionOrProfile)
-        : await this.ensure(selectionOrProfile, { allowDownload: false })
+        ? await this.resolveForProfile(selectionOrProfile, options)
+        : await this.ensure(selectionOrProfile, { ...options, allowDownload: false })
       return {
         ok: true,
         selection: runtime.selection,
@@ -348,12 +354,21 @@ export class BrowserRuntimeManager {
   private async requireSystemBrowser(
     browserId: SystemBrowserId,
     platform: BrowserRuntimePlatform,
+    browserExecutablePath: string | null | undefined,
   ) {
+    if (browserExecutablePath) {
+      const cached = await this.resolveSystemBrowserAtPath(
+        browserId,
+        platform,
+        browserExecutablePath,
+      ).catch(() => null)
+      if (cached) return cached
+    }
     const runtime = await this.resolveSystemBrowser(browserId, platform)
     if (runtime) return runtime
     throw tokenlessError(
-      'chromium_browser_not_found',
-      `Configured system browser '${browserId}' is not installed or executable.`,
+      'browser_executable_not_found',
+      `Browser executable for '${browserId}' was not found. Set it with tokenless config --browser ${browserId} --browser-executable-path "/absolute/path/to/browser" --json, or open tokenless dashboard and update System > Browser executable path.`,
     )
   }
 
@@ -363,6 +378,21 @@ export class BrowserRuntimeManager {
   ): Promise<ResolvedBrowserRuntime | null> {
     const executablePath = await systemBrowserExecutable(browserId, platform)
     if (!executablePath) return null
+    return await this.resolveSystemBrowserAtPath(browserId, platform, executablePath)
+  }
+
+  private async resolveSystemBrowserAtPath(
+    browserId: SystemBrowserId,
+    platform: BrowserRuntimePlatform,
+    executablePath: string,
+  ): Promise<ResolvedBrowserRuntime> {
+    if (!path.isAbsolute(executablePath)) {
+      throw tokenlessError(
+        'browser_executable_path_invalid',
+        'Browser executable path must be absolute.',
+      )
+    }
+    await assertExecutable(executablePath)
     const actualVersion = await browserExecutableVersion(executablePath)
     return {
       selection: browserId,

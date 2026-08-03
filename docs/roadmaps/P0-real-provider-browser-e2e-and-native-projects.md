@@ -27,7 +27,9 @@ The only runtime skip exception is the checked-in Claude Cloudflare known issue 
 
 Redacted, provenance-bound provider DOM captures remain development aids for selectors, parsers, and already-observed DOM variants. They are not E2E, do not close provider transitions, and do not count toward capability acceptance.
 
-Provider E2E runs manually on this machine with the explicitly selected managed profile already provisioned through Tokenless setup. It does not create a separate test account, automate login, or silently select another profile. Provider-side mutations, retained test artifacts, and usage cost are acceptable. Every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
+Provider E2E runs manually on this machine through the dedicated live-provider profile harness. Every explicit production browser selection resolves one stable slug such as `live-provider-cloak` under the test-only `<TOKENLESS_HOME>/e2e/live-provider` home. The production profile registry remains authoritative for mapping that slug to its opaque UUID directory, and the harness verifies directory containment, private permissions, ready lifecycle, exact executable, and runtime binding before provider automation. `auto` and cross-runtime profile reuse are forbidden because they cannot preserve one stable browser/profile storage contract across runs.
+
+The harness separates `prepare` from `run`. Preparation installs or resolves the selected browser, creates or reuses only its browser-specific profile, and resolves the configured effective provider whitelist from the profile override or top-level fallback without rewriting either list. It preserves that order, requests every listed provider-home tab through one concurrent Chromium background-target batch, and returns without waiting for page load, login, or Playwright target observation. The detached daemon remains the browser owner while Chromium persists the dedicated profile normally. Preparation does not consult the capability matrix or submit provider jobs. The browser may take focus on its initial launch, but preparation never foregrounds each provider tab sequentially. It does not run setup authentication checks, automate login, or inspect authentication data. The authenticated run then injects the resolved test home and slug into the existing built-CLI provider suite, where the capability matrix defines the journeys under test. It does not create a separate test account or silently select another profile. Provider-side mutations, retained test artifacts, and usage cost are acceptable. Every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
 
 The live E2E suite starts one daemon-owned, headed browser for the explicitly selected profile and reuses that browser across every selected provider case. Playwright owns the browser lifecycle on every platform; each independent observer attaches through the loopback CDP endpoint for one case and then disconnects without closing or relaunching the product browser. The suite has no macOS-specific `open` launcher or foreground-application manipulation. The operating system may activate the browser on its one initial headed launch.
 
@@ -150,10 +152,10 @@ Exit: the observer deterministically sees the real page before product actions b
 
 Run the built CLI as an asynchronous child process against:
 
-- the explicitly selected local `TOKENLESS_HOME`;
+- the harness-resolved test-only Tokenless home;
 - the real SQLite job store;
 - the packaged TypeScript daemon;
-- the existing managed browser profile provisioned through Tokenless setup;
+- the deterministic browser-specific profile prepared through the live-provider harness;
 - the real Chromium installation; and
 - the real provider website and current authenticated account state in that profile.
 
@@ -286,7 +288,7 @@ Exit: retries and later CLI invocations recover the exact Project and conversati
 
 ### Phase 5: Native Project Live Acceptance
 
-For both Claude and Grok, using the explicitly selected local setup-managed profile:
+For both Claude and Grok, using the explicitly selected dedicated live-provider profile:
 
 1. generate a run-scoped unique Project identity;
 2. run `workspace.ensure --workspace-mode native` and require `created`;
@@ -318,7 +320,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 - Every advertised visible capability has a required real-provider matrix entry.
 - Every required real-provider case proves CLI, visible DOM, and durable state for the same task and marker.
 - An invoked E2E suite has no skipped cases and no internal retry, except for the checked-in Claude Cloudflare durable blocker known issue.
-- Authentication or setup-profile problems fail with a clear reason.
+- Authentication or dedicated-profile preparation problems fail with a clear reason.
 - All applicable E2E suites pass manually before release, without requiring CI enforcement.
 - CDP inspection is test-only, loopback-only, read-only, and absent from normal runs.
 - Runtime provider failures fail required tests rather than silently skipping them unless they match the declared Claude Cloudflare durable blocker known issue.
@@ -334,7 +336,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 | Risk | Response |
 | --- | --- |
 | Provider UI drift | Fail the required live case, retain bounded diagnostics, capture the new real DOM variant for development, and update the provider-owned adapter |
-| Account or subscription variation | Inspect the selected setup-managed profile, run applicable declared capabilities, and fail clearly when authentication or account state cannot satisfy a required case |
+| Account or subscription variation | Use the selected dedicated live-provider profile, run applicable declared capabilities, and fail clearly when authentication or account state cannot satisfy a required case |
 | CDP endpoint is stale or unavailable | Start the daemon and browser context in inspection mode, validate lifecycle identity, and fail explicitly |
 | Observer changes product behavior | Keep it read-only, prohibit routes and actions, and assert through independent accessible roles and markers |
 | Provider rate limits or usage cost | Fail clearly, investigate, and manually rerun the suite when appropriate; use explicit gates, bounded concurrency, and real artifacts rather than fixtures |

@@ -170,9 +170,11 @@ Main options:
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
 
-`auto` is the default and prefers an installed Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing executable. If no supported system browser exists, setup downloads the locked Chrome for Testing 145 artifact into `~/.tokenless/browser/runtimes`. An explicit missing system-browser choice fails rather than falling back. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first runtime targets are Apple Silicon macOS and Windows x64 (Intel and AMD); Windows remains prerelease until its real-hardware gates pass.
+`auto` is the first-run default and prefers an installed Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing executable. Interactive setup asks whether to use Anti-Detect; declining does not open a separate browser-runtime picker. Normal mode follows an explicit `--browser`, then the saved concrete preference, then deterministic automatic discovery. Setup resolves the result to a concrete `browser` plus a verified `browserExecutablePath` in `config.json`. Later launches verify that cached executable first and scan standard installation paths only when the cache is missing or no longer runnable; a successful fallback refreshes the cache. If no supported system browser exists, setup downloads the locked Chrome for Testing 145 artifact into `$TOKENLESS_HOME/browser/runtimes`. An explicit missing system-browser choice fails with the exact config command and dashboard field needed to supply a path. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first runtime targets are Apple Silicon macOS and Windows x64 (Intel and AMD); Windows remains prerelease until its real-hardware gates pass.
 
-After Anti-Detect is selected, interactive setup links to the official CloakBrowser project, shows the exact platform artifact and Chromium version, and scans known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing profile directories. Discovery reads only the directory key and `Last Version` and classifies an exact four-component match. A listed profile is not copied unless the user selects it and gives explicit copy consent. Copying is opaque: Tokenless does not parse `Local State`, cookies, browser storage, or authentication values.
+`browserExecutablePath` may point outside `TOKENLESS_HOME` only for an explicitly selected system browser. Paths for `managed-chromium` and `cloak` are derived from the catalog-pinned runtime under `$TOKENLESS_HOME/browser/runtimes`; an arbitrary config value cannot replace or bypass that managed runtime.
+
+The Anti-Detect question states that accepting it will download and install the verified, platform-pinned CloakBrowser under `TOKENLESS_HOME` when needed; there is no later installation confirmation. After Anti-Detect is selected, setup does not run system-browser executable discovery for runtime selection. It links to the official CloakBrowser project, shows the exact platform artifact and Chromium version, and scans known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing profile directories. Discovery reads only the directory key and `Last Version` and classifies an exact four-component match. When compatible profiles exist, setup presents one choice containing `Start clean` and the compatible profile sources. Selecting a profile explicitly authorizes its opaque local copy; there are no separate import or copy-consent questions. When none align, setup skips the source choice and uses a clean profile. An explicitly requested incompatible or unknown-version import fails before download instead of being silently ignored. The installer then downloads, verifies, extracts, version-checks, and smoke-launches Cloak; setup immediately persists `browser: "cloak"` and its managed `browserExecutablePath`. Copying remains opaque: Tokenless does not parse `Local State`, cookies, browser storage, or authentication values. Non-interactive import still requires `--consent-local-profile-copy` because no visible profile-source selection occurred.
 
 Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing runtime family normally creates a clean profile; an explicit import can populate the new runtime-bound profile from a selected local Chromium profile. The managed profile then preserves its browser-managed session across jobs.
 
@@ -228,6 +230,7 @@ tokenless config \
   --language zh-CN \
   --provider-whitelist chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
+  --browser-executable-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --browser-visibility auto \
   --json
 ```
@@ -237,6 +240,8 @@ Configurable values:
 - `--language <en|zh-CN>`
 - `--provider-whitelist <list>`
 - `--browser <browser>`
+- `--browser-executable-path <absolute-path>` for an explicit system browser
+- `--clear-browser-executable-path` to force discovery on the next resolution
 - `--browser-visibility <auto|headed|headless>`
 - `--proxy-server <http|https|socks5-url>` with optional `--proxy-bypass <comma-separated-list>`
 - `--clear-proxy`
@@ -246,6 +251,34 @@ Configurable values:
 Add `--profile <slug>` to scope `--provider-whitelist`, `--browser-visibility`, and credential-free proxy settings to one managed profile. Proxy options require `--profile`; `--clear-proxy` removes that profile's endpoint. Global `providerWhitelist` remains a compatibility union for older callers, while routing reads the selected profile's membership.
 
 The persisted JSON key is `providerWhitelist`. Tokenless still reads the legacy `preferredProviders` key and rewrites it as `providerWhitelist` on the next config update. The undocumented legacy `--preferred-providers` flag remains accepted as an alias during migration.
+
+The config shape is:
+
+```json
+{
+  "protocol": "tokenless.config.v1",
+  "updatedAt": "2026-08-02T02:09:40.254Z",
+  "providerWhitelist": [
+    "chatgpt",
+    "claude",
+    "grok",
+    "qwen",
+    "deepseek",
+    "perplexity",
+    "zai",
+    "doubao"
+  ],
+  "profilePreferences": {},
+  "browser": "chrome",
+  "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "browserConnectionMode": "playwright",
+  "browserVisibility": "auto",
+  "daemonUrl": null,
+  "language": "en"
+}
+```
+
+`browserExecutablePath` is a verified cache, not an immutable override: Tokenless executes the browser's version command to validate it, falls back to standard-path discovery if validation fails, and rewrites the cache after a successful fallback. If both checks fail, use the CLI flag above or paste an absolute path into **System → Browser executable path** in the dashboard. The dashboard exposes only whether a path is configured; it does not send the private path back to browser JavaScript.
 
 Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
 
@@ -697,6 +730,19 @@ provider-status
 Commands that may open or operate a provider page are `setup`, `profiles status`, `profiles open`, `run`, `resume`, every provider inspection/configuration/action command, and `snapshot-dom`.
 
 ## Manual Real-Browser Acceptance
+
+The authenticated provider capability harness keeps a separate persistent profile for every explicitly selected production browser. It derives a test-only home at `<TOKENLESS_HOME>/e2e/live-provider` by default, or uses `TOKENLESS_LIVE_PROVIDER_TEST_HOME` or `--home` when explicitly supplied. The test home must differ from the ordinary Tokenless home and remain outside every repository/worktree. Browser selection `cloak`, for example, resolves stable slug `live-provider-cloak`; the production registry at `<test-home>/browser/profiles.json` maps that slug to the opaque directory `<test-home>/browser/profiles/<uuid>`. The harness validates that directory, its private permissions, lifecycle, executable, and runtime binding before any provider automation. It rejects `auto` because automatic discovery could resolve a different executable across runs, and it never reuses one profile across browser runtimes.
+
+Prepare and manually authenticate one browser-specific profile before running its provider gates:
+
+```bash
+npm run test:e2e:prepare -- --browser cloak
+# Sign in manually in each provider tab, then run the printed daemon-stop command.
+npm run test:e2e -- --browser cloak
+npm run test:e2e:connection-matrix -- --browser cloak
+```
+
+Supported authenticated-profile selections are `chrome`, `brave`, `edge`, `arc`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. `prepare` installs or resolves the exact browser, keeps its maintenance skill output inside the test-only home, and creates or reuses only its deterministic profile slug. Its login-page list is the profile's effective provider whitelist: `profilePreferences[slug].enabledProviders` when present, otherwise the top-level `providerWhitelist`. Preparation preserves that configured order and never rewrites either list. It requests every listed provider-home tab in one concurrent Chromium background-tab batch, then exits without waiting for page load, login, or Playwright target observation. The detached daemon remains the browser owner while Chromium persists the dedicated profile normally. The browser may take focus on its initial launch but does not foreground every provider tab in sequence. Preparation does not read the capability matrix, run provider jobs, call `setup` or `profiles status`, automate login, or inspect authentication data. Use `--no-open` for preparation validation without provider navigation or the manual browser handoff. The `run` command uses the live capability matrix to execute declared provider journeys once in Playwright mode; `connection-matrix` runs the same selected profile sequentially in Playwright and CDP modes. Both perform real provider mutations and may incur usage cost.
 
 Browser-runtime and provider-surface acceptance tests are explicit local gates and do not run in CI:
 

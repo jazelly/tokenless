@@ -4,11 +4,12 @@ import { createInProcessDaemonClient } from './in-process-daemon-client.js'
 import {
   ManagedPlaywrightRunnerService,
   type ManagedProfileOpenResult,
+  type ManagedProviderTabsOpenResult,
 } from '../playwright/runner-service.js'
 import { isClaimRecoveryError, tokenlessError } from '../playwright/errors.js'
 import { resolveE2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
 import type { E2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
-import { readTokenlessConfig } from '../job-store.js'
+import { readTokenlessConfig, writeTokenlessConfig, type TokenlessConfig } from '../job-store.js'
 import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
 import type { JobStore } from './job-store.js'
 import type { ManagedBrowserLaunchTarget } from '../playwright/browser/context-manager.js'
@@ -92,6 +93,21 @@ export class BrowserRuntimeController {
     })
   }
 
+  async openProviderTabs(
+    profileId: string,
+    providers: readonly string[],
+    browserVisibility: BrowserVisibility,
+  ): Promise<ManagedProviderTabsOpenResult & { status: BrowserRuntimeStatus }> {
+    return await this.enqueue(async () => {
+      const runner = await this.ensureRunningInLane()
+      const opened = await runner.service.openProviderTabs(profileId, providers, browserVisibility)
+      return {
+        ...opened,
+        status: this.status(),
+      }
+    })
+  }
+
   async openControlPlane(profileId: string, bootstrapUrl: string) {
     return await this.enqueue(async () => {
       const runner = await this.ensureRunningInLane()
@@ -154,7 +170,7 @@ export class BrowserRuntimeController {
       const cacheKey = profile.runtimeBinding?.runtimeId ?? `unbound:${profile.id}`
       let pending = resolvedTargets.get(cacheKey)
       if (!pending) {
-        pending = this.resolveBrowserLaunchTarget(profile, runtimeManager, e2eInspection)
+        pending = this.resolveBrowserLaunchTarget(profile, runtimeManager, config, e2eInspection)
         resolvedTargets.set(cacheKey, pending)
         pending.catch(() => resolvedTargets.delete(cacheKey))
       }
@@ -203,14 +219,30 @@ export class BrowserRuntimeController {
   private async resolveBrowserLaunchTarget(
     profile: ManagedBrowserProfile,
     runtimeManager: BrowserRuntimeManager,
+    config: TokenlessConfig,
     e2eInspection: E2EBrowserInspectionConfig | null,
   ): Promise<ManagedBrowserLaunchTarget> {
     const runtime = profile.runtimeBinding
       ? await runtimeManager.resolveForProfile({
           slug: profile.id,
           runtimeBinding: profile.runtimeBinding,
+        }, {
+          browserExecutablePath: profile.runtimeBinding.browserId === config.browser
+            ? config.browserExecutablePath
+            : null,
         })
       : await this.resolveLegacyTestProfileRuntime(runtimeManager)
+    if (
+      runtime.family !== 'test' &&
+      runtime.selection === config.browser &&
+      runtime.executablePath !== config.browserExecutablePath
+    ) {
+      await writeTokenlessConfig({
+        homeDir: this.store.homeDir,
+        browserExecutablePath: runtime.executablePath,
+      })
+      config.browserExecutablePath = runtime.executablePath
+    }
     return {
       id: runtime.browserId,
       executablePath: runtime.executablePath,

@@ -94,6 +94,19 @@ export type ManagedProfileOpenResult = {
   pageCount: number
 }
 
+export type ManagedProviderTabsOpenResult = ManagedProfileOpenResult & {
+  tabs: readonly {
+    provider: string
+    url: string
+    reused: boolean
+  }[]
+  failures: readonly {
+    provider: string
+    code: 'provider_tab_open_failed'
+    message: string
+  }[]
+}
+
 export type ManagedControlPlaneOpenResult = ManagedProfileOpenResult & {
   url: string
   reused: boolean
@@ -173,6 +186,8 @@ export class ManagedPlaywrightRunnerService {
   private readonly now: () => Date
   private readonly e2eInspection: E2EBrowserInspectionConfig | null
   private readonly controlPlanePageKey: string
+  private readonly providerTabsByProfile = new Map<string, Map<string, Page>>()
+  private readonly pendingProviderTabsByProfile = new Map<string, Set<string>>()
   private readonly inFlightProfiles = new Set<string>()
   private readonly inFlightJobs = new Set<Promise<void>>()
   private stopped = false
@@ -249,6 +264,108 @@ export class ManagedPlaywrightRunnerService {
       browserVisibility: managedContext.browserVisibility,
       effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
       pageCount: pages.length,
+    }
+  }
+
+  async openProviderTabs(
+    profileId: string,
+    providerIds: readonly string[],
+    browserVisibility: BrowserVisibility,
+  ): Promise<ManagedProviderTabsOpenResult> {
+    const profile = (await this.profileRegistry.listProfiles())
+      .find((candidate) => candidate.id === profileId && (candidate.lifecycle === undefined || candidate.lifecycle === 'ready'))
+    if (!profile) {
+      throw tokenlessError('profile_not_found', 'Managed profile is not registered or is not ready.')
+    }
+    const providers = providerIds.map((providerId) => {
+      const provider = getProviderInstanceById(providerId)
+      if (!provider || provider.descriptor.stage === 'disabled') {
+        throw tokenlessError('unknown_provider', `Provider '${providerId}' is not supported.`)
+      }
+      return provider
+    })
+    const managedContext = await this.contextManager.ensureContext(profile, browserVisibility)
+    const existingPages = managedContext.browserContext.pages()
+    const claimedPages = new Set<Page>()
+    const knownProviderTabs = this.providerTabsByProfile.get(profile.id) ?? new Map<string, Page>()
+    const pendingProviderTabs = this.pendingProviderTabsByProfile.get(profile.id) ?? new Set<string>()
+    this.providerTabsByProfile.set(profile.id, knownProviderTabs)
+    this.pendingProviderTabsByProfile.set(profile.id, pendingProviderTabs)
+    const tabs: ManagedProviderTabsOpenResult['tabs'][number][] = []
+    const missing: RunnerProvider[] = []
+    for (const provider of providers) {
+      const known = knownProviderTabs.get(provider.id)
+      if (known?.isClosed()) knownProviderTabs.delete(provider.id)
+      const existing = known && !known.isClosed()
+        ? known
+        : existingPages.find((page) => !claimedPages.has(page) && providerOwnsPage(provider, page))
+      if (existing) {
+        claimedPages.add(existing)
+        knownProviderTabs.set(provider.id, existing)
+        tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: true })
+      } else if (pendingProviderTabs.has(provider.id)) {
+        tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: true })
+      } else {
+        missing.push(provider)
+      }
+    }
+
+    const failures: ManagedProviderTabsOpenResult['failures'][number][] = []
+    const initialBlankPage = existingPages.find((page) => (
+      !page.isClosed() && !claimedPages.has(page) && page.url() === 'about:blank'
+    ))
+    const initialProvider = initialBlankPage ? missing.shift() : undefined
+    if (initialProvider && initialBlankPage) {
+      claimedPages.add(initialBlankPage)
+      knownProviderTabs.set(initialProvider.id, initialBlankPage)
+      pendingProviderTabs.add(initialProvider.id)
+      tabs.push({
+        provider: initialProvider.id,
+        url: initialProvider.descriptor.navigation.entryUrl,
+        reused: false,
+      })
+      void initialBlankPage.goto(initialProvider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
+        .catch(() => knownProviderTabs.delete(initialProvider.id))
+        .finally(() => pendingProviderTabs.delete(initialProvider.id))
+    }
+    if (missing.length > 0) {
+      const browser = managedContext.browserContext.browser()
+      if (!browser) throw tokenlessError('playwright_browser_closed', 'Managed browser is no longer connected.')
+      const session = await browser.newBrowserCDPSession()
+      const requests = missing.map((provider) => {
+        pendingProviderTabs.add(provider.id)
+        tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: false })
+        return session.send('Target.createTarget', {
+          url: provider.descriptor.navigation.entryUrl,
+          background: true,
+        }).then(async (created) => {
+          const createdPages = await waitForChromiumTargetPages(
+            managedContext.browserContext,
+            new Set([created.targetId]),
+            10_000,
+          )
+          const page = createdPages.get(created.targetId)
+          if (page) knownProviderTabs.set(provider.id, page)
+        }).finally(() => pendingProviderTabs.delete(provider.id))
+      })
+      void Promise.allSettled(requests).finally(() => session.detach().catch(() => undefined))
+    }
+    if (pendingProviderTabs.size === 0) {
+      this.pendingProviderTabsByProfile.delete(profile.id)
+      if (knownProviderTabs.size === 0) {
+        this.providerTabsByProfile.delete(profile.id)
+      }
+    }
+    const providerOrder = new Map(providerIds.map((provider, index) => [provider, index]))
+    tabs.sort((left, right) => (providerOrder.get(left.provider) ?? 0) - (providerOrder.get(right.provider) ?? 0))
+    failures.sort((left, right) => (providerOrder.get(left.provider) ?? 0) - (providerOrder.get(right.provider) ?? 0))
+    return {
+      profileId: profile.id,
+      browserVisibility: managedContext.browserVisibility,
+      effectiveBrowserVisibility: managedContext.effectiveBrowserVisibility,
+      pageCount: managedContext.browserContext.pages().length,
+      tabs,
+      failures,
     }
   }
 
@@ -1086,6 +1203,32 @@ async function chromiumTargetId(browserContext: BrowserContext, page: Page) {
   }
 }
 
+async function waitForChromiumTargetPages(
+  browserContext: BrowserContext,
+  targetIds: ReadonlySet<string>,
+  timeoutMs: number,
+) {
+  const pagesByTargetId = new Map<string, Page>()
+  const inspectedPages = new Set<Page>()
+  const deadline = Date.now() + timeoutMs
+  while (pagesByTargetId.size < targetIds.size && Date.now() <= deadline) {
+    for (const page of browserContext.pages()) {
+      if (page.isClosed() || inspectedPages.has(page)) continue
+      try {
+        const targetId = await chromiumTargetId(browserContext, page)
+        inspectedPages.add(page)
+        if (targetIds.has(targetId)) pagesByTargetId.set(targetId, page)
+      } catch {
+        if (page.isClosed()) inspectedPages.add(page)
+      }
+    }
+    if (pagesByTargetId.size < targetIds.size) {
+      await delay(Math.min(25, Math.max(1, deadline - Date.now())))
+    }
+  }
+  return pagesByTargetId
+}
+
 export function serializeRunnerError(error: unknown) {
   const response = errorResponse(error)
   return {
@@ -1861,6 +2004,14 @@ function managedPageKey(job: DaemonClaimedJob, request: ManagedPlaywrightJobRequ
     request.taskId === null ? 'job' : 'task',
     request.taskId ?? job.job_id,
   ])
+}
+
+function providerOwnsPage(
+  provider: NonNullable<ReturnType<typeof getProviderInstanceById>>,
+  page: Page,
+) {
+  const classification = provider.navigation.classify(page.url())
+  return classification.kind === 'approved' || classification.kind === 'trusted_sign_in'
 }
 
 function fallbackBlocker(page: Page, provider: RunnerProvider): VisibleBlocker {

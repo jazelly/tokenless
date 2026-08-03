@@ -6,6 +6,7 @@ import {
   providerCapabilities,
 } from './provider-definition.js'
 import { GeminiAccountInspector } from './gemini-account-inspector.js'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 export class GeminiProvider extends BaseProvider<'gemini'> {
   constructor() {
@@ -17,13 +18,7 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: true,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://gemini.google.com/app',
-        origins: Object.freeze(['https://gemini.google.com']),
-        trustedSignInOrigins: Object.freeze([
-          Object.freeze({ origin: 'https://accounts.google.com' }),
-        ]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.gemini,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze([]),
       }),

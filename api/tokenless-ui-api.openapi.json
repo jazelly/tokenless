@@ -194,12 +194,13 @@
           "updatedAt": { "type": ["string", "null"], "format": "date-time" },
           "providerWhitelist": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
           "browser": { "type": "string" },
+          "browserExecutablePathConfigured": { "type": "boolean" },
           "browserConnectionMode": { "type": "string", "enum": ["playwright", "cdp"] },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "daemonUrl": { "type": ["string", "null"], "format": "uri" },
           "language": { "type": "string", "enum": ["en", "zh-CN"] }
         },
-        "required": ["updatedAt", "providerWhitelist", "browser", "browserConnectionMode", "browserVisibility", "daemonUrl", "language"],
+        "required": ["updatedAt", "providerWhitelist", "browser", "browserExecutablePathConfigured", "browserConnectionMode", "browserVisibility", "daemonUrl", "language"],
         "additionalProperties": false
       },
       "RuntimeStatus": {
@@ -383,6 +384,7 @@
         "type": "object",
         "properties": {
           "browser": { "type": "string" },
+          "browserExecutablePath": { "type": ["string", "null"], "minLength": 1 },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "language": { "type": "string", "enum": ["en", "zh-CN"] }
         },

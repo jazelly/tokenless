@@ -97,13 +97,14 @@ Custom-root discovery does not make that root part of interactive setup. Release
 For each case:
 
 1. Setup asks whether to use Anti-Detect mode. Select `Yes`.
-2. Setup identifies and links to CloakBrowser and reports artifact `146.0.7680.177.5` with Chromium `146.0.7680.177`.
-3. Setup lists every safely discovered profile candidate with `aligned`, `not_aligned`, or `unknown` compatibility.
-4. Setup asks whether to continue with a clean CloakBrowser profile and explicitly states that listed profiles will not be imported.
-5. Declining returns `setup_cloak_profile_declined` before Cloak download, cache creation, or managed-profile creation.
-6. Accepting downloads the official artifact when absent, verifies SHA-256, safely extracts it, verifies the executable-reported version, commits the private cache atomically, and creates a clean managed profile bound to the exact Cloak runtime.
-7. Setup continues to provider selection and visible sign-in review without reading source browser authentication state.
-8. `doctor --json` reports the exact verified runtime, expected and actual versions, cache/checksum state, and profile runtime binding.
+2. The Anti-Detect question states that accepting will download and install the verified platform-pinned CloakBrowser under `TOKENLESS_HOME` when needed; no later installation confirmation appears.
+3. Setup identifies and links to CloakBrowser and reports artifact `146.0.7680.177.5` with Chromium `146.0.7680.177`.
+4. Setup lists every safely discovered profile candidate with `aligned`, `not_aligned`, or `unknown` compatibility.
+5. If aligned candidates exist, one choice offers `Start clean` and only the aligned profile sources. Selecting a profile explicitly authorizes its opaque copy; there are no separate import or copy-consent questions. If none align, setup uses a clean profile without asking.
+6. Setup downloads the official artifact when absent, verifies SHA-256, safely extracts it, verifies the executable-reported version, commits the private cache atomically, and creates a managed profile bound to the exact Cloak runtime.
+7. A selected source profile is version-checked again at the copy boundary and copied only as an opaque filesystem tree without inspecting authentication values.
+8. Setup continues to provider selection and visible sign-in review.
+9. `doctor --json` reports the exact verified runtime, expected and actual versions, cache/checksum state, and profile runtime binding.
 
 Equivalent English and Simplified Chinese prompt text is acceptable; the meaning and decisions must be identical.
 

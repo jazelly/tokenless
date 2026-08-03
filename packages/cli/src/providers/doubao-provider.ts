@@ -13,6 +13,7 @@ import {
   DoubaoModeCapability,
   DoubaoSkillCapability,
 } from './capabilities/doubao-controls.js'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 export class DoubaoProvider extends BaseProvider<'doubao'> {
   constructor() {
@@ -24,11 +25,7 @@ export class DoubaoProvider extends BaseProvider<'doubao'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://www.doubao.com/chat/',
-        origins: Object.freeze(['https://www.doubao.com']),
-        trustedSignInOrigins: Object.freeze([]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.doubao,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['doubao.com']),
       }),

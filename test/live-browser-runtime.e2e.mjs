@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { chromium } from 'playwright-core'
 
 import { BrowserRuntimeManager } from '../packages/cli/dist/src/browser-runtime/manager.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
@@ -39,12 +40,63 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
   try {
     await fs.mkdir(skillHome, { recursive: true, mode: 0o700 })
 
+    const customExecutablePath = chromium.executablePath()
+    await fs.access(customExecutablePath)
+    const configured = await runCli([
+      'config',
+      '--browser', 'chrome-for-testing',
+      '--browser-executable-path', customExecutablePath,
+      '--home', homeDir,
+      '--json',
+    ], env)
+    assert.equal(configured.config.browser, 'chrome-for-testing')
+    assert.equal(configured.config.browserExecutablePath, customExecutablePath)
+    const configuredRuntime = await new BrowserRuntimeManager({ homeDir }).ensure(
+      configured.config.browser,
+      { allowDownload: false, browserExecutablePath: configured.config.browserExecutablePath },
+    )
+    assert.equal(configuredRuntime.executablePath, customExecutablePath)
+    const cachedPathContext = await chromium.launchPersistentContext(
+      path.join(homeDir, 'cached-path-smoke-profile'),
+      {
+        executablePath: configuredRuntime.executablePath,
+        headless: true,
+        chromiumSandbox: true,
+        args: ['--password-store=basic', '--use-mock-keychain'],
+      },
+    )
+    try {
+      const page = cachedPathContext.pages()[0] ?? await cachedPathContext.newPage()
+      await page.goto('data:text/html,<title>cached-browser-path</title>')
+      assert.equal(await page.title(), 'cached-browser-path')
+    } finally {
+      await cachedPathContext.close()
+    }
+
     const automatic = await runCli([
       'install', '--browser', 'auto', '--home', homeDir, '--json',
     ], env)
     rememberDaemonPid(ownedDaemonPids, automatic)
     assert.equal(automatic.ok, true)
     assert.equal(automatic.browser.family, expectedAutoFamily)
+    const automaticConfig = JSON.parse(await fs.readFile(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.equal(automaticConfig.browser, automatic.browser.id)
+    assert.equal(typeof automaticConfig.browserExecutablePath, 'string')
+    await fs.access(automaticConfig.browserExecutablePath)
+    const staleExecutablePath = automatic.browser.family === 'system'
+      ? path.join(homeDir, 'missing-browser-executable')
+      : path.join(homeDir, 'browser', 'runtimes', 'missing-browser-executable')
+    await fs.writeFile(
+      path.join(homeDir, 'config.json'),
+      `${JSON.stringify({ ...automaticConfig, browserExecutablePath: staleExecutablePath }, null, 2)}\n`,
+      { mode: 0o600 },
+    )
+    const fallbackProfile = await runCli([
+      'profiles', 'add', '--profile', 'cache-fallback', '--home', homeDir, '--json',
+    ], env)
+    assert.equal(fallbackProfile.ok, true)
+    const refreshedConfig = JSON.parse(await fs.readFile(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.equal(refreshedConfig.browserExecutablePath, automaticConfig.browserExecutablePath)
 
     const managed = await runCli([
       'install', '--browser', 'managed-chromium', '--home', homeDir, '--json',

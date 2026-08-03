@@ -13,6 +13,7 @@ import {
   DeepSeekToggleCapability,
 } from './capabilities/deepseek-controls.js'
 import type { Page } from 'playwright-core'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 const DEEPSEEK_SESSION_HYDRATION_TIMEOUT_MS = 10_000
 
@@ -26,14 +27,7 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://chat.deepseek.com/',
-        origins: Object.freeze(['https://chat.deepseek.com']),
-        trustedSignInOrigins: Object.freeze([
-          Object.freeze({ origin: 'https://accounts.google.com' }),
-          Object.freeze({ origin: 'https://appleid.apple.com' }),
-        ]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.deepseek,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['deepseek.com']),
       }),

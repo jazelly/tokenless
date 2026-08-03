@@ -7,6 +7,7 @@ import {
 } from './provider-definition.js'
 import { MenuTextAccountInspector } from './account-inspectors.js'
 import { NativeProjectWorkspaceCapability } from './capabilities/native-project-workspace.js'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 export class ClaudeProvider extends BaseProvider<'claude'> {
   constructor() {
@@ -18,13 +19,7 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: true,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://claude.ai/new',
-        origins: Object.freeze(['https://claude.ai']),
-        trustedSignInOrigins: Object.freeze([
-          Object.freeze({ origin: 'https://accounts.google.com' }),
-        ]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.claude,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['claude.ai', 'anthropic.com']),
       }),

@@ -6,6 +6,7 @@ import {
   defineProvider,
   providerCapabilities,
 } from './provider-definition.js'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 export class ZaiProvider extends BaseProvider<'zai'> {
   constructor() {
@@ -17,11 +18,7 @@ export class ZaiProvider extends BaseProvider<'zai'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://chat.z.ai/',
-        origins: Object.freeze(['https://chat.z.ai']),
-        trustedSignInOrigins: Object.freeze([]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.zai,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['z.ai']),
       }),

@@ -6,6 +6,7 @@ import {
   providerCapabilities,
 } from './provider-definition.js'
 import { MenuTextAccountInspector } from './account-inspectors.js'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 export class ChatGptProvider extends BaseProvider<'chatgpt'> {
   constructor() {
@@ -17,16 +18,7 @@ export class ChatGptProvider extends BaseProvider<'chatgpt'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: true,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://chatgpt.com/',
-        origins: Object.freeze(['https://chatgpt.com', 'https://chat.openai.com']),
-        trustedSignInOrigins: Object.freeze([
-          Object.freeze({ origin: 'https://accounts.google.com' }),
-          Object.freeze({ origin: 'https://auth.openai.com' }),
-          Object.freeze({ origin: 'https://auth0.openai.com' }),
-          Object.freeze({ origin: 'https://login.openai.com' }),
-        ]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.chatgpt,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['chatgpt.com', 'openai.com']),
       }),

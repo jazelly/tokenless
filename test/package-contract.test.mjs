@@ -24,6 +24,33 @@ test('checked-in live provider capability matrix classifies every registered pro
   }])
 })
 
+test('built provider navigation catalog owns every entry point and known page pattern', async () => {
+  const {
+    PROVIDER_NAVIGATION_CATALOG,
+    listProviderDescriptors,
+  } = await import('../packages/cli/dist/src/playwright/index.js')
+  const descriptors = listProviderDescriptors()
+  assert.deepEqual(
+    Object.keys(PROVIDER_NAVIGATION_CATALOG).sort(),
+    descriptors.map((descriptor) => descriptor.id).sort(),
+  )
+  for (const descriptor of descriptors) {
+    assert.equal(descriptor.navigation, PROVIDER_NAVIGATION_CATALOG[descriptor.id])
+    assert.ok(descriptor.navigation.pagePatterns.some((page) => (
+      page.kind === 'entry' && page.urlPattern === descriptor.navigation.entryUrl
+    )))
+  }
+  assert.equal(PROVIDER_NAVIGATION_CATALOG.zai.entryUrl, 'https://z.ai/chat')
+  assert.equal(PROVIDER_NAVIGATION_CATALOG.zai.homeUrl, 'https://chat.z.ai/')
+  assert.deepEqual(PROVIDER_NAVIGATION_CATALOG.zai.origins, [
+    'https://z.ai',
+    'https://chat.z.ai',
+  ])
+  assert.ok(PROVIDER_NAVIGATION_CATALOG.zai.pagePatterns.some((page) => (
+    page.kind === 'conversation' && page.urlPattern === 'https://chat.z.ai/c/:conversationId'
+  )))
+})
+
 test('built capability routes stay provenance-bound to required live provider matrix cases', () => {
   const matrix = loadLiveProviderCapabilityMatrix()
   const result = spawnSync(process.execPath, [cliEntry, 'capabilities', 'list', '--json'], {
@@ -49,12 +76,13 @@ test('built capability routes stay provenance-bound to required live provider ma
   }
 })
 
-test('persistent config defaults, stores, and validates browser connection mode through the filesystem boundary', async () => {
+test('persistent config defaults, stores, and validates browser runtime fields through the filesystem boundary', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-connection-mode-'))
   const runtime = await import('../packages/cli/dist/src/index.js')
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
     assert.equal(defaults.browserConnectionMode, 'playwright')
+    assert.equal(defaults.browserExecutablePath, null)
     assert.deepEqual(defaults.providerWhitelist, [
       'chatgpt',
       'claude',
@@ -71,8 +99,32 @@ test('persistent config defaults, stores, and validates browser connection mode 
       'cdp',
     )
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'cdp')
+    const executablePath = path.join(homeDir, 'browsers', 'chrome')
+    await runtime.writeTokenlessConfig({ homeDir, browser: 'chrome', browserExecutablePath: executablePath })
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, executablePath)
+    await runtime.writeTokenlessConfig({ homeDir, browser: 'brave' })
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, null)
+    const managedExecutablePath = path.join(homeDir, 'browser', 'runtimes', 'managed-chromium', 'browser')
+    await runtime.writeTokenlessConfig({
+      homeDir,
+      browser: 'managed-chromium',
+      browserExecutablePath: managedExecutablePath,
+    })
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, managedExecutablePath)
+    await assert.rejects(
+      runtime.writeTokenlessConfig({
+        homeDir,
+        browser: 'managed-chromium',
+        browserExecutablePath: path.join(homeDir, 'outside-managed-runtime'),
+      }),
+      (error) => error?.code === 'tokenless_config_invalid',
+    )
     await assert.rejects(
       runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'webdriver' }),
+      (error) => error?.code === 'tokenless_config_invalid',
+    )
+    await assert.rejects(
+      runtime.writeTokenlessConfig({ homeDir, browserExecutablePath: 'relative/browser' }),
       (error) => error?.code === 'tokenless_config_invalid',
     )
   } finally {
@@ -693,7 +745,45 @@ test('built CLI classifies Chromium profile directories without reading browser 
   }
 })
 
-test('non-interactive Cloak setup requires an explicit clean-profile confirmation', () => {
+test('Cloak setup gates explicit profile import on an exact supported browser version before download', () => {
+  const temporaryRoot = fs.realpathSync(os.tmpdir())
+  const profileRoot = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-cloak-import-profile-'))
+  const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-cloak-import-home-'))
+  const expectedCloakVersion = process.platform === 'win32'
+    ? '146.0.7680.177'
+    : '145.0.7632.109'
+  const setupArgs = [
+    cliEntry,
+    'setup',
+    '--browser', 'cloak',
+    '--import-browser-profile', 'Default',
+    '--browser-user-data-dir', profileRoot,
+    '--consent-local-profile-copy',
+    '--defaults',
+    '--no-browser-download',
+    '--home', homeDir,
+    '--json',
+  ]
+  try {
+    fs.mkdirSync(path.join(profileRoot, 'Default'))
+    fs.writeFileSync(path.join(profileRoot, 'Last Version'), '150.0.7871.187')
+    fs.writeFileSync(path.join(profileRoot, 'Local State'), 'intentionally invalid and never read')
+
+    const mismatched = spawnSync(process.execPath, setupArgs, { cwd: root, encoding: 'utf8' })
+    assert.equal(mismatched.status, 1, mismatched.stderr || mismatched.stdout)
+    assert.equal(JSON.parse(mismatched.stdout).error.code, 'cloak_profile_version_incompatible')
+
+    fs.writeFileSync(path.join(profileRoot, 'Last Version'), expectedCloakVersion)
+    const aligned = spawnSync(process.execPath, setupArgs, { cwd: root, encoding: 'utf8' })
+    assert.equal(aligned.status, 1, aligned.stderr || aligned.stdout)
+    assert.equal(JSON.parse(aligned.stdout).error.code, 'browser_runtime_download_required')
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(profileRoot, { recursive: true, force: true })
+  }
+})
+
+test('non-interactive Cloak setup requires an explicit Anti-Detect selection', () => {
   const homeDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tokenless-cloak-consent-'))
   try {
     const configured = spawnSync(process.execPath, [

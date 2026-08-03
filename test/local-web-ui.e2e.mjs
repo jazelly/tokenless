@@ -48,6 +48,10 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await page.locator('.provider-pill').filter({ hasText: 'Gemini' }).locator('input').isChecked(), false)
       await page.getByTestId('finish-setup').click()
       await page.getByTestId('profiles-view').waitFor()
+      const setupConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+      assert.notEqual(setupConfig.browser, 'auto')
+      assert.equal(typeof setupConfig.browserExecutablePath, 'string')
+      fs.accessSync(setupConfig.browserExecutablePath, fs.constants.X_OK)
 
       assert.equal(await page.locator('.rail').evaluate((element) => Math.round(element.getBoundingClientRect().width)), 64)
       assert.equal(await page.locator('.profile-master').evaluate((element) => Math.round(element.getBoundingClientRect().width)), 302)

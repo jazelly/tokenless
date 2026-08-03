@@ -9,6 +9,7 @@ import { providerRegistry } from './providers/registry.js'
 import type { BrowserVisibility } from './browser-visibility.js'
 import {
   BROWSER_SELECTIONS,
+  isSystemBrowserId,
   normalizeBrowserSelection,
   type BrowserSelection,
 } from './browser-runtime/types.js'
@@ -26,6 +27,7 @@ export type TokenlessConfig = {
   providerWhitelist: string[]
   profilePreferences: Record<string, ManagedProfilePreferences>
   browser: BrowserSelection
+  browserExecutablePath: string | null
   browserConnectionMode: BrowserConnectionMode
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
@@ -106,6 +108,9 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.browser !== undefined && payload.browser !== null && !normalizeBrowserId(payload.browser)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.browserExecutablePath !== undefined && !isConfigBrowserExecutablePath(payload.browserExecutablePath)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   if (payload.browserConnectionMode !== undefined && !normalizeBrowserConnectionMode(payload.browserConnectionMode)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
@@ -118,12 +123,16 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.language !== undefined && !normalizeTokenlessLanguage(payload.language)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  const browser = normalizeBrowserId(payload.browser) ?? 'auto'
+  const browserExecutablePath = normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
+  validateConfigBrowserExecutablePathScope(homeDir, browser, browserExecutablePath, file)
   return {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
     providerWhitelist: configuredProviderWhitelist(payload),
     profilePreferences: normalizeProfilePreferences(payload.profilePreferences),
-    browser: normalizeBrowserId(payload.browser) ?? 'auto',
+    browser,
+    browserExecutablePath,
     browserConnectionMode: normalizeBrowserConnectionMode(payload.browserConnectionMode) ?? 'playwright',
     browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
@@ -136,6 +145,7 @@ export async function writeTokenlessConfig({
   providerWhitelist,
   profilePreferences,
   browser,
+  browserExecutablePath,
   browserConnectionMode,
   browserVisibility,
   daemonUrl,
@@ -145,6 +155,7 @@ export async function writeTokenlessConfig({
   providerWhitelist?: unknown
   profilePreferences?: unknown
   browser?: unknown
+  browserExecutablePath?: unknown
   browserConnectionMode?: unknown
   browserVisibility?: unknown
   daemonUrl?: unknown
@@ -155,6 +166,7 @@ export async function writeTokenlessConfig({
   const canonicalHome = await fs.realpath(homeDir)
   return await withPrivateSqliteWriterLock(path.join(canonicalHome, 'config.writer.sqlite'), async () => {
     const current = await readTokenlessConfig(homeDir)
+    const nextBrowser = browser === undefined ? current.browser : validateConfigBrowser(browser)
     const config: TokenlessConfig = {
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
@@ -164,7 +176,10 @@ export async function writeTokenlessConfig({
       profilePreferences: profilePreferences === undefined
         ? current.profilePreferences
         : validateProfilePreferences(profilePreferences),
-      browser: browser === undefined ? current.browser : validateConfigBrowser(browser),
+      browser: nextBrowser,
+      browserExecutablePath: browserExecutablePath === undefined
+        ? (nextBrowser === current.browser ? current.browserExecutablePath : null)
+        : validateConfigBrowserExecutablePath(browserExecutablePath),
       browserConnectionMode: browserConnectionMode === undefined
         ? current.browserConnectionMode
         : validateConfigBrowserConnectionMode(browserConnectionMode),
@@ -174,6 +189,12 @@ export async function writeTokenlessConfig({
       daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
       language: language === undefined ? current.language : validateConfigLanguage(language),
     }
+    validateConfigBrowserExecutablePathScope(
+      homeDir,
+      config.browser,
+      config.browserExecutablePath,
+      configPath(homeDir),
+    )
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
   })
@@ -186,6 +207,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
     providerWhitelist: defaultProviderWhitelist(),
     profilePreferences: {},
     browser: 'auto',
+    browserExecutablePath: null,
     browserConnectionMode: 'playwright',
     browserVisibility: 'auto',
     daemonUrl: null,
@@ -269,6 +291,51 @@ function validateConfigBrowser(value: unknown): BrowserSelection {
     )
   }
   return browser
+}
+
+function isConfigBrowserExecutablePath(value: unknown) {
+  return value === null || (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    path.isAbsolute(value.trim())
+  )
+}
+
+function normalizeConfigBrowserExecutablePath(value: unknown) {
+  return typeof value === 'string' && value.trim() ? path.normalize(value.trim()) : null
+}
+
+function validateConfigBrowserExecutablePath(value: unknown) {
+  if (!isConfigBrowserExecutablePath(value)) {
+    throw configError(
+      'tokenless_config_invalid',
+      'Invalid Tokenless browser executable path; expected null or an absolute path.',
+    )
+  }
+  return normalizeConfigBrowserExecutablePath(value)
+}
+
+function validateConfigBrowserExecutablePathScope(
+  homeDir: string,
+  browser: BrowserSelection,
+  executablePath: string | null,
+  file: string,
+) {
+  if (!executablePath || isSystemBrowserId(browser)) return
+  const managedRuntimeRoot = path.join(path.resolve(homeDir), 'browser', 'runtimes')
+  if (
+    (browser === 'managed-chromium' || browser === 'cloak') &&
+    isPathInside(managedRuntimeRoot, executablePath)
+  ) return
+  throw configError(
+    'tokenless_config_invalid',
+    `Invalid Tokenless browser executable path scope at ${file}.`,
+  )
+}
+
+function isPathInside(root: string, candidate: string) {
+  const relative = path.relative(root, candidate)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
 }
 
 function validateConfigLanguage(value: unknown): TokenlessLanguage {

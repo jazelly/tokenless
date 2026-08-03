@@ -8,6 +8,7 @@ import {
 import { MenuTextAccountInspector } from './account-inspectors.js'
 import type { Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 export class PerplexityProvider extends BaseProvider<'perplexity'> {
   constructor() {
@@ -19,11 +20,7 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://www.perplexity.ai/',
-        origins: Object.freeze(['https://www.perplexity.ai']),
-        trustedSignInOrigins: Object.freeze([]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.perplexity,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['perplexity.ai']),
       }),

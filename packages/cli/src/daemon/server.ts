@@ -241,6 +241,20 @@ async function handleRequest(
       ))
       return
     }
+    if (method === 'POST' && url.pathname === '/control/browser-runtime/open-provider-tabs') {
+      const body = await readJsonObject(request)
+      const openFields = new Set(['profile_id', 'browser_visibility', 'providers'])
+      if (Object.keys(body).some((key) => !openFields.has(key))) {
+        throw invalidInput('request body must be valid JSON: unknown field')
+      }
+      writeJson(response, 200, await browserRuntimeOpenProviderTabs(
+        runtimeController,
+        requiredString(body.profile_id, 'profile_id'),
+        requiredProviderList(body.providers),
+        requiredBrowserVisibility(body.browser_visibility),
+      ))
+      return
+    }
 
     if (method === 'POST' && url.pathname === '/jobs') {
       const body = await readJsonObject(request)
@@ -442,10 +456,36 @@ async function browserRuntimeOpenProfile(
   return await runtimeController.openProfile(profileId, browserVisibility)
 }
 
+async function browserRuntimeOpenProviderTabs(
+  runtimeController: BrowserRuntimeController | undefined,
+  profileId: string,
+  providers: readonly string[],
+  browserVisibility: ReturnType<typeof requiredBrowserVisibility>,
+) {
+  if (!runtimeController) throw invalidInput('browser runtime control is unavailable')
+  return await runtimeController.openProviderTabs(profileId, providers, browserVisibility)
+}
+
 function requiredBrowserVisibility(value: unknown) {
   const browserVisibility = normalizeBrowserVisibility(value)
   if (!browserVisibility) throw invalidInput('browser_visibility must be auto, headed, or headless')
   return browserVisibility
+}
+
+function requiredProviderList(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw invalidInput('providers must be a non-empty array')
+  }
+  const supported = supportedProviderSet()
+  const providers: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string' || !supported.has(entry)) {
+      throw invalidInput('providers includes an unsupported provider')
+    }
+    if (providers.includes(entry)) throw invalidInput('providers must not contain duplicates')
+    providers.push(entry)
+  }
+  return providers
 }
 
 function supportedProviders() {

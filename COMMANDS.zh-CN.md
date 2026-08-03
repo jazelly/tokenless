@@ -170,9 +170,11 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
 
-`auto` 是默认值，会优先使用已安装的 Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing executable。没有支持的 system browser 时，setup 才会把锁定的 Chrome for Testing 145 artifact 下载到 `~/.tokenless/browser/runtimes`。显式选择但不存在的 system browser 会失败，不会 fallback。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
+`auto` 是首次运行的默认值，会优先使用已安装的 Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing executable。交互式 setup 只询问是否使用 Anti-Detect；拒绝后不会再打开单独的 browser-runtime 选择器。普通模式依次遵循显式 `--browser`、已保存的具体偏好和确定性的自动发现。Setup 会把结果解析为具体的 `browser`，并把验证过的 `browserExecutablePath` 一起保存到 `config.json`。后续启动会先验证这条缓存；仅当缓存缺失或已经不可运行时，才扫描标准安装路径，fallback 成功后还会刷新缓存。没有支持的 system browser 时，setup 才会把锁定的 Chrome for Testing 145 artifact 下载到 `$TOKENLESS_HOME/browser/runtimes`。显式选择但找不到的 system browser 会失败，并给出用于手动设置路径的准确 config 命令和 dashboard 字段。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
 
-选择 Anti-Detect 后，交互式 setup 会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描已知 Chrome、Brave、Edge、Arc、Chromium 与 Chrome for Testing profile 目录。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。只有用户明确选择并同意复制时才会复制列出的 profile。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。
+只有明确选择的 system browser 才允许 `browserExecutablePath` 指向 `TOKENLESS_HOME` 外部。`managed-chromium` 与 `cloak` 的路径由 catalog 锁定的 runtime 决定，并位于 `$TOKENLESS_HOME/browser/runtimes`；config 中的任意路径不能替换或绕过该 managed runtime。
+
+Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将在 `TOKENLESS_HOME` 下下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。选择 Anti-Detect 后，setup 不会为了选择 runtime 而扫描 system-browser executable。它会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描已知 Chrome、Brave、Edge、Arc、Chromium 与 Chrome for Testing profile 目录。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。有兼容 profile 时，setup 只显示一次选择，其中包含 `Start clean` 和兼容 profile 来源；选择某个 profile 本身就构成对 opaque 本地复制的明确授权，不再另外询问是否 import 或是否同意 copy。没有匹配项时会跳过来源选择并使用 clean profile。用户显式要求导入版本不匹配或未知的 profile 时，会在下载前明确失败，而不是静默忽略。Installer 随后依次下载、校验、解包、检查版本并 smoke-launch Cloak；setup 会立即持久化 `browser: "cloak"` 及其 managed `browserExecutablePath`。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 因为没有发生可见的 profile 来源选择，仍要求 `--consent-local-profile-copy`。
 
 Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 通常会创建 clean profile；显式 import 可以从选定的本机 Chromium profile 填充新建且绑定 runtime 的 profile。之后由 managed profile 自己跨 job 保留 browser-managed session。
 
@@ -228,6 +230,7 @@ tokenless config \
   --language zh-CN \
   --provider-whitelist chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
+  --browser-executable-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --browser-visibility auto \
   --json
 ```
@@ -237,6 +240,8 @@ tokenless config \
 - `--language <en|zh-CN>`
 - `--provider-whitelist <list>`
 - `--browser <browser>`
+- `--browser-executable-path <绝对路径>`，用于明确选择的 system browser
+- `--clear-browser-executable-path`，让下次解析重新执行 discovery
 - `--browser-visibility <auto|headed|headless>`
 - `--proxy-server <http|https|socks5-url>`，可搭配 `--proxy-bypass <逗号分隔列表>`
 - `--clear-proxy`
@@ -246,6 +251,34 @@ tokenless config \
 增加 `--profile <slug>` 后，`--provider-whitelist`、`--browser-visibility` 和不带凭据的 proxy 设置会只作用于一个 managed profile。Proxy 选项必须搭配 `--profile`；`--clear-proxy` 会移除该 profile 的 endpoint。全局 `providerWhitelist` 会继续作为旧 caller 的兼容 union；路由会读取当前 profile 的 membership。
 
 持久化 JSON key 现在是 `providerWhitelist`。Tokenless 仍会读取旧 `preferredProviders` key，并在下一次配置更新时将其改写为 `providerWhitelist`。迁移期间，未写入文档的旧 `--preferred-providers` flag 仍作为 alias 接受。
+
+完整 config shape 如下：
+
+```json
+{
+  "protocol": "tokenless.config.v1",
+  "updatedAt": "2026-08-02T02:09:40.254Z",
+  "providerWhitelist": [
+    "chatgpt",
+    "claude",
+    "grok",
+    "qwen",
+    "deepseek",
+    "perplexity",
+    "zai",
+    "doubao"
+  ],
+  "profilePreferences": {},
+  "browser": "chrome",
+  "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "browserConnectionMode": "playwright",
+  "browserVisibility": "auto",
+  "daemonUrl": null,
+  "language": "en"
+}
+```
+
+`browserExecutablePath` 是经过验证的缓存，并不是不可变 override：Tokenless 会执行浏览器的 version command 进行验证；验证失败后会 fallback 到标准路径 discovery，成功时重新写入缓存。如果两种方式都失败，可以使用上面的 CLI flag，或在 dashboard 的 **System → Browser executable path** 中粘贴绝对路径。Dashboard 只会暴露是否已经配置路径，不会把私有路径传回浏览器 JavaScript。
 
 面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
 
@@ -697,6 +730,19 @@ provider-status
 可能打开或操作 provider 页面的命令包括：`setup`、`profiles status`、`profiles open`、`run`、`resume`、所有 provider inspection/configuration/action 命令，以及 `snapshot-dom`。
 
 ## 手动真实浏览器验收
+
+已认证 provider capability harness 会为每个显式选择的 production browser 保留一个独立的持久化 profile。默认 test-only home 是 `<TOKENLESS_HOME>/e2e/live-provider`；也可显式使用 `TOKENLESS_LIVE_PROVIDER_TEST_HOME` 或 `--home`。Test home 必须不同于普通 Tokenless home，并且位于所有 repository/worktree 之外。例如，browser selection `cloak` 会解析为稳定 slug `live-provider-cloak`；production registry `<test-home>/browser/profiles.json` 再把该 slug 映射到 opaque 目录 `<test-home>/browser/profiles/<uuid>`。在启动任何 provider automation 前，harness 会验证该目录、私有权限、lifecycle、executable 和 runtime binding。它拒绝 `auto`，因为 automatic discovery 可能在不同运行中解析到不同 executable；不同 browser runtime 也绝不会共用一个 profile。
+
+先准备并手动登录一个 browser-specific profile，然后再运行 provider gates：
+
+```bash
+npm run test:e2e:prepare -- --browser cloak
+# 在每个 provider tab 中手动登录，然后执行 harness 打印的 daemon-stop 命令。
+npm run test:e2e -- --browser cloak
+npm run test:e2e:connection-matrix -- --browser cloak
+```
+
+已认证 profile 支持 `chrome`、`brave`、`edge`、`arc`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-home tab，然后立即退出，不等待 page load、登录或 Playwright target observation。Detached daemon 会继续持有 browser，Chromium 则照常把状态持久化到 dedicated profile。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，在 Playwright mode 下执行其中声明的 provider journeys；`connection-matrix` 会用同一个 selected profile 依次运行 Playwright 与 CDP mode。两者都会真实修改 provider 侧状态，并可能产生使用费用。
 
 Browser runtime 与 provider surface 验收是显式本地 gate，不会在 CI 中运行：
 

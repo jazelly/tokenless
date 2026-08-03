@@ -12,6 +12,7 @@ import { QwenModeCapability } from './capabilities/qwen-mode.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
 import type { ProviderDomDefinition } from './provider-definition.js'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 const QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS = 15_000
 const QWEN_APP_HYDRATION_AGE_MS = 3_000
@@ -26,11 +27,7 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: false,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://chat.qwen.ai/',
-        origins: Object.freeze(['https://chat.qwen.ai']),
-        trustedSignInOrigins: Object.freeze([]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.qwen,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['qwen.ai']),
       }),

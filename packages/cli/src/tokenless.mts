@@ -103,6 +103,7 @@ import { tokenlessPackageVersion } from './platform-package.js'
 import { formatUpgradeProgress, formatUpgradeSummary, runUpgradeCommand } from './upgrade.js'
 import {
   BrowserRuntimeManager,
+  isSystemBrowserId,
   managedBrowserCatalogEntry,
   normalizeBrowserSelection,
   type BrowserCandidate,
@@ -213,6 +214,11 @@ type SetupCloakProfileInventory = {
   artifactVersion: string
   browserVersion: string
   candidates: SetupCloakProfileCandidate[]
+}
+type SetupCloakImportSelection = {
+  browser: ManagedChromiumBrowserId
+  userDataDir: string
+  directoryKey: string
 }
 
 const DEFAULT_RUN_TIMEOUT_MS = 180_000
@@ -448,14 +454,34 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   if (subcommand === 'add') {
     const slug = requiredAdminValue(args.profile, '--profile')
     const profileConfig = await readTokenlessConfig(homeDir)
+    const requestedBrowser = args.browser === undefined
+      ? profileConfig.browser
+      : normalizeCliBrowser(args.browser)
     const profileRuntime = await new BrowserRuntimeManager({ homeDir }).ensure(
-      args.browser === undefined ? profileConfig.browser : normalizeCliBrowser(args.browser),
-      { allowDownload: false },
+      requestedBrowser,
+      {
+        allowDownload: false,
+        browserExecutablePath: browserExecutablePathForSelection(profileConfig, requestedBrowser),
+      },
     )
+    if (
+      args.browser === undefined &&
+      (
+        profileConfig.browser !== profileRuntime.selection ||
+        profileConfig.browserExecutablePath !== profileRuntime.executablePath
+      )
+    ) {
+      await writeTokenlessConfig({
+        homeDir,
+        browser: profileRuntime.selection,
+        browserExecutablePath: profileRuntime.executablePath,
+      })
+    }
     const importKey = args.importChromeProfile === undefined
       ? null
       : validateChromeProfileDirectoryKey(String(args.importChromeProfile))
     const source = importKey ? await resolveOpaqueProfileSource(args, profileRuntime, importKey) : null
+    if (source) assertCloakProfileImportCompatible(source, profileRuntime)
     let record = await registry.addProfile({
       slug,
       ...(args.label === undefined ? (source ? { label: source.name, labelOrigin: 'import' as const } : {}) : { label: String(args.label) }),
@@ -1201,10 +1227,21 @@ async function resolveOpaqueProfileSource(
   runtime: ResolvedBrowserRuntime,
   directoryKey: string,
 ) {
-  const browser: ManagedChromiumBrowserId = runtime.family === 'system' &&
+  const configuredImportBrowser = MANAGED_CHROMIUM_BROWSER_IDS.includes(
+    args.setupImportBrowser as ManagedChromiumBrowserId,
+  ) ? args.setupImportBrowser as ManagedChromiumBrowserId : null
+  const browser: ManagedChromiumBrowserId = configuredImportBrowser ?? (runtime.family === 'system' &&
     MANAGED_CHROMIUM_BROWSER_IDS.includes(runtime.browserId as ManagedChromiumBrowserId)
     ? runtime.browserId as ManagedChromiumBrowserId
-    : 'chrome'
+    : 'chrome')
+  return await resolveOpaqueProfileSourceForBrowser(args, browser, directoryKey)
+}
+
+async function resolveOpaqueProfileSourceForBrowser(
+  args: CliArgs,
+  browser: ManagedChromiumBrowserId,
+  directoryKey: string,
+) {
   const roots = await discoverChromiumProfiles({
     browser,
     ...(args.chromeUserDataDir === undefined ? {} : { userDataDirs: [path.resolve(String(args.chromeUserDataDir))] }),
@@ -1218,6 +1255,17 @@ async function resolveOpaqueProfileSource(
     )
   }
   return matches[0]!
+}
+
+function assertCloakProfileImportCompatible(
+  source: { directoryKey: string; browserVersion: string | null },
+  runtime: ResolvedBrowserRuntime,
+) {
+  if (runtime.family !== 'cloak' || source.browserVersion === runtime.actualVersion) return
+  throw usageError(
+    'cloak_profile_version_incompatible',
+    `Browser profile '${source.directoryKey}' uses Chromium ${source.browserVersion ?? 'unknown'}; installed CloakBrowser requires ${runtime.actualVersion}.`,
+  )
 }
 
 async function defaultProfileSlug(registry: ManagedProfileRegistry) {
@@ -2612,28 +2660,40 @@ async function setupCommand(args: CliArgs) {
     noteSetupCliVersion(cliVersion, presenter)
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
     const runtimeManager = new BrowserRuntimeManager({ homeDir })
-    const installedBrowsers = await presenter.withProgress(
-      'Finding browsers',
-      () => discoverSetupBrowsers(runtimeManager),
-    )
     const selectedBrowser = await selectSetupBrowser({
       args,
       config,
-      installedBrowsers,
       runtimeManager,
       prompt,
       presenter,
     })
-    if (config.browser !== selectedBrowser.selection) {
+    if (
+      config.browser !== selectedBrowser.runtime.selection ||
+      config.browserExecutablePath !== selectedBrowser.runtime.executablePath
+    ) {
       await quiesceBrowserRuntimeForProfileMutation({
         homeDir,
         daemonUrl: configuredDaemonUrl,
         startIfUnavailable: false,
       })
+      config = await writeTokenlessConfig({
+        homeDir,
+        browser: selectedBrowser.runtime.selection,
+        browserExecutablePath: selectedBrowser.runtime.executablePath,
+      })
     }
     const providers = await selectSetupProviders({ args, config, homeDir, prompt, presenter })
+    const profileArgs = selectedBrowser.cloakImportSelection === null
+      ? args
+      : {
+          ...args,
+          importChromeProfile: selectedBrowser.cloakImportSelection.directoryKey,
+          chromeUserDataDir: selectedBrowser.cloakImportSelection.userDataDir,
+          consentLocalProfileCopy: true,
+          setupImportBrowser: selectedBrowser.cloakImportSelection.browser,
+        }
     const profile = await ensureSetupManagedProfile({
-      args,
+      args: profileArgs,
       homeDir,
       runtime: selectedBrowser.runtime,
       prompt,
@@ -2653,7 +2713,8 @@ async function setupCommand(args: CliArgs) {
       }
       await writeTokenlessConfig({
         homeDir,
-        browser: selectedBrowser.selection,
+        browser: selectedBrowser.runtime.selection,
+        browserExecutablePath: selectedBrowser.runtime.executablePath,
         providerWhitelist: [...new Set(Object.values(profilePreferences).flatMap((preferences) => preferences.enabledProviders))],
         profilePreferences,
         daemonUrl: configuredDaemonUrl,
@@ -2768,8 +2829,8 @@ async function setupCommand(args: CliArgs) {
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       skills,
       browser: {
-        id: selectedBrowser.selection,
-        antiDetect: selectedBrowser.selection === 'cloak',
+        id: selectedBrowser.runtime.selection,
+        antiDetect: selectedBrowser.runtime.selection === 'cloak',
         detectedChromeVersion: selectedBrowser.detectedChromeVersion,
         runtimeId: selectedBrowser.runtime.runtimeId,
         family: selectedBrowser.runtime.family,
@@ -2978,6 +3039,7 @@ async function ensureSetupManagedProfile({
       if (!source) {
         throw usageError('setup_reimport_source_required', `Managed profile '${selectedProfile.slug}' has no recorded import source.`)
       }
+      assertCloakProfileImportCompatible(source, runtime)
       await quiesceBrowserRuntimeForProfileMutation({ homeDir })
       await registry.updateLifecycle(selectedProfile.slug, 'importing')
       try {
@@ -3029,6 +3091,7 @@ async function ensureSetupManagedProfile({
       runtime,
       validateChromeProfileDirectoryKey(String(args.importChromeProfile)),
     )
+  if (source) assertCloakProfileImportCompatible(source, runtime)
   if (source) requireOpaqueProfileCopyConsent(args)
   if (!prompt && args.freshProfile !== true && args.setupDefaults !== true && !source) {
     throw usageError(
@@ -3202,7 +3265,7 @@ function presentSetupCloakProfileInventory(
     lines: [
       `CloakBrowser project: ${inventory.projectUrl}`,
       `Supported CloakBrowser on this platform: artifact ${inventory.artifactVersion} (Chromium ${inventory.browserVersion}).`,
-      'Discovery checks only profile directory names and browser versions. A selected profile is copied only after explicit consent, without reading authentication values.',
+      'Discovery checks only profile directory names and browser versions; it does not read authentication values.',
     ],
   })
   if (inventory.candidates.length === 0) {
@@ -3214,13 +3277,77 @@ function presentSetupCloakProfileInventory(
     lines: inventory.candidates.map((candidate) => {
       const version = candidate.detectedVersion ?? 'unknown'
       const compatibility = candidate.compatibility === 'aligned'
-        ? 'version-aligned (reference only)'
+        ? 'version-aligned (eligible for import)'
         : candidate.compatibility === 'not_aligned'
         ? 'not version-aligned'
         : 'version unknown'
       return `${candidate.browserDisplayName} profile ${candidate.directoryKey} at ${candidate.userDataDir}: version ${version}; ${compatibility}.`
     }),
   })
+}
+
+async function selectSetupCloakImport({
+  args,
+  inventory,
+  prompt,
+  presenter,
+}: {
+  args: CliArgs
+  inventory: SetupCloakProfileInventory
+  prompt: ReturnType<typeof createSetupPrompt> | null
+  presenter: SetupPresenter
+}): Promise<SetupCloakImportSelection | null> {
+  if (args.importChromeProfile !== undefined) {
+    const source = await resolveOpaqueProfileSourceForBrowser(
+      args,
+      'chrome',
+      validateChromeProfileDirectoryKey(String(args.importChromeProfile)),
+    )
+    if (source.browserVersion !== inventory.browserVersion) {
+      throw usageError(
+        'cloak_profile_version_incompatible',
+        `Browser profile '${source.directoryKey}' uses Chromium ${source.browserVersion ?? 'unknown'}; this platform's supported CloakBrowser requires ${inventory.browserVersion}.`,
+      )
+    }
+    return {
+      browser: source.browser,
+      userDataDir: source.userDataDir,
+      directoryKey: source.directoryKey,
+    }
+  }
+
+  const compatible = inventory.candidates.filter((candidate) => candidate.compatibility === 'aligned')
+  if (!prompt || compatible.length === 0) {
+    if (compatible.length === 0) {
+      presenter.note('No version-compatible local Chromium profile was found; CloakBrowser will use a clean profile.')
+    }
+    return null
+  }
+  presenter.explain({
+    title: 'CloakBrowser profile source',
+    lines: [
+      'Selecting an existing profile explicitly authorizes Tokenless to copy that entire profile folder into the managed profile as an opaque local filesystem tree. Tokenless does not inspect cookies, tokens, browser storage, or other authentication values.',
+    ],
+  })
+  const selectedIndex = await prompt.select(
+    'Choose how CloakBrowser should initialize its managed profile',
+    [
+      { label: 'Start clean', value: '__clean__' },
+      ...compatible.map((candidate, index) => ({
+        label: `Copy ${candidate.browserDisplayName} profile ${candidate.directoryKey} — version ${candidate.detectedVersion} — ${candidate.userDataDir}`,
+        value: String(index),
+      })),
+    ],
+    0,
+  )
+  if (selectedIndex === '__clean__') return null
+  const selected = compatible[Number(selectedIndex)]
+  if (!selected) throw usageError('setup_selection_invalid', 'Setup selection must be one of the displayed numbers.')
+  return {
+    browser: selected.browser,
+    userDataDir: selected.userDataDir,
+    directoryKey: selected.directoryKey,
+  }
 }
 
 function chromiumProfileBrowserDisplayName(browser: ManagedChromiumBrowserId) {
@@ -3238,14 +3365,12 @@ function chromiumProfileBrowserDisplayName(browser: ManagedChromiumBrowserId) {
 async function selectSetupBrowser({
   args,
   config,
-  installedBrowsers,
   runtimeManager,
   prompt,
   presenter,
 }: {
   args: CliArgs
   config: Record<string, any>
-  installedBrowsers: Awaited<ReturnType<typeof discoverSetupBrowsers>>
   runtimeManager: BrowserRuntimeManager
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
@@ -3254,13 +3379,16 @@ async function selectSetupBrowser({
   runtime: ResolvedBrowserRuntime
   detectedChromeVersion: string | null
   cloakProfileInventory: SetupCloakProfileInventory | null
+  cloakImportSelection: SetupCloakImportSelection | null
 }> {
   const explicit = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
-  const explicitCloakConsent = args.antiDetect === true || explicit === 'cloak'
+  const explicitCloakSelection = args.antiDetect === true || explicit === 'cloak'
   if (args.antiDetect === true && explicit && explicit !== 'cloak') {
     throw usageError('setup_anti_detect_browser_conflict', '--anti-detect requires --browser cloak when both flags are provided.')
   }
   const configured = explicit ?? normalizeBrowserSelection(config.browser) ?? 'auto'
+  let installedBrowsers: Awaited<ReturnType<typeof discoverSetupBrowsers>> = []
+  let cloakImportSelection: SetupCloakImportSelection | null = null
   let selection: BrowserSelection
   if (args.antiDetect === true) {
     selection = 'cloak'
@@ -3268,88 +3396,63 @@ async function selectSetupBrowser({
     selection = configured
   } else {
     const antiDetect = await prompt.confirm(
-      'Use Anti-Detect mode? Tokenless will use CloakBrowser.',
+      'Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser under TOKENLESS_HOME if needed.',
       configured === 'cloak',
     )
     if (antiDetect) {
       selection = 'cloak'
     } else {
-      presenter.note('Choose the browser runtime Tokenless should use.')
-      const choices = setupBrowserChoices(installedBrowsers).filter((choice) => choice.value !== 'cloak')
-      const defaultSelection = configured === 'cloak' ? 'auto' : configured
-      selection = await prompt.select(
-        'Choose a browser runtime',
-        choices,
-        Math.max(0, choices.findIndex((choice) => choice.value === defaultSelection)),
+      installedBrowsers = await presenter.withProgress(
+        'Finding browsers',
+        () => discoverSetupBrowsers(runtimeManager),
       )
+      selection = configured === 'cloak' ? 'auto' : configured
     }
   }
-  const detectedChromeVersion = installedBrowsers.find((browser) => browser.browserId === 'chrome')?.version ?? null
   let cloakProfileInventory: SetupCloakProfileInventory | null = null
   if (selection === 'cloak') {
+    if (!prompt && !explicitCloakSelection) {
+      throw usageError(
+        'setup_cloak_confirmation_required',
+        'Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.',
+      )
+    }
     cloakProfileInventory = await presenter.withProgress(
       'Finding Chromium profiles',
       () => discoverSetupCloakProfileInventory(installedBrowsers),
     )
     presentSetupCloakProfileInventory(cloakProfileInventory, presenter)
-    const cloakProfileApproved = prompt
-      ? await prompt.confirm(
-          args.importChromeProfile === undefined
-            ? 'Continue with a clean CloakBrowser profile?'
-            : 'Continue and copy the explicitly selected browser profile into CloakBrowser?',
-          true,
-        )
-      : explicitCloakConsent
-    if (!cloakProfileApproved) {
-      throw usageError(
-        prompt ? 'setup_cloak_profile_declined' : 'setup_cloak_confirmation_required',
-        prompt
-          ? 'Anti-Detect setup stopped before downloading CloakBrowser or creating a managed profile.'
-          : 'Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.',
-      )
-    }
+    cloakImportSelection = await selectSetupCloakImport({
+      args,
+      inventory: cloakProfileInventory,
+      prompt,
+      presenter,
+    })
   }
+  const automaticRuntime = selection === 'auto'
+    ? installedBrowsers.find((browser) => browser.family === 'system')
+    : null
+  const preparedSelection = selection === 'auto'
+    ? automaticRuntime?.selection ?? 'auto'
+    : selection
+  const discoveredExecutablePath = installedBrowsers.find(
+    (browser) => browser.selection === preparedSelection,
+  )?.executablePath ?? null
   const runtime = await presenter.withProgress(
     `Preparing ${setupBrowserSelectionLabel(selection)}`,
-    () => runtimeManager.ensure(selection, {
+    () => runtimeManager.ensure(preparedSelection, {
       allowDownload: args.noBrowserDownload !== true,
       repair: args.repairBrowser === true,
+      browserExecutablePath: browserExecutablePathForSelection(config, preparedSelection) ?? discoveredExecutablePath,
       onProgress: (progress) => presenter.note(
         `${progress.displayName} ${progress.version}: ${progress.phase}.`,
       ),
     }),
   )
   presenter.success(`Using ${runtime.displayName} ${runtime.actualVersion} (${runtime.source}).`)
-  return { selection, runtime, detectedChromeVersion, cloakProfileInventory }
-}
-
-function setupBrowserChoices(installedBrowsers: readonly BrowserCandidate[]) {
-  const installedSystem = installedBrowsers.filter((browser) => browser.family === 'system')
-  const managedChromium = managedBrowserCatalogEntry('managed-chromium')
-  const cloak = managedBrowserCatalogEntry('cloak')
-  const managedInstalled = installedBrowsers.find((browser) => browser.family === 'managed-chromium')
-  const cloakInstalled = installedBrowsers.find((browser) => browser.family === 'cloak')
-  const automaticOutcome = installedSystem[0]
-    ? `${installedSystem[0].displayName} ${installedSystem[0].version}`
-    : `${managedChromium.displayName} ${managedChromium.artifactVersion} — download required`
-  return [
-    {
-      label: `Automatic — ${automaticOutcome}`,
-      value: 'auto' as const,
-    },
-    ...installedSystem.map((browser) => ({
-      label: `${browser.displayName} ${browser.version} — installed system browser`,
-      value: browser.selection,
-    })),
-    {
-      label: `${managedChromium.displayName} ${managedChromium.artifactVersion} — ${managedInstalled ? 'cached' : 'download required'}`,
-      value: 'managed-chromium' as const,
-    },
-    {
-      label: `${cloak.displayName} ${cloak.artifactVersion} — ${cloakInstalled ? 'cached' : 'official download required'}`,
-      value: 'cloak' as const,
-    },
-  ]
+  const detectedChromeVersion = installedBrowsers.find((browser) => browser.browserId === 'chrome')?.version ??
+    (runtime.browserId === 'chrome' ? runtime.actualVersion : null)
+  return { selection, runtime, detectedChromeVersion, cloakProfileInventory, cloakImportSelection }
 }
 
 function setupBrowserSelectionLabel(selection: BrowserSelection) {
@@ -3566,26 +3669,25 @@ async function provisionRuntime(args: CliArgs) {
     : parseList(args.browsers)
   const runtimeManager = new BrowserRuntimeManager({ homeDir })
   const resolvedBrowsers: ResolvedBrowserRuntime[] = []
-  const selections: BrowserSelection[] = []
   for (const requested of requestedBrowsers) {
     const selection = normalizeCliBrowser(requested)
     const browser = await runtimeManager.ensure(selection, {
       allowDownload: true,
       repair: args.repairBrowser === true,
+      browserExecutablePath: browserExecutablePathForSelection(config, selection),
     })
     if (!resolvedBrowsers.some((candidate) => candidate.runtimeId === browser.runtimeId)) {
       resolvedBrowsers.push(browser)
-      selections.push(selection)
     }
   }
-  if (!resolvedBrowsers[0] || !selections[0]) {
+  if (!resolvedBrowsers[0]) {
     throw usageError('browser_runtime_selection_required', 'At least one browser runtime selection is required.')
   }
   const primaryBrowser = resolvedBrowsers[0]
-  const primarySelection = selections[0]
   await writeTokenlessConfig({
     homeDir,
-    browser: primarySelection,
+    browser: primaryBrowser.selection,
+    browserExecutablePath: primaryBrowser.executablePath,
     daemonUrl: configuredDaemonUrl,
   })
   const maintenance = await reconcileTokenlessMaintenance({
@@ -3639,7 +3741,12 @@ async function doctorCommand(args: CliArgs) {
   const runtime = await inspectManagedRuntime(homeDir)
   const skills = await inspectTokenlessSkills(process.env.TOKENLESS_SETUP_SKILL_HOME)
   const runtimeManager = new BrowserRuntimeManager({ homeDir })
-  const browserInspection = await runtimeManager.inspect(normalizeBrowserSelection(browserId) ?? String(browserId))
+  const normalizedBrowserId = normalizeBrowserSelection(browserId) ?? String(browserId)
+  const browserInspection = await runtimeManager.inspect(normalizedBrowserId, {
+    browserExecutablePath: args.browser === undefined
+      ? browserExecutablePathForSelection(config, normalizedBrowserId)
+      : null,
+  })
   const browser: Record<string, any> = browserInspection.ok && browserInspection.runtime
     ? {
         ok: true,
@@ -3743,7 +3850,11 @@ async function doctorCommand(args: CliArgs) {
         lifecycle: profile.lifecycle,
         imported: Boolean(profile.import),
         runtimeBinding: profile.runtimeBinding ?? null,
-        runtime: await runtimeManager.inspect(profile),
+        runtime: await runtimeManager.inspect(profile, {
+          browserExecutablePath: profile.runtimeBinding?.browserId === config.browser
+            ? config.browserExecutablePath
+            : null,
+        }),
       }
       profileRuntime = managedProfile.runtime
       const providers = config.profilePreferences[profile.slug]?.enabledProviders ?? config.providerWhitelist
@@ -3829,7 +3940,13 @@ async function configCommand(args: CliArgs) {
     throw usageError('profile_config_scope_required', 'Proxy configuration requires --profile <slug>.')
   }
   if (args.profile !== undefined) {
-    if (args.browser !== undefined || args.daemonUrl !== undefined || args.language !== undefined) {
+    if (
+      args.browser !== undefined ||
+      args.browserExecutablePath !== undefined ||
+      args.clearBrowserExecutablePath === true ||
+      args.daemonUrl !== undefined ||
+      args.language !== undefined
+    ) {
       throw usageError('profile_config_scope_invalid', '--profile can scope only provider membership, browser visibility, and proxy settings.')
     }
     const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(String(args.profile))
@@ -3868,9 +3985,45 @@ async function configCommand(args: CliArgs) {
     }, args)
     return
   }
-  if (args.providerWhitelist !== undefined || args.browser !== undefined || args.browserVisibility !== undefined || args.daemonUrl !== undefined || args.language !== undefined) {
+  if (args.browserExecutablePath !== undefined && args.clearBrowserExecutablePath === true) {
+    throw usageError(
+      'browser_executable_path_options_conflict',
+      '--browser-executable-path cannot be combined with --clear-browser-executable-path.',
+    )
+  }
+  if (
+    args.providerWhitelist !== undefined ||
+    args.browser !== undefined ||
+    args.browserExecutablePath !== undefined ||
+    args.clearBrowserExecutablePath === true ||
+    args.browserVisibility !== undefined ||
+    args.daemonUrl !== undefined ||
+    args.language !== undefined
+  ) {
     const current = await readTokenlessConfig(homeDir)
-    const browser = args.browser === undefined ? undefined : normalizeCliBrowser(args.browser)
+    let browser = args.browser === undefined ? current.browser : normalizeCliBrowser(args.browser)
+    let browserExecutablePath = current.browserExecutablePath
+    if (args.browserExecutablePath !== undefined && !isSystemBrowserId(browser)) {
+      throw usageError(
+        'browser_executable_path_requires_system_browser',
+        '--browser-executable-path requires an explicit system browser such as chrome or brave.',
+      )
+    }
+    if (args.clearBrowserExecutablePath === true) {
+      browserExecutablePath = null
+    } else if (args.browserExecutablePath !== undefined || (args.browser !== undefined && isSystemBrowserId(browser))) {
+      const configuredPath = args.browserExecutablePath === undefined
+        ? browserExecutablePathForSelection(current, browser)
+        : requiredBrowserExecutablePath(args.browserExecutablePath)
+      const runtime = await new BrowserRuntimeManager({ homeDir }).ensure(browser, {
+        allowDownload: false,
+        browserExecutablePath: configuredPath,
+      })
+      browser = runtime.selection
+      browserExecutablePath = runtime.executablePath
+    } else if (args.browser !== undefined && browser !== current.browser) {
+      browserExecutablePath = null
+    }
     const providerWhitelist = args.providerWhitelist === undefined ? undefined : parseProviderList(args.providerWhitelist)
     const browserVisibility = args.browserVisibility === undefined ? undefined : requiredBrowserVisibility(args.browserVisibility)
     const profilePreferences = providerWhitelist === undefined && browserVisibility === undefined
@@ -3880,11 +4033,22 @@ async function configCommand(args: CliArgs) {
           enabledProviders: providerWhitelist ?? preferences.enabledProviders,
           browserVisibility: browserVisibility ?? preferences.browserVisibility,
         }]))
+    if (
+      browser !== current.browser ||
+      browserExecutablePath !== current.browserExecutablePath
+    ) {
+      await quiesceBrowserRuntimeForProfileMutation({
+        homeDir,
+        daemonUrl: daemonUrl(args.daemonUrl ?? current.daemonUrl ?? undefined),
+        startIfUnavailable: false,
+      })
+    }
     const config = await writeTokenlessConfig({
       homeDir,
       providerWhitelist,
       profilePreferences,
       browser,
+      browserExecutablePath,
       browserVisibility,
       daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
       language: args.language,
@@ -3895,6 +4059,27 @@ async function configCommand(args: CliArgs) {
   }
   const config = await readTokenlessConfig(homeDir)
   printPayload({ ok: true, configPath: `${homeDir}/config.json`, config }, args)
+}
+
+function browserExecutablePathForSelection(
+  config: Record<string, any>,
+  selection: unknown,
+) {
+  const normalized = normalizeBrowserSelection(selection)
+  return normalized && normalized === normalizeBrowserSelection(config.browser)
+    ? typeof config.browserExecutablePath === 'string' ? config.browserExecutablePath : null
+    : null
+}
+
+function requiredBrowserExecutablePath(value: unknown) {
+  const executablePath = typeof value === 'string' ? value.trim() : ''
+  if (!executablePath || !path.isAbsolute(executablePath)) {
+    throw usageError(
+      'browser_executable_path_invalid',
+      '--browser-executable-path must be an absolute path.',
+    )
+  }
+  return path.normalize(executablePath)
 }
 
 function profileProxyFromConfigArgs(
@@ -4336,7 +4521,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
-    { command: 'config', usage: ['tokenless config [--profile <slug>] [--provider-whitelist <list>] [--browser-visibility <mode>] [--proxy-server <url> --proxy-bypass <list>|--clear-proxy] [--language <en|zh-CN>] [--browser <browser>] [--daemon-url <url>] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserVisibility', 'proxyServer', 'proxyBypass', 'clearProxy', 'daemonUrl'] },
+    { command: 'config', usage: ['tokenless config [--profile <slug>] [--provider-whitelist <list>] [--browser-visibility <mode>] [--proxy-server <url> --proxy-bypass <list>|--clear-proxy] [--language <en|zh-CN>] [--browser <browser>] [--browser-executable-path <path>|--clear-browser-executable-path] [--daemon-url <url>] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'proxyServer', 'proxyBypass', 'clearProxy', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'providerWhitelist', 'setDefault'] },
@@ -4405,6 +4590,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--agent-session-id': 'agentSessionId',
     '--limit': 'limit',
     '--browser': 'browser',
+    '--browser-executable-path': 'browserExecutablePath',
     '--browser-visibility': 'browserVisibility',
     '--proxy-server': 'proxyServer',
     '--proxy-bypass': 'proxyBypass',
@@ -4442,6 +4628,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--anti-detect': 'antiDetect',
     '--no-open': 'noOpen',
     '--clear-proxy': 'clearProxy',
+    '--clear-browser-executable-path': 'clearBrowserExecutablePath',
     '--no-browser-download': 'noBrowserDownload',
     '--repair-browser': 'repairBrowser',
     '--no-wait': 'noWait',
@@ -5403,6 +5590,7 @@ function optionUsageLabel(option: string) {
     allProfiles: '--all',
     attachFiles: '--attach-file <path>',
     browser: '--browser <browser>',
+    browserExecutablePath: '--browser-executable-path <absolute-path>',
     browsers: '--browsers <list>',
     browserVisibility: '--browser-visibility <auto|headed|headless>',
     capabilities: '--capability <capability>',
@@ -5441,6 +5629,7 @@ function optionUsageLabel(option: string) {
     proxyServer: '--proxy-server <url>',
     proxyBypass: '--proxy-bypass <list>',
     clearProxy: '--clear-proxy',
+    clearBrowserExecutablePath: '--clear-browser-executable-path',
     profile: '-P, --profile <slug>',
     projectInstructions: '--project-instructions <text>',
     projectInstructionsFile: '--project-instructions-file <path>',

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import path from 'node:path'
 
 import {
   readTokenlessConfig,
@@ -9,7 +10,7 @@ import {
 } from '../job-store.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
 import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
-import { normalizeBrowserSelection } from '../browser-runtime/types.js'
+import { isSystemBrowserId, normalizeBrowserSelection } from '../browser-runtime/types.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
   createManagedPlaywrightJobRequest,
@@ -79,7 +80,7 @@ export class TokenlessApplicationServices {
         id: provider.id,
         label: provider.label,
         stage: provider.stage,
-        homeUrl: provider.navigation.homeUrl,
+        homeUrl: provider.navigation.entryUrl,
       }))
     const capabilityRoutes = listProviderTaskCapabilityRoutes()
     const body = {
@@ -143,12 +144,22 @@ export class TokenlessApplicationServices {
   }
 
   async updateConfig(input: Record<string, unknown>) {
-    requireKnownFields(input, ['browser', 'browserVisibility', 'language'])
+    requireKnownFields(input, ['browser', 'browserExecutablePath', 'browserVisibility', 'language'])
     const current = await this.migratedConfig()
-    const browser = input.browser === undefined
+    let browser = input.browser === undefined
       ? current.browser
       : normalizeBrowserSelection(input.browser)
     if (!browser) throw applicationError('invalid_browser', 'Browser selection is invalid.')
+    const executablePathProvided = Object.hasOwn(input, 'browserExecutablePath')
+    let browserExecutablePath = executablePathProvided
+      ? applicationBrowserExecutablePath(input.browserExecutablePath)
+      : browser === current.browser ? current.browserExecutablePath : null
+    if (executablePathProvided && browserExecutablePath && !isSystemBrowserId(browser)) {
+      throw applicationError(
+        'browser_executable_path_requires_system_browser',
+        'Browser executable path requires an explicit system browser such as chrome or brave.',
+      )
+    }
     const browserVisibility = input.browserVisibility === undefined
       ? current.browserVisibility
       : normalizeBrowserVisibility(input.browserVisibility)
@@ -157,13 +168,26 @@ export class TokenlessApplicationServices {
     if (language !== 'en' && language !== 'zh-CN') {
       throw applicationError('invalid_language', 'Language must be en or zh-CN.')
     }
-    if (browser !== current.browser && this.runtimeController?.status().activeJobCount) {
+    const shouldResolveBrowser = (browserExecutablePath !== null && executablePathProvided) ||
+      (browser !== current.browser && isSystemBrowserId(browser))
+    if (shouldResolveBrowser) {
+      const runtime = await this.runtimeManager.ensure(browser, {
+        allowDownload: false,
+        browserExecutablePath,
+      })
+      browser = runtime.selection
+      browserExecutablePath = runtime.executablePath
+    }
+    const browserRuntimeChanged = browser !== current.browser ||
+      browserExecutablePath !== current.browserExecutablePath
+    if (browserRuntimeChanged && this.runtimeController?.status().activeJobCount) {
       throw applicationError('browser_mutation_unsafe', 'Browser selection cannot change while browser jobs are active.')
     }
-    if (browser !== current.browser) await this.runtimeController?.quiesce()
+    if (browserRuntimeChanged) await this.runtimeController?.quiesce()
     return publicConfig(await writeTokenlessConfig({
       homeDir: this.store.homeDir,
       browser,
+      browserExecutablePath,
       browserVisibility,
       language,
     }))
@@ -184,7 +208,20 @@ export class TokenlessApplicationServices {
         : requiredVisibility(input.browserVisibility),
       proxy: input.proxy === undefined ? null : validateProxy(input.proxy),
     }
-    const runtime = await this.runtimeManager.ensure(config.browser, { allowDownload: false })
+    const runtime = await this.runtimeManager.ensure(config.browser, {
+      allowDownload: false,
+      browserExecutablePath: config.browserExecutablePath,
+    })
+    if (
+      config.browser !== runtime.selection ||
+      config.browserExecutablePath !== runtime.executablePath
+    ) {
+      await writeTokenlessConfig({
+        homeDir: this.store.homeDir,
+        browser: runtime.selection,
+        browserExecutablePath: runtime.executablePath,
+      })
+    }
     const profile = await this.profiles.addProfile({
       slug,
       label: label ?? slug,
@@ -387,7 +424,9 @@ export class TokenlessApplicationServices {
     profiles: ManagedProfileRecord[],
     runtime: ReturnType<BrowserRuntimeController['status']>,
   ) {
-    const browser = await this.runtimeManager.inspect(config.browser)
+    const browser = await this.runtimeManager.inspect(config.browser, {
+      browserExecutablePath: config.browserExecutablePath,
+    })
     return [
       {
         id: 'configuration',
@@ -456,11 +495,24 @@ function publicConfig(config: TokenlessConfig) {
     updatedAt: config.updatedAt,
     providerWhitelist: config.providerWhitelist,
     browser: config.browser,
+    browserExecutablePathConfigured: config.browserExecutablePath !== null,
     browserConnectionMode: config.browserConnectionMode,
     browserVisibility: config.browserVisibility,
     daemonUrl: config.daemonUrl,
     language: config.language,
   }
+}
+
+function applicationBrowserExecutablePath(value: unknown) {
+  if (value === null) return null
+  const executablePath = typeof value === 'string' ? value.trim() : ''
+  if (!executablePath || !path.isAbsolute(executablePath)) {
+    throw applicationError(
+      'invalid_browser_executable_path',
+      'Browser executable path must be null or an absolute path.',
+    )
+  }
+  return path.normalize(executablePath)
 }
 
 function publicProfile(

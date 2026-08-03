@@ -32,7 +32,7 @@ As of 2026-08-02:
 - generic model selection is no longer advertised for DeepSeek, and the submit selector excludes DeepSeek's visible disabled class; and
 - DeepSeek remains non-routeable until a selected signed-in managed profile independently closes the declared built-CLI and packaged-daemon baseline, continuation, Search/DeepThink, and file/image gates.
 - Perplexity is registered as an experimental guest provider, with readiness, prompt drafting, real submission, completed response, visible normalized citations, conversation mapping, and durable state closed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network;
-- Z.ai is registered as an experimental guest provider, with guest continuation, readiness, prompt drafting, real submission, completed response, conversation mapping, and durable state closed through the same managed-Cloak boundary; and
+- Z.ai is registered as an experimental guest provider. Its canonical entry is `https://z.ai/chat`, while `https://chat.z.ai` remains an approved runtime origin because the official entry currently hands prepared drafts to that runtime. Guest continuation, readiness, prompt drafting, real submission, completed response, conversation mapping, and durable state were previously closed through the managed-Cloak runtime boundary; the updated entry-to-runtime journey remains a manual release rerun; and
 - Doubao is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak non-submission gate closes readiness, prompt drafting, visible file acceptance, exact Fast/Expert/Work Task mode selection, nine coding-relevant Web skill selections, unavailable-state reporting, and restoration. Text-file `file.upload` is experimental and routeable. The same anti-detect configuration completed two direct correlated marker responses, while the built-product chat mutation release gate remains blocked by a visible provider verification iframe and fails closed as `visible_provider_blocker`; and
 - Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
 
@@ -84,7 +84,7 @@ Official product entry points:
 
 - [Qwen / 千问](https://chat.qwen.ai/)
 - [Kimi](https://www.kimi.com/)
-- [Z.ai / GLM](https://chat.z.ai/)
+- [Z.ai / GLM](https://z.ai/chat)
 - [Zhipu Qingyan / 智谱清言](https://chatglm.cn/)
 - [DeepSeek Chat](https://chat.deepseek.com/)
 - [Perplexity](https://www.perplexity.ai/)

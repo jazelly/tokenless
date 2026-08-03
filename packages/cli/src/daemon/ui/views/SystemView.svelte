@@ -16,11 +16,15 @@
 
   let selectedLanguage = $state(untrack(() => snapshot.config.language as Language))
   let browser = $state(untrack(() => snapshot.config.browser))
+  let browserExecutablePath = $state('')
   let browserVisibility = $state(untrack(() => snapshot.config.browserVisibility))
 
   async function save(event: SubmitEvent) {
     event.preventDefault()
-    await onmutate('/config', { language: selectedLanguage, browser, browserVisibility }, 'PATCH')
+    const body: JsonRecord = { language: selectedLanguage, browser, browserVisibility }
+    if (browserExecutablePath.trim()) body.browserExecutablePath = browserExecutablePath.trim()
+    await onmutate('/config', body, 'PATCH')
+    browserExecutablePath = ''
   }
 
   async function copyDiagnostics() {
@@ -55,6 +59,7 @@
       <div class="settings-section-title"><h2>{t('runtime')}</h2><ShieldCheck size={17} /></div>
       <div class="form-stack">
         <label class="field"><span>{t('browserSelection')}</span><select bind:value={browser} data-testid="config-browser">{#each ['auto', 'chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak'] as value}<option value={value}>{value}</option>{/each}</select></label>
+        <label class="field"><span>{t('browserExecutablePath')}</span><input bind:value={browserExecutablePath} autocomplete="off" placeholder={t('browserExecutablePathPlaceholder')} data-testid="config-browser-executable-path" /><small>{snapshot.config.browserExecutablePathConfigured ? t('browserExecutablePathConfigured') : t('browserExecutablePathHelp')}</small></label>
         <label class="field"><span>{t('defaultVisibility')}</span><select bind:value={browserVisibility} data-testid="config-visibility"><option value="auto">auto</option><option value="headed">headed</option><option value="headless">headless</option></select></label>
       </div>
     </section>

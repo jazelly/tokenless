@@ -45,11 +45,15 @@ export {
   safeProviderTargetUrl,
   trustedProviderSignInNavigation,
 } from './navigation-policy.js'
+export { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 export type {
   CanonicalProviderTarget,
   ProviderNavigationClassification,
   ProviderNavigationDefinition,
+  ProviderPageKind,
+  ProviderPagePattern,
 } from './navigation-policy.js'
+export type { ProviderNavigationCatalogId } from './provider-navigation-catalog.js'
 export type {
   ProviderAccessClass,
   ProviderAccountTier,
@@ -220,15 +224,39 @@ function validateProviderDescriptor(descriptor: ProviderDescriptor<ProviderId>) 
   if (descriptor.controls?.chatSurface !== true && descriptor.controls?.chatSurface !== false) {
     throw new Error(`Provider ${descriptor.id} controls policy is invalid.`)
   }
+  const entry = parseDescriptorUrl(descriptor.navigation.entryUrl, { allowPath: true })
+  if (!entry) throw new Error(`Provider ${descriptor.id} entry URL is invalid.`)
   const home = parseDescriptorUrl(descriptor.navigation.homeUrl, { allowPath: true })
-  if (!home) throw new Error(`Provider ${descriptor.id} home URL is invalid.`)
+  if (!home) throw new Error(`Provider ${descriptor.id} automation home URL is invalid.`)
   const originSet = new Set<string>()
   for (const origin of descriptor.navigation.origins) {
     const parsed = parseDescriptorUrl(origin)
     if (!parsed || parsed.href !== parsed.origin + '/') throw new Error(`Provider ${descriptor.id} origin is invalid.`)
     originSet.add(parsed.origin.toLowerCase())
   }
-  if (!originSet.has(home.origin.toLowerCase())) throw new Error(`Provider ${descriptor.id} home URL origin is not owned.`)
+  if (!originSet.has(entry.origin.toLowerCase())) throw new Error(`Provider ${descriptor.id} entry URL origin is not owned.`)
+  if (!originSet.has(home.origin.toLowerCase())) throw new Error(`Provider ${descriptor.id} automation home URL origin is not owned.`)
+  const pagePatternSet = new Set<string>()
+  let ownsEntryPattern = false
+  let ownsAutomationHomePattern = false
+  for (const page of descriptor.navigation.pagePatterns) {
+    const parsed = parseDescriptorUrl(page.urlPattern, { allowPath: true })
+    if (!parsed || !validPagePatternPath(parsed.pathname)) {
+      throw new Error(`Provider ${descriptor.id} page URL pattern is invalid.`)
+    }
+    if (!originSet.has(parsed.origin.toLowerCase())) {
+      throw new Error(`Provider ${descriptor.id} page URL pattern origin is not owned.`)
+    }
+    const key = `${page.kind}:${page.urlPattern}`
+    if (pagePatternSet.has(key)) throw new Error(`Provider ${descriptor.id} page URL pattern is duplicated.`)
+    pagePatternSet.add(key)
+    if (page.kind === 'entry' && page.urlPattern === descriptor.navigation.entryUrl) ownsEntryPattern = true
+    if (page.urlPattern === descriptor.navigation.homeUrl) ownsAutomationHomePattern = true
+  }
+  if (!ownsEntryPattern) throw new Error(`Provider ${descriptor.id} entry URL has no entry page pattern.`)
+  if (!ownsAutomationHomePattern) {
+    throw new Error(`Provider ${descriptor.id} automation home URL has no page pattern.`)
+  }
   for (const entry of descriptor.navigation.trustedSignInOrigins) {
     const parsed = parseDescriptorUrl(entry.origin)
     if (!parsed || parsed.href !== parsed.origin + '/') {
@@ -262,4 +290,11 @@ function parseDescriptorUrl(value: string, options: { allowPath?: boolean } = {}
   ) return null
   if (!options.allowPath && parsed.pathname !== '/') return null
   return parsed
+}
+
+function validPagePatternPath(pathname: string) {
+  return pathname.split('/').filter(Boolean).every((segment) => (
+    /^:[A-Za-z][A-Za-z0-9]*$/.test(segment) ||
+    /^[A-Za-z0-9._~-]+$/.test(segment)
+  ))
 }

@@ -157,6 +157,25 @@ export type BrowserRuntimeOpenProfileResponse = {
   status: BrowserRuntimeStatus
 }
 
+export type BrowserRuntimeOpenProviderTabsOptions = DaemonClientOptions & {
+  profileId: string
+  providers: readonly string[]
+  browserVisibility: 'auto' | 'headed' | 'headless'
+}
+
+export type BrowserRuntimeOpenProviderTabsResponse = BrowserRuntimeOpenProfileResponse & {
+  tabs: readonly {
+    provider: string
+    url: string
+    reused: boolean
+  }[]
+  failures: readonly {
+    provider: string
+    code: 'provider_tab_open_failed'
+    message: string
+  }[]
+}
+
 export type OpenDashboardOptions = DaemonClientOptions & {
   profileId?: string | undefined
   open?: boolean | undefined
@@ -535,6 +554,30 @@ export async function openBrowserRuntimeProfile({
     path: '/control/browser-runtime/open-profile',
     body: {
       profile_id: profileId,
+      browser_visibility: browserVisibility,
+    },
+    token: daemon.token,
+    timeoutMs: requestTimeoutMs,
+    signal,
+  })
+}
+
+export async function openBrowserRuntimeProviderTabs({
+  daemonUrl: explicitDaemonUrl,
+  homeDir,
+  requestTimeoutMs,
+  signal,
+  profileId,
+  providers,
+  browserVisibility,
+}: BrowserRuntimeOpenProviderTabsOptions) {
+  const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
+  return daemonRequest<BrowserRuntimeOpenProviderTabsResponse>({
+    daemonUrl: daemon.daemonUrl,
+    path: '/control/browser-runtime/open-provider-tabs',
+    body: {
+      profile_id: profileId,
+      providers,
       browser_visibility: browserVisibility,
     },
     token: daemon.token,

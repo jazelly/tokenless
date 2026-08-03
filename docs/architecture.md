@@ -7,7 +7,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI and a
 1. The `tokenless` CLI handles setup, profile management, job submission, state, cancellation, and diagnostics.
 2. The local TypeScript daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
 3. The Playwright worker claims managed-web jobs and runs them in persistent managed browser profiles.
-4. The provider registry declares access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, Qwen, DeepSeek, Perplexity, Z.ai, and Doubao.
+4. The provider navigation catalog centrally declares each entry URL, automation home, owned origins, known page patterns, and trusted sign-in routes; the provider registry adds access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, Qwen, DeepSeek, Perplexity, Z.ai, and Doubao.
 5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
 7. Shared application services expose redacted config, profile, provider, capability, job, runtime, and diagnostic operations to the local control plane.
@@ -147,6 +147,8 @@ Conversation fallback is scoped to one provider, managed profile, and task ident
 ## Browser visibility policy
 
 Tokenless stores a global browser visibility fallback and profile-scoped visibility preferences, defaulting omitted values to `auto`. The same policy can be overridden per job, but the runner resolves it into the same managed-browser contract every time. Profile preferences also contain provider routing membership, a human role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy. Proxy changes require browser quiescence and cause the persistent context to be recreated.
+
+The persistent config stores the concrete `browser` selected by setup together with `browserExecutablePath`. For system browsers, the path is a verified cache: resolution tries it first, requires a runnable executable with a readable Chromium version, falls back to standard installation discovery on failure, and refreshes the cache after a successful fallback. The cache is used only when the requested profile binding matches the configured browser. Managed Chromium and Cloak ignore arbitrary path overrides and resolve their catalog-pinned executable under the versioned `$TOKENLESS_HOME/browser/runtimes` tree.
 
 The persistent config also stores `browserConnectionMode`, with `playwright` as the backward-compatible default and `cdp` as an experimental capability-evaluation mode. This is a daemon-runner setting rather than a job field or CLI flag. Native mode uses `launchPersistentContext`; CDP mode launches the exact profile-bound Chromium executable with an ephemeral loopback DevTools endpoint and then uses `connectOverCDP`. Both modes preserve the same profile, visibility, page-key, provider, and durable-mapping contracts. The daemon must be restarted after this config value changes.
 

@@ -7,6 +7,7 @@ import {
 import { GrokEntitlementAccountInspector } from './grok-account-inspector.js'
 import { GrokChoiceAvailability } from './grok-choice-availability.js'
 import { NativeProjectWorkspaceCapability } from './capabilities/native-project-workspace.js'
+import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
 export class GrokProvider extends BaseProvider<'grok'> {
   constructor() {
@@ -18,16 +19,7 @@ export class GrokProvider extends BaseProvider<'grok'> {
       protocolCompatibility: Object.freeze({
         legacyRequests: true,
       }),
-      navigation: Object.freeze({
-        homeUrl: 'https://grok.com/',
-        origins: Object.freeze(['https://grok.com']),
-        trustedSignInOrigins: Object.freeze([
-          Object.freeze({
-            origin: 'https://accounts.x.ai',
-            pathPrefixes: Object.freeze(['/check-login']),
-          }),
-        ]),
-      }),
+      navigation: PROVIDER_NAVIGATION_CATALOG.grok,
       profileImport: Object.freeze({
         cookieDomains: Object.freeze(['grok.com', 'x.ai']),
       }),

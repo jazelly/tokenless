@@ -1,8 +1,17 @@
 import type { ProviderId } from './provider-identity.js'
 
+export type ProviderPageKind = 'entry' | 'chat_runtime' | 'conversation' | 'project_list' | 'project'
+
+export type ProviderPagePattern = Readonly<{
+  kind: ProviderPageKind
+  urlPattern: string
+}>
+
 export type ProviderNavigationDefinition = Readonly<{
+  entryUrl: string
   homeUrl: string
   origins: readonly string[]
+  pagePatterns: readonly ProviderPagePattern[]
   trustedSignInOrigins: readonly Readonly<{
     origin: string
     pathPrefixes?: readonly string[]
@@ -43,14 +52,18 @@ const MALFORMED_PERCENT_ESCAPE = /%(?![0-9a-f]{2})/i
 
 export class ProviderNavigationPolicy {
   readonly providerId: ProviderId
+  readonly entryUrl: string
   readonly homeUrl: string
   readonly origins: readonly string[]
+  readonly pagePatterns: readonly ProviderPagePattern[]
   readonly trustedSignInOrigins: ProviderNavigationDefinition['trustedSignInOrigins']
 
   constructor(providerId: ProviderId, definition: ProviderNavigationDefinition) {
     this.providerId = providerId
+    this.entryUrl = definition.entryUrl
     this.homeUrl = definition.homeUrl
     this.origins = Object.freeze([...definition.origins])
+    this.pagePatterns = Object.freeze(definition.pagePatterns.map((pattern) => Object.freeze({ ...pattern })))
     this.trustedSignInOrigins = Object.freeze(definition.trustedSignInOrigins.map((entry) => Object.freeze({
       origin: entry.origin,
       ...(entry.pathPrefixes ? { pathPrefixes: Object.freeze([...entry.pathPrefixes]) } : {}),
