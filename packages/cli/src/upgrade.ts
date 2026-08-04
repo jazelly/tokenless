@@ -249,10 +249,11 @@ function assertUpgradeArguments(args: UpgradeArgs) {
     'daemonStartTimeoutMs',
   ])
   const unsupported = Object.entries(args)
-    .filter(([key, value]) => value !== undefined && !allowed.has(key))
+    .filter(([key, value]) => !['attachFiles', 'capabilities', 'files'].includes(key) && value !== undefined && !allowed.has(key))
     .map(([key]) => `--${key.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`)}`)
   if ((args.files?.length ?? 0) > 0) unsupported.push('--file')
   if ((args.attachFiles?.length ?? 0) > 0) unsupported.push('--attach-file')
+  if ((args.capabilities?.length ?? 0) > 0) unsupported.push('--capability')
   if (unsupported.length > 0) {
     throw upgradeUsageError(
       'upgrade_option_invalid',
