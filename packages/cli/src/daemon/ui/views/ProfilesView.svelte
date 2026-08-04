@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, ChevronRight, Ellipsis, ExternalLink, Plus, Settings2, Star, Trash2, UserRound } from '@lucide/svelte'
+  import { Check, ChevronRight, Ellipsis, ExternalLink, Plus, RefreshCw, Settings2, Star, Trash2, UserRound } from '@lucide/svelte'
   import Modal from '../components/Modal.svelte'
   import ProfileForm from '../components/ProfileForm.svelte'
   import type { JsonRecord } from '../types.js'
@@ -11,6 +11,7 @@
     busy,
     onselect,
     onmutate,
+    ondiscoverprofiles,
   }: {
     snapshot: JsonRecord
     selectedProfile: string
@@ -18,12 +19,15 @@
     busy: boolean
     onselect: (slug: string) => void
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
+    ondiscoverprofiles: (input: JsonRecord) => Promise<JsonRecord>
   } = $props()
 
   let editorOpen = $state(false)
   let creating = $state(false)
   let deleteOpen = $state(false)
   let deleteConfirmation = $state('')
+  let reimportOpen = $state(false)
+  let reimportConsent = $state(false)
   let menuOpen = $state(false)
   let profile = $derived(snapshot.profiles.find((entry: JsonRecord) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
 
@@ -48,6 +52,16 @@
     await onmutate(`/profiles/${encodeURIComponent(profile.slug)}`, undefined, 'DELETE')
     deleteOpen = false
     deleteConfirmation = ''
+  }
+
+  async function reimportProfile() {
+    if (!profile || !reimportConsent) return
+    await onmutate(
+      `/profiles/${encodeURIComponent(profile.slug)}/reimport`,
+      { consentLocalProfileCopy: true },
+    )
+    reimportOpen = false
+    reimportConsent = false
   }
 
   function stateFor(provider: JsonRecord) {
@@ -111,6 +125,7 @@
             <div class="popover-menu" data-testid="profile-menu-popover">
               <button type="button" onclick={() => openEditor()}><Settings2 size={15} />{t('edit')}</button>
               {#if !profile.isDefault}<button type="button" onclick={() => onmutate(`/profiles/${encodeURIComponent(profile.slug)}`, { setDefault: true }, 'PATCH')}><Star size={15} />{t('setDefault')}</button>{/if}
+              {#if profile.import}<button type="button" onclick={() => { reimportOpen = true; menuOpen = false }} data-testid="profile-reimport-open"><RefreshCw size={15} />{t('reimportProfile')}</button>{/if}
               <button class="danger-text" type="button" onclick={() => { deleteOpen = true; menuOpen = false }}><Trash2 size={15} />{t('deleteProfile')}</button>
             </div>
           {/if}
@@ -127,6 +142,7 @@
             <div class="settings-row"><span>{t('label')}</span><strong>{profile.label}</strong></div>
             <div class="settings-row"><span>{t('role')}</span><strong>{profile.preferences?.roleLabel || '—'}</strong></div>
             <div class="settings-row"><span>{t('profileBrowser')}</span><strong>{profile.runtimeBinding?.browserId ?? snapshot.config.browser}</strong></div>
+            {#if profile.import}<div class="settings-row"><span>{t('profileSource')}</span><strong>{profile.import.browser ?? t('importedProfile')}</strong></div>{/if}
             <div class="settings-row"><span>{t('visibility')}</span><strong>{profile.preferences?.browserVisibility ?? 'auto'}</strong></div>
           </div>
         </section>
@@ -166,7 +182,23 @@
 
 {#if editorOpen}
   <Modal title={creating ? t('createProfile') : t('edit')} closeLabel={t('close')} onclose={() => editorOpen = false} wide>
-    <ProfileForm snapshot={snapshot} profile={creating ? undefined : profile} {t} {busy} oncancel={() => editorOpen = false} onsubmit={saveProfile} />
+    <ProfileForm snapshot={snapshot} profile={creating ? undefined : profile} {t} {busy} oncancel={() => editorOpen = false} onsubmit={saveProfile} ondiscoverprofiles={ondiscoverprofiles} />
+  </Modal>
+{/if}
+
+{#if reimportOpen}
+  <Modal title={t('reimportProfile')} closeLabel={t('close')} onclose={() => { reimportOpen = false; reimportConsent = false }}>
+    <div class="form-stack">
+      <p class="form-note prominent-note">{t('reimportProfileHelp')}</p>
+      <label class="consent-row">
+        <input type="checkbox" bind:checked={reimportConsent} data-testid="profile-reimport-consent" />
+        <span><strong>{t('profileCopyConsent')}</strong><small>{t('profileCopyConsentHelp')}</small></span>
+      </label>
+      <div class="form-actions">
+        <button class="button secondary" type="button" onclick={() => { reimportOpen = false; reimportConsent = false }}>{t('cancel')}</button>
+        <button class="button primary" type="button" disabled={busy || !reimportConsent} onclick={reimportProfile} data-testid="profile-reimport-confirm">{t('reimport')}</button>
+      </div>
+    </div>
   </Modal>
 {/if}
 

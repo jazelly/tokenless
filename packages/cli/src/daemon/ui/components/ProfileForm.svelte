@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
+  import BrowserProfileSourcePicker from './BrowserProfileSourcePicker.svelte'
   import type { JsonRecord } from '../types.js'
 
   let {
@@ -9,6 +10,7 @@
     busy,
     oncancel,
     onsubmit,
+    ondiscoverprofiles,
   }: {
     snapshot: JsonRecord
     profile?: JsonRecord
@@ -16,6 +18,7 @@
     busy: boolean
     oncancel: () => void
     onsubmit: (value: JsonRecord) => Promise<void>
+    ondiscoverprofiles: (input: JsonRecord) => Promise<JsonRecord>
   } = $props()
 
   let slug = $state(untrack(() => profile?.slug ?? ''))
@@ -24,9 +27,13 @@
   let browserVisibility = $state(untrack(() => profile?.preferences?.browserVisibility ?? snapshot.config.browserVisibility ?? 'auto'))
   let enabledProviders = $state<string[]>(untrack(() => profile?.preferences?.enabledProviders
     ? [...profile.preferences.enabledProviders]
-    : snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled').map((provider: JsonRecord) => provider.id)))
+    : Array.isArray(snapshot.config.providerWhitelist)
+      ? [...snapshot.config.providerWhitelist]
+      : snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled').map((provider: JsonRecord) => provider.id)))
   let proxy = $state(untrack(() => profile?.preferences?.proxy?.server ?? ''))
   let proxyBypass = $state(untrack(() => profile?.preferences?.proxy?.bypass?.join(', ') ?? ''))
+  let importSourceId = $state('')
+  let consentLocalProfileCopy = $state(false)
 
   function toggleProvider(provider: string, checked: boolean) {
     enabledProviders = checked
@@ -42,6 +49,7 @@
       roleLabel,
       browserVisibility,
       enabledProviders,
+      ...(!profile && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
       proxy: proxy.trim()
         ? {
             server: proxy.trim(),
@@ -83,6 +91,17 @@
     </div>
   </div>
 
+  {#if !profile}
+    <BrowserProfileSourcePicker
+      bind:sourceId={importSourceId}
+      bind:consent={consentLocalProfileCopy}
+      {t}
+      {busy}
+      testId="profile"
+      ondiscover={ondiscoverprofiles}
+    />
+  {/if}
+
   <fieldset class="fieldset">
     <legend>{t('providerAccess')}</legend>
     <div class="provider-pills" data-testid="profile-providers">
@@ -117,7 +136,7 @@
 
   <div class="form-actions">
     <button class="button secondary" type="button" onclick={oncancel}>{t('cancel')}</button>
-    <button class="button primary" type="submit" disabled={busy} data-testid="profile-submit">
+    <button class="button primary" type="submit" disabled={busy || (importSourceId !== '' && !consentLocalProfileCopy)} data-testid="profile-submit">
       {profile ? t('save') : t('create')}
     </button>
   </div>

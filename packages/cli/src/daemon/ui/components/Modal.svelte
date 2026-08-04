@@ -1,5 +1,6 @@
 <script lang="ts">
   import { X } from '@lucide/svelte'
+  import { onMount } from 'svelte'
 
   let {
     title,
@@ -15,6 +16,14 @@
     children: import('svelte').Snippet
   } = $props()
 
+  let closeButton: HTMLButtonElement
+
+  onMount(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    closeButton.focus()
+    return () => previousFocus?.focus()
+  })
+
   function backdropClick(event: MouseEvent) {
     if (event.target === event.currentTarget) onclose()
   }
@@ -24,7 +33,7 @@
   <div class:wide class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-testid="modal">
     <header class="modal-header">
       <h2 id="modal-title">{title}</h2>
-      <button class="icon-button" type="button" aria-label={closeLabel} title={closeLabel} onclick={onclose} data-testid="modal-close">
+      <button bind:this={closeButton} class="icon-button" type="button" aria-label={closeLabel} title={closeLabel} onclick={onclose} data-testid="modal-close">
         <X size={18} strokeWidth={1.8} />
       </button>
     </header>

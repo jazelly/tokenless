@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
   import { untrack } from 'svelte'
+  import BrowserProfileSourcePicker from '../components/BrowserProfileSourcePicker.svelte'
+  import BrowserRuntimePicker from '../components/BrowserRuntimePicker.svelte'
   import type { JsonRecord, Language } from '../types.js'
 
   let {
@@ -8,23 +10,37 @@
     language,
     t,
     busy,
+    browserRuntimeCatalog,
+    oninspectbrowser,
+    oninstallbrowser,
+    onclearbrowserpath,
+    ondiscoverprofiles,
     onsetup,
   }: {
     snapshot: JsonRecord
     language: Language
     t: (key: any) => string
     busy: boolean
+    browserRuntimeCatalog: JsonRecord | null
+    oninspectbrowser: (browser: string, executablePath?: string) => Promise<JsonRecord>
+    oninstallbrowser: (browser: string, repair?: boolean) => Promise<JsonRecord>
+    onclearbrowserpath: (browser: string) => Promise<void>
+    ondiscoverprofiles: (input: JsonRecord) => Promise<JsonRecord>
     onsetup: (config: JsonRecord, profile: JsonRecord) => Promise<void>
   } = $props()
 
   let selectedLanguage = $state<Language>(untrack(() => language))
   let browser = $state(untrack(() => snapshot.config.browser ?? 'auto'))
+  let browserExecutablePath = $state('')
+  let browserError = $state('')
   let browserVisibility = $state(untrack(() => snapshot.config.browserVisibility ?? 'headed'))
   let slug = $state('default')
   let label = $state(untrack(() => language === 'zh-CN' ? '默认' : 'Default'))
   let roleLabel = $state('')
+  let importSourceId = $state('')
+  let consentLocalProfileCopy = $state(false)
   let enabledProviders = $state<string[]>(untrack(() => Array.isArray(snapshot.config.providerWhitelist)
-    ? [...snapshot.config.providerWhitelist]
+    ? snapshot.config.providerWhitelist.filter((provider: string) => snapshot.config.updatedAt || provider !== 'gemini')
     : snapshot.providers
       .filter((provider: JsonRecord) => provider.stage !== 'disabled' && provider.id !== 'gemini')
       .map((provider: JsonRecord) => provider.id)))
@@ -37,9 +53,35 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault()
+    browserError = ''
+    if (browserExecutablePath.trim()) {
+      try {
+        const inspection = await oninspectbrowser(browser, browserExecutablePath.trim())
+        if (inspection.ok !== true) {
+          browserError = String(inspection.message || t('browserUnavailable'))
+          return
+        }
+      } catch (error) {
+        browserError = error instanceof Error ? error.message : t('requestFailed')
+        return
+      }
+    }
     await onsetup(
-      { language: selectedLanguage, browser, browserVisibility },
-      { slug, label, roleLabel, enabledProviders, browserVisibility, setDefault: true },
+      {
+        language: selectedLanguage,
+        browser,
+        browserVisibility,
+        ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
+      },
+      {
+        slug,
+        label,
+        roleLabel,
+        enabledProviders,
+        browserVisibility,
+        setDefault: true,
+        ...(importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
+      },
     )
   }
 </script>
@@ -70,15 +112,21 @@
 
       <div class="setup-row">
         <div class="setup-icon"><Monitor size={19} /></div>
-        <div class="form-grid compact setup-fields">
-          <label class="field">
-            <span>{t('useBrowser')}</span>
-            <select bind:value={browser} data-testid="setup-browser">
-              {#each ['auto', 'chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak'] as option}
-                <option value={option}>{option}</option>
-              {/each}
-            </select>
-          </label>
+        <div class="setup-fields browser-setup-fields">
+          <BrowserRuntimePicker
+            bind:browser
+            bind:executablePath={browserExecutablePath}
+            catalog={browserRuntimeCatalog}
+            {t}
+            {busy}
+            pathConfigured={snapshot.config.browserExecutablePathConfigured === true}
+            configuredBrowser={snapshot.config.browser}
+            testId="setup"
+            oninspect={oninspectbrowser}
+            oninstall={oninstallbrowser}
+            onclear={onclearbrowserpath}
+          />
+          {#if browserError}<div class="inline-feedback error" role="alert"><span>{browserError}</span></div>{/if}
           <label class="field">
             <span>{t('visibility')}</span>
             <select bind:value={browserVisibility} data-testid="setup-visibility">
@@ -107,6 +155,14 @@
             <span>{t('role')} <small>{t('optional')}</small></span>
             <input bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="setup-role" />
           </label>
+          <BrowserProfileSourcePicker
+            bind:sourceId={importSourceId}
+            bind:consent={consentLocalProfileCopy}
+            {t}
+            {busy}
+            testId="setup"
+            ondiscover={ondiscoverprofiles}
+          />
           <fieldset class="fieldset setup-providers">
             <legend>{t('chooseProviders')}</legend>
             <div class="provider-pills">
@@ -129,7 +185,7 @@
 
       <div class="setup-actions">
         <span>localhost</span>
-        <button class="button primary" type="submit" disabled={busy || !enabledProviders.length} data-testid="finish-setup">
+        <button class="button primary" type="submit" disabled={busy || !enabledProviders.length || (importSourceId !== '' && !consentLocalProfileCopy)} data-testid="finish-setup">
           {t('finishSetup')} <ChevronRight size={16} />
         </button>
       </div>

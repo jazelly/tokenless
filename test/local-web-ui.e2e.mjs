@@ -15,6 +15,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
     const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
     const minted = await mintTicket(daemon.origin, token)
     const browserProfileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-browser-'))
+    const importSourceDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-import-source-')))
     const manager = new PersistentContextManager({
       browser: {
         id: 'profile',
@@ -26,6 +27,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
     const snapshotStatuses = []
 
     try {
+      await createClosedChromiumProfile(importSourceDir)
       const context = await manager.ensureContext(browserProfile, 'headless')
       const page = await context.acquireReservedPage({ key: 'tokenless:control-plane:web-e2e' })
       await page.setViewportSize({ width: 1920, height: 1080 })
@@ -40,18 +42,40 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.goto(minted.body.bootstrapUrl, { waitUntil: 'networkidle' })
       assert.equal(await page.title(), 'Tokenless local console')
       await page.getByTestId('setup-view').waitFor()
+      assert.equal(await page.locator('.boot-state').count(), 0)
+      assert.equal(await page.locator('main').count(), 1)
+      const customExecutablePath = chromium.executablePath()
+      await page.getByTestId('setup-browser').selectOption('chrome-for-testing')
+      await page.getByTestId('setup-browser-path-toggle').click()
+      await page.getByTestId('setup-browser-executable-path').fill(customExecutablePath)
+      await page.getByTestId('setup-browser-path-inspect').click()
+      await page.getByTestId('setup-browser-runtime-result').waitFor()
       await page.getByTestId('setup-slug').fill('work')
       await page.getByTestId('setup-label').fill('Work')
       await page.getByTestId('setup-role').fill('Research')
       await page.getByTestId('setup-visibility').selectOption('headless')
+      await page.getByTestId('setup-profile-source-copy').click()
+      await page.locator('.source-advanced summary').click()
+      await page.getByTestId('setup-profile-source-browser').selectOption('chrome-for-testing')
+      await page.getByTestId('setup-profile-source-root').fill(importSourceDir)
+      await page.getByTestId('setup-profile-source-scan').click()
+      await page.getByTestId('setup-profile-source-select').waitFor()
+      assert.match(await page.getByTestId('setup-profile-source-select').locator('option:checked').textContent(), /Google Chrome for Testing · Default/)
+      await page.getByTestId('setup-profile-source-consent').check()
       assert.equal(await page.locator('.provider-pill').filter({ hasText: 'ChatGPT' }).locator('input').isChecked(), true)
       assert.equal(await page.locator('.provider-pill').filter({ hasText: 'Gemini' }).locator('input').isChecked(), false)
       await page.getByTestId('finish-setup').click()
       await page.getByTestId('profiles-view').waitFor()
       const setupConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
-      assert.notEqual(setupConfig.browser, 'auto')
-      assert.equal(typeof setupConfig.browserExecutablePath, 'string')
+      assert.equal(setupConfig.browser, 'chrome-for-testing')
+      assert.equal(setupConfig.browserExecutablePath, customExecutablePath)
       fs.accessSync(setupConfig.browserExecutablePath, fs.constants.X_OK)
+      const importedWorkProfile = await new ManagedProfileRegistry(homeDir).resolveProfile('work')
+      assert.equal(importedWorkProfile.import?.source, importSourceDir)
+      assert.equal(importedWorkProfile.import?.profileDirectoryKey, 'Default')
+      fs.accessSync(path.join(importedWorkProfile.directory, 'Default'), fs.constants.R_OK)
+      const publicSnapshot = await page.evaluate(async () => await (await fetch('/ui-api/v1/snapshot')).json())
+      assert.equal(JSON.stringify(publicSnapshot).includes(importSourceDir), false)
 
       assert.equal(await page.locator('.rail').evaluate((element) => Math.round(element.getBoundingClientRect().width)), 64)
       assert.equal(await page.locator('.profile-master').evaluate((element) => Math.round(element.getBoundingClientRect().width)), 302)
@@ -74,6 +98,16 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('modal').waitFor({ state: 'detached' })
       await page.getByRole('heading', { name: 'Work updated' }).waitFor()
 
+      const importedAt = (await new ManagedProfileRegistry(homeDir).resolveProfile('work')).import?.importedAt
+      await page.waitForTimeout(20)
+      await page.getByTestId('profile-menu').click()
+      await page.getByTestId('profile-reimport-open').click()
+      await page.getByTestId('profile-reimport-consent').check()
+      await page.getByTestId('profile-reimport-confirm').click()
+      await page.getByTestId('modal').waitFor({ state: 'detached' })
+      const reimportedAt = (await new ManagedProfileRegistry(homeDir).resolveProfile('work')).import?.importedAt
+      assert.notEqual(reimportedAt, importedAt)
+
       const registry = new ManagedProfileRegistry(homeDir)
       const workProfile = await registry.resolveProfile('work')
       const work = daemon.store.createJob({
@@ -95,6 +129,35 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('modal-close').click()
 
       await page.locator('.rail button[data-nav="system"]').click()
+      await page.getByTestId('config-browser').selectOption('chrome-for-testing')
+      await page.getByTestId('config-browser-path-toggle').click()
+      await page.getByTestId('config-browser-executable-path').fill(customExecutablePath)
+      await page.getByTestId('config-browser-path-inspect').click()
+      await page.getByTestId('config-browser-runtime-result').waitFor()
+      assert.match(await page.getByTestId('config-browser-runtime-result').textContent(), /Executable verified/)
+      await page.getByTestId('config-save').click()
+      await page.waitForFunction(() => document.querySelector('[data-testid="config-browser-executable-path"]')?.value === '')
+      let runtimeConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+      assert.equal(runtimeConfig.browser, 'chrome-for-testing')
+      assert.equal(runtimeConfig.browserExecutablePath, customExecutablePath)
+
+      const missingExecutablePath = path.join(homeDir, 'missing-browser-executable')
+      await page.getByTestId('config-browser-executable-path').fill(missingExecutablePath)
+      await page.getByTestId('config-save').click()
+      await page.waitForFunction(() => /not runnable|not found|could not be verified/i.test(document.querySelector('.toast')?.textContent ?? ''))
+      assert.match(await page.locator('.toast').textContent(), /not runnable|not found|could not be verified/i)
+      runtimeConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+      assert.equal(runtimeConfig.browserExecutablePath, customExecutablePath)
+
+      await page.getByTestId('config-browser').selectOption('chrome')
+      await page.getByTestId('config-browser-path-toggle').click()
+      await page.getByTestId('config-browser-path-clear').click()
+      await page.waitForFunction(() => document.querySelector('[data-testid="config-browser-path-clear"]') === null)
+      await page.waitForFunction(() => document.querySelector('.toast')?.textContent === 'Changes saved.')
+      runtimeConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+      assert.equal(runtimeConfig.browser, 'chrome')
+      assert.equal(runtimeConfig.browserExecutablePath, null)
+
       await page.getByTestId('config-language').selectOption('zh-CN')
       await page.getByTestId('config-visibility').selectOption('headed')
       await page.getByTestId('config-save').click()
@@ -128,9 +191,26 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
     } finally {
       await manager.shutdown()
       fs.rmSync(browserProfileDir, { recursive: true, force: true })
+      fs.rmSync(importSourceDir, { recursive: true, force: true })
     }
   })
 })
+
+async function createClosedChromiumProfile(directory) {
+  const manager = new PersistentContextManager({
+    browser: {
+      id: 'profile',
+      executablePath: chromium.executablePath(),
+    },
+  })
+  try {
+    const context = await manager.ensureContext({ id: 'profile-source', directory, lifecycle: 'ready' }, 'headless')
+    const page = await context.acquireReservedPage({ key: 'tokenless:control-plane:web-e2e-profile-source' })
+    await page.goto('data:text/html,<title>Tokenless import source</title>')
+  } finally {
+    await manager.shutdown()
+  }
+}
 
 async function withDaemon(operation) {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-e2e-')))

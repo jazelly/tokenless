@@ -1,15 +1,31 @@
 <script lang="ts">
   import { Clipboard, Moon, PauseCircle, ShieldCheck } from '@lucide/svelte'
   import { untrack } from 'svelte'
+  import BrowserRuntimePicker from '../components/BrowserRuntimePicker.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatTime } from '../formatting.js'
   import type { JsonRecord, Language } from '../types.js'
 
-  let { snapshot, language, t, busy, onmutate, ontoast }: {
+  let {
+    snapshot,
+    language,
+    t,
+    busy,
+    browserRuntimeCatalog,
+    oninspectbrowser,
+    oninstallbrowser,
+    onclearbrowserpath,
+    onmutate,
+    ontoast,
+  }: {
     snapshot: JsonRecord
     language: Language
     t: (key: any) => string
     busy: boolean
+    browserRuntimeCatalog: JsonRecord | null
+    oninspectbrowser: (browser: string, executablePath?: string) => Promise<JsonRecord>
+    oninstallbrowser: (browser: string, repair?: boolean) => Promise<JsonRecord>
+    onclearbrowserpath: (browser: string) => Promise<void>
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
     ontoast: (message: string) => void
   } = $props()
@@ -23,8 +39,19 @@
     event.preventDefault()
     const body: JsonRecord = { language: selectedLanguage, browser, browserVisibility }
     if (browserExecutablePath.trim()) body.browserExecutablePath = browserExecutablePath.trim()
-    await onmutate('/config', body, 'PATCH')
-    browserExecutablePath = ''
+    try {
+      if (browserExecutablePath.trim()) {
+        const inspection = await oninspectbrowser(browser, browserExecutablePath.trim())
+        if (inspection.ok !== true) {
+          ontoast(String(inspection.message || t('browserUnavailable')))
+          return
+        }
+      }
+      await onmutate('/config', body, 'PATCH')
+      browserExecutablePath = ''
+    } catch (error) {
+      ontoast(error instanceof Error ? error.message : t('requestFailed'))
+    }
   }
 
   async function copyDiagnostics() {
@@ -58,8 +85,20 @@
     <section class="settings-section system-card">
       <div class="settings-section-title"><h2>{t('runtime')}</h2><ShieldCheck size={17} /></div>
       <div class="form-stack">
-        <label class="field"><span>{t('browserSelection')}</span><select bind:value={browser} data-testid="config-browser">{#each ['auto', 'chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak'] as value}<option value={value}>{value}</option>{/each}</select></label>
-        <label class="field"><span>{t('browserExecutablePath')}</span><input bind:value={browserExecutablePath} autocomplete="off" placeholder={t('browserExecutablePathPlaceholder')} data-testid="config-browser-executable-path" /><small>{snapshot.config.browserExecutablePathConfigured ? t('browserExecutablePathConfigured') : t('browserExecutablePathHelp')}</small></label>
+        <BrowserRuntimePicker
+          bind:browser
+          bind:executablePath={browserExecutablePath}
+          catalog={browserRuntimeCatalog}
+          {t}
+          {busy}
+          pathConfigured={snapshot.config.browserExecutablePathConfigured === true}
+          configuredBrowser={snapshot.config.browser}
+          testId="config"
+          allowRepair={true}
+          oninspect={oninspectbrowser}
+          oninstall={oninstallbrowser}
+          onclear={onclearbrowserpath}
+        />
         <label class="field"><span>{t('defaultVisibility')}</span><select bind:value={browserVisibility} data-testid="config-visibility"><option value="auto">auto</option><option value="headed">headed</option><option value="headless">headless</option></select></label>
       </div>
     </section>
