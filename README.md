@@ -54,6 +54,8 @@ Install the CLI:
 npm install --global tokenless@latest
 ```
 
+For an existing global installation, `tokenless upgrade --json` is the canonical maintenance command; `tokenless install` is a lower-level runtime provisioning command and is not part of the normal user flow.
+
 Then follow the interactive setup:
 
 ```bash

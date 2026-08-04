@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `tokenless help` | 显示内置命令摘要。 | 否 |
 | `tokenless --version` | 输出当前安装的 CLI 版本。 | 否 |
-| `tokenless install` | 验证打包的本地 runtime、所选浏览器和 daemon。 | 否 |
+| `tokenless install` | 底层本地 runtime provisioning；日常维护请使用 `tokenless upgrade`。 | 否 |
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
 | `tokenless dashboard` | 打开已认证的本地 Web 控制台，或生成一次性 URL。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
@@ -125,9 +125,9 @@ tokenless --version
 tokenless -V
 ```
 
-### `tokenless install`
+### `tokenless install`（底层兼容命令）
 
-解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 的版本和 control API revision 一致。如果同一 Tokenless home 下通过 proof 验证的 daemon 任一值已过期，当前 CLI package 会优雅重启它；foreign 或未经验证的 listener 绝不会被停止。
+解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 的版本和 control API revision 一致。面向普通用户的日常维护请使用 `tokenless upgrade`；本命令保留给底层 runtime provisioning 和兼容性自动化。如果同一 Tokenless home 下通过 proof 验证的 daemon 任一值已过期，当前 CLI package 会优雅重启它；foreign 或未经验证的 listener 绝不会被停止。
 
 ```bash
 tokenless install --browser auto --json
@@ -142,7 +142,7 @@ tokenless install --browsers chrome,brave --json
 - `--repair-browser` 显式替换所选 managed Chromium 或 Cloak cache；只有新下载的 replacement 通过全部校验后才会替换，repair 失败时会恢复原 cache。
 - `--daemon-url`、`--daemon-start-timeout-ms`、`--home` 和 `--json` 控制本地 runtime。
 
-该命令不会配置 managed profile，也不会检查 provider 登录状态。完成后仍需运行 `tokenless setup`。
+该命令不会更新全局 npm CLI，不会配置 managed profile，也不会检查 provider 登录状态。直接使用本命令时，完成后仍需运行 `tokenless setup`。
 
 ### `tokenless setup`
 
@@ -293,7 +293,7 @@ Config 文件还接受实验性的 `browserConnectionMode`，值为 `playwright`
 
 ### `tokenless upgrade`
 
-执行受支持的 upgrade pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来 upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。
+执行面向普通用户的 canonical maintenance pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来 upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。日常安装维护和升级请使用它，不要直接使用 `tokenless install`。
 
 ```bash
 tokenless upgrade

@@ -10,7 +10,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | --- | --- | --- |
 | `tokenless help` | Show the built-in command summary. | None |
 | `tokenless --version` | Print the installed CLI version. | None |
-| `tokenless install` | Verify the packaged local runtime, selected browser, and daemon. | None |
+| `tokenless install` | Low-level local runtime provisioning; use `tokenless upgrade` for normal maintenance. | None |
 | `tokenless setup` | Configure skills, browser, profiles, daemon, and one-time provider sign-in checks. | Yes |
 | `tokenless dashboard` | Open or mint a one-time URL for the authenticated local web control plane. | None |
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
@@ -125,9 +125,9 @@ tokenless --version
 tokenless -V
 ```
 
-### `tokenless install`
+### `tokenless install` (low-level compatibility)
 
-Resolves or installs the selected exact browser runtime, saves the runtime preference, upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, and ensures that the local daemon matches the installed CLI version and control API revision. A proof-verified daemon for the same Tokenless home is gracefully restarted from the current CLI package when either value is stale; foreign or unverified listeners are never stopped.
+Resolves or installs the selected exact browser runtime, saves the runtime preference, upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, and ensures that the local daemon matches the installed CLI version and control API revision. Use `tokenless upgrade` for the normal user-facing maintenance workflow; this command remains available for low-level runtime provisioning and compatibility automation. A proof-verified daemon for the same Tokenless home is gracefully restarted from the current CLI package when either value is stale; foreign or unverified listeners are never stopped.
 
 ```bash
 tokenless install --browser auto --json
@@ -142,7 +142,7 @@ Main options:
 - `--repair-browser` replaces the explicitly selected managed-Chromium or Cloak cache only after a newly downloaded replacement passes every verification step; a failed repair restores the previous cache.
 - `--daemon-url`, `--daemon-start-timeout-ms`, `--home`, and `--json` control the local runtime.
 
-This command does not configure a managed profile or check provider sign-in. Run `tokenless setup` afterward.
+This command does not update the global npm CLI, configure a managed profile, or check provider sign-in. Run `tokenless setup` afterward when using it directly.
 
 ### `tokenless setup`
 
@@ -293,7 +293,7 @@ The config file also accepts the experimental `browserConnectionMode` value `pla
 
 ### `tokenless upgrade`
 
-Runs the supported upgrade pipeline: update the global npm CLI, resolve and verify the installed CLI, invoke that new CLI's shared maintenance module to upsert global agent skills and reconcile the matching daemon, then run doctor.
+Runs the canonical user-facing maintenance pipeline. It updates the global npm CLI, resolves and verifies the installed CLI, invokes that new CLI's shared maintenance module to upsert global agent skills and reconcile the matching daemon, then runs doctor. Use this instead of `tokenless install` for normal installation maintenance and upgrades.
 
 ```bash
 tokenless upgrade

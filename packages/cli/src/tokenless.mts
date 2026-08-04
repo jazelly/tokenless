@@ -2733,7 +2733,7 @@ async function installCommand(args: CliArgs) {
       pid: provisioned.daemon.pid,
       executable: provisioned.installed.daemonExecutable,
     },
-    nextStep: 'Run "tokenless setup" to configure skills, a managed browser profile, the provider whitelist, and a one-time visible sign-in status report.',
+    nextStep: 'Run "tokenless setup" to configure a managed browser profile, the provider whitelist, and a one-time visible sign-in status report.',
   }, args)
 }
 

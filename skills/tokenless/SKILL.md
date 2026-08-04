@@ -1,11 +1,19 @@
 ---
 name: tokenless
-description: Use when any tasks can be completed without directly write to the workspace. Call the tokenless CLI to route tasks to AI provider websitesto save token.
+description: Use when a task can be delegated through the globally installed Tokenless CLI without directly writing to the workspace; route it to a visible AI provider website to save agent tokens.
 ---
 
 # Tokenless agent workflow
 
 Require the globally installed `tokenless` command on `PATH` and use it as the entrypoint. Never invoke Tokenless through `npx tokenless` or `npx tokenless@latest`. Do not reproduce provider-specific Playwright or DOM work yourself.
+
+If `tokenless` is missing from `PATH` or cannot be executed, stop before provider work and tell the user to install it globally:
+
+```bash
+npm install --global tokenless@latest
+```
+
+Do not install it on the user's behalf unless the user explicitly asks for installation. Do not substitute `npx`. After the user confirms installation, use `tokenless setup` for first-time onboarding or `tokenless upgrade --json` for maintenance.
 
 Tokenless sends visible jobs through its authenticated local TypeScript daemon and Playwright worker into a user-configured persistent managed Chromium profile. Keep provider authentication opaque inside that profile, operate only visible page controls, and use only documented Tokenless CLI or local API surfaces.
 

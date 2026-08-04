@@ -26,19 +26,13 @@ Use this workflow only for the maintenance task the user explicitly requested; i
    After installation, invoke only the global `tokenless` command. Never run the
    Tokenless CLI through `npx tokenless` or `npx tokenless@latest`.
 
-3. Reconcile the global skills and matching local daemon:
+3. Run the canonical maintenance workflow to reconcile the global skills and matching local daemon:
 
    ```bash
-   tokenless install --json
+   tokenless upgrade --json
    ```
 
-4. Verify the installation:
-
-   ```bash
-   tokenless doctor --json
-   ```
-
-Report success only when `install` confirms `skills.upserted: true` and a ready matching daemon, then `doctor` exits successfully and returns `ok: true`. Summarize skill, browser, managed profile, daemon, worker, and provider readiness without exposing account identity or authentication data. If verification reports that no managed profile exists, report that the CLI installation completed but provider readiness is pending user-run profile initialization. Do not start that workflow for the user.
+`upgrade` already runs the final read-only `doctor --json` check. Report full success only when its top-level result is `ok: true` and its `npmInstall`, `resolveGlobalCli`, `skills`, `runtimeInstall`, and `doctor` phases are healthy. Summarize skill, browser, managed profile, daemon, worker, and provider readiness without exposing account identity or authentication data. If the CLI, skills, and local runtime phases succeed but doctor reports that no managed profile exists, report that the CLI installation completed and provider readiness is pending user-run profile initialization. Do not start that workflow for the user.
 
 ## User handoff
 

@@ -54,6 +54,8 @@ Tokenless 为 AI Agent 提供一个统一的本地浏览器接口，用来访问
 npm install --global tokenless@latest
 ```
 
+已有全局安装时，`tokenless upgrade --json` 是 canonical maintenance 命令；`tokenless install` 只是底层 runtime provisioning 命令，不属于普通用户的标准流程。
+
 然后按照交互式 setup 流程完成初始化：
 
 ```bash
