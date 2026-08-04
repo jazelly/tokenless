@@ -257,7 +257,7 @@ export class ManagedPlaywrightRunnerService {
     const managedContext = await this.contextManager.ensureContext(profile, browserVisibility)
     const pages = managedContext.browserContext.pages()
     if (pages[0] && managedContext.effectiveBrowserVisibility === 'headed') {
-      await bringToFront(pages[0])
+      await bringToFrontForUserHandoff(pages[0])
     }
     return {
       profileId: profile.id,
@@ -338,6 +338,7 @@ export class ManagedPlaywrightRunnerService {
         return session.send('Target.createTarget', {
           url: provider.descriptor.navigation.entryUrl,
           background: true,
+          focus: false,
         }).then(async (created) => {
           const createdPages = await waitForChromiumTargetPages(
             managedContext.browserContext,
@@ -386,7 +387,7 @@ export class ManagedPlaywrightRunnerService {
     const page = await managedContext.acquireReservedPage({ key: this.controlPlanePageKey, policy: 'preserve' })
     const reused = page.url() !== 'about:blank'
     await page.goto(parsed.toString(), { waitUntil: 'domcontentloaded' })
-    await bringToFront(page)
+    await bringToFrontForUserHandoff(page)
     return {
       profileId: profile.id,
       browserVisibility: managedContext.browserVisibility,
@@ -734,7 +735,13 @@ export class ManagedPlaywrightRunnerService {
       }
       const startUrl = state.submitted?.providerUrl ?? request.target.url
       try {
-        await navigateToTarget(page, startUrl, signal, request.actions.some((action) => action.action === VISIBLE_ACTIONS.NAVIGATION_CHECK))
+        await navigateToTarget(
+          page,
+          provider,
+          startUrl,
+          signal,
+          request.userHandoff,
+        )
       } catch (error) {
         const failure = classifyProviderFailure({ error, submitted: state.submitted !== null })
         await failOrFallback(failure)
@@ -1076,7 +1083,7 @@ export class ManagedPlaywrightRunnerService {
       managedContext = await managedContext.switchVisibility('headed')
       options.onAutoEscalated(managedContext)
       page = await managedContext.acquirePage({ key: options.pageKey, policy: options.request.pagePolicy ?? 'preserve' })
-      await navigateToTarget(page, url, options.signal, true)
+      await navigateToTarget(page, options.provider, url, options.signal, true)
       if (!options.state.submitted) {
         await reconstructCompletedPreSubmitActions(page, {
           provider: options.provider,
@@ -1090,7 +1097,7 @@ export class ManagedPlaywrightRunnerService {
         })
       }
     } else {
-      await bringToFront(page)
+      await bringToFrontForUserHandoff(page)
     }
     const startedAt = Date.now()
     await this.daemonClient.markJobWaitingForUser({
@@ -1339,6 +1346,7 @@ function safeFallbackRequest(
     fallback: remaining.length === 0 ? null : { ...plan, alternatives: remaining },
     context: request.context,
     browserVisibility: request.browserVisibility,
+    userHandoff: request.userHandoff,
     ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
     actions: request.actions.map((action) => ({ ...action, provider: alternative.provider })),
   })
@@ -1764,22 +1772,24 @@ function validateProviderUrl(value: string, provider: RunnerProvider) {
   return target.href
 }
 
-async function bringToFront(page: Page) {
+async function bringToFrontForUserHandoff(page: Page) {
   const maybePage = page as { bringToFront?: () => Promise<unknown> }
   if (typeof maybePage.bringToFront === 'function') {
     await maybePage.bringToFront()
   }
 }
 
-async function navigateToTarget(page: unknown, url: string, signal: AbortSignal, foreground: boolean) {
+async function navigateToTarget(
+  page: Page,
+  provider: RunnerProvider,
+  url: string,
+  signal: AbortSignal,
+  userHandoff: boolean,
+) {
   throwIfStopped(signal, () => false)
-  const maybePage = page as {
-    goto?: (url: string, options?: Record<string, unknown>) => Promise<unknown>
-    bringToFront?: () => Promise<unknown>
-  }
-  if (typeof maybePage.goto === 'function') {
+  if (!canReuseCurrentProviderPage(page, provider, url)) {
     try {
-      await maybePage.goto(url, { waitUntil: 'domcontentloaded' })
+      await page.goto(url, { waitUntil: 'domcontentloaded' })
     } catch (error) {
       if (signal.aborted) throwIfStopped(signal, () => false)
       if (String(error).includes('net::ERR_NAME_NOT_RESOLVED')) {
@@ -1804,9 +1814,24 @@ async function navigateToTarget(page: unknown, url: string, signal: AbortSignal,
       )
     }
   }
-  if (foreground && typeof maybePage.bringToFront === 'function') {
-    await maybePage.bringToFront()
-  }
+  if (userHandoff) await bringToFrontForUserHandoff(page)
+}
+
+function canReuseCurrentProviderPage(page: Page, provider: RunnerProvider, targetUrl: string) {
+  const current = provider.navigation.classify(page.url())
+  if (current.kind !== 'approved') return false
+  const target = provider.navigation.canonicalTarget(targetUrl)
+  if (!target) return false
+  if (current.target.href === target.href) return true
+  return target.href === provider.navigation.homeTarget().href && provider.navigation.pagePatterns.some((pattern) => {
+    const declared = provider.navigation.canonicalTarget(pattern.urlPattern)
+    if (!declared || declared.origin.toLowerCase() !== current.target.origin.toLowerCase()) return false
+    const currentSegments = current.target.pathname.split('/').filter(Boolean)
+    const declaredSegments = declared.pathname.split('/').filter(Boolean)
+    return currentSegments.length === declaredSegments.length && declaredSegments.every((segment, index) => (
+      segment.startsWith(':') ? currentSegments[index] !== '' : segment === currentSegments[index]
+    ))
+  })
 }
 
 function dnsUnavailableDetails(url: string) {

@@ -219,7 +219,7 @@
     },
     "qwen-mode-workspace": {
       "gate": "mutation",
-      "submissions": 1,
+      "submissions": 2,
       "actions": [
         "qwen.mode.inspect",
         "qwen.mode.select",
@@ -234,6 +234,9 @@
         "conversation_fallback",
         "visible_submission",
         "visible_response",
+        "two_cli_processes",
+        "same_conversation",
+        "visible_two_turns",
         "durable_mapping",
         "restore_original"
       ]
@@ -449,7 +452,7 @@
         "workspace-response-citations": "no_real_visible_citation_closure",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
-        "native-project": "native_project_not_observed"
+        "native-project": "native_project_lifecycle_not_e2e_closed"
       }
     },
     "doubao": {
@@ -471,6 +474,28 @@
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-citations": "no_real_visible_citation_closure",
         "qwen-mode-workspace": "provider_specific_capability",
+        "native-project": "native_project_not_observed"
+      }
+    },
+    "kimi": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "model-choice",
+        "effort-choice",
+        "file-selection",
+        "conversation-workflow"
+      ],
+      "unavailable": {
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "workspace-response-citations": "covered_by_conversation_workflow",
+        "workspace-response-baseline": "covered_by_conversation_workflow",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_observed"
       }
     }

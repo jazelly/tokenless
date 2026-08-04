@@ -93,6 +93,7 @@ test('persistent config defaults, stores, and validates browser runtime fields t
       'perplexity',
       'zai',
       'doubao',
+      'kimi',
     ])
     assert.equal(Object.hasOwn(defaults, 'preferredProviders'), false)
     assert.equal(

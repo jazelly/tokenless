@@ -44,6 +44,7 @@ Each active managed profile owns its own browser instance. Tokenless reuses that
 | Perplexity | Experimental | Not required |
 | Z.ai / GLM | Experimental | Not required |
 | Doubao / 豆包 | Experimental | Required |
+| Kimi | Experimental | Required |
 
 ## Install and Setup
 
@@ -59,13 +60,13 @@ Then follow the interactive setup:
 tokenless setup
 ```
 
-Interactive setup first asks whether to use Anti-Detect mode and states that accepting will install the verified platform-pinned CloakBrowser under `TOKENLESS_HOME` when needed. Declining uses the saved normal-browser preference or automatic discovery without a separate runtime picker. When Anti-Detect is selected, setup links to CloakBrowser, shows the exact platform pin, scans only safe directory/version metadata for known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing profiles, and marks exact version alignment. If compatible profiles exist, one source choice offers `Start clean` and the compatible profiles; selecting a profile explicitly authorizes its opaque local copy without Tokenless inspecting authentication values. There are no additional import, copy-consent, or installation confirmations. In non-interactive setup, explicit `--anti-detect` or `--browser cloak` authorizes installation; a saved Cloak preference alone cannot start a download, and import still requires `--consent-local-profile-copy`. Setup then asks which providers belong to the selected managed profile, checks only those providers, leaves one headed provider page open per provider for visible sign-in review, and opens the local Tokenless dashboard in a reserved tab. Reopen the dashboard at any time with:
+Interactive setup first asks whether to use Anti-Detect mode and states that accepting will install the verified platform-pinned CloakBrowser under `TOKENLESS_HOME` when needed. Declining uses the saved normal-browser preference or automatic discovery without a separate runtime picker. When Anti-Detect is selected, setup links to CloakBrowser, shows the exact platform pin, scans only safe directory/version metadata for known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing profiles, and marks exact version alignment. If compatible profiles exist, one source choice offers `Start clean` and the compatible profiles; selecting a profile explicitly authorizes its opaque local copy without Tokenless inspecting authentication values. There are no additional import, copy-consent, or installation confirmations. In non-interactive setup, explicit `--anti-detect` or `--browser cloak` authorizes installation; a saved Cloak preference alone cannot start a download, and import still requires `--consent-local-profile-copy`. Setup then asks which providers belong to the selected managed profile, checks only those providers, leaves one headed provider page open per provider in a concurrent background batch for visible sign-in review, and opens the local Tokenless dashboard in a reserved foreground tab. Reopen the dashboard at any time with:
 
 ```bash
 tokenless dashboard
 ```
 
-The dashboard is served only by the loopback daemon. It manages browser identities, profile-scoped provider routing, visible readiness and controls, capabilities, durable jobs, user handoffs, and redacted diagnostics. Browser JavaScript never receives the daemon bearer token or provider credentials; `tokenless dashboard` uses a one-time bootstrap ticket to establish a short-lived local UI session.
+The dashboard is served only by the loopback daemon. It manages browser identities, profile-scoped provider routing, visible readiness and controls, capabilities, durable jobs, user handoffs, and redacted diagnostics. Setup and System settings discover installed runtimes, accept and verify an explicit system-browser executable path, and can explicitly copy or re-import one selected local Chromium profile as an opaque tree after consent. Browser JavaScript never receives the daemon bearer token, source filesystem paths, or provider credentials; `tokenless dashboard` uses a one-time bootstrap ticket to establish a short-lived local UI session.
 
 Installing the package is only the first step. Complete `tokenless setup` before using Tokenless; it selects and verifies an exact browser runtime, creates or reuses a runtime-bound browser profile, prepares the local runtime, checks every enabled provider, and opens one review tab per provider. Normal mode follows an explicit browser, then the saved preference, then automatic discovery; the default `auto` uses an installed Chrome-family browser first and lazily downloads Tokenless-managed Chrome for Testing 145 only when none exists. Anti-Detect mode selects CloakBrowser and is also available non-interactively as `--anti-detect`. Cloak is downloaded from its official release into the private Tokenless cache; its separately licensed binary is not included in the Tokenless npm package or release artifacts.
 
@@ -116,6 +117,8 @@ Inspect provider-specific availability with `tokenless provider-action --action 
 DeepSeek exposes provider-specific `Instant`, `Expert`, and `Vision` modes plus independent `DeepThink` and `Search` controls. Inspect them with `deepseek.mode.inspect`, `deepseek.deepthink.inspect`, and `deepseek.search.inspect`; Search and file availability are mode-dependent and are never inferred from the mode label alone.
 
 Doubao exposes provider-specific modes and coding-relevant Web skills through `doubao.mode.inspect/select` and `doubao.skill.inspect/select`. The runtime reports visible upgrade and desktop-only restrictions instead of clicking through them. Text-file `file.upload` is experimentally routeable; skill selection is control evidence only until each generated or long-running outcome completes its own real-provider release gate.
+
+Kimi requires a signed-in managed profile. Its experimental routes cover `conversation.chat` and text-file `file.upload`; the real Cloak gate also closes model selection (`Instant`, `K3`, and `K3 Swarm`), Standard/High thinking effort, visible citations, attachment-aware responses, and same-conversation continuation. Projects, Web search as an independently requested outcome, Skills, Plugins, and generated or long-running workflows remain unadvertised until their complete lifecycles close.
 
 For explicit DeepSeek runs, `search.web` prepares Instant with Search enabled, `reasoning.extended` enables DeepThink, and `image.input` prepares Vision before browser mutation. These canonical routes remain fail-closed until their declared real-provider release gates pass.
 

@@ -4,7 +4,7 @@ Status: implemented; real-provider release evidence pending | Priority: P0
 
 Depends on: authenticated loopback daemon, managed profile lifecycle, provider registry and capability catalog, embedded browser-runtime supervision, durable jobs, and browser page ownership
 
-Implementation note (2026-08-01): phases 0–4 and the currently stable phase-5 surfaces are implemented in the bundled CLI package. This includes profile-scoped preferences and migration, shared application services, one-time UI bootstrap and browser sessions, the `/ui-api/v1` contract, reserved control-plane page ownership, first-run Web setup/dashboard handoff, all six administration areas, clean-profile/provider/browser/job mutations, capability-first routing views, freshly observed model/effort controls, revision/ETag polling that preserves unsaved edits, English and Simplified Chinese localization, and redacted diagnostics. The browser application is a modular Svelte 5 application under `packages/cli/src/daemon/ui`, built by its own Vite boundary into deterministic self-hosted assets while remaining part of the CLI release artifact. Its separate Playwright Web E2E covers setup, responsive display at desktop/mobile viewports, configuration and profile persistence, durable work display, polling-safe drafts, and reserved control-plane page ownership; one explicitly gated signed-in provider case proves a real completed provider job is visible without rerunning the full provider matrix. Explicit-consent opaque local profile copying is available through CLI setup and profile flows; the dashboard exposes no import or reset mutation and never receives source paths or authentication values. Scheduler projections and project/context-mirror views remain conditional on the separate roadmaps that own those contracts. The roadmap stays active until the required authenticated real-provider release matrix is run.
+Implementation note (2026-08-04): phases 0–4 and the currently stable phase-5 surfaces are implemented in the bundled CLI package. This includes profile-scoped preferences and migration, shared application services, one-time UI bootstrap and browser sessions, the `/ui-api/v1` contract, reserved control-plane page ownership, first-run Web setup/dashboard handoff, all six administration areas, clean and explicit-consent imported profile flows, provider/browser/job mutations, capability-first routing views, freshly observed model/effort controls, revision/ETag polling that preserves unsaved edits, English and Simplified Chinese localization, URL-persisted profile and job filters, and redacted diagnostics. The browser application is a modular Svelte 5 application under `packages/cli/src/daemon/ui`, built by its own Vite boundary into deterministic self-hosted assets while remaining part of the CLI release artifact. Its separate Playwright Web E2E covers setup, installed-runtime discovery, executable-path validation, explicit opaque local profile copy and re-import, responsive display at desktop/mobile viewports, accessible navigation and dialogs, configuration and profile persistence, durable work display, polling-safe drafts, and reserved control-plane page ownership. One explicitly gated signed-in provider suite reuses one real completed ChatGPT job across fixture-composed desktop-fresh, desktop-reload, and mobile-fresh startup cases without rerunning the full provider matrix. Browser profile source handles are random, short-lived, and resolved only inside the daemon; the browser never receives source filesystem paths or authentication values. Scheduler projections and project/context-mirror views remain conditional on the separate roadmaps that own those contracts. The roadmap stays active until the required authenticated real-provider release matrix is run.
 
 ## Outcome
 
@@ -42,7 +42,7 @@ The first control-plane release does not:
 - detect whether a user is in mainland China or any other region;
 - install, start, configure, or inspect Clash, V2Ray, Xray, sing-box, VPN software, or proxy subscriptions;
 - read browser credentials, cookies, local storage, session storage, or Keychain data;
-- copy an existing Chrome, Brave, or Cloak profile or its authentication state into a managed profile;
+- parse, display, or extract authentication values from a copied browser profile;
 - expose the daemon on the LAN or public Internet;
 - replace provider websites with embedded iframes;
 - make experimental capabilities supported without real-provider E2E closure; or
@@ -148,7 +148,7 @@ The profiles area manages isolated browser identities:
 - open the profile without provider navigation;
 - remove a profile through an explicit destructive confirmation.
 
-The UI never offers browser-profile import or authentication-state copy. Users sign in through the visible clean managed profile, whose runtime binding and browser-owned session persist across jobs.
+The UI starts clean by default. After the user explicitly selects a discovered local Chromium profile and consents, it can copy that one profile as an opaque filesystem tree into a new managed profile, or re-import the same recorded source. Discovery returns only bounded display metadata and a short-lived opaque source handle; source paths and individual authentication values never enter browser JavaScript. Users may instead sign in through the visible clean managed profile, whose runtime binding and browser-owned session persist across jobs.
 
 ### Providers
 
@@ -307,7 +307,7 @@ The browser-facing API should initially expose:
 
 - one aggregate overview snapshot;
 - config read and update;
-- profile list, clean create, label, default, and remove;
+- profile list, clean or explicit-consent opaque-copy create, re-import, label, default, and remove;
 - per-profile provider membership and cached observations;
 - explicit provider open, readiness check, and controls inspection;
 - capability catalog and route availability;
@@ -362,7 +362,7 @@ Visual design requires a separate design target and review before frontend imple
 
 ### Phase 3: Profile and Browser Administration
 
-- Add clean profile creation, label/role editing, default selection, and removal; do not add profile-copy or authentication-state import.
+- Add clean profile creation, explicit-consent opaque local Chromium profile copy and re-import, label/role editing, default selection, and removal without parsing authentication state.
 - Add browser selection, visibility, runtime open, quiesce, and restart-required flows.
 - Add optional user-managed proxy server and bypass configuration with validation and safe redaction.
 - Prevent mutations while unsafe profile ownership or active jobs make them ambiguous.
@@ -389,6 +389,7 @@ Follow the repository's real-boundary testing policy:
 - exercise configuration and profile mutations against real temporary Tokenless homes and real filesystems;
 - keep test-only profile launches keychain-neutral with `--password-store=basic` and `--use-mock-keychain`;
 - verify the control-plane page cannot be selected by provider page acquisition or replacement;
+- compose real-provider Web UI startup cases from an ignored local fixture that names the dedicated home, profile, provider, context mode, reload mode, and viewport;
 - verify bootstrap ticket expiry, single use, session invalidation, same-origin enforcement, CSRF rejection, Host validation, CSP, and redaction through real HTTP requests and browser behavior;
 - do not use mocks, fake daemons, fake pages, synthetic fetch implementations, or source-string assertions;
 - run provider readiness, sign-in handoff, capability inspection, and provider-side mutations against the real provider website under the explicit local E2E gate; and

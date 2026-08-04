@@ -1,11 +1,13 @@
 <script lang="ts">
   import { ExternalLink, RefreshCw, ScanSearch } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
-  import type { JsonRecord } from '../types.js'
+  import { stateLabel } from '../localization.js'
+  import type { JsonRecord, Language } from '../types.js'
 
-  let { snapshot, selectedProfile, t, busy, onselect, onmutate }: {
+  let { snapshot, selectedProfile, language, t, busy, onselect, onmutate }: {
     snapshot: JsonRecord
     selectedProfile: string
+    language: Language
     t: (key: any) => string
     busy: boolean
     onselect: (slug: string) => void
@@ -18,20 +20,33 @@
     return provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
   }
 
-  async function toggle(provider: JsonRecord, enabled: boolean) {
+  async function toggle(provider: JsonRecord, input: HTMLInputElement) {
+    const enabled = input.checked
     const next = new Set<string>(profile.preferences.enabledProviders)
     if (enabled) next.add(provider.id)
     else next.delete(provider.id)
-    await onmutate(`/profiles/${encodeURIComponent(profile.slug)}`, { enabledProviders: [...next] }, 'PATCH')
+    try {
+      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}`, { enabledProviders: [...next] }, 'PATCH')
+    } catch {
+      input.checked = !enabled
+    }
   }
 
   async function choose(provider: JsonRecord, kind: 'model' | 'effort', label: string) {
     if (!label) return
-    await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/providers/${encodeURIComponent(provider.id)}/selection`, { kind, label }, 'POST', false)
+    try {
+      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/providers/${encodeURIComponent(provider.id)}/selection`, { kind, label }, 'POST', false)
+    } catch {
+      // The shared mutation boundary already reports the error.
+    }
   }
 
   async function action(provider: JsonRecord, value: 'open' | 'readiness' | 'controls') {
-    await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/providers/${encodeURIComponent(provider.id)}/actions/${value}`, undefined, 'POST', false)
+    try {
+      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/providers/${encodeURIComponent(provider.id)}/actions/${value}`, undefined, 'POST', false)
+    } catch {
+      // The shared mutation boundary already reports the error.
+    }
   }
 </script>
 
@@ -40,7 +55,7 @@
     {#snippet actions()}
       <label class="inline-select">
         <span class="sr-only">{t('selectProfile')}</span>
-        <select value={profile?.slug} onchange={(event) => onselect(event.currentTarget.value)} data-testid="provider-profile">
+        <select name="providerProfile" value={profile?.slug} onchange={(event) => onselect(event.currentTarget.value)} data-testid="provider-profile">
           {#each snapshot.profiles as entry}<option value={entry.slug}>{entry.label}</option>{/each}
         </select>
       </label>
@@ -53,9 +68,9 @@
       <article class:disabled={!state?.enabled} class="provider-card">
         <header>
           <span class="provider-glyph large">{provider.label.slice(0, 1)}</span>
-          <div><h2>{provider.label}</h2><p>{provider.id}</p></div>
+          <div><h2>{provider.label}</h2><p translate="no">{provider.id}</p></div>
           <label class="switch" title={state?.enabled ? t('enabled') : t('disabled')}>
-            <input type="checkbox" checked={state?.enabled === true} onchange={(event) => toggle(provider, event.currentTarget.checked)} data-testid={`provider-toggle-${provider.id}`} />
+            <input name={`provider-${provider.id}`} type="checkbox" checked={state?.enabled === true} disabled={busy} onchange={(event) => toggle(provider, event.currentTarget)} data-testid={`provider-toggle-${provider.id}`} />
             <span></span>
           </label>
         </header>
@@ -64,12 +79,12 @@
           <strong>{state?.observation?.account?.name ?? state?.observation?.access ?? t('neverChecked')}</strong>
         </div>
         {#if state?.controls?.model?.length}
-          <label class="field compact-field"><span>{t('model')}</span><select disabled={!state.enabled || busy} onchange={(event) => choose(provider, 'model', event.currentTarget.value)}>{#each state.controls.model as choice}<option value={choice.label} selected={choice.selected} disabled={!choice.enabled}>{choice.label}</option>{/each}</select></label>
+          <label class="field compact-field"><span>{t('model')}</span><select name={`${provider.id}-model`} disabled={!state.enabled || busy} onchange={(event) => choose(provider, 'model', event.currentTarget.value)}>{#each state.controls.model as choice}<option value={choice.label} selected={choice.selected} disabled={!choice.enabled} translate="no">{choice.label}</option>{/each}</select></label>
         {/if}
         {#if state?.controls?.effort?.length}
-          <label class="field compact-field"><span>{t('effort')}</span><select disabled={!state.enabled || busy} onchange={(event) => choose(provider, 'effort', event.currentTarget.value)}>{#each state.controls.effort as choice}<option value={choice.label} selected={choice.selected} disabled={!choice.enabled}>{choice.label}</option>{/each}</select></label>
+          <label class="field compact-field"><span>{t('effort')}</span><select name={`${provider.id}-effort`} disabled={!state.enabled || busy} onchange={(event) => choose(provider, 'effort', event.currentTarget.value)}>{#each state.controls.effort as choice}<option value={choice.label} selected={choice.selected} disabled={!choice.enabled} translate="no">{choice.label}</option>{/each}</select></label>
         {/if}
-        <div class="provider-meta"><span class:ok={state?.runtimeEligibility === 'eligible'} class="status-dot"></span><span>{state?.runtimeEligibility ?? 'ineligible'}</span><span class="spacer"></span><span>{provider.stage}</span></div>
+        <div class="provider-meta"><span class:ok={state?.runtimeEligibility === 'eligible'} class="status-dot"></span><span>{stateLabel(language, state?.runtimeEligibility ?? 'ineligible')}</span><span class="spacer"></span><span>{stateLabel(language, provider.stage)}</span></div>
         <footer>
           <button class="icon-button" type="button" disabled={!state?.enabled || busy} aria-label={t('open')} title={t('open')} onclick={() => action(provider, 'open')}><ExternalLink size={16} /></button>
           <button class="icon-button" type="button" disabled={!state?.enabled || busy} aria-label={t('checkNow')} title={t('checkNow')} onclick={() => action(provider, 'readiness')}><RefreshCw size={16} /></button>

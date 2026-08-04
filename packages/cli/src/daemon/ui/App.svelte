@@ -28,7 +28,7 @@
   let runtimeBusy = $state(false)
   let fatal = $state('')
   let toast = $state('')
-  let selectedProfile = $state('')
+  let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
   let section = $state<Section>(parseSection(location.hash))
   let toastTimer = 0
   let pollTimer = 0
@@ -53,14 +53,26 @@
   })
 
   onMount(() => {
-    const hashChange = () => section = parseSection(location.hash)
+    const skipLink = document.querySelector<HTMLAnchorElement>('.skip-link')
+    const skipToContent = (event: MouseEvent) => {
+      event.preventDefault()
+      const main = document.querySelector<HTMLElement>('#main')
+      main?.focus()
+      main?.scrollIntoView({ block: 'start' })
+    }
+    const hashChange = () => {
+      section = parseSection(location.hash)
+      queueMicrotask(() => document.querySelector<HTMLElement>('#main')?.focus())
+    }
     const visibilityChange = () => { if (!document.hidden) void refresh() }
     window.addEventListener('hashchange', hashChange)
     document.addEventListener('visibilitychange', visibilityChange)
+    skipLink?.addEventListener('click', skipToContent)
     void initialize()
     return () => {
       window.removeEventListener('hashchange', hashChange)
       document.removeEventListener('visibilitychange', visibilityChange)
+      skipLink?.removeEventListener('click', skipToContent)
       window.clearTimeout(pollTimer)
       window.clearTimeout(toastTimer)
       window.clearTimeout(runtimeCatalogTimer)
@@ -106,11 +118,22 @@
   function synchronizeSnapshot() {
     if (!snapshot) return
     if (snapshot.config?.language === 'en' || snapshot.config?.language === 'zh-CN') language = snapshot.config.language
-    if (!selectedProfile || !snapshot.profiles.some((profile: JsonRecord) => profile.slug === selectedProfile)) {
-      selectedProfile = snapshot.profiles.find((profile: JsonRecord) => profile.isDefault)?.slug
+    const requestedProfile = snapshot.profiles.find((profile: JsonRecord) => profile.slug === selectedProfile || profile.id === selectedProfile)
+    if (requestedProfile && requestedProfile.slug !== selectedProfile) {
+      selectProfile(requestedProfile.slug)
+    } else if (!requestedProfile) {
+      selectProfile(snapshot.profiles.find((profile: JsonRecord) => profile.isDefault)?.slug
         ?? snapshot.profiles[0]?.slug
-        ?? ''
+        ?? '')
     }
+  }
+
+  function selectProfile(slug: string) {
+    selectedProfile = slug
+    const url = new URL(location.href)
+    if (slug) url.searchParams.set('profile', slug)
+    else url.searchParams.delete('profile')
+    history.replaceState(history.state, '', url)
   }
 
   function navigate(next: string) {
@@ -193,14 +216,10 @@
   }
 
   async function setup(config: JsonRecord, profile: JsonRecord) {
-    try {
-      await mutate('/config', config, 'PATCH', false)
-      await mutate('/profiles', profile, 'POST', false)
-      showToast(t('profileCreated'))
-      navigate('profiles')
-    } catch {
-      // The mutation already exposes a localized error through the live region.
-    }
+    await mutate('/config', config, 'PATCH', false)
+    await mutate('/profiles', profile, 'POST', false)
+    showToast(t('profileCreated'))
+    navigate('profiles')
   }
 
   function showToast(message: string) {
@@ -215,15 +234,15 @@
 </script>
 
 {#if fatal}
-  <main class="fatal-state" data-testid="fatal-state">
-    <img src="/ui/mark.png" alt="" />
+  <main id="main" tabindex="-1" class="fatal-state" data-testid="fatal-state">
+    <img src="/ui/mark.png" alt="" width="42" height="42" />
     <h1>{t('sessionExpired')}</h1>
     <p>{fatal}</p>
     <p>{t('reopen')}</p>
   </main>
 {:else if !snapshot}
-  <main class="loading-state" aria-live="polite">
-    <img src="/ui/mark.png" alt="" />
+  <main id="main" tabindex="-1" class="loading-state" aria-live="polite">
+    <img src="/ui/mark.png" alt="" width="42" height="42" />
     <span class="spinner"></span>
     <p>{t('loading')}</p>
   </main>
@@ -243,21 +262,20 @@
 {:else}
   <div class:profiles-active={section === 'profiles'} class="app-shell" data-testid="app-shell">
     <aside class="rail">
-      <div class="rail-brand"><img src="/ui/mark.png" alt="Tokenless" /></div>
+      <div class="rail-brand"><img src="/ui/mark.png" alt="Tokenless" width="28" height="28" translate="no" /></div>
       <nav aria-label={t('primaryNavigation')}>
         {#each navigation as item (item.id)}
           {@const Icon = item.icon}
-          <button
+          <a
             class:active={section === item.id}
             class="rail-button"
-            type="button"
+            href={`#${item.id}`}
             aria-label={item.label}
             aria-current={section === item.id ? 'page' : undefined}
             title={item.label}
             data-tooltip={item.label}
             data-nav={item.id}
-            onclick={() => navigate(item.id)}
-          ><Icon size={19} strokeWidth={1.8} /></button>
+          ><Icon size={19} strokeWidth={1.8} /></a>
         {/each}
       </nav>
       <div class="rail-status" class:offline aria-label={offline ? t('offline') : t('healthy')} title={offline ? t('offline') : t('healthy')}>
@@ -266,10 +284,10 @@
     </aside>
 
     <header class="mobile-header">
-      <div><img src="/ui/mark.png" alt="" /><strong>Tokenless</strong></div>
+      <div><img src="/ui/mark.png" alt="" width="24" height="24" /><strong translate="no">Tokenless</strong></div>
       <label class="mobile-profile-select">
         <span class="sr-only">{t('selectProfile')}</span>
-        <select bind:value={selectedProfile}>{#each snapshot.profiles as profile}<option value={profile.slug}>{profile.label}</option>{/each}</select>
+        <select name="activeProfile" value={selectedProfile} onchange={(event) => selectProfile(event.currentTarget.value)}>{#each snapshot.profiles as profile}<option value={profile.slug}>{profile.label}</option>{/each}</select>
       </label>
     </header>
 
@@ -277,13 +295,13 @@
 
     <main id="main" tabindex="-1" class:profile-main={section === 'profiles'}>
       {#if section === 'overview'}
-        <OverviewView {snapshot} {selectedProfile} {t} onnavigate={navigate} onmutate={mutate} />
+        <OverviewView {snapshot} {selectedProfile} {language} {t} onmutate={mutate} />
       {:else if section === 'profiles'}
-        <ProfilesView {snapshot} {selectedProfile} {t} {busy} onselect={(slug) => selectedProfile = slug} onmutate={mutate} ondiscoverprofiles={discoverBrowserProfileSources} />
+        <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} ondiscoverprofiles={discoverBrowserProfileSources} />
       {:else if section === 'providers'}
-        <ProvidersView {snapshot} {selectedProfile} {t} {busy} onselect={(slug) => selectedProfile = slug} onmutate={mutate} />
+        <ProvidersView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
       {:else if section === 'capabilities'}
-        <CapabilitiesView {snapshot} {selectedProfile} {language} {t} onselect={(slug) => selectedProfile = slug} />
+        <CapabilitiesView {snapshot} {selectedProfile} {language} {t} onselect={selectProfile} />
       {:else if section === 'jobs'}
         <JobsView {snapshot} {language} {t} {busy} onget={(path) => client.get(path)} onmutate={mutate} />
       {:else}
@@ -305,9 +323,9 @@
     <nav class="mobile-nav" aria-label={t('primaryNavigation')}>
       {#each navigation as item (item.id)}
         {@const Icon = item.icon}
-        <button class:active={section === item.id} type="button" aria-label={item.label} aria-current={section === item.id ? 'page' : undefined} data-nav={item.id} onclick={() => navigate(item.id)}>
+        <a class:active={section === item.id} href={`#${item.id}`} aria-label={item.label} aria-current={section === item.id ? 'page' : undefined} data-nav={item.id}>
           <Icon size={18} strokeWidth={1.8} /><span>{item.label}</span>
-        </button>
+        </a>
       {/each}
     </nav>
   </div>

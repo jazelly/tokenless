@@ -8,23 +8,25 @@ const COOKIE_NAME = 'tokenless_ui_session'
 
 type Ticket = {
   expiresAt: number
+  profileId: string | null
 }
 
 type UiSession = {
   id: string
   csrf: string
   expiresAt: number
+  initialProfileId: string | null
 }
 
 export class UiSessionManager {
   private readonly tickets = new Map<string, Ticket>()
   private readonly sessions = new Map<string, UiSession>()
 
-  mintTicket(origin: string) {
+  mintTicket(origin: string, profileId?: string | null) {
     this.prune()
     const ticket = secret()
     const expiresAt = Date.now() + TICKET_TTL_MS
-    this.tickets.set(ticket, { expiresAt })
+    this.tickets.set(ticket, { expiresAt, profileId: profileId ?? null })
     return {
       ticket,
       bootstrapUrl: `${origin}/ui/bootstrap?ticket=${encodeURIComponent(ticket)}`,
@@ -41,6 +43,7 @@ export class UiSessionManager {
       id: secret(),
       csrf: secret(),
       expiresAt: Date.now() + SESSION_TTL_MS,
+      initialProfileId: stored.profileId,
     }
     this.sessions.set(session.id, session)
     response.setHeader('set-cookie', serializeCookie(session))
@@ -101,4 +104,3 @@ function secret() {
 function uiAuthError(code: string, message: string, status: number) {
   return Object.assign(new Error(message), { code, status })
 }
-

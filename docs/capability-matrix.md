@@ -46,10 +46,10 @@ Implications are expanded before provider selection. One provider must satisfy t
 
 This table summarizes checked-in routes. The CLI output is the authoritative current list.
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental |
-| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental |
+| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental |
 
 `—` means no route is advertised. It does not necessarily mean the provider product lacks the feature; the implementation or real-provider evidence may still be incomplete.
 
@@ -76,6 +76,8 @@ Doubao `file.upload` is experimental and routeable for file selection. Its visib
 Doubao also exposes provider-specific `doubao.mode` and `doubao.skill` actions. The real non-submission gate inspected, selected, visibly verified, and restored Fast, Expert, Work Task Turbo, and every available coding-relevant Web skill. Work Task Pro is reported unavailable when the visible UI requires an upgrade; Audio Transcription is reported unavailable because the Web entry presents a desktop-app download flow. These controls map to canonical candidates, but selecting a control does not prove the complete outcome lifecycle, so no generation, research, reasoning, background-task, transcription, or spreadsheet route is advertised yet.
 
 Doubao `auth.status` also reads the visible account control and opens only its account menu. A visible `升级到专业版` item is derived as `免费版` / `signed_in_free`; unobserved paid-account states remain `signed_in_unknown` rather than being inferred from the purchase page's default selected offer.
+
+Kimi `conversation.chat` and text-file `file.upload` are experimental and routeable only from a signed-in selected profile. The built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network closed readiness, prompt drafting, exact model and thinking-effort selection with restoration, file acceptance, an attachment-grounded response, normalized and visible citations, a second-process continuation on the same conversation URL, and durable task mapping. The visible Projects, Web search, Plugins, and Skills entries remain product-control observations, not public capability routes.
 
 | Doubao control | Canonical outcome candidates | Public route state |
 | --- | --- | --- |

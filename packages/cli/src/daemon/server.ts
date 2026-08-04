@@ -214,8 +214,8 @@ async function handleRequest(
       if (Object.keys(body).some((key) => key !== 'profile_id' && key !== 'open')) {
         throw invalidInput('request body must be valid JSON: unknown field')
       }
-      const ticket = uiServer.mintTicket()
       const profileId = optionalString(body.profile_id)
+      const ticket = uiServer.mintTicket(profileId)
       const opened = body.open === true && profileId
         ? await runtimeController?.openControlPlane(profileId, ticket.bootstrapUrl)
         : null

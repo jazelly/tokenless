@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import BrowserProfileSourcePicker from './BrowserProfileSourcePicker.svelte'
   import type { JsonRecord } from '../types.js'
 
@@ -34,6 +34,8 @@
   let proxyBypass = $state(untrack(() => profile?.preferences?.proxy?.bypass?.join(', ') ?? ''))
   let importSourceId = $state('')
   let consentLocalProfileCopy = $state(false)
+  let error = $state('')
+  let errorElement = $state<HTMLDivElement>()
 
   function toggleProvider(provider: string, checked: boolean) {
     enabledProviders = checked
@@ -43,20 +45,27 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault()
-    await onsubmit({
-      ...(!profile ? { slug } : {}),
-      label,
-      roleLabel,
-      browserVisibility,
-      enabledProviders,
-      ...(!profile && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
-      proxy: proxy.trim()
-        ? {
-            server: proxy.trim(),
-            bypass: proxyBypass.split(',').map((entry: string) => entry.trim()).filter(Boolean),
-          }
-        : null,
-    })
+    error = ''
+    try {
+      await onsubmit({
+        ...(!profile ? { slug } : {}),
+        label,
+        roleLabel,
+        browserVisibility,
+        enabledProviders,
+        ...(!profile && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
+        proxy: proxy.trim()
+          ? {
+              server: proxy.trim(),
+              bypass: proxyBypass.split(',').map((entry: string) => entry.trim()).filter(Boolean),
+            }
+          : null,
+      })
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : t('requestFailed')
+      await tick()
+      errorElement?.focus()
+    }
   }
 </script>
 
@@ -79,7 +88,7 @@
   <div class="form-grid compact">
     <label class="field">
       <span>{t('visibility')}</span>
-      <select bind:value={browserVisibility} data-testid="profile-visibility">
+      <select name="browserVisibility" bind:value={browserVisibility} data-testid="profile-visibility">
         <option value="auto">auto</option>
         <option value="headed">headed</option>
         <option value="headless">headless</option>
@@ -109,6 +118,7 @@
         <label class:checked={enabledProviders.includes(provider.id)} class="provider-pill">
           <input
             type="checkbox"
+            name="enabledProviders"
             value={provider.id}
             checked={enabledProviders.includes(provider.id)}
             onchange={(event) => toggleProvider(provider.id, event.currentTarget.checked)}
@@ -124,20 +134,22 @@
     <div class="details-content">
       <label class="field">
         <span>{t('proxy')}</span>
-        <input bind:value={proxy} placeholder="socks5://127.0.0.1:1080" autocomplete="off" data-testid="profile-proxy" />
+        <input name="proxy" bind:value={proxy} placeholder="socks5://127.0.0.1:1080…" autocomplete="off" spellcheck="false" inputmode="url" data-testid="profile-proxy" />
       </label>
       <label class="field">
         <span>{t('proxyBypass')}</span>
-        <input bind:value={proxyBypass} autocomplete="off" data-testid="profile-proxy-bypass" />
+        <input name="proxyBypass" bind:value={proxyBypass} autocomplete="off" spellcheck="false" data-testid="profile-proxy-bypass" />
       </label>
       <p class="form-note">{t('proxyRestartNote')}</p>
     </div>
   </details>
 
+  {#if error}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1" data-testid="profile-form-error"><span>{error}</span></div>{/if}
+
   <div class="form-actions">
     <button class="button secondary" type="button" onclick={oncancel}>{t('cancel')}</button>
     <button class="button primary" type="submit" disabled={busy || (importSourceId !== '' && !consentLocalProfileCopy)} data-testid="profile-submit">
-      {profile ? t('save') : t('create')}
+      {#if busy}<span class="spinner mini"></span>{/if}{profile ? t('save') : t('create')}
     </button>
   </div>
 </form>

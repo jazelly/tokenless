@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CheckCircle2, Download, FolderCog, RefreshCw, Search, X } from '@lucide/svelte'
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import type { JsonRecord } from '../types.js'
 
   let {
@@ -47,6 +47,13 @@
   let operation = $state<'inspect' | 'install' | 'repair' | 'clear' | ''>('')
   let result = $state<JsonRecord | null>(null)
   let error = $state('')
+  let errorElement = $state<HTMLDivElement>()
+
+  async function reportError(message: string) {
+    error = message
+    await tick()
+    errorElement?.focus()
+  }
 
   let options = $derived(Array.isArray(catalog?.options) && catalog.options.length
     ? catalog.options
@@ -88,9 +95,9 @@
     try {
       const inspection = await oninspect(browser, executablePath.trim())
       if (inspection.ok === true && inspection.runtime) result = inspection.runtime
-      else error = String(inspection.message || t('browserUnavailable'))
+      else await reportError(String(inspection.message || t('browserUnavailable')))
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : t('requestFailed')
+      await reportError(caught instanceof Error ? caught.message : t('requestFailed'))
     } finally {
       operation = ''
     }
@@ -103,7 +110,7 @@
     try {
       result = await oninstall(browser, repair)
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : t('requestFailed')
+      await reportError(caught instanceof Error ? caught.message : t('requestFailed'))
     } finally {
       operation = ''
     }
@@ -115,10 +122,10 @@
     error = ''
     try {
       executablePath = ''
-      showCustomPath = false
       await onclear?.(browser)
+      showCustomPath = false
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : t('requestFailed')
+      await reportError(caught instanceof Error ? caught.message : t('requestFailed'))
       showCustomPath = true
     } finally {
       operation = ''
@@ -129,7 +136,7 @@
 <div class="browser-picker" data-testid={`${testId}-browser-runtime-picker`}>
   <label class="field">
     <span>{t('browserSelection')}</span>
-    <select bind:value={browser} onchange={browserChanged} disabled={busy} data-testid={`${testId}-browser`}>
+    <select name="browser" bind:value={browser} onchange={browserChanged} disabled={busy} data-testid={`${testId}-browser`}>
       {#each options as option (option.selection)}
         <option value={option.selection}>{optionLabel(option)}</option>
       {/each}
@@ -183,6 +190,7 @@
           <div class="input-action-row">
             <input
               bind:value={executablePath}
+              name="browserExecutablePath"
               autocomplete="off"
               spellcheck="false"
               placeholder={t('browserExecutablePathPlaceholder')}
@@ -211,7 +219,7 @@
       <span><strong>{result.displayName}</strong><small>{result.version} · {t('browserValidated')}</small></span>
     </div>
   {:else if error}
-    <div class="inline-feedback error" role="alert" data-testid={`${testId}-browser-runtime-error`}>
+    <div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1" data-testid={`${testId}-browser-runtime-error`}>
       <X size={15} /><span>{error}</span>
     </div>
   {/if}

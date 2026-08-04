@@ -74,12 +74,15 @@ const WEB_BROWSER_LABELS: Record<(typeof WEB_BROWSER_SELECTIONS)[number], string
   cloak: 'CloakBrowser',
 }
 
+const WEB_PROFILE_SOURCE_TTL_MS = 5 * 60 * 1000
+
 type UiBrowserProfileSource = {
   browser: ManagedChromiumBrowserId
   userDataDir: string
   directoryKey: string
   name: string
   browserVersion: string | null
+  expiresAt: number
 }
 
 export class TokenlessApplicationServices {
@@ -327,6 +330,7 @@ export class TokenlessApplicationServices {
         directoryKey: profile.directoryKey,
         name: profile.name,
         browserVersion: profile.browserVersion,
+        expiresAt: Date.now() + WEB_PROFILE_SOURCE_TTL_MS,
       }
       this.browserProfileSources.set(id, source)
       const compatible = runtime?.family !== 'cloak' || source.browserVersion === runtime.actualVersion
@@ -409,7 +413,11 @@ export class TokenlessApplicationServices {
     const config = await this.migratedConfig()
     const label = optionalLabel(input.label)
     const importSourceId = typeof input.importSourceId === 'string' ? input.importSourceId.trim() : ''
-    const importSource = importSourceId ? this.browserProfileSources.get(importSourceId) : undefined
+    let importSource = importSourceId ? this.browserProfileSources.get(importSourceId) : undefined
+    if (importSource && importSource.expiresAt <= Date.now()) {
+      this.browserProfileSources.delete(importSourceId)
+      importSource = undefined
+    }
     if (importSourceId && !importSource) {
       throw applicationError('browser_profile_source_expired', 'Discover and select the browser profile again.')
     }
@@ -606,6 +614,7 @@ export class TokenlessApplicationServices {
     const request = createManagedPlaywrightJobRequest({
       provider: provider.id,
       browserVisibility: action === 'readiness' ? preferences.browserVisibility : 'headed',
+      userHandoff: action === 'open',
       taskId: `ui:${action}:${randomUUID()}`,
       actions,
     })

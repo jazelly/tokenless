@@ -65,7 +65,7 @@ async function uploadFiles(
 ): Promise<FileUploadResult> {
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
   const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
-  const visibleEvidenceBeforeUpload = await visibleAttachmentEvidence(page, attachments)
+  const visibleEvidenceBeforeUpload = await visibleAttachmentEvidence(page, attachments, provider)
   let fileInput: Locator | null = null
   const chooser = await openProviderFileChooser(page, provider)
   if (chooser) {
@@ -83,7 +83,13 @@ async function uploadFiles(
   if (fileInput) {
     await fileInput.setInputFiles(files)
   }
-  const acceptedProof = await waitForVisibleAttachmentProof(page, attachments, visibleEvidenceBeforeUpload, context.signal)
+  const acceptedProof = await waitForVisibleAttachmentProof(
+    page,
+    attachments,
+    visibleEvidenceBeforeUpload,
+    context.signal,
+    provider,
+  )
   if (!acceptedProof) {
     throw providerCapabilityFailure(
       'file_upload_unavailable',
@@ -223,13 +229,20 @@ async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDe
   }
 }
 
-async function visibleAttachmentEvidence(page: Page, attachments: readonly AttachmentInput[]) {
+async function visibleAttachmentEvidence(
+  page: Page,
+  attachments: readonly AttachmentInput[],
+  provider: ProviderDomDefinition,
+) {
   const evaluate = (page as Page & {
-    evaluate?: (callback: (expectedNames: string[]) => string[], expectedNames: string[]) => Promise<unknown>
+    evaluate?: (
+      callback: (input: { expectedNames: string[], allowExtensionless: boolean }) => string[],
+      input: { expectedNames: string[], allowExtensionless: boolean },
+    ) => Promise<unknown>
   }).evaluate
   if (typeof evaluate !== 'function') return new Set<string>()
   const names = attachments.map((attachment) => basename(attachment.name))
-  const result = await evaluate.call(page, (expectedNames) => {
+  const result = await evaluate.call(page, ({ expectedNames, allowExtensionless }) => {
     const isVisibleElement = (element: Element | null): element is HTMLElement | SVGElement => {
       if (!element || !(element instanceof HTMLElement || element instanceof SVGElement)) return false
       let node: Element | null = element
@@ -254,6 +267,7 @@ async function visibleAttachmentEvidence(page: Page, attachments: readonly Attac
       '[aria-label*="upload" i]',
       '[aria-label*="file" i]',
       '[class*="attachment-node-"]',
+      '.file-card-container.success',
       '[title]',
       '[role="listitem"]',
       '[role="status"]',
@@ -280,13 +294,20 @@ async function visibleAttachmentEvidence(page: Page, attachments: readonly Attac
           element.getAttribute('aria-label') ?? '',
           element.getAttribute('title') ?? '',
         ].join(' ').replace(/\s+/g, ' ').trim()
-        if (!expectedNames.every((name) => visibleText.includes(name))) return []
+        const matchesEveryAttachment = expectedNames.every((name) => {
+          if (visibleText.includes(name)) return true
+          if (!allowExtensionless || !element.matches('.file-card-container.success')) return false
+          const extensionIndex = name.lastIndexOf('.')
+          const stem = extensionIndex > 0 ? name.slice(0, extensionIndex) : name
+          return visibleText.includes(stem)
+        })
+        if (!matchesEveryAttachment) return []
         const tag = element.tagName.toLowerCase()
         const role = element.getAttribute('role') ?? ''
         const testId = element.getAttribute('data-testid') ?? ''
         return [`${tag}|${role}|${testId}|${visibleText.slice(0, 240)}`]
       })
-  }, names).catch(() => [])
+  }, { expectedNames: names, allowExtensionless: provider.id === 'kimi' }).catch(() => [])
   return new Set(Array.isArray(result) ? result.filter((entry): entry is string => typeof entry === 'string') : [])
 }
 
@@ -294,8 +315,9 @@ async function visibleAttachmentProof(
   page: Page,
   attachments: readonly AttachmentInput[],
   evidenceBeforeUpload: ReadonlySet<string>,
+  provider: ProviderDomDefinition,
 ) {
-  const evidence = await visibleAttachmentEvidence(page, attachments)
+  const evidence = await visibleAttachmentEvidence(page, attachments, provider)
   for (const entry of evidence) {
     if (!evidenceBeforeUpload.has(entry)) return 'visible-attachment-filename'
   }
@@ -307,10 +329,11 @@ async function waitForVisibleAttachmentProof(
   attachments: readonly AttachmentInput[],
   evidenceBeforeUpload: ReadonlySet<string>,
   signal: AbortSignal | undefined,
+  provider: ProviderDomDefinition,
 ) {
   for (let attempt = 0; attempt <= 75; attempt += 1) {
     assertNotAborted(signal)
-    const proof = await visibleAttachmentProof(page, attachments, evidenceBeforeUpload)
+    const proof = await visibleAttachmentProof(page, attachments, evidenceBeforeUpload, provider)
     if (proof) return proof
     if (attempt < 75) await waitForPageTimeout(page, 200)
   }

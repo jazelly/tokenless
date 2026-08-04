@@ -179,6 +179,16 @@ async function runProviderSuite(target, options) {
     TOKENLESS_LIVE_E2E_GATE: options.gate,
   }
   if (options.command === 'web-ui') {
+    const fixtureFile = path.resolve(options.fixture ?? path.join(root, 'test', 'fixtures', 'local', 'web-ui.json'))
+    await fs.access(fixtureFile).catch((error) => {
+      throw new Error(
+        `Web UI provider E2E fixture not found at ${fixtureFile}. ` +
+        'Create it from test/fixtures/web-ui.example.json; test/fixtures/local/ is intentionally ignored.',
+        { cause: error },
+      )
+    })
+    environment.TOKENLESS_LIVE_WEB_UI_FIXTURE_FILE = fixtureFile
+    environment.TOKENLESS_LIVE_WEB_UI_FIXTURE_SUITE = options.suite ?? 'representative-provider'
     return await runInherited(process.execPath, ['test/run-gated-e2e.mjs', 'web-ui-provider'], environment)
   }
   const script = options.command === 'connection-matrix'
@@ -259,6 +269,8 @@ function parseArguments(arguments_) {
     browser: null,
     home: null,
     gate: 'all',
+    fixture: null,
+    suite: null,
     noOpen: false,
   }
   for (let index = 1; index < arguments_.length; index += 1) {
@@ -272,11 +284,16 @@ function parseArguments(arguments_) {
     if (argument === '--browser') parsed.browser = value
     else if (argument === '--home') parsed.home = value
     else if (argument === '--gate') parsed.gate = value
+    else if (argument === '--fixture') parsed.fixture = value
+    else if (argument === '--suite') parsed.suite = value
     else failUsage(`Unsupported argument '${argument}'.`)
     index += 1
   }
   if (!['all', 'non_submission', 'mutation', 'project'].includes(parsed.gate)) {
     failUsage('Gate must be all, non_submission, mutation, or project.')
+  }
+  if ((parsed.fixture || parsed.suite) && command !== 'web-ui') {
+    failUsage('--fixture and --suite are valid only for web-ui.')
   }
   if (parsed.noOpen && command !== 'prepare') failUsage('--no-open is valid only for prepare.')
   return parsed
@@ -287,7 +304,8 @@ function failUsage(message) {
   console.error(
     `Usage: node test/run-live-provider-e2e.mjs <prepare|run|connection-matrix|web-ui|status> ` +
     `--browser <${LIVE_PROVIDER_TEST_BROWSERS.join('|')}> ` +
-    '[--home <test-home>] [--gate <all|non_submission|mutation|project>] [--no-open]',
+    '[--home <test-home>] [--gate <all|non_submission|mutation|project>] ' +
+    '[--fixture <web-ui-fixture>] [--suite <web-ui-suite>] [--no-open]',
   )
   process.exit(2)
 }

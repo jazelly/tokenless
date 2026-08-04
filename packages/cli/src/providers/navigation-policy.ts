@@ -1,6 +1,6 @@
 import type { ProviderId } from './provider-identity.js'
 
-export type ProviderPageKind = 'entry' | 'chat_runtime' | 'conversation' | 'project_list' | 'project'
+export type ProviderPageKind = 'entry' | 'chat_runtime' | 'conversation' | 'project_list' | 'project' | 'capability'
 
 export type ProviderPagePattern = Readonly<{
   kind: ProviderPageKind

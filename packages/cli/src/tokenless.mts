@@ -60,6 +60,7 @@ import {
   normalizeManagedProfileProxy,
   normalizeBrowserVisibility,
   openBrowserRuntimeProfile,
+  openBrowserRuntimeProviderTabs,
   openTokenlessDashboard,
   openProviderUrl,
   persistDaemonSnapshot,
@@ -649,6 +650,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       request: createManagedPlaywrightJobRequest({
         provider,
         target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
+        userHandoff: subcommand === 'open',
         actions: [{ action: visibleAction, payload: {} }],
       }),
       taskId: args.taskId || `profile:${subcommand}:${randomUUID()}`,
@@ -2038,6 +2040,7 @@ async function executeManagedPlaywrightJob({
           taskId: effectiveTaskId,
         },
         browserVisibility: request.browserVisibility,
+        userHandoff: request.userHandoff,
         ...(request.pagePolicy === undefined ? {} : { pagePolicy: request.pagePolicy }),
         actions: request.actions,
       })
@@ -2782,11 +2785,9 @@ async function setupCommand(args: CliArgs) {
     }
 
     const reviewTabs = await ensureSetupProviderReviewTabs({
-      args,
       homeDir,
       profile,
       providers,
-      reviewSessionId,
       daemonUrl: localRuntime.url,
       presenter,
     })
@@ -3582,98 +3583,54 @@ async function runSetupAuthCheck({
   }
 
 async function ensureSetupProviderReviewTabs({
-  args,
   homeDir,
   profile,
   providers,
-  reviewSessionId,
   daemonUrl: actualDaemonUrl,
   presenter,
 }: {
-  args: CliArgs
   homeDir: string
   profile: ManagedProfileRecord
   providers: readonly ProviderId[]
-  reviewSessionId: string
   daemonUrl: string
   presenter: SetupPresenter
 }) {
-  const opened: ProviderId[] = []
-  const failures: { provider: ProviderId, code: string, message: string }[] = []
-  for (const provider of providers) {
-    try {
-      await presenter.withProgress(`Opening ${provider} review tab`, () => executeManagedPlaywrightJob({
-        args: {
-          ...args,
-          home: homeDir,
-          profile: profile.slug,
-          browserVisibility: 'headed',
-          quiet: true,
-        },
-        provider,
-        request: createManagedPlaywrightJobRequest({
-          provider,
-          target: { kind: 'provider_home', url: managedProviderExplicitTargetUrl(provider, args.targetUrl) },
-          actions: [{ action: VISIBLE_ACTIONS.NAVIGATION_CHECK, payload: {} }],
-        }),
-        taskId: `setup-review:${reviewSessionId}:${provider}`,
-        statusEventAction: 'setup.review',
-        noWait: false,
-        timeoutMs: 30_000,
-      }))
-      opened.push(provider)
-    } catch (error) {
-      failures.push({
-        provider,
-        code: (error as CliError).code ?? 'setup_review_tab_failed',
-        message: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-  if (failures.length === 0) {
-    presenter.success(`Opened ${opened.length} provider review tab(s).`)
-  } else {
-    presenter.note(`Could not open ${failures.length} provider review tab(s).`)
-  }
-  let keptOpen: Awaited<ReturnType<typeof openBrowserRuntimeProfile>> | null = null
-  let keepOpenError: { code: string, message: string } | null = null
   try {
-    await waitForSetupReviewJobsToSettle({ homeDir, daemonUrl: actualDaemonUrl })
-    keptOpen = await openBrowserRuntimeProfile({
+    const result = await presenter.withProgress('Opening provider review tabs', () => openBrowserRuntimeProviderTabs({
       daemonUrl: actualDaemonUrl,
       homeDir,
       profileId: profile.id,
+      providers,
       browserVisibility: 'headed',
-    })
+    }))
+    const opened = result.tabs.map((tab) => tab.provider as ProviderId)
+    const failures = result.failures.map((failure) => ({ ...failure, provider: failure.provider as ProviderId }))
+    if (failures.length === 0) {
+      presenter.success(`Opened ${opened.length} provider review tab(s).`)
+    } else {
+      presenter.note(`Could not open ${failures.length} provider review tab(s).`)
+    }
+    return {
+      opened,
+      failures,
+      keptOpen: true,
+      pageCount: result.pageCount,
+      keepOpenError: null,
+    }
   } catch (error) {
-    keepOpenError = {
-      code: (error as CliError).code ?? 'setup_review_browser_closed',
+    const keepOpenError = {
+      code: (error as CliError).code ?? 'setup_review_tabs_failed',
       message: error instanceof Error ? error.message : String(error),
     }
     presenter.note('Could not keep the provider review browser open.')
+    return {
+      opened: [],
+      failures: [],
+      keptOpen: false,
+      pageCount: 0,
+      keepOpenError,
+    }
   }
-  return {
-    opened,
-    failures,
-    keptOpen: keptOpen !== null,
-    pageCount: keptOpen?.pageCount ?? 0,
-    keepOpenError,
-  }
-}
-
-async function waitForSetupReviewJobsToSettle({
-  homeDir,
-  daemonUrl: actualDaemonUrl,
-}: {
-  homeDir: string
-  daemonUrl: string
-}) {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const status = await browserRuntimeStatus({ homeDir, daemonUrl: actualDaemonUrl })
-    if (status.activeJobCount === 0) return
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-  throw usageError('setup_review_jobs_still_active', 'Provider review jobs did not settle before the browser handoff.')
 }
 
 async function provisionRuntime(args: CliArgs) {

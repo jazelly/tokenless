@@ -1,13 +1,15 @@
 <script lang="ts">
   import { ArrowUpRight, Bot, Clock3, ExternalLink, Monitor, UserRound } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
-  import type { JsonRecord } from '../types.js'
+  import { formatNumber } from '../formatting.js'
+  import { stateLabel } from '../localization.js'
+  import type { JsonRecord, Language } from '../types.js'
 
-  let { snapshot, selectedProfile, t, onnavigate, onmutate }: {
+  let { snapshot, selectedProfile, language, t, onmutate }: {
     snapshot: JsonRecord
     selectedProfile: string
+    language: Language
     t: (key: any) => string
-    onnavigate: (section: string) => void
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
   } = $props()
 
@@ -19,13 +21,21 @@
   function profileState(provider: JsonRecord) {
     return provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
   }
+
+  async function openProfile() {
+    try {
+      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/open`)
+    } catch {
+      // The shared mutation boundary already reports the error.
+    }
+  }
 </script>
 
 <section class="page" data-testid="overview-view">
   <PageHeader eyebrow="localhost" title={t('overview')} description={t('overviewLede')}>
     {#snippet actions()}
       {#if profile}
-        <button class="button primary icon-label" type="button" onclick={() => onmutate(`/profiles/${encodeURIComponent(profile.slug)}/open`)}>
+        <button class="button primary icon-label" type="button" onclick={openProfile}>
           <ExternalLink size={15} />{t('openBrowser')}
         </button>
       {/if}
@@ -33,38 +43,38 @@
   </PageHeader>
 
   <div class="metric-grid">
-    <article class="metric-card"><span class="metric-icon"><Bot size={18} /></span><div><small>{t('daemon')}</small><strong>{snapshot.daemon.version}</strong><p>{Math.floor(snapshot.daemon.uptimeMs / 60000)} {t('uptimeUnit')}</p></div></article>
-    <article class="metric-card"><span class="metric-icon"><Monitor size={18} /></span><div><small>{t('runtime')}</small><strong>{snapshot.runtime.status}</strong><p>{snapshot.runtime.activeJobCount} {t('activeUnit')}</p></div></article>
-    <article class="metric-card"><span class="metric-icon"><UserRound size={18} /></span><div><small>{t('profiles')}</small><strong>{snapshot.profiles.length}</strong><p>{profile?.label ?? t('noProfiles')}</p></div></article>
-    <article class="metric-card"><span class="metric-icon"><Clock3 size={18} /></span><div><small>{t('waitingJobs')}</small><strong>{waiting.length}</strong><p>{running.length} {t('activeUnit')}</p></div></article>
+    <article class="metric-card"><span class="metric-icon"><Bot size={18} /></span><div><small>{t('daemon')}</small><strong translate="no">{snapshot.daemon.version}</strong><p>{formatNumber(Math.floor(snapshot.daemon.uptimeMs / 60000), language)} {t('uptimeUnit')}</p></div></article>
+    <article class="metric-card"><span class="metric-icon"><Monitor size={18} /></span><div><small>{t('runtime')}</small><strong>{stateLabel(language, snapshot.runtime.status)}</strong><p>{formatNumber(snapshot.runtime.activeJobCount, language)} {t('activeUnit')}</p></div></article>
+    <article class="metric-card"><span class="metric-icon"><UserRound size={18} /></span><div><small>{t('profiles')}</small><strong>{formatNumber(snapshot.profiles.length, language)}</strong><p>{profile?.label ?? t('noProfiles')}</p></div></article>
+    <article class="metric-card"><span class="metric-icon"><Clock3 size={18} /></span><div><small>{t('waitingJobs')}</small><strong>{formatNumber(waiting.length, language)}</strong><p>{formatNumber(running.length, language)} {t('activeUnit')}</p></div></article>
   </div>
 
   <div class="overview-grid">
     <section class="content-panel">
-      <header class="panel-title"><div><h2>{t('providerReadiness')}</h2><p>{profile?.label}</p></div><span class="badge neutral">{readyProviders.length}/{snapshot.providers.length}</span></header>
+      <header class="panel-title"><div><h2>{t('providerReadiness')}</h2><p>{profile?.label}</p></div><span class="badge neutral">{formatNumber(readyProviders.length, language)}/{formatNumber(snapshot.providers.length, language)}</span></header>
       <div class="row-list">
         {#each snapshot.providers as provider (provider.id)}
           {@const state = profileState(provider)}
-          <button class="data-row" type="button" onclick={() => onnavigate('providers')}>
+          <a class="data-row" href="#providers">
             <span class="provider-glyph">{provider.label.slice(0, 1)}</span>
             <span class="data-row-main"><strong>{provider.label}</strong><small>{state?.observation?.access ?? t('neverChecked')}</small></span>
             <span class:ok={state?.runtimeEligibility === 'eligible'} class="status-dot"></span>
             <ArrowUpRight size={15} />
-          </button>
+          </a>
         {/each}
       </div>
     </section>
 
     <section class="content-panel">
-      <header class="panel-title"><div><h2>{t('recentJobs')}</h2><p>{snapshot.jobs.length} {t('durableUnit')}</p></div><button class="text-button" type="button" onclick={() => onnavigate('jobs')}>{t('details')}</button></header>
+      <header class="panel-title"><div><h2>{t('recentJobs')}</h2><p>{formatNumber(snapshot.jobs.length, language)} {t('durableUnit')}</p></div><a class="text-button" href="#jobs">{t('details')}</a></header>
       <div class="row-list">
         {#each snapshot.jobs.slice(0, 6) as job (job.jobId)}
-          <button class="data-row" type="button" onclick={() => onnavigate('jobs')}>
+          <a class="data-row" href="#jobs">
             <span class={`job-state ${job.status}`}></span>
             <span class="data-row-main"><strong>{job.taskId ?? job.jobId}</strong><small>{job.provider ?? '—'} · {job.profileSlug ?? '—'}</small></span>
-            <span class="mono-label">{job.status}</span>
+            <span class="mono-label">{stateLabel(language, job.status)}</span>
             <ArrowUpRight size={15} />
-          </button>
+          </a>
         {:else}
           <div class="empty-state"><Clock3 size={22} /><strong>{t('noJobs')}</strong><p>{t('noJobsBody')}</p></div>
         {/each}

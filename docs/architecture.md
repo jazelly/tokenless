@@ -96,6 +96,7 @@ Observation, account classification, decisions, and resolution live under `packa
 | Perplexity | Supported | Visible menu or account control text when signed in | Unknown until reliable visible plan evidence is available |
 | Z.ai | Supported | Visible menu or account control text when signed in | Unknown until reliable visible plan evidence is available |
 | Doubao | Sign-in required | Visible account control image | Unknown until reliable visible plan evidence is available |
+| Kimi | Sign-in required | Visible account control text | Unknown until reliable visible plan evidence is available |
 
 The provider-session machine is intentionally separate from the daemon job state machine:
 
@@ -156,6 +157,7 @@ The persistent config also stores `browserConnectionMode`, with `playwright` as 
 - Terminal errors do not trigger a visible window.
 - `headless` never opens a visible window. If that job parks, the same daemon job must later be resumed with headed visibility instead of submitting a replacement job.
 - `profiles open` is always headed. `doctor` is read-only. Chromium sandbox stays enabled in both modes.
+- Headed automation creates new Chromium targets with background and no-focus intent, and ordinary navigation or diagnostics never foreground a tab. Only explicit user handoffs such as `profiles open`, the dashboard, or a user-resolvable blocker may call `bringToFront`; the operating system may still activate Chromium once when its first headed process starts.
 - The same `jobId`, `taskId`, and profile identity are preserved across a visible handoff. Callers query or resume the same daemon job instead of creating a new one.
 - Auto-escalated windows close after 30 seconds of idle time after the job completes. Explicit headed and `profiles open` windows remain open until closed.
 

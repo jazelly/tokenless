@@ -267,32 +267,48 @@ async function qwenModeWorkspace({ provider, journey }) {
 
   const name = markerFor(provider, 'MODE_WORKSPACE')
   const marker = markerFor(provider, 'DEEP_RESEARCH')
-  const run = await journey.run([
+  const clarification = await journey.run([
     '--project-name', name,
     '--workspace-mode', 'conversation',
     '--qwen-mode', 'Deep Research',
     '--qwen-mode-variant', 'Advanced',
     '--prompt', [
-      'Proceed immediately with a standalone research report about the official Qwen homepage.',
-      'Focus only on its current product features, available user entry points, and stated use cases.',
-      'Use the official Qwen site as the primary source, do not compare competitors, and do not ask clarifying questions.',
-      `Include this exact marker exactly once in the final report: ${marker}`,
+      'Proceed immediately with a standalone research report about the current official Qwen homepage.',
+      'Prioritize user-visible product features rather than technical specifications.',
+      'Use one unified overview rather than a breakdown by product tier.',
+      'Organize the report into three sections: product features, available user entry points, and stated use cases grouped by user type.',
+      'Use only official Qwen sources, do not compare competitors, and do not ask clarifying questions.',
     ].join(' '),
   ], 720_000, async ({ page }) => (
-    await exactTextVisible(page, 'Deep Research') &&
-    await exactTextVisible(page, 'Advanced')
+    await qwenActiveModeVisible(page, 'Deep Research', 'Advanced')
   ))
-  const selected = responseResult(run.payload, 'qwen.mode.select')
+  const selected = responseResult(clarification.payload, 'qwen.mode.select')
   assert.deepEqual(selected, {
     supported: true,
     selectedMode: 'Deep Research',
     selectedVariant: 'Advanced',
     visibleProof: 'qwen-mode-and-variant-visible',
   })
-  assert.equal(run.observerResult, true, 'Qwen observer must see Deep Research Advanced selected')
-  assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
-  assertConversationWorkspaceResult(provider, journey.taskId, run)
-  await run.close()
+  assert.equal(clarification.observerResult, true, 'Qwen observer must see Deep Research Advanced selected')
+  assert.ok((responseResult(clarification.payload, 'response.read')?.text ?? '').length > 0)
+  const conversationUrl = assertConversationWorkspaceResult(provider, journey.taskId, clarification)
+  await clarification.close()
+
+  const report = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--prompt', [
+      'Include both interactive elements and prominently advertised capabilities linked from the homepage.',
+      'Include direct entry points plus pathways visible through navigation menus or footer links.',
+      'Use explicitly named user types when available and otherwise synthesize categories from the stated workflows.',
+      'Proceed immediately with the final report and do not ask more questions.',
+      `Include this exact marker exactly once in the final report: ${marker}`,
+    ].join(' '),
+  ], 720_000)
+  assert.match(responseResult(report.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assert.equal(canonicalPageUrl(report.page.url()), conversationUrl)
+  assertTaskConversationMapping(provider, journey.taskId, conversationUrl, report.payload)
+  await report.close()
 
   const restored = await journey.action('qwen.mode.select', ['--qwen-mode', 'Chat'])
   assert.deepEqual(responseResult(restored.payload, 'qwen.mode.select'), {
@@ -303,6 +319,19 @@ async function qwenModeWorkspace({ provider, journey }) {
   })
   assert.equal(await exactTextVisible(restored.page, 'Auto'), true)
   await restored.close()
+}
+
+async function qwenActiveModeVisible(page, mode, variant) {
+  const deadline = Date.now() + 30_000
+  do {
+    const active = page.locator('.mode-select').filter({ visible: true }).last()
+    if (await active.count() > 0) {
+      const label = (await active.innerText().catch(() => '')).replace(/\s+/gu, ' ').trim()
+      if (label.includes(mode) && label.includes(variant)) return true
+    }
+    if (Date.now() < deadline) await page.waitForTimeout(100)
+  } while (Date.now() < deadline)
+  return false
 }
 
 async function deepSeekControls({ provider, journey }) {
@@ -588,7 +617,8 @@ async function fileSelection({ provider, journey }) {
     const uploaded = await journey.action('file.upload', ['--attach-file', file], 180_000)
     const result = responseResult(uploaded.payload, 'file.upload')
     assert.ok(result?.attachments?.some((attachment) => attachment.name === name))
-    assert.equal(await exactTextVisible(uploaded.page, name), true, `${provider} observer must see selected attachment`)
+    const visibleName = provider === 'kimi' ? path.parse(name).name : name
+    assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
     await uploaded.close()
     const cleared = await journey.action('prompt.clear')
     await cleared.close()
@@ -624,7 +654,11 @@ async function conversationWorkflow({ provider, journey }) {
         `Remember this secret for my next message but do not reveal it yet: ${contextSecret}.`,
         'Identify the official Node.js homepage and cite that official source.',
       ].join(' '),
-    ], 360_000, ({ page }) => waitForExactText(page, attachmentName, 180_000))
+    ], 360_000, ({ page }) => waitForExactText(
+      page,
+      provider === 'kimi' ? path.parse(attachmentName).name : attachmentName,
+      180_000,
+    ))
     const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
     const citations = responseResult(first.payload, 'response.read')?.citations
     assert.match(firstText, new RegExp(escapeRegExp(attachmentMarker)))
@@ -897,6 +931,7 @@ function createProviderJourney(session, provider) {
     provider,
     taskId: markerFor(provider, 'JOURNEY_TASK'),
     targetId: null,
+    actionDocumentTimeOrigin: null,
     authenticated: false,
     skipReason: null,
   }
@@ -920,8 +955,8 @@ async function action(journey, visibleAction, args = [], timeoutMs = 120_000, ob
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
   ], {
-    beforeRelease: ({ waiting, page }) => {
-      assertJourneyPage(journey, waiting, page)
+    beforeRelease: async ({ waiting, page }) => {
+      await assertJourneyPage(journey, waiting, page, true)
     },
     observeAfterRelease,
   })
@@ -938,6 +973,7 @@ async function action(journey, visibleAction, args = [], timeoutMs = 120_000, ob
 async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
   assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
   recordSubmissionAttempt(journey)
+  journey.actionDocumentTimeOrigin = null
   const operation = await journey.session.startCli([
     'run',
     '--provider', journey.provider,
@@ -946,8 +982,8 @@ async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
   ], {
-    beforeRelease: ({ waiting, page }) => {
-      assertJourneyPage(journey, waiting, page)
+    beforeRelease: async ({ waiting, page }) => {
+      await assertJourneyPage(journey, waiting, page, false)
     },
     observeAfterRelease,
   })
@@ -961,7 +997,7 @@ async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
   }
 }
 
-function assertJourneyPage(journey, waiting, page) {
+async function assertJourneyPage(journey, waiting, page, preserveActionDocument) {
   assert.equal(waiting.provider, journey.provider)
   assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
   if (journey.targetId === null) journey.targetId = waiting.targetId
@@ -970,6 +1006,15 @@ function assertJourneyPage(journey, waiting, page) {
     journey.targetId,
     `${journey.provider} capability journey must stay on one exact Chromium page target`,
   )
+  if (preserveActionDocument && ['qwen', 'deepseek'].includes(journey.provider)) {
+    const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+    if (journey.actionDocumentTimeOrigin === null) journey.actionDocumentTimeOrigin = timeOrigin
+    assert.equal(
+      timeOrigin,
+      journey.actionDocumentTimeOrigin,
+      `${journey.provider} provider actions must not refresh their shared document`,
+    )
+  }
 }
 
 function recordSubmissionAttempt(journey) {
@@ -1140,7 +1185,7 @@ async function pageContains(page, value, minimumVisibleMatches = 1) {
 
 async function visibleCitationCount(page, citations) {
   const expected = new Set(citations.map((citation) => canonicalPageUrl(citation.href)))
-  const controls = page.locator('main a[href]')
+  const controls = page.locator('main a[href], .chat-content-item-assistant a[href]')
   let count = 0
   for (let index = 0; index < await controls.count(); index += 1) {
     const control = controls.nth(index)

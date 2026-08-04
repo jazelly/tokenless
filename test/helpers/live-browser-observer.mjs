@@ -34,7 +34,7 @@ export async function createLiveBrowserInspectionSession(options) {
   const runKey = createHash('sha256').update(runId).digest('base64url').slice(0, 16)
   const jobPrefix = `tlp_e2e_${runKey}_`
   const seenBarriers = new Set()
-  const observers = new Set()
+  const observerBrowsers = new Map()
 
   await stopExistingDaemons({ homeDir, daemonUrl })
 
@@ -49,8 +49,7 @@ export async function createLiveBrowserInspectionSession(options) {
       timeoutMs: observeOptions.timeoutMs ?? 120_000,
     })
     seenBarriers.add(barrierIdentity(waiting))
-    const observer = await connectObserver(waiting, startedAt)
-    observers.add(observer.browser)
+    const observer = await connectObserver(waiting, startedAt, observerBrowsers)
     await observeOptions.beforeRelease?.({ waiting, page: observer.page })
     const observation = observeOptions.observeAfterRelease === undefined
       ? Promise.resolve(undefined)
@@ -63,8 +62,8 @@ export async function createLiveBrowserInspectionSession(options) {
         return await observation
       },
       async close() {
-        await observer.browser.close()
-        observers.delete(observer.browser)
+        // Keep one observer connection per managed browser endpoint for the journey.
+        // Closing a connectOverCDP Browser can terminate Cloak's persistent context.
       },
     }
   }
@@ -116,8 +115,8 @@ export async function createLiveBrowserInspectionSession(options) {
     },
     async close() {
       const canceledJobs = cancelRunJobs({ homeDir, daemonUrl, env, jobPrefix })
-      await Promise.allSettled([...observers].map((browser) => browser.close()))
-      observers.clear()
+      await Promise.allSettled([...new Set(observerBrowsers.values())].map((browser) => browser.close()))
+      observerBrowsers.clear()
       const result = runCliSync([
         'daemon', 'stop',
         '--home', homeDir,
@@ -218,7 +217,7 @@ function barrierIdentity(waiting) {
   return `${String(waiting?.jobId ?? '')}:${String(waiting?.waitingAt ?? '')}`
 }
 
-async function connectObserver(waiting, sessionStartedAt) {
+async function connectObserver(waiting, sessionStartedAt, observerBrowsers) {
   const endpointFile = path.join(path.resolve(waiting.profileDirectory), 'DevToolsActivePort')
   const deadline = Date.now() + 30_000
   let endpoint
@@ -239,13 +238,16 @@ async function connectObserver(waiting, sessionStartedAt) {
     await delay(pollMs)
   }
   if (!endpoint) throw new Error('Current DevToolsActivePort was not available for E2E inspection.')
-  const browser = await chromium.connectOverCDP(endpoint)
+  let browser = observerBrowsers.get(endpoint)
+  if (!browser?.isConnected()) {
+    browser = await chromium.connectOverCDP(endpoint)
+    observerBrowsers.set(endpoint, browser)
+  }
   const contexts = browser.contexts()
   assert.equal(contexts.length, 1, 'managed persistent browser must expose exactly one CDP context')
   const expectedUrl = canonicalObservedUrl(waiting.url)
   const page = await waitForExpectedPage(contexts[0], waiting.targetId, expectedUrl, waiting.provider)
   if (!page) {
-    await browser.close()
     throw new Error(`CDP observer did not find the product page at ${expectedUrl}.`)
   }
   return { browser, page }

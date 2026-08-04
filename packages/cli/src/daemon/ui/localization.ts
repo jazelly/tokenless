@@ -13,10 +13,10 @@ const messages = {
     providerConfiguration: 'Provider configuration', providersLede: 'Intent, observed access, evidence, and routing eligibility stay separate.', selectProfile: 'Profile',
     enabled: 'Enabled', disabled: 'Disabled', neverChecked: 'Never checked', checkNow: 'Check readiness', inspectControls: 'Inspect controls',
     capabilityCatalog: 'Capability catalog', capabilitiesLede: 'Start from caller outcomes, then see which evidence-backed provider routes can satisfy them.', noRoute: 'No evidenced route',
-    durableJobs: 'Durable jobs', jobsLede: 'Inspect exact state transitions, blockers, normalized results, and recovery actions.', allStatuses: 'All statuses', allProviders: 'All providers', allProfiles: 'All profiles', searchJobs: 'Search task or job', details: 'Details', resume: 'Resume headed',
+    durableJobs: 'Durable jobs', jobsLede: 'Inspect exact state transitions, blockers, normalized results, and recovery actions.', allStatuses: 'All statuses', allProviders: 'All providers', allProfiles: 'All profiles', searchJobs: 'Search task or job…', details: 'Details', resume: 'Resume headed',
     settingsDiagnostics: 'System and diagnostics', systemLede: 'Shared preferences, runtime controls, compatibility, and redacted repair information.', language: 'Language', quiesce: 'Quiesce runtime', copyDiagnostics: 'Copy diagnostics', diagnostics: 'Diagnostics',
     updateSaved: 'Changes saved.', requestFailed: 'Request failed.', offline: 'Console is offline', offlineBody: 'The daemon stopped responding. Polling will resume automatically.', sessionExpired: 'Dashboard session expired', reopen: 'Run tokenless dashboard again to reauthenticate.',
-    loading: 'Loading current state', empty: 'Nothing to show', confirmRemove: 'Type the profile slug to confirm permanent removal:', create: 'Create', browserSelection: 'Browser for new profiles', browserExecutablePath: 'Browser executable path', browserExecutablePathPlaceholder: '/absolute/path/to/browser or Browser.app', browserExecutablePathConfigured: 'A verified path is cached. Leave blank to keep it, or paste a replacement.', browserExecutablePathHelp: 'Paste an absolute executable path. On macOS, an application bundle such as Browser.app is also accepted.', defaultVisibility: 'Default visibility', proxy: 'Proxy server', proxyBypass: 'Proxy bypass (comma separated)', proxyRestartNote: 'Changing the proxy first quiesces active browser ownership and recreates this profile context.', none: 'None', openBrowser: 'Open browser', savedAt: 'Saved',
+    loading: 'Loading current state…', empty: 'Nothing to show', confirmRemove: 'Type the profile slug to confirm permanent removal:', create: 'Create', browserSelection: 'Browser for new profiles', browserExecutablePath: 'Browser executable path', browserExecutablePathPlaceholder: '/absolute/path/to/browser or Browser.app…', browserExecutablePathConfigured: 'A verified path is cached. Leave blank to keep it, or paste a replacement.', browserExecutablePathHelp: 'Paste an absolute executable path. On macOS, an application bundle such as Browser.app is also accepted.', defaultVisibility: 'Default visibility', proxy: 'Proxy server', proxyBypass: 'Proxy bypass (comma separated)', proxyRestartNote: 'Changing the proxy first quiesces active browser ownership and recreates this profile context.', none: 'None', openBrowser: 'Open browser', savedAt: 'Saved',
     stage: 'Stage', lifecycle: 'Lifecycle', evidence: 'Evidence', result: 'Result', error: 'Error', attempts: 'Provider attempts', created: 'Created', updated: 'Updated',
     primaryNavigation: 'Primary navigation', uptimeUnit: 'min uptime', activeUnit: 'active', configuredUnit: 'configured', durableUnit: 'durable',
     documentTitle: 'Tokenless local console', skipToContent: 'Skip to content',
@@ -28,14 +28,14 @@ const messages = {
     proxySettings: 'Proxy settings', providerAccess: 'Provider access', deleteProfile: 'Delete profile', deleteWarning: 'This removes the managed local browser identity.',
     status: 'Status', version: 'Version', runtime: 'Runtime', ready: 'Ready', stopped: 'Stopped', selected: 'Selected',
     refresh: 'Refresh', search: 'Search', queued: 'Queued', succeeded: 'Succeeded', failed: 'Failed', waiting: 'Waiting',
-    noResults: 'No matching results', copy: 'Copy', copied: 'Copied.', account: 'Account', model: 'Model', effort: 'Effort',
+    noResults: 'No matching results', copy: 'Copy', copied: 'Copied.', copyFailed: 'Could not copy diagnostics.', account: 'Account', model: 'Model', effort: 'Effort',
     useBrowser: 'Use browser', chooseProviders: 'Choose providers', setupProfileHelp: 'A profile keeps provider sessions isolated on this machine.',
     automatic: 'Automatic', available: 'Available', notFound: 'Not found', downloadRequired: 'Download required', scanningBrowsers: 'Scanning installed browsers…',
     managedByTokenless: 'Managed by Tokenless', systemBrowser: 'System browser', runtimeDownloadHelp: 'Download and verify this runtime before using it.', automaticBrowserHelp: 'Tokenless will select the first verified browser.', browserNotDetectedHelp: 'Choose another browser or add its executable path.',
     installRuntime: 'Install', repairRuntime: 'Repair runtime', addExecutablePath: 'Add executable path', replaceExecutablePath: 'Replace executable path', hideExecutablePath: 'Hide custom path', verifiedPathCached: 'Verified path cached', validate: 'Validate', clearExecutablePath: 'Use automatic discovery', browserValidated: 'Executable verified', runtimeInstalled: 'Browser runtime installed.', runtimeRepaired: 'Browser runtime repaired.',
     profileStart: 'Start from', cleanProfile: 'Clean profile', cleanProfileHelp: 'Sign in in a new isolated browser.', copyProfile: 'Copy existing profile', copyProfileHelp: 'Copy one local Chromium profile as an opaque tree.',
-    browserProfiles: 'Local browser profiles', profileScanPrivacy: 'Only names and versions are shown here.', scanProfiles: 'Scan', scanAgain: 'Scan again', sourceProfile: 'Source profile', sourceBrowser: 'Browser', profileRootPath: 'Profile root', profileRootPathPlaceholder: '/absolute/path/to/user-data', customProfileRoot: 'Custom profile root', scanProfilesHelp: 'Scan when you want to select an existing local profile.', incompatible: 'Incompatible',
-    profileCopyConsent: 'I authorize this local profile copy.', profileCopyConsentHelp: 'Tokenless copies the selected profile as an opaque local file tree. It does not parse or display cookies, tokens, or passwords.', profileSource: 'Source', importedProfile: 'Imported profile', reimportProfile: 'Re-import source', reimportProfileHelp: 'Replace this managed copy from its recorded local source. Close the source browser first.', reimport: 'Re-import',
+    browserProfiles: 'Local browser profiles', profileScanPrivacy: 'Only names and versions are shown here.', scanProfiles: 'Scan', scanAgain: 'Scan again', sourceProfile: 'Source profile', sourceBrowser: 'Browser', profileRootPath: 'Profile root', profileRootPathPlaceholder: '/absolute/path/to/user-data…', customProfileRoot: 'Custom profile root', scanProfilesHelp: 'Scan when you want to select an existing local profile.', incompatible: 'Incompatible',
+    profileCopyConsent: 'I authorize this local profile copy.', profileCopyConsentHelp: 'Close the source browser first. Tokenless copies the profile as an opaque local tree and never displays cookies, tokens, or passwords.', profileSource: 'Source', importedProfile: 'Imported profile', reimportProfile: 'Re-import source', reimportProfileHelp: 'Replace this managed copy from its recorded local source. Close the source browser first.', reimport: 'Re-import',
     languageHelp: 'Used by the local console and CLI.', confirmDelete: 'Enter the profile slug to remove it permanently.', unknown: 'Unknown',
     offlineShort: 'Offline', menu: 'Menu', mainContent: 'Main content', profileList: 'Profile list', navigation: 'Navigation',
   },
@@ -51,10 +51,10 @@ const messages = {
     providerConfiguration: 'Provider 配置', providersLede: '用户意图、实际观测、证据和路由资格分别展示，不混成一个状态。', selectProfile: 'Profile',
     enabled: '已启用', disabled: '已停用', neverChecked: '从未检查', checkNow: '检查就绪状态', inspectControls: '检查控件',
     capabilityCatalog: '能力目录', capabilitiesLede: '先看调用方需要的结果，再看哪些 provider 路由已有真实证据。', noRoute: '暂无证据路由',
-    durableJobs: '持久任务', jobsLede: '检查精确状态、阻塞原因、标准化结果和恢复操作。', allStatuses: '全部状态', allProviders: '全部 provider', allProfiles: '全部 profile', searchJobs: '搜索 task 或 job', details: '详情', resume: '以 headed 恢复',
+    durableJobs: '持久任务', jobsLede: '检查精确状态、阻塞原因、标准化结果和恢复操作。', allStatuses: '全部状态', allProviders: '全部 provider', allProfiles: '全部 profile', searchJobs: '搜索 task 或 job…', details: '详情', resume: '以 headed 恢复',
     settingsDiagnostics: '系统与诊断', systemLede: '管理共享偏好、运行时控制、兼容性和已脱敏的修复信息。', language: '语言', quiesce: '静默浏览器运行时', copyDiagnostics: '复制诊断信息', diagnostics: '诊断',
     updateSaved: '更改已保存。', requestFailed: '请求失败。', offline: '控制台已离线', offlineBody: 'Daemon 暂时没有响应；连接恢复后会自动继续轮询。', sessionExpired: '控制台会话已过期', reopen: '请重新运行 tokenless dashboard 完成认证。',
-    loading: '正在读取当前状态', empty: '暂无内容', confirmRemove: '输入 profile slug 以确认永久移除：', create: '创建', browserSelection: '新 profile 使用的浏览器', browserExecutablePath: '浏览器 executable path', browserExecutablePathPlaceholder: '/浏览器的绝对路径或 Browser.app', browserExecutablePathConfigured: '已缓存经过验证的路径。留空会保留，也可以粘贴新路径替换。', browserExecutablePathHelp: '粘贴 executable 的绝对路径；macOS 也可以直接填写 Browser.app 应用路径。', defaultVisibility: '默认可见性', proxy: 'Proxy server', proxyBypass: 'Proxy bypass（逗号分隔）', proxyRestartNote: '更改 proxy 会先让浏览器运行时进入静默状态，再重建该 profile 的 context。', none: '无', openBrowser: '打开浏览器', savedAt: '保存时间',
+    loading: '正在读取当前状态…', empty: '暂无内容', confirmRemove: '输入 profile slug 以确认永久移除：', create: '创建', browserSelection: '新 profile 使用的浏览器', browserExecutablePath: '浏览器 executable path', browserExecutablePathPlaceholder: '/浏览器的绝对路径或 Browser.app…', browserExecutablePathConfigured: '已缓存经过验证的路径。留空会保留，也可以粘贴新路径替换。', browserExecutablePathHelp: '粘贴 executable 的绝对路径；macOS 也可以直接填写 Browser.app 应用路径。', defaultVisibility: '默认可见性', proxy: 'Proxy server', proxyBypass: 'Proxy bypass（逗号分隔）', proxyRestartNote: '更改 proxy 会先让浏览器运行时进入静默状态，再重建该 profile 的 context。', none: '无', openBrowser: '打开浏览器', savedAt: '保存时间',
     stage: '阶段', lifecycle: '生命周期', evidence: '证据', result: '结果', error: '错误', attempts: 'Provider 尝试', created: '创建时间', updated: '更新时间',
     primaryNavigation: '主要导航', uptimeUnit: '分钟运行时间', activeUnit: '活跃', configuredUnit: '已配置', durableUnit: '持久任务',
     documentTitle: 'Tokenless 本地控制台', skipToContent: '跳到主要内容',
@@ -66,14 +66,14 @@ const messages = {
     proxySettings: 'Proxy 设置', providerAccess: 'Provider 访问', deleteProfile: '删除 profile', deleteWarning: '这会移除本机的 managed browser 身份。',
     status: '状态', version: '版本', runtime: '运行时', ready: '就绪', stopped: '已停止', selected: '已选择',
     refresh: '刷新', search: '搜索', queued: '排队中', succeeded: '已完成', failed: '失败', waiting: '等待中',
-    noResults: '没有匹配结果', copy: '复制', copied: '已复制。', account: '账号', model: '模型', effort: '推理强度',
+    noResults: '没有匹配结果', copy: '复制', copied: '已复制。', copyFailed: '无法复制诊断信息。', account: '账号', model: '模型', effort: '推理强度',
     useBrowser: '使用浏览器', chooseProviders: '选择 provider', setupProfileHelp: 'Profile 会在这台机器上隔离不同的 provider 会话。',
     automatic: '自动选择', available: '可用', notFound: '未找到', downloadRequired: '需要下载', scanningBrowsers: '正在扫描已安装的浏览器…',
     managedByTokenless: '由 Tokenless 管理', systemBrowser: '系统浏览器', runtimeDownloadHelp: '使用前需要下载并验证这个 runtime。', automaticBrowserHelp: 'Tokenless 会选择第一个验证通过的浏览器。', browserNotDetectedHelp: '请选择其他浏览器，或添加它的 executable path。',
     installRuntime: '安装', repairRuntime: '修复 runtime', addExecutablePath: '添加 executable path', replaceExecutablePath: '替换 executable path', hideExecutablePath: '收起自定义路径', verifiedPathCached: '已缓存验证路径', validate: '验证', clearExecutablePath: '恢复自动发现', browserValidated: 'Executable 验证通过', runtimeInstalled: '浏览器 runtime 已安装。', runtimeRepaired: '浏览器 runtime 已修复。',
     profileStart: 'Profile 起点', cleanProfile: '全新 profile', cleanProfileHelp: '在新的隔离浏览器中登录。', copyProfile: '复制现有 profile', copyProfileHelp: '把一个本地 Chromium profile 作为 opaque 文件树复制。',
-    browserProfiles: '本地浏览器 profile', profileScanPrivacy: '这里只显示名称和版本。', scanProfiles: '扫描', scanAgain: '重新扫描', sourceProfile: '来源 profile', sourceBrowser: '浏览器', profileRootPath: 'Profile 根目录', profileRootPathPlaceholder: '/用户数据目录的绝对路径', customProfileRoot: '自定义 profile 根目录', scanProfilesHelp: '需要选择已有本地 profile 时再扫描。', incompatible: '不兼容',
-    profileCopyConsent: '我授权这次本地 profile 复制。', profileCopyConsentHelp: 'Tokenless 只把所选 profile 作为 opaque 本地文件树复制，不解析或显示 cookie、token 或密码。', profileSource: '来源', importedProfile: '导入的 profile', reimportProfile: '重新导入来源', reimportProfileHelp: '用之前记录的本地来源替换当前 managed copy。请先关闭来源浏览器。', reimport: '重新导入',
+    browserProfiles: '本地浏览器 profile', profileScanPrivacy: '这里只显示名称和版本。', scanProfiles: '扫描', scanAgain: '重新扫描', sourceProfile: '来源 profile', sourceBrowser: '浏览器', profileRootPath: 'Profile 根目录', profileRootPathPlaceholder: '/用户数据目录的绝对路径…', customProfileRoot: '自定义 profile 根目录', scanProfilesHelp: '需要选择已有本地 profile 时再扫描。', incompatible: '不兼容',
+    profileCopyConsent: '我授权这次本地 profile 复制。', profileCopyConsentHelp: '请先关闭来源浏览器。Tokenless 只把 profile 作为 opaque 本地文件树复制，不显示 cookie、token 或密码。', profileSource: '来源', importedProfile: '导入的 profile', reimportProfile: '重新导入来源', reimportProfileHelp: '用之前记录的本地来源替换当前 managed copy。请先关闭来源浏览器。', reimport: '重新导入',
     languageHelp: '用于本地控制台和 CLI。', confirmDelete: '输入 profile slug 以永久移除。', unknown: '未知',
     offlineShort: '离线', menu: '菜单', mainContent: '主要内容', profileList: 'Profile 列表', navigation: '导航',
   },
@@ -122,6 +122,37 @@ const capabilityFamilyZh: Record<string, string> = {
   artifact_generation: '产物生成',
   workspace_knowledge: 'Workspace 与知识',
   evidence_lifecycle: '证据与生命周期',
+}
+
+const stateZh: Record<string, string> = {
+  ok: '正常',
+  warning: '警告',
+  error: '错误',
+  ready: '就绪',
+  stopped: '已停止',
+  idle: '空闲',
+  active: '运行中',
+  quiescing: '静默中',
+  queued: '排队中',
+  claimed: '已领取',
+  running: '运行中',
+  waiting_for_user: '等待用户',
+  succeeded: '已完成',
+  failed: '失败',
+  canceled: '已取消',
+  timed_out: '已超时',
+  eligible: '可路由',
+  ineligible: '不可路由',
+  clean: '全新',
+  importing: '导入中',
+  action_required: '需要处理',
+  experimental: '实验性',
+  beta: '测试版',
+  stable: '稳定',
+  supported: '支持',
+  partial: '部分支持',
+  unavailable: '不可用',
+  unknown: '未知',
 }
 
 const uiErrorZh: Record<string, string> = {
@@ -187,4 +218,13 @@ export function capabilityText(language: Language, capability: JsonRecord) {
 
 export function capabilityFamilyLabel(language: Language, family: string) {
   return language === 'zh-CN' ? capabilityFamilyZh[family] ?? family : family.replaceAll('_', ' ')
+}
+
+export function stateLabel(language: Language, value: unknown) {
+  const state = String(value ?? 'unknown')
+  if (language === 'zh-CN') return stateZh[state] ?? state
+  if (state === 'ok') return 'OK'
+  return state
+    .replaceAll('_', ' ')
+    .replace(/^./, (character) => character.toUpperCase())
 }

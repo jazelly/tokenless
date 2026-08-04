@@ -60,7 +60,7 @@ async function detectStructuredBlockers(
 ): Promise<VisibleBlocker[]> {
   const url = page.url()
   const navigation = provider.navigationPolicy.classify(url)
-  const domBlockers = await page.evaluate(() => {
+  const domBlockers = await page.evaluate((composerSelectors) => {
     type RawBlocker = {
       kind: 'challenge' | 'auth' | 'terminal'
       code: string
@@ -159,11 +159,24 @@ async function detectStructuredBlockers(
     if (/(rate limit|too many requests|try again later|temporarily unavailable)/i.test(lowerText)) {
       raw.push({ kind: 'terminal', code: 'provider_rate_limited', family: 'rate_limit', message: 'The provider is showing a visible rate limit or temporary capacity blocker.', proof: 'visible-rate-limit-text', ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }) })
     }
-    if (/(upgrade required|upgrade your plan|subscribe to|requires a paid plan|plan limit|usage limit)/i.test(lowerText)) {
+    const composerVisible = composerSelectors.some(visibleWithAttribute)
+    const visiblePlanLimitSurface = Array.from(document.body?.querySelectorAll('body, body *') ?? [])
+      .filter(isVisibleElement)
+      .find((element) => (
+        /(upgrade required|upgrade your plan|subscribe to|requires a paid plan|plan limit|usage limit)/i.test([
+          ownText(element),
+          element.getAttribute('aria-label'),
+        ].filter(Boolean).join(' '))
+      ))
+    const planLimitBlocksComposer = visiblePlanLimitSurface !== undefined && (
+      !composerVisible ||
+      visiblePlanLimitSurface.closest('dialog, [role="dialog"], [role="alert"], [aria-modal="true"]') !== null
+    )
+    if (planLimitBlocksComposer) {
       raw.push({ kind: 'terminal', code: 'provider_plan_limited', family: 'plan_limit', message: 'The provider is showing a visible plan or quota blocker.', proof: 'visible-plan-limit-text' })
     }
     return raw
-  })
+  }, provider.composerSelectors)
 
   const selectorBlockers: VisibleBlocker[] = []
   for (const selector of provider.loginIndicators) {

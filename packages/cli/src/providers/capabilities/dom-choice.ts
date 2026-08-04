@@ -100,7 +100,12 @@ export class DomChoiceCapability<Options extends DomChoiceOptions = DomChoiceOpt
   }
 }
 
-async function inspectChoices(page: Page, provider: ProviderDomDefinition, kind: ChoiceKind): Promise<ChoiceInspectResult> {
+async function inspectChoices(
+  page: Page,
+  provider: ProviderDomDefinition,
+  kind: ChoiceKind,
+  keepOpen = false,
+): Promise<ChoiceInspectResult> {
   const selectors = kind === 'model' ? provider.modelControlSelectors : provider.effortControlSelectors
   if (selectors.length === 0) {
     return {
@@ -108,6 +113,7 @@ async function inspectChoices(page: Page, provider: ProviderDomDefinition, kind:
       reason: 'unsupported_by_provider' as const,
     }
   }
+  await waitForProviderChoiceSurface(page, provider)
   const trigger = await firstVisibleLocator(page, selectors)
   if (!trigger) {
     return {
@@ -118,10 +124,18 @@ async function inspectChoices(page: Page, provider: ProviderDomDefinition, kind:
   await trigger.click({ timeout: 5000 })
   await page.waitForTimeout(300)
   const choices = await collectVisibleChoices(page, provider, trigger)
+  if (!keepOpen) await page.keyboard.press('Escape').catch(() => undefined)
   return {
     supported: true as const,
     choices,
   }
+}
+
+async function waitForProviderChoiceSurface(page: Page, provider: ProviderDomDefinition) {
+  if (provider.id !== 'qwen') return
+  const overlay = page.locator('.page-loading[aria-hidden="false"]').filter({ visible: true })
+  if (await overlay.count() === 0) return
+  await overlay.last().waitFor({ state: 'hidden', timeout: 10_000 })
 }
 
 async function selectChoice(
@@ -133,7 +147,7 @@ async function selectChoice(
   if (typeof label !== 'string') {
     throw new Error('Validated request payload unexpectedly lacked a label.')
   }
-  const inspection = await inspectChoices(page, provider, kind)
+  const inspection = await inspectChoices(page, provider, kind, true)
   if (!inspection.supported) return inspection
   const choice = inspection.choices.find((candidate) => candidate.label === label && candidate.enabled)
   if (!choice) {

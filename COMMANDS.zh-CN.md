@@ -362,6 +362,8 @@ tokenless profiles status -P work -p chatgpt --json
 
 以 headed browser 打开所选 managed profile。不传 `--provider` 时，Tokenless 不会解析 `TOKENLESS_PROVIDER`，不会选择 ChatGPT 或任何其他 provider，也不会执行 navigation；Chromium 会显示该 profile 自然的初始页、默认页或恢复页。传 `--provider` 时，Tokenless 会打开该 provider 并验证 navigation。
 
+该命令属于明确的用户 handoff，因此可以将所选 profile 或 provider 标签页带到前台。自动化 job、status 检查和 navigation diagnostics 会在后台创建并操作标签页；只有确实需要用户执行可见操作时才会将页面带到前台。
+
 ```bash
 tokenless profiles open -P work --json
 tokenless profiles open -P work -p claude --json

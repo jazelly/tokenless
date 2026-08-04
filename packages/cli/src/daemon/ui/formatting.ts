@@ -16,6 +16,10 @@ export function formatTime(value: unknown, language: Language) {
     : '—'
 }
 
+export function formatNumber(value: number, language: Language) {
+  return new Intl.NumberFormat(language).format(value)
+}
+
 export function formatAge(value: unknown, language: Language, neverChecked: string) {
   if (!value) return neverChecked
   const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(String(value))) / 1000))

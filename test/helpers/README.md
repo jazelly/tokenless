@@ -13,7 +13,7 @@ npm run test:e2e:prepare -- --browser cloak
 npm run test:e2e:web-provider
 ```
 
-The test submits one real ChatGPT job through the dedicated profile, then verifies the completed job in the local Web UI using the same managed browser context. It does not use a local configuration-combination fixture.
+The test submits one real ChatGPT job through the dedicated profile, then verifies the completed job in the local Web UI using the same managed browser context. Home, profile, provider, and startup combinations come from `test/fixtures/local/web-ui.json`. That directory is ignored by git; start from `test/fixtures/web-ui.example.json` and point its dedicated home and profile at the target reported by the prepare command. The default suite is `representative-provider`; select another with `--suite`, or another file with `--fixture`.
 
 ## Capture Provider DOM With CDP
 

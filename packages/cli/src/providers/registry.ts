@@ -4,6 +4,7 @@ import { DeepSeekProvider } from './deepseek-provider.js'
 import { DoubaoProvider } from './doubao-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
 import { GrokProvider } from './grok-provider.js'
+import { KimiProvider } from './kimi-provider.js'
 import { PerplexityProvider } from './perplexity-provider.js'
 import { QwenProvider } from './qwen-provider.js'
 import { ZaiProvider } from './zai-provider.js'
@@ -158,6 +159,7 @@ export const providerInstances = Object.freeze([
   new PerplexityProvider(),
   new ZaiProvider(),
   new DoubaoProvider(),
+  new KimiProvider(),
 ] satisfies readonly ProviderInstance[])
 
 export const providerRegistry = ProviderRegistry.create(providerInstances)

@@ -110,6 +110,23 @@ for (const connectionMode of connectionModes) {
     })
   })
 
+  test(`${connectionMode} headed managed browser operates on background-created automation tabs`, async () => {
+    await withCapabilityServer(async (origin) => {
+      await withManager(connectionMode, async ({ manager, profile }) => {
+        const managed = await manager.ensureContext(profile, 'headed')
+        const selectedPage = await managed.acquirePage({ key: 'selected-tab' })
+        await selectedPage.goto(`${origin}/start`)
+
+        const backgroundPage = await managed.acquirePage({ key: 'background-tab' })
+        assert.notEqual(backgroundPage, selectedPage)
+
+        await backgroundPage.goto(`${origin}/navigated`)
+        assert.equal(await backgroundPage.locator('h1').textContent(), 'Navigated')
+        assert.equal(selectedPage.url(), `${origin}/start`)
+      })
+    })
+  })
+
   test(`${connectionMode} managed browser closes capability gaps at a real Chromium boundary`, async () => {
     await withCapabilityServer(async (origin) => {
       await withManager(connectionMode, async ({ manager, profile, profileDirectory }) => {

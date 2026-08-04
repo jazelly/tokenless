@@ -13,6 +13,7 @@ export type ProviderNavigationCatalogId =
   | 'perplexity'
   | 'zai'
   | 'doubao'
+  | 'kimi'
 
 function pages(...patterns: ProviderPagePattern[]) {
   return Object.freeze(patterns.map((pattern) => Object.freeze(pattern)))
@@ -136,6 +137,27 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
     origins: ['https://www.doubao.com'],
     pagePatterns: pages(
       { kind: 'entry', urlPattern: 'https://www.doubao.com/chat/' },
+    ),
+    trustedSignInOrigins: [],
+  }),
+  kimi: navigation({
+    entryUrl: 'https://www.kimi.com/',
+    homeUrl: 'https://www.kimi.com/',
+    origins: ['https://www.kimi.com'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://www.kimi.com/' },
+      { kind: 'conversation', urlPattern: 'https://www.kimi.com/chat/:conversationId' },
+      { kind: 'project_list', urlPattern: 'https://www.kimi.com/project/create' },
+      { kind: 'project', urlPattern: 'https://www.kimi.com/project/:projectId' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/mykimi' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/plugins' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/tasks' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/agent-swarm' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/slides' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/deep-research' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/websites' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/docs' },
+      { kind: 'capability', urlPattern: 'https://www.kimi.com/sheets' },
     ),
     trustedSignInOrigins: [],
   }),

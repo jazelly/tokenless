@@ -138,6 +138,7 @@ async function selectQwenMode(
     const variantTrigger = page.locator(DEEP_RESEARCH_VARIANT_TRIGGER_SELECTOR).filter({ visible: true }).last()
     if (await variantTrigger.count() === 0) return { supported: false, reason: 'selector_not_available' }
     await variantTrigger.click({ timeout: MODE_MENU_TIMEOUT_MS })
+    await page.waitForTimeout(300)
     const variantItem = page.locator('[role="menuitem"]').filter({ visible: true }).filter({
       hasText: new RegExp(`^${escapeRegExp(variant)}`),
     }).last()
@@ -146,6 +147,7 @@ async function selectQwenMode(
       await page.keyboard.press('Escape').catch(() => undefined)
       return { supported: false, reason: 'exact_variant_not_found' }
     }
+    await variantItem.scrollIntoViewIfNeeded({ timeout: MODE_MENU_TIMEOUT_MS })
     await variantItem.click({ timeout: MODE_MENU_TIMEOUT_MS })
     await waitForActiveMode(page, `${mode} ${variant}`, signal)
     selectedVariant = variant

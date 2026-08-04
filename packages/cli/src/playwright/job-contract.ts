@@ -50,6 +50,7 @@ export type ManagedPlaywrightJobRequest = {
   fallback: ManagedPlaywrightFallbackPlan | null
   context: ContextEnvelope
   browserVisibility: BrowserVisibility
+  userHandoff: boolean
   pagePolicy?: ManagedPagePolicy | undefined
   actions: readonly VisibleActionRequest[]
 }
@@ -76,6 +77,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   context?: ContextEnvelope | null | undefined
   contextLanguage?: 'en' | 'zh-CN' | null | undefined
   browserVisibility?: unknown
+  userHandoff?: unknown
   pagePolicy?: unknown
   actions: readonly (VisibleActionRequest | (Omit<Partial<VisibleActionWireRequest>, 'protocol' | 'provider'> & {
     requestId?: string | undefined
@@ -125,6 +127,7 @@ export function createManagedPlaywrightJobRequest(
       language: input.contextLanguage,
     }),
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
+    userHandoff: validateUserHandoff(input.userHandoff ?? false),
     ...(input.pagePolicy === undefined ? {} : { pagePolicy: validateManagedPagePolicy(input.pagePolicy) }),
     actions,
   })
@@ -137,7 +140,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
   requireKeys(
     input,
     ['protocol', 'provider', 'target', 'taskId', 'browserVisibility', 'actions'],
-    ['capabilityRoute', 'fallback', 'context', 'pagePolicy'],
+    ['capabilityRoute', 'fallback', 'context', 'pagePolicy', 'userHandoff'],
     'invalid_playwright_job_request',
   )
   if (input.protocol !== MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID) {
@@ -193,6 +196,7 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     ? createContextEnvelope({ taskId, requirements: contextRequirements, actions })
     : validateContextEnvelope(input.context, { taskId, requirements: contextRequirements, actions })
   const browserVisibility = validateJobBrowserVisibility(input.browserVisibility)
+  const userHandoff = validateUserHandoff(input.userHandoff ?? false)
   const pagePolicy = input.pagePolicy === undefined ? undefined : validateManagedPagePolicy(input.pagePolicy)
   if (fallback && actions.some((action) => !AUTOMATIC_FALLBACK_ACTIONS.has(action.action))) {
     throw tokenlessError('invalid_playwright_job_fallback', 'Automatic provider fallback accepts only portable conversation actions.')
@@ -206,9 +210,17 @@ export function validateManagedPlaywrightJobRequest(input: unknown): ManagedPlay
     fallback,
     context,
     browserVisibility,
+    userHandoff,
     ...(pagePolicy === undefined ? {} : { pagePolicy }),
     actions,
   }
+}
+
+function validateUserHandoff(value: unknown): boolean {
+  if (typeof value !== 'boolean') {
+    throw tokenlessError('invalid_playwright_job_user_handoff', 'Managed Playwright user handoff must be true or false.')
+  }
+  return value
 }
 
 function validateFallbackPlan(

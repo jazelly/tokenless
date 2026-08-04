@@ -46,10 +46,10 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 下表概括 checked-in routes；CLI 输出是当前列表的权威来源。
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental |
-| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental |
+| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental |
 
 `—` 表示目前没有公开 route，不一定代表 provider 产品没有该功能；也可能是 implementation 或真实 provider evidence 尚未完成。
 
@@ -76,6 +76,8 @@ Doubao `file.upload` 已作为 experimental route 对外提供文件选择能力
 豆包还公开 provider-specific 的 `doubao.mode` 与 `doubao.skill` actions。真实 non-submission gate 已检查、选择、在可见 DOM 中确认并恢复快速、专家、工作任务 Turbo，以及每一个适合 coding 工作流且可用的 Web 技能。可见 UI 要求升级时，工作任务 Pro 会报告 unavailable；录音转写的 Web 入口只提供桌面版下载流程，因此也报告 unavailable。这些 controls 会映射到 canonical candidates，但选择控件本身不能证明完整 outcome lifecycle，所以 generation、research、reasoning、background-task、transcription 与 spreadsheet routes 目前均不公开。
 
 豆包 `auth.status` 也会读取可见账号控件，且只打开它的账号菜单。可见的“升级到专业版”会被派生为 `免费版` / `signed_in_free`；尚未观察的付费账号状态仍返回 `signed_in_unknown`，不会把购买页默认选中的报价误当成已购套餐。
+
+Kimi `conversation.chat` 与 text-file `file.upload` 已作为 experimental routes 对外提供，但只适用于选定的已登录 profile。Built CLI、packaged daemon、runtime-bound Cloak profile 与真实 provider network 已闭环 readiness、prompt drafting、精确模型与思考强度选择及恢复、文件接收、附件感知回答、normalized 且可见的引用、第二个 CLI 进程在同一 conversation URL 上续聊，以及持久 task mapping。页面可见的 Projects、Web search、Plugins 与 Skills 目前只是产品控件观察，不是公共 capability routes。
 
 | Doubao control | Canonical outcome candidates | Public route state |
 | --- | --- | --- |

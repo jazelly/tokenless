@@ -141,6 +141,10 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
     assert.deepEqual(await registry.listProfiles(), [])
 
     const workProfile = await registry.addProfile({ slug: 'work', label: 'Work', lifecycle: 'ready', setDefault: true })
+    const profileTicket = await mintTicket(daemon.origin, token, { profile_id: workProfile.id })
+    const profileBootstrap = await fetch(profileTicket.body.bootstrapUrl, { redirect: 'manual' })
+    assert.equal(profileBootstrap.status, 303)
+    assert.equal(profileBootstrap.headers.get('location'), `/ui/?profile=${encodeURIComponent(workProfile.id)}`)
     const mappedJob = daemon.store.createJob({
       provider: 'chatgpt',
       action: 'profile-mapping-check',
@@ -248,14 +252,14 @@ async function withDaemon(operation) {
   }
 }
 
-async function mintTicket(origin, token) {
+async function mintTicket(origin, token, body = {}) {
   const response = await fetch(`${origin}/control/ui-bootstrap`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
     },
-    body: '{}',
+    body: JSON.stringify(body),
   })
   return { response, body: await response.json() }
 }

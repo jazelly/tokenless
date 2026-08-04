@@ -61,6 +61,10 @@
       "doubao": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
+      },
+      "kimi": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
       }
     }
   },
@@ -183,6 +187,13 @@
       "url": "https://www.doubao.com/legal/feature_intro",
       "authority": "official",
       "retrievedAt": "2026-08-02"
+    },
+    "kimi-consumer-web": {
+      "publisher": "Moonshot AI",
+      "title": "Kimi",
+      "url": "https://www.kimi.com/",
+      "authority": "official",
+      "retrievedAt": "2026-08-04"
     }
   },
   "providers": {
@@ -1910,6 +1921,63 @@
           "notes": [
             "The official product announcement confirms consumer Web availability but publishes no numeric Web allowance or reset window.",
             "GLM Coding Plan quotas are intentionally excluded because they are separate from Z.ai consumer Web chat."
+          ]
+        }
+      ]
+    },
+    "kimi": {
+      "label": "Kimi",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_model",
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "kimi.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["kimi-consumer-web"]
+            }
+          ],
+          "notes": [
+            "The official consumer Web surface publishes no exact numeric allowance or reset window in the cited source.",
+            "Runtime visible limits remain authoritative and fail closed."
           ]
         }
       ]

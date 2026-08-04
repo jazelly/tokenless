@@ -27,8 +27,8 @@ export class TokenlessUiServer {
     this.origin = options.origin
   }
 
-  mintTicket() {
-    return this.sessions.mintTicket(this.origin())
+  mintTicket(profileId?: string | null) {
+    return this.sessions.mintTicket(this.origin(), profileId)
   }
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL) {
@@ -39,7 +39,10 @@ export class TokenlessUiServer {
       const session = this.sessions.consumeTicket(ticket, response)
       if (!session) throw uiError('ui_ticket_invalid', 'The dashboard bootstrap ticket is invalid or expired.', 401)
       this.securityHeaders(response)
-      response.writeHead(303, { location: '/ui/' })
+      const location = session.initialProfileId
+        ? `/ui/?profile=${encodeURIComponent(session.initialProfileId)}`
+        : '/ui/'
+      response.writeHead(303, { location })
       response.end()
       return
     }

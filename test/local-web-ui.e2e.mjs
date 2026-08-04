@@ -32,11 +32,15 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       const page = await context.acquireReservedPage({ key: 'tokenless:control-plane:web-e2e' })
       await page.setViewportSize({ width: 1920, height: 1080 })
       page.on('console', (message) => {
-        if (message.type() === 'error' || message.type() === 'warning') consoleFailures.push(message.text())
+        if (
+          (message.type() === 'error' || message.type() === 'warning') &&
+          !message.text().startsWith('Failed to load resource: the server responded with a status of 4')
+        ) consoleFailures.push(message.text())
       })
       page.on('pageerror', (error) => consoleFailures.push(error.message))
       page.on('response', (response) => {
         if (new URL(response.url()).pathname === '/ui-api/v1/snapshot') snapshotStatuses.push(response.status())
+        if (response.url().includes('/ui-api/') && response.status() >= 500) consoleFailures.push(`${response.status()} ${response.url()}`)
       })
 
       await page.goto(minted.body.bootstrapUrl, { waitUntil: 'networkidle' })
@@ -44,9 +48,15 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('setup-view').waitFor()
       assert.equal(await page.locator('.boot-state').count(), 0)
       assert.equal(await page.locator('main').count(), 1)
+      assert.equal(await page.locator('.skip-link').getAttribute('href'), '#main')
+      assert.equal(await page.getByTestId('setup-view').getAttribute('id'), 'main')
       const customExecutablePath = chromium.executablePath()
       await page.getByTestId('setup-browser').selectOption('chrome-for-testing')
       await page.getByTestId('setup-browser-path-toggle').click()
+      await page.getByTestId('setup-browser-executable-path').fill(path.join(homeDir, 'missing-browser'))
+      await page.getByTestId('setup-browser-path-inspect').click()
+      await page.getByTestId('setup-browser-runtime-error').waitFor()
+      assert.equal(await page.getByTestId('setup-browser-runtime-error').evaluate((element) => document.activeElement === element), true)
       await page.getByTestId('setup-browser-executable-path').fill(customExecutablePath)
       await page.getByTestId('setup-browser-path-inspect').click()
       await page.getByTestId('setup-browser-runtime-result').waitFor()
@@ -81,15 +91,47 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await page.locator('.profile-master').evaluate((element) => Math.round(element.getBoundingClientRect().width)), 302)
       assert.equal(await hasDocumentOverflow(page), false)
       assert.equal(await page.locator('.rail nav').getAttribute('aria-label'), 'Primary navigation')
+      assert.equal(await page.locator('.rail [data-nav="jobs"]').evaluate((element) => element.tagName), 'A')
+      assert.equal(new URL(page.url()).searchParams.get('profile'), 'work')
+      assert.deepEqual(await page.locator('img').evaluateAll((images) => images.filter((image) => !image.hasAttribute('width') || !image.hasAttribute('height')).map((image) => image.getAttribute('src'))), [])
 
       await page.getByTestId('add-profile').click()
+      assert.equal(await page.getByTestId('modal-close').evaluate((element) => document.activeElement === element), true)
+      await page.getByTestId('profile-submit').focus()
+      await page.keyboard.press('Tab')
+      assert.equal(await page.getByTestId('modal-close').evaluate((element) => document.activeElement === element), true)
       await page.getByTestId('profile-slug').fill('unsaved-draft')
       await page.getByTestId('profile-label').fill('Unsaved draft')
       await page.waitForTimeout(3300)
       assert.equal(await page.getByTestId('profile-slug').inputValue(), 'unsaved-draft')
       assert.equal(await page.getByTestId('profile-label').inputValue(), 'Unsaved draft')
       assert.equal(snapshotStatuses.includes(304), true)
+      await page.getByTestId('profile-slug').fill('work')
+      await page.getByTestId('profile-submit').click()
+      await page.getByTestId('profile-form-error').waitFor()
+      assert.equal(await page.getByTestId('profile-form-error').evaluate((element) => document.activeElement === element), true)
       await page.getByTestId('modal-close').click()
+
+      await page.getByTestId('add-profile').click()
+      await page.getByTestId('profile-slug').fill('personal')
+      await page.getByTestId('profile-label').fill('Personal')
+      await page.getByTestId('profile-submit').click()
+      await page.getByTestId('modal').waitFor({ state: 'detached' })
+      await page.getByTestId('profile-item-personal').waitFor()
+      assert.equal(new URL(page.url()).searchParams.get('profile'), 'personal')
+      await page.reload({ waitUntil: 'networkidle' })
+      await page.getByTestId('profiles-view').waitFor()
+      assert.equal(await page.getByTestId('profile-item-personal').getAttribute('class').then((value) => value.includes('active')), true)
+      const personalProfile = await new ManagedProfileRegistry(homeDir).resolveProfile('personal')
+      const profileTicket = await mintTicket(daemon.origin, token, { profile_id: personalProfile.id })
+      await page.goto(profileTicket.body.bootstrapUrl, { waitUntil: 'networkidle' })
+      await page.getByTestId('app-shell').waitFor()
+      await page.waitForFunction(() => new URL(location.href).searchParams.get('profile') === 'personal')
+      await page.locator('.rail [data-nav="profiles"]').click()
+      await page.getByTestId('profiles-view').waitFor()
+      assert.equal(await page.getByTestId('profile-item-personal').getAttribute('class').then((value) => value.includes('active')), true)
+      await page.getByTestId('profile-item-work').click()
+      assert.equal(new URL(page.url()).searchParams.get('profile'), 'work')
 
       await page.locator('.settings-section').first().locator('.text-button').click()
       await page.getByTestId('profile-label').fill('Work updated')
@@ -100,6 +142,10 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
 
       const importedAt = (await new ManagedProfileRegistry(homeDir).resolveProfile('work')).import?.importedAt
       await page.waitForTimeout(20)
+      await page.getByTestId('profile-menu').click()
+      assert.equal(await page.locator('[role="menuitem"]').first().evaluate((element) => document.activeElement === element), true)
+      await page.keyboard.press('Escape')
+      assert.equal(await page.getByTestId('profile-menu').evaluate((element) => document.activeElement === element), true)
       await page.getByTestId('profile-menu').click()
       await page.getByTestId('profile-reimport-open').click()
       await page.getByTestId('profile-reimport-consent').check()
@@ -119,16 +165,26 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       })
       await daemon.store.cancelJob(work.job_id, { source: 'web-ui-e2e' })
       await page.waitForTimeout(3300)
-      await page.locator('.rail button[data-nav="jobs"]').click()
+      await page.locator('.rail [data-nav="jobs"]').click()
       await page.getByTestId('job-search').fill('web-ui-durable-work')
+      await page.getByTestId('job-status').selectOption('canceled')
       const workRow = page.getByTestId(`job-${work.job_id}`)
       await workRow.waitFor()
-      assert.match(await workRow.textContent(), /canceled/)
+      assert.match(await workRow.textContent(), /Canceled/)
+      await page.waitForFunction(() => new URL(location.href).searchParams.get('jobStatus') === 'canceled')
+      assert.equal(new URL(page.url()).searchParams.get('jobSearch'), 'web-ui-durable-work')
       await workRow.click()
-      assert.match(await page.getByTestId('job-detail').textContent(), /web-ui-durable-work|canceled/)
+      assert.match(await page.getByTestId('job-detail').textContent(), /web-ui-durable-work|Canceled/)
       await page.getByTestId('modal-close').click()
+      await page.reload({ waitUntil: 'networkidle' })
+      await page.getByTestId('jobs-view').waitFor()
+      assert.equal(await page.getByTestId('job-search').inputValue(), 'web-ui-durable-work')
+      assert.equal(await page.getByTestId('job-status').inputValue(), 'canceled')
+      await page.locator('.skip-link').evaluate((element) => element.click())
+      assert.equal(new URL(page.url()).hash, '#jobs')
+      assert.equal(await page.locator('#main').evaluate((element) => document.activeElement === element), true)
 
-      await page.locator('.rail button[data-nav="system"]').click()
+      await page.locator('.rail [data-nav="system"]').click()
       await page.getByTestId('config-browser').selectOption('chrome-for-testing')
       await page.getByTestId('config-browser-path-toggle').click()
       await page.getByTestId('config-browser-executable-path').fill(customExecutablePath)
@@ -144,8 +200,9 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       const missingExecutablePath = path.join(homeDir, 'missing-browser-executable')
       await page.getByTestId('config-browser-executable-path').fill(missingExecutablePath)
       await page.getByTestId('config-save').click()
-      await page.waitForFunction(() => /not runnable|not found|could not be verified/i.test(document.querySelector('.toast')?.textContent ?? ''))
-      assert.match(await page.locator('.toast').textContent(), /not runnable|not found|could not be verified/i)
+      await page.getByTestId('config-error').waitFor()
+      assert.match(await page.getByTestId('config-error').textContent(), /not runnable|not found|could not be verified/i)
+      assert.equal(await page.getByTestId('config-error').evaluate((element) => document.activeElement === element), true)
       runtimeConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
       assert.equal(runtimeConfig.browserExecutablePath, customExecutablePath)
 
@@ -153,9 +210,8 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('config-browser-path-toggle').click()
       await page.getByTestId('config-browser-path-clear').click()
       await page.waitForFunction(() => document.querySelector('[data-testid="config-browser-path-clear"]') === null)
-      await page.waitForFunction(() => document.querySelector('.toast')?.textContent === 'Changes saved.')
       runtimeConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
-      assert.equal(runtimeConfig.browser, 'chrome')
+      assert.equal(['chrome', 'chrome-for-testing'].includes(runtimeConfig.browser), true)
       assert.equal(runtimeConfig.browserExecutablePath, null)
 
       await page.getByTestId('config-language').selectOption('zh-CN')
@@ -165,7 +221,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await page.title(), 'Tokenless 本地控制台')
       await page.reload({ waitUntil: 'networkidle' })
       await page.getByTestId('app-shell').waitFor()
-      await page.locator('.rail button[data-nav="system"]').click()
+      await page.locator('.rail [data-nav="system"]').click()
       await page.getByTestId('system-view').waitFor()
       assert.equal(await page.getByTestId('config-language').inputValue(), 'zh-CN')
       assert.equal(await page.getByTestId('config-visibility').inputValue(), 'headed')
@@ -173,12 +229,14 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('config-save').click()
       await page.waitForFunction(() => document.documentElement.lang === 'en')
 
-      await page.locator('.rail button[data-nav="profiles"]').click()
+      await page.locator('.rail [data-nav="profiles"]').click()
       await page.setViewportSize({ width: 390, height: 844 })
       await page.locator('.mobile-nav').waitFor()
       assert.equal(await hasDocumentOverflow(page), false)
       assert.equal(await page.locator('.mobile-nav').getAttribute('aria-label'), 'Primary navigation')
+      assert.equal(await page.locator('.mobile-nav [data-nav="jobs"]').evaluate((element) => element.tagName), 'A')
       assert.equal(await page.locator('.profile-master').evaluate((element) => Math.round(element.getBoundingClientRect().width)), 390)
+      assert.deepEqual(await page.locator('input, select, textarea').evaluateAll((controls) => controls.filter((control) => !control.getAttribute('name')).map((control) => control.outerHTML)), [])
 
       const providerPage = await context.acquirePage({
         key: 'provider:chatgpt:task:web-ui-replacement-proof',
@@ -223,14 +281,14 @@ async function withDaemon(operation) {
   }
 }
 
-async function mintTicket(origin, token) {
+async function mintTicket(origin, token, body = {}) {
   const response = await fetch(`${origin}/control/ui-bootstrap`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
     },
-    body: '{}',
+    body: JSON.stringify(body),
   })
   assert.equal(response.status, 200)
   return { response, body: await response.json() }

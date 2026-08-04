@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CheckCircle2, Copy, Search, ShieldCheck, Sparkles, X } from '@lucide/svelte'
+  import { tick } from 'svelte'
   import type { JsonRecord } from '../types.js'
 
   let {
@@ -34,6 +35,7 @@
   let advanced = $state(false)
   let sourceBrowser = $state('chrome')
   let userDataDir = $state('')
+  let errorElement = $state<HTMLDivElement>()
   let selected = $derived(sources.find((source) => source.id === sourceId))
 
   function setMode(next: 'clean' | 'copy') {
@@ -60,6 +62,8 @@
     } catch (caught) {
       sources = []
       error = caught instanceof Error ? caught.message : t('requestFailed')
+      await tick()
+      errorElement?.focus()
     } finally {
       scanning = false
     }
@@ -99,7 +103,7 @@
       {#if sources.length}
         <label class="field">
           <span>{t('sourceProfile')}</span>
-          <select bind:value={sourceId} data-testid={`${testId}-profile-source-select`}>
+          <select name="importSourceId" bind:value={sourceId} data-testid={`${testId}-profile-source-select`}>
             {#each sources as source (source.id)}
               <option value={source.id} disabled={!source.compatible}>
                 {source.browserLabel} · {source.name}{source.browserVersion ? ` · ${source.browserVersion}` : ''}{source.compatible ? '' : ` — ${t('incompatible')}`}
@@ -122,25 +126,25 @@
         <div class="form-grid compact">
           <label class="field">
             <span>{t('sourceBrowser')}</span>
-            <select bind:value={sourceBrowser} data-testid={`${testId}-profile-source-browser`}>
+            <select name="sourceBrowser" bind:value={sourceBrowser} data-testid={`${testId}-profile-source-browser`}>
               {#each browsers as option}<option value={option[0]}>{option[1]}</option>{/each}
             </select>
           </label>
           <label class="field">
             <span>{t('profileRootPath')}</span>
-            <input bind:value={userDataDir} autocomplete="off" spellcheck="false" placeholder={t('profileRootPathPlaceholder')} data-testid={`${testId}-profile-source-root`} />
+            <input name="profileRootPath" bind:value={userDataDir} autocomplete="off" spellcheck="false" placeholder={t('profileRootPathPlaceholder')} data-testid={`${testId}-profile-source-root`} />
           </label>
         </div>
       </details>
 
       {#if sourceId}
         <label class="consent-row">
-          <input type="checkbox" bind:checked={consent} data-testid={`${testId}-profile-source-consent`} />
+          <input name="consentLocalProfileCopy" type="checkbox" bind:checked={consent} data-testid={`${testId}-profile-source-consent`} />
           <span><strong>{t('profileCopyConsent')}</strong><small>{t('profileCopyConsentHelp')}</small></span>
         </label>
       {/if}
 
-      {#if error}<div class="inline-feedback error" role="alert"><X size={15} /><span>{error}</span></div>{/if}
+      {#if error}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1"><X size={15} /><span>{error}</span></div>{/if}
     </div>
   {/if}
 </fieldset>

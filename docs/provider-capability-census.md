@@ -1,13 +1,13 @@
 # Provider Capability Census
 
-Last reviewed: 2026-08-02
+Last reviewed: 2026-08-04
 
 This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence. The normative naming, mapping, support, and extension rules live in the [Capability Matrix](capability-matrix.md).
 
 The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V1 routeable outcomes are:
 
-- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, experimental Qwen, experimental Perplexity, experimental Z.ai, and experimental Doubao;
-- `file.upload`: ChatGPT, Claude, Grok, and experimental Doubao.
+- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, experimental Qwen, experimental Perplexity, experimental Z.ai, experimental Doubao, and experimental Kimi;
+- `file.upload`: ChatGPT, Claude, Grok, experimental Doubao, and experimental Kimi.
 
 All other entries below remain discoverable candidates. In particular, `workspace.native`, `research.deep`, citations as a required production postcondition, continuation as an explicit capability, generated media, and generated work artifacts remain non-routeable until their complete execution contracts are implemented and real-provider E2E-closed.
 
@@ -38,6 +38,7 @@ The product surface is broader than the current Tokenless evidence. The middle c
 | Perplexity | Web search with citations, Pro Search, Advanced Deep Research, file-aware research, Spaces, model selection, image generation/editing, and multi-format asset creation | Experimental guest chat route with built-CLI managed-Cloak closure for readiness, prompt drafting, submission, completed response, normalized and visible citations, conversation mapping, and durable state; file acceptance, continuation, Deep Research, Spaces, model selection, and generated assets remain unadvertised |
 | Z.ai / GLM | GLM-5.2 web chat, 1M context, flexible effort levels, coding, and long-horizon agent strengths | Experimental guest chat route with built-CLI managed-Cloak closure for guest continuation, readiness, prompt drafting, submission, completed visible response, conversation mapping, and durable state; files, continuation, model or effort selection, and advanced GLM workflows remain unadvertised |
 | Doubao / 豆包 | Signed-in Chinese web chat; visible free-account discrimination; Fast, Expert, and Work Task modes; writing, presentation, image, video, deep-research, podcast, music, problem-solving, and spreadsheet Web skills; broad file input; desktop-only recording transcription entry | Experimental signed-in adapter with built-CLI managed-Cloak closure for readiness, prompt drafting, account-name and free-tier inspection, file acceptance, exact mode/skill selection, unavailable-state reporting, and restoration. Text-file `file.upload` is routeable. Advanced skill outcomes remain unadvertised until their full lifecycles close; the chat mutation gate remains release-blocked by a visible provider verification iframe |
+| Kimi | Signed-in web chat; Instant, K3, and K3 Swarm models; Standard/High thinking effort; files, Web search, Plugins, Skills, Projects, and broader research/agent/artifact surfaces | Experimental signed-in `conversation.chat` and text-file `file.upload` routes with built-CLI managed-Cloak closure for readiness, drafting, model/effort selection and restoration, file acceptance, attachment-grounded response, visible citations, same-conversation continuation across two CLI processes, and durable mapping. Projects, independent search, Plugins, Skills, research, agent, and artifact lifecycles remain unadvertised |
 
 Official references:
 
@@ -51,12 +52,12 @@ Official references:
 - [GLM-5.2 on Z.ai](https://z.ai/blog/glm-5.2)
 - [Doubao official feature introduction](https://www.doubao.com/legal/feature_intro)
 - [Doubao paid service agreement](https://www.doubao.com/legal/ey01)
+- [Kimi web product](https://www.kimi.com/)
 
 ## Candidate Web Providers
 
 | Candidate | Canonical web entry | Officially documented or currently confirmed surface | Recommended evaluation |
 | --- | --- | --- | --- |
-| Kimi | `https://www.kimi.com/` | Web chat, built-in web search and deep thinking, large file inputs, asynchronous Deep Research with clarification, progress, citations and multi-format reports, general Agent, Agent Swarm, Docs, Sheets, Slides, Websites, image generation, and coding products | P1. Best next provider for proving the complete `research.deep`, background-task, and generated-artifact contracts |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search and citations, Deep Research, Think mode, Projects and Libraries, files, code interpreter, image generation/editing, Canvas, agents, and MCP connectors | P1. Broad capability match with relatively clear official documentation; useful second adapter for research and artifact semantics |
 | Meta AI | `https://www.meta.ai/` | Web chat, voice, personalization, image generation and editing, multi-reference composition, search-grounded image creation, Discover, and limited document editor/import experiments | P2 image-first candidate. Do not infer Deep Research, stable file analysis, or document workflow from experiments |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | Web chat, Quick/Think Deeper/Smart modes, Deep Research, file upload, image generation/editing, Pages, connectors, voice, and browser-related experiences | Blocked in the 2026-08-01 Cloak precheck: the signed-out surface exposed Microsoft, Apple, and Google sign-in choices but no guest composer. Resume only with an explicitly selected setup-managed signed-in profile |
@@ -74,12 +75,13 @@ Official candidate references:
 - [Tencent Yuanbao web search](https://cloud.tencent.com/product/wsa) and [desktop file support](https://yuanbao.tencent.com/evt/dl)
 - [MiniMax Agent](https://www.minimax.io/news/minimax-agent)
 
-## 2026-08-01 to 2026-08-02 Cloak Expansion Checkpoint
+## 2026-08-01 to 2026-08-04 Cloak Expansion Checkpoint
 
 - Perplexity passed the real non-submission and mutation journeys through the built CLI, packaged daemon, runtime-bound Cloak profile, and provider network. Guest readiness, prompt drafting, completed response, normalized and visible citations, conversation mapping, and durable state are closed; `conversation.chat` is advertised as experimental. A later regression run declined the visible optional-cookie dialog but then reached `provider_sign_in_required`; no login was attempted, and that account-state-dependent rerun remains parked.
 - Z.ai passed its real non-submission and mutation journeys through the built CLI, packaged daemon, runtime-bound Cloak profile, and provider network. Guest continuation, readiness, prompt drafting, completed response, conversation mapping, and durable state are closed; `conversation.chat` is advertised as experimental. The configured entry point is now `https://z.ai/chat`; the official page currently prepares a draft and hands it to the `chat.z.ai` runtime, so the navigation catalog approves both origins. Prior acceptance covered that runtime through a strict E2E-only process-local resolver mapping; the entry-to-runtime journey remains a manual release rerun.
 - Doubao was added as an experimental signed-in adapter after a user completed login in the runtime-bound Cloak profile. The expanded real non-submission journey passed readiness, prompt drafting, visible account-name and free-tier inspection, visible file acceptance, three available mode selections, nine Web skill selections, explicit upgrade/desktop-only unavailable states, and restoration through the built CLI and packaged daemon. `file.upload` is advertised as experimental. Two direct submissions through the same anti-detect configuration produced completed correlated marker responses, but the built-product mutation journey reached Doubao's visible provider verification iframe and correctly stopped as `visible_provider_blocker`; the chat gate remains a release prerequisite rather than being skipped or simulated.
 - Microsoft Copilot loaded without a challenge on both checks but exposed a sign-in surface and no guest composer. Per the authentication-skip policy, no login was attempted and no adapter was registered.
+- Kimi was added from the user-selected signed-in Cloak profile. The real non-submission journey closed readiness, prompt drafting, Instant/K3/K3 Swarm model selection, Standard/High effort selection, restoration, and text-file acceptance. The mutation journey then closed attachment-grounded output, visible citations, same-conversation continuation across two CLI processes, and durable task mapping. `conversation.chat` and text-file `file.upload` are advertised as experimental; visible Projects, Web search, Plugins, Skills, and broader agent/artifact controls remain unadvertised.
 
 ## Canonical Capability Schema
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import BrowserProfileSourcePicker from '../components/BrowserProfileSourcePicker.svelte'
   import BrowserRuntimePicker from '../components/BrowserRuntimePicker.svelte'
   import type { JsonRecord, Language } from '../types.js'
@@ -33,6 +33,8 @@
   let browser = $state(untrack(() => snapshot.config.browser ?? 'auto'))
   let browserExecutablePath = $state('')
   let browserError = $state('')
+  let setupError = $state('')
+  let errorElement = $state<HTMLDivElement>()
   let browserVisibility = $state(untrack(() => snapshot.config.browserVisibility ?? 'headed'))
   let slug = $state('default')
   let label = $state(untrack(() => language === 'zh-CN' ? '默认' : 'Default'))
@@ -54,42 +56,53 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault()
     browserError = ''
+    setupError = ''
     if (browserExecutablePath.trim()) {
       try {
         const inspection = await oninspectbrowser(browser, browserExecutablePath.trim())
         if (inspection.ok !== true) {
           browserError = String(inspection.message || t('browserUnavailable'))
+          await tick()
+          errorElement?.focus()
           return
         }
       } catch (error) {
         browserError = error instanceof Error ? error.message : t('requestFailed')
+        await tick()
+        errorElement?.focus()
         return
       }
     }
-    await onsetup(
-      {
-        language: selectedLanguage,
-        browser,
-        browserVisibility,
-        ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
-      },
-      {
-        slug,
-        label,
-        roleLabel,
-        enabledProviders,
-        browserVisibility,
-        setDefault: true,
-        ...(importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
-      },
-    )
+    try {
+      await onsetup(
+        {
+          language: selectedLanguage,
+          browser,
+          browserVisibility,
+          ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
+        },
+        {
+          slug,
+          label,
+          roleLabel,
+          enabledProviders,
+          browserVisibility,
+          setDefault: true,
+          ...(importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
+        },
+      )
+    } catch (caught) {
+      setupError = caught instanceof Error ? caught.message : t('requestFailed')
+      await tick()
+      errorElement?.focus()
+    }
   }
 </script>
 
-<main class="setup-shell" data-testid="setup-view">
+<main id="main" tabindex="-1" class="setup-shell" data-testid="setup-view">
   <div class="setup-brand">
-    <img src="/ui/mark.png" alt="" />
-    <span>Tokenless</span>
+    <img src="/ui/mark.png" alt="" width="26" height="26" />
+    <span translate="no">Tokenless</span>
   </div>
   <section class="setup-card">
     <header class="setup-header">
@@ -103,7 +116,7 @@
         <div class="setup-icon"><Globe2 size={19} /></div>
         <label class="field">
           <span>{t('language')}</span>
-          <select bind:value={selectedLanguage} data-testid="setup-language">
+          <select name="language" bind:value={selectedLanguage} data-testid="setup-language">
             <option value="en">English</option>
             <option value="zh-CN">简体中文</option>
           </select>
@@ -126,10 +139,10 @@
             oninstall={oninstallbrowser}
             onclear={onclearbrowserpath}
           />
-          {#if browserError}<div class="inline-feedback error" role="alert"><span>{browserError}</span></div>{/if}
+          {#if browserError}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1"><span>{browserError}</span></div>{/if}
           <label class="field">
             <span>{t('visibility')}</span>
-            <select bind:value={browserVisibility} data-testid="setup-visibility">
+            <select name="browserVisibility" bind:value={browserVisibility} data-testid="setup-visibility">
               <option value="auto">auto</option>
               <option value="headed">headed</option>
               <option value="headless">headless</option>
@@ -144,16 +157,16 @@
           <div class="form-grid compact">
             <label class="field">
               <span>{t('slug')}</span>
-              <input bind:value={slug} required pattern={'[a-z0-9](?:[a-z0-9]|-){0,63}'} autocomplete="off" data-testid="setup-slug" />
+              <input name="slug" bind:value={slug} required pattern={'[a-z0-9](?:[a-z0-9]|-){0,63}'} autocomplete="off" spellcheck="false" data-testid="setup-slug" />
             </label>
             <label class="field">
               <span>{t('label')}</span>
-              <input bind:value={label} required maxlength="80" autocomplete="off" data-testid="setup-label" />
+              <input name="label" bind:value={label} required maxlength="80" autocomplete="off" data-testid="setup-label" />
             </label>
           </div>
           <label class="field">
             <span>{t('role')} <small>{t('optional')}</small></span>
-            <input bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="setup-role" />
+            <input name="roleLabel" bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="setup-role" />
           </label>
           <BrowserProfileSourcePicker
             bind:sourceId={importSourceId}
@@ -170,6 +183,7 @@
                 <label class:checked={enabledProviders.includes(provider.id)} class="provider-pill">
                   <input
                     type="checkbox"
+                    name="enabledProviders"
                     checked={enabledProviders.includes(provider.id)}
                     onchange={(event) => toggleProvider(provider.id, event.currentTarget.checked)}
                   />
@@ -183,10 +197,12 @@
         </div>
       </div>
 
+      {#if setupError}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1" data-testid="setup-error"><span>{setupError}</span></div>{/if}
+
       <div class="setup-actions">
         <span>localhost</span>
         <button class="button primary" type="submit" disabled={busy || !enabledProviders.length || (importSourceId !== '' && !consentLocalProfileCopy)} data-testid="finish-setup">
-          {t('finishSetup')} <ChevronRight size={16} />
+          {#if busy}<span class="spinner mini"></span>{/if}{t('finishSetup')} <ChevronRight size={16} />
         </button>
       </div>
     </form>

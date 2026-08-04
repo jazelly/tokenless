@@ -711,6 +711,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
   assert.equal(created.provider, 'qwen')
   assert.equal(created.target.url, 'https://chat.qwen.ai/')
   assert.equal(created.capabilityRoute, null)
+  assert.equal(created.userHandoff, false)
   assert.equal(created.actions[0].provider, 'qwen')
   assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID)
   assert.equal(created.actions[0].protocol, runtime.VISIBLE_ACTION_SCHEMA_ID_V3)
@@ -731,6 +732,23 @@ test('built Playwright validators enforce the current internal schema IDs', {
   })
   assert.equal(forcedReplacement.pagePolicy, 'replace')
   assert.equal(playwright.validateManagedPlaywrightJobRequest(forcedReplacement).pagePolicy, 'replace')
+  const explicitUserHandoff = playwright.createManagedPlaywrightJobRequest({
+    provider: 'qwen',
+    userHandoff: true,
+    actions: [{ action: playwright.VISIBLE_ACTIONS.NAVIGATION_CHECK, payload: {} }],
+  })
+  assert.equal(explicitUserHandoff.userHandoff, true)
+  assert.throws(
+    () => playwright.createManagedPlaywrightJobRequest({
+      provider: 'qwen',
+      userHandoff: 'foreground',
+      actions: [{ action: playwright.VISIBLE_ACTIONS.NAVIGATION_CHECK, payload: {} }],
+    }),
+    (error) => {
+      assert.equal(error.code, 'invalid_playwright_job_user_handoff')
+      return true
+    },
+  )
   assert.throws(
     () => playwright.createManagedPlaywrightJobRequest({
       provider: 'qwen',
@@ -761,6 +779,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
   })
   assert.equal(v3Validated.provider, 'qwen')
   assert.equal(v3Validated.capabilityRoute, null)
+  assert.equal(v3Validated.userHandoff, false)
   assert.equal(v3Validated.actions[0].provider, 'qwen')
 
   const routeDecision = playwright.resolveTaskCapabilityRoute({

@@ -10,7 +10,7 @@ Tokenless supports a broader set of high-value AI web providers while preserving
 
 ## Current Implementation State
 
-As of 2026-08-02:
+As of 2026-08-04:
 
 - the shared registry extraction and OOP provider seam are complete and recorded in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md) roadmap;
 - Qwen / 千问 is registered as an `experimental` provider through one provider module and one registry entry;
@@ -34,6 +34,7 @@ As of 2026-08-02:
 - Perplexity is registered as an experimental guest provider, with readiness, prompt drafting, real submission, completed response, visible normalized citations, conversation mapping, and durable state closed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network;
 - Z.ai is registered as an experimental guest provider. Its canonical entry is `https://z.ai/chat`, while `https://chat.z.ai` remains an approved runtime origin because the official entry currently hands prepared drafts to that runtime. Guest continuation, readiness, prompt drafting, real submission, completed response, conversation mapping, and durable state were previously closed through the managed-Cloak runtime boundary; the updated entry-to-runtime journey remains a manual release rerun; and
 - Doubao is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak non-submission gate closes readiness, prompt drafting, visible file acceptance, exact Fast/Expert/Work Task mode selection, nine coding-relevant Web skill selections, unavailable-state reporting, and restoration. Text-file `file.upload` is experimental and routeable. The same anti-detect configuration completed two direct correlated marker responses, while the built-product chat mutation release gate remains blocked by a visible provider verification iframe and fails closed as `visible_provider_blocker`; and
+- Kimi is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak gates close readiness, prompt drafting, Instant/K3/K3 Swarm model selection, Standard/High effort selection, text-file acceptance, attachment-grounded output, visible citations, second-process same-conversation continuation, restoration, and durable mapping. `conversation.chat` and text-file `file.upload` are experimental and routeable; visible Projects, Web search, Plugins, Skills, research, agent, and artifact lifecycles remain unadvertised; and
 - Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
 
 | Qwen capability | Current state | Evidence boundary |
@@ -70,11 +71,21 @@ As of 2026-08-02:
 | Generated and long-running outcomes | Candidate only | Control selection is closed; terminal artifacts, citations, progress, clarification, and background durability are not |
 | Chat mutation | Release gate blocked | Provider verification iframe is classified as `visible_provider_blocker`; no bypass or simulation |
 
+| Kimi capability | Current state | Evidence boundary |
+| --- | --- | --- |
+| Signed-in composer | Experimental, available | User-selected runtime-bound Cloak profile through built CLI and packaged daemon |
+| Conversation and continuation | Experimental, routeable chat | Correlated response, visible citation, two CLI processes, one exact conversation URL, and durable mapping passed against Kimi.com |
+| File upload | Experimental, routeable for text files | Visible provider attachment card plus attachment-grounded response passed the real workflow |
+| Model selection | Experimental provider control | Instant, K3, and K3 Swarm inspected, selected, visibly verified, and restored |
+| Thinking effort | Experimental provider control | Standard and High inspected, selected, visibly verified, and restored |
+| Projects, Web search, Plugins, and Skills | Live observed only | Visible controls do not establish complete canonical outcome lifecycles |
+| Research, agent, and artifact outcomes | Candidate only | Terminal reports, progress, clarification, generated artifacts, and background durability remain unclosed |
+
 The maintained [Provider Capability Census](../provider-capability-census.md) records official product surfaces, current Tokenless evidence, candidate providers, and the proposed canonical capability schema.
 
 The next evaluation wave is:
 
-1. Kimi web, prioritizing the complete asynchronous Deep Research lifecycle;
+1. Kimi Deep Research, building on the shipped baseline while requiring its complete asynchronous lifecycle;
 2. Mistral Le Chat, prioritizing a second independent research/Project/artifact implementation; and
 3. DeepSeek Chat signed-in closure, prioritizing the compact baseline first, then mode selection, search, and files as independent capabilities.
 

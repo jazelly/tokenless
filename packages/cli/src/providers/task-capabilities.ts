@@ -415,6 +415,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('zai', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('doubao', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('doubao', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
+  route('kimi', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['conversation-workflow']),
+  route('kimi', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 
 const DEFINITION_BY_ID = new Map(TASK_CAPABILITY_CATALOG.map((definition) => [definition.id, definition]))

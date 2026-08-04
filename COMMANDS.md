@@ -362,6 +362,8 @@ If omitted, the profile resolves to the configured default and the provider fall
 
 Opens the selected managed profile with a headed browser. Without `--provider`, Tokenless does not resolve `TOKENLESS_PROVIDER`, does not select ChatGPT or any other provider, and does not navigate; Chromium shows the profile's natural initial, default, or restored page. With `--provider`, Tokenless opens that provider and verifies navigation.
 
+This command is an explicit user handoff, so it may foreground the selected profile or provider tab. Automated jobs, status checks, and navigation diagnostics create and operate tabs in the background; they foreground a page only when visible user action is required.
+
 ```bash
 tokenless profiles open -P work --json
 tokenless profiles open -P work -p claude --json

@@ -361,9 +361,9 @@ export class PersistentContextManager {
         ])
         const replaceablePages = pages.filter((candidate) => !new Set(active.reservedPagesByKey.values()).has(candidate))
         const page = policy === 'replace'
-          ? replaceablePages.at(-1) ?? await active.browserContext.newPage()
+          ? replaceablePages.at(-1) ?? await createBackgroundPage(active.browserContext)
           : pages.find((candidate) => !claimedPages.has(candidate) && candidate.url() === 'about:blank')
-            ?? await active.browserContext.newPage()
+            ?? await createBackgroundPage(active.browserContext)
         if (policy === 'replace') {
           for (const [claimedKey, claimedPage] of active.pagesByKey) {
             if (claimedPage === page) active.pagesByKey.delete(claimedKey)
@@ -389,7 +389,7 @@ export class PersistentContextManager {
         ])
         const page = active.browserContext.pages()
           .find((candidate) => !candidate.isClosed() && !claimedPages.has(candidate) && candidate.url() === 'about:blank')
-          ?? await active.browserContext.newPage()
+          ?? await createBackgroundPage(active.browserContext)
         active.reservedPagesByKey.set(key, page)
         page.once('close', () => {
           if (active.reservedPagesByKey.get(key) === page) active.reservedPagesByKey.delete(key)
@@ -463,6 +463,49 @@ export class PersistentContextManager {
     }
     this.activeOperations.delete(profileId)
   }
+}
+
+async function createBackgroundPage(browserContext: BrowserContext): Promise<Page> {
+  const browser = browserContext.browser()
+  if (!browser?.isConnected()) {
+    throw tokenlessError('playwright_browser_closed', 'Managed browser is no longer connected.', { retryable: true })
+  }
+  const session = await browser.newBrowserCDPSession()
+  let targetId: string | undefined
+  try {
+    const created = await session.send('Target.createTarget', {
+      url: 'about:blank',
+      background: true,
+      focus: false,
+    })
+    targetId = created.targetId
+  } finally {
+    await session.detach().catch(() => undefined)
+  }
+  const deadline = Date.now() + 10_000
+  const inspectedPages = new Set<Page>()
+  while (Date.now() <= deadline) {
+    for (const page of browserContext.pages()) {
+      if (page.isClosed() || inspectedPages.has(page)) continue
+      const pageSession = await browserContext.newCDPSession(page).catch(() => null)
+      if (!pageSession) continue
+      try {
+        const target = await pageSession.send('Target.getTargetInfo')
+        inspectedPages.add(page)
+        if (target.targetInfo.targetId === targetId) return page
+      } catch {
+        if (page.isClosed()) inspectedPages.add(page)
+      } finally {
+        await pageSession.detach().catch(() => undefined)
+      }
+    }
+    await delay(Math.min(25, Math.max(1, deadline - Date.now())))
+  }
+  throw tokenlessError(
+    'playwright_background_page_unavailable',
+    'Chromium created a background target but Playwright did not expose its page.',
+    { retryable: true, details: { targetId } },
+  )
 }
 
 async function launchCdpManagedContext(
