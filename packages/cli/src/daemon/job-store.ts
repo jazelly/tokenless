@@ -1206,6 +1206,48 @@ export class JobStore {
     return this.transaction(() => {
       const clearedThrough = nowRfc3339()
       this.run(
+        `INSERT OR IGNORE INTO output_savings_cleared_events (
+           job_id, response_request_id, estimator_revision, cleared_at
+         )
+         SELECT job_id, response_request_id, estimator_revision, ?
+         FROM output_savings_events`,
+        clearedThrough,
+      )
+      const completedJobs = this.all(
+        `SELECT job_id, result_json
+         FROM jobs
+         WHERE status = 'succeeded' AND result_json IS NOT NULL`,
+      )
+      for (const job of completedJobs) {
+        let events: OutputSavingsEvent[] = []
+        let resultJson: unknown
+        try {
+          resultJson = parseJson(job.result_json)
+          events = outputSavingsEventsFromResult(String(job.job_id), resultJson)
+        } catch {
+          continue
+        }
+        for (const event of events) {
+          this.run(
+            `INSERT OR IGNORE INTO output_savings_cleared_events (
+               job_id, response_request_id, estimator_revision, cleared_at
+             ) VALUES (?, ?, ?, ?)`,
+            event.job_id,
+            event.response_request_id,
+            event.estimator_revision,
+            clearedThrough,
+          )
+        }
+        const stripped = stripOutputSavingsMeasurements(resultJson)
+        if (stripped.changed) {
+          this.run(
+            'UPDATE jobs SET result_json = ? WHERE job_id = ?',
+            stringifyJson(stripped.value),
+            String(job.job_id),
+          )
+        }
+      }
+      this.run(
         `INSERT INTO output_savings_state (singleton, cleared_through)
          VALUES (1, ?)
          ON CONFLICT(singleton) DO UPDATE SET cleared_through = excluded.cleared_through`,
@@ -1226,6 +1268,13 @@ export class JobStore {
       const clearedThrough = nullableString(state?.cleared_through)
       for (const event of events) {
         if (clearedThrough !== null && event.measured_at <= clearedThrough) continue
+        if (this.exists(
+          `SELECT 1 FROM output_savings_cleared_events
+           WHERE job_id = ? AND response_request_id = ? AND estimator_revision = ?`,
+          event.job_id,
+          event.response_request_id,
+          event.estimator_revision,
+        )) continue
         this.run(
           `INSERT OR IGNORE INTO output_savings_events (
              job_id, response_request_id, estimated_output_tokens, visible_characters,
@@ -1609,6 +1658,13 @@ export class JobStore {
       CREATE TABLE IF NOT EXISTS output_savings_state (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         cleared_through TEXT
+      );
+      CREATE TABLE IF NOT EXISTS output_savings_cleared_events (
+        job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+        response_request_id TEXT NOT NULL,
+        estimator_revision TEXT NOT NULL,
+        cleared_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, response_request_id, estimator_revision)
       );
       CREATE TABLE IF NOT EXISTS job_task_keys (
         job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
@@ -2119,6 +2175,25 @@ function outputSavingsEventsFromResult(jobId: string, resultJson: unknown): Outp
     })
   }
   return events
+}
+
+function stripOutputSavingsMeasurements(resultJson: unknown) {
+  const result = jsonRecord(resultJson)
+  if (!result || !Array.isArray(result.responses)) return { changed: false, value: resultJson }
+  let changed = false
+  const responses = result.responses.map((rawResponse) => {
+    const response = jsonRecord(rawResponse)
+    const actionResult = jsonRecord(response?.result)
+    const measurement = jsonRecord(actionResult?.outputSavings)
+    if (!response || !actionResult || measurement?.schema !== 'tokenless.output-savings-measurement.v1') return rawResponse
+    changed = true
+    const resultWithoutMeasurement = { ...actionResult }
+    delete resultWithoutMeasurement.outputSavings
+    return { ...response, result: resultWithoutMeasurement }
+  })
+  return changed
+    ? { changed: true, value: { ...result, responses } }
+    : { changed: false, value: resultJson }
 }
 
 function isNonnegativeSafeInteger(value: unknown): value is number {

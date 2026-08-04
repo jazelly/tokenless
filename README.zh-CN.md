@@ -82,6 +82,27 @@ Setup 会把 `auto` 解析成具体的 `browser`，并把验证过的绝对路�
 
 需要 Node.js 22.13+。首批 browser runtime 目标平台是 Apple Silicon Mac 和 Windows x64；Windows x64 同时覆盖 Intel 与 AMD CPU。Windows 在真机 gate 通过前仍属于 prerelease。
 
+## 可选的输出节省计量
+
+输出节省计量默认停用，也不属于 setup 流程。停用时，Tokenless 不会下载、加载或运行 tokenizer。可以在控制台的“系统”页面显式启用，也可以运行：
+
+```bash
+tokenless savings enable --json
+```
+
+首次启用会下载经过 checksum 固定的 `tiktoken` 1.0.22 archive（10,611,708 bytes，约 10.1 MiB），并且只把 `o200k_base` 的 WASM runtime 和 vocabulary（3,413,323 bytes，约 3.3 MiB）安装到 `TOKENLESS_HOME`。它是确定性 tokenizer，不是本地 AI model；不需要 GPU。只有 Tokenless 读完一条可见 assistant 回复时，才会在单并发、短生命周期的 Node.js subprocess 中运行。一次本机 benchmark 观测到约 100 MB 的瞬时内存；实际 CPU 时间和峰值内存会随回复内容和机器变化。
+
+Tokenless 只计量经过规范化的可见 assistant 输出；不估算 input token，不截取 provider 私有 API，不读取隐藏推理，也不声称与 provider billing 完全一致。`o200k_base` 提供统一、稳定的跨 provider 估算，因此界面始终标注为 estimate；结果可能与 provider 的 model-specific tokenizer 不同。每条计量会幂等归属到触发它的 durable job 和 response。
+
+```bash
+tokenless savings status --json
+tokenless savings disable --json
+tokenless savings clear --confirm-delete --json
+tokenless savings uninstall --confirm-delete --json
+```
+
+停用后不再产生新计量，但保留已验证的 runtime 和历史；清空只删除计量历史，不改变开关；卸载会停用该功能并删除本地 runtime。Tokenizer 不包含在 Tokenless npm package 中，只有之后显式启用才会触发下载。
+
 ## 执行
 
 Setup 完成后，可以直接让 Agent 使用 Tokenless，也可以自己快速测试：

@@ -9,7 +9,11 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { tokenlessError } from '../playwright/errors.js'
 import { withPrivateSqliteWriterLock } from '../playwright/profiles/sqlite-lock.js'
-import { OUTPUT_SAVINGS_RUNTIME_CATALOG } from './catalog.js'
+import {
+  OUTPUT_SAVINGS_RUNTIME_CATALOG,
+  OUTPUT_SAVINGS_RUNTIME_LICENSE_FILE,
+  OUTPUT_SAVINGS_RUNTIME_LICENSE_TEXT,
+} from './catalog.js'
 import { OUTPUT_SAVINGS_MEASUREMENT_SCHEMA, type OutputSavingsResult } from './measurement.js'
 
 const execFileAsync = promisify(execFile)
@@ -30,6 +34,8 @@ type RuntimeManifest = {
   estimator: string
   downloadUrl: string
   archiveSha256: string
+  license: 'MIT'
+  repository: string
   installedAt: string
   checksumVerified: true
   selfTestVerified: true
@@ -53,6 +59,7 @@ export class OutputSavingsRuntimeManager {
   readonly runtimesRoot: string
   readonly runtimeDirectory: string
   readonly installLockFile: string
+  private verifiedReadyCache: { fingerprint: string; inspection: OutputSavingsRuntimeInspection } | undefined
 
   constructor(homeDir: string) {
     this.homeDir = path.resolve(homeDir)
@@ -69,24 +76,39 @@ export class OutputSavingsRuntimeManager {
       if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) {
         return { ...base, state: 'invalid', installed: false }
       }
+      const fingerprintBefore = await runtimeFingerprint(this.runtimeDirectory)
+      if (this.verifiedReadyCache?.fingerprint === fingerprintBefore) {
+        return this.verifiedReadyCache.inspection
+      }
       const manifest = parseManifest(JSON.parse(await fs.readFile(
         path.join(this.runtimeDirectory, RUNTIME_MANIFEST_FILE),
         'utf8',
       )))
       if (!manifest) return { ...base, state: 'invalid', installed: false }
+      if (await fs.readFile(path.join(this.runtimeDirectory, OUTPUT_SAVINGS_RUNTIME_LICENSE_FILE), 'utf8') !== OUTPUT_SAVINGS_RUNTIME_LICENSE_TEXT) {
+        return { ...base, state: 'invalid', installed: false }
+      }
       for (const file of OUTPUT_SAVINGS_RUNTIME_CATALOG.files) {
         if (!await verifyRuntimeFile(this.runtimeDirectory, file)) {
           return { ...base, state: 'invalid', installed: false }
         }
       }
-      return {
+      const fingerprintAfter = await runtimeFingerprint(this.runtimeDirectory)
+      if (fingerprintBefore !== fingerprintAfter) {
+        this.verifiedReadyCache = undefined
+        return { ...base, state: 'invalid', installed: false }
+      }
+      const inspection: OutputSavingsRuntimeInspection = {
         ...base,
         state: 'ready',
         installed: true,
         checksumVerified: true,
         selfTestVerified: true,
       }
+      this.verifiedReadyCache = { fingerprint: fingerprintAfter, inspection }
+      return inspection
     } catch (error) {
+      this.verifiedReadyCache = undefined
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return { ...base, state: 'not_installed', installed: false }
       }
@@ -118,6 +140,7 @@ export class OutputSavingsRuntimeManager {
   }
 
   async remove(): Promise<OutputSavingsRuntimeInspection> {
+    this.verifiedReadyCache = undefined
     await fs.rm(this.tokenizerRoot, { recursive: true, force: true })
     return await this.inspect()
   }
@@ -210,10 +233,17 @@ export class OutputSavingsRuntimeManager {
         estimator: OUTPUT_SAVINGS_RUNTIME_CATALOG.estimator,
         downloadUrl: OUTPUT_SAVINGS_RUNTIME_CATALOG.downloadUrl,
         archiveSha256: OUTPUT_SAVINGS_RUNTIME_CATALOG.archiveSha256,
+        license: OUTPUT_SAVINGS_RUNTIME_CATALOG.license,
+        repository: OUTPUT_SAVINGS_RUNTIME_CATALOG.repository,
         installedAt: new Date().toISOString(),
         checksumVerified: true,
         selfTestVerified: true,
       }
+      await fs.writeFile(
+        path.join(payloadDirectory, OUTPUT_SAVINGS_RUNTIME_LICENSE_FILE),
+        OUTPUT_SAVINGS_RUNTIME_LICENSE_TEXT,
+        { encoding: 'utf8', mode: 0o600, flag: 'wx' },
+      )
       await writeJsonAtomic(path.join(payloadDirectory, RUNTIME_MANIFEST_FILE), manifest)
       await fs.mkdir(this.runtimesRoot, { recursive: true, mode: 0o700 })
       await fs.rename(payloadDirectory, this.runtimeDirectory)
@@ -228,6 +258,29 @@ export class OutputSavingsRuntimeManager {
       await fs.rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined)
     }
   }
+}
+
+async function runtimeFingerprint(runtimeDirectory: string) {
+  const paths = [
+    runtimeDirectory,
+    path.join(runtimeDirectory, RUNTIME_MANIFEST_FILE),
+    path.join(runtimeDirectory, OUTPUT_SAVINGS_RUNTIME_LICENSE_FILE),
+    ...OUTPUT_SAVINGS_RUNTIME_CATALOG.files.map((file) => path.join(runtimeDirectory, file.relativePath)),
+  ]
+  const parts: string[] = []
+  for (const candidate of paths) {
+    const metadata = await fs.lstat(candidate)
+    parts.push([
+      path.relative(runtimeDirectory, candidate) || '.',
+      metadata.mode,
+      metadata.size,
+      metadata.mtimeMs,
+      metadata.ctimeMs,
+      metadata.ino,
+      metadata.isSymbolicLink() ? 'symlink' : metadata.isDirectory() ? 'directory' : metadata.isFile() ? 'file' : 'other',
+    ].join(':'))
+  }
+  return parts.join('|')
 }
 
 function runtimeInspectionBase(): RuntimeInspectionBase {
@@ -424,6 +477,8 @@ function parseManifest(value: unknown): RuntimeManifest | null {
     value.estimator !== OUTPUT_SAVINGS_RUNTIME_CATALOG.estimator ||
     value.downloadUrl !== OUTPUT_SAVINGS_RUNTIME_CATALOG.downloadUrl ||
     value.archiveSha256 !== OUTPUT_SAVINGS_RUNTIME_CATALOG.archiveSha256 ||
+    value.license !== OUTPUT_SAVINGS_RUNTIME_CATALOG.license ||
+    value.repository !== OUTPUT_SAVINGS_RUNTIME_CATALOG.repository ||
     typeof value.installedAt !== 'string' ||
     value.checksumVerified !== true ||
     value.selfTestVerified !== true

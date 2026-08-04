@@ -27,7 +27,8 @@ test('built CLI explicitly installs, verifies, enables, measures, disables, and 
     assert.equal(enabled.outputSavings.summary.estimated_output_tokens, 0)
 
     const { OutputSavingsRuntimeManager } = await import('../packages/cli/dist/src/index.js')
-    const measurement = await new OutputSavingsRuntimeManager(homeDir).measure('hello world')
+    const runtimeManager = new OutputSavingsRuntimeManager(homeDir)
+    const measurement = await runtimeManager.measure('hello world')
     assert.deepEqual({ ...measurement, measuredAt: '<measured-at>' }, {
       schema: 'tokenless.output-savings-measurement.v1',
       state: 'measured',
@@ -47,6 +48,10 @@ test('built CLI explicitly installs, verifies, enables, measures, disables, and 
     assert.equal(disabled.outputSavings.enabled, false)
     assert.equal(disabled.outputSavings.collection, 'disabled')
     assert.equal(disabled.outputSavings.runtime.state, 'ready')
+
+    assert.equal((await runtimeManager.inspect()).state, 'ready')
+    fs.appendFileSync(path.join(runtimeManager.runtimeDirectory, 'lite', 'tiktoken.cjs'), '\n')
+    assert.equal((await runtimeManager.inspect()).state, 'invalid')
 
     const removed = runSavings(homeDir, 'uninstall', '--confirm-delete')
     assert.equal(removed.outputSavings.enabled, false)

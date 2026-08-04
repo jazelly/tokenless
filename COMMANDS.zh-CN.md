@@ -27,6 +27,7 @@
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
 | `tokenless limits inspect` | 根据 packaged catalog 和本地 job 历史查看下一次 prompt 的 provider/profile 容量估算。 | 否 |
+| `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | 管理可选的本地输出节省计量及其 lazy-download tokenizer。 | 否 |
 | `tokenless run` | 通过可见 provider session 发送 prompt 和可选文件。 | 是 |
 | `tokenless replay` | 为一个 agent recipient 报告此前未见过的 daemon outcome 摘要。 | 否 |
 | `tokenless state` | 查询 daemon 中持久化的 job 状态。 | 否 |
@@ -433,6 +434,22 @@ tokenless limits inspect --profile default --provider chatgpt --json
 ```
 
 结果会报告匹配的 catalog plan 和 rules、本地 usage、公开与生效 allowance、估算剩余额度、cadence、burst allowance、decision 和 `eligibleAt`。`unknown` 表示 Tokenless 没有可执行的官方数值，因此会放行；它不表示 provider 容量无限。该命令只读且只访问本地状态，不会打开 provider 网站或提交 prompt。
+
+### `tokenless savings`
+
+管理可选、只计算 output 的节省估算。它默认停用，setup 也绝不会启用或下载 tokenizer。
+
+```bash
+tokenless savings status --json
+tokenless savings enable --json
+tokenless savings disable --json
+tokenless savings clear --confirm-delete --json
+tokenless savings uninstall --confirm-delete --json
+```
+
+`enable` 会先按需下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。`disable` 停止后续计量，但保留历史和 runtime。`clear` 删除持久化计量历史；`uninstall` 停用计量并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
+
+计量范围仅包括经过规范化的可见 assistant 输出，并归属到触发它的 durable job 和 response。它是稳定的跨 provider estimate，不是 provider billing 数值；input token、隐藏推理和私有 backend traffic 都不在范围内。
 
 ### `tokenless run`
 

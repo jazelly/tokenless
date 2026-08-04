@@ -27,6 +27,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
 | `tokenless limits inspect` | Inspect the next-prompt provider/profile capacity estimate from the packaged catalog and local job history. | None |
+| `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | Manage optional local output savings measurement and its lazily downloaded tokenizer. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
 | `tokenless replay` | Report previously unseen daemon outcome summaries for one agent recipient. | None |
 | `tokenless state` | Inspect durable daemon job state. | None |
@@ -433,6 +434,22 @@ tokenless limits inspect --profile default --provider chatgpt --json
 ```
 
 The projection reports the matched catalog plan and rules, local usage, published and effective allowance, estimated remaining units, cadence, burst allowance, decision, and `eligibleAt`. `unknown` means Tokenless has no enforceable official number and will allow execution; it does not mean unlimited provider capacity. This command is local and read-only and does not open or submit to a provider website.
+
+### `tokenless savings`
+
+Manage the optional output-only savings estimate. It is disabled by default and setup never enables or downloads it.
+
+```bash
+tokenless savings status --json
+tokenless savings enable --json
+tokenless savings disable --json
+tokenless savings clear --confirm-delete --json
+tokenless savings uninstall --confirm-delete --json
+```
+
+`enable` lazily downloads and verifies the pinned `o200k_base` WASM tokenizer before setting `outputSavings.enabled` to `true`. `disable` stops future measurements while retaining history and the runtime. `clear` removes the durable measurement history, and `uninstall` disables measurement and removes the runtime; both destructive operations require `--confirm-delete`. `status` is read-only with respect to configuration and tokenizer installation. None of these commands opens a provider page.
+
+Measurements cover only normalized visible assistant output and are attributed to the triggering durable job and response. They are stable cross-provider estimates, not provider billing values; input tokens, hidden reasoning, and private backend traffic are excluded.
 
 ### `tokenless run`
 

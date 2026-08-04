@@ -1143,7 +1143,7 @@ test('SQLite durably and idempotently attributes measured visible output to its 
             estimatedOutputTokens: 2,
             visibleCharacters: 11,
             sourceTextSha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
-            measuredAt: '2026-08-04T00:00:00.000Z',
+            measuredAt: '2099-08-04T00:00:00.000Z',
           },
         },
         error: null,
@@ -1157,8 +1157,8 @@ test('SQLite durably and idempotently attributes measured visible output to its 
       visible_characters: 11,
       response_count: 1,
       job_count: 1,
-      first_measured_at: '2026-08-04T00:00:00.000Z',
-      last_measured_at: '2026-08-04T00:00:00.000Z',
+      first_measured_at: '2099-08-04T00:00:00.000Z',
+      last_measured_at: '2099-08-04T00:00:00.000Z',
     })
     assert.deepEqual(store.outputSavingsForJob(created.job_id), [{
       job_id: created.job_id,
@@ -1169,7 +1169,7 @@ test('SQLite durably and idempotently attributes measured visible output to its 
       estimator_revision: 'tiktoken-o200k_base-1.0.22',
       basis: 'visible_assistant_text',
       source_text_sha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
-      measured_at: '2026-08-04T00:00:00.000Z',
+      measured_at: '2099-08-04T00:00:00.000Z',
     }])
     store.close()
     store = await JobStore.open(homeDir)
@@ -1184,6 +1184,10 @@ test('SQLite durably and idempotently attributes measured visible output to its 
       first_measured_at: null,
       last_measured_at: null,
     })
+    assert.equal(
+      Object.hasOwn(store.getJob(created.job_id).result_json.responses[0].result, 'outputSavings'),
+      false,
+    )
   } finally {
     store.close()
     fs.rmSync(homeDir, { recursive: true, force: true })

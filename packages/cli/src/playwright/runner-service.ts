@@ -189,6 +189,7 @@ export class ManagedPlaywrightRunnerService {
   private readonly e2eInspection: E2EBrowserInspectionConfig | null
   private readonly controlPlanePageKey: string
   private readonly homeDir: string | undefined
+  private readonly outputSavingsRuntimeManager: OutputSavingsRuntimeManager | undefined
   private readonly providerTabsByProfile = new Map<string, Map<string, Page>>()
   private readonly pendingProviderTabsByProfile = new Map<string, Set<string>>()
   private readonly inFlightProfiles = new Set<string>()
@@ -197,6 +198,9 @@ export class ManagedPlaywrightRunnerService {
 
   constructor(options: ManagedPlaywrightRunnerServiceOptions) {
     this.homeDir = options.homeDir === undefined ? undefined : path.resolve(options.homeDir)
+    this.outputSavingsRuntimeManager = this.homeDir
+      ? new OutputSavingsRuntimeManager(this.homeDir)
+      : undefined
     if (options.profileRegistry) {
       this.profileRegistry = options.profileRegistry
     } else {
@@ -969,10 +973,10 @@ export class ManagedPlaywrightRunnerService {
   }
 
   private async outputSavingsManager() {
-    if (!this.homeDir) return null
+    if (!this.homeDir || !this.outputSavingsRuntimeManager) return null
     const config = await readTokenlessConfig(this.homeDir)
     return config.outputSavings.enabled
-      ? new OutputSavingsRuntimeManager(this.homeDir)
+      ? this.outputSavingsRuntimeManager
       : null
   }
 

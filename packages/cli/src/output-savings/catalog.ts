@@ -3,6 +3,33 @@ export const OUTPUT_SAVINGS_RUNTIME_ID = 'tiktoken-o200k_base-1.0.22'
 export const OUTPUT_SAVINGS_RUNTIME_VERSION = '1.0.22'
 export const OUTPUT_SAVINGS_RUNTIME_DOWNLOAD_BYTES = 10_611_708
 export const OUTPUT_SAVINGS_RUNTIME_INSTALLED_BYTES = 3_413_323
+export const OUTPUT_SAVINGS_RUNTIME_LICENSE_FILE = 'THIRD_PARTY_LICENSES.txt'
+export const OUTPUT_SAVINGS_RUNTIME_LICENSE_TEXT = `tiktoken 1.0.22
+Repository: https://github.com/dqbd/tiktoken
+License: MIT
+
+MIT License
+
+Copyright (c) 2022 OpenAI, Shantanu Jain
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`
 
 export const OUTPUT_SAVINGS_RUNTIME_CATALOG = Object.freeze({
   runtimeId: OUTPUT_SAVINGS_RUNTIME_ID,
@@ -12,6 +39,8 @@ export const OUTPUT_SAVINGS_RUNTIME_CATALOG = Object.freeze({
   archiveSha256: '55c339e756fdb17604f7c7e3eb35d2bcbffe4d960e8096e50285d1cefa51dd90',
   downloadBytes: OUTPUT_SAVINGS_RUNTIME_DOWNLOAD_BYTES,
   installedBytes: OUTPUT_SAVINGS_RUNTIME_INSTALLED_BYTES,
+  license: 'MIT',
+  repository: 'https://github.com/dqbd/tiktoken',
   files: Object.freeze([
     Object.freeze({
       archivePath: 'package/lite/tiktoken.cjs',

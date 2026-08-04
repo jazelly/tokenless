@@ -4241,7 +4241,9 @@ async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
     ok: true,
     outputSavings: {
       enabled: config.outputSavings.enabled,
-      collection: config.outputSavings.enabled && runtime.state === 'ready' ? 'enabled' : 'disabled',
+      collection: config.outputSavings.enabled
+        ? runtime.state === 'ready' ? 'enabled' : 'unavailable'
+        : 'disabled',
       estimator: OUTPUT_SAVINGS_ESTIMATOR,
       runtime,
       summary,
