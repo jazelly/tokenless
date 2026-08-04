@@ -28,6 +28,7 @@ const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME
 const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
 const browserConnectionMode = optionalConnectionMode(process.env.TOKENLESS_LIVE_BROWSER_CONNECTION_MODE)
 const providerFilter = optionalProviderFilter(process.env.TOKENLESS_LIVE_E2E_PROVIDER)
+const caseFilter = optionalCaseFilter(process.env.TOKENLESS_LIVE_E2E_CASES)
 const suiteRunMarker = `${compactTimestamp(new Date())}_${randomUUID().slice(0, 8)}`
 const submissionTrackers = new WeakMap()
 const handlers = {
@@ -45,6 +46,13 @@ const handlers = {
   'deepseek-vision-input': deepSeekVisionInput,
   'doubao-controls': doubaoControls,
   'native-project': nativeProject,
+  'kimi-library-controls': kimiLibraryControls,
+  'kimi-library-workflows': kimiLibraryWorkflows,
+  'kimi-search': kimiSearch,
+  'kimi-deep-research': kimiDeepResearch,
+  'kimi-artifacts': kimiArtifacts,
+  'kimi-long-running': kimiLongRunning,
+  'kimi-agent-swarm': kimiAgentSwarm,
 }
 
 const selectedProviders = Object.entries(matrix.providers)
@@ -52,7 +60,8 @@ const selectedProviders = Object.entries(matrix.providers)
     provider,
     declaration,
     caseIds: declaration.required.filter(
-      (caseId) => gate === 'all' || matrix.cases[caseId].gate === gate,
+      (caseId) => (gate === 'all' || matrix.cases[caseId].gate === gate) &&
+        (caseFilter === null || caseFilter.has(caseId)),
     ),
   }))
   .filter(({ provider }) => providerFilter === null || provider === providerFilter)
@@ -796,7 +805,9 @@ async function workspaceResponseBaseline({ provider, journey }) {
 }
 
 async function nativeProject({ provider, journey }) {
-  const projectName = markerFor(provider, 'PROJECT')
+  const projectName = provider === 'kimi'
+    ? `TLP_KIMI_PROJECT_${randomUUID().slice(0, 8)}`
+    : markerFor(provider, 'PROJECT')
   const instructionMarker = markerFor(provider, 'PROJECT_INSTRUCTION')
   const instructions = `Include this exact marker in every response: ${instructionMarker}`
   const created = await journey.action('workspace.ensure', [
@@ -845,7 +856,11 @@ async function nativeProject({ provider, journey }) {
       '--attach-file', attachment,
       ...controls.flatMap((control) => [control.option, control.alternate]),
       '--prompt', `Read the attached file and report its exact marker.`,
-    ], 360_000, ({ page }) => waitForExactText(page, attachmentName, 180_000))
+    ], 360_000, ({ page }) => waitForExactText(
+      page,
+      provider === 'kimi' ? path.parse(attachmentName).name : attachmentName,
+      180_000,
+    ))
     const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
     assert.match(firstText, new RegExp(escapeRegExp(firstMarker)))
     assert.match(firstText, new RegExp(escapeRegExp(instructionMarker)))
@@ -905,6 +920,177 @@ async function nativeProject({ provider, journey }) {
       }
     }
   }
+}
+
+async function kimiLibraryControls({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const plugins = await journey.action('kimi.plugin.inspect')
+  const pluginInspection = responseResult(plugins.payload, 'kimi.plugin.inspect')
+  assert.equal(pluginInspection?.supported, true)
+  assert.ok(Array.isArray(pluginInspection?.choices))
+  const plugin = pluginInspection.choices.find((choice) => choice.enabled)
+  await plugins.close()
+  if (!plugin) {
+    throw e2eFailure(
+      'e2e_provider_prerequisite_unavailable',
+      'Kimi selected profile has no enabled Plugin; connect one explicitly before the Plugin selection gate',
+    )
+  }
+  const selectedPlugin = await journey.action('kimi.plugin.select', ['--kimi-plugin', plugin.label])
+  assert.equal(responseResult(selectedPlugin.payload, 'kimi.plugin.select')?.selectedLabel, plugin.label)
+  assert.equal(await exactTextVisible(selectedPlugin.page, plugin.label), true)
+  await selectedPlugin.close()
+  const clearedPlugin = await journey.action('prompt.clear')
+  assert.equal(await composerContains(clearedPlugin.page, plugin.label), false)
+  await clearedPlugin.close()
+
+  const skills = await journey.action('kimi.skill.inspect', ['--target-url', 'https://www.kimi.com/'])
+  const skillInspection = responseResult(skills.payload, 'kimi.skill.inspect')
+  assert.equal(skillInspection?.supported, true)
+  const skill = skillInspection?.choices?.find((choice) => choice.enabled && !choice.selected) ??
+    skillInspection?.choices?.find((choice) => choice.enabled)
+  assert.ok(skill, 'Kimi must expose at least one enabled Skill in the selected profile')
+  await skills.close()
+  const selectedSkill = await journey.action('kimi.skill.select', [
+    '--target-url', 'https://www.kimi.com/',
+    '--kimi-skill', skill.label,
+  ])
+  assert.equal(responseResult(selectedSkill.payload, 'kimi.skill.select')?.selectedLabel, skill.label)
+  assert.equal(await exactTextVisible(selectedSkill.page, `/${skill.label}`), true)
+  await selectedSkill.close()
+  const clearedSkill = await journey.action('prompt.clear')
+  assert.equal(await composerContains(clearedSkill.page, skill.label), false)
+  await clearedSkill.close()
+}
+
+async function kimiSearch({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const inspected = await journey.action('kimi.search.inspect')
+  const inspection = responseResult(inspected.payload, 'kimi.search.inspect')
+  assert.equal(inspection?.supported, true)
+  assert.deepEqual(inspection?.choices?.map((choice) => choice.label), ['Auto', 'Off'])
+  const original = inspection.choices.find((choice) => choice.selected)?.label ?? 'Auto'
+  await inspected.close()
+  let primaryError
+  try {
+    const marker = markerFor(provider, 'WEB_SEARCH')
+    const run = await journey.run([
+      '--capability', 'search.web',
+      '--kimi-search', 'auto',
+      '--prompt', `Use web search to identify the official Node.js homepage and include this exact marker: ${marker}`,
+    ], 360_000)
+    assert.equal(responseResult(run.payload, 'kimi.search.select')?.selectedLabel, 'Auto')
+    const response = responseResult(run.payload, 'response.read')
+    assert.match(response?.text ?? '', new RegExp(escapeRegExp(marker)))
+    assert.ok(Array.isArray(response?.citations) && response.citations.length > 0)
+    assert.ok(await visibleCitationCount(run.page, response.citations) > 0)
+    await run.close()
+  } catch (error) {
+    primaryError = error
+    throw error
+  } finally {
+    try {
+      const restored = await journey.action('kimi.search.select', [
+        '--kimi-search', original === 'Off' ? 'off' : 'auto',
+      ])
+      assert.equal(responseResult(restored.payload, 'kimi.search.select')?.selectedLabel, original)
+      await restored.close()
+    } catch (error) {
+      if (primaryError === undefined) throw error
+    }
+  }
+}
+
+async function kimiLibraryWorkflows({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const pluginMarker = markerFor(provider, 'PLUGIN_SOURCE')
+  const plugin = await journey.run([
+    '--kimi-plugin', 'SEC',
+    '--prompt', `Use the SEC Plugin to identify the purpose of Form 10-K and include this exact marker: ${pluginMarker}`,
+  ], 360_000)
+  assert.equal(responseResult(plugin.payload, 'kimi.plugin.select')?.selectedLabel, 'SEC')
+  assert.match(responseResult(plugin.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(pluginMarker)))
+  await plugin.close()
+
+  const skillMarker = markerFor(provider, 'SKILL')
+  const skill = await journey.run([
+    '--kimi-skill', 'humanizer',
+    '--prompt', `Rewrite "We are excited to leverage innovative solutions" naturally and include this exact marker: ${skillMarker}`,
+  ], 360_000)
+  assert.equal(responseResult(skill.payload, 'kimi.skill.select')?.selectedLabel, 'humanizer')
+  assert.match(responseResult(skill.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(skillMarker)))
+  await skill.close()
+}
+
+async function kimiDeepResearch({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const marker = markerFor(provider, 'DEEP_RESEARCH')
+  const run = await journey.run([
+    '--target-url', 'https://www.kimi.com/deep-research',
+    '--long-running',
+    '--prompt', [
+      'Proceed immediately without clarification.',
+      'Research the current official Node.js release lines using official sources only.',
+      `Include this exact marker in the final cited report: ${marker}`,
+    ].join(' '),
+  ], 1_080_000)
+  assert.equal(new URL(run.page.url()).pathname.startsWith('/deep-research'), true)
+  const response = responseResult(run.payload, 'response.read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assert.ok(Array.isArray(response?.citations) && response.citations.length > 0)
+  assert.ok(await visibleCitationCount(run.page, response.citations) > 0)
+  assert.equal(await visibleResearchProgress(run.page), true)
+  await run.close()
+}
+
+async function kimiArtifacts({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const surfaces = [
+    ['/docs', 'DOC'],
+    ['/slides', 'SLIDES'],
+    ['/sheets', 'SHEET'],
+    ['/websites', 'WEBSITE'],
+  ]
+  for (const [pathname, kind] of surfaces) {
+    const marker = markerFor(provider, kind)
+    const run = await journey.run([
+      '--target-url', `https://www.kimi.com${pathname}`,
+      '--long-running',
+      '--prompt', `Create a small finished artifact titled ${marker}. Include ${marker} visibly in the artifact.`,
+    ], 1_080_000)
+    assert.equal(new URL(run.page.url()).pathname.startsWith(pathname), true)
+    assert.ok((responseResult(run.payload, 'response.read')?.text ?? '').length > 0)
+    assert.equal(await visibleArtifactDownload(run.page), true, `${pathname} must expose a visible download or export control`)
+    await run.close()
+  }
+}
+
+async function kimiLongRunning({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const background = await journey.run([
+    '--target-url', 'https://www.kimi.com/agent',
+    '--long-running',
+    '--prompt', `Complete a multi-step analysis and finish with ${markerFor(provider, 'BACKGROUND')}.`,
+  ], 1_080_000)
+  assert.match(
+    responseResult(background.payload, 'response.read')?.text ?? '',
+    new RegExp(escapeRegExp(markerFor(provider, 'BACKGROUND'))),
+  )
+  await background.close()
+}
+
+async function kimiAgentSwarm({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const marker = markerFor(provider, 'AGENT_SWARM')
+  const run = await journey.run([
+    '--target-url', 'https://www.kimi.com/agent-swarm',
+    '--long-running',
+    '--prompt', `Use coordinated agents to compare the current official Node.js LTS lines and finish with ${marker}.`,
+  ], 1_080_000)
+  assert.equal(new URL(run.page.url()).pathname.startsWith('/agent-swarm'), true)
+  assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assert.equal(await visibleAgentProgress(run.page), true)
+  await run.close()
 }
 
 async function projectChoice(provider, journey, targetUrl, kind) {
@@ -1197,6 +1383,36 @@ async function visibleCitationCount(page, citations) {
   return count
 }
 
+async function visibleResearchProgress(page) {
+  return await visibleLocatorCount(page.locator(
+    '[class*="research"] [class*="plan"], [class*="research"] [class*="step"], [class*="research-progress"]',
+  )) > 0
+}
+
+async function visibleArtifactDownload(page) {
+  return await visibleLocatorCount(page.locator([
+    'a[download]',
+    'button[aria-label*="Download" i]',
+    'button[aria-label*="Export" i]',
+    'button:has-text("Download")',
+    'button:has-text("Export")',
+  ].join(', '))) > 0
+}
+
+async function visibleAgentProgress(page) {
+  return await visibleLocatorCount(page.locator(
+    '[class*="agent"] [class*="plan"], [class*="agent"] [class*="task"], [class*="agent"] [class*="progress"]',
+  )) > 0
+}
+
+async function visibleLocatorCount(locator) {
+  let visible = 0
+  for (let index = 0; index < await locator.count(); index += 1) {
+    if (await locator.nth(index).isVisible({ timeout: 100 }).catch(() => false)) visible += 1
+  }
+  return visible
+}
+
 async function freePort() {
   const server = net.createServer()
   await new Promise((resolve, reject) => {
@@ -1238,6 +1454,20 @@ function optionalProviderFilter(value) {
     )
   }
   return provider
+}
+
+function optionalCaseFilter(value) {
+  const caseIds = value?.split(',').map((caseId) => caseId.trim()).filter(Boolean)
+  if (!caseIds || caseIds.length === 0) return null
+  for (const caseId of caseIds) {
+    if (!Object.hasOwn(matrix.cases, caseId)) {
+      throw e2eFailure(
+        'e2e_case_filter_invalid',
+        `TOKENLESS_LIVE_E2E_CASES contains a case not declared in the live capability matrix: ${caseId}`,
+      )
+    }
+  }
+  return new Set(caseIds)
 }
 
 function requiredEnv(name) {

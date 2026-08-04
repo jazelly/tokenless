@@ -18,6 +18,8 @@ import type {
 type WorkspaceAction = typeof VISIBLE_ACTIONS.WORKSPACE_ENSURE
 
 export type NativeProjectWorkspaceStrategy = Readonly<{
+  createTriggerActivation?: 'pointer' | 'dom'
+  instructionActivation?: 'pointer' | 'dom'
   listUrl: string
   projectPath: RegExp
   projectLinkSelectors: readonly string[]
@@ -143,7 +145,7 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
             { retryable: true },
           )
         }
-        await click(create, 'workspace_native_create_navigation_failed')
+        await click(create, 'workspace_native_create_navigation_failed', this.strategy.createTriggerActivation)
         const nameInput = await waitForVisibleLocator(page, this.strategy.nameInputSelectors, 10_000)
         if (!nameInput) {
           throw providerCapabilityFailure(
@@ -153,6 +155,7 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
           )
         }
         await nameInput.fill(payload.name)
+        if (this.strategy.createTriggerActivation === 'dom') await page.waitForTimeout(350)
         const instructionInput = payload.instructions === undefined
           ? null
           : await firstVisibleLocator(page, this.strategy.instructionsInputSelectors, 1_000)
@@ -167,9 +170,8 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
         } else if (instructionInput) {
           instructionOutcome = 'applied_on_creation'
         } else {
-          const applied = await applyProjectInstructions(page, payload.instructions, this.strategy)
-          instructionOutcome = applied ? 'applied_on_creation' : 'unavailable'
-          instructionProof = applied ? 'native-project-instructions-visible-after-create' : null
+          instructionOutcome = 'unavailable'
+          instructionProof = null
         }
       }
       identity = projectIdentity(page.url(), this.provider, this.strategy)
@@ -182,7 +184,15 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
         { retryable: true },
       )
     }
-    const nameVisible = await exactVisibleText(page, payload.name)
+    let nameVisible = await waitForExactVisibleText(page, payload.name, 10_000)
+    if (!nameVisible && this.strategy.createTriggerActivation === 'dom') {
+      await navigate(page, this.strategy.listUrl, context.signal)
+      const matches = await exactProjectLinks(page, this.strategy.projectLinkSelectors, payload.name)
+      if (matches.length === 1) {
+        await clickAndWaitForProject(page, matches[0] as Locator, this.provider, this.strategy, context.signal)
+        nameVisible = true
+      }
+    }
     if (!nameVisible) {
       throw providerCapabilityFailure(
         'workspace_native_identity_unavailable',
@@ -197,6 +207,11 @@ export class NativeProjectWorkspaceCapability implements ProviderActionCapabilit
         'The native Project conversation composer was not visible.',
         { retryable: true },
       )
+    }
+    if (disposition === 'created' && instructionOutcome === 'unavailable' && payload.instructions !== undefined) {
+      const applied = await applyProjectInstructions(page, payload.instructions, this.strategy)
+      instructionOutcome = applied ? 'applied_on_creation' : 'unavailable'
+      instructionProof = applied ? 'native-project-instructions-visible-after-create' : null
     }
     const updateInstructions = instructionOutcome === 'unavailable'
       ? {
@@ -277,7 +292,10 @@ async function submitProjectCreation(
 ) {
   for (let step = 0; step < 3; step += 1) {
     const identity = projectIdentity(page.url(), provider, strategy)
-    if (identity) return
+    if (identity) {
+      await page.waitForTimeout(800)
+      return
+    }
     if (signal?.aborted) throw providerCapabilityFailure('workspace_native_navigation_failed', 'Native Project creation was aborted.', { retryable: true })
     const submit = await waitForVisibleLocator(page, strategy.createSubmitSelectors, 10_000)
     if (!submit) {
@@ -302,13 +320,13 @@ async function submitProjectCreation(
 async function applyProjectInstructions(page: Page, instructions: string, strategy: NativeProjectWorkspaceStrategy) {
   const open = await firstVisibleLocator(page, strategy.instructionOpenSelectors, 1_000)
   if (!open) return false
-  await click(open, 'workspace_native_instruction_failed')
+  await click(open, 'workspace_native_instruction_failed', strategy.instructionActivation)
   const input = await waitForVisibleLocator(page, strategy.instructionsInputSelectors, 5_000)
   if (!input) return false
   await input.fill(instructions)
   const save = await waitForVisibleLocator(page, strategy.instructionSaveSelectors, 5_000)
   if (!save) return false
-  await click(save, 'workspace_native_instruction_failed')
+  await click(save, 'workspace_native_instruction_failed', strategy.instructionActivation)
   return true
 }
 
@@ -388,9 +406,22 @@ async function exactVisibleText(page: Page, value: string) {
   return false
 }
 
-async function click(locator: Locator, code: string) {
+async function waitForExactVisibleText(page: Page, value: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    if (await exactVisibleText(page, value)) return true
+    await page.waitForTimeout(100)
+  }
+  return false
+}
+
+async function click(locator: Locator, code: string, activation: 'pointer' | 'dom' = 'pointer') {
   try {
-    await locator.click({ timeout: 10_000 })
+    if (activation === 'dom') {
+      await locator.evaluate((element) => (element as HTMLElement).click())
+    } else {
+      await locator.click({ timeout: 10_000 })
+    }
   } catch {
     throw providerCapabilityFailure(code, 'A required native Project control could not be activated.', { retryable: true })
   }

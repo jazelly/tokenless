@@ -50,6 +50,8 @@ This table summarizes checked-in routes. The CLI output is the authoritative cur
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental |
 | `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental |
 
 `—` means no route is advertised. It does not necessarily mean the provider product lacks the feature; the implementation or real-provider evidence may still be incomplete.
 
@@ -77,7 +79,7 @@ Doubao also exposes provider-specific `doubao.mode` and `doubao.skill` actions. 
 
 Doubao `auth.status` also reads the visible account control and opens only its account menu. A visible `升级到专业版` item is derived as `免费版` / `signed_in_free`; unobserved paid-account states remain `signed_in_unknown` rather than being inferred from the purchase page's default selected offer.
 
-Kimi `conversation.chat` and text-file `file.upload` are experimental and routeable only from a signed-in selected profile. The built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network closed readiness, prompt drafting, exact model and thinking-effort selection with restoration, file acceptance, an attachment-grounded response, normalized and visible citations, a second-process continuation on the same conversation URL, and durable task mapping. The visible Projects, Web search, Plugins, and Skills entries remain product-control observations, not public capability routes.
+Kimi `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` are experimental and routeable only from a signed-in selected profile. The built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network closed readiness, prompt drafting, exact model and thinking-effort selection with restoration, file acceptance, an attachment-grounded response, exact Web search Auto/Off selection, normalized and visible citations, a second-process continuation on the same conversation URL, and durable task mapping. Plugin and Skill inspection and exact visible selection also passed the non-submission gate, but their complete submitted outcomes are currently blocked by Kimi's visible capacity queue and remain unadvertised. Projects, Deep Research, agent workflows, and artifact lifecycles have implementations and release gates but remain unadvertised because their real provider gates have not closed.
 
 | Doubao control | Canonical outcome candidates | Public route state |
 | --- | --- | --- |

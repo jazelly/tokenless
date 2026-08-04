@@ -32,7 +32,7 @@ import {
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersion } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
 import { readTokenlessConfig } from '../job-store.js'
-import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
+import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById, listTaskCapabilityDefinitions } from '../providers/registry.js'
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
@@ -163,6 +163,7 @@ const DEFAULT_RENEW_INTERVAL_MS = 10_000
 const DEFAULT_CANCEL_POLL_MS = 500
 const DEFAULT_POLL_IDLE_MS = 1_000
 const DEFAULT_RESPONSE_WAIT_TIMEOUT_MS = 120_000
+const LONG_RUNNING_RESPONSE_WAIT_TIMEOUT_MS = 2_160_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
@@ -828,7 +829,7 @@ export class ManagedPlaywrightRunnerService {
               provider,
               action,
               preparation: state.preparation,
-              timeoutMs: this.responseWaitTimeoutMs,
+              timeoutMs: responseWaitTimeoutForRoute(request.capabilityRoute, this.responseWaitTimeoutMs),
               pollMs: this.responseWaitPollMs,
               signal,
               isCanceled,
@@ -1460,7 +1461,41 @@ function liveInspectionTarget(capability: TaskCapabilityId): {
   if (capability === TASK_CAPABILITIES.WORKSPACE_NATIVE) {
     return { providerCapability: PROVIDER_CAPABILITIES.WORKSPACE_ENSURE, scope: 'native' }
   }
+  if (capability === TASK_CAPABILITIES.WORKSPACE_INSTRUCTIONS || capability === TASK_CAPABILITIES.WORKSPACE_KNOWLEDGE) {
+    return { providerCapability: PROVIDER_CAPABILITIES.WORKSPACE_ENSURE, scope: 'native' }
+  }
+  if (capability === TASK_CAPABILITIES.SEARCH_WEB) {
+    return { providerCapability: PROVIDER_CAPABILITIES.KIMI_SEARCH, scope: 'overall' }
+  }
+  if (capability === TASK_CAPABILITIES.SOURCE_CONNECTED) {
+    return { providerCapability: PROVIDER_CAPABILITIES.KIMI_PLUGIN, scope: 'overall' }
+  }
+  if (capability === TASK_CAPABILITIES.SKILL_INVOKE) {
+    return { providerCapability: PROVIDER_CAPABILITIES.KIMI_SKILL, scope: 'overall' }
+  }
+  if (new Set<TaskCapabilityId>([
+    TASK_CAPABILITIES.RESEARCH_DEEP,
+    TASK_CAPABILITIES.DOCUMENT_GENERATION,
+    TASK_CAPABILITIES.PRESENTATION_GENERATION,
+    TASK_CAPABILITIES.SPREADSHEET_GENERATION,
+    TASK_CAPABILITIES.WEBSITE_GENERATION,
+    TASK_CAPABILITIES.RESPONSE_CITATIONS,
+    TASK_CAPABILITIES.ARTIFACT_DOWNLOAD,
+    TASK_CAPABILITIES.TASK_BACKGROUND,
+    TASK_CAPABILITIES.TASK_INTERACTIVE,
+    TASK_CAPABILITIES.TASK_PARALLEL,
+  ]).has(capability)) {
+    return { providerCapability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE, scope: 'overall' }
+  }
   return null
+}
+
+function responseWaitTimeoutForRoute(route: TaskCapabilityRoute | null | undefined, fallback: number) {
+  if (!route) return fallback
+  const definitions = new Map(listTaskCapabilityDefinitions().map((definition) => [definition.id, definition]))
+  return route.requirements.some((capability) => definitions.get(capability)?.lifecycle === 'long_running')
+    ? Math.max(fallback, LONG_RUNNING_RESPONSE_WAIT_TIMEOUT_MS)
+    : fallback
 }
 
 function validateResumeVisibility(value: unknown): Extract<BrowserVisibility, 'headed'> | null {

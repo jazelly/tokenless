@@ -50,6 +50,8 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental |
 | `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental |
 
 `—` 表示目前没有公开 route，不一定代表 provider 产品没有该功能；也可能是 implementation 或真实 provider evidence 尚未完成。
 
@@ -77,7 +79,7 @@ Doubao `file.upload` 已作为 experimental route 对外提供文件选择能力
 
 豆包 `auth.status` 也会读取可见账号控件，且只打开它的账号菜单。可见的“升级到专业版”会被派生为 `免费版` / `signed_in_free`；尚未观察的付费账号状态仍返回 `signed_in_unknown`，不会把购买页默认选中的报价误当成已购套餐。
 
-Kimi `conversation.chat` 与 text-file `file.upload` 已作为 experimental routes 对外提供，但只适用于选定的已登录 profile。Built CLI、packaged daemon、runtime-bound Cloak profile 与真实 provider network 已闭环 readiness、prompt drafting、精确模型与思考强度选择及恢复、文件接收、附件感知回答、normalized 且可见的引用、第二个 CLI 进程在同一 conversation URL 上续聊，以及持久 task mapping。页面可见的 Projects、Web search、Plugins 与 Skills 目前只是产品控件观察，不是公共 capability routes。
+Kimi `conversation.chat`、text-file `file.upload`、`search.web` 与基于搜索的 `response.citations` 已作为 experimental routes 对外提供，但只适用于选定的已登录 profile。Built CLI、packaged daemon、runtime-bound Cloak profile 与真实 provider network 已闭环 readiness、prompt drafting、精确模型与思考强度选择及恢复、文件接收、附件感知回答、Web search Auto/Off 精确选择、normalized 且可见的引用、第二个 CLI 进程在同一 conversation URL 上续聊，以及持久 task mapping。Plugin 与 Skill 的检查和精确可见选择也通过了 non-submission gate，但完整提交 outcome 当前受 Kimi 可见容量队列阻塞，因此未公开为 routes。Projects、Deep Research、agent workflows 与 artifact lifecycles 已有实现和 release gates，但真实 provider gates 尚未闭环，所以仍不公开。
 
 | Doubao control | Canonical outcome candidates | Public route state |
 | --- | --- | --- |

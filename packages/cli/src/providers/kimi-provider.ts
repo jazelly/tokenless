@@ -9,7 +9,9 @@ import {
 import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 import {
   KimiEffortChoiceCapability,
+  KimiLibraryChoiceCapability,
   KimiModelChoiceCapability,
+  KimiSearchChoiceCapability,
 } from './capabilities/kimi-controls.js'
 import { NativeProjectWorkspaceCapability } from './capabilities/native-project-workspace.js'
 
@@ -60,6 +62,7 @@ export class KimiProvider extends BaseProvider<'kimi'> {
         'input[type="file"]',
       ]),
       fileUploadTriggerSelectors: Object.freeze([
+        '.project-knowledge .knowledge-upload-action',
         '.toolkit-trigger-btn',
         'button[aria-label*="Attach" i]',
         'button[aria-label*="Upload" i]',
@@ -90,18 +93,22 @@ export class KimiProvider extends BaseProvider<'kimi'> {
         'iframe[src*="hcaptcha.com" i]',
         'iframe[src*="challenges.cloudflare.com" i]',
         'text=/rate limit|too many requests/i',
+        'text=/Too many people are chatting with Kimi right now/i',
+        'text=/Subscribe to enter a dedicated priority queue/i',
       ]),
       busySelectors: Object.freeze([
         '.send-button-container.stop',
         'button[aria-label*="Stop" i]',
       ]),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
-      capabilities: providerCapabilities({ nativeWorkspace: true }),
+      capabilities: providerCapabilities({ nativeWorkspace: true, kimiControls: true }),
     })
     super(provider, {
       modelChoice: new KimiModelChoiceCapability(provider),
       effortChoice: new KimiEffortChoiceCapability(provider),
       workspace: new NativeProjectWorkspaceCapability(provider, {
+        createTriggerActivation: 'dom',
+        instructionActivation: 'dom',
         listUrl: 'https://www.kimi.com/',
         projectPath: /^\/project\/(?<resourceId>[A-Za-z0-9_-]+)\/?$/u,
         projectLinkSelectors: Object.freeze([
@@ -117,7 +124,7 @@ export class KimiProvider extends BaseProvider<'kimi'> {
           '.project-prompt-edit-modal textarea.prompt-editor',
         ]),
         createSubmitSelectors: Object.freeze([
-          'button.project-create-submit[aria-label="Create"]',
+          'button.project-create-submit',
         ]),
         instructionOpenSelectors: Object.freeze([
           '.project-knowledge .knowledge-action',
@@ -129,6 +136,11 @@ export class KimiProvider extends BaseProvider<'kimi'> {
           'text=/Projects are unavailable|Project is unavailable/i',
         ]),
       }),
+      extensions: Object.freeze([
+        new KimiSearchChoiceCapability(),
+        new KimiLibraryChoiceCapability('kimi.plugin'),
+        new KimiLibraryChoiceCapability('kimi.skill'),
+      ]),
     })
   }
 }

@@ -29,6 +29,12 @@ export const VISIBLE_ACTIONS = Object.freeze({
   DOUBAO_MODE_SELECT: 'doubao.mode.select',
   DOUBAO_SKILL_INSPECT: 'doubao.skill.inspect',
   DOUBAO_SKILL_SELECT: 'doubao.skill.select',
+  KIMI_SEARCH_INSPECT: 'kimi.search.inspect',
+  KIMI_SEARCH_SELECT: 'kimi.search.select',
+  KIMI_PLUGIN_INSPECT: 'kimi.plugin.inspect',
+  KIMI_PLUGIN_SELECT: 'kimi.plugin.select',
+  KIMI_SKILL_INSPECT: 'kimi.skill.inspect',
+  KIMI_SKILL_SELECT: 'kimi.skill.select',
   FILE_UPLOAD: 'file.upload',
   WORKSPACE_ENSURE: 'workspace.ensure',
   PROMPT_INPUT: 'prompt.input',
@@ -104,6 +110,9 @@ export type DoubaoSkill =
   | 'audio-transcription'
 export type DoubaoSkillSelectionPayload = {
   skill: DoubaoSkill
+}
+export type KimiSearchSelectionPayload = {
+  mode: 'auto' | 'off'
 }
 export type FileUploadPayload = {
   attachments: readonly AttachmentInput[]
@@ -200,6 +209,30 @@ export type DoubaoSkillSelectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.DOUBAO_SKILL_SELECT,
   DoubaoSkillSelectionPayload
 >
+export type KimiSearchInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.KIMI_SEARCH_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type KimiSearchSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.KIMI_SEARCH_SELECT,
+  KimiSearchSelectionPayload
+>
+export type KimiPluginInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.KIMI_PLUGIN_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type KimiPluginSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.KIMI_PLUGIN_SELECT,
+  VisibleSelectionPayload
+>
+export type KimiSkillInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.KIMI_SKILL_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type KimiSkillSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.KIMI_SKILL_SELECT,
+  VisibleSelectionPayload
+>
 export type FileUploadActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.FILE_UPLOAD,
   FileUploadPayload
@@ -256,6 +289,12 @@ export type VisibleActionRequest =
   | DoubaoModeSelectActionRequest
   | DoubaoSkillInspectActionRequest
   | DoubaoSkillSelectActionRequest
+  | KimiSearchInspectActionRequest
+  | KimiSearchSelectActionRequest
+  | KimiPluginInspectActionRequest
+  | KimiPluginSelectActionRequest
+  | KimiSkillInspectActionRequest
+  | KimiSkillSelectActionRequest
   | FileUploadActionRequest
   | WorkspaceEnsureActionRequest
   | PromptInputActionRequest

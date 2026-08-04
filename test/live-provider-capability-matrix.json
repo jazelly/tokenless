@@ -276,6 +276,125 @@
         "durable_project_mapping",
         "durable_conversation_mapping"
       ]
+    },
+    "kimi-library-controls": {
+      "gate": "non_submission",
+      "submissions": 0,
+      "actions": [
+        "kimi.plugin.inspect",
+        "kimi.plugin.select",
+        "kimi.skill.inspect",
+        "kimi.skill.select"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "exact_visible_identity",
+        "restore_original"
+      ]
+    },
+    "kimi-search": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "kimi.search.inspect",
+        "kimi.search.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_search_selection",
+        "visible_submission",
+        "visible_response",
+        "visible_citation",
+        "restore_original"
+      ]
+    },
+    "kimi-library-workflows": {
+      "gate": "mutation",
+      "submissions": 2,
+      "actions": [
+        "kimi.plugin.select",
+        "kimi.skill.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "exact_visible_identity",
+        "visible_submission",
+        "visible_response"
+      ]
+    },
+    "kimi-deep-research": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "deep_research_surface",
+        "research_plan",
+        "terminal_report",
+        "visible_citation",
+        "durable_background_job"
+      ]
+    },
+    "kimi-artifacts": {
+      "gate": "mutation",
+      "submissions": 4,
+      "actions": [
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "docs_surface",
+        "slides_surface",
+        "sheets_surface",
+        "websites_surface",
+        "terminal_artifact",
+        "visible_download"
+      ]
+    },
+    "kimi-long-running": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_submission",
+        "visible_response",
+        "durable_background_job",
+        "terminal_state"
+      ]
+    },
+    "kimi-agent-swarm": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "agent_swarm_surface",
+        "visible_agent_plan",
+        "visible_parallel_progress",
+        "terminal_state"
+      ]
     }
   },
   "providers": {
@@ -298,7 +417,14 @@
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
-        "native-project": "native_project_not_yet_proven"
+        "native-project": "native_project_not_yet_proven",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "claude": {
@@ -320,7 +446,14 @@
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
-        "doubao-controls": "provider_specific_capability"
+        "doubao-controls": "provider_specific_capability",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "gemini": {
@@ -342,7 +475,14 @@
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
-        "native-project": "native_project_not_yet_proven"
+        "native-project": "native_project_not_yet_proven",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "grok": {
@@ -364,7 +504,14 @@
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
-        "doubao-controls": "provider_specific_capability"
+        "doubao-controls": "provider_specific_capability",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "qwen": {
@@ -386,7 +533,14 @@
         "workspace-response-citations": "covered_by_qwen_mode_workspace",
         "workspace-response-baseline": "covered_by_qwen_mode_workspace",
         "doubao-controls": "provider_specific_capability",
-        "native-project": "native_project_not_proven"
+        "native-project": "native_project_not_proven",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "deepseek": {
@@ -408,7 +562,14 @@
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
-        "native-project": "native_project_not_observed"
+        "native-project": "native_project_not_observed",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "perplexity": {
@@ -430,7 +591,14 @@
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
-        "native-project": "native_space_not_proven"
+        "native-project": "native_space_not_proven",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "zai": {
@@ -452,7 +620,14 @@
         "workspace-response-citations": "no_real_visible_citation_closure",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
-        "native-project": "native_project_lifecycle_not_e2e_closed"
+        "native-project": "native_project_lifecycle_not_e2e_closed",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "doubao": {
@@ -474,7 +649,14 @@
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-citations": "no_real_visible_citation_closure",
         "qwen-mode-workspace": "provider_specific_capability",
-        "native-project": "native_project_not_observed"
+        "native-project": "native_project_not_observed",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     },
     "kimi": {
@@ -486,7 +668,15 @@
         "model-choice",
         "effort-choice",
         "file-selection",
-        "conversation-workflow"
+        "conversation-workflow",
+        "native-project",
+        "kimi-library-controls",
+        "kimi-library-workflows",
+        "kimi-search",
+        "kimi-deep-research",
+        "kimi-artifacts",
+        "kimi-long-running",
+        "kimi-agent-swarm"
       ],
       "unavailable": {
         "deepseek-controls": "provider_specific_capability",
@@ -495,8 +685,7 @@
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
-        "doubao-controls": "provider_specific_capability",
-        "native-project": "native_project_not_observed"
+        "doubao-controls": "provider_specific_capability"
       }
     }
   }

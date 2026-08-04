@@ -118,7 +118,7 @@ DeepSeek 提供 provider-specific 的 `Instant`、`Expert`、`Vision` mode，以
 
 豆包通过 `doubao.mode.inspect/select` 与 `doubao.skill.inspect/select` 公开 provider-specific modes 和适合 coding 工作流的 Web skills。Runtime 会报告可见的升级限制与 desktop-only 限制，不会强行点击受限流程。Text-file `file.upload` 已作为 experimental route 提供；在每种生成或长任务 outcome 分别通过真实 provider release gate 前，skill selection 仅作为 control evidence。
 
-Kimi 要求使用已登录的 managed profile。其 experimental routes 覆盖 `conversation.chat` 与 text-file `file.upload`；真实 Cloak gate 还闭环了模型选择（`Instant`、`K3`、`K3 Swarm`）、Standard/High 思考强度、可见引用、附件感知回答以及同一 conversation 续聊。Projects、作为独立 outcome 请求的 Web search、Skills、Plugins，以及生成或长任务 workflow 在完整 lifecycle 闭环前均不公开。
+Kimi 要求使用已登录的 managed profile。其 experimental routes 覆盖 `conversation.chat`、text-file `file.upload`、`search.web` 与基于搜索的 `response.citations`；真实 Cloak gates 还闭环了模型选择（`Instant`、`K3`、`K3 Swarm`）、Standard/High 思考强度、Web search Auto/Off 精确控制、可见引用、附件感知回答、同一 conversation 续聊，以及 Plugin/Skill 的精确检查与选择。Plugin/Skill 驱动的完整 outcome、Projects、Deep Research、agent workflows，以及生成或长任务 artifacts 在完整 lifecycle 闭环前均不公开。
 
 对于显式 DeepSeek run，`search.web` 会在浏览器 mutation 前准备 Instant 并启用 Search，`reasoning.extended` 会启用 DeepThink，`image.input` 会准备 Vision。在声明的真实 provider release gate 通过之前，这些 canonical route 仍会 fail closed。
 

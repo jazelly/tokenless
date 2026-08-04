@@ -42,6 +42,22 @@ const closures = new Set([
   'project_instructions',
   'durable_project_mapping',
   'durable_conversation_mapping',
+  'exact_visible_identity',
+  'deep_research_surface',
+  'research_plan',
+  'terminal_report',
+  'durable_background_job',
+  'docs_surface',
+  'slides_surface',
+  'sheets_surface',
+  'websites_surface',
+  'terminal_artifact',
+  'visible_download',
+  'terminal_state',
+  'agent_swarm_surface',
+  'visible_agent_plan',
+  'visible_parallel_progress',
+  'visible_search_selection',
 ])
 
 export function loadLiveProviderCapabilityMatrix() {
@@ -78,7 +94,7 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
     assert.deepEqual(Object.keys(definition).sort(), ['actions', 'closure', 'gate', 'submissions'])
     assert.equal(gates.has(definition.gate), true, `${caseId} gate must be recognized`)
     assert.equal(Number.isSafeInteger(definition.submissions), true, `${caseId} submissions must be an integer`)
-    assert.ok(definition.submissions >= 0 && definition.submissions <= 2, `${caseId} submissions must be between zero and two`)
+    assert.ok(definition.submissions >= 0 && definition.submissions <= 4, `${caseId} submissions must be between zero and four`)
     assert.equal(
       definition.gate === 'non_submission',
       definition.submissions === 0,

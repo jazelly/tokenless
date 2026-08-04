@@ -209,6 +209,7 @@ export function providerCapabilities(options: {
   qwenMode?: boolean
   deepSeekControls?: boolean
   doubaoControls?: boolean
+  kimiControls?: boolean
 } = {}): Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>> {
   return Object.freeze({
     [PROVIDER_CAPABILITIES.CAPABILITY_INSPECT]: Object.freeze({
@@ -414,6 +415,21 @@ export function providerCapabilities(options: {
       PROVIDER_CAPABILITIES.DOUBAO_SKILL,
       'doubao',
       options.doubaoControls === true,
+    ),
+    [PROVIDER_CAPABILITIES.KIMI_SEARCH]: providerSpecificControlStrategy(
+      PROVIDER_CAPABILITIES.KIMI_SEARCH,
+      'kimi',
+      options.kimiControls === true,
+    ),
+    [PROVIDER_CAPABILITIES.KIMI_PLUGIN]: providerSpecificControlStrategy(
+      PROVIDER_CAPABILITIES.KIMI_PLUGIN,
+      'kimi',
+      options.kimiControls === true,
+    ),
+    [PROVIDER_CAPABILITIES.KIMI_SKILL]: providerSpecificControlStrategy(
+      PROVIDER_CAPABILITIES.KIMI_SKILL,
+      'kimi',
+      options.kimiControls === true,
     ),
   })
 }

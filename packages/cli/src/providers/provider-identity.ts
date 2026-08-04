@@ -22,6 +22,9 @@ export const PROVIDER_CAPABILITIES = Object.freeze({
   DEEPSEEK_SEARCH: 'deepseek.search',
   DOUBAO_MODE: 'doubao.mode',
   DOUBAO_SKILL: 'doubao.skill',
+  KIMI_SEARCH: 'kimi.search',
+  KIMI_PLUGIN: 'kimi.plugin',
+  KIMI_SKILL: 'kimi.skill',
 })
 
 export type ProviderCapabilityId = typeof PROVIDER_CAPABILITIES[keyof typeof PROVIDER_CAPABILITIES]

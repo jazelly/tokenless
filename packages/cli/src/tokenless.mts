@@ -247,6 +247,12 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'doubao.mode.select',
   'doubao.skill.inspect',
   'doubao.skill.select',
+  'kimi.search.inspect',
+  'kimi.search.select',
+  'kimi.plugin.inspect',
+  'kimi.plugin.select',
+  'kimi.skill.inspect',
+  'kimi.skill.select',
   'file.upload',
   'workspace.ensure',
   'prompt.clear',
@@ -1518,6 +1524,9 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (action.startsWith('doubao.') && normalizeProvider(args.provider) !== 'doubao') {
     throw usageError('doubao_control_unsupported', 'doubao actions are available only for the Doubao provider.')
   }
+  if (action.startsWith('kimi.') && normalizeProvider(args.provider) !== 'kimi') {
+    throw usageError('kimi_control_unsupported', 'kimi actions are available only for the Kimi provider.')
+  }
 
   if (action === 'capability.inspect') {
     assertProviderActionPayloadOptions(args, new Set())
@@ -1533,7 +1542,10 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     action === 'deepseek.deepthink.inspect' ||
     action === 'deepseek.search.inspect' ||
     action === 'doubao.mode.inspect' ||
-    action === 'doubao.skill.inspect'
+    action === 'doubao.skill.inspect' ||
+    action === 'kimi.search.inspect' ||
+    action === 'kimi.plugin.inspect' ||
+    action === 'kimi.skill.inspect'
   ) {
     assertProviderActionPayloadOptions(args, new Set())
     return { action, payload: {} }
@@ -1649,6 +1661,24 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
     }
   }
 
+  if (action === 'kimi.search.select') {
+    assertProviderActionPayloadOptions(args, new Set(['kimiSearch']))
+    if (args.kimiSearch === undefined) {
+      throw usageError('missing_visible_action_kimi_search', 'kimi.search.select requires --kimi-search <auto|off>.')
+    }
+    return { action, payload: { mode: normalizeKimiSearch(args.kimiSearch) } }
+  }
+
+  if (action === 'kimi.plugin.select' || action === 'kimi.skill.select') {
+    const key = action === 'kimi.plugin.select' ? 'kimiPlugin' : 'kimiSkill'
+    const flag = action === 'kimi.plugin.select' ? '--kimi-plugin' : '--kimi-skill'
+    assertProviderActionPayloadOptions(args, new Set([key]))
+    if (args[key] === undefined) {
+      throw usageError('missing_visible_action_kimi_choice', `${action} requires ${flag} <exact-visible-label>.`)
+    }
+    return { action, payload: { label: normalizeVisibleModelLabel(args[key], flag, 'invalid_kimi_choice') } }
+  }
+
   if (action === 'file.upload') {
     assertProviderActionPayloadOptions(args, new Set(['attachFiles']))
     if (args.attachFiles.length < 1) {
@@ -1707,6 +1737,9 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['deepSeekSearch', '--deepseek-search'],
     ['doubaoMode', '--doubao-mode'],
     ['doubaoSkill', '--doubao-skill'],
+    ['kimiSearch', '--kimi-search'],
+    ['kimiPlugin', '--kimi-plugin'],
+    ['kimiSkill', '--kimi-skill'],
     ['chatSurface', '--chat-surface'],
     ['projectName', '--project-name'],
     ['projectInstructions', '--project-instructions'],
@@ -1754,14 +1787,17 @@ async function executeDaemonJob({
   prompt?: string | undefined
   visibleAction?: { action: string; payload: Record<string, unknown> } | undefined
 }) {
-  if (args.longRunning && args.noWait) {
-    throw usageError('long_running_requires_wait', '--long-running keeps the web job attached and cannot be combined with --no-wait.')
-  }
   const homeDir = tokenlessHome(args.home)
   const config = await readTokenlessConfig(homeDir)
   const explicitProvider = args.provider || process.env.TOKENLESS_PROVIDER
   const explicitProviderId = explicitProvider ? normalizeProvider(explicitProvider) : undefined
   const taskCapabilities = taskCapabilityRequirementsForExecution(args, action, visibleAction)
+  const longRunning = args.longRunning === true || taskCapabilities.some((capability) => (
+    listTaskCapabilityDefinitions().find((definition) => definition.id === capability)?.lifecycle === 'long_running'
+  ))
+  if (longRunning && args.noWait) {
+    throw usageError('long_running_requires_wait', 'Long-running capabilities keep the web job attached and cannot be combined with --no-wait.')
+  }
   const explicitProviderControls = explicitProviderId && !visibleAction
     ? resolveProviderControls({ args, provider: explicitProviderId, action, requirements: taskCapabilities })
     : undefined
@@ -1827,6 +1863,7 @@ async function executeDaemonJob({
               kind: 'provider_home' as const,
               url: await managedProviderTargetUrl({
                 provider: alternateProvider,
+                taskCapabilities: route.requirements,
                 explicitTargetUrl: undefined,
                 workspaceMode,
                 taskId,
@@ -1847,6 +1884,7 @@ async function executeDaemonJob({
         kind: 'provider_home',
         url: await managedProviderTargetUrl({
           provider,
+          taskCapabilities,
           explicitTargetUrl: args.targetUrl,
           workspaceMode,
           taskId,
@@ -1892,7 +1930,7 @@ async function executeDaemonJob({
       statusEventAction: MANAGED_PLAYWRIGHT_JOB_ACTION,
       noWait: args.noWait === true,
       timeoutMs: args.timeoutMs === undefined
-        ? (action === 'snapshot_dom' ? 60_000 : (args.longRunning ? LONG_RUNNING_JOB_TIMEOUT_MS : DEFAULT_RUN_TIMEOUT_MS))
+        ? (action === 'snapshot_dom' ? 60_000 : (longRunning ? LONG_RUNNING_JOB_TIMEOUT_MS : DEFAULT_RUN_TIMEOUT_MS))
         : Number(args.timeoutMs),
     })
     const { job, waitResult: result, statusLog } = submitted
@@ -1998,6 +2036,9 @@ function automaticProviderFallbackAllowed({
     args.deepSeekMode === undefined &&
     args.deepSeekDeepThink === undefined &&
     args.deepSeekSearch === undefined &&
+    args.kimiSearch === undefined &&
+    args.kimiPlugin === undefined &&
+    args.kimiSkill === undefined &&
     args.chatSurface === undefined
 }
 
@@ -2196,6 +2237,16 @@ function managedVisibleActions({
       )
       return actions
     }
+    if (provider === 'kimi') {
+      actions.push(
+        { requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_INSPECT, payload: {} },
+        { requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_INSPECT, payload: {} },
+        { requestId: `${requestId}:kimi-search`, action: VISIBLE_ACTIONS.KIMI_SEARCH_INSPECT, payload: {} },
+        { requestId: `${requestId}:kimi-plugin`, action: VISIBLE_ACTIONS.KIMI_PLUGIN_INSPECT, payload: {} },
+        { requestId: `${requestId}:kimi-skill`, action: VISIBLE_ACTIONS.KIMI_SKILL_INSPECT, payload: {} },
+      )
+      return actions
+    }
     actions.push(
       { requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_INSPECT, payload: {} },
       { requestId: `${requestId}:effort`, action: VISIBLE_ACTIONS.EFFORT_INSPECT, payload: {} },
@@ -2211,6 +2262,15 @@ function managedVisibleActions({
     }
     if (providerControls.deepSeekSearch !== undefined) {
       actions.push({ requestId: `${requestId}:deepseek-search`, action: VISIBLE_ACTIONS.DEEPSEEK_SEARCH_SELECT, payload: { enabled: providerControls.deepSeekSearch } })
+    }
+    if (providerControls.kimiSearch !== undefined) {
+      actions.push({ requestId: `${requestId}:kimi-search`, action: VISIBLE_ACTIONS.KIMI_SEARCH_SELECT, payload: { mode: providerControls.kimiSearch } })
+    }
+    if (providerControls.kimiSkill !== undefined) {
+      actions.push({ requestId: `${requestId}:kimi-skill`, action: VISIBLE_ACTIONS.KIMI_SKILL_SELECT, payload: { label: providerControls.kimiSkill } })
+    }
+    if (providerControls.kimiPlugin !== undefined) {
+      actions.push({ requestId: `${requestId}:kimi-plugin`, action: VISIBLE_ACTIONS.KIMI_PLUGIN_SELECT, payload: { label: providerControls.kimiPlugin } })
     }
     if (providerControls.model !== undefined) {
       actions.push({ requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: providerControls.model } })
@@ -2248,6 +2308,15 @@ function managedVisibleActions({
   if (providerControls.deepSeekSearch !== undefined) {
     actions.push({ requestId: `${requestId}:deepseek-search`, action: VISIBLE_ACTIONS.DEEPSEEK_SEARCH_SELECT, payload: { enabled: providerControls.deepSeekSearch } })
   }
+  if (providerControls.kimiSearch !== undefined) {
+    actions.push({ requestId: `${requestId}:kimi-search`, action: VISIBLE_ACTIONS.KIMI_SEARCH_SELECT, payload: { mode: providerControls.kimiSearch } })
+  }
+  if (providerControls.kimiSkill !== undefined) {
+    actions.push({ requestId: `${requestId}:kimi-skill`, action: VISIBLE_ACTIONS.KIMI_SKILL_SELECT, payload: { label: providerControls.kimiSkill } })
+  }
+  if (providerControls.kimiPlugin !== undefined) {
+    actions.push({ requestId: `${requestId}:kimi-plugin`, action: VISIBLE_ACTIONS.KIMI_PLUGIN_SELECT, payload: { label: providerControls.kimiPlugin } })
+  }
   if (providerControls.model !== undefined) {
     actions.push({ requestId: `${requestId}:model`, action: VISIBLE_ACTIONS.MODEL_SELECT, payload: { label: providerControls.model } })
   }
@@ -2274,6 +2343,7 @@ function managedVisibleActions({
 
 async function managedProviderTargetUrl({
   provider,
+  taskCapabilities,
   explicitTargetUrl,
   workspaceMode,
   taskId,
@@ -2284,6 +2354,7 @@ async function managedProviderTargetUrl({
   profileId,
 }: {
   provider: string
+  taskCapabilities: readonly TaskCapabilityId[]
   explicitTargetUrl: unknown
   workspaceMode?: string | undefined
   taskId?: string | null | undefined
@@ -2300,6 +2371,8 @@ async function managedProviderTargetUrl({
     parsed.hash = ''
     return parsed.toString()
   }
+  const kimiSurface = provider === 'kimi' ? kimiCapabilitySurface(taskCapabilities) : null
+  if (kimiSurface) return new URL(kimiSurface, 'https://www.kimi.com').toString()
   if ((workspaceMode === 'auto' || workspaceMode === 'native') && projectName) {
     const daemon = await ensureDaemonReady({ homeDir, daemonUrl, timeoutMs: daemonStartTimeoutMs, requiredProvider: provider })
     const mapped = await mappedDaemonTarget({
@@ -2329,6 +2402,16 @@ async function managedProviderTargetUrl({
   parsed.search = ''
   parsed.hash = ''
   return parsed.toString()
+}
+
+function kimiCapabilitySurface(requirements: readonly TaskCapabilityId[]) {
+  if (requirements.includes(TASK_CAPABILITIES.TASK_PARALLEL)) return '/agent-swarm'
+  if (requirements.includes(TASK_CAPABILITIES.RESEARCH_DEEP)) return '/deep-research'
+  if (requirements.includes(TASK_CAPABILITIES.PRESENTATION_GENERATION)) return '/slides'
+  if (requirements.includes(TASK_CAPABILITIES.DOCUMENT_GENERATION)) return '/docs'
+  if (requirements.includes(TASK_CAPABILITIES.SPREADSHEET_GENERATION)) return '/sheets'
+  if (requirements.includes(TASK_CAPABILITIES.WEBSITE_GENERATION)) return '/websites'
+  return null
 }
 
 function managedProviderExplicitTargetUrl(provider: string, targetUrl: unknown) {
@@ -4464,7 +4547,7 @@ function createCommandContracts(): CommandContract[] {
     'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
-    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch',
+    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill',
     'chatSurface', 'noWait',
     'agentKind', 'agentSessionId',
   ] as const
@@ -4479,7 +4562,7 @@ function createCommandContracts(): CommandContract[] {
   ] as const
   const providerConfigureOptions = [
     ...providerInspectOptions, 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'chatSurface',
-    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch',
+    'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill',
   ] as const
 
   const contracts: CommandContract[] = [
@@ -4497,7 +4580,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'inspect-chatgpt-controls', usage: ['tokenless inspect-chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
     { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
     { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill'] },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
@@ -4603,6 +4686,9 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--deepseek-search': 'deepSeekSearch',
     '--doubao-mode': 'doubaoMode',
     '--doubao-skill': 'doubaoSkill',
+    '--kimi-search': 'kimiSearch',
+    '--kimi-plugin': 'kimiPlugin',
+    '--kimi-skill': 'kimiSkill',
     '--chat-surface': 'chatSurface',
   }
   const booleanFlags: Record<string, string> = {
@@ -4954,6 +5040,9 @@ function taskCapabilityRequirementsForExecution(
   if (explicit.includes(TASK_CAPABILITIES.FILE_UPLOAD) && args.attachFiles.length === 0) {
     throw usageError('task_capability_input_required', 'file.upload requires at least one --attach-file <path>.')
   }
+  if (explicit.includes(TASK_CAPABILITIES.WORKSPACE_KNOWLEDGE) && args.attachFiles.length === 0) {
+    throw usageError('task_capability_input_required', 'workspace.knowledge requires at least one --attach-file <path>.')
+  }
   if (
     explicit.includes(TASK_CAPABILITIES.WORKSPACE_NATIVE) &&
     (args.workspaceMode === undefined || normalizeWorkspaceMode(args.workspaceMode) !== 'native')
@@ -4998,13 +5087,16 @@ function assertProviderConfigureArguments(args: CliArgs, command: string) {
     args.deepSeekMode === undefined &&
     args.deepSeekDeepThink === undefined &&
     args.deepSeekSearch === undefined &&
+    args.kimiSearch === undefined &&
+    args.kimiPlugin === undefined &&
+    args.kimiSkill === undefined &&
     args.chatSurface === undefined
   ) {
     throw usageError(
       command === 'chatgpt-configure' ? 'missing_chatgpt_control' : 'missing_provider_control',
       `${command} requires --model${command === 'chatgpt-configure'
         ? ', --effort, or --chat-surface chat'
-        : ', --effort, or a DeepSeek control'}.`
+        : ', --effort, or a provider-specific control'}.`
     )
   }
 }
@@ -5028,6 +5120,7 @@ function resolveProviderControls({
     args.deepSeekDeepThink !== undefined ||
     args.deepSeekSearch !== undefined
   )
+  const hasRequestedKimiControl = args.kimiSearch !== undefined || args.kimiPlugin !== undefined || args.kimiSkill !== undefined
   const hasRequestedChatGptControl = (
     args.chatSurface !== undefined
   )
@@ -5036,7 +5129,7 @@ function resolveProviderControls({
     action === 'inspect_controls' ||
     action === 'inspect_chatgpt_controls'
   )
-  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedDeepSeekControl || hasRequestedChatGptControl)) {
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl)) {
     throw usageError(
       'controls_unsupported_for_action',
       'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
@@ -5059,6 +5152,9 @@ function resolveProviderControls({
       'deepseek_control_unsupported',
       '--deepseek-mode, --deepseek-deepthink, and --deepseek-search are available only for the DeepSeek provider.'
     )
+  }
+  if (provider !== 'kimi' && hasRequestedKimiControl) {
+    throw usageError('kimi_control_unsupported', '--kimi-search, --kimi-plugin, and --kimi-skill are available only for the Kimi provider.')
   }
   if (inspectionAction) return {}
 
@@ -5091,6 +5187,24 @@ function resolveProviderControls({
   const requiresDeepSeekSearch = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB)
   const requiresDeepSeekVision = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT)
   const requiresDeepSeekReasoning = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.REASONING_EXTENDED)
+  const requiresKimiSearch = provider === 'kimi' && requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB)
+  const requiresKimiPlugin = provider === 'kimi' && requestedCapabilities.has(TASK_CAPABILITIES.SOURCE_CONNECTED)
+  const requiresKimiSkill = provider === 'kimi' && requestedCapabilities.has(TASK_CAPABILITIES.SKILL_INVOKE)
+  const kimiSearch = args.kimiSearch === undefined
+    ? (requiresKimiSearch ? 'auto' as const : undefined)
+    : normalizeKimiSearch(args.kimiSearch)
+  const kimiPlugin = args.kimiPlugin === undefined
+    ? undefined
+    : normalizeVisibleModelLabel(args.kimiPlugin, '--kimi-plugin', 'invalid_kimi_plugin')
+  const kimiSkill = args.kimiSkill === undefined
+    ? undefined
+    : normalizeVisibleModelLabel(args.kimiSkill, '--kimi-skill', 'invalid_kimi_skill')
+  if (requiresKimiPlugin && kimiPlugin === undefined) {
+    throw usageError('task_capability_input_required', 'source.connected on Kimi requires --kimi-plugin <exact-visible-label>.')
+  }
+  if (requiresKimiSkill && kimiSkill === undefined) {
+    throw usageError('task_capability_input_required', 'skill.invoke on Kimi requires --kimi-skill <exact-visible-label>.')
+  }
   if (requiresDeepSeekSearch && requiresDeepSeekVision) {
     throw usageError(
       'deepseek_capability_combination_unavailable',
@@ -5144,6 +5258,9 @@ function resolveProviderControls({
       deepSeekMode,
       deepSeekDeepThink,
       deepSeekSearch,
+      kimiSearch,
+      kimiPlugin,
+      kimiSkill,
     }
   }
 
@@ -5176,6 +5293,13 @@ function normalizeDeepSeekMode(value: unknown) {
   if (normalized === 'expert') return 'Expert' as const
   if (normalized === 'vision') return 'Vision' as const
   throw usageError('invalid_deepseek_mode', '--deepseek-mode must be Instant, Expert, or Vision.')
+}
+
+function normalizeKimiSearch(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'auto') return 'auto' as const
+  if (normalized === 'off') return 'off' as const
+  throw usageError('invalid_kimi_search', '--kimi-search must be auto or off.')
 }
 
 function normalizeDeepSeekToggle(value: unknown, flag: string) {

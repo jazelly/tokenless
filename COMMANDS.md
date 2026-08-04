@@ -478,6 +478,9 @@ Provider controls:
 - `--deepseek-deepthink <on|off>` controls DeepThink in the active DeepSeek mode.
 - `--deepseek-search <on|off>` controls Search; the control is available only in DeepSeek Instant mode.
 - DeepSeek canonical requirements prepare their required controls before mutation: `search.web` selects Instant and enables Search, `reasoning.extended` enables DeepThink, and `image.input` selects Vision. Explicit incompatible combinations fail before changing the page.
+- `--kimi-search <auto|off>` selects Kimi Web search behavior.
+- `--kimi-plugin <exact-visible-label>` selects one exact Kimi Plugin.
+- `--kimi-skill <exact-visible-label>` selects one exact Kimi Skill.
 - `--browser-visibility <auto|headed|headless>` overrides the configured visibility policy.
 
 Identity and continuity:
@@ -650,6 +653,12 @@ tokenless provider-action \
 | `doubao.mode.select` | Select one exact Doubao mode. | `--doubao-mode fast|expert|work-task-turbo|work-task-pro` |
 | `doubao.skill.inspect` | Inspect Doubao Web skills and their canonical candidate mappings. | None; Doubao only |
 | `doubao.skill.select` | Select a Doubao skill or restore ordinary chat. | `--doubao-skill <skill>` |
+| `kimi.search.inspect` | Inspect Kimi Web search choices. | None; Kimi only |
+| `kimi.search.select` | Select Kimi Web search Auto or Off. | `--kimi-search auto|off` |
+| `kimi.plugin.inspect` | List enabled Kimi Plugins by exact visible name. | None; Kimi only |
+| `kimi.plugin.select` | Select one exact Kimi Plugin. | `--kimi-plugin <exact-visible-label>` |
+| `kimi.skill.inspect` | List enabled Kimi Skills by exact visible name. | None; Kimi only |
+| `kimi.skill.select` | Select one exact Kimi Skill. | `--kimi-skill <exact-visible-label>` |
 | `file.upload` | Upload files through visible file controls. | One or more `--attach-file` |
 | `workspace.ensure` | Ensure a native or conversation-scoped Workspace. | `--project-name`; optional `--workspace-mode` and instructions |
 | `prompt.clear` | Clear the visible composer. | None |

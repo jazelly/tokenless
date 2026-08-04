@@ -16,6 +16,7 @@ import type {
   DeepSeekToggleSelectionPayload,
   DoubaoModeSelectionPayload,
   DoubaoSkillSelectionPayload,
+  KimiSearchSelectionPayload,
   WorkspaceEnsurePayload,
 } from './contracts.js'
 
@@ -186,6 +187,42 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
     requiredCapabilities: [PROVIDER_CAPABILITIES.DOUBAO_SKILL],
     validatePayload: validateDoubaoSkillSelectionPayload,
   }),
+  [VISIBLE_ACTIONS.KIMI_SEARCH_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.KIMI_SEARCH_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.KIMI_SEARCH],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.KIMI_SEARCH_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.KIMI_SEARCH_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.KIMI_SEARCH],
+    validatePayload: validateKimiSearchSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.KIMI_PLUGIN_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.KIMI_PLUGIN_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.KIMI_PLUGIN],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.KIMI_PLUGIN_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.KIMI_PLUGIN_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.KIMI_PLUGIN],
+    validatePayload: validateSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.KIMI_SKILL_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.KIMI_SKILL_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.KIMI_SKILL],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.KIMI_SKILL_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.KIMI_SKILL_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.KIMI_SKILL],
+    validatePayload: validateSelectionPayload,
+  }),
   [VISIBLE_ACTIONS.FILE_UPLOAD]: defineAction({
     action: VISIBLE_ACTIONS.FILE_UPLOAD,
     lifecycle: reconstructableGatedMutation,
@@ -342,6 +379,14 @@ function validateDeepSeekToggleSelectionPayload(payload: Record<string, unknown>
     throw tokenlessError('invalid_visible_action_payload', 'DeepSeek toggle enabled must be a boolean.')
   }
   return payload as DeepSeekToggleSelectionPayload
+}
+
+function validateKimiSearchSelectionPayload(payload: Record<string, unknown>): KimiSearchSelectionPayload {
+  requireExactKeys(payload, ['mode'], 'invalid_visible_action_payload')
+  if (payload.mode !== 'auto' && payload.mode !== 'off') {
+    throw tokenlessError('invalid_visible_action_payload', 'Kimi search mode must be auto or off.')
+  }
+  return payload as KimiSearchSelectionPayload
 }
 
 function validateDoubaoModeSelectionPayload(payload: Record<string, unknown>): DoubaoModeSelectionPayload {

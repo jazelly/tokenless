@@ -31,10 +31,12 @@ export const TASK_CAPABILITIES = Object.freeze({
   WORKSPACE_INSTRUCTIONS: 'workspace.instructions',
   WORKSPACE_KNOWLEDGE: 'workspace.knowledge',
   SOURCE_CONNECTED: 'source.connected',
+  SKILL_INVOKE: 'skill.invoke',
   RESPONSE_CITATIONS: 'response.citations',
   ARTIFACT_DOWNLOAD: 'artifact.download',
   TASK_BACKGROUND: 'task.background',
   TASK_INTERACTIVE: 'task.interactive',
+  TASK_PARALLEL: 'task.parallel',
 })
 
 export type TaskCapabilityId = typeof TASK_CAPABILITIES[keyof typeof TASK_CAPABILITIES]
@@ -361,6 +363,19 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
     outputKinds: ['text', 'citation'],
   }),
   defineCapability({
+    id: TASK_CAPABILITIES.SKILL_INVOKE,
+    title: 'Reusable skill',
+    description: 'Invoke an exact provider-native reusable skill selected by the caller.',
+    family: 'workspace_knowledge',
+    parametersSchema: objectParameters({
+      skill: { type: 'string', minLength: 1, maxLength: 240 },
+    }, ['skill']),
+    lifecycle: 'interactive',
+    sideEffects: ['read_provider_state', 'submit_prompt', 'persist_provider_state'],
+    requiredEvidence: ['exact_skill_identity', 'visible_skill_invocation', 'correlated_visible_response'],
+    outputKinds: ['text', 'file'],
+  }),
+  defineCapability({
     id: TASK_CAPABILITIES.RESPONSE_CITATIONS,
     title: 'Response citations',
     description: 'Require normalized citations backed by links visible in the provider response.',
@@ -400,6 +415,17 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
     requiredEvidence: ['waiting_for_user', 'same_job_resume'],
     outputKinds: [],
   }),
+  defineCapability({
+    id: TASK_CAPABILITIES.TASK_PARALLEL,
+    title: 'Parallel agent task',
+    description: 'Run a provider-native coordinated multi-agent task through a terminal visible result.',
+    family: 'evidence_lifecycle',
+    lifecycle: 'long_running',
+    sideEffects: ['submit_prompt', 'persist_provider_state', 'generate_artifact'],
+    implies: [TASK_CAPABILITIES.TASK_BACKGROUND, TASK_CAPABILITIES.TASK_INTERACTIVE],
+    requiredEvidence: ['visible_agent_plan', 'visible_parallel_progress', 'terminal_state'],
+    outputKinds: ['text', 'file', 'website'],
+  }),
 ] satisfies readonly TaskCapabilityDefinition[])
 
 const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
@@ -417,6 +443,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('doubao', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('kimi', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['conversation-workflow']),
   route('kimi', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
+  route('kimi', TASK_CAPABILITIES.SEARCH_WEB, 'experimental', 'kimi-web-search-auto', ['kimi-search']),
+  route('kimi', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'kimi-visible-citations', ['kimi-search']),
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 
 const DEFINITION_BY_ID = new Map(TASK_CAPABILITY_CATALOG.map((definition) => [definition.id, definition]))

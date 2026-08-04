@@ -478,6 +478,9 @@ Provider 控件：
 - `--deepseek-deepthink <on|off>` 控制当前 DeepSeek mode 中的 DeepThink。
 - `--deepseek-search <on|off>` 控制 Search；该控件只在 DeepSeek Instant mode 中可用。
 - DeepSeek canonical requirements 会在 mutation 前准备所需控件：`search.web` 选择 Instant 并启用 Search，`reasoning.extended` 启用 DeepThink，`image.input` 选择 Vision。显式冲突组合会在页面变化前失败。
+- `--kimi-search <auto|off>` 选择 Kimi Web search 行为。
+- `--kimi-plugin <exact-visible-label>` 选择一个精确的 Kimi Plugin。
+- `--kimi-skill <exact-visible-label>` 选择一个精确的 Kimi Skill。
 - `--browser-visibility <auto|headed|headless>` 覆盖已配置的可见性策略。
 
 Identity 与 continuity：
@@ -650,6 +653,12 @@ tokenless provider-action \
 | `doubao.mode.select` | 选择一个精确的 Doubao mode。 | `--doubao-mode fast|expert|work-task-turbo|work-task-pro` |
 | `doubao.skill.inspect` | 检查 Doubao Web skills 及其 canonical candidate mapping。 | 无；仅限 Doubao |
 | `doubao.skill.select` | 选择一个 Doubao skill，或恢复普通对话。 | `--doubao-skill <skill>` |
+| `kimi.search.inspect` | 检查 Kimi Web search 选项。 | 无；仅限 Kimi |
+| `kimi.search.select` | 选择 Kimi Web search 的 Auto 或 Off。 | `--kimi-search auto|off` |
+| `kimi.plugin.inspect` | 按精确可见名称列出已启用的 Kimi Plugins。 | 无；仅限 Kimi |
+| `kimi.plugin.select` | 选择一个精确的 Kimi Plugin。 | `--kimi-plugin <exact-visible-label>` |
+| `kimi.skill.inspect` | 按精确可见名称列出已启用的 Kimi Skills。 | 无；仅限 Kimi |
+| `kimi.skill.select` | 选择一个精确的 Kimi Skill。 | `--kimi-skill <exact-visible-label>` |
 | `file.upload` | 通过可见 file controls 上传文件。 | 一个或多个 `--attach-file` |
 | `workspace.ensure` | 确保存在原生或 conversation-scoped Workspace。 | `--project-name`；`--workspace-mode` 和 instructions 可选 |
 | `prompt.clear` | 清空可见 composer。 | 无 |
