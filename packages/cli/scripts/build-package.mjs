@@ -31,5 +31,6 @@ run(process.execPath, [path.join(providersRoot, 'rate-limit-catalog-check.mjs')]
 
 function run(command, args) {
   const executable = process.platform === 'win32' && !path.isAbsolute(command) ? `${command}.cmd` : command
-  execFileSync(executable, args, { cwd: packageRoot, stdio: 'inherit' })
+  const shell = process.platform === 'win32' && !path.isAbsolute(command)
+  execFileSync(executable, args, { cwd: packageRoot, stdio: 'inherit', shell })
 }
