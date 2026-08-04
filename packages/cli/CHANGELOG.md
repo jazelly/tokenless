@@ -1,5 +1,11 @@
 # tokenless
 
+## 0.4.1
+
+### Patch Changes
+
+- b4556a9: Fix `tokenless upgrade --json` rejecting its default empty capability argument state before starting the upgrade workflow.
+
 ## 0.4.0
 
 ### Minor Changes
