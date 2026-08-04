@@ -1,6 +1,6 @@
 import { constants as fsConstants } from 'node:fs'
 import { chmod, lstat, mkdir, open, realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { tokenlessError } from '../errors.js'
 import type { DatabaseSync as SqliteDatabase } from 'node:sqlite'
@@ -72,7 +72,12 @@ async function preparePrivateLockFile(input: string) {
     const linked = await lstat(file)
     assertPrivateFile(opened)
     assertPrivateFile(linked)
-    if (opened.dev !== linked.dev || opened.ino !== linked.ino) {
+    if (process.platform === 'win32') {
+      const canonicalFile = await realpath(file)
+      if (relative(canonicalParent, canonicalFile) !== basename(file)) {
+        throw tokenlessError('sqlite_lock_failed', 'The SQLite lock path changed while it was opened.')
+      }
+    } else if (opened.dev !== linked.dev || opened.ino !== linked.ino) {
       throw tokenlessError('sqlite_lock_failed', 'The SQLite lock path changed while it was opened.')
     }
   } catch (error) {
