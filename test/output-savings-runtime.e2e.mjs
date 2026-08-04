@@ -10,7 +10,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 
 test('built CLI explicitly installs, verifies, enables, measures, disables, and removes the real output savings runtime', { timeout: 180_000 }, async () => {
-  const homeDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tokenless-output-savings-runtime-'))
+  const tempRoot = fs.realpathSync.native(os.tmpdir())
+  const homeDir = fs.realpathSync.native(fs.mkdtempSync(path.join(tempRoot, 'tokenless-output-savings-runtime-')))
   try {
     const enabled = runSavings(homeDir, 'enable')
     assert.equal(enabled.outputSavings.enabled, true)
