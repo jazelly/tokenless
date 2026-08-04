@@ -1,11 +1,11 @@
 ---
 name: tokenless-install
-description: Install, upgrade, repair, and verify Tokenless, its agent skills, local Playwright runtime, and managed browser profiles. Use for initial noninteractive setup, fresh or import onboarding, browser sign-in handoff, upgrades, failed doctor checks, or installation integrity checks.
+description: Install, upgrade, repair, and verify Tokenless, its agent skills, and local Playwright runtime. Use only when the user explicitly asks for installation, upgrade, repair, browser sign-in handoff, a failed doctor check, or an installation integrity check.
 ---
 
 # Tokenless installation and maintenance
 
-Complete this workflow before using the `tokenless` skill. Execute every CLI step yourself. Never run interactive setup prompts: this skill runs inside an agent session where a human cannot answer CLI questions. Collect any required choices in chat, then pass them as flags. Report status, manual actions, and final results in the user's preferred language, inferred from the conversation.
+Use this workflow only for the maintenance task the user explicitly requested; it is not a prerequisite for every provider job. Execute the documented noninteractive maintenance and verification commands yourself. Managed-profile initialization and import are user-run workflows outside the agent session: never initiate either one or traverse providers on the user's behalf. Report status, manual actions, and final results in the user's preferred language, inferred from the conversation.
 
 ## Install
 
@@ -23,44 +23,16 @@ Complete this workflow before using the `tokenless` skill. Execute every CLI ste
    npm install --global tokenless@latest
    ```
 
-   Do not run profile setup as root. Setup installs and verifies both Tokenless agent skills, detects supported browsers, starts the local daemon and Playwright worker, and checks provider readiness.
+   After installation, invoke only the global `tokenless` command. Never run the
+   Tokenless CLI through `npx tokenless` or `npx tokenless@latest`.
 
-3. Choose one noninteractive profile strategy in chat, then run the matching command. Never run bare `tokenless setup`.
-
-   **Fresh managed profile (default when the user does not ask to import):**
-
-   ```bash
-   tokenless setup --fresh --json
-   ```
-
-   On first use this creates `default`, selects the first supported browser and ChatGPT, starts the runtime, and opens the provider when visible sign-in is needed. It never imports an existing browser profile.
-
-   **Import an existing browser profile (only after explicit user choice in chat):**
+3. Run the canonical maintenance workflow to reconcile the global skills and matching local daemon:
 
    ```bash
-   tokenless profiles discover --browser chrome --json
+   tokenless upgrade --json
    ```
 
-   Ask the user which discovered `directoryKey` and which providers to import. Then run:
-
-   ```bash
-   tokenless setup \
-     --browser chrome \
-     --preferred-providers chatgpt \
-     --import-browser-profile "Default" \
-     --consent-local-profile-copy \
-     --json
-   ```
-
-   Pass `--browser brave` when that is the chosen browser. Add `--browser-user-data-dir <dir>` when discover reports ambiguity. Do not invent consent: `--consent-local-profile-copy` is allowed only after the user explicitly agrees in chat to copy selected provider sign-in state into a separate managed profile. The source browser profile stays unchanged.
-
-4. Verify the installation:
-
-   ```bash
-   tokenless doctor --json
-   ```
-
-Report success only when `doctor` exits successfully and returns `ok: true`. Summarize skill, browser, managed profile, daemon, worker, and provider readiness without exposing account identity or authentication data.
+`upgrade` already runs the final read-only `doctor --json` check. Report full success only when its top-level result is `ok: true` and its `npmInstall`, `resolveGlobalCli`, `skills`, `runtimeInstall`, and `doctor` phases are healthy. Summarize skill, browser, managed profile, daemon, worker, and provider readiness without exposing account identity or authentication data. If the CLI, skills, and local runtime phases succeed but doctor reports that no managed profile exists, report that the CLI installation completed and provider readiness is pending user-run profile initialization. Do not start that workflow for the user.
 
 ## User handoff
 
@@ -80,7 +52,7 @@ Use `profiles open` only for headed browser handoff. It always opens a visible b
 
 ## Upgrade
 
-When `tokenless upgrade` is available, it is the canonical upgrade path. The command itself is prompt-free and does not read answers from stdin. Agents must use its structured automation form instead of composing separate npm, skill, setup, runtime, or doctor commands:
+When `tokenless upgrade` is available, it is the canonical upgrade path. The command itself is prompt-free and does not read answers from stdin. Agents must use its structured automation form instead of composing separate npm, skill, runtime, or doctor commands:
 
 ```bash
 tokenless upgrade --json
@@ -90,11 +62,12 @@ The command owns this order:
 
 1. Install `tokenless@latest` globally with npm.
 2. Resolve and verify the installed package, version, binary declaration, and exact CLI entrypoint before handing off to new code.
-3. Refresh both GitHub-backed Tokenless agent skills.
-4. Use that verified new CLI to reconcile the packaged daemon and local runtime.
-5. Use the same new CLI to run the final read-only `doctor --json` check.
+3. Use that verified new CLI's shared maintenance reconciler to upsert both
+   GitHub-backed Tokenless agent skills globally and reconcile the matching
+   packaged daemon runtime.
+4. Use the same new CLI to run the final read-only `doctor --json` check.
 
-Do not run setup before or after an upgrade unless the returned doctor result identifies a profile or provider problem that specifically requires setup. Upgrade does not run provider setup, sign in, re-import, reset, or replace a managed profile.
+Do not initialize, import, reset, or replace a managed profile before or after an upgrade. If the returned doctor result identifies a profile or provider problem, report it as a user-run follow-up. Upgrade does not sign in to providers or alter managed profiles.
 
 For a pre-upgrade CLI that reports `upgrade` as an unknown command, bootstrap the canonical command exactly once:
 
@@ -115,9 +88,9 @@ Run `tokenless doctor --json` first and use its exact failed check as the repair
 
 - Node.js failure: require Node.js 22.13 or newer.
 - CLI, daemon, or Playwright worker failure: run `tokenless upgrade --json`, then inspect its nested doctor result.
-- Browser failure: require a supported installed browser selected by setup; do not silently substitute another browser.
-- Missing default profile: run fresh setup to create one. For an invalid existing profile, report it instead of replacing it automatically.
-- Profile import failure: report the copy error, obtain fresh chat consent, rediscover if needed, then retry only with `--import-browser-profile`, `--preferred-providers`, `--consent-local-profile-copy`, and `--json`. Never mutate the source profile.
+- Browser failure: require a supported installed browser selected by the user; do not silently substitute another browser.
+- Missing default profile: report that the user must initialize a managed profile manually. Do not create one for them.
+- Profile import failure: report the copy error and tell the user that import must be retried manually. Never inspect, copy, or mutate the source profile.
 - Provider unauthenticated or visibly blocked: run `tokenless profiles open --profile <slug> --provider <id>`, use the user handoff, then rerun `profiles status` and `doctor`.
 - Unknown or contradictory output: report the exact failed check and stop instead of guessing, weakening validation, or switching runtime paths.
 

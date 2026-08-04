@@ -99,6 +99,7 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       ],
       blockers: [
         'iframe[src*="captcha"]',
+        'iframe[src*="challenges.cloudflare.com"]',
         'button[data-testid="login-with-google"]',
         'form:has(input[placeholder="Enter your email"]) button[data-testid="continue"]',
         'input[placeholder="Enter your email"]',
@@ -195,6 +196,85 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       projectLinks: [],
     },
   }),
+  qwen: defineProvider({
+    id: 'qwen',
+    label: 'Qwen',
+    origin: 'https://chat.qwen.ai',
+    url: 'https://chat.qwen.ai/',
+    outputName: 'qwen-dom.sanitized.html',
+    selectors: {
+      composers: [
+        'textarea.message-input-textarea',
+      ],
+      submits: [
+        'button.send-button',
+      ],
+      answers: [
+        '.qwen-chat-message-assistant .chat-response-message .qwen-markdown',
+        '.qwen-chat-message-assistant .qwen-markdown',
+      ],
+      blockers: [],
+      busy: [
+        'button.stop-button',
+        '.qwen-chat-message-awaiting-response',
+      ],
+      modelPickers: [],
+      effortPickers: [
+        '.qwen-select-thinking',
+        '[role="combobox"][aria-label="Thinking"]',
+      ],
+      modePickers: [
+        '[role="button"][aria-label="Select Mode"]',
+        '.mode-select',
+        '.message-input-column-footer-submode',
+        '[role="menuitem"].mode-select-common-item',
+      ],
+      fileInputs: [],
+      projectLinks: [],
+    },
+  }),
+  deepseek: defineProvider({
+    id: 'deepseek',
+    label: 'DeepSeek',
+    origin: 'https://chat.deepseek.com',
+    url: 'https://chat.deepseek.com/',
+    outputName: 'deepseek-dom.sanitized.html',
+    selectors: {
+      composers: [
+        'textarea#chat-input',
+        'textarea[placeholder="Message DeepSeek"]',
+      ],
+      submits: [
+        'button[aria-label="Send message"]',
+        'div[role="button"].ds-button.ds-button--primary',
+      ],
+      answers: [
+        '.ds-markdown.ds-markdown--block',
+        '.ds-markdown',
+      ],
+      blockers: [
+        'input[placeholder="Phone number / email address"]',
+        'iframe[src*="captcha" i]',
+        '[aria-label*="captcha" i]',
+      ],
+      busy: [
+        'button[aria-label*="Stop" i]',
+        '.ds-loading',
+      ],
+      modelPickers: [
+        'button:has-text("Instant Mode")',
+        'button:has-text("Expert Mode")',
+        'div[role="button"]:has-text("Instant Mode")',
+        'div[role="button"]:has-text("Expert Mode")',
+      ],
+      fileInputs: [
+        'input[type="file"]',
+        'button[aria-label*="Attach" i]',
+        'button[aria-label*="Upload" i]',
+      ],
+      projectLinks: [],
+    },
+  }),
 })
 
 export const providerDefinitions = PROVIDER_DEFINITIONS
@@ -225,7 +305,7 @@ export async function captureProviderDom({
     if (!provider) {
       throw usageError(
         'unsupported_provider',
-        'Provider must be one of: chatgpt, claude, gemini, grok.'
+        'Provider must be one of: chatgpt, claude, gemini, grok, qwen.'
       )
     }
     validateArgs(args)
@@ -278,7 +358,6 @@ export async function captureProviderDom({
         'meta',
         'noscript',
         'template',
-        'iframe',
         'object',
         'embed',
         'input[type="hidden"]',
@@ -618,6 +697,7 @@ export async function captureProviderDom({
           claude: new Set(['/new']),
           gemini: new Set(['/app', '/gems/view']),
           grok: new Set(['/']),
+          qwen: new Set(['/', '/c/guest']),
         }
         if (staticPaths[provider]?.has(normalized)) return normalized
 
@@ -626,6 +706,7 @@ export async function captureProviderDom({
           claude: new Set(['chat']),
           gemini: new Set(['app', 'gems', 'share']),
           grok: new Set(['c', 'share']),
+          qwen: new Set(['c']),
         }
         const firstSegment = normalized.split('/').filter(Boolean)[0]
         return firstSegment && knownRoutePrefixes[provider]?.has(firstSegment)
@@ -833,7 +914,7 @@ function printHelp({ forcedProvider, programName }) {
     '',
     ...(provider ? [] : [
       'Providers:',
-      '  chatgpt | claude | gemini | grok',
+      '  chatgpt | claude | gemini | grok | qwen',
       '',
     ]),
     'Options:',

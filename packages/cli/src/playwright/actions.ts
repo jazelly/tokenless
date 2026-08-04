@@ -1,36 +1,68 @@
 import { randomUUID } from 'node:crypto'
+import {
+  VISIBLE_ACTION_SCHEMA_ID,
+  VISIBLE_ATTACHMENT_SCHEMA_ID,
+} from '../schema-ids.js'
+import {
+  isVisibleAction,
+  validateVisibleActionPayload,
+} from '../providers/action-catalog.js'
+import { VISIBLE_ACTIONS, isVisibleActionProtocolVersion } from '../providers/contracts.js'
 import { tokenlessError } from './errors.js'
-import { getProviderById } from './providers.js'
-import type { ProviderId } from './providers.js'
+import { getProviderDescriptorById } from '../providers/registry.js'
+import type {
+  ProviderAccessClass,
+  ProviderAccountTier,
+  ProviderCapabilityId,
+  ProviderCapabilityResourceKind,
+  ProviderCapabilityStability,
+  ProviderId,
+} from '../providers/registry.js'
 
-export const VISIBLE_ACTION_PROTOCOL_VERSION = 'tokenless.playwright.visible-action.v1' as const
-export const VISIBLE_ATTACHMENT_PROTOCOL_VERSION = 'tokenless.visible-attachment.v1' as const
+export {
+  VISIBLE_ACTION_SCHEMA_ID,
+  VISIBLE_ATTACHMENT_SCHEMA_ID,
+} from '../schema-ids.js'
+export { validateAttachmentInput } from '../providers/action-catalog.js'
+export { VISIBLE_ACTIONS, isVisibleActionProtocolVersion } from '../providers/contracts.js'
+export type {
+  AttachmentInput,
+  EmptyVisibleActionPayload,
+  FileUploadActionRequest,
+  FileUploadPayload,
+  PromptInputActionRequest,
+  PromptInputPayload,
+  QwenModeInspectActionRequest,
+  QwenModeSelectActionRequest,
+  VisibleAction,
+  VisibleActionPayloadForAction,
+  VisibleActionProtocolVersion,
+  VisibleActionRequest,
+  VisibleActionRequestForAction,
+  VisibleActionWireRequest,
+  VisibleSelectionPayload,
+  QwenModeSelectionPayload,
+  DeepSeekMode,
+  DeepSeekModeSelectionPayload,
+  DeepSeekToggleSelectionPayload,
+  DoubaoMode,
+  DoubaoModeSelectionPayload,
+  DoubaoSkill,
+  DoubaoSkillSelectionPayload,
+  WorkspaceEnsureActionRequest,
+  WorkspaceEnsurePayload,
+} from '../providers/contracts.js'
 
-export const VISIBLE_ACTIONS = Object.freeze({
-  AUTH_STATUS: 'auth.status',
-  MODEL_INSPECT: 'model.inspect',
-  MODEL_SELECT: 'model.select',
-  EFFORT_INSPECT: 'effort.inspect',
-  EFFORT_SELECT: 'effort.select',
-  FILE_UPLOAD: 'file.upload',
-  PROMPT_INPUT: 'prompt.input',
-  PROMPT_CLEAR: 'prompt.clear',
-  PROMPT_SUBMIT: 'prompt.submit',
-  RESPONSE_READ: 'response.read',
-  SNAPSHOT_SANITIZED: 'snapshot.sanitized',
-  NAVIGATION_CHECK: 'navigation.check',
-  BLOCKER_CHECK: 'blocker.check',
-})
-
-export type VisibleAction = typeof VISIBLE_ACTIONS[keyof typeof VISIBLE_ACTIONS]
-
-export type VisibleActionRequest = {
-  protocol: typeof VISIBLE_ACTION_PROTOCOL_VERSION
-  requestId: string
-  provider: ProviderId
-  action: VisibleAction
-  payload: Record<string, unknown>
-}
+import type {
+  AttachmentInput,
+  DeepSeekMode,
+  DoubaoMode,
+  DoubaoSkill,
+  VisibleAction,
+  VisibleActionProtocolVersion,
+  VisibleActionRequest,
+  VisibleActionWireRequest,
+} from '../providers/contracts.js'
 
 export type VisibleActionError = {
   code: string
@@ -40,7 +72,7 @@ export type VisibleActionError = {
 
 export type VisibleActionResponse =
   | {
-    protocol: typeof VISIBLE_ACTION_PROTOCOL_VERSION
+    protocol: VisibleActionProtocolVersion
     requestId: string
     provider: ProviderId
     action: VisibleAction
@@ -49,7 +81,7 @@ export type VisibleActionResponse =
     error: null
   }
   | {
-    protocol: typeof VISIBLE_ACTION_PROTOCOL_VERSION
+    protocol: VisibleActionProtocolVersion
     requestId: string | null
     provider: ProviderId | null
     action: VisibleAction | null
@@ -60,7 +92,53 @@ export type VisibleActionResponse =
 
 export type AuthStatusResult = {
   state: 'authenticated' | 'unauthenticated' | 'unknown'
+  access: ProviderAccessClass
   visibleProof: string
+  account?: {
+    name: string | null
+    subscription: string | null
+    tier: ProviderAccountTier
+    subscriptionEvidence: {
+      status: 'observed' | 'derived' | 'unknown'
+      source: string | null
+    }
+  }
+}
+
+export type CapabilityInspectResult = {
+  visibleProof: string
+  capabilities: Readonly<Record<ProviderCapabilityId, ProviderCapabilityInspection>>
+}
+
+export type ProviderCapabilityInspection = {
+  capability: ProviderCapabilityId
+  availability: 'available' | 'unavailable' | 'unknown'
+  visibleProof: string
+  reason: string | null
+  actions?: readonly VisibleAction[]
+  native: {
+    resourceKind: ProviderCapabilityResourceKind | null
+    availability: 'available' | 'unavailable' | 'unknown'
+    visibleProof: string | null
+    reason: string | null
+    identity?: {
+      provider: ProviderId
+      canonicalUrl: string | null
+    } | null
+    updateInstructions?: {
+      availability: 'available' | 'unavailable' | 'unknown'
+      visibleProof: string | null
+      reason: string | null
+    }
+  }
+  fallback: {
+    resourceKind: ProviderCapabilityResourceKind | null
+    availability: 'available' | 'unavailable' | 'unknown'
+    mode: 'conversation' | null
+    visibleProof: string | null
+    reason: string | null
+  }
+  stability: ProviderCapabilityStability
 }
 
 export type Choice = {
@@ -87,9 +165,147 @@ export type ChoiceSelectResult = {
   reason: 'unsupported_by_provider'
 }
 
+export type QwenModeChoice = {
+  mode: string
+  enabled: boolean
+  selected: boolean
+}
+
+export type QwenModeInspectResult = {
+  supported: true
+  active: {
+    mode: string
+    variant: string | null
+  }
+  modes: readonly QwenModeChoice[]
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available'
+}
+
+export type QwenModeSelectResult = {
+  supported: true
+  selectedMode: string
+  selectedVariant: string | null
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_mode_not_found' | 'exact_variant_not_found'
+}
+
+export type DeepSeekModeChoice = {
+  mode: DeepSeekMode
+  enabled: boolean
+  selected: boolean
+  controls: {
+    deepThink: boolean
+    search: boolean
+    fileUpload: boolean
+    imageFileSelection: boolean
+  }
+}
+
+export type DeepSeekModeInspectResult = {
+  supported: true
+  activeMode: DeepSeekMode
+  modes: readonly DeepSeekModeChoice[]
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available'
+}
+
+export type DeepSeekModeSelectResult = {
+  supported: true
+  selectedMode: DeepSeekMode
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_mode_not_found'
+}
+
+export type DeepSeekToggleInspectResult = {
+  supported: true
+  activeMode: DeepSeekMode
+  enabled: boolean
+} | {
+  supported: false
+  activeMode: DeepSeekMode | null
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'unavailable_in_mode'
+}
+
+export type DeepSeekToggleSelectResult = {
+  supported: true
+  activeMode: DeepSeekMode
+  enabled: boolean
+  visibleProof: string
+} | {
+  supported: false
+  activeMode: DeepSeekMode | null
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'unavailable_in_mode'
+}
+
+export type DoubaoModeChoice = {
+  mode: DoubaoMode
+  nativeLabel: string
+  description: string
+  canonicalCapabilities: readonly string[]
+  enabled: boolean
+  selected: boolean
+  reason: 'upgrade_required' | null
+}
+
+export type DoubaoModeInspectResult = {
+  supported: true
+  activeMode: DoubaoMode
+  modes: readonly DoubaoModeChoice[]
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available'
+}
+
+export type DoubaoModeSelectResult = {
+  supported: true
+  selectedMode: DoubaoMode
+  nativeLabel: string
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_mode_not_found' | 'mode_unavailable'
+}
+
+export type DoubaoSkillChoice = {
+  skill: DoubaoSkill
+  nativeLabel: string
+  canonicalCapabilities: readonly string[]
+  enabled: boolean
+  selected: boolean
+  reason: 'desktop_app_required' | null
+}
+
+export type DoubaoSkillInspectResult = {
+  supported: true
+  activeSkill: DoubaoSkill
+  skills: readonly DoubaoSkillChoice[]
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available'
+}
+
+export type DoubaoSkillSelectResult = {
+  supported: true
+  selectedSkill: DoubaoSkill
+  nativeLabel: string
+  visibleProof: string
+} | {
+  supported: false
+  reason: 'unsupported_by_provider' | 'selector_not_available' | 'exact_skill_not_found' | 'skill_unavailable'
+}
+
 export type FileUploadResult = {
+  acceptance: 'selected' | 'accepted'
+  visibleProof: string
   attachments: readonly {
-    protocol: typeof VISIBLE_ATTACHMENT_PROTOCOL_VERSION
+    protocol: typeof VISIBLE_ATTACHMENT_SCHEMA_ID
     bundleId: string
     attachmentId: string
     name: string
@@ -99,6 +315,107 @@ export type FileUploadResult = {
     visible: true
   }[]
 }
+
+type WorkspaceInstructionOutcome =
+  | 'not_requested'
+  | 'applied_on_creation'
+  | 'already_equivalent'
+  | 'skipped_on_reuse'
+  | 'unavailable'
+
+type WorkspaceEnsureResultBase = {
+  requestedMode: 'auto' | 'native' | 'conversation'
+  resolvedMode: 'native' | 'conversation'
+  name: string
+  scope: {
+    provider: ProviderId
+    profileId: string
+  }
+  instructionOutcome: WorkspaceInstructionOutcome
+  availability: 'available'
+  visibleProof: string
+  reason: string | null
+}
+
+export type NativeWorkspaceEnsureResult = WorkspaceEnsureResultBase & {
+  mode: 'native'
+  resolvedMode: 'native'
+  identity: {
+    provider: ProviderId
+    name: string
+    resourceId: string
+    canonicalUrl: string
+  }
+  resource: {
+    kind: 'project'
+    native: true
+    disposition: 'created' | 'reused'
+    id: string
+    canonicalUrl: string
+  }
+  native: {
+    resourceKind: 'project'
+    availability: 'available'
+    canonicalUrl: string
+    visibleProof: string
+    reason: null
+    updateInstructions: {
+      availability: 'available' | 'unavailable'
+      visibleProof: string | null
+      reason: string | null
+    }
+  }
+  updateInstructions: {
+    availability: 'available' | 'unavailable'
+    visibleProof: string | null
+    reason: string | null
+  }
+  fallback: null
+}
+
+export type ConversationWorkspaceEnsureResult = WorkspaceEnsureResultBase & {
+  mode: 'conversation'
+  resolvedMode: 'conversation'
+  identity: {
+    provider: ProviderId
+    name: string
+    resourceId: null
+    canonicalUrl: string | null
+  }
+  resource: {
+    kind: 'conversation'
+    native: false
+    disposition: 'fallback'
+    id: null
+    canonicalUrl: string | null
+  }
+  native: {
+    resourceKind: 'project'
+    availability: 'unavailable'
+    canonicalUrl: null
+    visibleProof: null
+    reason: string
+    updateInstructions: {
+      availability: 'unavailable'
+      visibleProof: null
+      reason: string
+    }
+  }
+  updateInstructions: {
+    availability: 'unavailable'
+    visibleProof: null
+    reason: string
+  }
+  fallback: {
+    mode: 'conversation'
+    resourceKind: 'conversation'
+    availability: 'available'
+  } | null
+}
+
+export type WorkspaceEnsureResult =
+  | NativeWorkspaceEnsureResult
+  | ConversationWorkspaceEnsureResult
 
 export type PromptInputResult = {
   visible: true
@@ -119,6 +436,7 @@ export type ResponseReadResult = {
   text: string
   citations: readonly VisibleCitation[]
   visibleProof: string
+  outputSavings?: import('../output-savings/index.js').OutputSavingsResult
 }
 
 export type VisibleCitation = {
@@ -127,6 +445,20 @@ export type VisibleCitation = {
 }
 
 export type SnapshotResult = {
+  status: 'snapshotted'
+  provider: ProviderId
+  capturedAt: string
+  url: string
+  title: string
+  sanitized: true
+  includeText: false
+  html: string
+  selectorProbes: {
+    composer: number
+    authenticatedAccount: number
+    login: number
+    blocker: number
+  }
   page: {
     origin: string
   }
@@ -134,6 +466,10 @@ export type SnapshotResult = {
     tag: string
     role?: string
     inputType?: string
+    dataTestId?: string
+    ariaLabel?: string
+    placeholder?: string
+    text?: string
     disabled: boolean
     visible: boolean
   }[]
@@ -154,7 +490,8 @@ export type VisibleBlocker = {
   visibleProof: string
   provider: ProviderId
   url: string
-  family?: 'recaptcha' | 'cloudflare' | 'hcaptcha' | 'arkose' | 'provider_sign_in' | 'rate_limit' | 'plan_limit'
+  family?: 'recaptcha' | 'cloudflare' | 'hcaptcha' | 'arkose' | 'provider_sign_in' | 'rate_limit' | 'plan_limit' | 'availability'
+  retryAfterSeconds?: number | undefined
 }
 
 export type BlockerCheckResult = {
@@ -163,11 +500,28 @@ export type BlockerCheckResult = {
   blockers: readonly VisibleBlocker[]
 }
 
-export type VisibleActionResult =
+type VisibleActionResultBase = {
+  availability?: 'available' | 'unavailable' | 'unknown'
+  reason?: string | null
+}
+
+export type VisibleActionResult = (
+  | CapabilityInspectResult
   | AuthStatusResult
   | ChoiceInspectResult
   | ChoiceSelectResult
+  | QwenModeInspectResult
+  | QwenModeSelectResult
+  | DeepSeekModeInspectResult
+  | DeepSeekModeSelectResult
+  | DeepSeekToggleInspectResult
+  | DeepSeekToggleSelectResult
+  | DoubaoModeInspectResult
+  | DoubaoModeSelectResult
+  | DoubaoSkillInspectResult
+  | DoubaoSkillSelectResult
   | FileUploadResult
+  | WorkspaceEnsureResult
   | PromptInputResult
   | PromptClearResult
   | PromptSubmitResult
@@ -175,40 +529,14 @@ export type VisibleActionResult =
   | SnapshotResult
   | NavigationCheckResult
   | BlockerCheckResult
-
-export type AttachmentInput = {
-  protocol: typeof VISIBLE_ATTACHMENT_PROTOCOL_VERSION
-  bundleId: string
-  attachmentId: string
-  name: string
-  type: string
-  size: number
-  sha256: string
-}
-
-const ACTIONS = Object.freeze(Object.values(VISIBLE_ACTIONS)) as readonly VisibleAction[]
-const ACTION_SET = new Set<string>(ACTIONS)
-const EMPTY_PAYLOAD_ACTIONS = new Set<VisibleAction>([
-  VISIBLE_ACTIONS.AUTH_STATUS,
-  VISIBLE_ACTIONS.MODEL_INSPECT,
-  VISIBLE_ACTIONS.EFFORT_INSPECT,
-  VISIBLE_ACTIONS.PROMPT_CLEAR,
-  VISIBLE_ACTIONS.PROMPT_SUBMIT,
-  VISIBLE_ACTIONS.RESPONSE_READ,
-  VISIBLE_ACTIONS.SNAPSHOT_SANITIZED,
-  VISIBLE_ACTIONS.NAVIGATION_CHECK,
-  VISIBLE_ACTIONS.BLOCKER_CHECK,
-])
+) & VisibleActionResultBase
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
-const LABEL_MAX_BYTES = 512
-const PROMPT_MAX_BYTES = 1024 * 1024
-const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
 export function createVisibleActionRequest(
-  input: Omit<Partial<VisibleActionRequest>, 'protocol'> & Record<string, unknown>
+  input: Omit<Partial<VisibleActionWireRequest>, 'protocol'> & Record<string, unknown>
 ): VisibleActionRequest {
   return validateVisibleActionRequest({
-    protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+    protocol: VISIBLE_ACTION_SCHEMA_ID,
     requestId: typeof input.requestId === 'string' ? input.requestId : randomUUID(),
     provider: input.provider,
     action: input.action,
@@ -221,94 +549,31 @@ export function validateVisibleActionRequest(input: unknown): VisibleActionReque
     throw tokenlessError('invalid_visible_action_request', 'Visible action request must be an object.')
   }
   requireExactKeys(input, ['protocol', 'requestId', 'provider', 'action', 'payload'], 'invalid_visible_action_request')
-  if (input.protocol !== VISIBLE_ACTION_PROTOCOL_VERSION) {
+  if (!isVisibleActionProtocolVersion(input.protocol)) {
     throw tokenlessError('invalid_visible_action_protocol', 'Visible action protocol version is not supported.')
   }
   if (typeof input.requestId !== 'string' || !REQUEST_ID_PATTERN.test(input.requestId)) {
     throw tokenlessError('invalid_visible_action_request_id', 'Visible action request id is invalid.')
   }
-  const provider = getProviderById(input.provider)
+  const provider = getProviderDescriptorById(input.provider)
   if (!provider) {
     throw tokenlessError('unknown_visible_provider', 'Visible action provider is not supported.')
   }
-  if (typeof input.action !== 'string' || !ACTION_SET.has(input.action)) {
+  if (!isVisibleAction(input.action)) {
     throw tokenlessError('unknown_visible_action', 'Visible action is not supported.')
   }
   if (!isPlainRecord(input.payload)) {
     throw tokenlessError('invalid_visible_action_payload', 'Visible action payload must be an object.')
   }
-  validatePayload(input.action as VisibleAction, input.payload)
+  const action = input.action
+  const payload = validateVisibleActionPayload(action, input.payload)
   return {
-    protocol: VISIBLE_ACTION_PROTOCOL_VERSION,
+    protocol: input.protocol,
     requestId: input.requestId,
     provider: provider.id,
-    action: input.action as VisibleAction,
-    payload: input.payload,
-  }
-}
-
-export function validateAttachmentInput(input: unknown): AttachmentInput {
-  if (!isPlainRecord(input)) throw tokenlessError('invalid_visible_attachment', 'Attachment descriptor must be an object.')
-  requireExactKeys(input, ['protocol', 'bundleId', 'attachmentId', 'name', 'type', 'size', 'sha256'], 'invalid_visible_attachment')
-  if (input.protocol !== VISIBLE_ATTACHMENT_PROTOCOL_VERSION) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment protocol is invalid.')
-  }
-  if (typeof input.bundleId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.bundleId)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment bundle id is invalid.')
-  }
-  if (typeof input.attachmentId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.attachmentId)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment id is invalid.')
-  }
-  if (typeof input.name !== 'string' || input.name.length < 1 || Buffer.byteLength(input.name, 'utf8') > 255 || /[/\\\u0000-\u001f\u007f]/.test(input.name)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment name is invalid.')
-  }
-  if (typeof input.type !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$/.test(input.type)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment media type is invalid.')
-  }
-  if (typeof input.size !== 'number' || !Number.isSafeInteger(input.size) || input.size < 0 || input.size > 512 * 1024 * 1024) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment size is invalid.')
-  }
-  if (typeof input.sha256 !== 'string' || !SHA256_PATTERN.test(input.sha256)) {
-    throw tokenlessError('invalid_visible_attachment', 'Attachment sha256 is invalid.')
-  }
-  return input as AttachmentInput
-}
-
-function validatePayload(action: VisibleAction, payload: Record<string, unknown>) {
-  if (EMPTY_PAYLOAD_ACTIONS.has(action)) {
-    requireExactKeys(payload, [], 'invalid_visible_action_payload')
-    return
-  }
-  if (action === VISIBLE_ACTIONS.MODEL_SELECT || action === VISIBLE_ACTIONS.EFFORT_SELECT) {
-    requireExactKeys(payload, ['label'], 'invalid_visible_action_payload')
-    validateVisibleLabel(payload.label)
-    return
-  }
-  if (action === VISIBLE_ACTIONS.PROMPT_INPUT) {
-    requireExactKeys(payload, ['text'], 'invalid_visible_action_payload')
-    if (typeof payload.text !== 'string' || Buffer.byteLength(payload.text, 'utf8') > PROMPT_MAX_BYTES) {
-      throw tokenlessError('invalid_visible_prompt', 'Prompt text is invalid or too large.')
-    }
-    return
-  }
-  if (action === VISIBLE_ACTIONS.FILE_UPLOAD) {
-    requireExactKeys(payload, ['attachments'], 'invalid_visible_action_payload')
-    if (!Array.isArray(payload.attachments) || payload.attachments.length < 1 || payload.attachments.length > 100) {
-      throw tokenlessError('invalid_visible_attachment', 'File upload requires one to one hundred attachments.')
-    }
-    for (const attachment of payload.attachments) validateAttachmentInput(attachment)
-    return
-  }
-  throw tokenlessError('unknown_visible_action', 'Visible action is not supported.')
-}
-
-function validateVisibleLabel(value: unknown) {
-  if (typeof value !== 'string' || !/\S/u.test(value) || Buffer.byteLength(value, 'utf8') > LABEL_MAX_BYTES) {
-    throw tokenlessError('invalid_visible_label', 'Visible selection label is invalid.')
-  }
-  if (/[\u0000-\u001f\u007f]/.test(value)) {
-    throw tokenlessError('invalid_visible_label', 'Visible selection label contains control characters.')
-  }
+    action,
+    payload,
+  } as VisibleActionRequest
 }
 
 function requireExactKeys(record: Record<string, unknown>, keys: readonly string[], code: string) {

@@ -3,9 +3,15 @@ import { constants as fsConstants } from 'node:fs'
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
+import { getProviderDescriptorById } from '../../providers/registry.js'
 import { tokenlessError } from '../errors.js'
 import { withPrivateSqliteWriterLock } from './sqlite-lock.js'
-import type { ProviderId } from '../providers.js'
+import type {
+  ProviderAccessClass,
+  ProviderAccountTier,
+  ProviderId,
+} from '../../providers/registry.js'
+import type { BrowserRuntimeBinding } from '../../browser-runtime/types.js'
 
 export type ProfileLifecycleState = 'created' | 'importing' | 'ready' | 'removed' | 'failed'
 export type ManagedProfileLabelOrigin = 'slug' | 'import' | 'user'
@@ -13,7 +19,13 @@ export type ManagedProfileLabelOrigin = 'slug' | 'import' | 'user'
 export type ProviderStatus = {
   provider: ProviderId
   auth: 'authenticated' | 'unauthenticated' | 'unknown'
+  access: ProviderAccessClass
   checkedAt: string
+  account?: {
+    name: string | null
+    subscription: string | null
+    tier: ProviderAccountTier
+  }
 }
 
 export type ManagedProfileRecord = {
@@ -25,11 +37,13 @@ export type ManagedProfileRecord = {
   lifecycle: ProfileLifecycleState
   createdAt: string
   updatedAt: string
+  runtimeBinding?: BrowserRuntimeBinding | undefined
   import?: {
     source: string
     profileDirectoryKey: string
     importedAt: string
     browser?: string | undefined
+    browserVersion?: string | undefined
     providers?: readonly ProviderId[] | undefined
   }
   lastObservedAuth: Partial<Record<ProviderId, ProviderStatus>>
@@ -47,6 +61,7 @@ export type AddProfileOptions = {
   labelOrigin?: ManagedProfileLabelOrigin
   setDefault?: boolean
   lifecycle?: ProfileLifecycleState
+  runtimeBinding?: BrowserRuntimeBinding
 }
 
 export type ProfileRegistryPaths = {
@@ -92,6 +107,7 @@ export class ManagedProfileRegistry {
         lifecycle,
         createdAt: now,
         updatedAt: now,
+        ...(options.runtimeBinding ? { runtimeBinding: validateRuntimeBinding(options.runtimeBinding) } : {}),
         lastObservedAuth: {},
       }
       await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -131,6 +147,26 @@ export class ManagedProfileRegistry {
       data.defaultProfile = normalized
       await this.writeUnlocked(data)
       return record
+    })
+  }
+
+  async updateLabel(slug: string, label: string): Promise<ManagedProfileRecord> {
+    return await this.withWriteLock(async () => {
+      const normalized = normalizeSlug(slug)
+      const data = await this.readUnlocked()
+      const record = data.profiles[normalized]
+      if (!record || record.lifecycle === 'removed') {
+        throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
+      }
+      const updated: ManagedProfileRecord = {
+        ...record,
+        label: normalizeLabel(label, record.slug),
+        labelOrigin: 'user',
+        updatedAt: new Date().toISOString(),
+      }
+      data.profiles[normalized] = updated
+      await this.writeUnlocked(data)
+      return updated
     })
   }
 
@@ -194,7 +230,30 @@ export class ManagedProfileRegistry {
     })
   }
 
-  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; profileName?: string; importedAt?: string; browser?: string; providers?: readonly ProviderId[] }): Promise<ManagedProfileRecord> {
+  async bindRuntime(slug: string, runtimeBinding: BrowserRuntimeBinding): Promise<ManagedProfileRecord> {
+    return await this.withWriteLock(async () => {
+      const data = await this.readUnlocked()
+      const record = data.profiles[normalizeSlug(slug)]
+      if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
+      const binding = validateRuntimeBinding(runtimeBinding)
+      if (record.runtimeBinding && !sameRuntimeBinding(record.runtimeBinding, binding)) {
+        throw tokenlessError(
+          'profile_runtime_rebind_blocked',
+          `Managed profile '${record.slug}' is already bound to ${record.runtimeBinding.runtimeId}; create a clean profile for ${binding.runtimeId}.`,
+        )
+      }
+      const updated: ManagedProfileRecord = {
+        ...record,
+        runtimeBinding: binding,
+        updatedAt: new Date().toISOString(),
+      }
+      data.profiles[updated.slug] = updated
+      await this.writeUnlocked(data)
+      return updated
+    })
+  }
+
+  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; profileName?: string; importedAt?: string; browser?: string; browserVersion?: string | null; providers?: readonly ProviderId[] }): Promise<ManagedProfileRecord> {
     return await this.withWriteLock(async () => {
       const data = await this.readUnlocked()
       const record = data.profiles[normalizeSlug(slug)]
@@ -215,6 +274,7 @@ export class ManagedProfileRegistry {
           profileDirectoryKey: imported.profileDirectoryKey.slice(0, 128),
           importedAt: imported.importedAt === undefined ? now : parseIso(imported.importedAt),
           ...(imported.browser ? { browser: normalizeImportedBrowser(imported.browser) } : {}),
+          ...(imported.browserVersion ? { browserVersion: normalizeImportedBrowserVersion(imported.browserVersion) } : {}),
           ...(imported.providers ? { providers: normalizeImportedProviders(imported.providers) } : {}),
         },
       }
@@ -353,6 +413,7 @@ function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegi
       lifecycle: parseLifecycle(record.lifecycle),
       createdAt: parseIso(record.createdAt),
       updatedAt: parseIso(record.updatedAt),
+      ...parseRuntimeBinding(record.runtimeBinding),
       ...importMetadata,
       lastObservedAuth: parseProviderStatuses(record.lastObservedAuth),
     }
@@ -366,6 +427,44 @@ function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegi
     defaultProfile,
     profiles,
   }
+}
+
+function parseRuntimeBinding(value: unknown): Pick<ManagedProfileRecord, 'runtimeBinding'> | Record<string, never> {
+  if (value === undefined) return {}
+  return { runtimeBinding: validateRuntimeBinding(value) }
+}
+
+function validateRuntimeBinding(value: unknown): BrowserRuntimeBinding {
+  if (!isRecord(value)) {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile runtime binding is malformed.')
+  }
+  const family = value.family
+  if (family !== 'system' && family !== 'managed-chromium' && family !== 'cloak' && family !== 'test') {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile runtime family is invalid.')
+  }
+  if (
+    typeof value.runtimeId !== 'string' || !value.runtimeId || value.runtimeId.length > 160 ||
+    typeof value.browserId !== 'string' || !value.browserId || value.browserId.length > 64 ||
+    typeof value.createdWithVersion !== 'string' || !/^\d+\.\d+\.\d+\.\d+(?:\.\d+)?$/.test(value.createdWithVersion) ||
+    value.profileFormat !== 1
+  ) {
+    throw tokenlessError('invalid_profile_registry', 'Managed profile runtime binding is invalid.')
+  }
+  return {
+    runtimeId: value.runtimeId,
+    family,
+    browserId: value.browserId,
+    createdWithVersion: value.createdWithVersion,
+    profileFormat: 1,
+  }
+}
+
+function sameRuntimeBinding(left: BrowserRuntimeBinding, right: BrowserRuntimeBinding) {
+  return left.runtimeId === right.runtimeId &&
+    left.family === right.family &&
+    left.browserId === right.browserId &&
+    left.createdWithVersion === right.createdWithVersion &&
+    left.profileFormat === right.profileFormat
 }
 
 function parseLabelOrigin(value: unknown, label: string, slug: string, imported: boolean): ManagedProfileLabelOrigin {
@@ -384,10 +483,73 @@ function parseProviderStatuses(value: unknown): Partial<Record<ProviderId, Provi
     statuses[provider] = {
       provider,
       auth,
+      access: parseProviderAccess(status.access, auth),
       checkedAt: parseIso(status.checkedAt),
+      ...parseProviderAccount(status.account),
     }
   }
   return statuses
+}
+
+function parseProviderAccount(value: unknown): Pick<ProviderStatus, 'account'> | Record<string, never> {
+  if (!isRecord(value)) return {}
+  const name = value.name === null
+    ? null
+    : typeof value.name === 'string'
+      ? normalizeProviderAccountValue(value.name)
+      : undefined
+  const subscription = value.subscription === null
+    ? null
+    : typeof value.subscription === 'string'
+      ? normalizeProviderAccountValue(value.subscription)
+      : undefined
+  if (name === undefined || subscription === undefined) return {}
+  const tier = parseProviderAccountTier(value.tier)
+  return {
+    account: {
+      name,
+      subscription,
+      tier,
+    },
+  }
+}
+
+function parseProviderAccess(
+  value: unknown,
+  auth: ProviderStatus['auth'],
+): ProviderStatus['access'] {
+  if (
+    value === 'guest' ||
+    value === 'sign_in_required' ||
+    value === 'signed_in_free' ||
+    value === 'signed_in_paid' ||
+    value === 'signed_in_unknown' ||
+    value === 'unknown'
+  ) return value
+  return auth === 'authenticated' ? 'signed_in_unknown' : 'unknown'
+}
+
+function parseProviderAccountTier(value: unknown): NonNullable<ProviderStatus['account']>['tier'] {
+  if (!isRecord(value)) return { class: 'signed_in_unknown', label: null }
+  const tierClass = value.class
+  if (
+    tierClass !== 'signed_in_free' &&
+    tierClass !== 'signed_in_paid' &&
+    tierClass !== 'signed_in_unknown'
+  ) return { class: 'signed_in_unknown', label: null }
+  const label = value.label === null
+    ? null
+    : typeof value.label === 'string'
+      ? normalizeProviderAccountValue(value.label)
+      : null
+  return {
+    class: tierClass,
+    label,
+  }
+}
+
+function normalizeProviderAccountValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 120) || null
 }
 
 function parseImportMetadata(value: unknown): Pick<ManagedProfileRecord, 'import'> | Record<string, never> {
@@ -399,9 +561,18 @@ function parseImportMetadata(value: unknown): Pick<ManagedProfileRecord, 'import
       profileDirectoryKey: value.profileDirectoryKey.slice(0, 128),
       importedAt: parseIso(value.importedAt),
       ...(typeof value.browser === 'string' ? { browser: normalizeImportedBrowser(value.browser) } : {}),
+      ...(typeof value.browserVersion === 'string' ? { browserVersion: normalizeImportedBrowserVersion(value.browserVersion) } : {}),
       ...(value.providers === undefined ? {} : { providers: normalizeImportedProviders(value.providers) }),
     },
   }
+}
+
+function normalizeImportedBrowserVersion(value: string) {
+  const version = value.trim()
+  if (!/^\d+(?:\.\d+){1,3}$/.test(version)) {
+    throw tokenlessError('invalid_imported_browser_version', 'Imported browser version is invalid.')
+  }
+  return version
 }
 
 function normalizeLabel(label: string | undefined, fallback: string) {
@@ -454,7 +625,7 @@ function parseIso(value: unknown) {
 }
 
 function isProviderId(value: string): value is ProviderId {
-  return value === 'chatgpt' || value === 'claude' || value === 'gemini' || value === 'grok'
+  return Boolean(getProviderDescriptorById(value))
 }
 
 function isUuid(value: string) {

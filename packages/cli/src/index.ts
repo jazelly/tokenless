@@ -1,38 +1,67 @@
 import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { TokenlessLanguage } from './localization.js'
 
 export {
   DEFAULT_DAEMON_URL,
-  MAX_NATIVE_MESSAGE_BYTES,
+  MAX_DAEMON_REQUEST_BYTES,
+  browserRuntimeStatus,
   cancelDaemonJob,
-  claimNextDaemonJob,
-  completeDaemonJob,
   createDaemonJob,
   daemonUrl,
+  drainDaemonReplay,
   getDaemonJob,
+  getProviderCapacity,
   listDaemonJobs,
+  markDaemonJobReported,
+  openBrowserRuntimeProfile,
+  openBrowserRuntimeProviderTabs,
+  openTokenlessDashboard,
+  quiesceBrowserRuntime,
   readDaemonToken,
+  resolveProviderConversation,
+  resolveProviderMapping,
   resumeDaemonJob,
+  shutdownDaemon,
   waitDaemonJobResult,
 } from './daemon-client.js'
 
 export type {
-  ClaimNextDaemonJobOptions,
   CancelDaemonJobOptions,
-  CompleteDaemonJobOptions,
   CreateDaemonJobOptions,
-  DaemonClaimedJob,
+  DrainDaemonReplayOptions,
+  DaemonReplaySummary,
   DaemonClientOptions,
   DaemonJob,
   GetDaemonJobOptions,
+  GetProviderCapacityOptions,
   ListDaemonJobsOptions,
+  MarkDaemonJobReportedOptions,
+  BrowserRuntimeStatus,
+  BrowserRuntimeOpenProfileOptions,
+  BrowserRuntimeOpenProfileResponse,
+  BrowserRuntimeOpenProviderTabsOptions,
+  BrowserRuntimeOpenProviderTabsResponse,
+  OpenDashboardOptions,
+  OpenDashboardResponse,
   ResumeDaemonJobOptions,
+  ResolveProviderMappingOptions,
+  ResolveProviderConversationOptions,
+  ShutdownDaemonOptions,
+  ShutdownDaemonResponse,
   WaitDaemonJobResultOptions,
 } from './daemon-client.js'
 
-export type { TokenlessConfig } from './job-store.js'
+export type { ManagedProfilePreferences, TokenlessConfig } from './job-store.js'
+export type { OutputSavingsConfig } from './job-store.js'
 export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
+export type { BrowserConnectionMode } from './browser-connection-mode.js'
+
+export {
+  BROWSER_CONNECTION_MODES,
+  normalizeBrowserConnectionMode,
+} from './browser-connection-mode.js'
 
 export {
   BROWSER_VISIBILITIES,
@@ -43,62 +72,88 @@ export {
 export {
   configPath,
   deriveTaskId,
-  NATIVE_HOST_NAME,
   normalizeBrowserId,
-  nativeMessagingHostDir,
-  nativeMessagingHostDirs,
+  normalizeManagedProfileProxy,
   readTokenlessConfig,
-  TOKENLESS_CONFIG_PROTOCOL_VERSION,
+  TOKENLESS_CONFIG_SCHEMA_ID,
   tokenlessHome,
   writeTokenlessConfig,
+  hasConfiguredTokenlessLanguage,
 } from './job-store.js'
 
 export {
+  TOKENLESS_LANGUAGES,
+  detectSystemLanguage,
+  normalizeTokenlessLanguage,
+} from './localization.js'
+
+export type { TokenlessLanguage } from './localization.js'
+
+export {
+  BROWSER_SELECTIONS,
+  SYSTEM_BROWSER_IDS,
+  BrowserRuntimeManager,
+  allManagedBrowserCatalogEntries,
+  currentBrowserRuntimePlatform,
+  managedBrowserCatalogEntry,
+  normalizeBrowserSelection,
+} from './browser-runtime/index.js'
+
+export type {
+  BrowserCandidate,
+  BrowserLaunchPolicy,
+  BrowserRuntimeBinding,
+  BrowserRuntimeFamily,
+  BrowserRuntimeInspection,
+  BrowserRuntimePlatform,
+  BrowserSelection,
+  ResolvedBrowserRuntime,
+} from './browser-runtime/index.js'
+
+export {
+  OUTPUT_SAVINGS_ESTIMATOR,
+  OUTPUT_SAVINGS_RUNTIME_CATALOG,
+  OUTPUT_SAVINGS_RUNTIME_DOWNLOAD_BYTES,
+  OUTPUT_SAVINGS_RUNTIME_ID,
+  OUTPUT_SAVINGS_RUNTIME_INSTALLED_BYTES,
+  OUTPUT_SAVINGS_RUNTIME_VERSION,
+  OutputSavingsRuntimeManager,
+} from './output-savings/index.js'
+
+export type { OutputSavingsRuntimeInspection } from './output-savings/index.js'
+export type {
+  MeasureVisibleOutput,
+  OutputSavingsMeasurement,
+  OutputSavingsResult,
+  OutputSavingsUnavailable,
+} from './output-savings/index.js'
+
+export {
+  DAEMON_CONTROL_API_REVISION,
   DAEMON_LOG_FILE,
   DAEMON_PID_FILE,
-  DAEMON_PROCESS_PROTOCOL,
-  DAEMON_PROCESS_PROOF_PROTOCOL,
-  DAEMON_PROTOCOL,
-  DAEMON_READY_PROOF_PROTOCOL,
-  EXTENSION_BRIDGE_FILE,
-  EXTENSION_BRIDGE_PROTOCOL,
-  NATIVE_BINARY_BUILD_INFO_PROTOCOL,
-  NATIVE_PROTOCOL,
-  bundledRustBinaryPath,
+  DAEMON_PROCESS_SCHEMA_ID,
+  MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+  MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID_V3,
+  VISIBLE_ACTION_SCHEMA_ID,
+  VISIBLE_ACTION_SCHEMA_ID_V3,
   ensureDaemonReady,
-  inspectNativeHostManifests,
-  inspectRustBinaries,
+  ensureSetupDaemonRunnable,
   inspectManagedRuntime,
-  installNativeHost,
-  installRustRuntime,
-  installedRustBinaryPath,
   openProviderUrl,
   persistDaemonSnapshot,
   probeDaemonReady,
   providerWakeUrl,
-  readLiveBridgeMarker,
-  refreshInstalledRustBinaries,
-  refreshInstalledManagedRuntime,
   resolveChromiumBrowser,
-  resolveDaemonBinary,
-  waitForExtensionBridge,
-  windowsNativeHostRegistryCommands,
+  semanticVersionMajor,
+  stopDaemon,
 } from './runtime.js'
-
-export {
-  NATIVE_PLATFORM_PACKAGE_PROTOCOL,
-  NATIVE_PLATFORM_PACKAGES,
-  nativePlatformPackageName,
-  resolveNativePlatformPackage,
-} from './platform-package.js'
-
-export type { ResolveNativePlatformPackageOptions } from './platform-package.js'
 
 export {
   DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES,
   DEFAULT_VISIBLE_ATTACHMENT_ORPHAN_TTL_MS,
   VISIBLE_ATTACHMENT_DIRECTORY,
-  VISIBLE_ATTACHMENT_PROTOCOL,
+  VISIBLE_ATTACHMENT_SCHEMA_ID,
   cleanupOrphanedVisibleAttachmentBundles,
   createVisibleAttachmentId,
   removeStagedVisibleAttachmentBundle,
@@ -117,12 +172,11 @@ export type {
 } from './visible-attachments.js'
 
 export type {
-  BridgeMarker,
   ChromiumBrowser,
   DaemonReadyProbe,
   EnsureDaemonOptions,
-  InstallRustRuntimeOptions,
   ManagedRuntimeInspection,
+  StopDaemonResult,
 } from './runtime.js'
 
 const DEFAULT_MAX_FILE_BYTES = 24_000
@@ -135,6 +189,7 @@ type TokenlessPromptOptions = {
   turnContext?: unknown
   maxFileBytes?: number
   maxTotalBytes?: number
+  responseLanguage?: TokenlessLanguage
 }
 
 type CollectedFile = {
@@ -150,6 +205,7 @@ export async function buildTokenlessPrompt({
   turnContext,
   maxFileBytes = DEFAULT_MAX_FILE_BYTES,
   maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
+  responseLanguage = 'en',
 }: TokenlessPromptOptions = {}) {
   if (typeof userPrompt !== 'string' || userPrompt.trim() === '') {
     throw new TypeError('userPrompt must be a nonempty string.')
@@ -163,6 +219,11 @@ export async function buildTokenlessPrompt({
     '',
     '## User Prompt',
     userPrompt.trim(),
+    '',
+    '## Response Language',
+    responseLanguage === 'zh-CN'
+      ? 'Respond in Simplified Chinese unless the user prompt explicitly requests another language.'
+      : 'Respond in English unless the user prompt explicitly requests another language.',
     '',
     '## Shareable Turn Context',
     sanitizeText(turnContext ?? 'No additional shareable turn context was provided.'),

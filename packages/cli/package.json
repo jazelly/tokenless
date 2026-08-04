@@ -23,24 +23,21 @@
     "tokenless": "dist/src/tokenless.mjs"
   },
   "scripts": {
-    "build": "npm run build:js && npm run build:native",
-    "build:js": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/src/tokenless.mjs',0o755)\"",
-    "build:native": "node scripts/build-rust-binaries.mjs",
-    "lint": "tsc -p tsconfig.json --noEmit",
-    "prepack": "npm run build:js"
+    "build": "node scripts/build-package.mjs",
+    "lint": "tsc -p tsconfig.json --noEmit && svelte-check --tsconfig ./tsconfig.ui.json",
+    "prepack": "node scripts/build-package.mjs"
   },
   "dependencies": {
-    "playwright-core": "^1.53.0"
-  },
-  "optionalDependencies": {
-    "tokenless-native-darwin-arm64": "0.3.0",
-    "tokenless-native-darwin-x64": "0.3.0",
-    "tokenless-native-linux-arm64": "0.3.0",
-    "tokenless-native-linux-x64": "0.3.0",
-    "tokenless-native-win32-arm64": "0.3.0",
-    "tokenless-native-win32-x64": "0.3.0"
+    "playwright-core": "1.61.1"
   },
   "engines": {
     "node": ">=22.13.0"
+  },
+  "devDependencies": {
+    "@lucide/svelte": "1.28.0",
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "svelte": "5.56.8",
+    "svelte-check": "4.7.4",
+    "vite": "8.2.0"
   }
 }

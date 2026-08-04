@@ -1,0 +1,47 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "qwen",
+  "accountState": "signed-out-guest",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "response-complete",
+  "routeClass": "conversation",
+  "operationPhase": "response-complete",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-26",
+  "sanitizedUrl": "https://www.qianwen.com/chat/[redacted]",
+  "source": "unauthenticated-user-visible-in-app-browser-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "52af63c7a4b0c660cf593e1cf15e6e376720c078c86796e11d10d22f0fbc6b63",
+  "evidenceSelectors": [
+    {
+      "capability": "response.read",
+      "selector": ".chat-answers-card-wrap .qk-markdown.qk-markdown-complete",
+      "expectedCount": 1
+    },
+    {
+      "capability": "conversation.continue",
+      "selector": "div[contenteditable=\"true\"][role=\"textbox\"][aria-multiline=\"true\"][data-placeholder=\"向千问提问\"][data-slate-editor=\"true\"]",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [
+    {
+      "purpose": "response.not-streaming",
+      "selector": ".chat-answers-card-wrap .qk-markdown:not(.qk-markdown-complete)",
+      "expectedCount": 0
+    }
+  ],
+  "redactions": [
+    "conversation history",
+    "message content",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": [
+    "A guest prompt produced a visibly complete response and a same-origin conversation route.",
+    "The prompt, response, and private conversation identifier were reduced to redaction markers."
+  ]
+}

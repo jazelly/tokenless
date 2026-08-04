@@ -1,5 +1,6 @@
 node_modules/
 test-results/
+test/fixtures/local/
 packages/cli/npm/*/bin/
 dist/
 packages/*/dist/
@@ -10,3 +11,13 @@ packages/*/dist/
 
 .workbuddy-ai/
 docs/
+!docs/
+docs/*
+!docs/README.md
+!docs/README.zh-CN.md
+!docs/capability-matrix.md
+!docs/capability-matrix.zh-CN.md
+!docs/provider-capability-census.md
+!docs/provider-rate-limits.md
+!docs/roadmaps/
+!docs/roadmaps/**

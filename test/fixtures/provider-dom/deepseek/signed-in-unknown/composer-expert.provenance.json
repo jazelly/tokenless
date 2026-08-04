@@ -1,0 +1,30 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "deepseek",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "composer-expert",
+  "routeClass": "new-chat",
+  "operationPhase": "mode-inspection",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-08-01",
+  "sanitizedUrl": "https://chat.deepseek.com/",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "9ae22e013c8f7a11276e09f640ab0a2e9a8e16fd81dfe7a071e4692ed093069e",
+  "evidenceSelectors": [
+    { "capability": "deepseek.mode.expert", "selector": "[role=\"radio\"][aria-checked=\"true\"]", "expectedCount": 1 },
+    { "capability": "prompt.input", "selector": "textarea[name=\"search\"][placeholder=\"Message DeepSeek\"]", "expectedCount": 1 },
+    { "capability": "deepseek.deepthink", "selector": ".ds-toggle-button[aria-pressed=\"true\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "file-input-not-observed-in-expert", "selector": "input[type=\"file\"]", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "conversation history", "message content", "private route identifiers", "scripts", "styles"],
+  "notes": [
+    "Expert and DeepThink were observed together; Search and the file input were not present in this state.",
+    "No account credentials, browser storage, or unrelated account content were inspected."
+  ]
+}

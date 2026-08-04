@@ -30,49 +30,8 @@ jobs:
       - id: release
         run: node scripts/release/verify-pending.mjs "$GITHUB_OUTPUT"
 
-  publish-native:
-    needs: prepare
-    if: needs.prepare.outputs.publish == 'true'
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-14
-            platform: darwin
-            arch: arm64
-          - runner: macos-15-intel
-            platform: darwin
-            arch: x64
-          - runner: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-          - runner: ubuntu-24.04
-            platform: linux
-            arch: x64
-          - runner: windows-11-arm
-            platform: win32
-            arch: arm64
-          - runner: windows-2022
-            platform: win32
-            arch: x64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-      - name: Install npm with Trusted Publishing support
-        run: npm install --global npm@11.15.0
-      - name: Install Rust
-        run: rustup toolchain install stable --profile minimal
-      - name: Build and verify this native runtime
-        run: npm --prefix packages/cli run build:native
-      - name: Publish native runtime
-        run: node scripts/release/publish-package.mjs "packages/cli/npm/tokenless-native-${{ matrix.platform }}-${{ matrix.arch }}"
-
   publish-cli:
-    needs: [prepare, publish-native]
+    needs: prepare
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     steps:
@@ -84,16 +43,40 @@ jobs:
       - name: Install npm with Trusted Publishing support
         run: npm install --global npm@11.15.0
       - name: Install dependencies
-        run: |
-          # Native packages are published immediately before this job, so refresh
-          # their optional-dependency entries while installing the workspace.
-          rm package-lock.json
-          npm install --ignore-scripts
-      - name: Publish universal CLI after every native runtime
+        run: npm ci --ignore-scripts
+      - name: Publish CLI
         run: node scripts/release/publish-package.mjs packages/cli
 
-  clear-pending-marker:
+  create-github-release:
     needs: [prepare, publish-cli]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Extract release notes from persisted changelog
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/release/extract-changelog-section.mjs "$VERSION" /tmp/tokenless-release-notes.md
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it unchanged."
+          else
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "tokenless $TAG" \
+              --notes-file /tmp/tokenless-release-notes.md
+          fi
+
+  clear-pending-marker:
+    needs: [prepare, create-github-release]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     steps:
@@ -115,7 +98,6 @@ jobs:
           git checkout -B "$CLEANUP_BRANCH" origin/main
           node scripts/release/verify-pending.mjs /tmp/release-output
           grep -Fx "version=$VERSION" /tmp/release-output
-          rm package-lock.json
           npm install --package-lock-only --ignore-scripts
           git rm .changeset/publish-pending.json
           git add package-lock.json

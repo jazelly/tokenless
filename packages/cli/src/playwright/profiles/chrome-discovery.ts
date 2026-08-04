@@ -1,4 +1,4 @@
-import { access, readFile, stat } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir, platform } from 'node:os'
 import { basename, join, resolve, sep } from 'node:path'
 import { tokenlessError } from '../errors.js'
@@ -10,14 +10,25 @@ export type ChromeProfileCandidate = {
   profileDir: string
   name: string
   isDefault: boolean
+  browserVersion: string | null
 }
 
 export type ChromeUserDataRoot = {
   userDataDir: string
+  browserVersion: string | null
   profiles: readonly ChromeProfileCandidate[]
 }
 
-export type ManagedChromiumBrowserId = 'chrome' | 'brave'
+export const MANAGED_CHROMIUM_BROWSER_IDS = Object.freeze([
+  'chrome',
+  'brave',
+  'edge',
+  'arc',
+  'chromium',
+  'chrome-for-testing',
+] as const)
+
+export type ManagedChromiumBrowserId = typeof MANAGED_CHROMIUM_BROWSER_IDS[number]
 
 export type ChromiumUserDataRoot = ChromeUserDataRoot & {
   browser: ManagedChromiumBrowserId
@@ -43,16 +54,48 @@ export function standardChromiumUserDataDirs(
 ): string[] {
   if (browser === 'chrome') return standardChromeUserDataDirs(osPlatform, home, env)
   if (osPlatform === 'darwin') {
-    return [join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser')]
+    const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome'>, string> = {
+      brave: join('BraveSoftware', 'Brave-Browser'),
+      edge: 'Microsoft Edge',
+      arc: join('Arc', 'User Data'),
+      chromium: 'Chromium',
+      'chrome-for-testing': join('Google', 'Chrome for Testing'),
+    }
+    return [join(home, 'Library', 'Application Support', relativePaths[browser])]
   }
   if (osPlatform === 'win32') {
     const localAppData = env.LOCALAPPDATA
-    return localAppData ? [join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data')] : []
+    if (!localAppData) return []
+    const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome' | 'arc'>, string> = {
+      brave: join('BraveSoftware', 'Brave-Browser', 'User Data'),
+      edge: join('Microsoft', 'Edge', 'User Data'),
+      chromium: join('Chromium', 'User Data'),
+      'chrome-for-testing': join('Google', 'Chrome for Testing', 'User Data'),
+    }
+    if (browser === 'arc') {
+      return [
+        join(localAppData, 'Packages', 'TheBrowserCompany.Arc_ttt1ap7aakyb4', 'LocalCache', 'Local', 'Arc', 'User Data'),
+        join(localAppData, 'TheBrowserCompany', 'Arc', 'User Data'),
+      ]
+    }
+    return [join(localAppData, relativePaths[browser])]
   }
-  return [
-    join(home, '.config', 'BraveSoftware', 'Brave-Browser'),
-    join(home, '.config', 'brave'),
-  ]
+  if (browser === 'arc') return []
+  const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome' | 'arc'>, readonly string[]> = {
+    brave: [join('BraveSoftware', 'Brave-Browser'), 'brave'],
+    edge: ['microsoft-edge', 'microsoft-edge-stable'],
+    chromium: ['chromium'],
+    'chrome-for-testing': ['chrome-for-testing'],
+  }
+  return relativePaths[browser].map((relativePath) => join(home, '.config', relativePath))
+}
+
+export async function discoverKnownChromiumProfiles(options: {
+  browsers?: readonly ManagedChromiumBrowserId[]
+} = {}): Promise<ChromiumUserDataRoot[]> {
+  const browsers = options.browsers ?? MANAGED_CHROMIUM_BROWSER_IDS
+  const roots = await Promise.all(browsers.map((browser) => discoverChromiumProfiles({ browser })))
+  return roots.flat()
 }
 
 export async function discoverChromeProfiles(options: { userDataDirs?: readonly string[] } = {}): Promise<ChromeUserDataRoot[]> {
@@ -60,7 +103,7 @@ export async function discoverChromeProfiles(options: { userDataDirs?: readonly 
     browser: 'chrome',
     ...(options.userDataDirs ? { userDataDirs: options.userDataDirs } : {}),
   })
-  return roots.map(({ userDataDir, profiles }) => ({ userDataDir, profiles }))
+  return roots.map(({ userDataDir, browserVersion, profiles }) => ({ userDataDir, browserVersion, profiles }))
 }
 
 export async function discoverChromiumProfiles(options: {
@@ -71,18 +114,24 @@ export async function discoverChromiumProfiles(options: {
   const discovered: ChromeUserDataRoot[] = []
   for (const root of roots) {
     const userDataDir = resolve(root)
-    const localStatePath = join(userDataDir, 'Local State')
     try {
-      await access(localStatePath)
-      const parsed = JSON.parse(await readFile(localStatePath, 'utf8')) as unknown
-      const profileCache = readProfileCache(parsed)
-      const profiles: ChromeProfileCandidate[] = []
-      for (const [directoryKey, metadata] of Object.entries(profileCache)) {
-        const candidate = await chromeProfileCandidate(userDataDir, directoryKey, metadata)
-        if (candidate) profiles.push(candidate)
-      }
+      const rootStat = await stat(userDataDir)
+      if (!rootStat.isDirectory()) continue
+      const browserVersion = await readChromeProfileVersion(userDataDir)
+      const entries = await readdir(userDataDir, { withFileTypes: true })
+      const profiles = entries
+        .filter((entry) => entry.isDirectory() && isChromiumProfileDirectoryKey(entry.name))
+        .map((entry): ChromeProfileCandidate => ({
+          userDataDir,
+          directoryKey: entry.name,
+          profileDir: resolve(userDataDir, entry.name),
+          name: entry.name,
+          isDefault: entry.name === 'Default',
+          browserVersion,
+        }))
       discovered.push({
         userDataDir,
+        browserVersion,
         profiles: profiles.sort((left, right) => left.directoryKey.localeCompare(right.directoryKey)),
       })
     } catch (error) {
@@ -104,14 +153,24 @@ export async function resolveChromeProfile(userDataDir: string, directoryKey: st
   if (!profileStat.isDirectory()) {
     throw tokenlessError('chrome_profile_not_found', 'Chrome profile directory is not a directory.')
   }
-  const state = await readChromeLocalState(root)
-  const metadata = readProfileCache(state)[key] ?? {}
+  const browserVersion = await readChromeProfileVersion(root)
   return {
     userDataDir: root,
     directoryKey: key,
     profileDir,
-    name: typeof metadata.name === 'string' && metadata.name.trim() ? metadata.name.trim() : key,
-    isDefault: metadata.is_using_default_name === true || key === 'Default',
+    name: key,
+    isDefault: key === 'Default',
+    browserVersion,
+  }
+}
+
+export async function readChromeProfileVersion(userDataDir: string): Promise<string | null> {
+  try {
+    const value = (await readFile(resolve(userDataDir, 'Last Version'), 'utf8')).trim()
+    return /^\d+\.\d+\.\d+\.\d+$/.test(value) ? value : null
+  } catch (error) {
+    if (isIgnorableDiscoveryError(error)) return null
+    throw error
   }
 }
 
@@ -132,60 +191,12 @@ export function validateChromeProfileDirectoryKey(directoryKey: string): string 
   return directoryKey
 }
 
-export async function readChromeLocalState(userDataDir: string): Promise<Record<string, unknown>> {
-  const root = resolve(userDataDir)
-  const localStatePath = resolve(root, 'Local State')
-  if (!isPathInside(root, localStatePath)) {
-    throw tokenlessError('chrome_profile_path_escape', 'Chrome Local State path escapes its user data root.')
-  }
-  const localStateStat = await stat(localStatePath)
-  if (!localStateStat.isFile()) {
-    throw tokenlessError('chrome_local_state_missing', 'Chrome Local State is not a regular file.')
-  }
-  const parsed = JSON.parse(await readFile(localStatePath, 'utf8')) as unknown
-  if (!isRecord(parsed)) throw tokenlessError('chrome_local_state_invalid', 'Chrome Local State is malformed.')
-  return parsed
-}
-
-function readProfileCache(localState: unknown): Record<string, Record<string, unknown>> {
-  if (!isRecord(localState)) return {}
-  const profile = localState.profile
-  if (!isRecord(profile)) return {}
-  const infoCache = profile.info_cache
-  if (!isRecord(infoCache)) return {}
-  const cache: Record<string, Record<string, unknown>> = {}
-  for (const [key, metadata] of Object.entries(infoCache)) {
-    if (isRecord(metadata)) cache[key] = metadata
-  }
-  return cache
-}
-
-async function chromeProfileCandidate(userDataDir: string, directoryKey: string, metadata: Record<string, unknown>): Promise<ChromeProfileCandidate | null> {
-  let key: string
-  try {
-    key = validateChromeProfileDirectoryKey(directoryKey)
-  } catch {
-    return null
-  }
-  const profileDir = resolve(userDataDir, key)
-  if (!isPathInside(userDataDir, profileDir)) return null
-  try {
-    const profileStat = await stat(profileDir)
-    if (!profileStat.isDirectory()) return null
-  } catch {
-    return null
-  }
-  return {
-    userDataDir,
-    directoryKey: key,
-    profileDir,
-    name: typeof metadata.name === 'string' && metadata.name.trim() ? metadata.name.trim() : key,
-    isDefault: metadata.is_using_default_name === true || key === 'Default',
-  }
+function isChromiumProfileDirectoryKey(directoryKey: string) {
+  return directoryKey === 'Default' || /^Profile \d+$/.test(directoryKey)
 }
 
 function isIgnorableDiscoveryError(error: unknown) {
-  return error instanceof SyntaxError || (isRecord(error) && (error.code === 'ENOENT' || error.code === 'EACCES'))
+  return isRecord(error) && (error.code === 'ENOENT' || error.code === 'EACCES')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

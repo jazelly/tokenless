@@ -1,0 +1,46 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "qwen",
+  "accountState": "signed-out-guest",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "composer-idle",
+  "routeClass": "new-chat",
+  "operationPhase": "observed",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-26",
+  "sanitizedUrl": "https://www.qianwen.com/",
+  "source": "unauthenticated-user-visible-in-app-browser-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "6c4a17224f7a0589b33d1b655b4210afc80e4611c78366036ee89762a049111f",
+  "evidenceSelectors": [
+    {
+      "capability": "session.guest",
+      "selector": "button:has-text(\"登录\")",
+      "expectedCount": 1
+    },
+    {
+      "capability": "prompt.input",
+      "selector": "div[contenteditable=\"true\"][role=\"textbox\"][aria-multiline=\"true\"][data-placeholder=\"向千问提问\"][data-slate-editor=\"true\"]",
+      "expectedCount": 1
+    },
+    {
+      "capability": "prompt.submit",
+      "selector": "button[aria-label=\"发送消息\"]",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "conversation history",
+    "message content",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": [
+    "The guest composer and disabled empty-state submit control were observed on the public Qwen product surface.",
+    "No account credentials or browser storage were inspected."
+  ]
+}

@@ -38,16 +38,30 @@ test('provider control commands validate generic model and effort labels while k
       {
         args: ['provider-controls', '--provider', 'gemini', '--model', 'Flash'],
         code: 'controls_unsupported_for_action',
+        usage: true,
       },
       {
         args: ['chatgpt-configure', '--provider', 'gemini', '--model', 'Flash'],
         code: 'chatgpt_controls_unsupported',
+      },
+      {
+        args: ['provider-configure', '--provider', 'deepseek', '--deepseek-search', 'on'],
+        code: 'deepseek_search_requires_instant',
+      },
+      {
+        args: ['provider-configure', '--provider', 'claude', '--deepseek-mode', 'Instant'],
+        code: 'deepseek_control_unsupported',
       },
     ]) {
       const completed = await runCli([...fixture.args, '--home', home, '--json'])
       assert.equal(completed.exitCode, 1, `${completed.stderr}\n${completed.stdout}`)
       const payload = JSON.parse(completed.stdout)
       assert.equal(payload.error.code, fixture.code)
+      if (fixture.usage) {
+        assert.deepEqual(payload.error.usage.invalidOptions, ['--model'])
+        assert.ok(payload.error.usage.usage.some((line) => line.startsWith('tokenless provider-controls ')))
+        assert.ok(payload.error.usage.commonOptions.includes('-h, --help'))
+      }
     }
   } finally {
     fs.rmSync(home, { recursive: true, force: true })
@@ -77,6 +91,18 @@ test('provider-action maps only the strict priority payload for each action', as
         code: 'duplicate_effort',
       },
       {
+        args: ['provider-action', '--provider', 'qwen', '--action', 'qwen.mode.select'],
+        code: 'missing_visible_action_qwen_mode',
+      },
+      {
+        args: ['provider-action', '--provider', 'claude', '--action', 'qwen.mode.inspect'],
+        code: 'qwen_mode_unsupported',
+      },
+      {
+        args: ['provider-action', '--provider', 'qwen', '--action', 'qwen.mode.select', '--qwen-mode', 'Deep Research\nAdvanced'],
+        code: 'invalid_qwen_mode',
+      },
+      {
         args: ['provider-action', '--provider', 'chatgpt', '--action', 'file.upload'],
         code: 'missing_visible_action_file',
       },
@@ -96,11 +122,50 @@ test('provider-action maps only the strict priority payload for each action', as
         args: ['provider-action', '--provider', 'gemini', '--action', 'model.select', '--model', 'Flash', '--model-fallback', 'Pro'],
         code: 'model_fallback_unsupported',
       },
+      {
+        args: ['provider-action', '--provider', 'deepseek', '--action', 'deepseek.mode.select'],
+        code: 'missing_visible_action_deepseek_mode',
+      },
+      {
+        args: ['provider-action', '--provider', 'qwen', '--action', 'deepseek.search.inspect'],
+        code: 'deepseek_control_unsupported',
+      },
     ]) {
       const completed = await runCli([...fixture.args, '--home', home, '--json'])
       assert.equal(completed.exitCode, 1, `${completed.stderr}\n${completed.stdout}`)
       const payload = JSON.parse(completed.stdout)
       assert.equal(payload.error.code, fixture.code)
+    }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('DeepSeek canonical requirements fail closed on incompatible explicit controls', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-deepseek-controls-'))
+  const image = path.join(root, 'assets', 'tokenless-mark.png')
+  try {
+    for (const fixture of [
+      {
+        args: ['run', '--provider', 'deepseek', '--capability', 'search.web', '--deepseek-search', 'off', '--prompt', 'x'],
+        code: 'deepseek_search_required',
+      },
+      {
+        args: ['run', '--provider', 'deepseek', '--capability', 'image.input', '--deepseek-mode', 'Instant', '--attach-file', image, '--prompt', 'x'],
+        code: 'deepseek_image_requires_vision',
+      },
+      {
+        args: ['run', '--provider', 'deepseek', '--capability', 'search.web', '--attach-file', image, '--prompt', 'x'],
+        code: 'deepseek_capability_combination_unavailable',
+      },
+      {
+        args: ['run', '--provider', 'deepseek', '--capability', 'reasoning.extended', '--deepseek-deepthink', 'off', '--prompt', 'x'],
+        code: 'deepseek_deepthink_required',
+      },
+    ]) {
+      const completed = await runCli([...fixture.args, '--home', home, '--json'])
+      assert.equal(completed.exitCode, 1, `${completed.stderr}\n${completed.stdout}`)
+      assert.equal(JSON.parse(completed.stdout).error.code, fixture.code)
     }
   } finally {
     fs.rmSync(home, { recursive: true, force: true })

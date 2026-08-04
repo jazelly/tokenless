@@ -1,367 +1,1513 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
-import fsSync from 'node:fs'
+import net from 'node:net'
 import path from 'node:path'
 import test from 'node:test'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
+import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
+import {
+  knownIssueSkipForDurableBlocker,
+  loadLiveProviderCapabilityMatrix,
+  structuredBlockerCodes,
+} from './helpers/live-provider-capability-matrix.mjs'
+import {
+  createLiveProviderE2eReport,
+  finalizeLiveProviderE2eReport,
+  formatLiveProviderE2eReport,
+  recordLiveProviderCapability,
+  writeLiveProviderE2eReport,
+} from './helpers/live-provider-e2e-report.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
-const providers = ['chatgpt', 'claude', 'gemini', 'grok']
-const gates = [
-  'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT',
-  'TOKENLESS_LIVE_PROVIDER_MUTATIONS',
-  'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME',
-  'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE',
-]
-const liveEnabled = gates.every((key) => (
-  key === 'TOKENLESS_LIVE_MANAGED_PLAYWRIGHT' || key === 'TOKENLESS_LIVE_PROVIDER_MUTATIONS'
-    ? process.env[key] === '1'
-    : Boolean(process.env[key])
-))
+const matrix = loadLiveProviderCapabilityMatrix()
+const gate = requiredGate()
+const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
+const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
+const browserConnectionMode = optionalConnectionMode(process.env.TOKENLESS_LIVE_BROWSER_CONNECTION_MODE)
+const providerFilter = optionalProviderFilter(process.env.TOKENLESS_LIVE_E2E_PROVIDER)
+const caseFilter = optionalCaseFilter(process.env.TOKENLESS_LIVE_E2E_CASES)
+const suiteRunMarker = `${compactTimestamp(new Date())}_${randomUUID().slice(0, 8)}`
+const submissionTrackers = new WeakMap()
+const handlers = {
+  'session-readiness': sessionReadiness,
+  'prompt-draft': promptDraft,
+  'model-choice': modelChoice,
+  'effort-choice': effortChoice,
+  'file-selection': fileSelection,
+  'conversation-workflow': conversationWorkflow,
+  'workspace-response-citations': workspaceResponseCitations,
+  'workspace-response-baseline': workspaceResponseBaseline,
+  'qwen-mode-workspace': qwenModeWorkspace,
+  'deepseek-controls': deepSeekControls,
+  'deepseek-search-reasoning': deepSeekSearchReasoning,
+  'deepseek-vision-input': deepSeekVisionInput,
+  'doubao-controls': doubaoControls,
+  'native-project': nativeProject,
+  'kimi-library-controls': kimiLibraryControls,
+  'kimi-library-workflows': kimiLibraryWorkflows,
+  'kimi-search': kimiSearch,
+  'kimi-deep-research': kimiDeepResearch,
+  'kimi-artifacts': kimiArtifacts,
+  'kimi-long-running': kimiLongRunning,
+  'kimi-agent-swarm': kimiAgentSwarm,
+}
 
-test('live managed Playwright provider matrix reuses existing managed profile and real DOM', {
-  skip: liveEnabled ? false : `set ${gates.join(', ')} to run live managed Playwright E2E`,
-  timeout: 1_200_000,
-}, async () => {
-  const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
-  const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
-  const managedProfile = resolveManagedProfile({ homeDir, profileSlug })
+const selectedProviders = Object.entries(matrix.providers)
+  .map(([provider, declaration]) => ({
+    provider,
+    declaration,
+    caseIds: declaration.required.filter(
+      (caseId) => (gate === 'all' || matrix.cases[caseId].gate === gate) &&
+        (caseFilter === null || caseFilter.has(caseId)),
+    ),
+  }))
+  .filter(({ provider }) => providerFilter === null || provider === providerFilter)
+  .filter(({ caseIds }) => caseIds.length > 0)
 
-  const artifactDir = await createArtifactDir()
-  const evidence = {
-    protocol: 'tokenless.live-managed-playwright.evidence.v1',
-    startedAt: new Date().toISOString(),
-    node: process.version,
-    platform: process.platform,
-    versions: await runtimeVersions(),
-    managedProfile,
-    providers: {},
-  }
-  let evidenceWritten = false
+assert.ok(selectedProviders.length > 0, `TOKENLESS_LIVE_E2E_GATE=${gate} selected no required providers`)
+const suiteReport = createLiveProviderE2eReport({
+  runId: suiteRunMarker,
+  startedAt: new Date().toISOString(),
+  gate,
+  connectionMode: browserConnectionMode,
+  profileSlug,
+  matrix,
+  selectedProviders,
+})
+let sharedSession
+let originalBrowserConnectionMode
+
+test.before(async () => {
+  const runtime = await import('../packages/cli/dist/src/index.js')
+  originalBrowserConnectionMode = (await runtime.readTokenlessConfig(homeDir)).browserConnectionMode
+  await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode })
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  sharedSession = await createLiveBrowserInspectionSession({
+    homeDir,
+    profileSlug,
+    daemonUrl,
+  })
+})
+
+test.after(async () => {
+  const cleanupErrors = []
   try {
-    for (const provider of providers) {
-      try {
-        evidence.providers[provider] = await exerciseProvider({ provider, homeDir, profileSlug })
-      } catch (error) {
-        if (error?.providerEvidence) evidence.providers[provider] = error.providerEvidence
-        throw error
-      }
+    await sharedSession?.close()
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  try {
+    if (originalBrowserConnectionMode) {
+      const runtime = await import('../packages/cli/dist/src/index.js')
+      await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: originalBrowserConnectionMode })
     }
-
-    evidence.completedAt = new Date().toISOString()
-    await writeArtifact(artifactDir, 'matrix.json', evidence)
-    evidenceWritten = true
-
-  } finally {
-    if (!evidenceWritten) {
-      await writeArtifact(artifactDir, 'matrix.partial.json', evidence).catch(() => undefined)
-    }
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  try {
+    finalizeLiveProviderE2eReport(suiteReport, new Date().toISOString())
+    const reportPath = await writeLiveProviderE2eReport(suiteReport, path.join(root, 'test-results'))
+    console.log(formatLiveProviderE2eReport(suiteReport, path.relative(root, reportPath)))
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  if (cleanupErrors.length === 1) throw cleanupErrors[0]
+  if (cleanupErrors.length > 1) {
+    throw new AggregateError(cleanupErrors, 'Live provider E2E cleanup or report generation failed.')
   }
 })
 
-async function exerciseProvider({ provider, homeDir, profileSlug }) {
-  const started = Date.now()
-  const entry = { actions: {}, startedAt: new Date().toISOString() }
-  let draftInputConfirmed = false
-  let draftCleared = false
-  try {
-    const auth = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'auth.status', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-    const authState = findResponseResult(auth, 'auth.status')?.state
-    assert.equal(authState, 'authenticated', `${provider} must be authenticated`)
-    entry.actions.auth = { state: authState, ms: Date.now() - started }
-
-    const controls = runJson(['provider-controls', '--profile', profileSlug, '--provider', provider, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-    const modelInspect = findResponseResult(controls, 'model.inspect')
-    const effortInspect = findResponseResult(controls, 'effort.inspect')
-    assert.equal(modelInspect?.supported, true, `${provider} model inspect must be supported`)
-    assert.ok(selectedChoice(modelInspect), `${provider} model inspect must expose selected model`)
-    entry.actions.modelInspect = inspectSummary(modelInspect)
-    entry.actions.effortInspect = inspectSummary(effortInspect)
-
-    const modelRestore = selectedChoice(modelInspect)
-    const modelAlternate = alternateChoice(modelInspect) ?? modelRestore
-    if (modelAlternate) {
-      try {
-        const selected = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'model.select', '--model', modelAlternate.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-        const selectedResult = findResponseResult(selected, 'model.select')
-        assert.equal(selectedResult?.selectedLabel, modelAlternate.label, `${provider} model select must apply exact label`)
-        entry.actions.modelSelect = { requested: modelAlternate.label, selectedLabel: selectedResult.selectedLabel }
-      } finally {
-        if (modelRestore) {
-          const restored = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'model.select', '--model', modelRestore.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-          assert.equal(findResponseResult(restored, 'model.select')?.selectedLabel, modelRestore.label, `${provider} model restore must apply exact label`)
+for (const { provider, declaration, caseIds } of selectedProviders) {
+  test(`real provider ${provider}: ${gate} journey`, { timeout: 1_200_000 }, async (t) => {
+    const session = sharedSession
+    assert.ok(session, 'shared live E2E browser session must be initialized')
+    const journey = createProviderJourney(session, provider)
+    for (const caseId of caseIds) {
+      await t.test(`${provider}: ${caseId}`, { timeout: 1_200_000 }, async (step) => {
+        const caseStartedAt = Date.now()
+        if (journey.skipReason) {
+          recordLiveProviderCapability(suiteReport, {
+            provider,
+            capability: caseId,
+            status: 'known_issue',
+            error: e2eSkip('e2e_known_issue_provider_blocker', journey.skipReason),
+            durationMs: Date.now() - caseStartedAt,
+          })
+          step.skip(journey.skipReason)
+          return
         }
-      }
-    }
-
-    const effortRestore = selectedChoice(effortInspect)
-    const effortAlternate = alternateChoice(effortInspect) ?? effortRestore
-    if (effortInspect?.supported === false) {
-      entry.actions.effortSelect = { supported: false, reason: effortInspect.reason }
-    } else if (effortAlternate) {
-      try {
-        const selected = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'effort.select', '--effort', effortAlternate.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-        const selectedResult = findResponseResult(selected, 'effort.select')
-        assert.equal(selectedResult?.selectedLabel, effortAlternate.label, `${provider} effort select must apply exact label`)
-        entry.actions.effortSelect = { requested: effortAlternate.label, selectedLabel: selectedResult.selectedLabel }
-      } finally {
-        if (effortRestore) {
-          const restored = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'effort.select', '--effort', effortRestore.label, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-          assert.equal(findResponseResult(restored, 'effort.select')?.selectedLabel, effortRestore.label, `${provider} effort restore must apply exact label`)
+        const handler = handlers[caseId]
+        assert.equal(typeof handler, 'function', `missing real E2E handler for ${caseId}`)
+        submissionTrackers.set(journey, {
+          attempts: 0,
+          budget: matrix.cases[caseId].submissions,
+          caseId,
+        })
+        try {
+          if (
+            matrix.cases[caseId].gate !== 'non_submission' &&
+            declaration.account === 'signed_in_selected_setup_profile' &&
+            !journey.authenticated
+          ) {
+            await requireSignedInSelectedProfile(journey)
+          }
+          await handler({ provider, declaration, journey })
+          assertSubmissionBudget(journey)
+          recordLiveProviderCapability(suiteReport, {
+            provider,
+            capability: caseId,
+            status: 'passed',
+            durationMs: Date.now() - caseStartedAt,
+          })
+        } catch (error) {
+          if (isKnownIssueSkip(error)) {
+            journey.skipReason = `${caseId}: ${error.message}`
+            recordLiveProviderCapability(suiteReport, {
+              provider,
+              capability: caseId,
+              status: 'known_issue',
+              error,
+              durationMs: Date.now() - caseStartedAt,
+            })
+            step.skip(journey.skipReason)
+            return
+          }
+          recordLiveProviderCapability(suiteReport, {
+            provider,
+            capability: caseId,
+            status: 'failed',
+            error,
+            durationMs: Date.now() - caseStartedAt,
+          })
+          throw Object.assign(
+            new Error(`${provider} journey step ${caseId}: ${error instanceof Error ? error.message : String(error)}`),
+            { cause: error },
+          )
         }
-      }
+      })
     }
-
-    const draft = `TOKENLESS_DRAFT_CLEAR_${provider}_${Date.now()}`
-    const input = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'prompt.input', '--prompt', draft, '--home', homeDir, '--timeout-ms', '90000', '--json'])
-    const inputResult = findResponseResult(input, 'prompt.input')
-    assert.deepEqual(inputResult, { visible: true, inputProof: 'prompt-text-visible' }, `${provider} prompt.input must succeed`)
-    draftInputConfirmed = true
-    const clear = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'prompt.clear', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-    const clearResult = findResponseResult(clear, 'prompt.clear')
-    assert.deepEqual(clearResult, { visible: true, inputProof: 'empty' }, `${provider} prompt.clear must succeed`)
-    draftCleared = true
-    entry.actions.draftClear = { visible: clearResult.visible, inputProof: clearResult.inputProof }
-
-    const marker = `TOKENLESS_LIVE_${provider}_${Date.now()}`
-    const upload = await markerUploadFile(provider, marker)
-    let uploadUsesError = null
-    try {
-      const uploadResult = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'file.upload', '--attach-file', upload, '--home', homeDir, '--timeout-ms', '120000', '--json'])
-      entry.actions.fileUpload = {
-        ok: Boolean(findResponseResult(uploadResult, 'file.upload')),
-        markerSha256: sha256String(marker),
-      }
-
-      const run = runJson(['run', '--profile', profileSlug, '--provider', provider, '--task-id', `live-${provider}-${Date.now()}`, '--attach-file', upload, '--prompt', `Reply with marker ${marker} and include any visible citation/source controls if available.`, '--home', homeDir, '--timeout-ms', '240000', '--json'])
-      const responseRead = findResponseResult(run, 'response.read')
-      const runUpload = findResponseResult(run, 'file.upload')
-      assert.match(responseRead?.text ?? '', new RegExp(marker), `${provider} response must correlate marker`)
-      assert.equal(Array.isArray(responseRead?.citations), true, `${provider} response.read must return citations array`)
-      assert.ok(runUpload, `${provider} run must include marker file upload in the same job`)
-      entry.actions.response = {
-        markerMatched: true,
-        textChars: String(responseRead.text).length,
-        citationCount: Array.isArray(responseRead.citations) ? responseRead.citations.length : 0,
-      }
-    } catch (error) {
-      uploadUsesError = error
-      throw error
-    } finally {
-      const cleanup = await removeGeneratedUploadFile(upload)
-      entry.cleanup = {
-        ...entry.cleanup,
-        markerUploadFile: cleanup,
-      }
-      if (!cleanup.succeeded && !uploadUsesError) {
-        throw new Error(`${provider} generated marker upload file cleanup failed: ${cleanup.error?.code ?? 'unknown_error'}`)
-      }
-    }
-
-    const navigation = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'navigation.check', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-    entry.actions.navigation = boundedResult(findResponseResult(navigation, 'navigation.check'))
-    assert.equal(entry.actions.navigation.allowed, true, `${provider} navigation must be allowed`)
-
-    const blocker = runJson(['provider-action', '--profile', profileSlug, '--provider', provider, '--action', 'blocker.check', '--home', homeDir, '--timeout-ms', '90000', '--json'])
-    entry.actions.blocker = boundedResult(findResponseResult(blocker, 'blocker.check'))
-    assert.equal(entry.actions.blocker.blocked, false, `${provider} must not be visibly blocked`)
-
-    entry.completedAt = new Date().toISOString()
-    entry.elapsedMs = Date.now() - started
-    return entry
-  } catch (error) {
-    entry.failedAt = new Date().toISOString()
-    entry.elapsedMs = Date.now() - started
-    attachProviderEvidence(error, entry)
-    throw error
-  } finally {
-    if (draftInputConfirmed && !draftCleared) {
-      entry.cleanup = {
-        ...entry.cleanup,
-        promptClear: attemptPromptClearCleanup({ provider, homeDir, profileSlug }),
-      }
-    }
-  }
-}
-
-function runJson(args) {
-  const result = runCli(args)
-  assert.equal(result.status, 0, summarizeProcess(result))
-  return JSON.parse(result.stdout)
-}
-
-function runCli(args) {
-  return spawnSync(process.execPath, [cliEntry, ...args], {
-    cwd: root,
-    env: { ...process.env, TOKENLESS_PROVIDER: '' },
-    encoding: 'utf8',
-    timeout: 300000,
   })
 }
 
-function findResponseResult(payload, action) {
-  const responses = payload?.result?.result?.responses ?? payload?.result?.responses ?? payload?.latest?.result?.value?.responses
-  if (!Array.isArray(responses)) return null
-  return [...responses].reverse().find((response) => response?.ok === true && response.action === action)?.result ?? null
+async function requireSignedInSelectedProfile(journey) {
+  const auth = await journey.action('auth.status')
+  const result = responseResult(auth.payload, 'auth.status')
+  await auth.close()
+  const signedIn = result?.state === 'authenticated' || String(result?.access ?? '').startsWith('signed_in_')
+  if (!signedIn) {
+    throw e2eFailure(
+      'e2e_provider_auth_unavailable',
+      `${journey.provider} selected setup profile is not authenticated`,
+    )
+  }
+  journey.authenticated = true
 }
 
-function selectedChoice(result) {
-  return result?.supported === true && Array.isArray(result.choices)
-    ? result.choices.find((choice) => choice.selected && choice.enabled) ?? null
-    : null
+async function sessionReadiness({ provider, declaration, journey }) {
+  const auth = await journey.action('auth.status')
+  const authResult = responseResult(auth.payload, 'auth.status')
+  await auth.close()
+  const capabilities = await journey.action('capability.inspect')
+  const capabilityResult = responseResult(capabilities.payload, 'capability.inspect')
+  const navigation = await journey.action('navigation.check')
+  assert.equal(responseResult(navigation.payload, 'navigation.check')?.allowed, true)
+  const blocker = await journey.action('blocker.check')
+  const blockerResult = responseResult(blocker.payload, 'blocker.check')
+  assert.equal(blockerResult?.blocked, false)
+  await Promise.all([capabilities.close(), navigation.close(), blocker.close()])
+  const signedIn = authResult?.state === 'authenticated' || String(authResult?.access ?? '').startsWith('signed_in_')
+  const guestReady = authResult?.access === 'guest' ||
+    blockerResult?.observation?.composerVisible === true ||
+    capabilityResult?.capabilities?.['conversation.continue']?.availability === 'available'
+  const ready = declaration.account === 'signed_in_selected_setup_profile'
+    ? signedIn
+    : signedIn || guestReady
+  if (!ready) {
+    throw e2eFailure(
+      'e2e_provider_auth_unavailable',
+      `${provider} selected setup profile does not satisfy ${declaration.account}`,
+    )
+  }
+  journey.authenticated = signedIn
 }
 
-function alternateChoice(result) {
-  return result?.supported === true && Array.isArray(result.choices)
-    ? result.choices.find((choice) => !choice.selected && choice.enabled) ?? null
-    : null
+async function promptDraft({ provider, journey }) {
+  const marker = markerFor(provider, 'DRAFT')
+  const input = await journey.action('prompt.input', ['--prompt', marker])
+  assert.deepEqual(responseResult(input.payload, 'prompt.input'), {
+    visible: true,
+    inputProof: 'prompt-text-visible',
+  })
+  assert.equal(await composerContains(input.page, marker), true, `${provider} observer must see the unique draft`)
+  await input.close()
+
+  const clear = await journey.action('prompt.clear')
+  assert.deepEqual(responseResult(clear.payload, 'prompt.clear'), {
+    visible: true,
+    inputProof: 'empty',
+  })
+  assert.equal(await composerContains(clear.page, marker), false, `${provider} observer must see the draft removed`)
+  await clear.close()
 }
 
-function inspectSummary(result) {
-  if (!result) return { available: false }
-  if (result.supported === false) return { supported: false, reason: result.reason }
-  return {
+async function modelChoice(context) {
+  await choiceCase(context, 'model')
+}
+
+async function effortChoice(context) {
+  await choiceCase(context, 'effort')
+}
+
+async function qwenModeWorkspace({ provider, journey }) {
+  assert.equal(provider, 'qwen')
+  const inspected = await journey.action('qwen.mode.inspect')
+  const inspection = responseResult(inspected.payload, 'qwen.mode.inspect')
+  assert.equal(inspection?.supported, true)
+  assert.deepEqual(inspection?.active, { mode: 'Chat', variant: null })
+  assert.equal(
+    inspection?.modes?.some((mode) => mode.mode === 'Deep Research' && mode.enabled),
+    true,
+    'Qwen must expose an enabled Deep Research mode',
+  )
+  await inspected.close()
+
+  const name = markerFor(provider, 'MODE_WORKSPACE')
+  const marker = markerFor(provider, 'DEEP_RESEARCH')
+  const clarification = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--qwen-mode', 'Deep Research',
+    '--qwen-mode-variant', 'Advanced',
+    '--prompt', [
+      'Proceed immediately with a standalone research report about the current official Qwen homepage.',
+      'Prioritize user-visible product features rather than technical specifications.',
+      'Use one unified overview rather than a breakdown by product tier.',
+      'Organize the report into three sections: product features, available user entry points, and stated use cases grouped by user type.',
+      'Use only official Qwen sources, do not compare competitors, and do not ask clarifying questions.',
+    ].join(' '),
+  ], 720_000, async ({ page }) => (
+    await qwenActiveModeVisible(page, 'Deep Research', 'Advanced')
+  ))
+  const selected = responseResult(clarification.payload, 'qwen.mode.select')
+  assert.deepEqual(selected, {
     supported: true,
-    choices: Array.isArray(result.choices)
-      ? result.choices.map((choice) => ({ label: choice.label, selected: Boolean(choice.selected), enabled: Boolean(choice.enabled) }))
-      : [],
-  }
+    selectedMode: 'Deep Research',
+    selectedVariant: 'Advanced',
+    visibleProof: 'qwen-mode-and-variant-visible',
+  })
+  assert.equal(clarification.observerResult, true, 'Qwen observer must see Deep Research Advanced selected')
+  assert.ok((responseResult(clarification.payload, 'response.read')?.text ?? '').length > 0)
+  const conversationUrl = assertConversationWorkspaceResult(provider, journey.taskId, clarification)
+  await clarification.close()
+
+  const report = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--prompt', [
+      'Include both interactive elements and prominently advertised capabilities linked from the homepage.',
+      'Include direct entry points plus pathways visible through navigation menus or footer links.',
+      'Use explicitly named user types when available and otherwise synthesize categories from the stated workflows.',
+      'Proceed immediately with the final report and do not ask more questions.',
+      `Include this exact marker exactly once in the final report: ${marker}`,
+    ].join(' '),
+  ], 720_000)
+  assert.match(responseResult(report.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assert.equal(canonicalPageUrl(report.page.url()), conversationUrl)
+  assertTaskConversationMapping(provider, journey.taskId, conversationUrl, report.payload)
+  await report.close()
+
+  const restored = await journey.action('qwen.mode.select', ['--qwen-mode', 'Chat'])
+  assert.deepEqual(responseResult(restored.payload, 'qwen.mode.select'), {
+    supported: true,
+    selectedMode: 'Chat',
+    selectedVariant: null,
+    visibleProof: 'qwen-chat-mode-visible',
+  })
+  assert.equal(await exactTextVisible(restored.page, 'Auto'), true)
+  await restored.close()
 }
 
-function boundedResult(result) {
-  if (!result || typeof result !== 'object') return result
-  return JSON.parse(JSON.stringify(result, (key, value) => {
-    if (typeof value === 'string' && value.length > 240) return `${value.slice(0, 240)}...[truncated]`
-    return value
-  }))
+async function qwenActiveModeVisible(page, mode, variant) {
+  const deadline = Date.now() + 30_000
+  do {
+    const active = page.locator('.mode-select').filter({ visible: true }).last()
+    if (await active.count() > 0) {
+      const label = (await active.innerText().catch(() => '')).replace(/\s+/gu, ' ').trim()
+      if (label.includes(mode) && label.includes(variant)) return true
+    }
+    if (Date.now() < deadline) await page.waitForTimeout(100)
+  } while (Date.now() < deadline)
+  return false
 }
 
-function resolveManagedProfile({ homeDir, profileSlug }) {
-  assert.equal(fsSync.existsSync(homeDir), true, `${homeDir} must already exist`)
-  const payload = runJson(['profiles', 'list', '--home', homeDir, '--json'])
-  const profile = payload.profiles?.find((candidate) => candidate.slug === profileSlug)
-  assert.ok(profile, `${profileSlug} must be registered in ${homeDir}`)
-  assert.equal(profile.lifecycle, 'ready', `${profileSlug} must be ready before the live suite starts`)
-  assert.equal(Boolean(profile.import?.profileDirectoryKey), true, `${profileSlug} must be a user-imported managed profile`)
-  return {
-    slug: profile.slug,
-    id: profile.id,
-    lifecycle: profile.lifecycle,
-    isDefault: profile.isDefault,
-    imported: Boolean(profile.import?.profileDirectoryKey),
-  }
-}
+async function deepSeekControls({ provider, journey }) {
+  assert.equal(provider, 'deepseek')
+  const modeInspection = await journey.action('deepseek.mode.inspect')
+  const modes = responseResult(modeInspection.payload, 'deepseek.mode.inspect')
+  assert.equal(modes?.supported, true)
+  assert.deepEqual(modes?.modes?.map((choice) => choice.mode), ['Instant', 'Expert', 'Vision'])
+  assert.equal(modes?.modes?.find((choice) => choice.mode === 'Instant')?.controls.search, true)
+  assert.equal(modes?.modes?.find((choice) => choice.mode === 'Expert')?.controls.fileUpload, false)
+  assert.equal(modes?.modes?.find((choice) => choice.mode === 'Vision')?.controls.imageFileSelection, true)
+  const originalMode = modes.activeMode
+  await modeInspection.close()
 
-async function markerUploadFile(provider, marker) {
-  const inputDir = path.join(root, 'test-results', 'live-managed-playwright-inputs')
-  await fs.mkdir(inputDir, { recursive: true, mode: 0o700 })
-  const file = path.join(inputDir, `${provider}-${Date.now()}-marker.txt`)
-  await fs.writeFile(file, `${marker}\n`, { mode: 0o600 })
-  return file
-}
+  const deepThinkInspection = await journey.action('deepseek.deepthink.inspect')
+  const originalDeepThink = responseResult(deepThinkInspection.payload, 'deepseek.deepthink.inspect')?.enabled
+  assert.equal(typeof originalDeepThink, 'boolean')
+  await deepThinkInspection.close()
 
-function attemptPromptClearCleanup({ provider, homeDir, profileSlug }) {
-  const cleanup = {
-    attempted: true,
-    succeeded: false,
-  }
+  let originalSearch
   try {
-    const result = runCli([
-      'provider-action',
-      '--profile', profileSlug,
-      '--provider', provider,
-      '--action', 'prompt.clear',
-      '--home', homeDir,
-      '--timeout-ms', '90000',
-      '--json',
+    const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+    assert.equal(responseResult(instant.payload, 'deepseek.mode.select')?.selectedMode, 'Instant')
+    await instant.close()
+
+    const searchInspection = await journey.action('deepseek.search.inspect')
+    originalSearch = responseResult(searchInspection.payload, 'deepseek.search.inspect')?.enabled
+    assert.equal(typeof originalSearch, 'boolean')
+    await searchInspection.close()
+
+    const searchChanged = await journey.action('deepseek.search.select', [
+      '--deepseek-search', originalSearch ? 'off' : 'on',
     ])
-    cleanup.status = result.status
-    cleanup.stdoutBytes = Buffer.byteLength(result.stdout ?? '', 'utf8')
-    cleanup.stderrBytes = Buffer.byteLength(result.stderr ?? '', 'utf8')
-    if (result.status !== 0) return cleanup
-    const clearResult = findResponseResult(JSON.parse(result.stdout), 'prompt.clear')
-    cleanup.succeeded = clearResult?.visible === true && clearResult?.inputProof === 'empty'
-    cleanup.result = clearResult
-      ? { visible: clearResult.visible, inputProof: clearResult.inputProof }
-      : { visible: false, inputProof: 'missing' }
-    return cleanup
-  } catch (error) {
-    cleanup.error = boundedError(error)
-    return cleanup
+    assert.equal(responseResult(searchChanged.payload, 'deepseek.search.select')?.enabled, !originalSearch)
+    await searchChanged.close()
+
+    const deepThinkChanged = await journey.action('deepseek.deepthink.select', [
+      '--deepseek-deepthink', originalDeepThink ? 'off' : 'on',
+    ])
+    assert.equal(responseResult(deepThinkChanged.payload, 'deepseek.deepthink.select')?.enabled, !originalDeepThink)
+    await deepThinkChanged.close()
+
+    for (const mode of ['Expert', 'Vision']) {
+      const selected = await journey.action('deepseek.mode.select', ['--deepseek-mode', mode])
+      assert.equal(responseResult(selected.payload, 'deepseek.mode.select')?.selectedMode, mode)
+      await selected.close()
+      const search = await journey.action('deepseek.search.inspect')
+      assert.deepEqual(responseResult(search.payload, 'deepseek.search.inspect'), {
+        supported: false,
+        activeMode: mode,
+        reason: 'unavailable_in_mode',
+      })
+      await search.close()
+    }
+  } finally {
+    const restoredMode = await journey.action('deepseek.mode.select', ['--deepseek-mode', originalMode])
+    await restoredMode.close()
+    const restoredDeepThink = await journey.action('deepseek.deepthink.select', [
+      '--deepseek-deepthink', originalDeepThink ? 'on' : 'off',
+    ])
+    await restoredDeepThink.close()
+    if (originalMode === 'Instant' && typeof originalSearch === 'boolean') {
+      const restoredSearch = await journey.action('deepseek.search.select', [
+        '--deepseek-search', originalSearch ? 'on' : 'off',
+      ])
+      await restoredSearch.close()
+    }
   }
 }
 
-async function removeGeneratedUploadFile(file) {
-  const cleanup = {
-    attempted: true,
-    succeeded: false,
-  }
+async function doubaoControls({ provider, journey }) {
+  assert.equal(provider, 'doubao')
+  const modeInspection = await journey.action('doubao.mode.inspect')
+  const modes = responseResult(modeInspection.payload, 'doubao.mode.inspect')
+  assert.equal(modes?.supported, true)
+  assert.equal(modes?.activeMode, 'fast')
+  assert.deepEqual(modes?.modes?.map((choice) => choice.mode), [
+    'fast',
+    'expert',
+    'work-task-turbo',
+    'work-task-pro',
+  ])
+  assert.deepEqual(modes?.modes?.find((choice) => choice.mode === 'work-task-pro'), {
+    mode: 'work-task-pro',
+    nativeLabel: '工作任务 Pro',
+    description: '执行 agent 任务 - 2.1 Pro',
+    canonicalCapabilities: ['task.background', 'task.interactive'],
+    enabled: false,
+    selected: false,
+    reason: 'upgrade_required',
+  })
+  const originalMode = modes.activeMode
+  await modeInspection.close()
+
   try {
-    await fs.unlink(file)
-    cleanup.succeeded = true
-  } catch (error) {
-    cleanup.error = boundedError(error)
+    for (const mode of ['expert', 'work-task-turbo']) {
+      const selected = await journey.action('doubao.mode.select', ['--doubao-mode', mode])
+      const result = responseResult(selected.payload, 'doubao.mode.select')
+      assert.equal(result?.selectedMode, mode)
+      assert.equal(await doubaoModeVisible(selected.page, result.nativeLabel), true)
+      await selected.close()
+    }
+    const unavailable = await journey.action('doubao.mode.select', ['--doubao-mode', 'work-task-pro'])
+    assert.deepEqual(responseResult(unavailable.payload, 'doubao.mode.select'), {
+      supported: false,
+      reason: 'mode_unavailable',
+    })
+    await unavailable.close()
+  } finally {
+    const restored = await journey.action('doubao.mode.select', ['--doubao-mode', originalMode])
+    assert.equal(responseResult(restored.payload, 'doubao.mode.select')?.selectedMode, originalMode)
+    await restored.close()
   }
-  return cleanup
+
+  const skillInspection = await journey.action('doubao.skill.inspect')
+  const skills = responseResult(skillInspection.payload, 'doubao.skill.inspect')
+  assert.equal(skills?.supported, true)
+  assert.equal(skills?.activeSkill, 'chat')
+  assert.deepEqual(
+    skills?.skills?.find((choice) => choice.skill === 'audio-transcription'),
+    {
+      skill: 'audio-transcription',
+      nativeLabel: '录音转写',
+      canonicalCapabilities: ['audio.transcription'],
+      enabled: false,
+      selected: false,
+      reason: 'desktop_app_required',
+    },
+  )
+  const selectableSkills = skills.skills.filter((choice) => choice.enabled && choice.skill !== 'chat')
+  assert.deepEqual(selectableSkills.map((choice) => choice.skill), [
+    'document-writing',
+    'presentation-generation',
+    'image-generation',
+    'video-generation',
+    'deep-research',
+    'audio-podcast',
+    'music-generation',
+    'problem-solving',
+    'spreadsheet-generation',
+  ])
+  await skillInspection.close()
+
+  try {
+    for (const choice of selectableSkills) {
+      const selected = await journey.action('doubao.skill.select', ['--doubao-skill', choice.skill])
+      const result = responseResult(selected.payload, 'doubao.skill.select')
+      assert.equal(result?.selectedSkill, choice.skill)
+      assert.equal(await doubaoSkillVisible(selected.page, choice.nativeLabel), true)
+      await selected.close()
+    }
+    const unavailable = await journey.action('doubao.skill.select', ['--doubao-skill', 'audio-transcription'])
+    assert.deepEqual(responseResult(unavailable.payload, 'doubao.skill.select'), {
+      supported: false,
+      reason: 'skill_unavailable',
+    })
+    await unavailable.close()
+  } finally {
+    const restored = await journey.action('doubao.skill.select', ['--doubao-skill', 'chat'])
+    assert.deepEqual(responseResult(restored.payload, 'doubao.skill.select'), {
+      supported: true,
+      selectedSkill: 'chat',
+      nativeLabel: '普通对话',
+      visibleProof: 'doubao-default-composer-visible',
+    })
+    assert.equal(await restored.page.locator('textarea.semi-input-textarea').filter({ visible: true }).count(), 1)
+    await restored.close()
+  }
 }
 
-function sha256String(value) {
-  return createHash('sha256').update(value).digest('hex')
+async function doubaoModeVisible(page, nativeLabel) {
+  const trigger = page.locator(
+    'button[aria-haspopup="menu"][aria-expanded]:has([data-valid-btn="mode-select-action-btn"])',
+  ).filter({ visible: true }).last()
+  return await trigger.count() > 0 && (await trigger.innerText()).replace(/\s+/gu, ' ').trim().startsWith(nativeLabel)
 }
 
-async function createArtifactDir() {
-  const dir = path.join(root, 'test-results', 'live-managed-playwright', new Date().toISOString().replace(/[:.]/g, '-'))
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 })
-  return dir
+async function doubaoSkillVisible(page, nativeLabel) {
+  const token = page.locator('div[data-input-engine-action-source="actionbar"][data-value]')
+    .filter({ visible: true })
+    .filter({ hasText: new RegExp(`^${escapeRegExp(nativeLabel)}$`) })
+    .last()
+  return await token.count() > 0
 }
 
-async function writeArtifact(dir, name, value) {
-  await fs.writeFile(path.join(dir, name), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+async function deepSeekSearchReasoning({ provider, journey }) {
+  assert.equal(provider, 'deepseek')
+  const modeInspection = await journey.action('deepseek.mode.inspect')
+  const originalMode = responseResult(modeInspection.payload, 'deepseek.mode.inspect')?.activeMode
+  assert.ok(['Instant', 'Expert', 'Vision'].includes(originalMode))
+  await modeInspection.close()
+  const deepThinkInspection = await journey.action('deepseek.deepthink.inspect')
+  const originalDeepThink = responseResult(deepThinkInspection.payload, 'deepseek.deepthink.inspect')?.enabled
+  assert.equal(typeof originalDeepThink, 'boolean')
+  await deepThinkInspection.close()
+  const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+  await instant.close()
+  const searchInspection = await journey.action('deepseek.search.inspect')
+  const originalSearch = responseResult(searchInspection.payload, 'deepseek.search.inspect')?.enabled
+  assert.equal(typeof originalSearch, 'boolean')
+  await searchInspection.close()
+
+  try {
+    const reasoningMarker = markerFor(provider, 'DEEPTHINK_RESPONSE')
+    const reasoning = await journey.run([
+      '--deepseek-mode', 'Instant',
+      '--deepseek-deepthink', 'on',
+      '--deepseek-search', 'off',
+      '--prompt', `Use DeepThink to calculate 37 multiplied by 43. Include this exact marker in the final answer: ${reasoningMarker}`,
+    ])
+    assert.equal(responseResult(reasoning.payload, 'deepseek.mode.select')?.selectedMode, 'Instant')
+    assert.equal(responseResult(reasoning.payload, 'deepseek.deepthink.select')?.enabled, true)
+    assert.equal(responseResult(reasoning.payload, 'deepseek.search.select')?.enabled, false)
+    assert.match(responseResult(reasoning.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(reasoningMarker)))
+    await reasoning.close()
+
+    const searchMarker = markerFor(provider, 'SEARCH_RESPONSE')
+    const search = await journey.run([
+      '--deepseek-mode', 'Instant',
+      '--deepseek-deepthink', 'off',
+      '--deepseek-search', 'on',
+      '--prompt', `Use web search to identify the official Node.js homepage. Include this exact marker: ${searchMarker}. Provide visible source links.`,
+    ])
+    const response = responseResult(search.payload, 'response.read')
+    assert.equal(responseResult(search.payload, 'deepseek.search.select')?.enabled, true)
+    assert.match(response?.text ?? '', new RegExp(escapeRegExp(searchMarker)))
+    assert.ok(Array.isArray(response?.citations) && response.citations.length > 0)
+    assert.ok(await visibleCitationCount(search.page, response.citations) > 0)
+    await search.close()
+  } finally {
+    const restoreInstant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+    await restoreInstant.close()
+    const restoreSearch = await journey.action('deepseek.search.select', [
+      '--deepseek-search', originalSearch ? 'on' : 'off',
+    ])
+    await restoreSearch.close()
+    const restoreMode = await journey.action('deepseek.mode.select', ['--deepseek-mode', originalMode])
+    await restoreMode.close()
+    const restoreDeepThink = await journey.action('deepseek.deepthink.select', [
+      '--deepseek-deepthink', originalDeepThink ? 'on' : 'off',
+    ])
+    await restoreDeepThink.close()
+  }
 }
 
-function summarizeProcess(result) {
-  return JSON.stringify({
-    status: result.status,
-    stdout: truncate(result.stdout),
-    stderr: truncate(result.stderr),
-  }, null, 2)
+async function choiceCase({ provider, journey }, kind) {
+  const inspectAction = `${kind}.inspect`
+  const selectAction = `${kind}.select`
+  const inspect = await journey.action(inspectAction)
+  const result = responseResult(inspect.payload, inspectAction)
+  assert.equal(result?.supported, true, `${provider} ${inspectAction} must be supported`)
+  const selected = result.choices.find((choice) => choice.selected && choice.enabled)
+  const alternate = result.choices.find((choice) => !choice.selected && choice.enabled)
+  assert.ok(selected, `${provider} ${kind} must expose the selected choice`)
+  assert.ok(alternate, `${provider} ${kind} must expose a real alternate choice`)
+  await inspect.close()
+
+  const option = kind === 'model' ? '--model' : '--effort'
+  const changed = await journey.action(selectAction, [option, alternate.label])
+  try {
+    assert.equal(responseResult(changed.payload, selectAction)?.selectedLabel, alternate.label)
+    assert.equal(await exactTextVisible(changed.page, alternate.label), true, `${provider} observer must see selected ${kind}`)
+  } finally {
+    await changed.close()
+    const restored = await journey.action(selectAction, [option, selected.label])
+    assert.equal(responseResult(restored.payload, selectAction)?.selectedLabel, selected.label)
+    await restored.close()
+  }
 }
 
-function truncate(value) {
-  return typeof value === 'string' && value.length > 2000 ? `${value.slice(0, 2000)}...[truncated]` : value
+async function fileSelection({ provider, journey }) {
+  const name = `${markerFor(provider, 'ATTACHMENT')}.txt`
+  const file = path.join(root, 'test-results', 'live-provider-inputs', name)
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
+  await fs.writeFile(file, `${name}\n`, { mode: 0o600 })
+  const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
+  try {
+    if (deepSeekState) {
+      const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+      assert.equal(responseResult(instant.payload, 'deepseek.mode.select')?.selectedMode, 'Instant')
+      await instant.close()
+    }
+    const uploaded = await journey.action('file.upload', ['--attach-file', file], 180_000)
+    const result = responseResult(uploaded.payload, 'file.upload')
+    assert.ok(result?.attachments?.some((attachment) => attachment.name === name))
+    const visibleName = provider === 'kimi' ? path.parse(name).name : name
+    assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
+    await uploaded.close()
+    const cleared = await journey.action('prompt.clear')
+    await cleared.close()
+  } finally {
+    await fs.rm(file, { force: true })
+    if (deepSeekState) await restoreDeepSeekState(journey, deepSeekState)
+  }
 }
 
-function boundedError(error) {
+async function conversationWorkflow({ provider, journey }) {
+  const name = markerFor(provider, 'CONVERSATION_WORKFLOW')
+  const attachmentMarker = markerFor(provider, 'ATTACHMENT')
+  const responseMarker = markerFor(provider, 'TURN_ONE_RESPONSE')
+  const contextSecret = markerFor(provider, 'CONTEXT_SECRET')
+  const attachmentName = `${attachmentMarker}.txt`
+  const attachment = path.join(root, 'test-results', 'live-provider-inputs', attachmentName)
+  await fs.mkdir(path.dirname(attachment), { recursive: true, mode: 0o700 })
+  await fs.writeFile(attachment, `${attachmentMarker}\n`, { mode: 0o600 })
+  const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
+  try {
+    const first = await journey.run([
+      '--project-name', name,
+      '--workspace-mode', 'conversation',
+      ...(provider === 'deepseek' ? [
+        '--deepseek-mode', 'Instant',
+        '--deepseek-deepthink', 'off',
+        '--deepseek-search', 'on',
+      ] : []),
+      '--attach-file', attachment,
+      '--prompt', [
+        'Read the attached file and include its exact marker in your response.',
+        `Also include this exact response marker: ${responseMarker}.`,
+        `Remember this secret for my next message but do not reveal it yet: ${contextSecret}.`,
+        'Identify the official Node.js homepage and cite that official source.',
+      ].join(' '),
+    ], 360_000, ({ page }) => waitForExactText(
+      page,
+      provider === 'kimi' ? path.parse(attachmentName).name : attachmentName,
+      180_000,
+    ))
+    const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
+    const citations = responseResult(first.payload, 'response.read')?.citations
+    assert.match(firstText, new RegExp(escapeRegExp(attachmentMarker)))
+    assert.match(firstText, new RegExp(escapeRegExp(responseMarker)))
+    assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextSecret)))
+    assert.ok(responseResult(first.payload, 'file.upload')?.attachments?.some(
+      (attachmentResult) => attachmentResult.name === attachmentName,
+    ))
+    assert.equal(first.observerResult, true, `${provider} observer must see the submitted attachment`)
+    assert.equal(await pageContains(first.page, responseMarker, 2), true)
+    assert.ok(Array.isArray(citations) && citations.length > 0, `${provider} must return normalized real citations`)
+    assert.ok(await visibleCitationCount(first.page, citations) > 0, `${provider} observer must see a returned citation link`)
+    const firstUrl = assertConversationWorkspaceResult(provider, journey.taskId, first)
+    await first.close()
+
+    const second = await journey.run([
+      '--project-name', name,
+      '--workspace-mode', 'conversation',
+      ...(provider === 'deepseek' ? [
+        '--deepseek-mode', 'Instant',
+        '--deepseek-deepthink', 'off',
+        '--deepseek-search', 'on',
+      ] : []),
+      '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
+    ])
+    const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
+    assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
+    assert.equal(canonicalPageUrl(second.page.url()), firstUrl, `${provider} both CLI processes must share one exact conversation`)
+    assertTaskConversationMapping(provider, journey.taskId, firstUrl, second.payload)
+    await second.close()
+  } finally {
+    await fs.rm(attachment, { force: true })
+    if (deepSeekState) await restoreDeepSeekState(journey, deepSeekState)
+  }
+}
+
+async function deepSeekVisionInput({ provider, journey }) {
+  assert.equal(provider, 'deepseek')
+  const original = await captureDeepSeekState(journey)
+  const image = path.join(root, 'assets', 'tokenless-mark.png')
+  const marker = markerFor(provider, 'VISION_RESPONSE')
+  try {
+    const run = await journey.run([
+      '--deepseek-mode', 'Vision',
+      '--deepseek-deepthink', 'off',
+      '--attach-file', image,
+      '--prompt', [
+        'Describe the central mark in the attached image in one short sentence.',
+        `Include this exact marker: ${marker}`,
+      ].join(' '),
+    ], 360_000, ({ page }) => waitForExactText(page, path.basename(image), 180_000))
+    assert.equal(responseResult(run.payload, 'deepseek.mode.select')?.selectedMode, 'Vision')
+    assert.ok(responseResult(run.payload, 'file.upload')?.attachments?.some(
+      (attachment) => attachment.name === path.basename(image),
+    ))
+    assert.equal(run.observerResult, true, 'DeepSeek observer must see the selected Vision image')
+    assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
+    await run.close()
+  } finally {
+    await restoreDeepSeekState(journey, original)
+  }
+}
+
+async function captureDeepSeekState(journey) {
+  const modeInspection = await journey.action('deepseek.mode.inspect')
+  const mode = responseResult(modeInspection.payload, 'deepseek.mode.inspect')?.activeMode
+  assert.ok(['Instant', 'Expert', 'Vision'].includes(mode))
+  await modeInspection.close()
+
+  const deepThinkInspection = await journey.action('deepseek.deepthink.inspect')
+  const deepThink = responseResult(deepThinkInspection.payload, 'deepseek.deepthink.inspect')?.enabled
+  assert.equal(typeof deepThink, 'boolean')
+  await deepThinkInspection.close()
+
+  let search = null
+  if (mode === 'Instant') {
+    const searchInspection = await journey.action('deepseek.search.inspect')
+    search = responseResult(searchInspection.payload, 'deepseek.search.inspect')?.enabled
+    assert.equal(typeof search, 'boolean')
+    await searchInspection.close()
+  }
+  return { mode, deepThink, search }
+}
+
+async function restoreDeepSeekState(journey, state) {
+  const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
+  await instant.close()
+  if (typeof state.search === 'boolean') {
+    const search = await journey.action('deepseek.search.select', [
+      '--deepseek-search', state.search ? 'on' : 'off',
+    ])
+    await search.close()
+  }
+  const mode = await journey.action('deepseek.mode.select', ['--deepseek-mode', state.mode])
+  await mode.close()
+  const deepThink = await journey.action('deepseek.deepthink.select', [
+    '--deepseek-deepthink', state.deepThink ? 'on' : 'off',
+  ])
+  await deepThink.close()
+}
+
+async function workspaceResponseCitations({ provider, journey }) {
+  const name = markerFor(provider, 'WORKSPACE_RESPONSE')
+  const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
+  const run = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--prompt', `Include this exact marker: ${responseMarker}. Identify the official Node.js homepage and cite that official source.`,
+  ])
+  const response = responseResult(run.payload, 'response.read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
+  assert.equal(await pageContains(run.page, responseMarker, 2), true)
+  assert.ok(Array.isArray(response?.citations) && response.citations.length > 0, `${provider} must return normalized real citations`)
+  assert.ok(await visibleCitationCount(run.page, response.citations) > 0, `${provider} observer must see a returned citation link`)
+  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  await run.close()
+}
+
+async function workspaceResponseBaseline({ provider, journey }) {
+  const name = markerFor(provider, 'WORKSPACE_RESPONSE')
+  const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
+  const prompt = provider === 'doubao'
+    ? `请只在代码块中原样回复：\`${responseMarker}\``
+    : `Reply with this exact marker: ${responseMarker}`
+  const run = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--prompt', prompt,
+  ])
+  const response = responseResult(run.payload, 'response.read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(responseMarker)))
+  assert.equal(await pageContains(run.page, responseMarker, 2), true)
+  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  await run.close()
+}
+
+async function nativeProject({ provider, journey }) {
+  const projectName = provider === 'kimi'
+    ? `TLP_KIMI_PROJECT_${randomUUID().slice(0, 8)}`
+    : markerFor(provider, 'PROJECT')
+  const instructionMarker = markerFor(provider, 'PROJECT_INSTRUCTION')
+  const instructions = `Include this exact marker in every response: ${instructionMarker}`
+  const created = await journey.action('workspace.ensure', [
+    '--project-name', projectName,
+    '--workspace-mode', 'native',
+    '--project-instructions', instructions,
+  ], 240_000)
+  const createdResult = responseResult(created.payload, 'workspace.ensure')
+  assert.equal(createdResult?.mode, 'native')
+  assert.equal(createdResult?.resource?.disposition, 'created')
+  assert.equal(createdResult?.instructionOutcome, 'applied_on_creation')
+  assert.equal(await exactTextVisible(created.page, projectName), true)
+  const projectUrl = createdResult.resource.canonicalUrl
+  await created.close()
+
+  const reused = await journey.action('workspace.ensure', [
+    '--project-name', projectName,
+    '--workspace-mode', 'native',
+    '--project-instructions', instructions,
+  ], 240_000)
+  const reusedResult = responseResult(reused.payload, 'workspace.ensure')
+  assert.equal(reusedResult?.resource?.disposition, 'reused')
+  assert.equal(reusedResult?.resource?.canonicalUrl, projectUrl)
+  assert.equal(reusedResult?.instructionOutcome, 'skipped_on_reuse')
+  await reused.close()
+
+  const controls = []
+  if (matrix.providers[provider].required.includes('model-choice')) {
+    controls.push(await projectChoice(provider, journey, projectUrl, 'model'))
+  }
+  if (matrix.providers[provider].required.includes('effort-choice')) {
+    controls.push(await projectChoice(provider, journey, projectUrl, 'effort'))
+  }
+
+  const firstMarker = markerFor(provider, 'PROJECT_TURN_ONE')
+  const attachmentName = `${markerFor(provider, 'PROJECT_ATTACHMENT')}.txt`
+  const attachment = path.join(root, 'test-results', 'live-provider-inputs', attachmentName)
+  await fs.mkdir(path.dirname(attachment), { recursive: true, mode: 0o700 })
+  await fs.writeFile(attachment, `${firstMarker}\n`, { mode: 0o600 })
+  let primaryError
+  try {
+    const first = await journey.run([
+      '--project-name', projectName,
+      '--project-instructions', instructions,
+      '--workspace-mode', 'native',
+      '--attach-file', attachment,
+      ...controls.flatMap((control) => [control.option, control.alternate]),
+      '--prompt', `Read the attached file and report its exact marker.`,
+    ], 360_000, ({ page }) => waitForExactText(
+      page,
+      provider === 'kimi' ? path.parse(attachmentName).name : attachmentName,
+      180_000,
+    ))
+    const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
+    assert.match(firstText, new RegExp(escapeRegExp(firstMarker)))
+    assert.match(firstText, new RegExp(escapeRegExp(instructionMarker)))
+    assert.ok(responseResult(first.payload, 'file.upload')?.attachments?.some(
+      (candidate) => candidate.name === attachmentName,
+    ))
+    assert.equal(first.observerResult, true, `${provider} observer must see the Project attachment`)
+    for (const control of controls) {
+      assert.equal(responseResult(first.payload, `${control.kind}.select`)?.selectedLabel, control.alternate)
+    }
+    const conversationUrl = canonicalPageUrl(first.page.url())
+    assert.notEqual(conversationUrl, canonicalPageUrl(projectUrl))
+    await first.close()
+
+    const secondMarker = markerFor(provider, 'PROJECT_TURN_TWO')
+    const second = await journey.run([
+      '--project-name', projectName,
+      '--workspace-mode', 'native',
+      '--prompt', `Reply with both the earlier file marker and this marker: ${secondMarker}`,
+    ], 360_000)
+    const text = responseResult(second.payload, 'response.read')?.text ?? ''
+    assert.match(text, new RegExp(escapeRegExp(firstMarker)))
+    assert.match(text, new RegExp(escapeRegExp(secondMarker)))
+    assert.match(text, new RegExp(escapeRegExp(instructionMarker)))
+    assert.equal(canonicalPageUrl(second.page.url()), conversationUrl)
+
+    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+    try {
+      const project = database.prepare(
+        'SELECT resource_id, canonical_url FROM provider_projects WHERE provider = ? AND profile_id = ? AND name = ?',
+      ).get(provider, createdResult.scope.profileId, projectName)
+      assert.equal(project?.canonical_url, projectUrl)
+      const conversation = database.prepare(
+        `SELECT canonical_url FROM provider_conversations
+         WHERE provider = ? AND profile_id = ? AND project_resource_id = ? AND task_id = ?`,
+      ).get(provider, createdResult.scope.profileId, project.resource_id, journey.taskId)
+      assert.equal(conversation?.canonical_url, conversationUrl)
+    } finally {
+      database.close()
+    }
+    await second.close()
+  } catch (error) {
+    primaryError = error
+    throw error
+  } finally {
+    await fs.rm(attachment, { force: true })
+    for (const control of controls) {
+      try {
+        const restored = await journey.action(`${control.kind}.select`, [
+          '--target-url', projectUrl,
+          control.option, control.original,
+        ])
+        assert.equal(responseResult(restored.payload, `${control.kind}.select`)?.selectedLabel, control.original)
+        await restored.close()
+      } catch (error) {
+        if (primaryError === undefined) throw error
+      }
+    }
+  }
+}
+
+async function kimiLibraryControls({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const plugins = await journey.action('kimi.plugin.inspect')
+  const pluginInspection = responseResult(plugins.payload, 'kimi.plugin.inspect')
+  assert.equal(pluginInspection?.supported, true)
+  assert.ok(Array.isArray(pluginInspection?.choices))
+  const plugin = pluginInspection.choices.find((choice) => choice.enabled)
+  await plugins.close()
+  if (!plugin) {
+    throw e2eFailure(
+      'e2e_provider_prerequisite_unavailable',
+      'Kimi selected profile has no enabled Plugin; connect one explicitly before the Plugin selection gate',
+    )
+  }
+  const selectedPlugin = await journey.action('kimi.plugin.select', ['--kimi-plugin', plugin.label])
+  assert.equal(responseResult(selectedPlugin.payload, 'kimi.plugin.select')?.selectedLabel, plugin.label)
+  assert.equal(await exactTextVisible(selectedPlugin.page, plugin.label), true)
+  await selectedPlugin.close()
+  const clearedPlugin = await journey.action('prompt.clear')
+  assert.equal(await composerContains(clearedPlugin.page, plugin.label), false)
+  await clearedPlugin.close()
+
+  const skills = await journey.action('kimi.skill.inspect', ['--target-url', 'https://www.kimi.com/'])
+  const skillInspection = responseResult(skills.payload, 'kimi.skill.inspect')
+  assert.equal(skillInspection?.supported, true)
+  const skill = skillInspection?.choices?.find((choice) => choice.enabled && !choice.selected) ??
+    skillInspection?.choices?.find((choice) => choice.enabled)
+  assert.ok(skill, 'Kimi must expose at least one enabled Skill in the selected profile')
+  await skills.close()
+  const selectedSkill = await journey.action('kimi.skill.select', [
+    '--target-url', 'https://www.kimi.com/',
+    '--kimi-skill', skill.label,
+  ])
+  assert.equal(responseResult(selectedSkill.payload, 'kimi.skill.select')?.selectedLabel, skill.label)
+  assert.equal(await exactTextVisible(selectedSkill.page, `/${skill.label}`), true)
+  await selectedSkill.close()
+  const clearedSkill = await journey.action('prompt.clear')
+  assert.equal(await composerContains(clearedSkill.page, skill.label), false)
+  await clearedSkill.close()
+}
+
+async function kimiSearch({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const inspected = await journey.action('kimi.search.inspect')
+  const inspection = responseResult(inspected.payload, 'kimi.search.inspect')
+  assert.equal(inspection?.supported, true)
+  assert.deepEqual(inspection?.choices?.map((choice) => choice.label), ['Auto', 'Off'])
+  const original = inspection.choices.find((choice) => choice.selected)?.label ?? 'Auto'
+  await inspected.close()
+  let primaryError
+  try {
+    const marker = markerFor(provider, 'WEB_SEARCH')
+    const run = await journey.run([
+      '--capability', 'search.web',
+      '--kimi-search', 'auto',
+      '--prompt', `Use web search to identify the official Node.js homepage and include this exact marker: ${marker}`,
+    ], 360_000)
+    assert.equal(responseResult(run.payload, 'kimi.search.select')?.selectedLabel, 'Auto')
+    const response = responseResult(run.payload, 'response.read')
+    assert.match(response?.text ?? '', new RegExp(escapeRegExp(marker)))
+    assert.ok(Array.isArray(response?.citations) && response.citations.length > 0)
+    assert.ok(await visibleCitationCount(run.page, response.citations) > 0)
+    await run.close()
+  } catch (error) {
+    primaryError = error
+    throw error
+  } finally {
+    try {
+      const restored = await journey.action('kimi.search.select', [
+        '--kimi-search', original === 'Off' ? 'off' : 'auto',
+      ])
+      assert.equal(responseResult(restored.payload, 'kimi.search.select')?.selectedLabel, original)
+      await restored.close()
+    } catch (error) {
+      if (primaryError === undefined) throw error
+    }
+  }
+}
+
+async function kimiLibraryWorkflows({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const pluginMarker = markerFor(provider, 'PLUGIN_SOURCE')
+  const plugin = await journey.run([
+    '--kimi-plugin', 'SEC',
+    '--prompt', `Use the SEC Plugin to identify the purpose of Form 10-K and include this exact marker: ${pluginMarker}`,
+  ], 360_000)
+  assert.equal(responseResult(plugin.payload, 'kimi.plugin.select')?.selectedLabel, 'SEC')
+  assert.match(responseResult(plugin.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(pluginMarker)))
+  await plugin.close()
+
+  const skillMarker = markerFor(provider, 'SKILL')
+  const skill = await journey.run([
+    '--kimi-skill', 'humanizer',
+    '--prompt', `Rewrite "We are excited to leverage innovative solutions" naturally and include this exact marker: ${skillMarker}`,
+  ], 360_000)
+  assert.equal(responseResult(skill.payload, 'kimi.skill.select')?.selectedLabel, 'humanizer')
+  assert.match(responseResult(skill.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(skillMarker)))
+  await skill.close()
+}
+
+async function kimiDeepResearch({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const marker = markerFor(provider, 'DEEP_RESEARCH')
+  const run = await journey.run([
+    '--target-url', 'https://www.kimi.com/deep-research',
+    '--long-running',
+    '--prompt', [
+      'Proceed immediately without clarification.',
+      'Research the current official Node.js release lines using official sources only.',
+      `Include this exact marker in the final cited report: ${marker}`,
+    ].join(' '),
+  ], 1_080_000)
+  assert.equal(new URL(run.page.url()).pathname.startsWith('/deep-research'), true)
+  const response = responseResult(run.payload, 'response.read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assert.ok(Array.isArray(response?.citations) && response.citations.length > 0)
+  assert.ok(await visibleCitationCount(run.page, response.citations) > 0)
+  assert.equal(await visibleResearchProgress(run.page), true)
+  await run.close()
+}
+
+async function kimiArtifacts({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const surfaces = [
+    ['/docs', 'DOC'],
+    ['/slides', 'SLIDES'],
+    ['/sheets', 'SHEET'],
+    ['/websites', 'WEBSITE'],
+  ]
+  for (const [pathname, kind] of surfaces) {
+    const marker = markerFor(provider, kind)
+    const run = await journey.run([
+      '--target-url', `https://www.kimi.com${pathname}`,
+      '--long-running',
+      '--prompt', `Create a small finished artifact titled ${marker}. Include ${marker} visibly in the artifact.`,
+    ], 1_080_000)
+    assert.equal(new URL(run.page.url()).pathname.startsWith(pathname), true)
+    assert.ok((responseResult(run.payload, 'response.read')?.text ?? '').length > 0)
+    assert.equal(await visibleArtifactDownload(run.page), true, `${pathname} must expose a visible download or export control`)
+    await run.close()
+  }
+}
+
+async function kimiLongRunning({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const background = await journey.run([
+    '--target-url', 'https://www.kimi.com/agent',
+    '--long-running',
+    '--prompt', `Complete a multi-step analysis and finish with ${markerFor(provider, 'BACKGROUND')}.`,
+  ], 1_080_000)
+  assert.match(
+    responseResult(background.payload, 'response.read')?.text ?? '',
+    new RegExp(escapeRegExp(markerFor(provider, 'BACKGROUND'))),
+  )
+  await background.close()
+}
+
+async function kimiAgentSwarm({ provider, journey }) {
+  assert.equal(provider, 'kimi')
+  const marker = markerFor(provider, 'AGENT_SWARM')
+  const run = await journey.run([
+    '--target-url', 'https://www.kimi.com/agent-swarm',
+    '--long-running',
+    '--prompt', `Use coordinated agents to compare the current official Node.js LTS lines and finish with ${marker}.`,
+  ], 1_080_000)
+  assert.equal(new URL(run.page.url()).pathname.startsWith('/agent-swarm'), true)
+  assert.match(responseResult(run.payload, 'response.read')?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assert.equal(await visibleAgentProgress(run.page), true)
+  await run.close()
+}
+
+async function projectChoice(provider, journey, targetUrl, kind) {
+  const inspectAction = `${kind}.inspect`
+  const inspected = await journey.action(inspectAction, ['--target-url', targetUrl])
+  const result = responseResult(inspected.payload, inspectAction)
+  assert.equal(result?.supported, true)
+  const selected = result.choices.find((choice) => choice.selected && choice.enabled)
+  const alternate = result.choices.find((choice) => !choice.selected && choice.enabled)
+  assert.ok(selected, `${provider} Project must expose the selected ${kind}`)
+  assert.ok(alternate, `${provider} Project must expose an alternate ${kind}`)
+  await inspected.close()
   return {
-    name: error?.name ?? 'Error',
-    code: typeof error?.code === 'string' ? error.code.slice(0, 64) : 'unknown_error',
+    kind,
+    option: kind === 'model' ? '--model' : '--effort',
+    original: selected.label,
+    alternate: alternate.label,
   }
 }
 
-function attachProviderEvidence(error, entry) {
-  if (error && (typeof error === 'object' || typeof error === 'function')) {
-    error.providerEvidence = entry
+function createProviderJourney(session, provider) {
+  const journey = {
+    session,
+    provider,
+    taskId: markerFor(provider, 'JOURNEY_TASK'),
+    targetId: null,
+    actionDocumentTimeOrigin: null,
+    authenticated: false,
+    skipReason: null,
   }
+  journey.action = (visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) => (
+    action(journey, visibleAction, args, timeoutMs, observeAfterRelease)
+  )
+  journey.run = (args, timeoutMs = 300_000, observeAfterRelease) => (
+    cliRun(journey, args, timeoutMs, observeAfterRelease)
+  )
+  return journey
 }
 
-async function runtimeVersions() {
-  const versions = {
-    chrome: null,
-    playwrightCore: null,
-  }
+async function action(journey, visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) {
+  assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
+  const operation = await journey.session.startCli([
+    'provider-action',
+    '--provider', journey.provider,
+    '--task-id', journey.taskId,
+    '--action', visibleAction,
+    ...args,
+    '--browser-visibility', 'headed',
+    '--timeout-ms', String(timeoutMs),
+  ], {
+    beforeRelease: async ({ waiting, page }) => {
+      await assertJourneyPage(journey, waiting, page, true)
+    },
+    observeAfterRelease,
+  })
   try {
-    versions.playwrightCore = JSON.parse(await fs.readFile(path.join(root, 'node_modules', 'playwright-core', 'package.json'), 'utf8')).version
-  } catch {}
-  const chrome = spawnSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', ['--version'], { encoding: 'utf8' })
-  if (chrome.status === 0) versions.chrome = chrome.stdout.trim()
-  return versions
+    const result = await operation.wait()
+    assertDurableSuccess(result.payload, journey.provider)
+    return { ...operation, ...result }
+  } catch (error) {
+    await operation.close()
+    throw error
+  }
+}
+
+async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
+  assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
+  recordSubmissionAttempt(journey)
+  journey.actionDocumentTimeOrigin = null
+  const operation = await journey.session.startCli([
+    'run',
+    '--provider', journey.provider,
+    '--task-id', journey.taskId,
+    ...args,
+    '--browser-visibility', 'headed',
+    '--timeout-ms', String(timeoutMs),
+  ], {
+    beforeRelease: async ({ waiting, page }) => {
+      await assertJourneyPage(journey, waiting, page, false)
+    },
+    observeAfterRelease,
+  })
+  try {
+    const result = await operation.wait()
+    assertDurableSuccess(result.payload, journey.provider)
+    return { ...operation, ...result }
+  } catch (error) {
+    await operation.close()
+    throw error
+  }
+}
+
+async function assertJourneyPage(journey, waiting, page, preserveActionDocument) {
+  assert.equal(waiting.provider, journey.provider)
+  assert.equal(canonicalPageUrl(waiting.url), canonicalPageUrl(page.url()))
+  if (journey.targetId === null) journey.targetId = waiting.targetId
+  assert.equal(
+    waiting.targetId,
+    journey.targetId,
+    `${journey.provider} capability journey must stay on one exact Chromium page target`,
+  )
+  if (preserveActionDocument && ['qwen', 'deepseek'].includes(journey.provider)) {
+    const timeOrigin = await page.evaluate(() => performance.timeOrigin)
+    if (journey.actionDocumentTimeOrigin === null) journey.actionDocumentTimeOrigin = timeOrigin
+    assert.equal(
+      timeOrigin,
+      journey.actionDocumentTimeOrigin,
+      `${journey.provider} provider actions must not refresh their shared document`,
+    )
+  }
+}
+
+function recordSubmissionAttempt(journey) {
+  const tracker = submissionTrackers.get(journey)
+  assert.ok(tracker, 'live E2E submission tracker must be initialized')
+  tracker.attempts += 1
+  assert.ok(
+    tracker.attempts <= tracker.budget,
+    `${tracker.caseId} exceeded its provider submission budget of ${tracker.budget}`,
+  )
+}
+
+function assertSubmissionBudget(journey) {
+  const tracker = submissionTrackers.get(journey)
+  assert.ok(tracker, 'live E2E submission tracker must be initialized')
+  assert.equal(
+    tracker.attempts,
+    tracker.budget,
+    `${tracker.caseId} must use exactly ${tracker.budget} provider submissions`,
+  )
+}
+
+function assertDurableSuccess(payload, provider) {
+  assert.equal(payload?.ok, true)
+  if (payload?.status === 'waiting_for_user' || payload?.waitingForUser === true) {
+    const knownIssueSkip = knownIssueSkipForDurableBlocker(matrix, provider, payload)
+    if (knownIssueSkip) {
+      assertDurableWaitingForUser(payload, provider, knownIssueSkip.blockerCode)
+      throw e2eSkip(
+        'e2e_known_issue_provider_blocker',
+        `${provider} known issue ${knownIssueSkip.reason}: ${knownIssueSkip.blockerCode}`,
+      )
+    }
+    const blockerCode = structuredBlockerCodes(payload?.blocker)[0] ?? 'provider_user_handover_required'
+    throw e2eFailure(
+      'e2e_provider_prerequisite_unavailable',
+      `provider job requires user action: ${blockerCode}`,
+    )
+  }
+  assert.equal(payload?.status, 'succeeded')
+  const jobId = payload.jobId
+  assert.equal(typeof jobId, 'string')
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    const row = database.prepare(
+      'SELECT status, result_json, error_json FROM jobs WHERE job_id = ?',
+    ).get(jobId)
+    assert.equal(row?.status, 'succeeded')
+    assert.equal(typeof row?.result_json, 'string')
+    assert.equal(row?.error_json, null)
+  } finally {
+    database.close()
+  }
+}
+
+function assertDurableWaitingForUser(payload, provider, blockerCode) {
+  const jobId = payload.jobId
+  assert.equal(typeof jobId, 'string')
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    const row = database.prepare(
+      'SELECT provider, status, blocker_json, error_json FROM jobs WHERE job_id = ?',
+    ).get(jobId)
+    assert.equal(row?.provider, provider)
+    assert.equal(row?.status, 'waiting_for_user')
+    assert.equal(row?.error_json, null)
+    const durableBlocker = typeof row?.blocker_json === 'string'
+      ? JSON.parse(row.blocker_json)
+      : null
+    assert.equal(
+      structuredBlockerCodes(durableBlocker).includes(blockerCode),
+      true,
+      `durable blocker must include ${blockerCode}`,
+    )
+  } finally {
+    database.close()
+  }
+}
+
+function responseResult(payload, actionName) {
+  const responses = payload?.result?.result?.responses ??
+    payload?.result?.responses ??
+    payload?.latest?.result?.value?.responses
+  if (!Array.isArray(responses)) return null
+  return [...responses].reverse().find((response) => response?.ok === true && response.action === actionName)?.result ?? null
+}
+
+function assertConversationWorkspaceResult(provider, taskId, run) {
+  const result = responseResult(run.payload, 'workspace.ensure')
+  assert.equal(result?.mode, 'conversation')
+  assert.equal(result?.resource?.kind, 'conversation')
+  assert.equal(result?.resource?.native, false)
+  assert.equal(result?.resource?.disposition, 'fallback')
+  const conversationUrl = canonicalPageUrl(run.page.url())
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    const mapping = database.prepare(
+      `SELECT canonical_url
+       FROM provider_task_conversations
+       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
+    ).get(provider, result.scope.profileId, taskId)
+    assert.equal(typeof mapping?.canonical_url, 'string', `${provider} must persist the conversation Workspace mapping`)
+    assert.equal(canonicalPageUrl(mapping?.canonical_url), conversationUrl)
+  } finally {
+    database.close()
+  }
+  return conversationUrl
+}
+
+function assertTaskConversationMapping(provider, taskId, expectedUrl, payload) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+  try {
+    const job = database.prepare('SELECT profile_id FROM jobs WHERE job_id = ?').get(payload?.jobId)
+    assert.equal(typeof job?.profile_id, 'string')
+    const mapping = database.prepare(
+      `SELECT canonical_url
+       FROM provider_task_conversations
+       WHERE provider = ? AND profile_id = ? AND task_id = ?`,
+    ).get(provider, job.profile_id, taskId)
+    assert.equal(typeof mapping?.canonical_url, 'string', `${provider} must persist the continuation mapping`)
+    assert.equal(canonicalPageUrl(mapping.canonical_url), expectedUrl)
+  } finally {
+    database.close()
+  }
+}
+
+async function composerContains(page, marker) {
+  const fields = page.locator('textarea, [contenteditable="true"]')
+  for (let index = 0; index < await fields.count(); index += 1) {
+    const field = fields.nth(index)
+    if (!await field.isVisible({ timeout: 100 }).catch(() => false)) continue
+    const value = await field.evaluate((element) => (
+      element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+        ? element.value
+        : element.textContent ?? ''
+    ))
+    if (value.includes(marker)) return true
+  }
+  return false
+}
+
+async function exactTextVisible(page, value) {
+  const locator = page.getByText(value, { exact: true })
+  for (let index = 0; index < await locator.count(); index += 1) {
+    if (await locator.nth(index).isVisible({ timeout: 100 }).catch(() => false)) return true
+  }
+  return false
+}
+
+async function waitForExactText(page, value, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    if (await exactTextVisible(page, value)) return true
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  return false
+}
+
+async function pageContains(page, value, minimumVisibleMatches = 1) {
+  const matches = page.getByText(new RegExp(escapeRegExp(value)))
+  let visible = 0
+  for (let index = 0; index < await matches.count(); index += 1) {
+    if (await matches.nth(index).isVisible({ timeout: 100 }).catch(() => false)) visible += 1
+    if (visible >= minimumVisibleMatches) return true
+  }
+  return false
+}
+
+async function visibleCitationCount(page, citations) {
+  const expected = new Set(citations.map((citation) => canonicalPageUrl(citation.href)))
+  const controls = page.locator('main a[href], .chat-content-item-assistant a[href]')
+  let count = 0
+  for (let index = 0; index < await controls.count(); index += 1) {
+    const control = controls.nth(index)
+    const href = await control.getAttribute('href').catch(() => null)
+    if (!href) continue
+    const canonical = canonicalPageUrl(new URL(href, page.url()).toString())
+    if (expected.has(canonical) && await control.isVisible({ timeout: 100 }).catch(() => false)) count += 1
+  }
+  return count
+}
+
+async function visibleResearchProgress(page) {
+  return await visibleLocatorCount(page.locator(
+    '[class*="research"] [class*="plan"], [class*="research"] [class*="step"], [class*="research-progress"]',
+  )) > 0
+}
+
+async function visibleArtifactDownload(page) {
+  return await visibleLocatorCount(page.locator([
+    'a[download]',
+    'button[aria-label*="Download" i]',
+    'button[aria-label*="Export" i]',
+    'button:has-text("Download")',
+    'button:has-text("Export")',
+  ].join(', '))) > 0
+}
+
+async function visibleAgentProgress(page) {
+  return await visibleLocatorCount(page.locator(
+    '[class*="agent"] [class*="plan"], [class*="agent"] [class*="task"], [class*="agent"] [class*="progress"]',
+  )) > 0
+}
+
+async function visibleLocatorCount(locator) {
+  let visible = 0
+  for (let index = 0; index < await locator.count(); index += 1) {
+    if (await locator.nth(index).isVisible({ timeout: 100 }).catch(() => false)) visible += 1
+  }
+  return visible
+}
+
+async function freePort() {
+  const server = net.createServer()
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string')
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  return address.port
+}
+
+function requiredGate() {
+  const value = requiredEnv('TOKENLESS_LIVE_E2E_GATE')
+  if (!['all', 'non_submission', 'mutation', 'project'].includes(value)) {
+    throw e2eFailure('e2e_gate_invalid', 'TOKENLESS_LIVE_E2E_GATE must be all, non_submission, mutation, or project')
+  }
+  return value
+}
+
+function optionalConnectionMode(value) {
+  const connectionMode = value ?? 'playwright'
+  if (connectionMode !== 'playwright' && connectionMode !== 'cdp') {
+    throw e2eFailure(
+      'e2e_browser_connection_mode_invalid',
+      'TOKENLESS_LIVE_BROWSER_CONNECTION_MODE must be playwright or cdp',
+    )
+  }
+  return connectionMode
+}
+
+function optionalProviderFilter(value) {
+  const provider = value?.trim()
+  if (!provider) return null
+  if (!Object.hasOwn(matrix.providers, provider)) {
+    throw e2eFailure(
+      'e2e_provider_filter_invalid',
+      `TOKENLESS_LIVE_E2E_PROVIDER must name a provider declared in the live capability matrix: ${provider}`,
+    )
+  }
+  return provider
+}
+
+function optionalCaseFilter(value) {
+  const caseIds = value?.split(',').map((caseId) => caseId.trim()).filter(Boolean)
+  if (!caseIds || caseIds.length === 0) return null
+  for (const caseId of caseIds) {
+    if (!Object.hasOwn(matrix.cases, caseId)) {
+      throw e2eFailure(
+        'e2e_case_filter_invalid',
+        `TOKENLESS_LIVE_E2E_CASES contains a case not declared in the live capability matrix: ${caseId}`,
+      )
+    }
+  }
+  return new Set(caseIds)
 }
 
 function requiredEnv(name) {
-  const value = process.env[name]
-  if (!value) throw new Error(`${name} is required`)
+  const value = process.env[name]?.trim()
+  if (!value) {
+    throw e2eFailure(
+      'e2e_activation_missing',
+      `${name} is required; only declared durable provider known issues may skip`,
+    )
+  }
   return value
+}
+
+function markerFor(provider, kind) {
+  return `TOKENLESS_E2E_${kind}_${provider}_${suiteRunMarker}_${randomUUID().slice(0, 8)}`
+}
+
+function compactTimestamp(value) {
+  return value.toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
+}
+
+function canonicalPageUrl(value) {
+  const parsed = new URL(value)
+  parsed.search = ''
+  parsed.hash = ''
+  return parsed.toString()
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+}
+
+function e2eFailure(code, message) {
+  return Object.assign(new Error(`${code}: ${message}`), { code })
+}
+
+function e2eSkip(code, message) {
+  return Object.assign(new Error(`${code}: ${message}`), { code })
+}
+
+function isKnownIssueSkip(error) {
+  return error?.code === 'e2e_known_issue_provider_blocker'
 }

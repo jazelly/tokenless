@@ -1,5 +1,9 @@
+import { localizeText } from './localization.js'
+import { paintCliText, resolveCliColorEnabled } from './cli-output.js'
+
 type WritableStream = {
   columns?: number
+  isTTY?: boolean
   write(chunk: string): unknown
 }
 
@@ -12,6 +16,7 @@ export type SetupPresenterOptions = {
   enabled?: boolean
   stream?: WritableStream
   env?: NodeJS.ProcessEnv
+  color?: boolean
   timers?: TimerApi
   animation?: boolean
   intervalMs?: number
@@ -38,7 +43,7 @@ const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 const REPLACE_TERMINAL_LINE = '\u001b[2K\u001b[1G'
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
-  'Keeps sign-ins between jobs. Imports copy selected provider cookies only; other browser data is excluded.',
+  'Keeps sign-ins between jobs inside a Tokenless-managed profile. With explicit consent, setup can copy a selected local profile as an opaque filesystem tree without reading its authentication values.',
 ])
 
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([
@@ -56,11 +61,11 @@ export class SetupPresenter {
   constructor(options: SetupPresenterOptions = {}) {
     const env = options.env ?? process.env
     this.enabled = options.enabled ?? true
-    this.colorEnabled = this.enabled && supportsAnsi(env)
+    this.stream = options.stream ?? process.stderr
+    this.colorEnabled = this.enabled && (options.color ?? resolveCliColorEnabled({}, { env, stream: this.stream }))
     this.animationEnabled = this.enabled &&
       options.animation !== false &&
       supportsAnimation(env)
-    this.stream = options.stream ?? process.stderr
     this.timers = options.timers ?? {
       setInterval: (callback, ms) => setInterval(callback, ms),
       clearInterval: (timer) => clearInterval(timer as NodeJS.Timeout),
@@ -76,34 +81,25 @@ export class SetupPresenter {
     if (!this.enabled) return
     this.write([
       '',
-      this.paint('brightCyan', 'Tokenless setup'),
+      this.paint('brightCyan', localizeText('Tokenless setup')),
       '',
     ].join('\n'))
   }
 
   explain({ title, lines }: ExplainOptions) {
     if (!this.enabled) return
-    this.write(`${this.paint('bright', title)}\n`)
-    for (const line of lines) this.write(`  ${this.paint('dim', '-')} ${line}\n`)
+    this.write(`${this.paint('bright', localizeText(title))}\n`)
+    for (const line of lines) this.write(`  ${this.paint('dim', '-')} ${localizeText(line)}\n`)
   }
 
   note(message: string) {
     if (!this.enabled) return
-    this.write(`  ${this.paint('cyan', '*')} ${message}\n`)
+    this.write(`  ${this.paint('yellow', '*')} ${localizeText(message)}\n`)
   }
 
   success(message: string) {
     if (!this.enabled) return
-    this.write(`  ${this.paint('green', 'OK')} ${message}\n`)
-  }
-
-  handover(provider: string, detail: string, nextStep = 'Finish in the already-open Tokenless-managed Chrome window/tab, then press Enter here. The same job will resume.') {
-    if (!this.enabled) return
-    this.write([
-      this.paint('yellow', `Visible ${provider} handoff`),
-      `  ${this.paint('dim', '-')} ${detail}`,
-      `  ${this.paint('dim', '-')} ${nextStep}`,
-    ].join('\n') + '\n')
+    this.write(`  ${this.paint('green', 'OK')} ${localizeText(message)}\n`)
   }
 
   async withProgress<T>(message: string, task: () => Promise<T>): Promise<T> {
@@ -115,7 +111,7 @@ export class SetupPresenter {
       const prefix = this.animationEnabled
         ? `${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]}`
         : '-'
-      this.writeProgress(prefix, message)
+      this.writeProgress(prefix, localizeText(message))
     }
 
     if (this.animationEnabled) {
@@ -126,20 +122,20 @@ export class SetupPresenter {
     try {
       const result = await task()
       if (timer !== null) this.timers.clearInterval(timer)
-      if (this.animationEnabled) this.finishProgress('OK', message, 'green')
+      if (this.animationEnabled) this.finishProgress('OK', localizeText(message), 'green')
       else this.success(message)
       return result
     } catch (error) {
       if (timer !== null) this.timers.clearInterval(timer)
-      if (this.animationEnabled) this.finishProgress('X', message, 'red')
-      else this.write(`  ${this.paint('red', 'X')} ${message}\n`)
+      if (this.animationEnabled) this.finishProgress('X', localizeText(message), 'red')
+      else this.write(`  ${this.paint('red', 'X')} ${localizeText(message)}\n`)
       throw error
     }
   }
 
   summary(message: string) {
     if (!this.enabled) return
-    this.write(`\n${this.paint('brightGreen', message)}\n`)
+    this.write(`\n${this.paint('brightGreen', localizeText(message))}\n`)
   }
 
   private writeProgress(prefix: string, message: string) {
@@ -163,9 +159,7 @@ export class SetupPresenter {
   }
 
   private paint(color: keyof typeof ANSI_COLORS, value: string) {
-    if (!this.colorEnabled) return value
-    const code = ANSI_COLORS[color]
-    return `\u001b[${code}m${value}\u001b[0m`
+    return paintCliText(value, color, this.colorEnabled)
   }
 }
 
@@ -183,9 +177,10 @@ export function resolveSetupTerminalCapabilities(options: SetupTerminalCapabilit
   }
 }
 
-export function supportsAnsi(env: NodeJS.ProcessEnv = process.env) {
+export function supportsAnsi(env: NodeJS.ProcessEnv = process.env, stream?: WritableStream) {
   if ('NO_COLOR' in env) return false
   if (env.TERM === 'dumb') return false
+  if (stream?.isTTY === false) return false
   return true
 }
 

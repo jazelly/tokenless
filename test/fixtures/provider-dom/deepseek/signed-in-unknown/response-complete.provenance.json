@@ -1,0 +1,27 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "deepseek",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "response-complete",
+  "routeClass": "conversation",
+  "operationPhase": "response-complete",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-08-01",
+  "sanitizedUrl": "https://chat.deepseek.com/a/chat/s/[redacted]",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "8c1d9c9ff90b3b4649685c7df4b805ea997cfcd8d191044918947971151156c6",
+  "evidenceSelectors": [
+    { "capability": "response.read", "selector": ".ds-message > .ds-markdown.ds-assistant-message-main-content", "expectedCount": 1 },
+    { "capability": "conversation.continue", "selector": "textarea[name=\"search\"][placeholder=\"Message DeepSeek\"]", "expectedCount": 1 },
+    { "capability": "prompt.submit", "selector": "[role=\"button\"].ds-button--primary.ds-button--disabled", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "deepthink-content-not-present", "selector": ".ds-think-content", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "conversation history", "prompt content", "response content", "private route identifiers", "scripts", "styles"],
+  "notes": ["A correlated Instant response and same-conversation composer were observed with unique test markers."]
+}

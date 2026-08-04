@@ -1,0 +1,55 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "qwen",
+  "accountState": "signed-out-guest",
+  "observedPlan": {
+    "status": "unknown",
+    "label": null
+  },
+  "scenario": "studio-response-complete",
+  "routeClass": "conversation",
+  "operationPhase": "response-complete",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-29",
+  "sanitizedUrl": "https://chat.qwen.ai/c/guest",
+  "source": "managed-visible-provider-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "dca904c8dd9350767b6eb658b2e43a2ff36fefff71c74e97e0d87aac501dc484",
+  "evidenceSelectors": [
+    {
+      "capability": "prompt.input",
+      "selector": "textarea.message-input-textarea",
+      "expectedCount": 1
+    },
+    {
+      "capability": "prompt.submit",
+      "selector": "button.send-button",
+      "expectedCount": 1
+    },
+    {
+      "capability": "response.read",
+      "selector": ".qwen-chat-message-assistant .chat-response-message .qwen-markdown",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [
+    {
+      "purpose": "response.not-streaming",
+      "selector": "button.stop-button, .qwen-chat-message-awaiting-response",
+      "expectedCount": 0
+    }
+  ],
+  "redactions": [
+    "prompt content",
+    "response content",
+    "scripts",
+    "styles",
+    "unrelated controls"
+  ],
+  "notes": [
+    "A real guest prompt submitted from the canonical Qwen Studio home and navigated the same visible page to /c/guest.",
+    "The response text and unrelated page structure were removed from this reduction."
+  ]
+}

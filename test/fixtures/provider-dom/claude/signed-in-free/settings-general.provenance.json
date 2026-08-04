@@ -1,0 +1,44 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "claude",
+  "accountState": "signed-in-free",
+  "observedPlan": {
+    "status": "observed",
+    "label": "Free"
+  },
+  "scenario": "settings-general",
+  "routeClass": "settings-overlay",
+  "operationPhase": "observed",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://claude.ai/new",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "0d6cd7a582c3fb1869fea9b4cf77ba546a2ac958ab3477c7cb6df6e3879cb16e",
+  "evidenceSelectors": [
+    {
+      "capability": "settings.open",
+      "selector": "[role=\"dialog\"][aria-label=\"Settings\"]",
+      "expectedCount": 1
+    },
+    {
+      "capability": "settings.sections",
+      "selector": "nav[aria-label=\"Settings sections\"] button",
+      "expectedCount": 12
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

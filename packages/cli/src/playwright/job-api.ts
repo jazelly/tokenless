@@ -4,18 +4,21 @@ import {
   createManagedPlaywrightJobRequest,
   validateManagedPlaywrightJobRequest,
 } from './job-contract.js'
-import { createDaemonClient } from './daemon-client.js'
+import {
+  cancelDaemonJob,
+  createDaemonJob,
+  getDaemonJob,
+  listDaemonJobs,
+  resumeDaemonJob,
+} from '../daemon-client.js'
 import { tokenlessError } from './errors.js'
-import type { DaemonJob, DaemonJobStatus, ManagedDaemonClient } from './daemon-client.js'
+import type { DaemonJob, DaemonJobStatus } from '../daemon-client.js'
 import type { CreateManagedPlaywrightJobRequestInput, ManagedPlaywrightJobRequest } from './job-contract.js'
-import type { ProviderId } from './providers.js'
+import type { ProviderId } from '../providers/registry.js'
 
 export type ManagedPlaywrightJobApiOptions = {
-  daemonClient?: ManagedDaemonClient | undefined
   daemonUrl?: string | undefined
   homeDir?: string | undefined
-  token?: string | undefined
-  fetchImpl?: typeof fetch | undefined
   requestTimeoutMs?: number | undefined
   signal?: AbortSignal | undefined
 }
@@ -23,8 +26,10 @@ export type ManagedPlaywrightJobApiOptions = {
 export type SubmitManagedPlaywrightJobOptions = ManagedPlaywrightJobApiOptions & {
   profileId: string
   request: ManagedPlaywrightJobRequest | CreateManagedPlaywrightJobRequestInput
+  agentKind?: string | undefined
+  agentSessionId?: string | undefined
+  upstreamState?: Readonly<Record<string, unknown>> | undefined
   jobId?: string | undefined
-  claimToken?: string | undefined
 }
 
 export type ListManagedPlaywrightJobsOptions = ManagedPlaywrightJobApiOptions & {
@@ -47,21 +52,35 @@ export type CancelManagedPlaywrightJobOptions = GetManagedPlaywrightJobOptions &
 export type ResumeManagedPlaywrightJobOptions = GetManagedPlaywrightJobOptions
 
 export async function submitManagedPlaywrightJob(options: SubmitManagedPlaywrightJobOptions) {
-  const request = normalizeJobRequest(options.request)
-  return daemonClient(options).createJob({
+  const normalized = normalizeJobRequest(options.request)
+  const request = options.agentKind === undefined && options.agentSessionId === undefined && options.upstreamState === undefined
+    ? normalized
+    : validateManagedPlaywrightJobRequest({
+        ...normalized,
+        context: {
+          ...normalized.context,
+          upstream: {
+            agentKind: options.agentKind ?? null,
+            sessionId: options.agentSessionId ?? null,
+            state: options.upstreamState ?? null,
+          },
+        },
+      })
+  return createDaemonJob({
     ...daemonOptions(options),
     provider: request.provider,
     action: MANAGED_PLAYWRIGHT_JOB_ACTION,
     requestJson: request,
     executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
     profileId: options.profileId,
+    agentKind: options.agentKind,
+    agentSessionId: options.agentSessionId,
     jobId: options.jobId,
-    claimToken: options.claimToken,
   })
 }
 
 export async function listManagedPlaywrightJobs(options: ListManagedPlaywrightJobsOptions = {}) {
-  return daemonClient(options).listJobs({
+  return listDaemonJobs({
     ...daemonOptions(options),
     executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
     profileId: options.profileId,
@@ -73,7 +92,7 @@ export async function listManagedPlaywrightJobs(options: ListManagedPlaywrightJo
 }
 
 export async function getManagedPlaywrightJob(options: GetManagedPlaywrightJobOptions): Promise<DaemonJob> {
-  const job = await daemonClient(options).getJob({
+  const job = await getDaemonJob({
     ...daemonOptions(options),
     jobId: options.jobId,
   })
@@ -83,7 +102,7 @@ export async function getManagedPlaywrightJob(options: GetManagedPlaywrightJobOp
 
 export async function cancelManagedPlaywrightJob(options: CancelManagedPlaywrightJobOptions): Promise<DaemonJob> {
   await getManagedPlaywrightJob(options)
-  return daemonClient(options).cancelJob({
+  return cancelDaemonJob({
     ...daemonOptions(options),
     jobId: options.jobId,
     reason: options.reason,
@@ -92,7 +111,7 @@ export async function cancelManagedPlaywrightJob(options: CancelManagedPlaywrigh
 
 export async function resumeManagedPlaywrightJob(options: ResumeManagedPlaywrightJobOptions): Promise<DaemonJob> {
   await getManagedPlaywrightJob(options)
-  const job = await daemonClient(options).resumeJob({
+  const job = await resumeDaemonJob({
     ...daemonOptions(options),
     jobId: options.jobId,
     browserVisibility: 'headed',
@@ -110,16 +129,10 @@ function normalizeJobRequest(
   return createManagedPlaywrightJobRequest(request)
 }
 
-function daemonClient(options: ManagedPlaywrightJobApiOptions) {
-  return options.daemonClient ?? createDaemonClient(daemonOptions(options))
-}
-
 function daemonOptions(options: ManagedPlaywrightJobApiOptions) {
   return {
     daemonUrl: options.daemonUrl,
     homeDir: options.homeDir,
-    token: options.token,
-    fetchImpl: options.fetchImpl,
     requestTimeoutMs: options.requestTimeoutMs,
     signal: options.signal,
   }

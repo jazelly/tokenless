@@ -1,0 +1,49 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "chatgpt",
+  "accountState": "signed-in-paid",
+  "observedPlan": {
+    "status": "observed",
+    "label": "Pro"
+  },
+  "scenario": "conversation-existing",
+  "routeClass": "conversation",
+  "operationPhase": "conversation-existing",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-25",
+  "sanitizedUrl": "https://chatgpt.com/c/[redacted]",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "b29e4ff1d1a9bd5ad891060d26d726f6e761094ea67529e49d9c7de5bf2b2af3",
+  "evidenceSelectors": [
+    {
+      "capability": "job.existing",
+      "selector": "main article[data-message-author-role]",
+      "expectedCount": 2
+    },
+    {
+      "capability": "job.continue",
+      "selector": "main [role=\"textbox\"][aria-label=\"Chat with ChatGPT\"]",
+      "expectedCount": 1
+    },
+    {
+      "capability": "job.share",
+      "selector": "button[aria-label=\"Share\"]",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "account identity",
+    "chat titles",
+    "message content",
+    "uploaded file names",
+    "generated asset URLs",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": []
+}

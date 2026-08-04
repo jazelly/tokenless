@@ -1,0 +1,40 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "qwen",
+  "accountState": "signed-out-guest",
+  "observedPlan": {
+    "status": "unknown",
+    "label": null
+  },
+  "scenario": "composer-slate-placeholder",
+  "routeClass": "new-chat",
+  "operationPhase": "prompt-input-clear",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-07-28",
+  "sanitizedUrl": "https://www.qianwen.com/",
+  "source": "managed-visible-provider-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "80f3fae8ed520d57477295438b063c60c5d9b151d194b57839f723e50af84959",
+  "evidenceSelectors": [
+    {
+      "capability": "prompt.input",
+      "selector": "div[contenteditable=\"true\"][role=\"textbox\"][data-slate-editor=\"true\"]",
+      "expectedCount": 1
+    },
+    {
+      "capability": "prompt.placeholder",
+      "selector": "[data-slate-placeholder=\"true\"][contenteditable=\"false\"]",
+      "expectedCount": 1
+    }
+  ],
+  "absenceSelectors": [],
+  "redactions": [
+    "conversation history",
+    "message content",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ]
+}
