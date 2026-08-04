@@ -32,6 +32,7 @@ import {
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersion } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
 import { readTokenlessConfig } from '../job-store.js'
+import { OutputSavingsRuntimeManager } from '../output-savings/index.js'
 import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById, listTaskCapabilityDefinitions } from '../providers/registry.js'
 import type {
   ManagedBrowserContext,
@@ -187,6 +188,7 @@ export class ManagedPlaywrightRunnerService {
   private readonly now: () => Date
   private readonly e2eInspection: E2EBrowserInspectionConfig | null
   private readonly controlPlanePageKey: string
+  private readonly homeDir: string | undefined
   private readonly providerTabsByProfile = new Map<string, Map<string, Page>>()
   private readonly pendingProviderTabsByProfile = new Map<string, Set<string>>()
   private readonly inFlightProfiles = new Set<string>()
@@ -194,6 +196,7 @@ export class ManagedPlaywrightRunnerService {
   private stopped = false
 
   constructor(options: ManagedPlaywrightRunnerServiceOptions) {
+    this.homeDir = options.homeDir === undefined ? undefined : path.resolve(options.homeDir)
     if (options.profileRegistry) {
       this.profileRegistry = options.profileRegistry
     } else {
@@ -698,6 +701,7 @@ export class ManagedPlaywrightRunnerService {
     renewalError: () => unknown,
     onAutoEscalated: (context: ManagedBrowserContext) => void
   ): Promise<ManagedPlaywrightJobResult> {
+    const outputSavingsManager = await this.outputSavingsManager()
     const resumeVisibility = validateResumeVisibility(job.resume_json)
     const claimBrowserVisibility = requestedVisibilityForClaim(request.browserVisibility, resumeVisibility)
     const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
@@ -863,6 +867,9 @@ export class ManagedPlaywrightRunnerService {
           operationId: job.job_id,
           signal,
           now: this.now,
+          ...(outputSavingsManager
+            ? { measureVisibleOutput: (text: string) => outputSavingsManager.measure(text, { signal }) }
+            : {}),
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),
         }
         const response = await (async (): Promise<VisibleActionResponse> => {
@@ -959,6 +966,14 @@ export class ManagedPlaywrightRunnerService {
       provider: request.provider,
       responses,
     }
+  }
+
+  private async outputSavingsManager() {
+    if (!this.homeDir) return null
+    const config = await readTokenlessConfig(this.homeDir)
+    return config.outputSavings.enabled
+      ? new OutputSavingsRuntimeManager(this.homeDir)
+      : null
   }
 
   private async checkpointJob(

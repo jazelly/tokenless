@@ -32,7 +32,8 @@
     "test:e2e:non-submission": "npm run build && node test/run-live-provider-e2e.mjs run --gate non_submission",
     "test:e2e:mutation": "npm run build && node test/run-live-provider-e2e.mjs run --gate mutation",
     "test:e2e:project": "npm run build && node test/run-live-provider-e2e.mjs run --gate project",
-    "test:e2e:fallback": "npm run build && node test/run-gated-e2e.mjs provider-fallback"
+    "test:e2e:fallback": "npm run build && node test/run-gated-e2e.mjs provider-fallback",
+    "test:e2e:output-savings": "npm run build && node --test --test-concurrency=1 test/output-savings-runtime.e2e.mjs"
   },
   "workspaces": [
     "packages/*"

@@ -65,6 +65,28 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
     const snapshotBody = JSON.parse(snapshotText)
     assert.equal(snapshotBody.schema, 'tokenless.ui-snapshot.v1')
     assert.equal(typeof snapshotBody.revision, 'string')
+    assert.deepEqual(snapshotBody.outputSavings, {
+      enabled: false,
+      collection: 'disabled',
+      estimator: 'o200k_base',
+      basis: 'visible_assistant_text',
+      runtime: {
+        runtimeId: 'tiktoken-o200k_base-1.0.22',
+        state: 'not_installed',
+        installed: false,
+        downloadBytes: 10611708,
+        installedBytes: 3413323,
+      },
+      summary: {
+        estimatedOutputTokens: 0,
+        visibleCharacters: 0,
+        responseCount: 0,
+        jobCount: 0,
+        firstMeasuredAt: null,
+        lastMeasuredAt: null,
+      },
+    })
+    assert.equal(snapshotBody.config.outputSavings.enabled, false)
     assertUiSchema(validateUiSnapshot, snapshotBody)
 
     const unchanged = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, {
@@ -121,6 +143,44 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
     })
     assert.equal(changed.status, 200)
     assert.equal((await changed.json()).language, 'zh-CN')
+
+    const disableSavings = await fetch(`${daemon.origin}/ui-api/v1/output-savings/disable`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    })
+    assert.equal(disableSavings.status, 200)
+    assert.equal((await disableSavings.json()).enabled, false)
+
+    const unconfirmedClear = await fetch(`${daemon.origin}/ui-api/v1/output-savings/history/clear`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    })
+    assert.equal(unconfirmedClear.status, 400)
+
+    const clearSavings = await fetch(`${daemon.origin}/ui-api/v1/output-savings/history/clear`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ confirmDelete: true }),
+    })
+    assert.equal(clearSavings.status, 200)
+    assert.equal((await clearSavings.json()).summary.estimatedOutputTokens, 0)
 
     const registry = new ManagedProfileRegistry(homeDir)
     const invalidProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles`, {

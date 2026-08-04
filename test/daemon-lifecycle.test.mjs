@@ -394,6 +394,18 @@ test('doctor is read-only for an uninitialized Tokenless home', () => {
     assert.equal(payload.checks.daemon.daemonLogExists, false)
     assert.equal(payload.checks.runner.state, 'stopped')
     assert.equal(payload.checks.managedProfile.ok, false)
+    assert.deepEqual(payload.checks.outputSavings, {
+      ok: true,
+      enabled: false,
+      collection: 'disabled',
+      runtime: {
+        runtimeId: 'tiktoken-o200k_base-1.0.22',
+        state: 'not_installed',
+        installed: false,
+        downloadBytes: 10611708,
+        installedBytes: 3413323,
+      },
+    })
     assert.equal(fs.existsSync(homeDir), false, result.stdout)
   } finally {
     fs.rmSync(parent, { recursive: true, force: true })

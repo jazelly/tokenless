@@ -3,7 +3,7 @@
   import { onMount, tick } from 'svelte'
   import Modal from '../components/Modal.svelte'
   import PageHeader from '../components/PageHeader.svelte'
-  import { formatTime } from '../formatting.js'
+  import { formatNumber, formatTime } from '../formatting.js'
   import { stateLabel } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
@@ -92,7 +92,7 @@
     {#each filtered as job (job.jobId)}
       <button class="data-row job-row" type="button" onclick={() => showDetail(job.jobId)} data-testid={`job-${job.jobId}`}>
         <span class={`job-state ${job.status}`}></span>
-        <span class="data-row-main"><strong>{job.taskId ?? job.jobId}</strong><small>{job.provider ?? '—'} · {job.profileSlug ?? '—'}</small></span>
+        <span class="data-row-main"><strong>{job.taskId ?? job.jobId}</strong><small>{job.provider ?? '—'} · {job.profileSlug ?? '—'}{#if job.outputSavings.estimatedOutputTokens > 0} · {formatNumber(job.outputSavings.estimatedOutputTokens, language)} {t('tokensSavedShort')}{/if}</small></span>
         <span class="mono-label">{stateLabel(language, job.status)}</span>
         <time>{formatTime(job.updatedAt, language)}</time>
         <ChevronRight size={15} />
@@ -110,6 +110,7 @@
       {#if error}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1"><span>{error}</span></div>{/if}
       <p class="muted">{t('created')}: {formatTime(detail.createdAt, language)}<br />{t('updated')}: {formatTime(detail.updatedAt, language)}</p>
       {#if detail.status === 'waiting_for_user'}<button class="button primary" type="button" disabled={busy} onclick={() => jobAction('resume')}>{t('resume')}</button>{:else if ['queued', 'claimed', 'running'].includes(detail.status)}<button class="button danger" type="button" disabled={busy} onclick={() => jobAction('cancel')}>{t('cancel')}</button>{/if}
+      {#if detail.outputSavings.responseCount > 0}<section><h3>{t('outputSavings')}</h3><p>{t('estimatedTokensSaved')}: {formatNumber(detail.outputSavings.estimatedOutputTokens, language)}<br />{t('measuredResponses')}: {formatNumber(detail.outputSavings.responseCount, language)}</p></section>{/if}
       <section><h3>{t('result')}</h3><pre>{JSON.stringify(detail.result, null, 2)}</pre></section>
       <section><h3>{t('error')}</h3><pre>{JSON.stringify(detail.error ?? detail.blocker, null, 2)}</pre></section>
       <section><h3>{t('attempts')}</h3><pre>{JSON.stringify(detail.providerAttempts, null, 2)}</pre></section>

@@ -45,8 +45,17 @@ import {
   type ManagedChromiumBrowserId,
 } from '../playwright/profiles/chrome-discovery.js'
 import { copyOpaqueChromiumProfile } from '../playwright/profiles/opaque-copy.js'
-import { publicView, type Job, type JobStore, type JobView } from '../daemon/job-store.js'
+import {
+  publicView,
+  type Job,
+  type JobStore,
+  type JobView,
+  type OutputSavingsEvent,
+  type OutputSavingsSummary,
+} from '../daemon/job-store.js'
 import type { BrowserRuntimeController } from '../daemon/browser-runtime-controller.js'
+import { OUTPUT_SAVINGS_ESTIMATOR } from '../output-savings/catalog.js'
+import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
 
 export type UiApplicationServicesOptions = {
   store: JobStore
@@ -89,6 +98,7 @@ export class TokenlessApplicationServices {
   readonly store: JobStore
   readonly profiles: ManagedProfileRegistry
   readonly runtimeManager: BrowserRuntimeManager
+  readonly outputSavingsRuntimeManager: OutputSavingsRuntimeManager
 
   private readonly runtimeController: BrowserRuntimeController | undefined
   private readonly origin: () => string
@@ -100,6 +110,7 @@ export class TokenlessApplicationServices {
     this.store = options.store
     this.profiles = new ManagedProfileRegistry(options.store.homeDir)
     this.runtimeManager = new BrowserRuntimeManager({ homeDir: options.store.homeDir })
+    this.outputSavingsRuntimeManager = new OutputSavingsRuntimeManager(options.store.homeDir)
     this.runtimeController = options.runtimeController
     this.origin = options.origin
     this.startedAt = options.startedAt
@@ -130,6 +141,8 @@ export class TokenlessApplicationServices {
         homeUrl: provider.navigation.entryUrl,
       }))
     const capabilityRoutes = listProviderTaskCapabilityRoutes()
+    this.store.reconcileOutputSavings()
+    const outputSavings = await this.outputSavingsState(config)
     const body = {
       schema: 'tokenless.ui-snapshot.v1',
       generatedAt: new Date().toISOString(),
@@ -141,6 +154,7 @@ export class TokenlessApplicationServices {
       },
       runtime,
       config: publicConfig(config),
+      outputSavings,
       profiles: profiles.map((profile) => publicProfile(
         profile,
         profileData.defaultProfile,
@@ -173,8 +187,12 @@ export class TokenlessApplicationServices {
             evidence: route.evidence,
           })),
       })),
-      jobs: jobs.map((job) => publicJobSummary(job, profiles)),
-      diagnostics: await this.diagnostics(config, profiles, runtime),
+      jobs: jobs.map((job) => publicJobSummary(
+        job,
+        profiles,
+        this.store.outputSavingsForJob(job.job_id),
+      )),
+      diagnostics: await this.diagnostics(config, profiles, runtime, outputSavings),
     }
     return {
       ...body,
@@ -187,7 +205,59 @@ export class TokenlessApplicationServices {
   }
 
   async job(jobId: string) {
-    return publicJobDetail(this.store.getJob(jobId), await this.profiles.listProfiles())
+    return publicJobDetail(
+      this.store.getJob(jobId),
+      await this.profiles.listProfiles(),
+      this.store.outputSavingsForJob(jobId),
+    )
+  }
+
+  async enableOutputSavings() {
+    await this.outputSavingsRuntimeManager.ensureInstalled()
+    const config = await writeTokenlessConfig({
+      homeDir: this.store.homeDir,
+      outputSavings: { enabled: true },
+    })
+    return await this.outputSavingsState(config)
+  }
+
+  async disableOutputSavings() {
+    const config = await writeTokenlessConfig({
+      homeDir: this.store.homeDir,
+      outputSavings: { enabled: false },
+    })
+    return await this.outputSavingsState(config)
+  }
+
+  async uninstallOutputSavings(input: Record<string, unknown>) {
+    requireKnownFields(input, ['confirmDelete'])
+    if (input.confirmDelete !== true) {
+      throw applicationError(
+        'output_savings_uninstall_confirmation_required',
+        'Output savings runtime removal requires explicit confirmation.',
+      )
+    }
+    const config = await writeTokenlessConfig({
+      homeDir: this.store.homeDir,
+      outputSavings: { enabled: false },
+    })
+    await this.outputSavingsRuntimeManager.remove()
+    return await this.outputSavingsState(config)
+  }
+
+  async clearOutputSavings(input: Record<string, unknown>) {
+    requireKnownFields(input, ['confirmDelete'])
+    if (input.confirmDelete !== true) {
+      throw applicationError(
+        'output_savings_clear_confirmation_required',
+        'Output savings history removal requires explicit confirmation.',
+      )
+    }
+    const cleared = this.store.clearOutputSavings().cleared
+    return {
+      ...await this.outputSavingsState(),
+      cleared,
+    }
   }
 
   async browserRuntimes() {
@@ -733,6 +803,7 @@ export class TokenlessApplicationServices {
     config: TokenlessConfig,
     profiles: ManagedProfileRecord[],
     runtime: ReturnType<BrowserRuntimeController['status']>,
+    outputSavings: Awaited<ReturnType<TokenlessApplicationServices['outputSavingsState']>>,
   ) {
     const browser = await this.runtimeManager.inspect(config.browser, {
       browserExecutablePath: config.browserExecutablePath,
@@ -758,7 +829,31 @@ export class TokenlessApplicationServices {
         state: runtime.status === 'quiescing' ? 'action_required' : 'ok',
         message: `${runtime.activeJobCount} active browser job(s).`,
       },
+      {
+        id: 'output-savings',
+        state: !outputSavings.enabled || outputSavings.runtime.state === 'ready' ? 'ok' : 'error',
+        message: !outputSavings.enabled
+          ? 'Optional output savings measurement is disabled.'
+          : outputSavings.runtime.state === 'ready'
+            ? 'The output savings tokenizer runtime is ready.'
+            : 'Output savings is enabled, but its tokenizer runtime is unavailable.',
+      },
     ]
+  }
+
+  private async outputSavingsState(config?: TokenlessConfig) {
+    const resolvedConfig = config ?? await this.migratedConfig()
+    const runtime = await this.outputSavingsRuntimeManager.inspect()
+    return {
+      enabled: resolvedConfig.outputSavings.enabled,
+      collection: resolvedConfig.outputSavings.enabled
+        ? runtime.state === 'ready' ? 'enabled' as const : 'unavailable' as const
+        : 'disabled' as const,
+      estimator: OUTPUT_SAVINGS_ESTIMATOR,
+      basis: 'visible_assistant_text' as const,
+      runtime,
+      summary: publicOutputSavingsSummary(this.store.outputSavingsSummary()),
+    }
   }
 
   private async reconcileProviderObservations() {
@@ -810,6 +905,7 @@ function publicConfig(config: TokenlessConfig) {
     browserVisibility: config.browserVisibility,
     daemonUrl: config.daemonUrl,
     language: config.language,
+    outputSavings: config.outputSavings,
   }
 }
 
@@ -991,7 +1087,11 @@ function latestProviderControls(jobs: Job[], profileId: string, provider: Provid
   }
 }
 
-function publicJobSummary(job: JobView | Job, profiles: ManagedProfileRecord[] = []) {
+function publicJobSummary(
+  job: JobView | Job,
+  profiles: ManagedProfileRecord[] = [],
+  outputSavings: OutputSavingsEvent[] = [],
+) {
   const request = record(job.request_json)
   return {
     jobId: job.job_id,
@@ -1006,17 +1106,50 @@ function publicJobSummary(job: JobView | Job, profiles: ManagedProfileRecord[] =
       ? { kind: job.agent_kind, sessionId: job.agent_session_id }
       : null,
     blocker: publicError(job.blocker_json),
+    outputSavings: publicJobOutputSavings(outputSavings),
     createdAt: job.created_at,
     updatedAt: job.updated_at,
   }
 }
 
-function publicJobDetail(job: JobView | Job, profiles: ManagedProfileRecord[] = []) {
+function publicJobDetail(
+  job: JobView | Job,
+  profiles: ManagedProfileRecord[] = [],
+  outputSavings: OutputSavingsEvent[] = [],
+) {
   return {
-    ...publicJobSummary(job, profiles),
+    ...publicJobSummary(job, profiles, outputSavings),
     result: redactPublicValue(job.result_json),
     error: publicError(job.error_json),
     providerAttempts: redactPublicValue(job.provider_attempts_json),
+    outputSavingsEvents: outputSavings.map((event) => ({
+      responseRequestId: event.response_request_id,
+      estimatedOutputTokens: event.estimated_output_tokens,
+      visibleCharacters: event.visible_characters,
+      estimator: event.estimator,
+      estimatorRevision: event.estimator_revision,
+      basis: event.basis,
+      measuredAt: event.measured_at,
+    })),
+  }
+}
+
+function publicOutputSavingsSummary(summary: OutputSavingsSummary) {
+  return {
+    estimatedOutputTokens: summary.estimated_output_tokens,
+    visibleCharacters: summary.visible_characters,
+    responseCount: summary.response_count,
+    jobCount: summary.job_count,
+    firstMeasuredAt: summary.first_measured_at,
+    lastMeasuredAt: summary.last_measured_at,
+  }
+}
+
+function publicJobOutputSavings(events: OutputSavingsEvent[]) {
+  return {
+    estimatedOutputTokens: events.reduce((sum, event) => sum + event.estimated_output_tokens, 0),
+    visibleCharacters: events.reduce((sum, event) => sum + event.visible_characters, 0),
+    responseCount: events.length,
   }
 }
 

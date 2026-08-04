@@ -185,6 +185,10 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await page.locator('#main').evaluate((element) => document.activeElement === element), true)
 
       await page.locator('.rail [data-nav="system"]').click()
+      await page.getByTestId('output-savings-card').waitFor()
+      assert.match(await page.getByTestId('output-savings-card').textContent(), /Output savings|Disabled|10\.1 MB/)
+      assert.equal(await page.getByTestId('output-savings-enable').isVisible(), true)
+      assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
       await page.getByTestId('config-browser').selectOption('chrome-for-testing')
       await page.getByTestId('config-browser-path-toggle').click()
       await page.getByTestId('config-browser-executable-path').fill(customExecutablePath)
@@ -219,6 +223,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('config-save').click()
       await page.waitForFunction(() => document.documentElement.lang === 'zh-CN')
       assert.equal(await page.title(), 'Tokenless 本地控制台')
+      assert.match(await page.getByTestId('output-savings-card').textContent(), /输出节省|已停用|需要时才会下载/)
       await page.reload({ waitUntil: 'networkidle' })
       await page.getByTestId('app-shell').waitFor()
       await page.locator('.rail [data-nav="system"]').click()

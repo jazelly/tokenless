@@ -1,0 +1,77 @@
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
+
+test('built CLI explicitly installs, verifies, enables, measures, disables, and removes the real output savings runtime', { timeout: 180_000 }, async () => {
+  const homeDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tokenless-output-savings-runtime-'))
+  try {
+    const enabled = runSavings(homeDir, 'enable')
+    assert.equal(enabled.outputSavings.enabled, true)
+    assert.equal(enabled.outputSavings.collection, 'enabled')
+    assert.deepEqual(enabled.outputSavings.runtime, {
+      state: 'ready',
+      runtimeId: 'tiktoken-o200k_base-1.0.22',
+      installed: true,
+      downloadBytes: 10_611_708,
+      installedBytes: 3_413_323,
+      checksumVerified: true,
+      selfTestVerified: true,
+    })
+    assert.equal(enabled.outputSavings.summary.estimated_output_tokens, 0)
+
+    const { OutputSavingsRuntimeManager } = await import('../packages/cli/dist/src/index.js')
+    const measurement = await new OutputSavingsRuntimeManager(homeDir).measure('hello world')
+    assert.deepEqual({ ...measurement, measuredAt: '<measured-at>' }, {
+      schema: 'tokenless.output-savings-measurement.v1',
+      state: 'measured',
+      basis: 'visible_assistant_text',
+      estimator: 'o200k_base',
+      estimatorRevision: 'tiktoken-o200k_base-1.0.22',
+      estimatedOutputTokens: 2,
+      visibleCharacters: 11,
+      sourceTextSha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
+      measuredAt: '<measured-at>',
+    })
+
+    const status = runSavings(homeDir, 'status')
+    assert.deepEqual(status.outputSavings, enabled.outputSavings)
+
+    const disabled = runSavings(homeDir, 'disable')
+    assert.equal(disabled.outputSavings.enabled, false)
+    assert.equal(disabled.outputSavings.collection, 'disabled')
+    assert.equal(disabled.outputSavings.runtime.state, 'ready')
+
+    const removed = runSavings(homeDir, 'uninstall', '--confirm-delete')
+    assert.equal(removed.outputSavings.enabled, false)
+    assert.equal(removed.outputSavings.collection, 'disabled')
+    assert.equal(removed.outputSavings.runtime.state, 'not_installed')
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+function runSavings(homeDir, subcommand, ...extra) {
+  const result = spawnSync(process.execPath, [
+    cliEntry,
+    'savings',
+    subcommand,
+    ...extra,
+    '--home',
+    homeDir,
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 150_000,
+  })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  return JSON.parse(result.stdout)
+}

@@ -274,8 +274,8 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
     return legacyDomResponsePreparationFromBaseline(this.definition, baseline)
   }
 
-  protected readResponse(page: Page, _context: ProviderExecutionContext): Promise<VisibleActionResult> {
-    return readDomResponse(this.definition, page)
+  protected readResponse(page: Page, context: ProviderExecutionContext): Promise<VisibleActionResult> {
+    return readDomResponse(this.definition, page, context.measureVisibleOutput)
   }
 
   private executePromptAction(

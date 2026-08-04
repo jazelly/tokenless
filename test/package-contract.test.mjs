@@ -81,6 +81,7 @@ test('persistent config defaults, stores, and validates browser runtime fields t
   const runtime = await import('../packages/cli/dist/src/index.js')
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
+    assert.deepEqual(defaults.outputSavings, { enabled: false })
     assert.equal(defaults.browserConnectionMode, 'playwright')
     assert.equal(defaults.browserExecutablePath, null)
     assert.deepEqual(defaults.providerWhitelist, [
@@ -101,6 +102,11 @@ test('persistent config defaults, stores, and validates browser runtime fields t
       'cdp',
     )
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'cdp')
+    assert.deepEqual(
+      (await runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: true } })).outputSavings,
+      { enabled: true },
+    )
+    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).outputSavings, { enabled: true })
     const executablePath = path.join(homeDir, 'browsers', 'chrome')
     await runtime.writeTokenlessConfig({ homeDir, browser: 'chrome', browserExecutablePath: executablePath })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, executablePath)
@@ -149,6 +155,47 @@ test('persistent config migrates the legacy preferredProviders key to providerWh
     const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'))
     assert.deepEqual(persisted.providerWhitelist, ['gemini', 'chatgpt'])
     assert.equal(Object.hasOwn(persisted, 'preferredProviders'), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('output savings stays disabled and absent from disk until the user explicitly enables it', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-output-savings-disabled-'))
+  try {
+    const result = spawnSync(process.execPath, [
+      cliEntry,
+      'savings',
+      'status',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: true,
+      outputSavings: {
+        enabled: false,
+        collection: 'disabled',
+        estimator: 'o200k_base',
+        runtime: {
+          state: 'not_installed',
+          runtimeId: 'tiktoken-o200k_base-1.0.22',
+          installed: false,
+          downloadBytes: 10_611_708,
+          installedBytes: 3_413_323,
+        },
+        summary: {
+          estimated_output_tokens: 0,
+          visible_characters: 0,
+          response_count: 0,
+          job_count: 0,
+          first_measured_at: null,
+          last_measured_at: null,
+        },
+      },
+    })
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -217,6 +264,7 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(canonicalUsage, /tokenless profiles list/)
   assert.match(canonicalUsage, /tokenless provider-status/)
   assert.match(canonicalUsage, /tokenless doctor/)
+  assert.match(canonicalUsage, /tokenless savings status --json/)
   assert.match(canonicalUsage, /tokenless upgrade/)
   assert.match(canonicalUsage, /tokenless help/)
   assert.match(canonicalUsage, /tokenless daemon stop \[--json\]/)
@@ -227,6 +275,7 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(advancedUsage, /tokenless state/)
   assert.match(advancedUsage, /tokenless profiles remove/)
   assert.match(advancedUsage, /tokenless config/)
+  assert.match(advancedUsage, /tokenless savings enable --json/)
   assert.match(result.stderr, /^Short options:$/m)
   assert.match(result.stderr, /^  -P, --profile <slug>        Select a managed browser profile\.$/m)
   assert.match(result.stderr, /^  -p, --provider <provider>   Select an AI provider\.$/m)
@@ -497,6 +546,7 @@ test('universal CLI manifest declares the pure JS runtime without native optiona
   assert.equal(typeof pkg.dependencies['playwright-core'], 'string')
   assert.equal(pkg.files.includes('dist/bin'), false)
   assert.equal(pkg.optionalDependencies, undefined)
+  assert.equal(pkg.dependencies.tiktoken, undefined)
   assert.equal(pkg.scripts['build:native'], undefined)
   assert.equal(fs.existsSync(path.join(cliDir, 'dist/src/native-host.mjs')), false)
   assert.equal(fs.existsSync(path.join(cliDir, 'dist/src/direct')), false)
@@ -558,6 +608,8 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     assert.equal(universalPack.files.some((file) => file.path.startsWith('npm/')), false)
     assert.equal(universalPack.files.some((file) => /native-host\.mjs$/.test(file.path)), false)
     assert.equal(universalPack.files.some((file) => file.path.startsWith('dist/src/direct/')), false)
+    assert.equal(universalPack.files.some((file) => file.path.endsWith('.wasm')), false)
+    assert.equal(universalPack.files.some((file) => file.path.includes('/encoders/o200k_base.json')), false)
 
     npmExecFileSync([
       'install',

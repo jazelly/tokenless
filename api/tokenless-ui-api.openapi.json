@@ -89,6 +89,47 @@
         }
       }
     },
+    "/output-savings/enable": {
+      "post": {
+        "operationId": "enableUiOutputSavings",
+        "security": [{ "uiSession": [], "csrf": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/OutputSavingsState" },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/output-savings/disable": {
+      "post": {
+        "operationId": "disableUiOutputSavings",
+        "security": [{ "uiSession": [], "csrf": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "200": { "$ref": "#/components/responses/OutputSavingsState" } }
+      }
+    },
+    "/output-savings/runtime/uninstall": {
+      "post": {
+        "operationId": "uninstallUiOutputSavingsRuntime",
+        "security": [{ "uiSession": [], "csrf": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/ConfirmedDeletion" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/OutputSavingsState" },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/output-savings/history/clear": {
+      "post": {
+        "operationId": "clearUiOutputSavingsHistory",
+        "security": [{ "uiSession": [], "csrf": [] }],
+        "requestBody": { "$ref": "#/components/requestBodies/ConfirmedDeletion" },
+        "responses": {
+          "200": { "$ref": "#/components/responses/OutputSavingsState" },
+          "400": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/profiles": {
       "post": {
         "operationId": "createUiProfile",
@@ -197,6 +238,8 @@
       "JobId": { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 256 } }
     },
     "requestBodies": {
+      "EmptyObject": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
+      "ConfirmedDeletion": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfirmedDeletion" } } } },
       "ConfigUpdate": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfigUpdate" } } } },
       "BrowserRuntimeInspect": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntimeInspect" } } } },
       "BrowserRuntimeInstall": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntimeInstall" } } } },
@@ -210,6 +253,7 @@
       "Session": { "description": "Active in-memory UI session.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UiSession" } } } },
       "Snapshot": { "description": "Redacted aggregate dashboard state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UiSnapshot" } } } },
       "Config": { "description": "Persisted public configuration.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UiConfig" } } } },
+      "OutputSavingsState": { "description": "Optional local output savings measurement state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OutputSavingsState" } } } },
       "BrowserRuntimeCatalog": { "description": "Discovered and installable browser runtime choices.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntimeCatalog" } } } },
       "BrowserRuntime": { "description": "Validated browser runtime metadata without a private executable path.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntime" } } } },
       "BrowserRuntimeInspection": { "description": "Non-mutating browser validation result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntimeInspection" } } } },
@@ -361,9 +405,86 @@
           "browserConnectionMode": { "type": "string", "enum": ["playwright", "cdp"] },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "daemonUrl": { "type": ["string", "null"], "format": "uri" },
-          "language": { "type": "string", "enum": ["en", "zh-CN"] }
+          "language": { "type": "string", "enum": ["en", "zh-CN"] },
+          "outputSavings": {
+            "type": "object",
+            "properties": { "enabled": { "type": "boolean" } },
+            "required": ["enabled"],
+            "additionalProperties": false
+          }
         },
-        "required": ["updatedAt", "providerWhitelist", "browser", "browserExecutablePathConfigured", "browserConnectionMode", "browserVisibility", "daemonUrl", "language"],
+        "required": ["updatedAt", "providerWhitelist", "browser", "browserExecutablePathConfigured", "browserConnectionMode", "browserVisibility", "daemonUrl", "language", "outputSavings"],
+        "additionalProperties": false
+      },
+      "ConfirmedDeletion": {
+        "type": "object",
+        "properties": { "confirmDelete": { "const": true } },
+        "required": ["confirmDelete"],
+        "additionalProperties": false
+      },
+      "OutputSavingsRuntime": {
+        "type": "object",
+        "properties": {
+          "runtimeId": { "type": "string", "minLength": 1 },
+          "state": { "type": "string", "enum": ["not_installed", "invalid", "ready"] },
+          "installed": { "type": "boolean" },
+          "downloadBytes": { "type": "integer", "minimum": 0 },
+          "installedBytes": { "type": "integer", "minimum": 0 },
+          "checksumVerified": { "const": true },
+          "selfTestVerified": { "const": true }
+        },
+        "required": ["runtimeId", "state", "installed", "downloadBytes", "installedBytes"],
+        "additionalProperties": false
+      },
+      "OutputSavingsSummary": {
+        "type": "object",
+        "properties": {
+          "estimatedOutputTokens": { "type": "integer", "minimum": 0 },
+          "visibleCharacters": { "type": "integer", "minimum": 0 },
+          "responseCount": { "type": "integer", "minimum": 0 },
+          "jobCount": { "type": "integer", "minimum": 0 },
+          "firstMeasuredAt": { "type": ["string", "null"], "format": "date-time" },
+          "lastMeasuredAt": { "type": ["string", "null"], "format": "date-time" }
+        },
+        "required": ["estimatedOutputTokens", "visibleCharacters", "responseCount", "jobCount", "firstMeasuredAt", "lastMeasuredAt"],
+        "additionalProperties": false
+      },
+      "OutputSavingsState": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "collection": { "type": "string", "enum": ["disabled", "enabled", "unavailable"] },
+          "estimator": { "const": "o200k_base" },
+          "basis": { "const": "visible_assistant_text" },
+          "runtime": { "$ref": "#/components/schemas/OutputSavingsRuntime" },
+          "summary": { "$ref": "#/components/schemas/OutputSavingsSummary" },
+          "cleared": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["enabled", "collection", "estimator", "basis", "runtime", "summary"],
+        "additionalProperties": false
+      },
+      "JobOutputSavings": {
+        "type": "object",
+        "properties": {
+          "estimatedOutputTokens": { "type": "integer", "minimum": 0 },
+          "visibleCharacters": { "type": "integer", "minimum": 0 },
+          "responseCount": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["estimatedOutputTokens", "visibleCharacters", "responseCount"],
+        "additionalProperties": false
+      },
+      "OutputSavingsEvent": {
+        "type": "object",
+        "properties": {
+          "responseRequestId": { "type": "string", "minLength": 1 },
+          "estimatedOutputTokens": { "type": "integer", "minimum": 0 },
+          "visibleCharacters": { "type": "integer", "minimum": 0 },
+          "estimator": { "type": "string", "minLength": 1 },
+          "estimatorRevision": { "type": "string", "minLength": 1 },
+          "basis": { "const": "visible_assistant_text" },
+          "measuredAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["responseRequestId", "estimatedOutputTokens", "visibleCharacters", "estimator", "estimatorRevision", "basis", "measuredAt"],
         "additionalProperties": false
       },
       "RuntimeStatus": {
@@ -440,10 +561,11 @@
           "capabilityRoute": { "type": ["object", "null"] },
           "agent": { "type": ["object", "null"] },
           "blocker": {},
+          "outputSavings": { "$ref": "#/components/schemas/JobOutputSavings" },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         },
-        "required": ["jobId", "profileId", "profileSlug", "provider", "action", "status", "taskId", "capabilityRoute", "agent", "blocker", "createdAt", "updatedAt"],
+        "required": ["jobId", "profileId", "profileSlug", "provider", "action", "status", "taskId", "capabilityRoute", "agent", "blocker", "outputSavings", "createdAt", "updatedAt"],
         "additionalProperties": false
       },
       "JobDetail": {
@@ -451,8 +573,13 @@
           { "$ref": "#/components/schemas/JobSummary" },
           {
             "type": "object",
-            "properties": { "result": {}, "error": {}, "providerAttempts": {} },
-            "required": ["result", "error", "providerAttempts"]
+            "properties": {
+              "result": {},
+              "error": {},
+              "providerAttempts": {},
+              "outputSavingsEvents": { "type": "array", "items": { "$ref": "#/components/schemas/OutputSavingsEvent" } }
+            },
+            "required": ["result", "error", "providerAttempts", "outputSavingsEvents"]
           }
         ]
       },
@@ -515,13 +642,14 @@
           "daemon": { "$ref": "#/components/schemas/DaemonStatus" },
           "runtime": { "$ref": "#/components/schemas/RuntimeStatus" },
           "config": { "$ref": "#/components/schemas/UiConfig" },
+          "outputSavings": { "$ref": "#/components/schemas/OutputSavingsState" },
           "profiles": { "type": "array", "items": { "$ref": "#/components/schemas/Profile" } },
           "providers": { "type": "array", "items": { "$ref": "#/components/schemas/Provider" } },
           "capabilities": { "type": "array", "items": { "$ref": "#/components/schemas/Capability" } },
           "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/JobSummary" } },
           "diagnostics": { "type": "array", "items": { "$ref": "#/components/schemas/Diagnostic" } }
         },
-        "required": ["schema", "generatedAt", "revision", "daemon", "runtime", "config", "profiles", "providers", "capabilities", "jobs", "diagnostics"],
+        "required": ["schema", "generatedAt", "revision", "daemon", "runtime", "config", "outputSavings", "profiles", "providers", "capabilities", "jobs", "diagnostics"],
         "additionalProperties": false
       },
       "UiSession": {

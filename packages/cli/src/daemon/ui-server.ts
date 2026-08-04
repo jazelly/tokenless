@@ -129,6 +129,24 @@ export class TokenlessUiServer {
       this.writeJson(response, 200, await this.services.updateConfig(await readJson(request)))
       return true
     }
+    if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/enable') {
+      await requireEmptyJson(request)
+      this.writeJson(response, 200, await this.services.enableOutputSavings())
+      return true
+    }
+    if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/disable') {
+      await requireEmptyJson(request)
+      this.writeJson(response, 200, await this.services.disableOutputSavings())
+      return true
+    }
+    if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/runtime/uninstall') {
+      this.writeJson(response, 200, await this.services.uninstallOutputSavings(await readJson(request)))
+      return true
+    }
+    if (method === 'POST' && url.pathname === '/ui-api/v1/output-savings/history/clear') {
+      this.writeJson(response, 200, await this.services.clearOutputSavings(await readJson(request)))
+      return true
+    }
     if (method === 'POST' && url.pathname === '/ui-api/v1/profiles') {
       this.writeJson(response, 201, await this.services.createProfile(await readJson(request)))
       return true
@@ -271,6 +289,13 @@ async function readJson(request: IncomingMessage) {
     throw uiError('ui_json_invalid', 'Request body must be a JSON object.', 400)
   }
   return value as Record<string, unknown>
+}
+
+async function requireEmptyJson(request: IncomingMessage) {
+  const value = await readJson(request)
+  if (Object.keys(value).length > 0) {
+    throw uiError('invalid_fields', 'Request contains unsupported fields.', 400)
+  }
 }
 
 function uiError(code: string, message: string, status: number) {

@@ -81,6 +81,10 @@ import {
   writeTokenlessConfig,
 } from './index.js'
 import {
+  OUTPUT_SAVINGS_ESTIMATOR,
+  OutputSavingsRuntimeManager,
+} from './output-savings/index.js'
+import {
   activeTokenlessLanguage,
   detectSystemLanguage,
   localizeText,
@@ -93,6 +97,7 @@ import {
 } from './setup-workflow.js'
 import { reconcileTokenlessMaintenance } from './maintenance.js'
 import { DaemonRuntimeState } from './daemon/runtime-state.js'
+import { JobStore } from './daemon/job-store.js'
 import { fetchTokenlessLatestVersion } from './npm-registry.js'
 import {
   SETUP_MANAGED_PROFILE_DISCLOSURE,
@@ -276,6 +281,7 @@ const TOP_LEVEL_USAGE = [
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
   'tokenless dashboard [--no-open] [--json]',
+  'tokenless savings <status|enable|disable|uninstall|clear> --json',
   'tokenless daemon stop [--json]',
   'tokenless help',
 ]
@@ -305,7 +311,7 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings') && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   assertKnownTopLevelCommand(command)
@@ -346,6 +352,8 @@ try {
     await capabilitiesCommand(subcommand, args)
   } else if (command === 'limits') {
     await limitsCommand(subcommand, args)
+  } else if (command === 'savings') {
+    await savingsCommand(subcommand, args)
   } else if (command === 'replay') {
     await replayCommand(args)
   } else if (command === 'provider-status' || command === 'provider-auth-status') {
@@ -3823,6 +3831,16 @@ async function doctorCommand(args: CliArgs) {
         code: browserInspection.code,
         message: browserInspection.message,
       }
+  const outputSavingsEnabled = config.outputSavings?.enabled === true
+  const outputSavingsRuntime = await new OutputSavingsRuntimeManager(homeDir).inspect()
+  const outputSavings = {
+    ok: !outputSavingsEnabled || outputSavingsRuntime.state === 'ready',
+    enabled: outputSavingsEnabled,
+    collection: outputSavingsEnabled
+      ? outputSavingsRuntime.state === 'ready' ? 'enabled' : 'unavailable'
+      : 'disabled',
+    runtime: outputSavingsRuntime,
+  }
   let daemon: Record<string, any>
   const daemonLogPath = path.join(homeDir, 'daemon.log')
   const daemonLogExists = await fileExists(daemonLogPath)
@@ -3973,6 +3991,7 @@ async function doctorCommand(args: CliArgs) {
     managedProfile,
     profileRuntime,
     providerReadiness,
+    outputSavings,
   }
   const ok = Object.values(checks).every((check) => check.ok === true)
   printPayload({
@@ -4176,6 +4195,59 @@ async function promptCommand(args: CliArgs) {
   const prompt = await promptFromArgs(args)
   if (args.output) await fs.writeFile(args.output, `${prompt}\n`, 'utf8')
   else console.log(prompt)
+}
+
+async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
+  const homeDir = tokenlessHome(args.home)
+  const manager = new OutputSavingsRuntimeManager(homeDir)
+  if (subcommand === 'enable') {
+    await manager.ensureInstalled()
+    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: true } })
+  } else if (subcommand === 'disable') {
+    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })
+  } else if (subcommand === 'uninstall') {
+    if (args.confirmDelete !== true) {
+      throw usageError(
+        'output_savings_uninstall_confirmation_required',
+        'Output savings runtime removal requires --confirm-delete.',
+      )
+    }
+    await writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })
+    await manager.remove()
+  } else if (subcommand === 'clear') {
+    if (args.confirmDelete !== true) {
+      throw usageError(
+        'output_savings_clear_confirmation_required',
+        'Output savings history removal requires --confirm-delete.',
+      )
+    }
+  } else if (subcommand !== 'status') {
+    throw usageError('invalid_savings_command', 'Usage: tokenless savings <status|enable|disable|uninstall|clear> --json')
+  }
+  const store = await JobStore.open(homeDir)
+  let summary
+  let cleared: number | undefined
+  try {
+    if (subcommand === 'clear') cleared = store.clearOutputSavings().cleared
+    summary = store.reconcileOutputSavings()
+  } finally {
+    store.close()
+  }
+  const [config, runtime] = await Promise.all([
+    readTokenlessConfig(homeDir),
+    manager.inspect(),
+  ])
+  printPayload({
+    ok: true,
+    outputSavings: {
+      enabled: config.outputSavings.enabled,
+      collection: config.outputSavings.enabled && runtime.state === 'ready' ? 'enabled' : 'disabled',
+      estimator: OUTPUT_SAVINGS_ESTIMATOR,
+      runtime,
+      summary,
+      ...(cleared === undefined ? {} : { cleared }),
+    },
+  }, args)
 }
 
 async function promptFromArgs(args: CliArgs) {
@@ -4571,6 +4643,11 @@ function createCommandContracts(): CommandContract[] {
     { command: 'run', usage: [`tokenless run [--capability <capability>] --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`], options: runOptions },
     { command: 'capabilities', subcommand: 'list', usage: ['tokenless capabilities list --json'], options: ['json'] },
     { command: 'limits', subcommand: 'inspect', usage: ['tokenless limits inspect --profile <slug> --provider <provider> --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs'] },
+    { command: 'savings', subcommand: 'status', usage: ['tokenless savings status --json'], options: ['home', 'json'] },
+    { command: 'savings', subcommand: 'enable', usage: ['tokenless savings enable --json'], options: ['home', 'json'] },
+    { command: 'savings', subcommand: 'disable', usage: ['tokenless savings disable --json'], options: ['home', 'json'] },
+    { command: 'savings', subcommand: 'uninstall', usage: ['tokenless savings uninstall --confirm-delete --json'], options: ['home', 'json', 'confirmDelete'] },
+    { command: 'savings', subcommand: 'clear', usage: ['tokenless savings clear --confirm-delete --json'], options: ['home', 'json', 'confirmDelete'] },
     { command: 'replay', usage: ['tokenless replay --agent-kind <kind> --agent-session-id <id> [--limit <count>] --json'], options: ['home', 'json', 'daemonUrl', 'daemonStartTimeoutMs', 'agentKind', 'agentSessionId', 'limit'] },
     { command: 'provider-status', usage: ['tokenless provider-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'provider-auth-status', usage: ['tokenless provider-auth-status --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
@@ -5650,6 +5727,7 @@ function usage(args: CliArgs) {
       commands: [
         'tokenless daemon stop [--json]',
         'tokenless doctor --json',
+        'tokenless savings status --json',
         'tokenless upgrade [--json]',
         'tokenless help',
       ],
@@ -5706,6 +5784,10 @@ function usage(args: CliArgs) {
       commands: [
         `tokenless config --language <en|zh-CN> --provider-whitelist ${supportedVisibleProviderIds().join(',')} --browser chrome --browser-visibility auto --json`,
         'tokenless dashboard [--profile <slug>] [--no-open] --json',
+        'tokenless savings enable --json',
+        'tokenless savings disable --json',
+        'tokenless savings uninstall --confirm-delete --json',
+        'tokenless savings clear --confirm-delete --json',
         'tokenless daemon stop --daemon-url <loopback-url> --json',
       ],
     },

@@ -1107,6 +1107,89 @@ test('TS daemon browser runtime control is authenticated, quiesces queued work, 
   }
 })
 
+test('SQLite durably and idempotently attributes measured visible output to its triggering job', async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-output-savings-store-')
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  let store = await JobStore.open(homeDir)
+  try {
+    const created = store.createJob({
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      request_json: { taskId: 'savings-task' },
+      profile_id: 'savings-profile',
+    })
+    const claimed = store.claimJob(created.job_id, created.claim_token)
+    store.markRunning(claimed.job_id, claimed.claim_token)
+    const result = {
+      protocol: 'tokenless.playwright.job.v3',
+      provider: 'chatgpt',
+      responses: [{
+        protocol: 'tokenless.playwright.visible-action.v3',
+        requestId: 'savings-response',
+        provider: 'chatgpt',
+        action: 'response.read',
+        ok: true,
+        result: {
+          text: 'hello world',
+          citations: [],
+          visibleProof: 'visible-answer-read',
+          outputSavings: {
+            schema: 'tokenless.output-savings-measurement.v1',
+            state: 'measured',
+            basis: 'visible_assistant_text',
+            estimator: 'o200k_base',
+            estimatorRevision: 'tiktoken-o200k_base-1.0.22',
+            estimatedOutputTokens: 2,
+            visibleCharacters: 11,
+            sourceTextSha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
+            measuredAt: '2026-08-04T00:00:00.000Z',
+          },
+        },
+        error: null,
+      }],
+    }
+    store.completeJob(claimed.job_id, claimed.claim_token, { result_json: result })
+    store.reconcileOutputSavings()
+    store.reconcileOutputSavings()
+    assert.deepEqual(store.outputSavingsSummary(), {
+      estimated_output_tokens: 2,
+      visible_characters: 11,
+      response_count: 1,
+      job_count: 1,
+      first_measured_at: '2026-08-04T00:00:00.000Z',
+      last_measured_at: '2026-08-04T00:00:00.000Z',
+    })
+    assert.deepEqual(store.outputSavingsForJob(created.job_id), [{
+      job_id: created.job_id,
+      response_request_id: 'savings-response',
+      estimated_output_tokens: 2,
+      visible_characters: 11,
+      estimator: 'o200k_base',
+      estimator_revision: 'tiktoken-o200k_base-1.0.22',
+      basis: 'visible_assistant_text',
+      source_text_sha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
+      measured_at: '2026-08-04T00:00:00.000Z',
+    }])
+    store.close()
+    store = await JobStore.open(homeDir)
+    assert.equal(store.outputSavingsSummary().estimated_output_tokens, 2)
+    assert.deepEqual(store.clearOutputSavings(), { cleared: 1 })
+    store.reconcileOutputSavings()
+    assert.deepEqual(store.outputSavingsSummary(), {
+      estimated_output_tokens: 0,
+      visible_characters: 0,
+      response_count: 0,
+      job_count: 0,
+      first_measured_at: null,
+      last_measured_at: null,
+    })
+  } finally {
+    store.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 for (const browserConnectionMode of ['playwright', 'cdp']) {
 test(`profiles open without provider uses ${browserConnectionMode} through daemon browser runtime control`, {
   timeout: 60_000,

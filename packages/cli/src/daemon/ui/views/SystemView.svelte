@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Clipboard, Moon, PauseCircle, ShieldCheck } from '@lucide/svelte'
+  import { Calculator, Clipboard, Moon, PauseCircle, ShieldCheck } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
   import BrowserRuntimePicker from '../components/BrowserRuntimePicker.svelte'
   import PageHeader from '../components/PageHeader.svelte'
@@ -81,6 +81,44 @@
     }
   }
 
+  async function enableOutputSavings() {
+    try {
+      await onmutate('/output-savings/enable', {})
+    } catch {
+      // The shared mutation boundary already reports the error.
+    }
+  }
+
+  async function disableOutputSavings() {
+    try {
+      await onmutate('/output-savings/disable', {})
+    } catch {
+      // The shared mutation boundary already reports the error.
+    }
+  }
+
+  async function clearOutputSavings() {
+    if (!window.confirm(t('confirmClearSavings'))) return
+    try {
+      await onmutate('/output-savings/history/clear', { confirmDelete: true })
+    } catch {
+      // The shared mutation boundary already reports the error.
+    }
+  }
+
+  async function uninstallOutputSavings() {
+    if (!window.confirm(t('confirmUninstallTokenizer'))) return
+    try {
+      await onmutate('/output-savings/runtime/uninstall', { confirmDelete: true })
+    } catch {
+      // The shared mutation boundary already reports the error.
+    }
+  }
+
+  function formatMegabytes(bytes: number) {
+    return `${new Intl.NumberFormat(language, { maximumFractionDigits: 1 }).format(bytes / 1024 / 1024)} MB`
+  }
+
   function diagnosticMessage(item: JsonRecord) {
     if (item.id === 'configuration') return snapshot.config.updatedAt ? t('configPersisted') : t('setupIncomplete')
     if (item.id === 'browser-runtime') return item.state === 'ok' ? t('browserReady') : t('browserUnavailable')
@@ -96,6 +134,10 @@
       return language === 'zh-CN'
         ? `${count} 个浏览器任务正在运行。`
         : `${count} active browser job${snapshot.runtime.activeJobCount === 1 ? '' : 's'}.`
+    }
+    if (item.id === 'output-savings') {
+      if (!snapshot.outputSavings.enabled) return t('savingsDisabled')
+      return snapshot.outputSavings.runtime.state === 'ready' ? t('tokenizerReady') : t('tokenizerUnavailable')
     }
     return item.message
   }
@@ -141,6 +183,29 @@
     </div>
     {#if formError}<div bind:this={errorElement} class="inline-feedback error system-form-error" role="alert" tabindex="-1" data-testid="config-error"><span>{formError}</span></div>{/if}
   </form>
+
+  <section class="settings-section system-card output-savings-card" data-testid="output-savings-card">
+    <div class="settings-section-title"><h2>{t('outputSavings')}</h2><Calculator size={17} /></div>
+    <p class="output-savings-lede"><strong>{t(snapshot.outputSavings.enabled ? 'savingsEnabled' : 'savingsDisabled')}</strong> {t('outputSavingsLede')}</p>
+    <div class="output-savings-metrics">
+      <div><small>{t('estimatedTokensSaved')}</small><strong>{formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language)}</strong></div>
+      <div><small>{t('measuredResponses')}</small><strong>{formatNumber(snapshot.outputSavings.summary.responseCount, language)}</strong></div>
+      <div><small>{t('tokenizerRuntime')}</small><strong>{snapshot.outputSavings.runtime.installed ? stateLabel(language, snapshot.outputSavings.runtime.state) : t('tokenizerNotInstalled')}</strong></div>
+      <div><small>{snapshot.outputSavings.runtime.installed ? t('runtimeSize') : t('downloadRequired')}</small><strong>{formatMegabytes(snapshot.outputSavings.runtime.installed ? snapshot.outputSavings.runtime.installedBytes : snapshot.outputSavings.runtime.downloadBytes)}</strong></div>
+    </div>
+    <p class="output-savings-help">{t('lazyTokenizerDownload')}</p>
+    <div class="output-savings-actions">
+      {#if snapshot.outputSavings.enabled}
+        <button class="button secondary" type="button" disabled={busy} onclick={disableOutputSavings} data-testid="output-savings-disable">{t('disableOutputSavings')}</button>
+      {:else}
+        <button class="button primary" type="button" disabled={busy} onclick={enableOutputSavings} data-testid="output-savings-enable">{t('enableOutputSavings')}</button>
+      {/if}
+      <button class="button secondary" type="button" disabled={busy || snapshot.outputSavings.summary.responseCount === 0} onclick={clearOutputSavings}>{t('clearSavingsHistory')}</button>
+      {#if snapshot.outputSavings.runtime.installed}
+        <button class="button danger" type="button" disabled={busy} onclick={uninstallOutputSavings}>{t('uninstallTokenizer')}</button>
+      {/if}
+    </div>
+  </section>
 
   <section class="diagnostics-section">
     <header><div><h2>{t('diagnostics')}</h2><p>{formatTime(snapshot.generatedAt, language)}</p></div></header>

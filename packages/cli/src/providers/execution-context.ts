@@ -1,6 +1,7 @@
 import type { Page } from 'playwright-core'
 import type { ProviderDomDefinition } from './provider-definition.js'
 import type { VisibleActionRequest } from './contracts.js'
+import type { MeasureVisibleOutput } from '../output-savings/index.js'
 
 export type ProviderExecutionContext = {
   profileId: string
@@ -8,6 +9,7 @@ export type ProviderExecutionContext = {
   attachmentRoot?: string
   signal?: AbortSignal
   now?: () => Date
+  measureVisibleOutput?: MeasureVisibleOutput
 }
 
 export type BoundProviderExecutionContext = ProviderExecutionContext & {

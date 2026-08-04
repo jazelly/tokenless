@@ -54,6 +54,7 @@ export type {
 } from './daemon-client.js'
 
 export type { ManagedProfilePreferences, TokenlessConfig } from './job-store.js'
+export type { OutputSavingsConfig } from './job-store.js'
 export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
 export type { BrowserConnectionMode } from './browser-connection-mode.js'
 
@@ -108,6 +109,24 @@ export type {
   BrowserSelection,
   ResolvedBrowserRuntime,
 } from './browser-runtime/index.js'
+
+export {
+  OUTPUT_SAVINGS_ESTIMATOR,
+  OUTPUT_SAVINGS_RUNTIME_CATALOG,
+  OUTPUT_SAVINGS_RUNTIME_DOWNLOAD_BYTES,
+  OUTPUT_SAVINGS_RUNTIME_ID,
+  OUTPUT_SAVINGS_RUNTIME_INSTALLED_BYTES,
+  OUTPUT_SAVINGS_RUNTIME_VERSION,
+  OutputSavingsRuntimeManager,
+} from './output-savings/index.js'
+
+export type { OutputSavingsRuntimeInspection } from './output-savings/index.js'
+export type {
+  MeasureVisibleOutput,
+  OutputSavingsMeasurement,
+  OutputSavingsResult,
+  OutputSavingsUnavailable,
+} from './output-savings/index.js'
 
 export {
   DAEMON_CONTROL_API_REVISION,

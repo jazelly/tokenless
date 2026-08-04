@@ -5,6 +5,7 @@ import type { Page } from 'playwright-core'
 import type { ProviderDomDefinition } from '../provider-definition.js'
 import type { ProviderActionObservation, ProviderActionPreparation } from '../contracts.js'
 import type { VisibleCitation } from '../../playwright/actions.js'
+import type { MeasureVisibleOutput } from '../../output-savings/index.js'
 
 export const RESPONSE_CURSOR_SCHEMA = 'tokenless.provider.response-cursor.v2'
 
@@ -77,7 +78,11 @@ export function validateDomResponsePreparation(provider: ProviderDomDefinition, 
   }
 }
 
-export async function readDomResponse(provider: ProviderDomDefinition, page: Page) {
+export async function readDomResponse(
+  provider: ProviderDomDefinition,
+  page: Page,
+  measureVisibleOutput?: MeasureVisibleOutput,
+) {
   const answer = await latestLocator(page, provider.answerSelectors)
   if (!answer) {
     return {
@@ -86,7 +91,11 @@ export async function readDomResponse(provider: ProviderDomDefinition, page: Pag
       visibleProof: 'no-visible-answer',
     }
   }
-  const text = sanitizeVisibleText(await answer.innerText({ timeout: 5000 }))
+  const completeText = normalizeVisibleText(await answer.innerText({ timeout: 5000 }))
+  const outputSavings = measureVisibleOutput
+    ? await measureVisibleOutput(completeText)
+    : undefined
+  const text = boundVisibleText(completeText)
   const citations = await answer.locator('a[href]').evaluateAll((anchors) => anchors.slice(0, 24).map((anchor) => ({
     label: (anchor.textContent ?? '').trim().slice(0, 120),
     href: anchor instanceof HTMLAnchorElement ? anchor.href : '',
@@ -95,6 +104,7 @@ export async function readDomResponse(provider: ProviderDomDefinition, page: Pag
     text,
     citations,
     visibleProof: 'visible-answer-read',
+    ...(outputSavings === undefined ? {} : { outputSavings }),
   }
 }
 
@@ -114,8 +124,12 @@ function createResponsePreparation(
   })
 }
 
-function sanitizeVisibleText(text: string) {
-  return text.replace(/\s+/g, ' ').trim().slice(0, 32_000)
+function normalizeVisibleText(text: string) {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function boundVisibleText(text: string) {
+  return text.slice(0, 32_000)
 }
 
 function validateBaseline(value: unknown) {
@@ -126,7 +140,7 @@ function validateBaseline(value: unknown) {
 }
 
 function fingerprintAnswer(text: string) {
-  const normalized = sanitizeVisibleText(text)
+  const normalized = boundVisibleText(normalizeVisibleText(text))
   return normalized ? createHash('sha256').update(normalized).digest('hex') : null
 }
 

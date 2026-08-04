@@ -95,6 +95,27 @@ export type ReplaySummary = {
   has_blocker: boolean
 }
 
+export type OutputSavingsEvent = {
+  job_id: string
+  response_request_id: string
+  estimated_output_tokens: number
+  visible_characters: number
+  estimator: string
+  estimator_revision: string
+  basis: 'visible_assistant_text'
+  source_text_sha256: string
+  measured_at: string
+}
+
+export type OutputSavingsSummary = {
+  estimated_output_tokens: number
+  visible_characters: number
+  response_count: number
+  job_count: number
+  first_measured_at: string | null
+  last_measured_at: string | null
+}
+
 export type ListJobsInput = {
   status?: JobStatus | undefined
   execution_backend?: ExecutionBackend | undefined
@@ -1118,8 +1139,110 @@ export class JobStore {
       claimToken,
       nowMs
     )
-    if (result.changes === 1) return this.getJobWithoutRecovery(jobId)
+    if (result.changes === 1) {
+      if ('result_json' in completion) {
+        try {
+          this.recordOutputSavingsForJob(jobId, completion.result_json)
+        } catch {
+          // Optional measurement persistence never changes the provider job outcome.
+        }
+      }
+      return this.getJobWithoutRecovery(jobId)
+    }
     return this.explainActiveClaimFailure(jobId, claimToken, nowMs)
+  }
+
+  reconcileOutputSavings() {
+    const rows = this.all(
+      `SELECT job_id, result_json
+       FROM jobs
+       WHERE status = 'succeeded' AND result_json IS NOT NULL
+       ORDER BY updated_at ASC, job_id ASC`
+    )
+    for (const row of rows) {
+      try {
+        this.recordOutputSavingsForJob(String(row.job_id), parseJson(row.result_json))
+      } catch {
+        // Invalid legacy results and optional measurement failures remain non-fatal.
+      }
+    }
+    return this.outputSavingsSummary()
+  }
+
+  outputSavingsSummary(): OutputSavingsSummary {
+    const row = this.get(
+      `SELECT
+         COALESCE(SUM(estimated_output_tokens), 0) AS estimated_output_tokens,
+         COALESCE(SUM(visible_characters), 0) AS visible_characters,
+         COUNT(*) AS response_count,
+         COUNT(DISTINCT job_id) AS job_count,
+         MIN(measured_at) AS first_measured_at,
+         MAX(measured_at) AS last_measured_at
+       FROM output_savings_events`
+    )
+    return {
+      estimated_output_tokens: Number(row?.estimated_output_tokens ?? 0),
+      visible_characters: Number(row?.visible_characters ?? 0),
+      response_count: Number(row?.response_count ?? 0),
+      job_count: Number(row?.job_count ?? 0),
+      first_measured_at: nullableString(row?.first_measured_at),
+      last_measured_at: nullableString(row?.last_measured_at),
+    }
+  }
+
+  outputSavingsForJob(jobId: string): OutputSavingsEvent[] {
+    return this.all(
+      `SELECT
+         job_id, response_request_id, estimated_output_tokens, visible_characters,
+         estimator, estimator_revision, basis, source_text_sha256, measured_at
+       FROM output_savings_events
+       WHERE job_id = ?
+       ORDER BY measured_at ASC, response_request_id ASC`,
+      jobId,
+    ).map(rowToOutputSavingsEvent)
+  }
+
+  clearOutputSavings() {
+    return this.transaction(() => {
+      const clearedThrough = nowRfc3339()
+      this.run(
+        `INSERT INTO output_savings_state (singleton, cleared_through)
+         VALUES (1, ?)
+         ON CONFLICT(singleton) DO UPDATE SET cleared_through = excluded.cleared_through`,
+        clearedThrough,
+      )
+      const result = this.run('DELETE FROM output_savings_events')
+      return { cleared: Number(result.changes) }
+    })
+  }
+
+  private recordOutputSavingsForJob(jobId: string, resultJson: unknown) {
+    const events = outputSavingsEventsFromResult(jobId, resultJson)
+    if (events.length === 0) return
+    this.transaction(() => {
+      const state = this.get(
+        'SELECT cleared_through FROM output_savings_state WHERE singleton = 1',
+      )
+      const clearedThrough = nullableString(state?.cleared_through)
+      for (const event of events) {
+        if (clearedThrough !== null && event.measured_at <= clearedThrough) continue
+        this.run(
+          `INSERT OR IGNORE INTO output_savings_events (
+             job_id, response_request_id, estimated_output_tokens, visible_characters,
+             estimator, estimator_revision, basis, source_text_sha256, measured_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          event.job_id,
+          event.response_request_id,
+          event.estimated_output_tokens,
+          event.visible_characters,
+          event.estimator,
+          event.estimator_revision,
+          event.basis,
+          event.source_text_sha256,
+          event.measured_at,
+        )
+      }
+    })
   }
 
   async cancelJob(jobId: string, reason: unknown | undefined) {
@@ -1469,6 +1592,24 @@ export class JobStore {
           OR (agent_kind IS NOT NULL AND agent_session_id IS NOT NULL)
         )
       );
+      CREATE TABLE IF NOT EXISTS output_savings_events (
+        job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+        response_request_id TEXT NOT NULL CHECK (length(response_request_id) BETWEEN 1 AND 128),
+        estimated_output_tokens INTEGER NOT NULL CHECK (estimated_output_tokens >= 0),
+        visible_characters INTEGER NOT NULL CHECK (visible_characters >= 0),
+        estimator TEXT NOT NULL CHECK (length(estimator) BETWEEN 1 AND 64),
+        estimator_revision TEXT NOT NULL CHECK (length(estimator_revision) BETWEEN 1 AND 128),
+        basis TEXT NOT NULL CHECK (basis = 'visible_assistant_text'),
+        source_text_sha256 TEXT NOT NULL CHECK (
+          length(source_text_sha256) = 64 AND source_text_sha256 NOT GLOB '*[^0-9a-f]*'
+        ),
+        measured_at TEXT NOT NULL,
+        PRIMARY KEY (job_id, response_request_id, estimator_revision)
+      );
+      CREATE TABLE IF NOT EXISTS output_savings_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        cleared_through TEXT
+      );
       CREATE TABLE IF NOT EXISTS job_task_keys (
         job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
         task_id TEXT NOT NULL CHECK (length(task_id) BETWEEN 1 AND 256),
@@ -1542,6 +1683,8 @@ export class JobStore {
         ON provider_conversations(provider, profile_id, task_id, project_resource_id);
       CREATE INDEX IF NOT EXISTS provider_task_conversations_job_idx
         ON provider_task_conversations(proved_job_id);
+      CREATE INDEX IF NOT EXISTS output_savings_measured_at_idx
+        ON output_savings_events(measured_at, job_id);
     `)
   }
 
@@ -1919,6 +2062,67 @@ function rowToProviderTaskConversation(row: Record<string, unknown>): ProviderTa
     proved_job_id: String(row.proved_job_id),
     observed_at: String(row.observed_at),
   }
+}
+
+function rowToOutputSavingsEvent(row: Record<string, unknown>): OutputSavingsEvent {
+  return {
+    job_id: String(row.job_id),
+    response_request_id: String(row.response_request_id),
+    estimated_output_tokens: Number(row.estimated_output_tokens),
+    visible_characters: Number(row.visible_characters),
+    estimator: String(row.estimator),
+    estimator_revision: String(row.estimator_revision),
+    basis: 'visible_assistant_text',
+    source_text_sha256: String(row.source_text_sha256),
+    measured_at: String(row.measured_at),
+  }
+}
+
+function outputSavingsEventsFromResult(jobId: string, resultJson: unknown): OutputSavingsEvent[] {
+  const result = jsonRecord(resultJson)
+  const responses = Array.isArray(result?.responses) ? result.responses : []
+  const events: OutputSavingsEvent[] = []
+  for (const rawResponse of responses) {
+    const response = jsonRecord(rawResponse)
+    const actionResult = jsonRecord(response?.result)
+    const measurement = jsonRecord(actionResult?.outputSavings)
+    if (
+      response?.ok !== true ||
+      response.action !== 'response.read' ||
+      typeof response.requestId !== 'string' ||
+      response.requestId.length < 1 ||
+      response.requestId.length > 128 ||
+      measurement?.schema !== 'tokenless.output-savings-measurement.v1' ||
+      measurement.state !== 'measured' ||
+      measurement.basis !== 'visible_assistant_text' ||
+      measurement.estimator !== 'o200k_base' ||
+      typeof measurement.estimatorRevision !== 'string' ||
+      measurement.estimatorRevision.length < 1 ||
+      measurement.estimatorRevision.length > 128 ||
+      !isNonnegativeSafeInteger(measurement.estimatedOutputTokens) ||
+      !isNonnegativeSafeInteger(measurement.visibleCharacters) ||
+      typeof measurement.sourceTextSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(measurement.sourceTextSha256) ||
+      typeof measurement.measuredAt !== 'string' ||
+      !Number.isFinite(Date.parse(measurement.measuredAt))
+    ) continue
+    events.push({
+      job_id: jobId,
+      response_request_id: response.requestId,
+      estimated_output_tokens: measurement.estimatedOutputTokens,
+      visible_characters: measurement.visibleCharacters,
+      estimator: measurement.estimator,
+      estimator_revision: measurement.estimatorRevision,
+      basis: measurement.basis,
+      source_text_sha256: measurement.sourceTextSha256,
+      measured_at: new Date(measurement.measuredAt).toISOString(),
+    })
+  }
+  return events
+}
+
+function isNonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 function mappingText(value: unknown, field: string, maximumLength: number) {

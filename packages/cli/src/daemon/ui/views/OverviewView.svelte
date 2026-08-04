@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUpRight, Bot, Clock3, ExternalLink, Monitor, UserRound } from '@lucide/svelte'
+  import { ArrowUpRight, Bot, Calculator, Clock3, ExternalLink, Monitor, UserRound } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel } from '../localization.js'
@@ -47,6 +47,7 @@
     <article class="metric-card"><span class="metric-icon"><Monitor size={18} /></span><div><small>{t('runtime')}</small><strong>{stateLabel(language, snapshot.runtime.status)}</strong><p>{formatNumber(snapshot.runtime.activeJobCount, language)} {t('activeUnit')}</p></div></article>
     <article class="metric-card"><span class="metric-icon"><UserRound size={18} /></span><div><small>{t('profiles')}</small><strong>{formatNumber(snapshot.profiles.length, language)}</strong><p>{profile?.label ?? t('noProfiles')}</p></div></article>
     <article class="metric-card"><span class="metric-icon"><Clock3 size={18} /></span><div><small>{t('waitingJobs')}</small><strong>{formatNumber(waiting.length, language)}</strong><p>{formatNumber(running.length, language)} {t('activeUnit')}</p></div></article>
+    <article class="metric-card"><span class="metric-icon"><Calculator size={18} /></span><div><small>{t('estimatedTokensSaved')}</small><strong>{formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language)}</strong><p>{formatNumber(snapshot.outputSavings.summary.responseCount, language)} {t('measuredResponses')}</p></div></article>
   </div>
 
   <div class="overview-grid">

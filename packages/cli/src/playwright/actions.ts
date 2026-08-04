@@ -436,6 +436,7 @@ export type ResponseReadResult = {
   text: string
   citations: readonly VisibleCitation[]
   visibleProof: string
+  outputSavings?: import('../output-savings/index.js').OutputSavingsResult
 }
 
 export type VisibleCitation = {

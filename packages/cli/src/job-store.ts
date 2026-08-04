@@ -32,6 +32,11 @@ export type TokenlessConfig = {
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
   language: TokenlessLanguage
+  outputSavings: OutputSavingsConfig
+}
+
+export type OutputSavingsConfig = {
+  enabled: boolean
 }
 
 export type ManagedProfilePreferences = {
@@ -123,6 +128,9 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.language !== undefined && !normalizeTokenlessLanguage(payload.language)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
+  if (payload.outputSavings !== undefined && !isOutputSavingsConfig(payload.outputSavings)) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
   const browser = normalizeBrowserId(payload.browser) ?? 'auto'
   const browserExecutablePath = normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
   validateConfigBrowserExecutablePathScope(homeDir, browser, browserExecutablePath, file)
@@ -137,6 +145,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
+    outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
   }
 }
 
@@ -150,6 +159,7 @@ export async function writeTokenlessConfig({
   browserVisibility,
   daemonUrl,
   language,
+  outputSavings,
 }: {
   homeDir?: string
   providerWhitelist?: unknown
@@ -160,6 +170,7 @@ export async function writeTokenlessConfig({
   browserVisibility?: unknown
   daemonUrl?: unknown
   language?: unknown
+  outputSavings?: unknown
 } = {}) {
   await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
   await fs.chmod(homeDir, 0o700).catch(() => undefined)
@@ -188,6 +199,9 @@ export async function writeTokenlessConfig({
         : validateConfigBrowserVisibility(browserVisibility),
       daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
       language: language === undefined ? current.language : validateConfigLanguage(language),
+      outputSavings: outputSavings === undefined
+        ? current.outputSavings
+        : validateOutputSavingsConfig(outputSavings),
     }
     validateConfigBrowserExecutablePathScope(
       homeDir,
@@ -212,7 +226,25 @@ function emptyTokenlessConfig(): TokenlessConfig {
     browserVisibility: 'auto',
     daemonUrl: null,
     language: 'en',
+    outputSavings: { enabled: false },
   }
+}
+
+function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {
+  return isJsonRecord(value) &&
+    Object.keys(value).length === 1 &&
+    typeof value.enabled === 'boolean'
+}
+
+function normalizeOutputSavingsConfig(value: unknown): OutputSavingsConfig {
+  return isOutputSavingsConfig(value) ? { enabled: value.enabled } : { enabled: false }
+}
+
+function validateOutputSavingsConfig(value: unknown): OutputSavingsConfig {
+  if (!isOutputSavingsConfig(value)) {
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless output savings configuration.')
+  }
+  return { enabled: value.enabled }
 }
 
 function defaultProviderWhitelist() {
