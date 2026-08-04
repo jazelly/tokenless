@@ -77,6 +77,6 @@ function runSavings(homeDir, subcommand, ...extra) {
     encoding: 'utf8',
     timeout: 150_000,
   })
-  assert.equal(result.status, 0, result.stderr || result.stdout)
+  assert.equal(result.status, 0, [result.stderr, result.stdout].filter(Boolean).join('\n'))
   return JSON.parse(result.stdout)
 }
