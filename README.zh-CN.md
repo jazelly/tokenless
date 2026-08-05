@@ -62,7 +62,7 @@ npm install --global tokenless@latest
 tokenless setup
 ```
 
-交互式 setup 会先询问是否使用 Anti-Detect 模式，并直接说明接受后会在需要时安装经过验证、按平台固定版本的 CloakBrowser。拒绝后会使用已保存的普通 browser 偏好或自动发现，不再显示单独的 runtime 选择器。选择 Anti-Detect 后，setup 会链接到 CloakBrowser、显示当前平台的精确锁定版本，只扫描本机已知 Chrome、Brave、Edge、Arc、Chromium 和 Chrome for Testing profile 的安全目录/版本元数据，并标记精确版本是否匹配。有兼容 profile 时，只显示一次来源选择，其中包含 `Start clean` 和兼容 profile；选择某个 profile 本身就明确授权 opaque 本地复制，Tokenless 不会检查认证值。之后不再询问是否 import、是否同意 copy 或是否继续安装。非交互 setup 中，显式 `--anti-detect` 或 `--browser cloak` 授权安装；仅有已保存的 Cloak preference 不会触发下载，import 仍要求 `--consent-local-profile-copy`。之后 setup 会列出所有受支持的 provider，默认全部启用，并允许你回复编号移除 provider；直接回车则保留全部。它只检查剩余 provider，通过一次并发后台批处理为每个 provider 保留一个 headed 页面供用户审核登录状态，并在一个保留的前台标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
+交互式 setup 会先询问是否使用 Anti-Detect 模式，并直接说明接受后会在需要时安装经过验证、按平台固定版本的 CloakBrowser。拒绝后会使用已保存的普通 browser 偏好或自动发现，不再显示单独的 runtime 选择器。选择 Anti-Detect 后，setup 会链接到 CloakBrowser、显示当前平台的精确锁定版本，只扫描受支持的 Chrome、Edge、Chromium 和 Chrome for Testing profile 的安全目录/版本元数据，并标记精确版本是否匹配。有兼容 profile 时，只显示一次来源选择，其中包含 `Start clean` 和兼容 profile；选择某个 profile 本身就明确授权 opaque 本地复制，Tokenless 不会检查认证值。之后不再询问是否 import、是否同意 copy 或是否继续安装。非交互 setup 中，显式 `--anti-detect` 或 `--browser cloak` 授权安装；仅有已保存的 Cloak preference 不会触发下载，import 仍要求 `--consent-local-profile-copy`。之后 setup 会列出所有受支持的 provider，默认全部启用，并允许你回复编号移除 provider；直接回车则保留全部。它只检查剩余 provider，通过一次并发后台批处理为每个 provider 保留一个 headed 页面供用户审核登录状态，并在一个保留的前台标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
 
 ```bash
 tokenless dashboard
@@ -176,6 +176,12 @@ Kimi 要求使用已登录的 managed profile。其 experimental routes 覆盖 `
 ### Tokenless 需要 provider API Key 吗？
 
 不需要。Tokenless 使用 provider 的可见网页，而不是 provider API。部分 provider 仍要求登录，实际可用能力取决于你的账号在网页上能够使用的功能。
+
+### 为什么 macOS 可能请求访问 Chrome 或 Chromium Safe Storage？
+
+在 macOS 上，Chromium 系浏览器可能会使用保存在 Keychain 中的材料，加密 cookies 和其他由浏览器管理的登录状态。Tokenless 会让 managed browser 使用正常的 Keychain 集成，使复制的 profile 或之后完成登录的 profile 能够解密并保留兼容状态。Tokenless 不会直接读取、导出或记录 Keychain item、cookies、密码或 tokens，也不会把它们发送给 Agent 或单独的 Tokenless 服务。本地访问由预期的浏览器进程直接发起，session cookies 只会用于浏览器向 provider 网站发出的正常请求。
+
+如果是你主动启动了 Tokenless，而且提示中显示的是 setup 时选择的 browser runtime，那么批准访问属于预期行为。选择 `Always Allow` 可以减少重复提示，但也意味着允许该浏览器持续访问对应的 Keychain item；只有在你确认并信任该浏览器时才应选择。拒绝访问可能会让导入的 profile 看起来处于未登录状态。不要批准来源不明的应用或浏览器。Keychain 授权也无法让浏览器状态跨不兼容的 browser product、Safe Storage identity 或 profile version 通用，因此 source profile 必须与选定 runtime 兼容。
 
 ### Tokenless 会把整个项目发送给 provider 吗？
 

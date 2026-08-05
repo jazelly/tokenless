@@ -130,6 +130,8 @@ tokenless profiles status --profile work --provider claude --json
 
 New profiles are bound to the exact runtime that created them. They start clean unless the user explicitly selects a version-compatible local Chromium profile for opaque filesystem copy. Tokenless does not inspect or expose individual cookies, tokens, browser storage, or authentication values. The managed browser then keeps that profile's session across jobs.
 
+On macOS, the managed browser uses its normal Keychain integration to decrypt browser-managed sign-in state. A Chrome or Chromium Safe Storage prompt is expected when you intentionally launch Tokenless with that selected browser; Tokenless does not export the Keychain item or decrypted credentials to an agent or separate service. Approve only the browser you recognize. Denying access can make an imported profile appear signed out, and approval cannot make profiles compatible across different browser products or Safe Storage identities. See the full [English FAQ](https://github.com/jazelly/tokenless#why-can-macos-ask-for-access-to-chrome-or-chromium-safe-storage) or [中文常见问题](https://github.com/jazelly/tokenless/blob/main/README.zh-CN.md#为什么-macos-可能请求访问-chrome-或-chromium-safe-storage).
+
 ## Browser and Local Runtime
 
 Browser visibility defaults to `auto`: jobs start headless and open a visible window only for user-resolvable blockers. Use `headed` or `headless` for an explicit policy. A waiting headless job must be resumed, not resubmitted:

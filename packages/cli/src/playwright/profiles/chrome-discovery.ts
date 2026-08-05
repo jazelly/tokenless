@@ -21,9 +21,7 @@ export type ChromeUserDataRoot = {
 
 export const MANAGED_CHROMIUM_BROWSER_IDS = Object.freeze([
   'chrome',
-  'brave',
   'edge',
-  'arc',
   'chromium',
   'chrome-for-testing',
 ] as const)
@@ -55,9 +53,7 @@ export function standardChromiumUserDataDirs(
   if (browser === 'chrome') return standardChromeUserDataDirs(osPlatform, home, env)
   if (osPlatform === 'darwin') {
     const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome'>, string> = {
-      brave: join('BraveSoftware', 'Brave-Browser'),
       edge: 'Microsoft Edge',
-      arc: join('Arc', 'User Data'),
       chromium: 'Chromium',
       'chrome-for-testing': join('Google', 'Chrome for Testing'),
     }
@@ -66,23 +62,14 @@ export function standardChromiumUserDataDirs(
   if (osPlatform === 'win32') {
     const localAppData = env.LOCALAPPDATA
     if (!localAppData) return []
-    const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome' | 'arc'>, string> = {
-      brave: join('BraveSoftware', 'Brave-Browser', 'User Data'),
+    const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome'>, string> = {
       edge: join('Microsoft', 'Edge', 'User Data'),
       chromium: join('Chromium', 'User Data'),
       'chrome-for-testing': join('Google', 'Chrome for Testing', 'User Data'),
     }
-    if (browser === 'arc') {
-      return [
-        join(localAppData, 'Packages', 'TheBrowserCompany.Arc_ttt1ap7aakyb4', 'LocalCache', 'Local', 'Arc', 'User Data'),
-        join(localAppData, 'TheBrowserCompany', 'Arc', 'User Data'),
-      ]
-    }
     return [join(localAppData, relativePaths[browser])]
   }
-  if (browser === 'arc') return []
-  const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome' | 'arc'>, readonly string[]> = {
-    brave: [join('BraveSoftware', 'Brave-Browser'), 'brave'],
+  const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome'>, readonly string[]> = {
     edge: ['microsoft-edge', 'microsoft-edge-stable'],
     chromium: ['chromium'],
     'chrome-for-testing': ['chrome-for-testing'],

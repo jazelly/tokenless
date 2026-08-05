@@ -1,6 +1,6 @@
 # Browser Connection Mode Capability Evaluation
 
-Status: active, implementation and available-capability comparison complete | Priority: P0 | Last reviewed: 2026-08-01
+Status: active, implementation and available-capability comparison complete | Priority: P0 | Last reviewed: 2026-08-05
 
 ## Outcome
 
@@ -20,7 +20,7 @@ This work protects capability fidelity, not an assumed notion of more realistic 
 
 The supported values are `playwright` and `cdp`. Omitted values resolve to `playwright` for backward compatibility. The daemon reads the value when it creates its embedded browser runner, so changing it requires the daemon to be restarted. Profiles, browser runtime bindings, visibility policy, provider mappings, and job contracts do not change.
 
-In `cdp` mode Tokenless launches the exact profile-bound Chromium executable with a loopback-only ephemeral DevTools endpoint, connects through Playwright, owns the browser process, and closes or terminates that process during cleanup. Every production and test executable retains `--password-store=basic` and `--use-mock-keychain`, matching Playwright mode. Chromium sandboxing remains enabled.
+In `cdp` mode Tokenless launches the exact profile-bound Chromium executable with a loopback-only ephemeral DevTools endpoint, connects through Playwright, owns the browser process, and closes or terminates that process during cleanup. Both production modes use the selected browser's native credential storage; Playwright mode suppresses its keychain-neutral defaults, while CDP omits those arguments from its explicit launch list. Disposable unauthenticated test profiles may remain keychain-neutral. Chromium sandboxing remains enabled.
 
 ## Capability Matrix
 
@@ -97,7 +97,7 @@ The provider E2E was subsequently simplified from one top-level test and implici
 ## Acceptance Criteria
 
 - The configuration default preserves existing production behavior and no operational CLI flag is added.
-- Both modes pass build, config filesystem validation, daemon `profiles open`, and the local real-Chromium matrix without Keychain prompts.
+- Both modes pass build, config filesystem validation, daemon `profiles open`, and the local real-Chromium matrix. Any production-profile Keychain approval remains an explicit manual user action.
 - Both modes run every applicable real-provider case without fixtures, interception, retries, or unauthorized profile switching.
 - Each provider and connection-mode run uses one stable task/page journey, and every step proves exact Chromium target continuity.
 - Results identify capability differences by observable outcome, not by protocol reputation.

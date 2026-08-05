@@ -43,13 +43,13 @@
 ### Credential and macOS Keychain Safety
 
 - Browser auth stays opaque in the user-controlled managed profile. After explicit user consent, Tokenless may copy a user-selected browser profile only as an opaque local filesystem tree between user-controlled profiles; it must not parse or expose individual authentication values.
-- Never request, inspect, export, log, transmit, decrypt, or dump passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets; never use `security`, Keychain APIs, or equivalent tools. An explicitly authorized opaque local profile copy is not secret extraction.
-- Never automate or encourage Keychain approval, including `Allow` or `Always Allow`.
-- Tests, helpers, and test browsers must not trigger Keychain prompts. Any prompt fails the run: stop the browser/test, tell the user to choose `Deny` or `Cancel` without a password, then fix launch settings before retrying.
-- Every production and test Chromium launch must retain `--password-store=basic` and `--use-mock-keychain`, regardless of the configured browser executable.
+- Tokenless code, tests, and tooling must never directly inspect, export, log, transmit, decrypt, or dump passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets, and must never call `security`, Keychain APIs, or equivalent tools. The selected browser's normal local Keychain use and an explicitly authorized opaque local profile copy are not secret extraction by Tokenless.
+- On macOS, production managed browsers use the browser's normal Keychain access so the matching runtime can decrypt browser-managed state in its profile. Never add `--password-store=basic` or `--use-mock-keychain` to a production managed-profile launch, and explicitly suppress those Playwright defaults.
+- Keychain approval remains a user-controlled security decision. Tokenless may explain why the expected browser is asking and the user may approve it, but tests and automation must never click the prompt, enter a password, or weaken the prompt on the user's behalf.
+- Disposable installer smoke profiles and unauthenticated browser-surface test profiles may stay keychain-neutral. Real-provider E2E using a setup-managed authenticated profile must use the production native credential-storage policy and may pause for manual user approval.
 - Keychain safety never permits mocked browser boundaries.
-- For browser-launch changes, verify keychain-neutral production and test options, enabled Chromium sandboxing, process cleanup, and focused real-boundary completion without prompts.
-- Regression guard: never remove either keychain-neutral flag from any Chromium launch; inconsistent storage modes caused the prior `Chromium Safe Storage` prompt in provider-less `profiles open` conformance.
+- For browser-launch changes, verify native credential storage on production managed profiles, keychain neutrality on disposable unauthenticated profiles, enabled Chromium sandboxing, process cleanup, and focused real-boundary completion.
+- Regression guard: production managed-profile launches must remain free of `--password-store=basic` and `--use-mock-keychain`; either flag can prevent a copied profile from using browser state encrypted with the source browser's macOS Keychain material.
 
 ### Provider DOM Fixture Policy
 

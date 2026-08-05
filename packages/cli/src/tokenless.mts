@@ -1229,15 +1229,13 @@ function normalizeProfileDiscoveryBrowser(value: unknown): ManagedChromiumBrowse
   const browser = value === undefined ? 'chrome' : normalizeCliBrowser(value)
   if (
     browser !== 'chrome' &&
-    browser !== 'brave' &&
     browser !== 'edge' &&
-    browser !== 'arc' &&
     browser !== 'chromium' &&
     browser !== 'chrome-for-testing'
   ) {
     throw usageError(
       'profile_discovery_browser_invalid',
-      'Browser profile discovery supports all, Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing.',
+      'Browser profile discovery supports all, Chrome, Edge, Chromium, or Chrome for Testing.',
     )
   }
   return browser
@@ -3483,9 +3481,7 @@ async function selectSetupCloakImport({
 function chromiumProfileBrowserDisplayName(browser: ManagedChromiumBrowserId) {
   const names: Record<ManagedChromiumBrowserId, string> = {
     chrome: 'Google Chrome',
-    brave: 'Brave Browser',
     edge: 'Microsoft Edge',
-    arc: 'Arc',
     chromium: 'Chromium',
     'chrome-for-testing': 'Google Chrome for Testing',
   }
@@ -4115,7 +4111,7 @@ async function configCommand(args: CliArgs) {
     if (args.browserExecutablePath !== undefined && !isSystemBrowserId(browser)) {
       throw usageError(
         'browser_executable_path_requires_system_browser',
-        '--browser-executable-path requires an explicit system browser such as chrome or brave.',
+        '--browser-executable-path requires an explicit system browser selection.',
       )
     }
     if (args.clearBrowserExecutablePath === true) {
@@ -4695,7 +4691,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
-    { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <all|chrome|brave|edge|arc|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
+    { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <all|chrome|edge|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
     { command: 'profiles', subcommand: 'reset', usage: ['tokenless profiles reset [--profile <slug>] --consent-local-profile-copy --json'], options: ['home', 'json', 'profile', 'consentLocalProfileCopy'] },
     { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
@@ -4887,7 +4883,7 @@ function normalizeCliBrowser(browser: unknown) {
   if (!browserId || (browserId === 'profile' && !process.env.TOKENLESS_BROWSER_EXECUTABLE)) {
     throw usageError(
       'invalid_browser',
-      'Browser must be auto, chrome, chrome-for-testing, chromium, edge, arc, brave, managed-chromium, or cloak.'
+    'Browser must be auto, chrome, chrome-for-testing, chromium, edge, managed-chromium, or cloak.'
     )
   }
   return browserId
@@ -5785,7 +5781,7 @@ function usage(args: CliArgs) {
       description: 'Discover metadata or manage clean browser profiles.',
       commands: [
         'tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
-        'tokenless profiles discover [--browser <all|chrome|brave|edge|arc|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json',
+        'tokenless profiles discover [--browser <all|chrome|edge|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json',
         'tokenless profiles clear (--profile <slug>|--all)',
         'tokenless profiles set-default --profile <slug> --json',
         'tokenless profiles remove --profile <slug> --confirm-delete --json',

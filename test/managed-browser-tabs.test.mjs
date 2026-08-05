@@ -14,15 +14,15 @@ import {
 const connectionModes = ['playwright', 'cdp']
 
 for (const connectionMode of connectionModes) {
-  test(`${connectionMode} production launch keeps configured Chromium executables keychain-neutral`, async () => {
+  test(`${connectionMode} production launch allows configured Chromium executables to use native credential storage`, async () => {
     await withManager(connectionMode, async ({ manager, profile }) => {
       const managed = await manager.ensureContext(profile, 'headless')
       const page = await managed.acquirePage({ key: 'browser-command-line' })
       await page.goto('chrome://version')
       const commandLine = await page.locator('#command_line').textContent()
-      assert.match(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
-      assert.match(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
-    }, { browserId: 'chromium' })
+      assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
+      assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
+    }, { browserId: 'chromium', launchPolicy: 'standard' })
   })
 
   test(`${connectionMode} managed browser reuses one persistent browser for one selected profile`, async () => {
@@ -214,7 +214,11 @@ for (const connectionMode of connectionModes) {
   })
 }
 
-async function withManager(connectionMode, operation, { browserId = 'profile' } = {}) {
+async function withManager(
+  connectionMode,
+  operation,
+  { browserId = 'profile', launchPolicy = 'test-profile' } = {},
+) {
   const profileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-capabilities-`))
   const otherProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-other-profile-`))
   const overflowProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-overflow-profile-`))
@@ -224,6 +228,7 @@ async function withManager(connectionMode, operation, { browserId = 'profile' } 
     browser: {
       id: browserId,
       executablePath: chromium.executablePath(),
+      launchPolicy,
     },
   })
   const profile = { id: 'default', directory: profileDirectory, lifecycle: 'ready' }

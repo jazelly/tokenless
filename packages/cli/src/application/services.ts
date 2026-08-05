@@ -74,9 +74,7 @@ const WEB_BROWSER_SELECTIONS = [
 const WEB_BROWSER_LABELS: Record<(typeof WEB_BROWSER_SELECTIONS)[number], string> = {
   auto: 'Automatic',
   chrome: 'Google Chrome',
-  brave: 'Brave Browser',
   edge: 'Microsoft Edge',
-  arc: 'Arc',
   chromium: 'Chromium',
   'chrome-for-testing': 'Google Chrome for Testing',
   'managed-chromium': 'Managed Chromium',
@@ -300,7 +298,7 @@ export class TokenlessApplicationServices {
       if (executablePath && !isSystemBrowserId(browser)) {
         throw applicationError(
           'browser_executable_path_requires_system_browser',
-          'Browser executable path requires an explicit system browser such as chrome or brave.',
+          'Browser executable path requires an explicit system browser selection.',
         )
       }
       const inspection = await this.runtimeManager.inspect(browser, {
@@ -431,7 +429,7 @@ export class TokenlessApplicationServices {
     if (executablePathProvided && browserExecutablePath && !isSystemBrowserId(browser)) {
       throw applicationError(
         'browser_executable_path_requires_system_browser',
-        'Browser executable path requires an explicit system browser such as chrome or brave.',
+        'Browser executable path requires an explicit system browser selection.',
       )
     }
     const browserVisibility = input.browserVisibility === undefined
@@ -992,9 +990,7 @@ function applicationBrowserExecutablePath(value: unknown, browser: BrowserSelect
 function macOsBrowserExecutableName(browser: SystemBrowserId) {
   const names: Record<SystemBrowserId, string> = {
     chrome: 'Google Chrome',
-    brave: 'Brave Browser',
     edge: 'Microsoft Edge',
-    arc: 'Arc',
     chromium: 'Chromium',
     'chrome-for-testing': 'Google Chrome for Testing',
   }

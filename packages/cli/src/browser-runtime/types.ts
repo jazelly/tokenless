@@ -1,8 +1,6 @@
 export const SYSTEM_BROWSER_IDS = Object.freeze([
   'chrome',
-  'brave',
   'edge',
-  'arc',
   'chromium',
   'chrome-for-testing',
 ] as const)
@@ -97,7 +95,6 @@ export function normalizeBrowserSelection(value: unknown): BrowserSelection | nu
     'chromium-browser': 'chromium',
     'microsoft-edge': 'edge',
     msedge: 'edge',
-    'brave-browser': 'brave',
     managed: 'managed-chromium',
     'tokenless-chromium': 'managed-chromium',
     cloakbrowser: 'cloak',

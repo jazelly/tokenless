@@ -179,7 +179,7 @@ const uiErrorZh: Record<string, string> = {
   ui_json_invalid: '请求内容必须是有效的 JSON object。',
   invalid_browser: '浏览器选择无效。',
   invalid_browser_executable_path: '浏览器 executable path 必须为空或使用绝对路径。',
-  browser_executable_path_requires_system_browser: '只有明确选择 Chrome 或 Brave 等 system browser 时才能设置 executable path。',
+  browser_executable_path_requires_system_browser: '只有明确选择 system browser 后才能设置 executable path。',
   browser_executable_not_found: '找不到浏览器 executable。请粘贴绝对路径，或改选其他浏览器。',
   browser_executable_path_invalid: '浏览器 executable path 必须使用绝对路径。',
   browser_runtime_executable_missing: '该路径不是可运行的浏览器 executable。',

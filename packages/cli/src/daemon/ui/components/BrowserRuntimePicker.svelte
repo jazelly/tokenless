@@ -34,9 +34,7 @@
   const fallbackSelections = [
     ['auto', 'Automatic'],
     ['chrome', 'Google Chrome'],
-    ['brave', 'Brave Browser'],
     ['edge', 'Microsoft Edge'],
-    ['arc', 'Arc'],
     ['chromium', 'Chromium'],
     ['chrome-for-testing', 'Google Chrome for Testing'],
     ['managed-chromium', 'Managed Chromium'],
@@ -63,7 +61,7 @@
         available: selection === 'auto',
         installed: selection === 'auto',
         downloadRequired: selection === 'managed-chromium' || selection === 'cloak',
-        customPathAllowed: ['chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing'].includes(selection),
+        customPathAllowed: ['chrome', 'edge', 'chromium', 'chrome-for-testing'].includes(selection),
         version: null,
         source: null,
       })))

@@ -21,9 +21,7 @@
 
   const browsers = [
     ['chrome', 'Google Chrome'],
-    ['brave', 'Brave Browser'],
     ['edge', 'Microsoft Edge'],
-    ['arc', 'Arc'],
     ['chromium', 'Chromium'],
     ['chrome-for-testing', 'Google Chrome for Testing'],
   ] as const

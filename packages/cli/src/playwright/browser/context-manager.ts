@@ -56,7 +56,7 @@ export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromi
 
 export const MAX_ACTIVE_BROWSER_PROFILES = 4
 
-const KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS = [
+const PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS = [
   '--password-store=basic',
   '--use-mock-keychain',
 ] as const
@@ -433,7 +433,6 @@ export class PersistentContextManager {
     launchOptions: PersistentChromeLaunchOptions,
     browserTarget: ManagedBrowserLaunchTarget,
   ): Promise<LaunchedManagedContext> {
-    assertKeychainNeutralE2ELaunch(launchOptions, browserTarget)
     if (this.connectionMode === 'cdp') {
       return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget)
     }
@@ -707,7 +706,9 @@ export function managedBrowserLaunchOptions(
       '--disable-sync',
       '--no-first-run',
       '--no-default-browser-check',
-      ...KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS,
+      ...(normalized.launchPolicy === 'test-profile'
+        ? PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS
+        : []),
       ...(normalized.e2eInspection
         ? [
             '--remote-debugging-address=127.0.0.1',
@@ -718,9 +719,16 @@ export function managedBrowserLaunchOptions(
           ]
         : []),
     ],
+    ...(normalized.launchPolicy === 'test-profile'
+      ? {}
+      : { ignoreDefaultArgs: [...PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS] }),
   }
   if (normalized.launchPolicy === 'cloak') {
-    launchOptions.ignoreDefaultArgs = ['--enable-automation', '--enable-unsafe-swiftshader']
+    launchOptions.ignoreDefaultArgs = [
+      ...PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS,
+      '--enable-automation',
+      '--enable-unsafe-swiftshader',
+    ]
   }
   if (proxy) {
     launchOptions.proxy = {
@@ -729,22 +737,6 @@ export function managedBrowserLaunchOptions(
     }
   }
   return launchOptions
-}
-
-function assertKeychainNeutralE2ELaunch(
-  launchOptions: PersistentChromeLaunchOptions,
-  browserTarget: ManagedBrowserLaunchTarget,
-) {
-  if (!browserTarget.e2eInspection) return
-  const args = new Set(launchOptions.args ?? [])
-  for (const required of KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS) {
-    if (!args.has(required)) {
-      throw tokenlessError(
-        'e2e_keychain_neutral_launch_required',
-        `Browser E2E requires ${required} before the browser process can start.`,
-      )
-    }
-  }
 }
 
 export function chromeLaunchOptions(): PersistentChromeLaunchOptions {
@@ -767,7 +759,7 @@ function normalizeManagedBrowserLaunchTarget(
   browser: ManagedBrowserLaunchTarget | undefined
 ): ManagedBrowserLaunchTarget {
   const id = String(browser?.id ?? 'chrome').trim().toLowerCase()
-  if (!['chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak', 'profile'].includes(id)) {
+  if (!['chrome', 'edge', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak', 'profile'].includes(id)) {
     throw tokenlessError('unsupported_managed_browser', `Managed Playwright does not support browser '${id}'.`)
   }
   const executablePath = browser?.executablePath?.trim()

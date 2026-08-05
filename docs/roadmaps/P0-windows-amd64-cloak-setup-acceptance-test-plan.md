@@ -34,14 +34,8 @@ Each version case uses a blank source browser profile and a fresh Tokenless home
 | --- | --- | --- | --- | --- |
 | `WIN-CLOAK-CHROME-150` | Google Chrome | A real `150.0.7871.x` build | `150.0.7871.x` | `not version-aligned` |
 | `WIN-CLOAK-CHROME-145` | Google Chrome | Prefer `145.0.7632.160` | `145.0.7632.160` | `not version-aligned` |
-| `WIN-CLOAK-BRAVE-150` | Brave | [`1.92.144`](https://github.com/brave/brave-browser/releases/tag/v1.92.144) | `150.0.7871.186` | `not version-aligned` |
-| `WIN-CLOAK-BRAVE-145` | Brave | [`1.87.192`](https://github.com/brave/brave-browser/releases/tag/v1.87.192) | `145.0.7632.160` | `not version-aligned` |
-| `WIN-CLOAK-ARC-150` | Arc | `1.116.0` | `150.0.7871.182` | `not version-aligned` |
-| `WIN-CLOAK-ARC-145` | Arc | `1.96.0` | `145.0.7632.160` | `not version-aligned` |
 | `WIN-CLOAK-EXACT-146` | Chrome or Chromium | Exact build | `146.0.7680.177` | `version-aligned (reference only)` |
-| `WIN-CLOAK-PATCH-MISMATCH` | Arc | `1.100.0` | `146.0.7680.178` | `not version-aligned` |
-
-Arc mappings come from the [official Arc for Windows release notes](https://resources.arc.net/hc/en-us/articles/22513842649623-Arc-for-Windows-2023-2026-Release-Notes). Arc `1.94.1`, `1.95.0`, and `1.96.0` cover Chromium 145 patch levels `.76`, `.117`, and `.160`; Arc `1.114.0`, `1.115.0`, and `1.116.0` cover Chromium 150 patch levels `.115`, `.125`, and `.182`.
+| `WIN-CLOAK-PATCH-MISMATCH` | Chrome or Chromium | Exact patch-mismatch build | `146.0.7680.178` | `not version-aligned` |
 
 ## Safety and Isolation Rules
 
@@ -60,9 +54,7 @@ Interactive setup scans these standard roots:
 | Browser | Root |
 | --- | --- |
 | Chrome | `%LOCALAPPDATA%\Google\Chrome\User Data` |
-| Brave | `%LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data` |
-| Arc package | `%LOCALAPPDATA%\Packages\TheBrowserCompany.Arc_ttt1ap7aakyb4\LocalCache\Local\Arc\User Data` |
-| Arc standalone | `%LOCALAPPDATA%\TheBrowserCompany\Arc\User Data` |
+| Chromium | `%LOCALAPPDATA%\Chromium\User Data` |
 
 Only `Default` and `Profile N` directories are candidates. Setup reads the root-level `Last Version` file and does not parse `Local State`, `Preferences`, or any profile storage.
 
@@ -129,18 +121,14 @@ The first cache-miss run must prove the download path. At least one later case m
 
 - [ ] Build and package boundaries complete on a clean Windows AMD x86-64 host.
 - [ ] Official Cloak download, checksum, extraction, version verification, cache commit, clean profile binding, launch, doctor, and cleanup pass.
-- [ ] At least Chrome 150, one Brave case, one Arc case, exact 146, and patch-mismatch classifications pass.
+- [ ] Chrome 150, exact 146, and patch-mismatch classifications pass.
 
 ### Complete Version Matrix
 
 - [ ] Chrome 150 is non-aligned.
 - [ ] Chrome 145 is non-aligned.
-- [ ] Brave 150 is non-aligned.
-- [ ] Brave 145 is non-aligned.
-- [ ] Arc 150 is non-aligned.
-- [ ] Arc 145 is non-aligned.
 - [ ] Exact Chromium `146.0.7680.177` is aligned for reference only.
-- [ ] Arc Chromium `146.0.7680.178` is non-aligned.
+- [ ] Chromium `146.0.7680.178` is non-aligned.
 - [ ] Decline, cache-miss download, verified-cache reuse, and downloads-disabled failure paths pass.
 - [ ] Source profile roots remain unimported and unmodified by Tokenless.
 
@@ -149,14 +137,6 @@ The first cache-miss run must prove the download path. At least one later case m
 ### One version per user-data root
 
 Chrome-family profiles do not carry independent browser versions for this flow. One user-data root has one root-level `Last Version`, so `Default` and `Profile 1` cannot be classified as Chrome 145 and Chrome 150 independently when they share the same root. Use a clean VM snapshot or a separate blank root for version switching, and do not downgrade a real profile.
-
-### Brave version semantics
-
-Brave may store a product-shaped `Last Version`, such as `150.1.92.144`, instead of its underlying Chromium build. The 145 and 150 negative cases remain unambiguous against Cloak 146, but a Brave build whose underlying Chromium is exactly `146.0.7680.177` may be classified as a false negative. Record the observed safe value and result. Do not treat a Brave positive-alignment claim as closed until Tokenless can prove the owning Chromium build through a safe real boundary.
-
-### Arc archived installers
-
-The official release notes establish the product-to-Chromium mappings, but the current official installer may update to the latest Arc build. Exact historical cases require an existing official installation or clean VM snapshot; an unavailable trusted artifact blocks that individual case rather than authorizing a third-party download.
 
 ## Evidence Record
 

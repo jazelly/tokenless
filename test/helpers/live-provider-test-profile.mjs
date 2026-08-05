@@ -14,9 +14,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 
 export const LIVE_PROVIDER_TEST_BROWSERS = Object.freeze([
   'chrome',
-  'brave',
   'edge',
-  'arc',
   'chromium',
   'chrome-for-testing',
   'managed-chromium',

@@ -562,17 +562,13 @@ async function systemBrowserExecutable(
   if (platform === 'darwin-arm64') {
     const applicationNames: Record<SystemBrowserId, string> = {
       chrome: 'Google Chrome.app',
-      brave: 'Brave Browser.app',
       edge: 'Microsoft Edge.app',
-      arc: 'Arc.app',
       chromium: 'Chromium.app',
       'chrome-for-testing': 'Google Chrome for Testing.app',
     }
     const executableNames: Record<SystemBrowserId, string> = {
       chrome: 'Google Chrome',
-      brave: 'Brave Browser',
       edge: 'Microsoft Edge',
-      arc: 'Arc',
       chromium: 'Chromium',
       'chrome-for-testing': 'Google Chrome for Testing',
     }
@@ -589,10 +585,8 @@ async function systemBrowserExecutable(
     return null
   }
 
-  if (browserId === 'arc') return null
-  const relativeExecutables: Record<Exclude<SystemBrowserId, 'arc'>, readonly string[]> = {
+  const relativeExecutables: Record<SystemBrowserId, readonly string[]> = {
     chrome: ['Google/Chrome/Application/chrome.exe'],
-    brave: ['BraveSoftware/Brave-Browser/Application/brave.exe'],
     edge: ['Microsoft/Edge/Application/msedge.exe'],
     chromium: ['Chromium/Application/chrome.exe'],
     'chrome-for-testing': ['Google/Chrome for Testing/Application/chrome.exe'],
@@ -611,9 +605,7 @@ async function systemBrowserExecutable(
 function systemBrowserDisplayName(browserId: SystemBrowserId) {
   const names: Record<SystemBrowserId, string> = {
     chrome: 'Google Chrome',
-    brave: 'Brave Browser',
     edge: 'Microsoft Edge',
-    arc: 'Arc',
     chromium: 'Chromium',
     'chrome-for-testing': 'Google Chrome for Testing',
   }

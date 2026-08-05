@@ -110,8 +110,6 @@ test('persistent config defaults, stores, and validates browser runtime fields t
     const executablePath = path.join(homeDir, 'browsers', 'chrome')
     await runtime.writeTokenlessConfig({ homeDir, browser: 'chrome', browserExecutablePath: executablePath })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, executablePath)
-    await runtime.writeTokenlessConfig({ homeDir, browser: 'brave' })
-    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, null)
     const managedExecutablePath = path.join(homeDir, 'browser', 'runtimes', 'managed-chromium', 'browser')
     await runtime.writeTokenlessConfig({
       homeDir,
