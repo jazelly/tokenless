@@ -226,7 +226,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
     browserVisibility: 'auto',
     daemonUrl: null,
     language: 'en',
-    outputSavings: { enabled: false },
+    outputSavings: { enabled: true },
   }
 }
 
@@ -237,7 +237,7 @@ function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {
 }
 
 function normalizeOutputSavingsConfig(value: unknown): OutputSavingsConfig {
-  return isOutputSavingsConfig(value) ? { enabled: value.enabled } : { enabled: false }
+  return isOutputSavingsConfig(value) ? { enabled: value.enabled } : { enabled: true }
 }
 
 function validateOutputSavingsConfig(value: unknown): OutputSavingsConfig {

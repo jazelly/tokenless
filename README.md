@@ -84,15 +84,15 @@ For browser capability evaluation, the config file accepts experimental `browser
 
 Requires Node.js 22.13+. The first browser-runtime targets are Apple Silicon macOS and x64 Windows; Windows x64 covers Intel and AMD processors. Windows remains prerelease until its real-hardware gates pass.
 
-## Optional Output Savings Measurement
+## Output Savings Measurement
 
-Output savings measurement is disabled by default and is not part of setup. While disabled, Tokenless does not download, load, or run a tokenizer. Enable it explicitly from the dashboard's System page or with:
+Output savings measurement is enabled by default, but tokenizer installation is not part of setup. Setup, status checks, and opening the dashboard do not download or run the tokenizer. Tokenless lazily installs it only when the first visible assistant response needs measurement. You can also preinstall it, or turn measurement back on after opting out, from the dashboard's System page or with:
 
 ```bash
 tokenless savings enable --json
 ```
 
-The first enable downloads a checksum-pinned `tiktoken` 1.0.22 archive (10,611,708 bytes, about 10.1 MiB) and installs only the `o200k_base` WASM runtime and vocabulary (3,413,323 bytes, about 3.3 MiB) under `TOKENLESS_HOME`. This is a deterministic tokenizer, not a local AI model. It needs no GPU and runs in a short-lived, single-concurrency Node.js subprocess only when Tokenless finishes reading a visible assistant response. A local benchmark observed roughly 100 MB of transient memory; exact CPU time and peak memory vary by response and machine.
+The first measurement or explicit install downloads a checksum-pinned `tiktoken` 1.0.22 archive (10,611,708 bytes, about 10.1 MiB) and installs only the `o200k_base` WASM runtime and vocabulary (3,413,323 bytes, about 3.3 MiB) under `TOKENLESS_HOME`. This is a deterministic tokenizer, not a local AI model. It needs no GPU and runs in a short-lived, single-concurrency Node.js subprocess only when Tokenless finishes reading a visible assistant response. A local benchmark observed roughly 100 MB of transient memory; exact CPU time and peak memory vary by response and machine.
 
 Tokenless measures only normalized visible assistant output. It does not estimate input tokens, intercept private provider APIs, inspect hidden reasoning, or claim provider billing accuracy. `o200k_base` provides one stable cross-provider estimate, so totals are labeled estimates and can differ from a provider's model-specific tokenizer. Measurements are attributed idempotently to the triggering durable job and response.
 
@@ -103,7 +103,7 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-Disabling stops future measurement but keeps the verified runtime and history. Clearing deletes measurement history without changing the toggle. Uninstalling disables the feature and removes its local runtime. The tokenizer is not included in the Tokenless npm package; enabling it later is the only download path.
+Disabling stops future measurement but keeps the verified runtime and history. The main dashboard keeps the savings section visible and grays it out until measurement is turned back on. Clearing deletes measurement history without changing the toggle. Uninstalling disables the feature and removes its local runtime. The tokenizer is not included in the Tokenless npm package; only a first enabled measurement or an explicit dashboard/CLI install downloads it.
 
 ## Run
 

@@ -47,7 +47,7 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
 | [Agent Session Integrations](P1-agent-session-integrations.md) | Expose the current Web Provider operations through a northbound local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration; this is not the Web Agent Harness. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](P1-project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
-| [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a fully opt-in, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
+| [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a default-on, opt-out, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
 
 Priority describes product importance, not a promise that all work proceeds serially.
 

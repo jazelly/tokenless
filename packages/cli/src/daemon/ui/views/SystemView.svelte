@@ -137,7 +137,10 @@
     }
     if (item.id === 'output-savings') {
       if (!snapshot.outputSavings.enabled) return t('savingsDisabled')
-      return snapshot.outputSavings.runtime.state === 'ready' ? t('tokenizerReady') : t('tokenizerUnavailable')
+      if (snapshot.outputSavings.runtime.state === 'ready') return t('tokenizerReady')
+      return snapshot.outputSavings.runtime.state === 'not_installed'
+        ? t('tokenizerPreparesOnFirstResponse')
+        : t('tokenizerUnavailable')
     }
     return item.message
   }
@@ -196,6 +199,9 @@
     <p class="output-savings-help">{t('lazyTokenizerDownload')}</p>
     <div class="output-savings-actions">
       {#if snapshot.outputSavings.enabled}
+        {#if snapshot.outputSavings.runtime.state !== 'ready'}
+          <button class="button primary" type="button" disabled={busy} onclick={enableOutputSavings} data-testid="output-savings-install">{t('prepareTokenizerNow')}</button>
+        {/if}
         <button class="button secondary" type="button" disabled={busy} onclick={disableOutputSavings} data-testid="output-savings-disable">{t('disableOutputSavings')}</button>
       {:else}
         <button class="button primary" type="button" disabled={busy} onclick={enableOutputSavings} data-testid="output-savings-enable">{t('enableOutputSavings')}</button>

@@ -145,7 +145,10 @@ export class OutputSavingsRuntimeManager {
     return await this.inspect()
   }
 
-  async measure(text: string, options: { signal?: AbortSignal } = {}): Promise<OutputSavingsResult> {
+  async measure(
+    text: string,
+    options: { signal?: AbortSignal; installIfMissing?: boolean } = {},
+  ): Promise<OutputSavingsResult> {
     const unavailable = (reason: Extract<OutputSavingsResult, { state: 'unavailable' }>['reason']): OutputSavingsResult => ({
       schema: OUTPUT_SAVINGS_MEASUREMENT_SCHEMA,
       state: 'unavailable',
@@ -156,7 +159,15 @@ export class OutputSavingsRuntimeManager {
     })
     if (options.signal?.aborted) return unavailable('measurement_canceled')
     if (Buffer.byteLength(text, 'utf8') > MAX_MEASUREMENT_BYTES) return unavailable('text_too_large')
-    const inspection = await this.inspect()
+    let inspection = await this.inspect()
+    if (inspection.state !== 'ready' && options.installIfMissing) {
+      try {
+        inspection = await this.ensureInstalled()
+      } catch {
+        return unavailable(options.signal?.aborted ? 'measurement_canceled' : 'runtime_not_ready')
+      }
+    }
+    if (options.signal?.aborted) return unavailable('measurement_canceled')
     if (inspection.state !== 'ready') return unavailable('runtime_not_ready')
     try {
       const estimatedOutputTokens = await serializeMeasurement(() => runWorker(

@@ -81,7 +81,7 @@ test('persistent config defaults, stores, and validates browser runtime fields t
   const runtime = await import('../packages/cli/dist/src/index.js')
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
-    assert.deepEqual(defaults.outputSavings, { enabled: false })
+    assert.deepEqual(defaults.outputSavings, { enabled: true })
     assert.equal(defaults.browserConnectionMode, 'playwright')
     assert.equal(defaults.browserExecutablePath, null)
     assert.deepEqual(defaults.providerWhitelist, [
@@ -103,10 +103,10 @@ test('persistent config defaults, stores, and validates browser runtime fields t
     )
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'cdp')
     assert.deepEqual(
-      (await runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: true } })).outputSavings,
-      { enabled: true },
+      (await runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })).outputSavings,
+      { enabled: false },
     )
-    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).outputSavings, { enabled: true })
+    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).outputSavings, { enabled: false })
     const executablePath = path.join(homeDir, 'browsers', 'chrome')
     await runtime.writeTokenlessConfig({ homeDir, browser: 'chrome', browserExecutablePath: executablePath })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, executablePath)
@@ -160,8 +160,8 @@ test('persistent config migrates the legacy preferredProviders key to providerWh
   }
 })
 
-test('output savings stays disabled and absent from disk until the user explicitly enables it', () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-output-savings-disabled-'))
+test('output savings defaults on without downloading its runtime during status checks', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-output-savings-default-on-'))
   try {
     const result = spawnSync(process.execPath, [
       cliEntry,
@@ -175,8 +175,8 @@ test('output savings stays disabled and absent from disk until the user explicit
     assert.deepEqual(JSON.parse(result.stdout), {
       ok: true,
       outputSavings: {
-        enabled: false,
-        collection: 'disabled',
+        enabled: true,
+        collection: 'unavailable',
         estimator: 'o200k_base',
         runtime: {
           state: 'not_installed',

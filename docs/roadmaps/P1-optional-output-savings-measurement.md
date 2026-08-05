@@ -7,7 +7,7 @@ Last reviewed: 2026-08-04
 
 ## Outcome
 
-Give users an honest, durable estimate of the output tokens Tokenless avoided returning through an upstream agent, without intercepting private provider APIs, estimating input context, or imposing tokenizer cost on users who did not opt in.
+Give users an honest, durable estimate of the output tokens Tokenless avoided returning through an upstream agent, without intercepting private provider APIs, estimating input context, or imposing tokenizer cost during setup, status checks, dashboard reads, or disabled runs.
 
 ## Product Decisions
 
@@ -15,7 +15,8 @@ Give users an honest, durable estimate of the output tokens Tokenless avoided re
 - Count output only. File context, prompt construction, hidden provider state, input tokens, hidden reasoning, and provider billing are outside the metric.
 - Use one versioned `o200k_base` estimator across providers. Label every value as estimated; never present it as model-specific provider usage or billing truth.
 - Attribute each measurement to the exact durable job, response request, estimator revision, and source-text hash. Reconciliation must be idempotent across retries and daemon restarts.
-- Keep collection disabled by default and out of setup. Only an explicit dashboard or `tokenless savings enable` action may download and enable the tokenizer.
+- Keep collection enabled by default but out of setup. Lazily download the tokenizer on the first visible response that needs measurement; status checks and dashboard reads remain download-free, and users can opt out at any time.
+- Keep a prominent savings section on the main dashboard in every state. When measurement is disabled, hide the saved total, gray the section, and explain how to turn it back on.
 - Do not call private provider backend APIs. Provider adapters continue to own visible DOM extraction; metering is injected once at the provider-neutral response boundary.
 
 ## Runtime Envelope
@@ -31,7 +32,7 @@ The v1 runtime is `tiktoken-o200k_base-1.0.22`:
 - worker guard: 10-second timeout and bounded output;
 - integrity: pinned archive and selected-file SHA-256 verification, safe archive paths, private permissions, atomic installation, and an installed self-test.
 
-The tokenizer payload is not a package dependency and is not included in the Tokenless npm artifact. Status, setup, normal configuration, and disabled provider runs must not create the tokenizer directory.
+The tokenizer payload is not a package dependency and is not included in the Tokenless npm artifact. Status, setup, normal configuration, dashboard reads, and disabled provider runs must not create the tokenizer directory.
 
 ## Durable Model
 
@@ -49,13 +50,13 @@ tokenless savings clear --confirm-delete
 tokenless savings uninstall --confirm-delete
 ```
 
-`disable` preserves the runtime and history for cheap re-enablement. `clear` preserves configuration and runtime. `uninstall` disables collection and removes the runtime. Doctor treats disabled as healthy and reports enabled-without-ready-runtime as an error.
+`disable` preserves the runtime and history for cheap re-enablement. `clear` preserves configuration and runtime. `uninstall` disables collection and removes the runtime. Doctor treats disabled and default-enabled/not-yet-installed states as healthy; an invalid installed runtime is an error.
 
 ## Acceptance Evidence
 
 - Real packaged CLI download, archive verification, self-test, known token count, disable, tamper detection, and uninstall.
 - Real SQLite completion, restart, duplicate reconciliation, job attribution, clear cutoff, and cascade behavior.
-- Real loopback UI session, CSRF, OpenAPI validation, bilingual controls, default no-download behavior, and Chromium rendering.
+- Real loopback UI session, CSRF, OpenAPI validation, bilingual controls, default-on pending state, disabled gray state, setup/status no-download behavior, and Chromium rendering.
 - Package tarball proof that no WASM or encoder payload ships in npm.
 - Checked-in GitHub Actions matrix for Node.js 22.13 on Ubuntu, macOS, and Windows.
 - Applicable real-provider release gates must demonstrate that enabling collection adds a measured result to a real visible `response.read` outcome without changing provider success semantics.

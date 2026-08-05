@@ -830,12 +830,14 @@ export class TokenlessApplicationServices {
       },
       {
         id: 'output-savings',
-        state: !outputSavings.enabled || outputSavings.runtime.state === 'ready' ? 'ok' : 'error',
+        state: !outputSavings.enabled || outputSavings.runtime.state !== 'invalid' ? 'ok' : 'error',
         message: !outputSavings.enabled
-          ? 'Optional output savings measurement is disabled.'
+          ? 'Output savings measurement is disabled.'
           : outputSavings.runtime.state === 'ready'
             ? 'The output savings tokenizer runtime is ready.'
-            : 'Output savings is enabled, but its tokenizer runtime is unavailable.',
+            : outputSavings.runtime.state === 'not_installed'
+              ? 'The output savings tokenizer will be installed when the first visible response is measured.'
+              : 'Output savings is enabled, but its tokenizer runtime is invalid.',
       },
     ]
   }

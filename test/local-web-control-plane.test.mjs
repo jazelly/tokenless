@@ -66,8 +66,8 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
     assert.equal(snapshotBody.schema, 'tokenless.ui-snapshot.v1')
     assert.equal(typeof snapshotBody.revision, 'string')
     assert.deepEqual(snapshotBody.outputSavings, {
-      enabled: false,
-      collection: 'disabled',
+      enabled: true,
+      collection: 'unavailable',
       estimator: 'o200k_base',
       basis: 'visible_assistant_text',
       runtime: {
@@ -86,7 +86,8 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
         lastMeasuredAt: null,
       },
     })
-    assert.equal(snapshotBody.config.outputSavings.enabled, false)
+    assert.equal(snapshotBody.config.outputSavings.enabled, true)
+    assert.equal(snapshotBody.diagnostics.find((item) => item.id === 'output-savings')?.state, 'ok')
     assertUiSchema(validateUiSnapshot, snapshotBody)
 
     const unchanged = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, {

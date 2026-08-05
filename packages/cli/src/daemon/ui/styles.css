@@ -76,13 +76,26 @@ main#main:focus { outline: none; }
 .text-button { padding: 4px 0; border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 650; text-decoration: none; }
 .text-button:hover { color: var(--ink); }
 
-.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .metric-card { display: flex; min-height: 114px; align-items: flex-start; gap: 15px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .metric-card > div { min-width: 0; }
 .metric-card small { display: block; margin-bottom: 7px; }
 .metric-card strong { display: block; overflow: hidden; font-size: 22px; font-weight: 620; letter-spacing: -.03em; text-overflow: ellipsis; white-space: nowrap; }
 .metric-card p { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .metric-icon { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: var(--surface-muted); color: #5f5c56; }
+.overview-output-savings { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(280px, 1.2fr) auto; min-height: 142px; align-items: center; gap: 28px; margin-top: 16px; padding: 24px 28px; border: 1px solid #cbc8bf; border-radius: var(--radius); background: linear-gradient(120deg, var(--surface) 0%, #f7f5ef 100%); box-shadow: 0 10px 28px rgb(47 45 40 / 5%); }
+.overview-output-savings.pending { border-style: dashed; }
+.overview-output-savings.disabled { border-color: var(--line); background: var(--surface-muted); box-shadow: none; color: var(--muted); filter: grayscale(1); opacity: .68; }
+.overview-savings-value { display: flex; min-width: 0; align-items: center; gap: 18px; }
+.overview-savings-value small, .overview-savings-value strong { display: block; }
+.overview-savings-value small { margin-bottom: 7px; color: var(--muted); font-size: 10px; }
+.overview-savings-value strong { font-size: 38px; font-weight: 650; letter-spacing: -.045em; line-height: 1; }
+.overview-savings-icon { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: var(--ink); color: white; }
+.overview-output-savings.disabled .overview-savings-icon { background: #9d9a93; }
+.overview-savings-summary { min-width: 0; }
+.overview-savings-summary strong { font-size: 13px; font-weight: 630; }
+.overview-savings-summary p { max-width: 620px; margin-top: 7px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.overview-savings-link { white-space: nowrap; }
 .overview-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 16px; margin-top: 16px; }
 .content-panel { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .panel-title { display: flex; min-height: 70px; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--line-soft); }
@@ -325,6 +338,8 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
 @media (max-width: 1100px) {
   .page { padding-right: 30px; padding-left: 30px; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-output-savings { grid-template-columns: 1fr auto; }
+  .overview-savings-summary { grid-column: 1 / -1; grid-row: 2; }
   .provider-card-grid { grid-template-columns: repeat(2, minmax(240px, 1fr)); }
   .profiles-layout { grid-template-columns: 260px minmax(0, 1fr); }
   .inspector-header { padding: 0 24px; }
@@ -353,6 +368,9 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .metric-card { min-height: 106px; gap: 10px; padding: 15px; }
   .metric-card strong { font-size: 17px; }
+  .overview-output-savings { grid-template-columns: 1fr; gap: 16px; padding: 20px; }
+  .overview-savings-summary { grid-column: auto; grid-row: auto; }
+  .overview-savings-link { justify-self: start; }
   .metric-icon { width: 30px; height: 30px; }
   .output-savings-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-grid { grid-template-columns: 1fr; gap: 10px; }

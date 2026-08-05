@@ -872,7 +872,10 @@ export class ManagedPlaywrightRunnerService {
           signal,
           now: this.now,
           ...(outputSavingsManager
-            ? { measureVisibleOutput: (text: string) => outputSavingsManager.measure(text, { signal }) }
+            ? { measureVisibleOutput: (text: string) => outputSavingsManager.measure(text, {
+                signal,
+                installIfMissing: true,
+              }) }
             : {}),
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),
         }

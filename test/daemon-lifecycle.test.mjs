@@ -396,8 +396,8 @@ test('doctor is read-only for an uninitialized Tokenless home', () => {
     assert.equal(payload.checks.managedProfile.ok, false)
     assert.deepEqual(payload.checks.outputSavings, {
       ok: true,
-      enabled: false,
-      collection: 'disabled',
+      enabled: true,
+      collection: 'unavailable',
       runtime: {
         runtimeId: 'tiktoken-o200k_base-1.0.22',
         state: 'not_installed',

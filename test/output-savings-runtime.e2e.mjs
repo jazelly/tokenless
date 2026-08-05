@@ -9,11 +9,32 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 
-test('built CLI explicitly installs, verifies, enables, measures, disables, and removes the real output savings runtime', { timeout: 180_000 }, async () => {
+test('built runtime lazily installs on the first default-enabled measurement, then disables and removes cleanly', { timeout: 180_000 }, async () => {
   const tempRoot = fs.realpathSync.native(os.tmpdir())
   const homeDir = fs.realpathSync.native(fs.mkdtempSync(path.join(tempRoot, 'tokenless-output-savings-runtime-')))
   try {
-    const enabled = runSavings(homeDir, 'enable')
+    const initial = runSavings(homeDir, 'status')
+    assert.equal(initial.outputSavings.enabled, true)
+    assert.equal(initial.outputSavings.collection, 'unavailable')
+    assert.equal(initial.outputSavings.runtime.state, 'not_installed')
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
+
+    const { OutputSavingsRuntimeManager } = await import('../packages/cli/dist/src/index.js')
+    const runtimeManager = new OutputSavingsRuntimeManager(homeDir)
+    const measurement = await runtimeManager.measure('hello world', { installIfMissing: true })
+    assert.deepEqual({ ...measurement, measuredAt: '<measured-at>' }, {
+      schema: 'tokenless.output-savings-measurement.v1',
+      state: 'measured',
+      basis: 'visible_assistant_text',
+      estimator: 'o200k_base',
+      estimatorRevision: 'tiktoken-o200k_base-1.0.22',
+      estimatedOutputTokens: 2,
+      visibleCharacters: 11,
+      sourceTextSha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
+      measuredAt: '<measured-at>',
+    })
+
+    const enabled = runSavings(homeDir, 'status')
     assert.equal(enabled.outputSavings.enabled, true)
     assert.equal(enabled.outputSavings.collection, 'enabled')
     assert.deepEqual(enabled.outputSavings.runtime, {
@@ -27,23 +48,8 @@ test('built CLI explicitly installs, verifies, enables, measures, disables, and 
     })
     assert.equal(enabled.outputSavings.summary.estimated_output_tokens, 0)
 
-    const { OutputSavingsRuntimeManager } = await import('../packages/cli/dist/src/index.js')
-    const runtimeManager = new OutputSavingsRuntimeManager(homeDir)
-    const measurement = await runtimeManager.measure('hello world')
-    assert.deepEqual({ ...measurement, measuredAt: '<measured-at>' }, {
-      schema: 'tokenless.output-savings-measurement.v1',
-      state: 'measured',
-      basis: 'visible_assistant_text',
-      estimator: 'o200k_base',
-      estimatorRevision: 'tiktoken-o200k_base-1.0.22',
-      estimatedOutputTokens: 2,
-      visibleCharacters: 11,
-      sourceTextSha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
-      measuredAt: '<measured-at>',
-    })
-
-    const status = runSavings(homeDir, 'status')
-    assert.deepEqual(status.outputSavings, enabled.outputSavings)
+    const explicitlyEnabled = runSavings(homeDir, 'enable')
+    assert.deepEqual(explicitlyEnabled.outputSavings, enabled.outputSavings)
 
     const disabled = runSavings(homeDir, 'disable')
     assert.equal(disabled.outputSavings.enabled, false)

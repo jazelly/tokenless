@@ -16,6 +16,8 @@
   let waiting = $derived(snapshot.jobs.filter((job: JsonRecord) => job.status === 'waiting_for_user'))
   let running = $derived(snapshot.jobs.filter((job: JsonRecord) => ['queued', 'claimed', 'running'].includes(job.status)))
   let readyProviders = $derived(snapshot.providers.filter((provider: JsonRecord) => provider.profiles?.some((entry: JsonRecord) => entry.profileId === profile?.slug && entry.enabled && entry.runtimeEligibility === 'eligible')))
+  let savingsEnabled = $derived(snapshot.outputSavings.enabled === true)
+  let savingsReady = $derived(savingsEnabled && snapshot.outputSavings.collection === 'enabled')
 
   function profileState(provider: JsonRecord) {
     return provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
@@ -32,8 +34,37 @@
     <article class="metric-card"><span class="metric-icon"><Monitor size={18} /></span><div><small>{t('runtime')}</small><strong>{stateLabel(language, snapshot.runtime.status)}</strong><p>{formatNumber(snapshot.runtime.activeJobCount, language)} {t('activeUnit')}</p></div></article>
     <article class="metric-card"><span class="metric-icon"><UserRound size={18} /></span><div><small>{t('profiles')}</small><strong>{formatNumber(snapshot.profiles.length, language)}</strong><p>{profile?.label ?? t('noProfiles')}</p></div></article>
     <article class="metric-card"><span class="metric-icon"><Clock3 size={18} /></span><div><small>{t('waitingJobs')}</small><strong>{formatNumber(waiting.length, language)}</strong><p>{formatNumber(running.length, language)} {t('activeUnit')}</p></div></article>
-    <article class="metric-card"><span class="metric-icon"><Calculator size={18} /></span><div><small>{t('estimatedTokensSaved')}</small><strong>{formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language)}</strong><p>{formatNumber(snapshot.outputSavings.summary.responseCount, language)} {t('measuredResponses')}</p></div></article>
   </div>
+
+  <article
+    class:disabled={!savingsEnabled}
+    class:pending={savingsEnabled && !savingsReady}
+    class="overview-output-savings"
+    data-testid="overview-output-savings"
+    data-state={!savingsEnabled ? 'disabled' : savingsReady ? 'ready' : 'pending'}
+    title={!savingsEnabled ? t('savingsUnavailableTooltip') : undefined}
+  >
+    <div class="overview-savings-value">
+      <span class="overview-savings-icon"><Calculator size={23} /></span>
+      <div>
+        <small>{t('estimatedTokensSaved')}</small>
+        <strong>{savingsReady ? formatNumber(snapshot.outputSavings.summary.estimatedOutputTokens, language) : '—'}</strong>
+      </div>
+    </div>
+    <div class="overview-savings-summary">
+      {#if !savingsEnabled}
+        <strong>{t('savingsSummaryUnavailable')}</strong>
+        <p>{t('turnOnToReview')}</p>
+      {:else if !savingsReady}
+        <strong>{t('savingsEnabled')}</strong>
+        <p>{t('tokenizerPreparesOnFirstResponse')}</p>
+      {:else}
+        <strong>{formatNumber(snapshot.outputSavings.summary.responseCount, language)} {t('measuredResponses')}</strong>
+        <p>{formatNumber(snapshot.outputSavings.summary.jobCount, language)} {t('durableUnit')}</p>
+      {/if}
+    </div>
+    <a class="text-button overview-savings-link" href="#system">{t(savingsEnabled && !savingsReady ? 'prepareTokenizerNow' : 'manageOutputSavings')}</a>
+  </article>
 
   <div class="overview-grid">
     <section class="content-panel">

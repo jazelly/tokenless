@@ -3855,7 +3855,7 @@ async function doctorCommand(args: CliArgs) {
   const outputSavingsEnabled = config.outputSavings?.enabled === true
   const outputSavingsRuntime = await new OutputSavingsRuntimeManager(homeDir).inspect()
   const outputSavings = {
-    ok: !outputSavingsEnabled || outputSavingsRuntime.state === 'ready',
+    ok: !outputSavingsEnabled || outputSavingsRuntime.state !== 'invalid',
     enabled: outputSavingsEnabled,
     collection: outputSavingsEnabled
       ? outputSavingsRuntime.state === 'ready' ? 'enabled' : 'unavailable'
