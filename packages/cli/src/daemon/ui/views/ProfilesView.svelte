@@ -79,12 +79,18 @@
     }
   }
 
-  async function openProfile() {
+  async function openProfile(slug = profile?.slug) {
+    if (!slug) return
     try {
-      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/open`)
+      await onmutate(`/profiles/${encodeURIComponent(slug)}/open`)
     } catch {
       // The shared mutation boundary already reports the error.
     }
+  }
+
+  function openListProfile(event: MouseEvent, slug: string) {
+    event.stopPropagation()
+    void openProfile(slug)
   }
 
   async function setDefault() {
@@ -155,20 +161,33 @@
     </header>
     <div class="profile-master-list">
       {#each snapshot.profiles as entry (entry.slug)}
-        <button
-          class:active={entry.slug === profile?.slug}
-          class="profile-list-item"
-          type="button"
-          onclick={() => onselect(entry.slug)}
-          data-testid={`profile-item-${entry.slug}`}
-        >
-          <span class="avatar"><UserRound size={17} /></span>
-          <span class="profile-list-copy">
-            <strong>{entry.label}</strong>
-            <small>{entry.preferences?.roleLabel || entry.slug}</small>
-          </span>
-          {#if entry.isDefault}<Star class="default-star" size={13} fill="currentColor" />{:else}<ChevronRight size={15} />{/if}
-        </button>
+        <div class:active={entry.slug === profile?.slug} class="profile-list-row">
+          <button
+            class:active={entry.slug === profile?.slug}
+            class="profile-list-item"
+            type="button"
+            onclick={() => onselect(entry.slug)}
+            data-testid={`profile-item-${entry.slug}`}
+          >
+            <span class="avatar"><UserRound size={17} /></span>
+            <span class="profile-list-copy">
+              <strong>{entry.label}</strong>
+              <small>{entry.preferences?.roleLabel || entry.slug}</small>
+            </span>
+            {#if entry.isDefault}<Star class="default-star" size={13} fill="currentColor" />{:else}<ChevronRight size={15} />{/if}
+          </button>
+          <button
+            class="profile-list-open icon-button"
+            type="button"
+            aria-label={`${t('openBrowser')}: ${entry.label}`}
+            title={t('openBrowser')}
+            disabled={busy}
+            onclick={(event) => openListProfile(event, entry.slug)}
+            data-testid={`open-profile-${entry.slug}`}
+          >
+            <ExternalLink size={15} />
+          </button>
+        </div>
       {/each}
     </div>
     <p class="profile-master-note">{t('cleanProfileNote')}</p>
@@ -188,9 +207,6 @@
           </div>
         </div>
         <div bind:this={actionContainer} class="inspector-actions">
-          <button class="button secondary icon-label" type="button" onclick={openProfile} data-testid="open-profile">
-            <ExternalLink size={15} /> <span>{t('open')}</span>
-          </button>
           <button bind:this={menuButton} class="icon-button" type="button" aria-label={t('openMenu')} title={t('openMenu')} aria-haspopup="menu" aria-expanded={menuOpen} aria-controls="profile-actions-menu" onclick={toggleMenu} data-testid="profile-menu">
             <Ellipsis size={18} />
           </button>

@@ -97,7 +97,7 @@ Custom-root discovery does not make that root part of interactive setup. Release
 For each case:
 
 1. Setup asks whether to use Anti-Detect mode. Select `Yes`.
-2. The Anti-Detect question states that accepting will download and install the verified platform-pinned CloakBrowser under `TOKENLESS_HOME` when needed; no later installation confirmation appears.
+2. The Anti-Detect question states that accepting will download and install the verified platform-pinned CloakBrowser when needed; no later installation confirmation appears.
 3. Setup identifies and links to CloakBrowser and reports artifact `146.0.7680.177.5` with Chromium `146.0.7680.177`.
 4. Setup lists every safely discovered profile candidate with `aligned`, `not_aligned`, or `unknown` compatibility.
 5. If aligned candidates exist, one choice offers `Start clean` and only the aligned profile sources. Selecting a profile explicitly authorizes its opaque copy; there are no separate import or copy-consent questions. If none align, setup uses a clean profile without asking.

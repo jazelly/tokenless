@@ -62,7 +62,7 @@ npm install --global tokenless@latest
 tokenless setup
 ```
 
-交互式 setup 会先询问是否使用 Anti-Detect 模式，并直接说明接受后会在需要时把经过验证、按平台固定版本的 CloakBrowser 安装到 `TOKENLESS_HOME` 下。拒绝后会使用已保存的普通 browser 偏好或自动发现，不再显示单独的 runtime 选择器。选择 Anti-Detect 后，setup 会链接到 CloakBrowser、显示当前平台的精确锁定版本，只扫描本机已知 Chrome、Brave、Edge、Arc、Chromium 和 Chrome for Testing profile 的安全目录/版本元数据，并标记精确版本是否匹配。有兼容 profile 时，只显示一次来源选择，其中包含 `Start clean` 和兼容 profile；选择某个 profile 本身就明确授权 opaque 本地复制，Tokenless 不会检查认证值。之后不再询问是否 import、是否同意 copy 或是否继续安装。非交互 setup 中，显式 `--anti-detect` 或 `--browser cloak` 授权安装；仅有已保存的 Cloak preference 不会触发下载，import 仍要求 `--consent-local-profile-copy`。之后 setup 才会询问哪些 provider 属于当前 managed profile，只检查这些 provider，通过一次并发后台批处理为每个 provider 保留一个 headed 页面供用户审核登录状态，并在一个保留的前台标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
+交互式 setup 会先询问是否使用 Anti-Detect 模式，并直接说明接受后会在需要时安装经过验证、按平台固定版本的 CloakBrowser。拒绝后会使用已保存的普通 browser 偏好或自动发现，不再显示单独的 runtime 选择器。选择 Anti-Detect 后，setup 会链接到 CloakBrowser、显示当前平台的精确锁定版本，只扫描本机已知 Chrome、Brave、Edge、Arc、Chromium 和 Chrome for Testing profile 的安全目录/版本元数据，并标记精确版本是否匹配。有兼容 profile 时，只显示一次来源选择，其中包含 `Start clean` 和兼容 profile；选择某个 profile 本身就明确授权 opaque 本地复制，Tokenless 不会检查认证值。之后不再询问是否 import、是否同意 copy 或是否继续安装。非交互 setup 中，显式 `--anti-detect` 或 `--browser cloak` 授权安装；仅有已保存的 Cloak preference 不会触发下载，import 仍要求 `--consent-local-profile-copy`。之后 setup 会列出所有受支持的 provider，默认全部启用，并允许你回复编号移除 provider；直接回车则保留全部。它只检查剩余 provider，通过一次并发后台批处理为每个 provider 保留一个 headed 页面供用户审核登录状态，并在一个保留的前台标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
 
 ```bash
 tokenless dashboard
@@ -76,7 +76,7 @@ tokenless dashboard
 
 首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制 CLI、控制台和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可在控制台中修改，也可运行 `tokenless config --language en` 或 `tokenless config --language zh-CN`。
 
-Config 使用 `providerWhitelist` 作为 provider routing 边界。默认值包含除 Gemini 外的所有非 `disabled` provider；可以在 setup 中、通过 `tokenless config --provider-whitelist ...`，或在控制台中显式启用 Gemini。
+Config 使用 `providerWhitelist` 作为 provider routing 边界。默认值包含所有非 `disabled` provider，包括 Gemini；setup 可以通过回复编号移除 provider，也可以通过 `tokenless config --provider-whitelist ...` 或控制台修改名单。
 
 Setup 会把 `auto` 解析成具体的 `browser`，并把验证过的绝对路径作为 `browserExecutablePath` 缓存到 `$TOKENLESS_HOME/config.json`。Runtime resolution 会先验证缓存，缓存失效后才扫描标准安装路径，并在 fallback 成功时刷新该字段。可以运行 `tokenless config --browser chrome --browser-executable-path "/浏览器的绝对路径"` 设置自定义 system-browser 路径；managed Chromium 与 Cloak 的路径仍由 catalog 控制，并固定在 `$TOKENLESS_HOME/browser/runtimes` 下。
 

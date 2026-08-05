@@ -295,7 +295,7 @@
 
     <main id="main" tabindex="-1" class:profile-main={section === 'profiles'}>
       {#if section === 'overview'}
-        <OverviewView {snapshot} {selectedProfile} {language} {t} onmutate={mutate} />
+        <OverviewView {snapshot} {selectedProfile} {language} {t} />
       {:else if section === 'profiles'}
         <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} ondiscoverprofiles={discoverBrowserProfileSources} />
       {:else if section === 'providers'}

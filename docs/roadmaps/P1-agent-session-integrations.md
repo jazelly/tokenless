@@ -111,7 +111,7 @@ The router returns one `CapabilityRoute` containing the selected provider, profi
 
 1. Validate the requested capability set and infer structurally required capabilities. Attachments imply `file.upload`; native workspace intent implies `workspace.native`.
 2. If the caller supplied an explicit provider constraint, evaluate only that provider and fail rather than silently switching.
-3. Otherwise, use profile membership or `providerWhitelist` as the complete provider filter; the persisted default contains every non-disabled provider except Gemini.
+3. Otherwise, use profile membership or `providerWhitelist` as the complete provider filter; the persisted default contains every non-disabled provider, including Gemini.
 4. Remove providers without implemented and real-E2E-closed mappings for every required capability.
 5. Evaluate current profile access, visible availability, blockers, subscription-aware capacity, and plan limits through read-only inspection and the scheduler capacity policy.
 6. Select an eligible provider through the general capacity, fairness, and route-selection algorithm.

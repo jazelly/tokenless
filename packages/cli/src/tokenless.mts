@@ -3301,12 +3301,34 @@ function createSetupPrompt(colorEnabled = false) {
     ): Promise<T> {
       console.error(paintCliText(localizeText(message), 'cyan', colorEnabled))
       choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${localizeText(choice.label)}`))
-      const answer = (await terminal.question(paintCliText(localizeText(`Choose [${defaultIndex + 1}]: `), 'cyan', colorEnabled))).trim()
+      const answer = (await terminal.question(paintCliText(localizeText(`Chose [${defaultIndex + 1}]: `), 'cyan', colorEnabled))).trim()
       const index = answer ? Number(answer) - 1 : defaultIndex
       if (!Number.isInteger(index) || !choices[index]) {
         throw usageError('setup_selection_invalid', 'Setup selection must be one of the displayed numbers.')
       }
       return choices[index]!.value
+    },
+    async removeByIndex<T extends string>(
+      message: string,
+      choices: readonly { label: string; value: T }[],
+    ): Promise<T[]> {
+      console.error(paintCliText(localizeText(message), 'cyan', colorEnabled))
+      choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${localizeText(choice.label)}`))
+      const answer = (await terminal.question(
+        paintCliText(localizeText('Reply with the provider numbers to remove, separated by commas. Press Enter to keep all: '), 'cyan', colorEnabled),
+      )).trim()
+      if (!answer) return choices.map((choice) => choice.value)
+
+      const indexes = answer.split(/[\s,]+/).filter(Boolean).map((value) => {
+        if (!/^\d+$/.test(value)) return null
+        const index = Number(value) - 1
+        return Number.isSafeInteger(index) && index >= 0 && index < choices.length ? index : null
+      })
+      if (indexes.some((index) => index === null)) {
+        throw usageError('setup_selection_invalid', 'Provider removal selection must contain only the displayed numbers.')
+      }
+      const removed = new Set(indexes as number[])
+      return choices.filter((_choice, index) => !removed.has(index)).map((choice) => choice.value)
     },
     close() {
       terminal.close()
@@ -3504,7 +3526,7 @@ async function selectSetupBrowser({
     selection = configured
   } else {
     const antiDetect = await prompt.confirm(
-      'Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser under TOKENLESS_HOME if needed.',
+      'Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser if needed.',
       configured === 'cloak',
     )
     if (antiDetect) {
@@ -3589,21 +3611,20 @@ async function selectSetupProviders({
     presenter.success(`Checking providers: ${providers.join(', ')}.`)
     return providers
   }
-  const configuredScope = await setupConfiguredProviderScope({ args, config, homeDir })
   if (!prompt) {
+    const configuredScope = await setupConfiguredProviderScope({ args, config, homeDir })
     const configured = configuredScope.filter((provider): provider is ProviderId => available.includes(provider as ProviderId))
     const providers = requireSetupProviders(configured)
     presenter.success(`Checking providers: ${providers.join(', ')}.`)
     return providers
   }
-  const defaults = new Set(configuredScope)
-  const providers: ProviderId[] = []
-  for (const provider of available) {
-    const descriptor = getProviderDescriptorById(provider)
-    if (await prompt.confirm(`Enable ${descriptor?.label ?? provider} for this profile?`, defaults.has(provider))) {
-      providers.push(provider)
-    }
-  }
+  const providers = await prompt.removeByIndex(
+    'Supported providers (all are enabled by default):',
+    available.map((provider) => {
+      const descriptor = getProviderDescriptorById(provider)
+      return { label: `${descriptor?.label ?? provider} (${provider})`, value: provider }
+    }),
+  )
   requireSetupProviders(providers)
   presenter.success(`Checking providers: ${providers.join(', ')}.`)
   return providers

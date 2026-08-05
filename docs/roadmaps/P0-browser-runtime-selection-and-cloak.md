@@ -178,7 +178,7 @@ Interrupted or failed installs leave the prior verified runtime intact. Offline 
 Setup performs browser work before daemon readiness:
 
 1. read config and stop or quiesce a running local daemon when the selected runtime/profile may change;
-2. ask whether to enable Anti-Detect mode and state in that question that accepting will download and install the verified platform-pinned CloakBrowser under `TOKENLESS_HOME` when needed;
+2. ask whether to enable Anti-Detect mode and state in that question that accepting will download and install the verified platform-pinned CloakBrowser when needed;
 3. when Anti-Detect is declined, follow an explicit browser, then the saved normal-browser preference, then deterministic automatic discovery without asking the user to choose a runtime implementation;
 4. when Cloak is selected, enumerate safe metadata for known local Chromium profiles across Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing where that browser exists on the platform;
 5. classify exact four-component alignment against the platform Cloak catalog entry and show both aligned and non-aligned candidates without reading browser secrets;

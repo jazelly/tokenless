@@ -742,8 +742,7 @@ export class TokenlessApplicationServices {
   async openProfile(slug: string) {
     const profile = await this.profiles.resolveProfile(slug)
     if (!this.runtimeController) throw applicationError('browser_runtime_unavailable', 'Browser runtime is unavailable.')
-    const preferences = profilePreferences(await this.migratedConfig(), profile)
-    return await this.runtimeController.openProfile(profile.id, preferences.browserVisibility)
+    return await this.runtimeController.openProfile(profile.id, 'headed')
   }
 
   async quiesceRuntime() {

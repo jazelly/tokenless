@@ -1,16 +1,15 @@
 <script lang="ts">
-  import { ArrowUpRight, Bot, Calculator, Clock3, ExternalLink, Monitor, UserRound } from '@lucide/svelte'
+  import { ArrowUpRight, Bot, Calculator, Clock3, Monitor, UserRound } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
-  let { snapshot, selectedProfile, language, t, onmutate }: {
+  let { snapshot, selectedProfile, language, t }: {
     snapshot: JsonRecord
     selectedProfile: string
     language: Language
     t: (key: any) => string
-    onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
   } = $props()
 
   let profile = $derived(snapshot.profiles.find((entry: JsonRecord) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
@@ -22,24 +21,10 @@
     return provider.profiles?.find((entry: JsonRecord) => entry.profileId === profile?.slug)
   }
 
-  async function openProfile() {
-    try {
-      await onmutate(`/profiles/${encodeURIComponent(profile.slug)}/open`)
-    } catch {
-      // The shared mutation boundary already reports the error.
-    }
-  }
 </script>
 
 <section class="page" data-testid="overview-view">
   <PageHeader eyebrow="localhost" title={t('overview')} description={t('overviewLede')}>
-    {#snippet actions()}
-      {#if profile}
-        <button class="button primary icon-label" type="button" onclick={openProfile}>
-          <ExternalLink size={15} />{t('openBrowser')}
-        </button>
-      {/if}
-    {/snippet}
   </PageHeader>
 
   <div class="metric-grid">

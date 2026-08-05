@@ -40,6 +40,21 @@ for (const connectionMode of connectionModes) {
     })
   })
 
+  test(`${connectionMode} profile open reuses an existing headed dashboard context`, async () => {
+    await withManager(connectionMode, async ({ manager, profile }) => {
+      const first = await manager.ensureContext(profile, 'headed')
+      const dashboard = await first.acquireReservedPage({ key: 'tokenless:control-plane:profile-open-regression' })
+      await dashboard.setContent('<title>Tokenless dashboard</title>')
+
+      const reopened = await manager.ensureContext(profile, 'headed')
+
+      assert.equal(reopened.browserContext, first.browserContext)
+      assert.equal(reopened.browserContext.browser(), first.browserContext.browser())
+      assert.equal(dashboard.isClosed(), false)
+      assert.equal(await dashboard.title(), 'Tokenless dashboard')
+    })
+  })
+
   test(`${connectionMode} managed browser keeps one stable browser instance per active profile`, async () => {
     await withManager(connectionMode, async ({ manager, profile, otherProfile }) => {
       const first = await manager.ensureContext(profile, 'headless')

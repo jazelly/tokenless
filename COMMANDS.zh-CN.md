@@ -181,13 +181,13 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 
 只有明确选择的 system browser 才允许 `browserExecutablePath` 指向 `TOKENLESS_HOME` 外部。`managed-chromium` 与 `cloak` 的路径由 catalog 锁定的 runtime 决定，并位于 `$TOKENLESS_HOME/browser/runtimes`；config 中的任意路径不能替换或绕过该 managed runtime。
 
-Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将在 `TOKENLESS_HOME` 下下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。选择 Anti-Detect 后，setup 不会为了选择 runtime 而扫描 system-browser executable。它会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描已知 Chrome、Brave、Edge、Arc、Chromium 与 Chrome for Testing profile 目录。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。有兼容 profile 时，setup 只显示一次选择，其中包含 `Start clean` 和兼容 profile 来源；选择某个 profile 本身就构成对 opaque 本地复制的明确授权，不再另外询问是否 import 或是否同意 copy。没有匹配项时会跳过来源选择并使用 clean profile。用户显式要求导入版本不匹配或未知的 profile 时，会在下载前明确失败，而不是静默忽略。Installer 随后依次下载、校验、解包、检查版本并 smoke-launch Cloak；setup 会立即持久化 `browser: "cloak"` 及其 managed `browserExecutablePath`。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 因为没有发生可见的 profile 来源选择，仍要求 `--consent-local-profile-copy`。
+Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。选择 Anti-Detect 后，setup 不会为了选择 runtime 而扫描 system-browser executable。它会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描已知 Chrome、Brave、Edge、Arc、Chromium 与 Chrome for Testing profile 目录。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。有兼容 profile 时，setup 只显示一次选择，其中包含 `Start clean` 和兼容 profile 来源；选择某个 profile 本身就构成对 opaque 本地复制的明确授权，不再另外询问是否 import 或是否同意 copy。没有匹配项时会跳过来源选择并使用 clean profile。用户显式要求导入版本不匹配或未知的 profile 时，会在下载前明确失败，而不是静默忽略。Installer 随后依次下载、校验、解包、检查版本并 smoke-launch Cloak；setup 会立即持久化 `browser: "cloak"` 及其 managed `browserExecutablePath`。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 因为没有发生可见的 profile 来源选择，仍要求 `--consent-local-profile-copy`。
 
 Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 通常会创建 clean profile；显式 import 可以从选定的本机 Chromium profile 填充新建且绑定 runtime 的 profile。之后由 managed profile 自己跨 job 保留 browser-managed session。
 
-交互式 `setup` 会询问哪些 provider 属于当前 profile。非交互 setup 会依次使用 `--provider-whitelist`、已有 profile 范围或持久化的默认 whitelist。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
+交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会依次使用 `--provider-whitelist`、已有 profile 范围或持久化的默认 whitelist。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
 
-默认 `providerWhitelist` 包含除 Gemini 外的所有非 `disabled` provider。Gemini 仍然可用，可通过 `--provider-whitelist` 或控制台显式加入。
+默认 `providerWhitelist` 包含所有非 `disabled` provider，包括 Gemini。交互式 setup 可以通过回复编号移除 provider，也可以通过 `--provider-whitelist` 或控制台修改名单。
 
 ### `tokenless dashboard`
 

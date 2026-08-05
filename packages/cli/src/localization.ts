@@ -70,7 +70,7 @@ const ZH_TEXT = new Map<string, string>([
   ['Invalid Tokenless browser executable path; expected null or an absolute path.', '无效的 Tokenless browser executable path；应为 null 或绝对路径。'],
   ['Browser executable path must be absolute.', 'Browser executable path 必须是绝对路径。'],
   ['Keeps sign-ins between jobs inside a Tokenless-managed profile. With explicit consent, setup can copy a selected local profile as an opaque filesystem tree without reading its authentication values.', '登录状态会保留在 Tokenless 管理的 profile 中并跨 job 复用。获得明确同意后，setup 可以把选定的本机 profile 作为 opaque 文件树复制，不读取其中的认证值。'],
-  ['Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser under TOKENLESS_HOME if needed.', '是否使用 Anti-Detect 模式？如有需要，Tokenless 将下载并把经过验证、按平台固定版本的 CloakBrowser 安装到 TOKENLESS_HOME 下。'],
+  ['Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser if needed.', '是否使用 Anti-Detect 模式？如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser。'],
   ['Discovery checks only profile directory names and browser versions; it does not read authentication values.', '发现阶段只检查 profile 目录名和浏览器版本，不读取认证值。'],
   ['No local Chromium profiles were found.', '未找到本机 Chromium profile。'],
   ['CloakBrowser profile source', 'CloakBrowser profile 来源'],
@@ -82,6 +82,10 @@ const ZH_TEXT = new Map<string, string>([
   ['--browser-user-data-dir requires one explicit browser instead of all.', '--browser-user-data-dir 必须指定一个具体浏览器，不能使用 all。'],
   ['Browser profile discovery supports all, Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing.', 'Browser profile discovery 支持 all、Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing。'],
   ['Checks visible sign-in state without submitting a prompt.', '检查可见的登录状态，不会提交 prompt。'],
+  ['Supported providers (all are enabled by default):', '支持的 provider（默认全部启用）：'],
+  ['Reply with the provider numbers to remove, separated by commas. Press Enter to keep all: ', '请输入要移除的 provider 编号，多个编号用逗号分隔。直接回车保留全部：'],
+  ['Provider removal selection must contain only the displayed numbers.', '移除 provider 时只能输入界面显示的编号。'],
+  ['Tokenless setup requires at least one supported visible provider.', 'Tokenless setup 至少需要一个受支持且可见的 provider。'],
   ['Setup selection must be one of the displayed numbers.', '设置选项必须是界面显示的编号之一。'],
   ['Usage', '用法'],
   ['Advanced Usage', '高级用法'],
@@ -201,7 +205,7 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^Checking providers: (.+)\.$/, '正在检查 provider：$1。')
     .replace(/^Checking (.+) sign-in$/, '检查 $1 登录状态')
     .replace(/^Choose the (.+) profile to import$/, '选择要导入的 $1 profile')
-    .replace(/^Choose \[(.+)\]: $/, '请选择 [$1]：')
+    .replace(/^Chose \[(.+)\]: $/, '已选择 [$1]：')
     .replace(/^(.+) is authenticated \((.+)\)\.$/, '$1 已通过身份验证（$2）。')
     .replace(/^(.+) sign-in status: (.+); access: (.+)\.$/, '$1 登录状态：$2；访问级别：$3。')
     .replace(/^(.+) readiness failed: (.+)\.$/, '$1 就绪检查失败：$2。')
