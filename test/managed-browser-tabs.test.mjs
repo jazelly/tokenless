@@ -55,6 +55,37 @@ for (const connectionMode of connectionModes) {
     })
   })
 
+  if (connectionMode === 'playwright') {
+    test('headed managed pages follow the real browser window viewport', async () => {
+      await withManager(connectionMode, async ({ manager, profile }) => {
+        const managed = await manager.ensureContext(profile, 'headed')
+        const page = await managed.acquirePage({ key: 'tokenless:control-plane:responsive-regression' })
+        const session = await managed.browserContext.newCDPSession(page)
+        try {
+          const target = await session.send('Browser.getWindowForTarget')
+          await session.send('Browser.setWindowBounds', {
+            windowId: target.windowId,
+            bounds: { width: 1200, height: 800 },
+          })
+          await page.waitForFunction(() => window.innerWidth > 760)
+          const wideViewport = await page.evaluate(() => window.innerWidth)
+
+          await session.send('Browser.setWindowBounds', {
+            windowId: target.windowId,
+            bounds: { width: 640, height: 500 },
+          })
+          await page.waitForFunction(() => window.innerWidth <= 760)
+          const narrowViewport = await page.evaluate(() => window.innerWidth)
+
+          assert.ok(wideViewport > 760)
+          assert.ok(narrowViewport <= 760)
+        } finally {
+          await session.detach().catch(() => undefined)
+        }
+      })
+    })
+  }
+
   test(`${connectionMode} managed browser keeps one stable browser instance per active profile`, async () => {
     await withManager(connectionMode, async ({ manager, profile, otherProfile }) => {
       const first = await manager.ensureContext(profile, 'headless')

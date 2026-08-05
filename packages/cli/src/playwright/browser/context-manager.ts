@@ -701,6 +701,7 @@ export function managedBrowserLaunchOptions(
   const launchOptions: PersistentChromeLaunchOptions = {
     ...executable,
     headless: effectiveVisibility === 'headless',
+    ...(effectiveVisibility === 'headed' ? { viewport: null } : {}),
     chromiumSandbox: true,
     args: [
       '--disable-sync',
