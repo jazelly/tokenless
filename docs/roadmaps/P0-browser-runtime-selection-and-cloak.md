@@ -219,7 +219,7 @@ The following matrix ran on `darwin-arm64` with real headed browsers, the real G
 
 Each target has its own matrix so every outcome cell represents one observable criterion. ✅ means the criterion was observed. ❌ means the criterion was not reached because the target exited with `SIGTRAP` before returning a context; for marker preservation and clean close, it does not independently prove marker loss or a cleanup defect.
 
-#### Cloak 145 target
+#### macOS — Cloak 145 target
 
 | Source profile | Opened | History marker preserved | Clean close |
 | --- | :---: | :---: | :---: |
@@ -243,7 +243,7 @@ Each target has its own matrix so every outcome cell represents one observable c
 | Chrome for Testing `150.0.7871.124` | ❌ | ❌ | ❌ |
 | Cloak `150.0.7871.114` native source | ❌ | ❌ | ❌ |
 
-#### Cloak 150 target
+#### macOS — Cloak 150 target (experimental keyed build)
 
 | Source profile | Opened | History marker preserved | Clean close |
 | --- | :---: | :---: | :---: |
@@ -269,6 +269,12 @@ Each target has its own matrix so every outcome cell represents one observable c
 
 Chrome for Testing 120 is intentionally absent from both matrices: official builds `120.0.6099.71` and `120.0.6099.109` exited with `SIGSEGV`/139 before a source profile could be created on this host, so no target criterion was exercised. The existing full Chrome `150.0.7871.187` opaque copy is also kept outside the marker matrices because user history was intentionally not inspected: it exited with `SIGTRAP` before context in Cloak 145, and the previously tested full, profile-only, and tab-restore-stripped Cloak 150 variants did the same; the decisive stripped case started and ended with `active: 0`.
 
+### Windows importability observations — pending
+
+No profile-importability result in this document was produced on Windows. The production Windows catalog currently downloads the official Cloak `146.0.7680.177.5` artifact (browser `146.0.7680.177`) after explicit user selection; it does not bundle Cloak in Tokenless. The macOS matrices above must not be used as evidence for Windows admission decisions.
+
+Run the same opaque profile importability runbook on `win32-x64` against the production Cloak 146 target before changing the Windows compatibility policy. Add a Windows-specific matrix with `Opened`, `History marker preserved`, and `Clean close` columns after those runs. Keep each platform's evidence and admission policy independent.
+
 Additional observations and limits:
 
 - A separately user-prepared Chrome for Testing `145.0.7632.6` profile also copied 258 opaque files into Cloak 145 and opened a visible window. Account and login state were not inspected.
@@ -280,7 +286,7 @@ Additional observations and limits:
 - The observed boundary is not simply "same major works": Cloak 145 accepted the tested runnable sources through major 145 and rejected newer majors, while Cloak 150 accepted every runnable Chrome/Chromium source tested through 149 plus its own native 150 profile but rejected the tested Chrome/Chrome for Testing 150 profiles on both sides of target patch `.114`.
 - Chrome for Testing 143 succeeding does not prove that every older Chrome version works. The older 113, 115, 125, 130, and 135 anchors increase confidence in long upgrade paths, but untested majors and patches remain unproven, pre-Chrome-for-Testing releases are outside this runbook, and major 120 is explicitly unresolved on this host.
 - The evidence does not identify the crashing file or prove a Chromium guarantee. The opaque-profile rule intentionally prevents file-by-file inspection, and successful history migration does not prove macOS Keychain-encrypted login portability.
-- Keep the production admission rule fail-closed at exact four-component alignment until a supported built-CLI matrix establishes a safer policy. These experimental cross-version successes must not silently broaden setup eligibility.
+- Keep the production admission rule fail-closed at exact four-component alignment until a supported, platform-specific built-CLI matrix establishes a safer policy. The macOS evidence may inform a future macOS rule for the locked Cloak 145 target, but it does not establish Windows compatibility with the locked Cloak 146 target. These experimental cross-version successes must not silently broaden setup eligibility.
 
 ## Delivery Plan and Alignment Ledger
 
