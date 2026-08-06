@@ -217,29 +217,57 @@ This manual runbook measures whether a copied profile can be opened by a target 
 
 The following matrix ran on `darwin-arm64` with real headed browsers, the real Google network, production opaque-copy code, native target credential storage, enabled Chromium sandboxing, and sequential cleanup. Cloak targets were no-key artifact `145.0.7632.109.2` (browser `145.0.7632.109`) and keyed Pro artifact `150.0.7871.114.3` (browser `150.0.7871.114`) through JavaScript wrapper `0.5.4`. Pro/free licensing and the Cloak 150 artifact remain outside the supported Tokenless catalog; these rows are experimental evidence only.
 
-| Source profile | Cloak 145 result | Cloak 150 result |
-| --- | --- | --- |
-| Chrome for Testing `113.0.5672.63` | Opened; Google history marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `115.0.5790.170` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing 120 (`120.0.6099.71` and `120.0.6099.109`) | Not tested: both source binaries exited with `SIGSEGV`/139 before a profile could be created on this host | Not tested for the same host-runtime reason |
-| Chrome for Testing `125.0.6422.141` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `130.0.6723.116` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `135.0.7049.114` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `140.0.7339.207` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `141.0.7390.122` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `142.0.7444.175` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `143.0.7499.192` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `144.0.7559.133` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `145.0.7632.6` | Opened; Google history marker preserved; clean close | Opened; marker preserved; clean close |
-| Chromium `145.0.7632.159` | Opened despite the source patch being newer; marker preserved; clean close | Opened; marker preserved; clean close |
-| Chrome for Testing `146.0.7680.165` | `SIGTRAP` before context | Opened; marker preserved; clean close |
-| Chrome for Testing `147.0.7727.15` | `SIGTRAP` before context | Opened; marker preserved; clean close |
-| Chrome for Testing `148.0.7778.96` | `SIGTRAP` before context | Opened; marker preserved; clean close |
-| Chrome for Testing `149.0.7827.55` | `SIGTRAP` before context | Opened; marker preserved; clean close |
-| Chrome for Testing `150.0.7871.49` | `SIGTRAP` before context | `SIGTRAP` before context |
-| Chrome for Testing `150.0.7871.124` | `SIGTRAP` before context | `SIGTRAP` before context |
-| Cloak `150.0.7871.114` native source | `SIGTRAP` before context | Opened; marker preserved; clean close |
-| Existing full Chrome `150.0.7871.187` opaque copy | `SIGTRAP` before context; user history was not inspected | Previously observed `SIGTRAP` for full, profile-only, and tab-restore-stripped variants; the decisive stripped case started and ended with `active: 0` |
+Each target has its own matrix so every outcome cell represents one observable criterion. ✅ means the criterion was observed. ❌ means the criterion was not reached because the target exited with `SIGTRAP` before returning a context; for marker preservation and clean close, it does not independently prove marker loss or a cleanup defect.
+
+#### Cloak 145 target
+
+| Source profile | Opened | History marker preserved | Clean close |
+| --- | :---: | :---: | :---: |
+| Chrome for Testing `113.0.5672.63` | ✅ | ✅ | ✅ |
+| Chrome for Testing `115.0.5790.170` | ✅ | ✅ | ✅ |
+| Chrome for Testing `125.0.6422.141` | ✅ | ✅ | ✅ |
+| Chrome for Testing `130.0.6723.116` | ✅ | ✅ | ✅ |
+| Chrome for Testing `135.0.7049.114` | ✅ | ✅ | ✅ |
+| Chrome for Testing `140.0.7339.207` | ✅ | ✅ | ✅ |
+| Chrome for Testing `141.0.7390.122` | ✅ | ✅ | ✅ |
+| Chrome for Testing `142.0.7444.175` | ✅ | ✅ | ✅ |
+| Chrome for Testing `143.0.7499.192` | ✅ | ✅ | ✅ |
+| Chrome for Testing `144.0.7559.133` | ✅ | ✅ | ✅ |
+| Chrome for Testing `145.0.7632.6` | ✅ | ✅ | ✅ |
+| Chromium `145.0.7632.159` | ✅ | ✅ | ✅ |
+| Chrome for Testing `146.0.7680.165` | ❌ | ❌ | ❌ |
+| Chrome for Testing `147.0.7727.15` | ❌ | ❌ | ❌ |
+| Chrome for Testing `148.0.7778.96` | ❌ | ❌ | ❌ |
+| Chrome for Testing `149.0.7827.55` | ❌ | ❌ | ❌ |
+| Chrome for Testing `150.0.7871.49` | ❌ | ❌ | ❌ |
+| Chrome for Testing `150.0.7871.124` | ❌ | ❌ | ❌ |
+| Cloak `150.0.7871.114` native source | ❌ | ❌ | ❌ |
+
+#### Cloak 150 target
+
+| Source profile | Opened | History marker preserved | Clean close |
+| --- | :---: | :---: | :---: |
+| Chrome for Testing `113.0.5672.63` | ✅ | ✅ | ✅ |
+| Chrome for Testing `115.0.5790.170` | ✅ | ✅ | ✅ |
+| Chrome for Testing `125.0.6422.141` | ✅ | ✅ | ✅ |
+| Chrome for Testing `130.0.6723.116` | ✅ | ✅ | ✅ |
+| Chrome for Testing `135.0.7049.114` | ✅ | ✅ | ✅ |
+| Chrome for Testing `140.0.7339.207` | ✅ | ✅ | ✅ |
+| Chrome for Testing `141.0.7390.122` | ✅ | ✅ | ✅ |
+| Chrome for Testing `142.0.7444.175` | ✅ | ✅ | ✅ |
+| Chrome for Testing `143.0.7499.192` | ✅ | ✅ | ✅ |
+| Chrome for Testing `144.0.7559.133` | ✅ | ✅ | ✅ |
+| Chrome for Testing `145.0.7632.6` | ✅ | ✅ | ✅ |
+| Chromium `145.0.7632.159` | ✅ | ✅ | ✅ |
+| Chrome for Testing `146.0.7680.165` | ✅ | ✅ | ✅ |
+| Chrome for Testing `147.0.7727.15` | ✅ | ✅ | ✅ |
+| Chrome for Testing `148.0.7778.96` | ✅ | ✅ | ✅ |
+| Chrome for Testing `149.0.7827.55` | ✅ | ✅ | ✅ |
+| Chrome for Testing `150.0.7871.49` | ❌ | ❌ | ❌ |
+| Chrome for Testing `150.0.7871.124` | ❌ | ❌ | ❌ |
+| Cloak `150.0.7871.114` native source | ✅ | ✅ | ✅ |
+
+Chrome for Testing 120 is intentionally absent from both matrices: official builds `120.0.6099.71` and `120.0.6099.109` exited with `SIGSEGV`/139 before a source profile could be created on this host, so no target criterion was exercised. The existing full Chrome `150.0.7871.187` opaque copy is also kept outside the marker matrices because user history was intentionally not inspected: it exited with `SIGTRAP` before context in Cloak 145, and the previously tested full, profile-only, and tab-restore-stripped Cloak 150 variants did the same; the decisive stripped case started and ended with `active: 0`.
 
 Additional observations and limits:
 
