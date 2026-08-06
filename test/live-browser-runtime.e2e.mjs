@@ -18,8 +18,8 @@ const expectedAutoFamily = process.env.TOKENLESS_LIVE_BROWSER_RUNTIME_EXPECT_AUT
 if (!enabled) {
   throw new Error('Set TOKENLESS_LIVE_BROWSER_RUNTIME_GATE=1 to run the real browser-runtime acceptance gate.')
 }
-if (expectedAutoFamily !== 'system' && expectedAutoFamily !== 'managed-chromium') {
-  throw new Error('Set TOKENLESS_LIVE_BROWSER_RUNTIME_EXPECT_AUTO to system or managed-chromium for this machine.')
+if (expectedAutoFamily !== 'managed-chromium') {
+  throw new Error('Set TOKENLESS_LIVE_BROWSER_RUNTIME_EXPECT_AUTO to managed-chromium for this machine.')
 }
 if (!(
   (process.platform === 'darwin' && process.arch === 'arm64') ||
@@ -83,9 +83,7 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
     assert.equal(automaticConfig.browser, automatic.browser.id)
     assert.equal(typeof automaticConfig.browserExecutablePath, 'string')
     await fs.access(automaticConfig.browserExecutablePath)
-    const staleExecutablePath = automatic.browser.family === 'system'
-      ? path.join(homeDir, 'missing-browser-executable')
-      : path.join(homeDir, 'browser', 'runtimes', 'missing-browser-executable')
+    const staleExecutablePath = path.join(homeDir, 'browser', 'runtimes', 'missing-browser-executable')
     await fs.writeFile(
       path.join(homeDir, 'config.json'),
       `${JSON.stringify({ ...automaticConfig, browserExecutablePath: staleExecutablePath }, null, 2)}\n`,

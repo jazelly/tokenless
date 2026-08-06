@@ -60,7 +60,7 @@ const ZH_TEXT = new Map<string, string>([
   ['Anti-Detect mode', 'Anti-Detect 反爬模式'],
   ['Experimental Google Chrome profile compatibility', '实验性 Google Chrome profile 兼容性'],
   ['Preparing automatic browser selection', '准备自动 browser selection'],
-  ['Preparing Tokenless-managed Chromium', '准备由 Tokenless 管理的 Chromium'],
+  ['Preparing Tokenless-managed Chrome for Testing', '准备由 Tokenless 管理的 Chrome for Testing'],
   ['Preparing CloakBrowser', '准备 CloakBrowser'],
   ['At least one browser runtime selection is required.', '至少需要选择一个 browser runtime。'],
   ['Browser runtime repair requires an explicit managed-chromium or cloak selection.', 'Browser runtime repair 需要显式选择 managed-chromium 或 cloak。'],
@@ -69,7 +69,8 @@ const ZH_TEXT = new Map<string, string>([
   ['Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.', '无效的 Tokenless browser；应为 auto、受支持的 system browser、managed-chromium 或 cloak。'],
   ['Invalid Tokenless browser executable path; expected null or an absolute path.', '无效的 Tokenless browser executable path；应为 null 或绝对路径。'],
   ['Browser executable path must be absolute.', 'Browser executable path 必须是绝对路径。'],
-  ['Keeps sign-ins between jobs inside a Tokenless-managed profile. Experimental import can copy only a selected Google Chrome profile as an opaque filesystem tree with explicit consent; it may fail by version or platform and does not guarantee sign-in-state transfer.', '登录状态会保留在 Tokenless 管理的 profile 中并跨 job 复用。实验性导入只会在明确同意后，把选定的 Google Chrome profile 作为 opaque 文件树复制；它可能因版本或平台而失败，也不保证登录状态能够迁移。'],
+  ['Normal setup starts clean in the platform-pinned Tokenless-managed Chrome for Testing and keeps usable sign-ins there between jobs. Experimental Google Chrome profile import is offered only for CloakBrowser setup; it may fail by version or platform and does not guarantee sign-in-state transfer.', '普通 setup 会在按平台固定版本、由 Tokenless 管理的 Chrome for Testing 中创建 clean profile，并在 job 之间保留其中可用的登录状态。实验性 Google Chrome profile 导入只在 CloakBrowser setup 中提供；它可能因版本或平台而失败，也不保证登录状态能够迁移。'],
+  ['Experimental profile import is available only when setting up CloakBrowser; managed Chrome for Testing starts clean.', '实验性 profile 导入只在设置 CloakBrowser 时可用；managed Chrome for Testing 始终从 clean profile 开始。'],
   ['Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser if needed.', '是否使用 Anti-Detect 模式？如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser。'],
   ['Google Chrome profile import is experimental. It may fail on some browser versions or platforms, and a profile opening successfully does not guarantee that sign-in state transfers.', 'Google Chrome profile 导入属于实验性功能。部分浏览器版本或平台可能失败，而且 profile 能成功打开也不代表登录状态一定能够迁移。'],
   ['Discovery checks only profile directory names and browser versions; it does not read authentication values.', '发现阶段只检查 profile 目录名和浏览器版本，不读取认证值。'],
@@ -138,7 +139,7 @@ const ZH_TEXT = new Map<string, string>([
   ['Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.', '需要你的协助：请在可见浏览器中完成 provider 登录或验证。Tokenless 会保留当前 job，完成后继续。'],
   ['Your help is needed, but no browser window is open. Resume this same job in headed mode; do not create a replacement job.', '需要你的协助，但当前没有打开浏览器窗口。请以 headed mode 恢复同一个 job，不要创建替代 job。'],
   ['After completing sign-in or verification, query this same job or task; Tokenless will continue from its saved checkpoint.', '完成登录或验证后，请查询同一个 job 或 task；Tokenless 会从已保存的 checkpoint 继续。'],
-  ['The managed Chromium browser did not exit after shutdown.', '托管 Chromium browser 在关闭后仍未退出。'],
+  ['The managed Chrome for Testing browser did not exit after shutdown.', '托管 Chrome for Testing browser 在关闭后仍未退出。'],
   ['Too many managed browser profiles are active; existing profile browsers remain open.', '当前 active 的托管 browser profiles 过多；已有 profile browsers 会保持打开。'],
 ])
 

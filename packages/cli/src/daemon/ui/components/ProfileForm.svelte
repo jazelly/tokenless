@@ -53,7 +53,7 @@
         roleLabel,
         browserVisibility,
         enabledProviders,
-        ...(!profile && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
+        ...(!profile && snapshot.config.browser === 'cloak' && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
         proxy: proxy.trim()
           ? {
               server: proxy.trim(),
@@ -100,7 +100,7 @@
     </div>
   </div>
 
-  {#if !profile}
+  {#if !profile && snapshot.config.browser === 'cloak'}
     <BrowserProfileSourcePicker
       bind:sourceId={importSourceId}
       bind:consent={consentLocalProfileCopy}

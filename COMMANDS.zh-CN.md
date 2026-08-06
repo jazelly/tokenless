@@ -63,7 +63,7 @@ doubao
 
 ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM 和 Doubao / 豆包目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
 
-Runtime browser 可选值为 `auto`、`chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`auto` 优先使用已安装的 system browser，仅在没有可用项时使用锁定的 managed fallback；`cloak` 必须显式选择。Tokenless 新建的 profile 默认是 clean 且绑定 runtime。也可以在提供 `--consent-local-profile-copy` 后复制一个明确选定的本机 Chromium profile；Tokenless 会把其中内容作为 opaque 本地文件树处理。
+Runtime browser 可选值为 `auto`、`chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。新 setup 中，`auto` 会解析为按平台固定版本的 `managed-chromium`；显式 system-browser 值继续用于已有或 advanced 配置。`cloak` 必须显式选择。Tokenless 新建的 profile 为 clean 且绑定 runtime。实验性 opaque profile copy 只在创建 CloakBrowser profile 时提供，需要 `--consent-local-profile-copy`，并且只接受版本兼容的 Google Chrome 来源。
 
 ### 短选项
 
@@ -139,7 +139,7 @@ tokenless install --browsers chrome,edge --json
 
 - `--browser <browser>` 选择一个 browser preference。Managed selection 只会在 install 或 setup 期间下载。
 - `--browsers <list>` 验证逗号分隔的浏览器列表。
-- `--repair-browser` 显式替换所选 managed Chromium 或 Cloak cache；只有新下载的 replacement 通过全部校验后才会替换，repair 失败时会恢复原 cache。
+- `--repair-browser` 显式替换所选 managed Chrome for Testing 或 Cloak cache；只有新下载的 replacement 通过全部校验后才会替换，repair 失败时会恢复原 cache。
 - `--daemon-url`、`--daemon-start-timeout-ms`、`--home` 和 `--json` 控制本地 runtime。
 
 该命令不会更新全局 npm CLI，不会配置 managed profile，也不会检查 provider 登录状态。直接使用本命令时，完成后仍需运行 `tokenless setup`。
@@ -172,18 +172,18 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 - `--no-browser-download` 在缺少 managed runtime 时直接失败，而不是下载。
 - `--repair-browser` 显式重新安装所选 `managed-chromium` 或 `cloak` runtime；不能与 `--no-browser-download` 同时使用。
 - `--fresh` 或 `-f` 创建 clean managed profile。
-- `--import-browser-profile <key> --consent-local-profile-copy` 把一个明确选定的本机 Chromium profile 复制进 managed profile，并且不解析认证值。
+- `--import-browser-profile <key> --consent-local-profile-copy` 以实验性方式把一个明确选定、版本兼容的 Google Chrome profile 复制进新的 CloakBrowser profile，并且不解析认证值。
 - `--defaults` 选择非交互默认值。
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
 
-`auto` 是首次运行的默认值，会优先使用已安装的 Chrome、Edge、Chromium 或 Chrome for Testing executable。交互式 setup 只询问是否使用 Anti-Detect；拒绝后不会再打开单独的 browser-runtime 选择器。普通模式依次遵循显式 `--browser`、已保存的具体偏好和确定性的自动发现。Setup 会把结果解析为具体的 `browser`，并把验证过的 `browserExecutablePath` 一起保存到 `config.json`。后续启动会先验证这条缓存；仅当缓存缺失或已经不可运行时，才扫描标准安装路径，fallback 成功后还会刷新缓存。没有支持的 system browser 时，setup 才会把锁定的 Chrome for Testing 145 artifact 下载到 `$TOKENLESS_HOME/browser/runtimes`。显式选择但找不到的 system browser 会失败，并给出用于手动设置路径的准确 config 命令和 dashboard 字段。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
+`auto` 会解析为按平台固定版本的 Tokenless-managed Chrome for Testing。交互式 setup 会询问是否使用 Anti-Detect；拒绝后不再打开单独的 browser-runtime 选择器，而是选择 managed Chrome for Testing 并创建 clean profile。若 cache 中尚不存在，setup 会把经过 checksum 固定的官方 artifact 下载到 `$TOKENLESS_HOME/browser/runtimes`：Apple Silicon macOS 使用 `145.0.7632.6`，Windows x64 使用 `146.0.7680.165`。Browser binary 不会内嵌进 npm package。已有的显式 system-browser selection 继续受支持，并会先验证缓存 executable，再扫描标准安装路径；显式选择但找不到的 system browser 会失败，并给出准确的 config 命令和 dashboard 字段。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
 
 只有明确选择的 system browser 才允许 `browserExecutablePath` 指向 `TOKENLESS_HOME` 外部。`managed-chromium` 与 `cloak` 的路径由 catalog 锁定的 runtime 决定，并位于 `$TOKENLESS_HOME/browser/runtimes`；config 中的任意路径不能替换或绕过该 managed runtime。
 
-Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。选择 Anti-Detect 后，setup 不会为了选择 runtime 而扫描 system-browser executable。它会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描受支持的 Chrome、Edge、Chromium 与 Chrome for Testing profile 目录。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。有兼容 profile 时，setup 只显示一次选择，其中包含 `Start clean` 和兼容 profile 来源；选择某个 profile 本身就构成对 opaque 本地复制的明确授权，不再另外询问是否 import 或是否同意 copy。没有匹配项时会跳过来源选择并使用 clean profile。用户显式要求导入版本不匹配或未知的 profile 时，会在下载前明确失败，而不是静默忽略。Installer 随后依次下载、校验、解包、检查版本并 smoke-launch Cloak；setup 会立即持久化 `browser: "cloak"` 及其 managed `browserExecutablePath`。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 因为没有发生可见的 profile 来源选择，仍要求 `--consent-local-profile-copy`。
+Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。选择 Anti-Detect 后，setup 不会为了选择 runtime 而扫描 system-browser executable。它会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并且只扫描 Google Chrome profile 目录作为 import candidate。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。有兼容 profile 时，setup 只显示一次选择，其中包含 `Start clean` 和兼容 profile 来源；选择某个 profile 本身就构成对 opaque 本地复制的明确授权，不再另外询问是否 import 或是否同意 copy。没有匹配项时会跳过来源选择并使用 clean profile。用户显式要求导入版本不匹配、browser 不受支持或版本未知的 profile 时，会在下载前明确失败，而不是静默忽略。Installer 随后依次下载、校验、解包、检查版本并 smoke-launch Cloak；setup 会立即持久化 `browser: "cloak"` 及其 managed `browserExecutablePath`。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 因为没有发生可见的 profile 来源选择，仍要求 `--consent-local-profile-copy`。
 
-Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 通常会创建 clean profile；显式 import 可以从选定的本机 Chromium profile 填充新建且绑定 runtime 的 profile。之后由 managed profile 自己跨 job 保留 browser-managed session。
+Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 会创建 clean profile。实验性 Google Chrome import 只能填充新的 CloakBrowser-bound profile。之后由 managed profile 自己跨 job 保留 browser-managed session。未来若提供 managed Chrome for Testing 到 Cloak 的迁移，必须另行取得平台 parity 与认证状态证据；当前产品尚未暴露该能力。
 
 交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会依次使用 `--provider-whitelist`、已有 profile 范围或持久化的默认 whitelist。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
 
@@ -329,14 +329,14 @@ tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user
 
 ### `tokenless profiles add`
 
-创建 clean managed profile，或在明确同意后复制选定的本机 Chromium profile：
+创建 clean managed profile；或者只在使用 CloakBrowser 时，经明确同意后以实验性方式复制一个版本兼容的本机 Google Chrome profile：
 
 ```bash
 tokenless profiles add -P work --label "Work" --set-default --json
 tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
 ```
 
-复制只发生在本机，并保持 opaque。Tokenless 会复制文件系统条目，但不会检查或报告 cookies、storage、密码、tokens 或 Keychain 数据。
+复制只发生在本机，并保持 opaque。Tokenless 会复制文件系统条目，但不会检查或报告 cookies、storage、密码、tokens 或 Keychain 数据。Edge、Chromium、Chrome for Testing、Brave、Arc 和其他 browser profile 均不可导入。
 
 ### `tokenless profiles list`
 
@@ -765,7 +765,7 @@ provider-status
 
 ## 手动真实浏览器验收
 
-已认证 provider capability harness 会为每个显式选择的 production browser 保留一个独立的持久化 profile。默认 test-only home 是 `<TOKENLESS_HOME>/e2e/live-provider`；也可显式使用 `TOKENLESS_LIVE_PROVIDER_TEST_HOME` 或 `--home`。Test home 必须不同于普通 Tokenless home，并且位于所有 repository/worktree 之外。例如，browser selection `cloak` 会解析为稳定 slug `live-provider-cloak`；production registry `<test-home>/browser/profiles.json` 再把该 slug 映射到 opaque 目录 `<test-home>/browser/profiles/<uuid>`。在启动任何 provider automation 前，harness 会验证该目录、私有权限、lifecycle、executable 和 runtime binding。它拒绝 `auto`，因为 automatic discovery 可能在不同运行中解析到不同 executable；不同 browser runtime 也绝不会共用一个 profile。
+已认证 provider capability harness 会为每个显式选择的 production browser 保留一个独立的持久化 profile。默认 test-only home 是 `<TOKENLESS_HOME>/e2e/live-provider`；也可显式使用 `TOKENLESS_LIVE_PROVIDER_TEST_HOME` 或 `--home`。Test home 必须不同于普通 Tokenless home，并且位于所有 repository/worktree 之外。例如，browser selection `cloak` 会解析为稳定 slug `live-provider-cloak`；production registry `<test-home>/browser/profiles.json` 再把该 slug 映射到 opaque 目录 `<test-home>/browser/profiles/<uuid>`。在启动任何 provider automation 前，harness 会验证该目录、私有权限、lifecycle、executable 和 runtime binding。它拒绝 `auto`，让每条 evidence record 都明确命名 production runtime；不同 browser runtime 也绝不会共用一个 profile。
 
 先准备并手动登录一个 browser-specific profile，然后再运行 provider gates：
 
@@ -788,6 +788,6 @@ npm run test:e2e:managed-surfaces
 npm run test:e2e:cloak-surfaces
 ```
 
-在特意准备为“没有受支持 system browser”的机器上，运行 `npm run test:e2e:browser-runtime -- --expected-auto managed-chromium`，强制证明 lazy managed fallback。默认命令则要求 `auto` 解析到 system browser。每一种目标 Windows x64 CPU 类型都要分别运行这两条命令；npm 从 `cmd.exe`、PowerShell 和 POSIX shell 转发这些参数时行为一致。
+运行 `npm run test:e2e:browser-runtime`，要求 `auto` 安装或复用按平台固定版本的 managed Chrome for Testing。显式形式 `npm run test:e2e:browser-runtime -- --expected-auto managed-chromium` 会断言同一个 invariant。每一种目标 Windows x64 CPU 类型都要运行该 gate；npm 从 `cmd.exe`、PowerShell 和 POSIX shell 转发参数时行为一致。
 
 Browser surface gate 会用同一套真实 headed、keychain-neutral test profile 分别测试 system auto-selection、managed Chrome for Testing 和 Cloak。每个 case 都会先通过真实网络访问全部已注册 providers 和 Google Search，再汇总所有失败；检测到 anti-bot challenge 时会失败，并且只报告公开 location、title、response status 与结构化 challenge 结果。它不会登录、提交 prompt、读取 browser storage、截屏，也不能替代使用已认证 profile 的 built-CLI provider release gate。三个 selection-specific 命令分别只运行 system、managed 或 Cloak case。

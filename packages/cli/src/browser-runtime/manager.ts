@@ -111,10 +111,6 @@ export class BrowserRuntimeManager {
       )
     }
     if (selection === 'auto') {
-      for (const browserId of SYSTEM_BROWSER_IDS) {
-        const resolved = await this.resolveSystemBrowser(browserId, platform).catch(() => null)
-        if (resolved) return resolved
-      }
       return await this.ensureManagedRuntime('managed-chromium', platform, options)
     }
     if (selection === 'profile') return await this.resolveTestProfile(platform)

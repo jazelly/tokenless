@@ -37,7 +37,7 @@
     ['edge', 'Microsoft Edge'],
     ['chromium', 'Chromium'],
     ['chrome-for-testing', 'Google Chrome for Testing'],
-    ['managed-chromium', 'Managed Chromium'],
+    ['managed-chromium', 'Managed Chrome for Testing'],
     ['cloak', 'CloakBrowser'],
   ] as const
 
@@ -65,6 +65,14 @@
         version: null,
         source: null,
       })))
+  let visibleOptions = $derived(testId === 'setup'
+    ? options.filter((option: JsonRecord) => (
+        option.selection === 'managed-chromium' ||
+        option.selection === 'cloak' ||
+        option.selection === configuredBrowser ||
+        option.selection === browser
+      ))
+    : options)
   let selected = $derived(options.find((option: JsonRecord) => option.selection === browser))
   let isManaged = $derived(browser === 'managed-chromium' || browser === 'cloak')
   let customPathAllowed = $derived(selected?.customPathAllowed === true)
@@ -135,7 +143,7 @@
   <label class="field">
     <span>{t('browserSelection')}</span>
     <select name="browser" bind:value={browser} onchange={browserChanged} disabled={busy} data-testid={`${testId}-browser`}>
-      {#each options as option (option.selection)}
+      {#each visibleOptions as option (option.selection)}
         <option value={option.selection}>{optionLabel(option)}</option>
       {/each}
     </select>

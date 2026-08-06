@@ -629,7 +629,7 @@ async function closeCdpManagedBrowser(
       if (!killed && browserProcess.exitCode === null && browserProcess.signalCode === null) {
         throw tokenlessError(
           'playwright_browser_close_failed',
-          'The managed Chromium browser did not exit after shutdown.',
+          'The managed Chrome for Testing browser did not exit after shutdown.',
           { retryable: true },
         )
       }

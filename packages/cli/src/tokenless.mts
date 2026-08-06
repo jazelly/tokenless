@@ -513,7 +513,10 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       ? null
       : validateChromeProfileDirectoryKey(String(args.importChromeProfile))
     const source = importKey ? await resolveOpaqueProfileSource(args, importKey) : null
-    if (source) assertCloakProfileImportCompatible(source, profileRuntime)
+    if (source) {
+      assertNewProfileImportTargetSupported(profileRuntime)
+      assertCloakProfileImportCompatible(source, profileRuntime)
+    }
     let record = await registry.addProfile({
       slug,
       ...(args.label === undefined ? (source ? { label: source.name, labelOrigin: 'import' as const } : {}) : { label: String(args.label) }),
@@ -1304,6 +1307,14 @@ function assertProfileImportBrowserSupported(browser: string) {
   throw usageError(
     'profile_import_browser_unsupported',
     `Profile import supports only Google Chrome; ${browser} is not supported.`,
+  )
+}
+
+function assertNewProfileImportTargetSupported(runtime: ResolvedBrowserRuntime) {
+  if (runtime.family === 'cloak') return
+  throw usageError(
+    'profile_import_runtime_unsupported',
+    'Experimental profile import is available only when setting up CloakBrowser; managed Chrome for Testing starts clean.',
   )
 }
 
@@ -3207,7 +3218,10 @@ async function ensureSetupManagedProfile({
       args,
       validateChromeProfileDirectoryKey(String(args.importChromeProfile)),
     )
-  if (source) assertCloakProfileImportCompatible(source, runtime)
+  if (source) {
+    assertNewProfileImportTargetSupported(runtime)
+    assertCloakProfileImportCompatible(source, runtime)
+  }
   if (source) requireOpaqueProfileCopyConsent(args)
   if (!prompt && args.freshProfile !== true && args.setupDefaults !== true && !source) {
     throw usageError(
@@ -3342,10 +3356,6 @@ function createSetupPrompt(colorEnabled = false) {
       terminal.close()
     },
   }
-}
-
-async function discoverSetupBrowsers(runtimeManager: BrowserRuntimeManager) {
-  return await runtimeManager.discover()
 }
 
 async function discoverSetupCloakProfileInventory(
@@ -3528,7 +3538,7 @@ async function selectSetupBrowser({
     throw usageError('setup_anti_detect_browser_conflict', '--anti-detect requires --browser cloak when both flags are provided.')
   }
   const configured = explicit ?? normalizeBrowserSelection(config.browser) ?? 'auto'
-  let installedBrowsers: Awaited<ReturnType<typeof discoverSetupBrowsers>> = []
+  const installedBrowsers: BrowserCandidate[] = []
   let cloakImportSelection: SetupCloakImportSelection | null = null
   let selection: BrowserSelection
   if (args.antiDetect === true) {
@@ -3543,11 +3553,7 @@ async function selectSetupBrowser({
     if (antiDetect) {
       selection = 'cloak'
     } else {
-      installedBrowsers = await presenter.withProgress(
-        'Finding browsers',
-        () => discoverSetupBrowsers(runtimeManager),
-      )
-      selection = configured === 'cloak' ? 'auto' : configured
+      selection = configured === 'cloak' ? 'managed-chromium' : configured
     }
   }
   let cloakProfileInventory: SetupCloakProfileInventory | null = null
@@ -3570,11 +3576,8 @@ async function selectSetupBrowser({
       presenter,
     })
   }
-  const automaticRuntime = selection === 'auto'
-    ? installedBrowsers.find((browser) => browser.family === 'system')
-    : null
   const preparedSelection = selection === 'auto'
-    ? automaticRuntime?.selection ?? 'auto'
+    ? 'managed-chromium'
     : selection
   const discoveredExecutablePath = installedBrowsers.find(
     (browser) => browser.selection === preparedSelection,
@@ -3598,7 +3601,7 @@ async function selectSetupBrowser({
 
 function setupBrowserSelectionLabel(selection: BrowserSelection) {
   if (selection === 'auto') return 'automatic browser selection'
-  if (selection === 'managed-chromium') return 'Tokenless-managed Chromium'
+  if (selection === 'managed-chromium') return 'Tokenless-managed Chrome for Testing'
   if (selection === 'cloak') return 'CloakBrowser'
   return selection
 }

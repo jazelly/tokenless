@@ -7,11 +7,20 @@ import test from 'node:test'
 import { chromium } from 'playwright-core'
 
 import { startDaemon } from '../packages/cli/dist/src/daemon/lifecycle.js'
+import { readTokenlessConfig, writeTokenlessConfig } from '../packages/cli/dist/src/job-store.js'
 import { PersistentContextManager } from '../packages/cli/dist/src/playwright/browser/context-manager.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
 
 test('Svelte Web UI completes setup, persists configuration, renders durable work, and remains responsive', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
+    const customExecutablePath = chromium.executablePath()
+    const initialConfig = await readTokenlessConfig(homeDir)
+    await writeTokenlessConfig({
+      homeDir,
+      browser: 'chrome-for-testing',
+      browserExecutablePath: customExecutablePath,
+      providerWhitelist: initialConfig.providerWhitelist.filter((provider) => provider !== 'gemini'),
+    })
     const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
     const minted = await mintTicket(daemon.origin, token)
     const browserProfileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-browser-'))
@@ -50,7 +59,10 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(await page.locator('main').count(), 1)
       assert.equal(await page.locator('.skip-link').getAttribute('href'), '#main')
       assert.equal(await page.getByTestId('setup-view').getAttribute('id'), 'main')
-      const customExecutablePath = chromium.executablePath()
+      assert.deepEqual(
+        await page.getByTestId('setup-browser').locator('option').evaluateAll((options) => options.map((option) => option.value)),
+        ['chrome-for-testing', 'managed-chromium', 'cloak'],
+      )
       await page.getByTestId('setup-browser').selectOption('chrome-for-testing')
       await page.getByTestId('setup-browser-path-toggle').click()
       await page.getByTestId('setup-browser-executable-path').fill(path.join(homeDir, 'missing-browser'))
@@ -64,6 +76,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('setup-label').fill('Work')
       await page.getByTestId('setup-role').fill('Research')
       await page.getByTestId('setup-visibility').selectOption('headless')
+      await page.getByTestId('setup-browser').selectOption('cloak')
       await page.getByTestId('setup-profile-source-copy').click()
       assert.match(await page.getByTestId('setup-profile-source-copy').textContent(), /experimental/i)
       assert.match(await page.locator('.profile-source-panel .prominent-note').textContent(), /only Google Chrome/i)
@@ -88,6 +101,8 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('setup-profile-source-select').waitFor()
       assert.match(await page.getByTestId('setup-profile-source-select').locator('option:checked').textContent(), /Google Chrome · Default/)
       await page.getByTestId('setup-profile-source-consent').check()
+      await page.getByTestId('setup-browser').selectOption('chrome-for-testing')
+      assert.equal(await page.getByTestId('setup-profile-source-picker').count(), 0)
       assert.equal(await page.locator('.provider-pill').filter({ hasText: 'ChatGPT' }).locator('input').isChecked(), true)
       assert.equal(await page.locator('.provider-pill').filter({ hasText: 'Gemini' }).locator('input').isChecked(), false)
       await page.getByTestId('finish-setup').click()
@@ -98,9 +113,8 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(setupConfig.browserExecutablePath, customExecutablePath)
       fs.accessSync(setupConfig.browserExecutablePath, fs.constants.X_OK)
       const importedWorkProfile = await new ManagedProfileRegistry(homeDir).resolveProfile('work')
-      assert.equal(importedWorkProfile.import?.source, importSourceDir)
-      assert.equal(importedWorkProfile.import?.profileDirectoryKey, 'Default')
-      fs.accessSync(path.join(importedWorkProfile.directory, 'Default'), fs.constants.R_OK)
+      assert.equal(importedWorkProfile.import, undefined)
+      assert.equal(fs.existsSync(path.join(importedWorkProfile.directory, 'Default')), false)
       const publicSnapshot = await page.evaluate(async () => await (await fetch('/ui-api/v1/snapshot')).json())
       assert.equal(JSON.stringify(publicSnapshot).includes(importSourceDir), false)
 
@@ -171,19 +185,11 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('modal').waitFor({ state: 'detached' })
       await page.getByRole('heading', { name: 'Work updated' }).waitFor()
 
-      const importedAt = (await new ManagedProfileRegistry(homeDir).resolveProfile('work')).import?.importedAt
-      await page.waitForTimeout(20)
       await page.getByTestId('profile-menu').click()
       assert.equal(await page.locator('[role="menuitem"]').first().evaluate((element) => document.activeElement === element), true)
+      assert.equal(await page.getByTestId('profile-reimport-open').count(), 0)
       await page.keyboard.press('Escape')
       assert.equal(await page.getByTestId('profile-menu').evaluate((element) => document.activeElement === element), true)
-      await page.getByTestId('profile-menu').click()
-      await page.getByTestId('profile-reimport-open').click()
-      await page.getByTestId('profile-reimport-consent').check()
-      await page.getByTestId('profile-reimport-confirm').click()
-      await page.getByTestId('modal').waitFor({ state: 'detached' })
-      const reimportedAt = (await new ManagedProfileRegistry(homeDir).resolveProfile('work')).import?.importedAt
-      assert.notEqual(reimportedAt, importedAt)
 
       const registry = new ManagedProfileRegistry(homeDir)
       const workProfile = await registry.resolveProfile('work')

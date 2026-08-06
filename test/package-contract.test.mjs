@@ -82,6 +82,7 @@ test('persistent config defaults, stores, and validates browser runtime fields t
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
     assert.deepEqual(defaults.outputSavings, { enabled: true })
+    assert.equal(defaults.browser, 'managed-chromium')
     assert.equal(defaults.browserConnectionMode, 'playwright')
     assert.equal(defaults.browserExecutablePath, null)
     assert.deepEqual(defaults.providerWhitelist, [
@@ -136,6 +137,37 @@ test('persistent config defaults, stores, and validates browser runtime fields t
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
+})
+
+test('new profiles default to managed Chrome for Testing without falling back to an installed system browser', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-managed-browser-default-'))
+  try {
+    const result = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'add',
+      '--profile',
+      'default',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    assert.equal(JSON.parse(result.stdout).error.code, 'browser_runtime_download_required')
+    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('managed Chrome for Testing catalog follows the platform Cloak major', async () => {
+  const { managedBrowserCatalogEntry } = await import('../packages/cli/dist/src/browser-runtime/catalog.js')
+  const mac = managedBrowserCatalogEntry('managed-chromium', 'darwin-arm64')
+  const windows = managedBrowserCatalogEntry('managed-chromium', 'win32-x64')
+  assert.equal(mac.browserVersion, '145.0.7632.6')
+  assert.equal(windows.browserVersion, '146.0.7680.165')
+  assert.equal(windows.sha256, '65d1d4d993da8b24fc871f59f7c8100ffc3719afd58cbf843d81d6ada9bc9880')
+  assert.equal(path.basename(windows.executableRelativePath), 'chrome.exe')
 })
 
 test('persistent config migrates the legacy preferredProviders key to providerWhitelist', async () => {
@@ -327,9 +359,26 @@ test('CLI localizes human output from system setup locale and persistent languag
   }
 })
 
-test('CLI accepts distinct case-sensitive short options for profile and provider', () => {
+test('CLI accepts distinct case-sensitive short options for profile and provider', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-short-options-')))
   try {
+    const { chromium } = await import('playwright-core')
+    const configured = spawnSync(process.execPath, [
+      cliEntry,
+      'config',
+      '--browser',
+      'chrome-for-testing',
+      '--browser-executable-path',
+      chromium.executablePath(),
+      '--home',
+      homeDir,
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+    assert.equal(configured.status, 0, configured.stderr || configured.stdout)
+
     const added = spawnSync(process.execPath, [
       cliEntry,
       'profiles',
@@ -877,6 +926,51 @@ test('built CLI rejects a recorded non-Chrome source at the profile reset copy b
     assert.equal(reset.status, 1, reset.stderr || reset.stdout)
     assert.equal(JSON.parse(reset.stdout).error.code, 'profile_import_browser_unsupported')
     assert.equal(fs.existsSync(path.join(profile.directory, 'Default', 'must-not-copy.txt')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(sourceRoot, { recursive: true, force: true })
+  }
+})
+
+test('built CLI keeps normal managed-profile creation clean and reserves new imports for CloakBrowser', async () => {
+  const temporaryRoot = fs.realpathSync(os.tmpdir())
+  const sourceRoot = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-normal-import-source-'))
+  const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-normal-import-home-'))
+  try {
+    fs.mkdirSync(path.join(sourceRoot, 'Default'))
+    fs.writeFileSync(path.join(sourceRoot, 'Last Version'), '145.0.7632.6')
+    const { chromium } = await import('playwright-core')
+    const configured = spawnSync(process.execPath, [
+      cliEntry,
+      'config',
+      '--browser',
+      'chrome-for-testing',
+      '--browser-executable-path',
+      chromium.executablePath(),
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(configured.status, 0, configured.stderr || configured.stdout)
+
+    const imported = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'add',
+      '--profile',
+      'normal-import',
+      '--import-browser-profile',
+      'Default',
+      '--browser-user-data-dir',
+      sourceRoot,
+      '--consent-local-profile-copy',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(imported.status, 1, imported.stderr || imported.stdout)
+    assert.equal(JSON.parse(imported.stdout).error.code, 'profile_import_runtime_unsupported')
+    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
     fs.rmSync(sourceRoot, { recursive: true, force: true })

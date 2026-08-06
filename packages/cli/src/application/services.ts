@@ -82,7 +82,7 @@ const WEB_BROWSER_LABELS: Record<(typeof WEB_BROWSER_SELECTIONS)[number], string
   edge: 'Microsoft Edge',
   chromium: 'Chromium',
   'chrome-for-testing': 'Google Chrome for Testing',
-  'managed-chromium': 'Managed Chromium',
+  'managed-chromium': 'Managed Chrome for Testing',
   cloak: 'CloakBrowser',
 }
 
@@ -521,7 +521,15 @@ export class TokenlessApplicationServices {
       allowDownload: false,
       browserExecutablePath: config.browserExecutablePath,
     })
-    if (importSource) assertProfileImportCompatible(importSource, runtime)
+    if (importSource) {
+      if (runtime.family !== 'cloak') {
+        throw applicationError(
+          'profile_import_runtime_unsupported',
+          'Experimental profile import is available only when setting up CloakBrowser; managed Chrome for Testing starts clean.',
+        )
+      }
+      assertProfileImportCompatible(importSource, runtime)
+    }
     if (
       config.browser !== runtime.selection ||
       config.browserExecutablePath !== runtime.executablePath

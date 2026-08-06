@@ -131,7 +131,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.outputSavings !== undefined && !isOutputSavingsConfig(payload.outputSavings)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  const browser = normalizeBrowserId(payload.browser) ?? 'auto'
+  const browser = normalizeBrowserId(payload.browser) ?? 'managed-chromium'
   const browserExecutablePath = normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
   validateConfigBrowserExecutablePathScope(homeDir, browser, browserExecutablePath, file)
   return {
@@ -220,7 +220,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
     updatedAt: null,
     providerWhitelist: defaultProviderWhitelist(),
     profilePreferences: {},
-    browser: 'auto',
+    browser: 'managed-chromium',
     browserExecutablePath: null,
     browserConnectionMode: 'playwright',
     browserVisibility: 'auto',

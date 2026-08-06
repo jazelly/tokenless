@@ -88,7 +88,7 @@
           enabledProviders,
           browserVisibility,
           setDefault: true,
-          ...(importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
+          ...(browser === 'cloak' && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
         },
       )
     } catch (caught) {
@@ -168,14 +168,16 @@
             <span>{t('role')} <small>{t('optional')}</small></span>
             <input name="roleLabel" bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="setup-role" />
           </label>
-          <BrowserProfileSourcePicker
-            bind:sourceId={importSourceId}
-            bind:consent={consentLocalProfileCopy}
-            {t}
-            {busy}
-            testId="setup"
-            ondiscover={ondiscoverprofiles}
-          />
+          {#if browser === 'cloak'}
+            <BrowserProfileSourcePicker
+              bind:sourceId={importSourceId}
+              bind:consent={consentLocalProfileCopy}
+              {t}
+              {busy}
+              testId="setup"
+              ondiscover={ondiscoverprofiles}
+            />
+          {/if}
           <fieldset class="fieldset setup-providers">
             <legend>{t('chooseProviders')}</legend>
             <div class="provider-pills">
@@ -201,7 +203,7 @@
 
       <div class="setup-actions">
         <span>localhost</span>
-        <button class="button primary" type="submit" disabled={busy || !enabledProviders.length || (importSourceId !== '' && !consentLocalProfileCopy)} data-testid="finish-setup">
+        <button class="button primary" type="submit" disabled={busy || !enabledProviders.length || (browser === 'cloak' && importSourceId !== '' && !consentLocalProfileCopy)} data-testid="finish-setup">
           {#if busy}<span class="spinner mini"></span>{/if}{t('finishSetup')} <ChevronRight size={16} />
         </button>
       </div>
