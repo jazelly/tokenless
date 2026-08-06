@@ -6,7 +6,7 @@ Depends on: the typed visible-provider capability seam, durable daemon job and c
 
 Blocks: the stable cross-project seam required by [Web Agent Harness](P0-web-agent-harness.md); protocol discovery and specification precede the Harness package's dependency on a provider-turn client
 
-Related: [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) supplies provider-side evidence; [Agent Session Integrations](P1-agent-session-integrations.md) is a northbound caller surface, not this protocol; the visible model-control envelope remains owned by the Harness roadmap
+Related: [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) supplies provider-side evidence; [Agent Session Integrations](P1-agent-session-integrations.md) is a caller interface, not this protocol; the visible model-control envelope remains owned by the Harness roadmap
 
 Packaging direction: one independently buildable, language-neutral protocol package in this repository first; external repository, package scope, final name, and governance only after the contract is stable and namespace ownership is verified
 
@@ -29,10 +29,10 @@ The protocol covers capabilities, workspace and conversation identity, instructi
 | Component or roadmap | Protocol relationship | Owns | Must not depend on or absorb |
 | --- | --- | --- | --- |
 | This protocol | Normative contract and shared compatibility boundary | Semantics, wire schemas, lifecycle, capability negotiation, errors, versioning, conformance rules, and language bindings | Tokenless storage, daemon routes, Playwright, provider selectors, MCP, tools, approvals, or agent policy |
-| Tokenless Layer 1 / current repository | First Provider Runtime and reference Provider implementation | Visible browser execution, provider adapters, durable provider turns, exact provider-side resources, and evidence-backed outcomes | Harness prompts, tool-call parsing, MCP clients, approval policy, or agent-loop state |
-| [Web Agent Harness](P0-web-agent-harness.md) / Layer 2 | First Client implementation and primary design consumer | Agent runs, instruction compilation, visible model-control envelope, tools, approvals, MCP, limits, and run persistence | Provider DOM, browser profiles, selectors, Tokenless database tables, or private daemon modules |
+| Tokenless Layer 1 / current repository | First Provider Runtime and reference Provider implementation | Visible browser execution, provider adapters, durable provider turns, exact provider-side resources, and evidence-backed outcomes | Harness prompts, action-batch parsing, MCP clients, approval policy, or agent-loop state |
+| [Web Agent Harness](P0-web-agent-harness.md) / Layer 2 | First Client implementation and primary design consumer | Agent runs, caller-selected `SKILL.md` instruction compilation, visible action-batch and final envelopes, tools, consolidated user input, approvals, MCP execution, aggregate results, limits, and run persistence | Caller-Agent Skill selection policy, provider DOM, browser profiles, selectors, Tokenless database tables, or private daemon modules |
 | Visible Web-Agent Control Protocol | A separate Layer 2-to-model text contract carried inside protocol messages | Tool-request and final-result envelopes visible in model text | Provider runtime semantics or Layer 1 parsing |
-| [Agent Session Integrations](P1-agent-session-integrations.md) | Northbound integration that may invoke Layer 1 or the Harness | Caller-session binding and local MCP exposure | Replacing the Client/Provider protocol or inheriting southbound tool authority |
+| [Agent Session Integrations](P1-agent-session-integrations.md) | Caller integration that may invoke Layer 1 or the Harness | Caller-session binding and local MCP exposure | Replacing the Client/Provider protocol or inheriting web-model tool-execution authority |
 | OpenAI-compatible mapping profile | Optional, explicitly lossy compatibility adapter | Simple stateless request/result mappings | Defining the canonical resource, lifecycle, identity, waiting, resume, or evidence model |
 
 The sequencing contract is explicit:
@@ -50,12 +50,12 @@ Layer 1 implementation work and Layer 2 research may continue where they discove
 ```mermaid
 flowchart TB
   Caller["Caller"]
-  Harness["Layer 2: Web Agent Harness<br/>protocol Client + agent loop + tools + approval"]
+  Harness["Layer 2: Web Agent Harness<br/>protocol Client + batched agent loop + tools + approval"]
   Protocol["Web AI Interaction Protocol<br/>schemas + lifecycle + capabilities + conformance"]
   Provider["Layer 1: Tokenless Web Provider Runtime<br/>protocol Provider + durable browser execution"]
   Browser["Provider adapters + managed browser"]
   Website["Visible AI provider website"]
-  ModelProtocol["Visible model-control envelope<br/>Layer 2-owned text protocol"]
+  ModelProtocol["Visible action-batch envelope<br/>Layer 2-owned text protocol"]
 
   Caller --> Harness
   Harness <--> Protocol
@@ -93,7 +93,7 @@ The canonical spec and core schemas must not contain:
 - SQLite rows, daemon table names, leases, worker ids, or process topology;
 - ChatGPT, Claude, Gemini, Grok, Qwen, or another provider's URL or menu shape;
 - MCP clients, MCP transports, tool registries, tool approvals, skills, or agent-loop policy; or
-- the Harness's visible control codec, nonce framing, tool-call envelope, or repair policy.
+- the Harness's visible control codec, nonce framing, action-batch envelope, aggregate-result envelope, or repair policy.
 
 Provider-specific metadata may appear only in a namespaced extension container. A Client must be able to complete core behavior without reading it.
 
@@ -380,7 +380,7 @@ Exit: a second independent implementation passes conformance, or the protocol re
 - Standardizing a complete agent architecture, planner, memory system, tool runtime, MCP host, approval system, or skill format
 - Exposing browser automation, raw DOM, selectors, profiles, credentials, storage, or private provider traffic
 - Making every provider appear to support Projects, system instructions, continuation, attachments, cancellation, or resume
-- Defining the Harness visible tool-call envelope or teaching Layer 1 to interpret model tool requests
+- Defining the Harness visible action-batch or aggregate-result envelope, or teaching Layer 1 to interpret model tool requests
 - Replacing Tokenless's internal durable scheduler, provider adapters, or evidence collection design
 - Publishing a package, splitting a repository, claiming an external namespace, or creating a standards body in the first phase
 - Claiming compatibility solely from schema parsing without real behavioral proof

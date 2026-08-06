@@ -1,10 +1,10 @@
 # Agent Session Integrations
 
-Status: proposed | Priority: P1 | First integration: northbound local MCP server, then Codex
+Status: proposed | Priority: P1 | First integration: caller-facing local MCP server, then Codex
 
 Depends on: stable local job identity, typed provider capabilities, and the Context Envelope contract
 
-Related: [Web Agent Harness](P0-web-agent-harness.md) owns the independently buildable harness package, skill injection, southbound MCP client, tool authorization, and web-model tool loop
+Related: [Web Agent Harness](P0-web-agent-harness.md) owns the independently buildable harness package, caller-selected Skill resolution and injection, MCP tool execution, tool authorization, and web-model action-batch loop; this roadmap owns Agent adapters that capture and transmit current-turn context and Skill selections
 
 ## Outcome
 
@@ -159,9 +159,9 @@ The CLI remains the human, scripting, diagnostics, and recovery interface. MCP b
 
 MCP does not make provider-specific semantics generic. It lets the router hide them behind a capability-first interface.
 
-This roadmap uses MCP only as a northbound transport: Tokenless is an MCP server called by Codex or another agent host. It does not own the separate southbound role in which the Web Agent Harness is the MCP host/client executing tools requested by a web model. That role, its credentials, approvals, tool schemas, and durable loop belong to [Web Agent Harness](P0-web-agent-harness.md).
+This roadmap owns the caller MCP interface: Tokenless is an MCP server called by Codex or another agent host. It does not own the separate MCP tool-execution role in which the Web Agent Harness is the MCP host/client executing action batches proposed by a web model. That role, its credentials, approvals, authentication resume, tool schemas, aggregate results, and durable loop belong to [Web Agent Harness](P0-web-agent-harness.md).
 
-This roadmap is therefore an integration interface, not an early Agent Harness. Its tools expose the Web Provider layer's durable web operations and bind them to an external session. It does not inject skills into the web model, teach the web model an MCP calling protocol, execute the requested MCP tools, return their results to the provider conversation, or own the agent loop. When the separate harness package is available, an agent-run interface calls that package; harness logic does not move into this P1 adapter.
+This roadmap is therefore an integration interface, not an early Agent Harness. Its tools expose the Web Provider layer's durable web operations and bind them to an external session. It does not inject skills into the web model, teach the web model the action-batch protocol, execute model-proposed MCP calls, consolidate their local requirements, return aggregate results to the provider conversation, or own the agent loop. When the separate harness package is available, an agent-run interface calls that package; harness logic does not move into this P1 adapter.
 
 ## Minimal MCP Tool Surface
 
@@ -238,6 +238,24 @@ Introduce a versioned `AgentSessionBinding`:
 
 The durable lookup key is `agentKind + sessionId`. Project, worktree, and provider-workspace bindings are associated records and can change over a session's lifetime.
 
+## Agent Turn Context and Skill Selection
+
+Session binding alone does not tell Tokenless what the user is doing now. Deep Agent adapters therefore produce a versioned `AgentTurnContext` for each explicit Tokenless invocation:
+
+| Field | Purpose |
+| --- | --- |
+| `sessionId` and `turnId` | Correlate the exact caller interaction with one Tokenless run |
+| `userGoal` | Bounded user-visible task text explicitly supplied for this run |
+| `selectedSkills` | Ordered Skill identities selected for the current interaction |
+| `selectedBy` | Preserve `explicit_user` or `caller_agent` provenance per Skill |
+| `attachments` and `contextRefs` | Explicitly authorized caller resources, not ambient transcript scraping |
+| `cwd`, `projectRoot`, and `worktreeId` | Bind relative identities to the exact local project scope |
+| `producerVersion` and `observedAt` | Adapter compatibility and freshness |
+
+Both explicit and automatic Skill selection happen upstream in the caller Agent. “Automatic” means the caller Agent selected the Skill using its current interaction context and sent that completed selection through the package, daemon HTTP, CLI, or later caller MCP request. Tokenless does not ask the web model to select Skills again, and the Harness does not infer an unrequested Skill from the task.
+
+A generic caller without a deep adapter supplies the same fields explicitly through CLI flags or the daemon request. A routing Skill may remain a compatibility and discoverability aid, but it is not the authoritative source of session identity or hidden context once a stable hook or adapter exists.
+
 ## Why Codex First
 
 Current Codex lifecycle hooks provide the fields needed for exact first-party binding:
@@ -264,6 +282,7 @@ The installable Codex plugin should bundle:
 
 - a Tokenless routing skill for explicit user or agent invocation;
 - trusted lifecycle hooks that register and refresh session binding;
+- an adapter that emits the bounded current `AgentTurnContext` and ordered Skill selection for an explicit Tokenless invocation;
 - configuration for the local Tokenless MCP server;
 - schemas for context export and Tokenless result import; and
 - clear permission, privacy, and uninstall behavior.
@@ -272,18 +291,19 @@ The primary flow is:
 
 1. `SessionStart` sends `session_id`, `cwd`, and adapter version to the local Tokenless control plane.
 2. Tokenless canonicalizes the working directory, resolves the project root and worktree, and persists the binding.
-3. An explicit Tokenless invocation includes the same session id and optional turn id.
-4. Tokenless resolves the provider workspace from the exact session/project binding.
-5. The web result returns to the requesting session with job id, context revision, provider conversation identity, and artifacts.
-6. `SessionEnd` marks the binding inactive without deleting retained user-approved history.
+3. On an explicit Tokenless invocation, the adapter sends the same session id, exact turn id, bounded current user goal, and all explicitly or caller-Agent-selected Skill identities with provenance.
+4. Tokenless resolves the provider workspace and selected Skills from the exact session/project binding and approved roots.
+5. The Harness injects every selected `SKILL.md` before the first web task turn; it does not ask the web model to choose Skills again.
+6. The web result returns to the requesting session with job id, context revision, Skill-selection revision, provider conversation identity, and artifacts.
+7. `SessionEnd` marks the binding inactive without deleting retained user-approved history.
 
-Hooks register identity; they do not submit prompts or upload files implicitly.
+Hooks and adapters may register identity and bounded current-turn context. They do not start a Tokenless run, upload files, or share a transcript implicitly; those actions remain tied to an explicit invocation and its declared sharing policy.
 
 ## Delivery Phases
 
 ### Phase 0: Capability Catalog and Routing Protocol
 
-- Define the canonical capability catalog, provider capability matrix, `CapabilityRoute`, `AgentSessionBinding`, lifecycle events, and schema versioning.
+- Define the canonical capability catalog, provider capability matrix, `CapabilityRoute`, `AgentSessionBinding`, `AgentTurnContext`, `SkillSelection`, lifecycle events, and schema versioning.
 - Separate agent identity, filesystem identity, provider workspace identity, and task identity.
 - Define collision, resume, fork, worktree-change, and stale-session behavior.
 - Define capability composition, conflicts, provider preference scope, explicit provider constraints, stale observations, account blockers, and route failure behavior.
@@ -305,6 +325,7 @@ Exit: an MCP client can request `research.deep` without naming Qwen, observe an 
 ### Phase 2: Explicit Codex Binding
 
 - Add a Tokenless command that accepts Codex `session_id` and `cwd`.
+- Accept an optional exact turn id, bounded user goal, and ordered Skill selection using the same daemon schema consumed by the Harness.
 - Resolve realpath, repository root, worktree, branch, and current revision.
 - Persist the binding in the local daemon.
 - Route jobs by exact binding and expose the resolved identity in state output without leaking raw private paths.
@@ -316,10 +337,11 @@ Exit: two Codex sessions in different worktrees or directories resolve to differ
 - Package the routing skill and minimal hook definitions as a plugin.
 - Configure the local MCP server as the explicit Tokenless tool surface.
 - Register on `SessionStart` and refresh only on meaningful lifecycle changes.
+- Use the explicit invocation adapter to capture the current turn and complete Skill selection without requiring the routing Skill to reconstruct conversation state.
 - Require the user to review and trust plugin hooks.
 - Keep prompt submission explicit and observable.
 
-Exit: starting or resuming a Codex session creates or refreshes the exact binding with no project-name guess.
+Exit: starting or resuming a Codex session creates or refreshes the exact binding with no project-name guess, and an explicit invocation transmits the exact current turn plus every selected Skill in one request.
 
 ### Phase 4: Authorized Context Export
 
