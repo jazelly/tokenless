@@ -23,7 +23,7 @@ The plan is saved in the root of `docs/roadmaps/`, which is the repository's aut
 | Runtime foundation | 5 / 5 | Production catalog, manager, exact executable resolution, transactional installation, and independent Playwright pin exist. |
 | Durable selection and profile binding | 6 / 6 | Production config/profile paths implement exact runtime binding, clean family changes, downgrade protection, and explicit-consent opaque profile copying without authentication-value inspection. |
 | Setup and daemon integration | 6 / 6 | Interactive and non-interactive setup, lazy download policy, atomic persistence ordering, and daemon resolution paths exist. |
-| Safe Chromium profile inventory | 5 / 5 | Setup enumerates known Chromium profile directories without browser state, resolves safe version metadata, classifies exact platform-pin alignment, presents bilingual results, and offers one explicit profile-source choice when an aligned source exists. |
+| Safe Chromium profile inventory | 5 / 5 | Diagnostic discovery can enumerate known Chromium-family profile directories without browser state; experimental setup import admits only exact-aligned Google Chrome sources, presents bilingual limitations, and keeps every other browser ineligible. |
 | Exact Playwright launch | 4 / 4 | The resolved executable and launch policy reach Playwright/CDP; sandboxing, production native credential storage, disposable-profile keychain neutrality, and cleanup are preserved. |
 | Inspection, recovery, and documentation | 5 / 5 | Doctor, cache reuse/repair, bilingual docs, licensing, and cross-platform release-gate launchers exist. |
 | Real-boundary acceptance | 10 / 15 | macOS positive runtime paths and the locally executable fail-closed paths are proven. Five environment-dependent release gates remain open; implementation completion is not release completion. |
@@ -69,7 +69,7 @@ Tokenless v1 supports only the no-license-key Cloak artifacts pinned in the prod
 
 The fifth component is Cloak's artifact revision; Chromium profile comparison uses the four-component browser version. A candidate is version-aligned only when its owning browser's complete four-component version equals the platform catalog entry's `browserVersion`. A major-only value such as `150` is insufficient for a positive match. A Windows profile last used by any Chromium 150 build is not aligned with the currently supported Windows Cloak 146 runtime.
 
-Version alignment is an admission policy, not proof that Chromium guarantees profile portability. Tokenless may enumerate only non-secret metadata: browser identity, executable version, user-data root, validated profile directory key, and safe `Last Version` metadata. After explicit user consent, Tokenless may copy the selected profile only as an opaque local filesystem tree into a new user-controlled managed profile. It must not parse `Local State`, `Preferences`, cookies, tokens, browser storage, encryption keys, account names, emails, avatars, or authentication state. A source that is unknown or not exactly aligned with the supported Cloak pin fails before copy; `Start clean` remains the safe default.
+Version alignment is an admission policy, not proof that Chromium guarantees profile portability. Profile import is explicitly experimental and supports only a source identified as Google Chrome; Edge, Chromium, Chrome for Testing, Brave, Arc, and every other browser are ineligible even when their Chromium version aligns. Tokenless may enumerate only non-secret metadata: browser identity, executable version, user-data root, validated profile directory key, and safe `Last Version` metadata. After explicit user consent, Tokenless may copy the selected profile only as an opaque local filesystem tree into a new user-controlled managed profile. It must not parse `Local State`, `Preferences`, cookies, tokens, browser storage, encryption keys, account names, emails, avatars, or authentication state. A source that is unsupported, unknown, or not exactly aligned with the supported Cloak pin fails before copy; `Start clean` remains the safe default. A successful open does not guarantee authentication-state portability.
 
 ### Selection semantics
 
@@ -104,7 +104,7 @@ The invariant is strict:
 - Changing from a system browser to managed Chrome for Testing or Cloak provisions a new clean managed profile.
 - Removing a system browser does not cause its existing profile to open with the managed fallback.
 - System browser in-family updates remain supported, but the observed version is recorded and downgrade compatibility fails closed.
-- Tokenless copies a local Chromium profile only after explicit user selection or the non-interactive consent flag, only into a new runtime-bound managed profile, and only as an opaque filesystem tree. The source remains untouched.
+- Tokenless experimentally copies only a Google Chrome source profile, only after explicit user selection or the non-interactive consent flag, only into a new runtime-bound managed profile, and only as an opaque filesystem tree. The source remains untouched.
 - Tokenless never inspects, exports, logs, or promises migration of authentication values. Browser-managed login state may remain unusable when the source and target rely on different macOS Safe Storage identities even if the copied profile opens.
 - Users may instead authenticate inside a clean Tokenless-managed profile through the visible browser. The browser owns that profile's session afterward, and Tokenless may reuse the same runtime-bound profile without reading its authentication data.
 
@@ -181,16 +181,16 @@ Setup performs browser work before daemon readiness:
 1. read config and stop or quiesce a running local daemon when the selected runtime/profile may change;
 2. ask whether to enable Anti-Detect mode and state in that question that accepting will download and install the verified platform-pinned CloakBrowser when needed;
 3. when Anti-Detect is declined, follow an explicit browser, then the saved normal-browser preference, then deterministic automatic discovery without asking the user to choose a runtime implementation;
-4. when Cloak is selected, enumerate safe metadata for known local Chromium profiles across Chrome, Edge, Chromium, and Chrome for Testing where that browser exists on the platform;
-5. classify exact four-component alignment against the platform Cloak catalog entry and show both aligned and non-aligned candidates without reading browser secrets;
-6. when aligned candidates exist, present one profile-source choice containing `Start clean` and the aligned profiles; selecting a profile explicitly authorizes its opaque local copy, with no separate import, copy-consent, or installation confirmation;
+4. when Cloak is selected, label profile import as experimental, state that it may fail by version or platform and does not guarantee sign-in transfer, and enumerate safe metadata only for local Google Chrome profiles;
+5. classify exact four-component alignment against the platform Cloak catalog entry and show both aligned and non-aligned Google Chrome candidates without reading browser secrets;
+6. when aligned candidates exist, present one profile-source choice containing `Start clean` and the aligned Google Chrome profiles; selecting a profile explicitly authorizes its opaque local copy, with no separate import, copy-consent, or installation confirmation;
 7. when no candidate aligns, select a clean Cloak profile without asking a profile-source question;
 8. resolve or install the selected runtime, verify it, and immediately persist the concrete browser and executable path;
 9. provision or select a compatible managed profile, recheck Cloak/profile version compatibility at the copy boundary, and perform an explicitly authorized opaque copy when selected;
 10. persist profile preferences and the provider whitelist;
 11. start the daemon, verify runtime/profile readiness, and leave one headed review tab open for every enabled provider.
 
-The Anti-Detect question carries the installation disclosure; there is no later installation confirmation. English and Simplified Chinese flows carry equivalent meaning. In non-interactive setup, explicit `--anti-detect` or `--browser cloak` authorizes installation, while an inherited Cloak preference without either flag fails before download with `setup_cloak_confirmation_required`. Non-interactive profile import additionally requires `--consent-local-profile-copy` because no visible profile-source selection occurred.
+The Anti-Detect question carries the installation disclosure; there is no later installation confirmation. The profile-source step separately carries the experimental-status, Google-Chrome-only, version/platform variability, and sign-in non-guarantee disclosures. English and Simplified Chinese flows carry equivalent meaning. In non-interactive setup, explicit `--anti-detect` or `--browser cloak` authorizes installation, while an inherited Cloak preference without either flag fails before download with `setup_cloak_confirmation_required`. Non-interactive profile import additionally requires `--consent-local-profile-copy` because no visible profile-source selection occurred.
 
 ### Playwright launch contract
 
@@ -215,7 +215,7 @@ This manual runbook measures whether a copied profile can be opened by a target 
 
 ### Experimental macOS importability observations (2026-08-05)
 
-The following matrix ran on `darwin-arm64` with real headed browsers, the real Google network, production opaque-copy code, native target credential storage, enabled Chromium sandboxing, and sequential cleanup. Cloak targets were no-key artifact `145.0.7632.109.2` (browser `145.0.7632.109`) and keyed Pro artifact `150.0.7871.114.3` (browser `150.0.7871.114`) through JavaScript wrapper `0.5.4`. Pro/free licensing and the Cloak 150 artifact remain outside the supported Tokenless catalog; these rows are experimental evidence only.
+The following broader research matrix ran on `darwin-arm64` with real headed browsers, the real Google network, production opaque-copy code, native target credential storage, enabled Chromium sandboxing, and sequential cleanup. Cloak targets were no-key artifact `145.0.7632.109.2` (browser `145.0.7632.109`) and keyed Pro artifact `150.0.7871.114.3` (browser `150.0.7871.114`) through JavaScript wrapper `0.5.4`. Pro/free licensing and the Cloak 150 artifact remain outside the supported Tokenless catalog. Chrome for Testing, Chromium, and native Cloak rows measure format behavior only; the shipping import UI and copy boundary accept Google Chrome sources only.
 
 Each target has its own matrix so every outcome cell represents one observable criterion. ✅ means the criterion was observed. ❌ means the criterion was not reached because the target exited with `SIGTRAP` before returning a context; for marker preservation and clean close, it does not independently prove marker loss or a cleanup defect.
 
@@ -307,7 +307,7 @@ This ledger is updated as implementation and evidence land. A checked code item 
 - [x] Add runtime binding to newly provisioned profiles.
 - [x] Fail before browser launch when a profile/runtime family or downgrade invariant is violated.
 - [x] Create a clean profile when setup changes runtime family.
-- [x] Add explicit-consent opaque local profile copying into a new runtime-bound managed profile while keeping unconsented, unsafe-destination, symlink, and source-version mismatch paths fail-closed.
+- [x] Add experimental, explicit-consent opaque Google Chrome profile copying into a new runtime-bound managed profile while keeping unsupported-browser, unconsented, unsafe-destination, symlink, and source-version mismatch paths fail-closed.
 
 ### Milestone 3: Setup and daemon integration
 
@@ -321,10 +321,10 @@ This ledger is updated as implementation and evidence land. A checked code item 
 ### Milestone 3A: Safe Chromium profile inventory
 
 - [x] Replace `Local State`-based setup discovery with directory-only profile enumeration that cannot read account or browser-secret fields.
-- [x] Cover known Chrome, Edge, Chromium, and Chrome for Testing roots on supported macOS and Windows platforms.
+- [x] Keep safe diagnostic discovery for known Chrome, Edge, Chromium, and Chrome for Testing roots on supported macOS and Windows platforms while admitting only Google Chrome to profile import.
 - [x] Map every candidate to its safe profile `Last Version`, falling back to the exact owning installed-browser version when needed; never infer Chrome's version for another Chromium browser.
-- [x] Classify candidates against the production Cloak catalog and present aligned and non-aligned results in equivalent English and Simplified Chinese output, including the official CloakBrowser reference.
-- [x] Add one safe setup profile-source choice containing `Start clean` plus exactly aligned local sources; selection authorizes only an opaque copy and never authentication-value inspection.
+- [x] Classify Google Chrome candidates against the production Cloak catalog and present aligned and non-aligned results in equivalent English and Simplified Chinese output, including the official CloakBrowser reference and experimental-import disclosure.
+- [x] Add one safe setup profile-source choice containing `Start clean` plus exactly aligned local Google Chrome sources; selection authorizes only an opaque copy and never authentication-value inspection.
 
 ### Milestone 4: Exact Playwright launch
 
@@ -380,7 +380,7 @@ Windows AMD64 execution for the following gates is specified and recorded in the
 - The managed-artifact security integration called the same production verifier used immediately after a real download and before cache commit. With real tar.gz bytes, the real filesystem, the system `tar` executable, and a real version subprocess, it received exact `browser_runtime_checksum_mismatch`, `browser_runtime_archive_unsafe`, and `browser_runtime_version_mismatch` errors. The checksum case created no payload, the unsafe entry escaped nowhere, and config/profile sentinel files remained byte-for-byte unchanged in all three cases. The complete built-CLI browser-runtime gate passed again in 75 seconds after this refactor, proving the official managed Chrome and Cloak positive install paths still work. A later targeted managed-browser surface rerun also visited every provider successfully and isolated its current blockers to the Claude Cloudflare interstitial and Google `/sorry`.
 - The current selected user profile is bound to system Chrome rather than Cloak, and `doctor` reports no usable provider readiness observations for ChatGPT, Claude, Gemini, or Grok. Tokenless must not silently switch that profile or automate provider login. Authenticated cross-runtime closure therefore requires the user to explicitly select a clean runtime-bound profile, sign in visibly, and then invoke the manual provider gates.
 - The official release list now also exposes Cloak Pro Chromium 150 builds for macOS and Windows, but obtaining the current Pro binary requires a Cloak key. The current Tokenless scope remains the no-license-key catalog pins above; Pro 150 is not silently added to the supported set. See the [official CloakBrowser releases](https://github.com/CloakHQ/CloakBrowser/releases).
-- The built CLI's real filesystem inventory found the current macOS supported Chromium profile roots without parsing `Local State`. Chrome `150.0.7871.127` and Chrome for Testing `147.0.7727.15` were non-aligned; Chromium `145.0.7632.109` was exactly aligned with the macOS Cloak pin. Edge had no standard persistent profile directory to list.
+- Historical diagnostic evidence: the built CLI's real filesystem inventory found the current macOS Chromium-family profile roots without parsing `Local State`. Chrome `150.0.7871.127` and Chrome for Testing `147.0.7727.15` were non-aligned; Chromium `145.0.7632.109` matched the macOS Cloak version, and Edge had no standard persistent profile directory to list. The current admission policy supersedes the former cross-browser classification: only Google Chrome can be import-eligible, while those other browser identities are `unsupported_browser` regardless of version.
 - Historical evidence: a real interactive built-CLI setup used an isolated Tokenless home, selected Anti-Detect, displayed the official project link, exact Cloak/Chromium pin, all discovered candidate classifications, and the former second clean-profile confirmation. Declining returned `setup_cloak_profile_declined` before mutation. That redundant second confirmation has since been superseded by the installation disclosure in the initial Anti-Detect question and the single profile-source choice.
 - The focused built-CLI filesystem integration passed with real `Default` and `Profile 1` directories, an exact aligned `Last Version`, a mismatched Chromium 150 version, and deliberately invalid `Local State` contents. It classified both versions correctly and succeeded without parsing the invalid browser-state file.
 - Historical evidence: the former positive interactive path accepted both Anti-Detect confirmations in an isolated home, reused the checksum-verified Cloak cache with downloads disabled, reported exact Cloak browser `145.0.7632.109`, and reached provider/profile selection. The current flow removes the redundant second confirmation. A separate built-CLI clean-profile boundary against that exact cache created a ready default profile bound to runtime `cloak:darwin-arm64:145.0.7632.109.2`, family/browser `cloak`, and created-with version `145.0.7632.109`.

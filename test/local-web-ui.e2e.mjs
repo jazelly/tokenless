@@ -65,12 +65,28 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('setup-role').fill('Research')
       await page.getByTestId('setup-visibility').selectOption('headless')
       await page.getByTestId('setup-profile-source-copy').click()
+      assert.match(await page.getByTestId('setup-profile-source-copy').textContent(), /experimental/i)
+      assert.match(await page.locator('.profile-source-panel .prominent-note').textContent(), /only Google Chrome/i)
+      const unsupportedImportSource = await page.evaluate(async (userDataDir) => {
+        const session = await (await fetch('/ui-api/v1/session')).json()
+        const response = await fetch('/ui-api/v1/browser-profile-sources/discover', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-tokenless-csrf': String(session.csrf),
+          },
+          body: JSON.stringify({ browser: 'edge', userDataDir }),
+        })
+        return { status: response.status, body: await response.json() }
+      }, importSourceDir)
+      assert.equal(unsupportedImportSource.status, 400)
+      assert.equal(unsupportedImportSource.body.error.code, 'profile_import_browser_unsupported')
       await page.locator('.source-advanced summary').click()
-      await page.getByTestId('setup-profile-source-browser').selectOption('chrome-for-testing')
+      assert.equal(await page.getByTestId('setup-profile-source-browser').count(), 0)
       await page.getByTestId('setup-profile-source-root').fill(importSourceDir)
       await page.getByTestId('setup-profile-source-scan').click()
       await page.getByTestId('setup-profile-source-select').waitFor()
-      assert.match(await page.getByTestId('setup-profile-source-select').locator('option:checked').textContent(), /Google Chrome for Testing · Default/)
+      assert.match(await page.getByTestId('setup-profile-source-select').locator('option:checked').textContent(), /Google Chrome · Default/)
       await page.getByTestId('setup-profile-source-consent').check()
       assert.equal(await page.locator('.provider-pill').filter({ hasText: 'ChatGPT' }).locator('input').isChecked(), true)
       assert.equal(await page.locator('.provider-pill').filter({ hasText: 'Gemini' }).locator('input').isChecked(), false)

@@ -43,7 +43,7 @@ const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 const REPLACE_TERMINAL_LINE = '\u001b[2K\u001b[1G'
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
-  'Keeps sign-ins between jobs inside a Tokenless-managed profile. With explicit consent, setup can copy a selected local profile as an opaque filesystem tree without reading its authentication values.',
+  'Keeps sign-ins between jobs inside a Tokenless-managed profile. Experimental import can copy only a selected Google Chrome profile as an opaque filesystem tree with explicit consent; it may fail by version or platform and does not guarantee sign-in-state transfer.',
 ])
 
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([

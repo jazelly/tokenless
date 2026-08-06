@@ -41,7 +41,7 @@ const ZH_TEXT = new Map<string, string>([
   ['Reading config', '读取配置'],
   ['Checking npm version', '检查 npm 版本'],
   ['Finding browsers', '查找浏览器'],
-  ['Finding Chromium profiles', '查找 Chromium profiles'],
+  ['Finding Google Chrome profiles', '查找 Google Chrome profiles'],
   ['Saving preferences', '保存偏好设置'],
   ['Upserting global Tokenless agent skills', '更新全局 Tokenless agent skills'],
   ['Reconciling current Tokenless daemon', '协调当前 Tokenless daemon'],
@@ -58,7 +58,7 @@ const ZH_TEXT = new Map<string, string>([
   ['Choose a browser', '选择浏览器'],
   ['Choose the browser Tokenless should use.', '选择 Tokenless 要使用的浏览器。'],
   ['Anti-Detect mode', 'Anti-Detect 反爬模式'],
-  ['Chromium profile compatibility', 'Chromium profile 兼容性'],
+  ['Experimental Google Chrome profile compatibility', '实验性 Google Chrome profile 兼容性'],
   ['Preparing automatic browser selection', '准备自动 browser selection'],
   ['Preparing Tokenless-managed Chromium', '准备由 Tokenless 管理的 Chromium'],
   ['Preparing CloakBrowser', '准备 CloakBrowser'],
@@ -69,15 +69,17 @@ const ZH_TEXT = new Map<string, string>([
   ['Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.', '无效的 Tokenless browser；应为 auto、受支持的 system browser、managed-chromium 或 cloak。'],
   ['Invalid Tokenless browser executable path; expected null or an absolute path.', '无效的 Tokenless browser executable path；应为 null 或绝对路径。'],
   ['Browser executable path must be absolute.', 'Browser executable path 必须是绝对路径。'],
-  ['Keeps sign-ins between jobs inside a Tokenless-managed profile. With explicit consent, setup can copy a selected local profile as an opaque filesystem tree without reading its authentication values.', '登录状态会保留在 Tokenless 管理的 profile 中并跨 job 复用。获得明确同意后，setup 可以把选定的本机 profile 作为 opaque 文件树复制，不读取其中的认证值。'],
+  ['Keeps sign-ins between jobs inside a Tokenless-managed profile. Experimental import can copy only a selected Google Chrome profile as an opaque filesystem tree with explicit consent; it may fail by version or platform and does not guarantee sign-in-state transfer.', '登录状态会保留在 Tokenless 管理的 profile 中并跨 job 复用。实验性导入只会在明确同意后，把选定的 Google Chrome profile 作为 opaque 文件树复制；它可能因版本或平台而失败，也不保证登录状态能够迁移。'],
   ['Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser if needed.', '是否使用 Anti-Detect 模式？如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser。'],
+  ['Google Chrome profile import is experimental. It may fail on some browser versions or platforms, and a profile opening successfully does not guarantee that sign-in state transfers.', 'Google Chrome profile 导入属于实验性功能。部分浏览器版本或平台可能失败，而且 profile 能成功打开也不代表登录状态一定能够迁移。'],
   ['Discovery checks only profile directory names and browser versions; it does not read authentication values.', '发现阶段只检查 profile 目录名和浏览器版本，不读取认证值。'],
-  ['No local Chromium profiles were found.', '未找到本机 Chromium profile。'],
-  ['CloakBrowser profile source', 'CloakBrowser profile 来源'],
+  ['No local Google Chrome profiles were found.', '未找到本机 Google Chrome profile。'],
+  ['Experimental Google Chrome profile import', '实验性 Google Chrome profile 导入'],
+  ['Only Google Chrome profiles are supported. Edge, Chromium, Chrome for Testing, Brave, Arc, and other browser profiles are not eligible for import.', '仅支持 Google Chrome profile。Edge、Chromium、Chrome for Testing、Brave、Arc 和其他浏览器 profile 均不可导入。'],
   ['Selecting an existing profile explicitly authorizes Tokenless to copy that entire profile folder into the managed profile as an opaque local filesystem tree. Tokenless does not inspect cookies, tokens, browser storage, or other authentication values.', '选择现有 profile 即明确授权 Tokenless 将整个 profile 文件夹作为 opaque 本地文件树复制到 managed profile。Tokenless 不会检查 cookies、tokens、browser storage 或其他认证值。'],
   ['Choose how CloakBrowser should initialize its managed profile', '选择 CloakBrowser managed profile 的初始化方式'],
   ['Start clean', '从 clean profile 开始'],
-  ['No version-compatible local Chromium profile was found; CloakBrowser will use a clean profile.', '未找到版本兼容的本地 Chromium profile；CloakBrowser 将使用 clean profile。'],
+  ['No version-compatible local Google Chrome profile was found; CloakBrowser will use a clean profile.', '未找到版本兼容的本地 Google Chrome profile；CloakBrowser 将使用 clean profile。'],
   ['Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.', '非交互 CloakBrowser setup 必须通过显式的 --anti-detect 或 --browser cloak 进行确认。'],
   ['--browser-user-data-dir requires one explicit browser instead of all.', '--browser-user-data-dir 必须指定一个具体浏览器，不能使用 all。'],
   ['Browser profile discovery supports all, Chrome, Edge, Chromium, or Chrome for Testing.', 'Browser profile discovery 支持 all、Chrome、Edge、Chromium 或 Chrome for Testing。'],
@@ -124,6 +126,7 @@ const ZH_TEXT = new Map<string, string>([
   ['(none)', '（无）'],
   ['Tokenless CLI failed.', 'Tokenless CLI 执行失败。'],
   ['Invalid Tokenless language; expected en or zh-CN.', '无效的 Tokenless language；应为 en 或 zh-CN。'],
+  ['Profile import supports only Google Chrome.', 'Profile 导入仅支持 Google Chrome。'],
   ['Proxy configuration requires --profile <slug>.', 'Proxy 配置必须提供 --profile <slug>。'],
   ['--profile can scope only provider membership, browser visibility, and proxy settings.', '--profile 只能限定 provider membership、browser visibility 和 proxy 设置。'],
   ['--clear-proxy cannot be combined with --proxy-server or --proxy-bypass.', '--clear-proxy 不能与 --proxy-server 或 --proxy-bypass 同时使用。'],
@@ -190,6 +193,7 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^Managed profile '(.+)' is already bound to (.+); create a clean profile for (.+)\.$/, "Managed profile '$1' 已绑定到 $2；请为 $3 创建 clean profile。")
     .replace(/^Browser profile '(.+)' uses Chromium (.+); this platform's supported CloakBrowser requires (.+)\.$/, "Browser profile '$1' 使用 Chromium $2；当前平台支持的 CloakBrowser 要求 $3。")
     .replace(/^Browser profile '(.+)' uses Chromium (.+); installed CloakBrowser requires (.+)\.$/, "Browser profile '$1' 使用 Chromium $2；已安装的 CloakBrowser 要求 $3。")
+    .replace(/^Profile import supports only Google Chrome; (.+) is not supported\.$/, 'Profile 导入仅支持 Google Chrome；不支持 $1。')
     .replace(/^(.+) download checksum mismatch; refusing to extract the artifact\.$/, '$1 下载文件的 checksum 不匹配；已拒绝解包。')
     .replace(/^(.+) reported browser (.+); expected (.+)\.$/, '$1 报告 browser $2；预期为 $3。')
     .replace(/^(.+) cache reported browser (.+); expected (.+)\.$/, '$1 cache 报告 browser $2；预期为 $3。')

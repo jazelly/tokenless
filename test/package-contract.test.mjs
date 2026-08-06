@@ -754,7 +754,7 @@ test('CLI rejects removed local fallback routes before network access', () => {
   assert.equal(JSON.parse(removedProjectRouteFlag.stdout).error.code, 'unknown_argument')
 })
 
-test('built CLI classifies Chromium profile directories without reading browser state', () => {
+test('built CLI classifies Google Chrome profile directories and rejects other browsers for Cloak import without reading browser state', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-inventory-'))
   const expectedCloakVersion = process.platform === 'win32'
     ? '146.0.7680.177'
@@ -771,7 +771,7 @@ test('built CLI classifies Chromium profile directories without reading browser 
       'profiles',
       'discover',
       '--browser',
-      'edge',
+      'chrome',
       '--browser-user-data-dir',
       root,
       '--json',
@@ -779,7 +779,7 @@ test('built CLI classifies Chromium profile directories without reading browser 
     assert.equal(aligned.status, 0, aligned.stderr || aligned.stdout)
     const alignedPayload = JSON.parse(aligned.stdout)
     assert.equal(alignedPayload.cloak.browserVersion, expectedCloakVersion)
-    assert.equal(alignedPayload.roots[0].browser, 'edge')
+    assert.equal(alignedPayload.roots[0].browser, 'chrome')
     assert.deepEqual(
       alignedPayload.roots[0].profiles.map((profile) => ({
         directoryKey: profile.directoryKey,
@@ -797,7 +797,7 @@ test('built CLI classifies Chromium profile directories without reading browser 
       'profiles',
       'discover',
       '--browser',
-      'edge',
+      'chrome',
       '--browser-user-data-dir',
       root,
       '--json',
@@ -814,7 +814,7 @@ test('built CLI classifies Chromium profile directories without reading browser 
       'profiles',
       'discover',
       '--browser',
-      'edge',
+      'chrome',
       '--browser-user-data-dir',
       root,
       '--json',
@@ -824,8 +824,62 @@ test('built CLI classifies Chromium profile directories without reading browser 
       JSON.parse(incomplete.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
       ['unknown', 'unknown'],
     )
+
+    fs.writeFileSync(path.join(root, 'Last Version'), expectedCloakVersion)
+    const unsupported = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'discover',
+      '--browser',
+      'edge',
+      '--browser-user-data-dir',
+      root,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(unsupported.status, 0, unsupported.stderr || unsupported.stdout)
+    assert.deepEqual(
+      JSON.parse(unsupported.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
+      ['unsupported_browser', 'unsupported_browser'],
+    )
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('built CLI rejects a recorded non-Chrome source at the profile reset copy boundary', async () => {
+  const temporaryRoot = fs.realpathSync(os.tmpdir())
+  const sourceRoot = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-unsupported-import-source-'))
+  const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-unsupported-import-home-'))
+  try {
+    fs.mkdirSync(path.join(sourceRoot, 'Default'))
+    fs.writeFileSync(path.join(sourceRoot, 'Default', 'must-not-copy.txt'), 'source sentinel')
+    const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
+    const registry = new ManagedProfileRegistry(homeDir)
+    const profile = await registry.addProfile({ slug: 'legacy-edge', label: 'Legacy Edge', lifecycle: 'ready' })
+    await registry.markImported(profile.slug, {
+      source: sourceRoot,
+      profileDirectoryKey: 'Default',
+      browser: 'edge',
+      browserVersion: '145.0.7632.109',
+    })
+
+    const reset = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'reset',
+      '--profile',
+      profile.slug,
+      '--consent-local-profile-copy',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(reset.status, 1, reset.stderr || reset.stdout)
+    assert.equal(JSON.parse(reset.stdout).error.code, 'profile_import_browser_unsupported')
+    assert.equal(fs.existsSync(path.join(profile.directory, 'Default', 'must-not-copy.txt')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.rmSync(sourceRoot, { recursive: true, force: true })
   }
 })
 

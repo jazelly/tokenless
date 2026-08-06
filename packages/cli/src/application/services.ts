@@ -44,6 +44,11 @@ import {
   discoverKnownChromiumProfiles,
   type ManagedChromiumBrowserId,
 } from '../playwright/profiles/chrome-discovery.js'
+import {
+  SUPPORTED_PROFILE_IMPORT_BROWSER,
+  classifyCloakProfileCompatibility,
+  isSupportedProfileImportBrowser,
+} from '../playwright/profiles/import-policy.js'
 import { copyOpaqueChromiumProfile } from '../playwright/profiles/opaque-copy.js'
 import {
   publicView,
@@ -365,23 +370,29 @@ export class TokenlessApplicationServices {
   async discoverBrowserProfileSources(input: Record<string, unknown>) {
     requireKnownFields(input, ['browser', 'userDataDir'])
     const browser = input.browser === undefined
-      ? null
+      ? SUPPORTED_PROFILE_IMPORT_BROWSER
       : MANAGED_CHROMIUM_BROWSER_IDS.includes(input.browser as ManagedChromiumBrowserId)
       ? input.browser as ManagedChromiumBrowserId
       : null
-    if (input.browser !== undefined && !browser) {
+    if (!browser) {
       throw applicationError('invalid_browser_profile_source', 'Browser profile source is invalid.')
     }
+    if (!isSupportedProfileImportBrowser(browser)) {
+      throw applicationError(
+        'profile_import_browser_unsupported',
+        'Profile import supports only Google Chrome.',
+      )
+    }
     const userDataDir = typeof input.userDataDir === 'string' ? input.userDataDir.trim() : ''
-    if (userDataDir && (!browser || !path.isAbsolute(userDataDir))) {
+    if (userDataDir && !path.isAbsolute(userDataDir)) {
       throw applicationError(
         'invalid_browser_profile_source',
-        'A custom browser profile root requires one browser and an absolute user data directory.',
+        'A custom Google Chrome profile root requires an absolute user data directory.',
       )
     }
     const roots = userDataDir
-      ? await discoverChromiumProfiles({ browser: browser!, userDataDirs: [userDataDir] })
-      : await discoverKnownChromiumProfiles(browser ? { browsers: [browser] } : {})
+      ? await discoverChromiumProfiles({ browser: SUPPORTED_PROFILE_IMPORT_BROWSER, userDataDirs: [userDataDir] })
+      : await discoverKnownChromiumProfiles({ browsers: [SUPPORTED_PROFILE_IMPORT_BROWSER] })
     const config = await this.migratedConfig()
     const runtime = config.browser === 'cloak'
       ? (await this.runtimeManager.inspect(config.browser, {
@@ -401,7 +412,11 @@ export class TokenlessApplicationServices {
         expiresAt: Date.now() + WEB_PROFILE_SOURCE_TTL_MS,
       }
       this.browserProfileSources.set(id, source)
-      const compatible = runtime?.family !== 'cloak' || source.browserVersion === runtime.actualVersion
+      const compatible = runtime?.family !== 'cloak' || classifyCloakProfileCompatibility({
+        browser: source.browser,
+        sourceVersion: source.browserVersion,
+        cloakVersion: runtime.actualVersion,
+      }) === 'aligned'
       return {
         id,
         browser: source.browser,
@@ -506,12 +521,7 @@ export class TokenlessApplicationServices {
       allowDownload: false,
       browserExecutablePath: config.browserExecutablePath,
     })
-    if (importSource && runtime.family === 'cloak' && importSource.browserVersion !== runtime.actualVersion) {
-      throw applicationError(
-        'browser_profile_version_incompatible',
-        'The selected browser profile version is not compatible with this CloakBrowser runtime.',
-      )
-    }
+    if (importSource) assertProfileImportCompatible(importSource, runtime)
     if (
       config.browser !== runtime.selection ||
       config.browserExecutablePath !== runtime.executablePath
@@ -624,12 +634,10 @@ export class TokenlessApplicationServices {
       const value = error as { code?: string, message?: string }
       throw applicationError(value.code ?? 'browser_runtime_unavailable', value.message ?? 'Browser runtime is unavailable.')
     }
-    if (runtime.family === 'cloak' && profile.import.browserVersion !== runtime.actualVersion) {
-      throw applicationError(
-        'browser_profile_version_incompatible',
-        'The recorded browser profile version is not compatible with this CloakBrowser runtime.',
-      )
-    }
+    assertProfileImportCompatible({
+      browser: profile.import.browser ?? SUPPORTED_PROFILE_IMPORT_BROWSER,
+      browserVersion: profile.import.browserVersion ?? null,
+    }, runtime)
     await this.runtimeController?.quiesce()
     await this.profiles.updateLifecycle(profile.slug, 'importing')
     try {
@@ -1256,6 +1264,23 @@ function requireKnownFields(input: Record<string, unknown>, allowed: string[]) {
 
 function usableAccess(value: unknown) {
   return value === 'guest' || value === 'signed_in_free' || value === 'signed_in_paid' || value === 'signed_in_unknown'
+}
+
+function assertProfileImportCompatible(
+  source: { browser: string; browserVersion: string | null },
+  runtime: ResolvedBrowserRuntime,
+) {
+  if (!isSupportedProfileImportBrowser(source.browser)) {
+    throw applicationError(
+      'profile_import_browser_unsupported',
+      'Profile import supports only Google Chrome.',
+    )
+  }
+  if (runtime.family !== 'cloak' || source.browserVersion === runtime.actualVersion) return
+  throw applicationError(
+    'browser_profile_version_incompatible',
+    'The Google Chrome profile version is not compatible with this CloakBrowser runtime.',
+  )
 }
 
 function runtimeBinding(runtime: Awaited<ReturnType<BrowserRuntimeManager['ensure']>>) {

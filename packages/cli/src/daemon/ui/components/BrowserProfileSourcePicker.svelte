@@ -19,19 +19,11 @@
     ondiscover: (input: JsonRecord) => Promise<JsonRecord>
   } = $props()
 
-  const browsers = [
-    ['chrome', 'Google Chrome'],
-    ['edge', 'Microsoft Edge'],
-    ['chromium', 'Chromium'],
-    ['chrome-for-testing', 'Google Chrome for Testing'],
-  ] as const
-
   let mode = $state<'clean' | 'copy'>('clean')
   let sources = $state<JsonRecord[]>([])
   let scanning = $state(false)
   let error = $state('')
   let advanced = $state(false)
-  let sourceBrowser = $state('chrome')
   let userDataDir = $state('')
   let errorElement = $state<HTMLDivElement>()
   let selected = $derived(sources.find((source) => source.id === sourceId))
@@ -51,9 +43,10 @@
     consent = false
     error = ''
     try {
-      const result = await ondiscover(advanced && userDataDir.trim()
-        ? { browser: sourceBrowser, userDataDir: userDataDir.trim() }
-        : {})
+      const result = await ondiscover({
+        browser: 'chrome',
+        ...(advanced && userDataDir.trim() ? { userDataDir: userDataDir.trim() } : {}),
+      })
       sources = Array.isArray(result.sources) ? result.sources : []
       const firstCompatible = sources.find((source) => source.compatible === true)
       if (firstCompatible) sourceId = String(firstCompatible.id)
@@ -80,13 +73,14 @@
     <label class:checked={mode === 'copy'} class="source-mode-card" data-testid={`${testId}-profile-source-copy`}>
       <input type="radio" name={`${testId}-profile-source`} value="copy" checked={mode === 'copy'} onchange={() => setMode('copy')} />
       <Copy size={16} />
-      <span><strong>{t('copyProfile')}</strong><small>{t('copyProfileHelp')}</small></span>
+      <span><strong>{t('copyChromeProfileExperimental')}</strong><small>{t('copyChromeProfileExperimentalHelp')}</small></span>
       {#if mode === 'copy'}<CheckCircle2 size={15} />{/if}
     </label>
   </div>
 
   {#if mode === 'copy'}
     <div class="profile-source-panel">
+      <p class="form-note prominent-note">{t('profileImportExperimentalHelp')}</p>
       <div class="source-discovery-row">
         <div>
           <strong>{t('browserProfiles')}</strong>
@@ -123,13 +117,7 @@
         <summary>{t('customProfileRoot')}</summary>
         <div class="form-grid compact">
           <label class="field">
-            <span>{t('sourceBrowser')}</span>
-            <select name="sourceBrowser" bind:value={sourceBrowser} data-testid={`${testId}-profile-source-browser`}>
-              {#each browsers as option}<option value={option[0]}>{option[1]}</option>{/each}
-            </select>
-          </label>
-          <label class="field">
-            <span>{t('profileRootPath')}</span>
+            <span>{t('chromeProfileRootPath')}</span>
             <input name="profileRootPath" bind:value={userDataDir} autocomplete="off" spellcheck="false" placeholder={t('profileRootPathPlaceholder')} data-testid={`${testId}-profile-source-root`} />
           </label>
         </div>

@@ -62,17 +62,17 @@ npm install --global tokenless@latest
 tokenless setup
 ```
 
-交互式 setup 会先询问是否使用 Anti-Detect 模式，并直接说明接受后会在需要时安装经过验证、按平台固定版本的 CloakBrowser。拒绝后会使用已保存的普通 browser 偏好或自动发现，不再显示单独的 runtime 选择器。选择 Anti-Detect 后，setup 会链接到 CloakBrowser、显示当前平台的精确锁定版本，只扫描受支持的 Chrome、Edge、Chromium 和 Chrome for Testing profile 的安全目录/版本元数据，并标记精确版本是否匹配。有兼容 profile 时，只显示一次来源选择，其中包含 `Start clean` 和兼容 profile；选择某个 profile 本身就明确授权 opaque 本地复制，Tokenless 不会检查认证值。之后不再询问是否 import、是否同意 copy 或是否继续安装。非交互 setup 中，显式 `--anti-detect` 或 `--browser cloak` 授权安装；仅有已保存的 Cloak preference 不会触发下载，import 仍要求 `--consent-local-profile-copy`。之后 setup 会列出所有受支持的 provider，默认全部启用，并允许你回复编号移除 provider；直接回车则保留全部。它只检查剩余 provider，通过一次并发后台批处理为每个 provider 保留一个 headed 页面供用户审核登录状态，并在一个保留的前台标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
+交互式 setup 会先询问是否使用 Anti-Detect 模式，并直接说明接受后会在需要时安装经过验证、按平台固定版本的 CloakBrowser。拒绝后会使用已保存的普通 browser 偏好或自动发现，不再显示单独的 runtime 选择器。选择 Anti-Detect 后，setup 会链接到 CloakBrowser、显示当前平台的精确锁定版本，并明确标记 profile 导入为实验性功能：它仅支持 Google Chrome，可能在部分浏览器版本或平台上失败，也不保证登录状态能够迁移。Setup 只扫描 Google Chrome profile 的安全目录/版本元数据，并标记精确版本是否匹配。有兼容 profile 时，只显示一次来源选择，其中包含 `Start clean` 和兼容 profile；选择某个 profile 本身就明确授权 opaque 本地复制，Tokenless 不会检查认证值。Edge、Chromium、Chrome for Testing、Brave、Arc 和其他浏览器 profile 均不可导入。之后不再询问是否 import、是否同意 copy 或是否继续安装。非交互 setup 中，显式 `--anti-detect` 或 `--browser cloak` 授权安装；仅有已保存的 Cloak preference 不会触发下载，import 仍要求 `--consent-local-profile-copy`。之后 setup 会列出所有受支持的 provider，默认全部启用，并允许你回复编号移除 provider；直接回车则保留全部。它只检查剩余 provider，通过一次并发后台批处理为每个 provider 保留一个 headed 页面供用户审核登录状态，并在一个保留的前台标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
 
 ```bash
 tokenless dashboard
 ```
 
-控制台只由 loopback daemon 提供，可管理浏览器身份、profile 级 provider 路由、可见就绪状态与控件、能力目录、持久任务、用户接管和脱敏诊断信息。Setup 和系统设置会发现已安装的 runtime，接受并验证用户明确填写的 system-browser executable path；经用户同意后，也可以把一个选定的本机 Chromium profile 作为 opaque 文件树复制或重新导入。浏览器 JavaScript 不会拿到 daemon bearer token、来源文件系统路径或 provider 登录信息；`tokenless dashboard` 通过一次性 bootstrap ticket 建立短期本地 UI session。
+控制台只由 loopback daemon 提供，可管理浏览器身份、profile 级 provider 路由、可见就绪状态与控件、能力目录、持久任务、用户接管和脱敏诊断信息。Setup 和系统设置会发现已安装的 runtime，接受并验证用户明确填写的 system-browser executable path；经用户同意后，也可以通过实验性功能把一个选定的本机 Google Chrome profile 作为 opaque 文件树复制或重新导入。浏览器 JavaScript 不会拿到 daemon bearer token、来源文件系统路径或 provider 登录信息；`tokenless dashboard` 通过一次性 bootstrap ticket 建立短期本地 UI session。
 
 安装 npm package 只是第一步。使用 Tokenless 前必须完成 `tokenless setup`；它会选择并验证精确的 browser runtime，创建或复用绑定 runtime 的 browser profile，准备本地运行环境，检查所有已启用的 providers，并为每个 provider 打开一个审核 tab。普通模式依次遵循显式 browser、已保存偏好和自动发现；默认的 `auto` 会优先使用用户已经安装的 Chrome-family browser，只有没有可用浏览器时才 lazy download 由 Tokenless 管理的 Chrome for Testing 145。Anti-Detect 模式会选择 CloakBrowser，非交互流程也可使用 `--anti-detect`。Cloak 会从官方 release 下载到 Tokenless 私有 cache；采用单独许可的 binary 不会进入 Tokenless npm package 或 release artifact。
 
-每个 managed profile 都会绑定创建它的 browser runtime。Tokenless 不会用不同 runtime family 静默打开 managed profile；切换 runtime family 通常会创建 clean profile。经过用户明确选择后，setup 可以把一个版本兼容的本机 Chromium profile 作为 opaque 文件树复制到新的 managed profile；Tokenless 不会检查或暴露其中单独的 cookies、tokens、browser storage 或认证值。之后由 managed browser 自己跨 job 保留该 profile 的 session。
+每个 managed profile 都会绑定创建它的 browser runtime。Tokenless 不会用不同 runtime family 静默打开 managed profile；切换 runtime family 通常会创建 clean profile。实验性导入只接受一个版本兼容的本机 Google Chrome profile，并将其作为 opaque 文件树复制到新的 managed profile；Tokenless 不会检查或暴露其中单独的 cookies、tokens、browser storage 或认证值。导入可能因浏览器版本或平台而失败，成功打开也不保证登录状态能够迁移。之后由 managed browser 跨 job 保留它实际能够使用的 session。
 
 首次 setup 会根据系统 locale 选择英文或简体中文，并把结果保存到 `~/.tokenless/config.json` 的 `language` 字段；无法识别时使用英文。该偏好同时控制 CLI、控制台和 provider 的默认回复语言；prompt 中明确指定的语言仍然优先。之后可在控制台中修改，也可运行 `tokenless config --language en` 或 `tokenless config --language zh-CN`。
 
