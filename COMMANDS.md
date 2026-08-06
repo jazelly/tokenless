@@ -127,7 +127,7 @@ tokenless -V
 
 ### `tokenless install` (low-level compatibility)
 
-Resolves or installs the selected exact browser runtime, saves the runtime preference, upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, and ensures that the local daemon matches the installed CLI version and control API revision. Use `tokenless upgrade` for the normal user-facing maintenance workflow; this command remains available for low-level runtime provisioning and compatibility automation. A proof-verified daemon for the same Tokenless home is gracefully restarted from the current CLI package when either value is stale; foreign or unverified listeners are never stopped.
+Resolves or installs the selected exact browser runtime, saves the runtime preference, upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, and ensures that the local daemon matches the installed CLI version and control API revision. The canonical skill copy is kept in `~/.agents/skills`; when common agent roots already exist, maintenance also refreshes direct copies for Codex, Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, Pi, Hermes, and Windsurf, plus the legacy `~/.agent/skills` location. Use `tokenless upgrade` for the normal user-facing maintenance workflow; this command remains available for low-level runtime provisioning and compatibility automation. A proof-verified daemon for the same Tokenless home is gracefully restarted from the current CLI package when either value is stale; foreign or unverified listeners are never stopped.
 
 ```bash
 tokenless install --browser auto --json
@@ -146,7 +146,7 @@ This command does not update the global npm CLI, configure a managed profile, or
 
 ### `tokenless setup`
 
-Runs the complete onboarding flow: discovers system and cached runtimes, resolves or installs the exact selected browser, creates or selects a runtime-compatible managed profile, saves the verified selection, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and performs one live sign-in check for every enabled provider. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
+Runs the complete onboarding flow: discovers system and cached runtimes, resolves or installs the exact selected browser, creates or selects a runtime-compatible managed profile, saves the verified selection, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and performs one live sign-in check for every enabled provider. Skill maintenance keeps `~/.agents/skills` canonical and refreshes direct copies for already-present common agent roots, including `~/.codex/skills` and `~/.claude/skills`; it also repairs the legacy `~/.agent/skills` location. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
 
 Interactive setup:
 
@@ -293,7 +293,7 @@ The config file also accepts the experimental `browserConnectionMode` value `pla
 
 ### `tokenless upgrade`
 
-Runs the canonical user-facing maintenance pipeline. It updates the global npm CLI, resolves and verifies the installed CLI, invokes that new CLI's shared maintenance module to upsert global agent skills and reconcile the matching daemon, then runs doctor. Use this instead of `tokenless install` for normal installation maintenance and upgrades.
+Runs the canonical user-facing maintenance pipeline. It updates the global npm CLI, resolves and verifies the installed CLI, invokes that new CLI's shared maintenance module to upsert global agent skills across the canonical and detected direct agent roots and reconcile the matching daemon, then runs doctor. Use this instead of `tokenless install` for normal installation maintenance and upgrades.
 
 ```bash
 tokenless upgrade

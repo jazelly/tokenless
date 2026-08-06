@@ -127,7 +127,7 @@ tokenless -V
 
 ### `tokenless install`（底层兼容命令）
 
-解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 的版本和 control API revision 一致。面向普通用户的日常维护请使用 `tokenless upgrade`；本命令保留给底层 runtime provisioning 和兼容性自动化。如果同一 Tokenless home 下通过 proof 验证的 daemon 任一值已过期，当前 CLI package 会优雅重启它；foreign 或未经验证的 listener 绝不会被停止。
+解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 的版本和 control API revision 一致。canonical skill copy 保存在 `~/.agents/skills`；当常见 agent root 已存在时，maintenance 还会刷新 Codex、Claude Code、Cursor、Copilot、Gemini CLI、OpenCode、Pi、Hermes 和 Windsurf 的 direct copy，以及 legacy 的 `~/.agent/skills`。面向普通用户的日常维护请使用 `tokenless upgrade`；本命令保留给底层 runtime provisioning 和兼容性自动化。如果同一 Tokenless home 下通过 proof 验证的 daemon 任一值已过期，当前 CLI package 会优雅重启它；foreign 或未经验证的 listener 绝不会被停止。
 
 ```bash
 tokenless install --browser auto --json
@@ -146,7 +146,7 @@ tokenless install --browsers chrome,edge --json
 
 ### `tokenless setup`
 
-执行完整 onboarding：发现 system 与 cached runtimes，解析或安装精确的所选 browser，创建或选择 runtime-compatible managed profile，保存已验证的 selection，upsert 全局 Tokenless agent skills，将 daemon 对齐已安装 CLI 版本，并对所有 enabled providers 各执行一次实时登录检查。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
+执行完整 onboarding：发现 system 与 cached runtimes，解析或安装精确的所选 browser，创建或选择 runtime-compatible managed profile，保存已验证的 selection，upsert 全局 Tokenless agent skills，将 daemon 对齐已安装 CLI 版本，并对所有 enabled providers 各执行一次实时登录检查。Skill maintenance 以 `~/.agents/skills` 为 canonical，并刷新已经存在的常见 agent root（包括 `~/.codex/skills` 和 `~/.claude/skills`）中的 direct copy；同时修复 legacy 的 `~/.agent/skills`。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
 
 交互式 setup：
 
@@ -293,7 +293,7 @@ Config 文件还接受实验性的 `browserConnectionMode`，值为 `playwright`
 
 ### `tokenless upgrade`
 
-执行面向普通用户的 canonical maintenance pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来 upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。日常安装维护和升级请使用它，不要直接使用 `tokenless install`。
+执行面向普通用户的 canonical maintenance pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来跨 canonical 与已检测到的 direct agent root upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。日常安装维护和升级请使用它，不要直接使用 `tokenless install`。
 
 ```bash
 tokenless upgrade

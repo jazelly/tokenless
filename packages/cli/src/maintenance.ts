@@ -53,6 +53,7 @@ export async function reconcileTokenlessMaintenance({
       upserted: true,
       checked: true,
       manifests: Object.values(skillInstall.check.skills).map((skill) => skill.manifest),
+      targets: skillInstall.check.targets,
     },
     daemon,
   }
