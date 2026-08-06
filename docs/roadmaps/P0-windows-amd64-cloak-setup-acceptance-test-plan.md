@@ -1,4 +1,4 @@
-# Windows x64 Browser Runtime, Surface, and Fallback Acceptance Test Plan
+# Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan
 
 Status: ready for execution | Priority: P0 | Last reviewed: 2026-08-06
 
@@ -8,7 +8,7 @@ Tracks: [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-sel
 
 ## Objective
 
-Prove the complete Windows x64 browser path on named AMD and Intel machines using the built Tokenless CLI, packaged daemon, real browser executables, real filesystems, real browser processes, and the real provider network.
+Prove the complete Windows AMD x86-64 browser path using the built Tokenless CLI, packaged daemon, real browser executables, real filesystems, real browser processes, and the real provider network.
 
 Acceptance covers four distinct claims:
 
@@ -19,15 +19,14 @@ Acceptance covers four distinct claims:
 
 This plan does not automate browser login, claim guaranteed CAPTCHA bypass, or treat a public landing-page check as authenticated provider capability proof. Authenticated prompt, response, upload, citation, continuation, and Project gates remain separate manual release prerequisites.
 
-## Required Hosts and Locked Runtimes
+## Required Host and Locked Runtimes
 
-The full behavioral matrix must run once on each named hardware class. Node reports both as `win32-x64`; the evidence record must therefore include the processor manufacturer from Windows rather than inferring it from `process.arch`.
+The full behavioral matrix must run on a named AMD x86-64 host. Node reports the platform as `win32-x64`; the evidence record must therefore confirm the processor manufacturer from Windows rather than inferring AMD hardware from `process.arch`.
 
 | Item | Locked expectation |
 | --- | --- |
 | Operating system | A currently supported Windows 10 or Windows 11 x64 build |
-| Hardware run A | Physical or dedicated-VM host backed by AMD x86-64 hardware |
-| Hardware run B | Physical or dedicated-VM host backed by Intel x86-64 hardware |
+| CPU coverage | Physical or dedicated-VM host backed by AMD x86-64 hardware (`AMD64`, Node `x64`) |
 | Node runtime | Project-supported Node version; record exact version |
 | Managed Chrome for Testing artifact | `146.0.7680.165` |
 | Cloak artifact | `146.0.7680.177.5` |
@@ -35,7 +34,7 @@ The full behavioral matrix must run once on each named hardware class. Node repo
 | System Chrome | Installed stable Chrome; record the exact product and Chromium version at execution time |
 | Browser visibility | Both `headed` and `headless` |
 
-Windows ARM64 and 32-bit Windows are unsupported by this plan. A generic hosted CI label is not evidence for either CPU-vendor row unless the actual host manufacturer is recorded and the browser/provider run is stable enough to satisfy every gate.
+This plan is deliberately AMD-only. Windows ARM64, 32-bit Windows x86, and independent Intel-hardware certification are outside its scope. A generic hosted CI label is not AMD evidence unless the actual host manufacturer is recorded and the browser/provider run is stable enough to satisfy every gate.
 
 Record the host identity before execution:
 
@@ -98,7 +97,7 @@ Every setup case must prove:
 
 ## Runtime and Public-Surface Matrix
 
-Run every row on both the AMD and Intel hosts. “Strict” means the browser itself must clear all enabled provider surfaces. “Fallback” means the primary failure is preserved as evidence and a separate Cloak profile must clear every provider that failed in the primary attempt.
+Run every row on the AMD host. “Strict” means the browser itself must clear all enabled provider surfaces. “Fallback” means the primary failure is preserved as evidence and a separate Cloak profile must clear every provider that failed in the primary attempt.
 
 | Browser selection | Locked/recorded version | Headed | Headless | Acceptance role |
 | --- | --- | --- | --- | --- |
@@ -131,7 +130,7 @@ For both system Chrome and managed Chrome for Testing, in both visibility modes:
 5. revisit every provider that failed in the primary attempt; and
 6. fail unless Cloak clears every one of those provider failures.
 
-If a Chrome row happens to have no provider failure, record it as a successful Chrome observation but leave that row's fallback criterion unproven. Do not manufacture a challenge or rerun until one appears. A release needs at least one naturally observed, passing system-Chrome-to-Cloak fallback row and one managed-Chrome-to-Cloak fallback row on each hardware class.
+If a Chrome row happens to have no provider failure, record it as a successful Chrome observation but leave that row's fallback criterion unproven. Do not manufacture a challenge or rerun until one appears. A release needs at least one naturally observed, passing system-Chrome-to-Cloak fallback row and one managed-Chrome-to-Cloak fallback row on the AMD host.
 
 ## Commands
 
@@ -187,26 +186,16 @@ The current evidence schema is `tokenless.live-browser-surface-fallback-result.v
 - [ ] Managed Chrome headed and headless observations complete; at least one isolated Cloak fallback row passes.
 - [ ] Authenticated provider gates pass for every applicable runtime and visibility.
 
-### Intel x86-64 host
-
-- [ ] Host identity and Intel processor manufacturer are recorded.
-- [ ] Setup/version/cache/recovery matrix passes.
-- [ ] Managed Chrome for Testing 146 and Cloak 146 exact-runtime launch gates pass.
-- [ ] Cloak headed and headless strict surface gates pass.
-- [ ] System Chrome headed and headless observations complete; at least one isolated Cloak fallback row passes.
-- [ ] Managed Chrome headed and headless observations complete; at least one isolated Cloak fallback row passes.
-- [ ] Authenticated provider gates pass for every applicable runtime and visibility.
-
 ## Exit Criteria
 
 This plan is complete only when:
 
-1. both named AMD and Intel Windows x64 hosts pass the setup, exact-runtime, sandbox, cleanup, and recovery gates;
+1. the named Windows AMD x86-64 host passes the setup, exact-runtime, sandbox, cleanup, and recovery gates;
 2. the complete source-version classification matrix passes or a historical-version row is explicitly blocked only by unavailable official installation media;
-3. managed Chrome for Testing `146.0.7680.165` and Cloak `146.0.7680.177.5` are downloaded or reused, verified, bound, launched, inspected, and cleaned up on both hosts;
-4. Cloak passes the complete strict public-surface matrix in headed and headless modes on both hosts;
-5. system Chrome and managed Chrome for Testing complete headed and headless observation rows on both hosts;
-6. at least one natural provider failure exercises and passes each required Chrome-to-Cloak fallback category on each host, using isolated profiles and clearing every failed provider;
+3. managed Chrome for Testing `146.0.7680.165` and Cloak `146.0.7680.177.5` are downloaded or reused, verified, bound, launched, inspected, and cleaned up on the AMD host;
+4. Cloak passes the complete strict public-surface matrix in headed and headless modes on the AMD host;
+5. system Chrome and managed Chrome for Testing complete headed and headless observation rows on the AMD host;
+6. at least one natural provider failure exercises and passes each required Chrome-to-Cloak fallback category on the AMD host, using isolated profiles and clearing every failed provider;
 7. Google anti-bot control results remain separately recorded and are never substituted for provider fallback evidence;
 8. no invoked run uses fixtures, interception, simulation, skip, internal retry, automated login, or automated challenge interaction;
 9. applicable authenticated provider capability gates pass through the built CLI, packaged daemon, selected managed profile, and real provider network; and

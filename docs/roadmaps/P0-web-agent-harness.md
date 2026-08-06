@@ -1,10 +1,10 @@
 # Web Agent Harness
 
-Status: proposed | Priority: P0 | First provider: ChatGPT | First harness capability: Caller-Selected Skill Injection
+Status: proposed | Priority: P0 | First provider: ChatGPT | First harness capability: Caller-Selected Skill File Delivery
 
-Depends on: the typed visible-provider capability seam, durable daemon jobs and conversation lanes, the Context Envelope contract, and real ChatGPT Project, instruction, upload, and continuation evidence
+Depends on: the typed visible-provider capability seam, durable daemon jobs and conversation lanes, the Context Envelope contract, and real ChatGPT Project, Markdown file upload, instruction, and chat evidence
 
-Related: [Agent Session Integrations](P1-agent-session-integrations.md) owns the caller-facing local MCP server, exact caller-session/turn binding, and Agent adapters that transmit Skill selections; this roadmap owns resolving those selections, injecting `SKILL.md`, and executing MCP tool calls proposed by the web model
+Related: [Agent Session Integrations](P1-agent-session-integrations.md) owns the caller-facing local MCP server, exact caller-session/turn binding, and Agent adapters that transmit Skill selections; this roadmap owns resolving those selections, delivering `SKILL.md` files, and executing MCP tool calls proposed by the web model
 
 Packaging direction: one independently buildable workspace package as the implementation owner, exposed through authenticated daemon HTTP and CLI in the same first usable slice; separate Harness project only after the provider-turn interface and real agent loop are stable
 
@@ -18,25 +18,29 @@ The first complete path is ChatGPT because it is the current strategic target fo
 
 Web turns are materially slower and more expensive than local tool execution. The Harness therefore optimizes for fewer provider round trips rather than imitating an API-native one-tool-call-at-a-time loop. Every non-final web response must describe one complete current action batch: all executable actions the model can determine now, plus all user inputs or other prerequisites it already knows are missing. It cannot defer an independent known action or ask for one known missing item at a time.
 
-V1 proves caller-selected skill delivery and one bounded batch-control loop before adding general filesystem or MCP authority:
+V1 proves best-effort caller-selected Skill file delivery and one bounded batch-control loop before adding general filesystem or MCP authority:
 
-1. accept one `AgentRunSpec` through the package interface, authenticated daemon HTTP interface, or CLI, including the current caller turn and an ordered set of Skill selections made explicitly by the user or automatically by the caller Agent;
-2. resolve only those selected Skills inside explicitly approved roots, validate and freeze their exact `SKILL.md` revisions, and reject ambiguous or unavailable selections before a provider mutation;
-3. create or resolve an exact ChatGPT Project and a fresh conversation;
-4. inject every selected `SKILL.md` body with the versioned Harness instructions, user goal, available tool catalog, and batch-completeness contract before the first task turn;
-5. parse either a schema-valid `action_batch` containing all currently known calls and consolidated missing-input requests, or a schema-valid final result;
-6. validate and persist the whole batch, collect every required local user decision in one request, and return one ordered aggregate result to the exact same conversation; and
-7. repeat only when results reveal a genuinely new dependency, until ChatGPT returns a schema-valid final result or the run reaches a waiting or terminal state.
+1. accept one `AgentRunSpec` or later turn intervention through the package interface, authenticated daemon HTTP interface, or CLI, including the current caller turn and any ordered Skill selections made explicitly by the user or automatically by the caller Agent;
+2. resolve the newly selected Skills inside approved roots and validate their exact `SKILL.md` revisions on a best-effort basis; unavailable, ambiguous, invalid, or over-limit items are skipped without failing the run;
+3. stage each accepted new `SKILL.md` as a private, immutable, content-addressed Markdown attachment with a collision-free display name and one ordered manifest revision;
+4. select a Provider route using the existing `conversation.chat` requirement and create or resolve the ChatGPT conversation;
+5. when that route also supports the existing `file.upload` capability, attempt to upload the staged Skill files before the corresponding Prompt; otherwise continue the chat without them. The Prompt manifest names only successfully delivered files;
+6. parse either a schema-valid `action_batch` containing all currently known calls and consolidated missing-input requests, or a schema-valid final result;
+7. validate and persist the whole batch, collect every required local user decision in one request, and return one ordered aggregate result to the exact same conversation; and
+8. repeat only when results reveal a genuinely new dependency, until ChatGPT returns a schema-valid final result or the run reaches a waiting or terminal state.
 
-This first slice deliberately has no Skill resource read, Skill asset upload, Skill script execution, workspace write, arbitrary file read, process execution, network tool, or MCP server. It proves the hard web-specific parts—caller-to-run context handoff, high-payload `SKILL.md` instruction delivery, complete-batch output framing, correlation, validation, consolidated user input, aggregate result return, continuation, and durable looping. Filesystem and MCP then enter through the same batched tool-runtime seam instead of creating separate agent loops.
+This first slice attempts to upload selected `SKILL.md` files but has no Skill resource read, Skill asset upload, Skill script execution, workspace write, arbitrary file read, process execution, network tool, or MCP server. It proves the hard web-specific parts—caller-to-run context handoff, initial and later-turn instruction-file delivery, complete-batch output framing, correlation, validation, consolidated user input, aggregate result return, and durable looping. Filesystem and MCP then enter through the same batched tool-runtime seam instead of creating separate agent loops.
 
 ## User-Visible Batch Stories
 
 | User input | Expected Harness behavior | User-visible result |
 | --- | --- | --- |
-| The user explicitly selects two Skills in the caller Agent | The caller passes both selections to Tokenless; the Harness injects both complete `SKILL.md` revisions before the first task turn | The web model can use both Skills immediately; there is no web-side Skill-selection round trip |
-| The caller Agent automatically selects three Skills from its current interaction | The caller adapter sends all three selected identities and their selection provenance in the initial run request | All three `SKILL.md` bodies are present in the first web prompt; the Harness does not guess or ask the web model to select again |
+| The user explicitly selects two Skills in the caller Agent | The caller passes both selections to Tokenless; the Harness stages and uploads both exact `SKILL.md` revisions before submitting the first task Prompt | The web model can use both Skills immediately; there is no web-side Skill-selection round trip |
+| The caller Agent automatically selects three Skills from its current interaction | The caller adapter sends all three selected identities and their selection provenance in the initial run request | All three Skill files are uploaded together and referenced by one manifest in the first Prompt; the Harness does not guess or ask the web model to select again |
 | The caller supplies no Skill selection | Start the run without scanning or advertising unrelated Skills to the web model | The task runs without Skill instructions; selection is never inferred from the web model's answer |
+| The caller selects another Skill after the run has started | Resolve and attach the new `SKILL.md` before the next Prompt, then append a new manifest revision | The same chat can begin using the additional Skill without restarting the run |
+| A Skill is missing, too large, exceeds the attachment count, or cannot be uploaded | Skip that Skill, keep a bounded internal delivery diagnostic, and continue the chat | Skill delivery remains a soft enhancement and does not block the user's task |
+| The selected Provider supports chat but not file upload | Continue through `conversation.chat` without Skill attachments | Provider choice is not failed or changed solely because best-effort Skill delivery is unavailable |
 | “Compare these three project files” | Return all three independent reads in one action batch and execute them concurrently when safe | One reading phase, one aggregate result submission, then the answer |
 | The task is missing audience, jurisdiction, and output language | Return all three missing-input items together | The user receives one form or question list and answers once |
 | A batch contains two safe reads and one write | Run the reads, show the write in the same consolidated review, and preserve a decision for each call | The user reviews all known work at once; denied calls are reported alongside successful calls |
@@ -73,6 +77,7 @@ flowchart TB
   Caller["Caller"]
   SkillSelection["Caller-selected Skill identities<br/>explicit user or caller Agent"]
   Skills["Approved Skill roots<br/>SKILL.md only in V1"]
+  SkillFiles["Run-owned staged attachments<br/>one exact file per selected Skill"]
   Harness["Layer 2: Web Agent Harness<br/>batched model-output execution loop"]
   Tools["Harness tool runtime<br/>batched filesystem + MCP execution"]
   Files["Approved workspace roots"]
@@ -85,6 +90,8 @@ flowchart TB
   Caller --> SkillSelection
   SkillSelection --> Harness
   Skills --> Harness
+  Harness --> SkillFiles
+  SkillFiles --> Provider
   Harness <--> Tools
   Tools <--> Files
   Tools <--> MCP
@@ -103,7 +110,7 @@ The intended end state contains two independently useful projects:
 
 | Module and eventual project | Owns | Does not own |
 | --- | --- | --- |
-| Web Provider API | Playwright provider adapters, managed browser execution, Projects, files, conversations, visible model controls, durable provider turns, routing, scheduling, scaling, evidence, and the versioned Web Provider interface | Skill injection, MCP tool execution, approvals, or an agent loop |
+| Web Provider API | Playwright provider adapters, managed browser execution, Projects, files, conversations, visible model controls, durable provider turns, routing, scheduling, scaling, evidence, and the versioned Web Provider interface | Skill selection or instruction semantics, MCP tool execution, approvals, or an agent loop |
 | Web Agent Harness | Agent runs, caller-selected Skill resolution, web-specific high-payload instruction delivery, complete action batches, bounded filesystem tools, MCP tool execution, consolidated approvals and input, aggregate results, output validation, loop policy, and harness-owned run state | Caller-Agent Skill selection policy, provider DOM, browser profiles, selectors, credentials, or direct Playwright operations |
 
 The repository is not split while both interfaces are still moving. The delivery sequence is:
@@ -111,7 +118,7 @@ The repository is not split while both interfaces are still moving. The delivery
 1. keep the existing Web Provider API implementation in this repository;
 2. add the harness as an independently buildable workspace package, provisionally `packages/web-agent-harness/`;
 3. make that package depend only on a versioned provider-turn client and shared wire schemas;
-4. prove complete caller-selected `SKILL.md` injection, then the first external-tool loop, and stabilize the cross-package interface; and
+4. prove complete caller-selected `SKILL.md` file delivery, then the first external-tool loop, and stabilize the cross-package interface; and
 5. extract the harness package into its own project only when doing so is a mechanical repository move rather than an architectural rewrite.
 
 No external package scope, registry namespace, or final package name is assumed by this roadmap. Those names require separate ownership verification before publication.
@@ -147,7 +154,7 @@ packages/web-agent-harness/
     internal/
       control/                # visible envelope schemas, framing, and validation
       instructions/           # precedence, provenance, budgets, and rendering
-      skills/                 # caller selection resolution, SKILL.md validation, and injection
+      skills/                 # caller selection resolution, SKILL.md validation, staging, and manifest
       tools/                  # registry, policy, execution, and bounded outcomes
         filesystem/           # rooted read, search, patch, and artifact materialization
         mcp/                  # MCP tool execution, authentication, and resume
@@ -166,7 +173,9 @@ interface WebAgentHarness {
 }
 ```
 
-Selected Skills are part of `AgentRunSpec`; they are not tool calls. Callers do not invoke `readFile`, `writeFile`, or `callMcpTool` directly through this interface. Those operations originate in validated web-model action batches handled inside one run.
+Selected Skills may be part of the initial `AgentRunSpec` or a later `AgentRunIntervention`; they are not tool calls. Callers do not invoke `readFile`, `writeFile`, or `callMcpTool` directly through this interface. Those operations originate in validated web-model action batches handled inside one run.
+
+`AgentRunIntervention` may carry the next caller turn plus another `selectedSkills` list. This adds a Skill manifest revision for that turn; it does not restart the run or invalidate previously delivered Skills.
 
 ### Entry Points: One Module, Three Access Paths
 
@@ -174,7 +183,7 @@ Package, daemon HTTP, and CLI are all required in the first usable Harness slice
 
 | Access path | Role | Required behavior |
 | --- | --- | --- |
-| Package interface | Canonical in-process Harness interface and implementation seam | Own `start`, `read`, `resume`, and `cancel`, validation, persistence, Skill injection, batching, and final results |
+| Package interface | Canonical in-process Harness interface and implementation seam | Own `start`, `read`, `resume`, and `cancel`, validation, persistence, Skill file delivery, batching, and final results |
 | Authenticated daemon HTTP | Durable process interface over the same Harness module | Expose the same run lifecycle and schemas without leaking package internals or daemon storage |
 | CLI | Human, scripting, diagnostics, and recovery adapter | Submit the same `AgentRunSpec`, including selected Skills and caller-turn context, then read or resume the same durable run through the daemon client |
 
@@ -185,7 +194,7 @@ The CLI must not implement a second instruction compiler, Skill resolver, valida
 This is not a generic model-API harness with a Web Provider adapter added afterward. Its loop is designed around the actual Web Provider interface:
 
 - model output arrives as a slow, complete visible webpage response rather than a native function-call event stream, so the Harness contract maximizes useful work per turn;
-- caller-selected `SKILL.md` instructions and the MCP calling contract must be injected through proven Project instructions, files, or a visible conversation bootstrap;
+- caller-selected `SKILL.md` instructions must be staged and delivered through proven visible Markdown attachments, while the stable Harness contract and MCP calling contract use proven Project instructions or a visible conversation bootstrap;
 - the current tool catalog and per-turn nonce must fit provider message and file limits;
 - every currently executable filesystem and MCP request plus every known missing input must be parsed from one complete action batch;
 - locally independent actions execute without additional provider turns, and their ordered aggregate results return as one next message in the exact same provider conversation;
@@ -273,7 +282,7 @@ An `AgentRunSpec` contains:
 - the user goal and optional structured output requirement;
 - an exact caller/session/project/turn binding and bounded caller-turn context when available;
 - a Context Envelope and selected attachments;
-- approved Skill roots and access rules plus an ordered `SkillSelection[]` supplied by the caller, with each selection attributed to `explicit_user` or `caller_agent`;
+- approved Skill roots and access rules plus an optional ordered initial `SkillSelection[]` supplied by the caller, with each selection attributed to `explicit_user` or `caller_agent`;
 - an explicit tool-set reference, not an ambient global tool dump;
 - approval policy and local resource scopes;
 - provider/profile constraints and required provider capabilities; and
@@ -286,23 +295,25 @@ The conceptual caller-supplied selection is deliberately small:
   "selectedSkills": [
     {
       "name": "legal-writing",
+      "sourceRootId": "global-agents",
       "selectedBy": "explicit_user",
       "expectedRevision": "sha256:optional"
     },
     {
       "name": "pdf-processing",
+      "sourceRootId": "worktree-agents",
       "selectedBy": "caller_agent"
     }
   ]
 }
 ```
 
-`name` resolves only within the run's approved Skill roots; an optional logical root identity may disambiguate names without accepting an arbitrary path. `expectedRevision`, when present, must match the locally resolved `SKILL.md`. The request never embeds the Skill body. Every accepted selection—especially one explicitly named by the user—must be compiled into the initial instruction payload before the first web task turn.
+`name` resolves only within the run's approved Skill roots; an optional logical root identity may disambiguate names without accepting an arbitrary path. `expectedRevision`, when present, must match the locally resolved `SKILL.md` or that selection is skipped. The request never embeds the Skill body. The same `selectedSkills` shape may appear in a later turn intervention; each newly accepted selection is considered for attachment before that next Prompt.
 
 The harness implementation owns:
 
 - compiling instruction layers with explicit precedence and provenance;
-- resolving only caller-selected Skills against approved roots, validating their `SKILL.md` files, and freezing the ordered exact revisions for the run;
+- resolving caller-selected Skills against approved roots, validating their `SKILL.md` files, and recording ordered per-turn selection and delivery revisions;
 - freezing a bounded tool-catalog snapshot for the run;
 - creating a fresh provider conversation for each new run;
 - driving provider turns through the provider runtime interface;
@@ -316,19 +327,15 @@ The harness implementation owns:
 
 The harness does not know provider selectors, daemon internals, or MCP transport internals. It depends on the provider-turn client and tool-runtime interfaces.
 
-## Provider Eligibility for Agent Runs
+## Provider Requirements for Skill Delivery
 
-Normal chat support does not imply agent-harness support. The runtime catalog should distinguish at least:
+V1 introduces no new Provider capability names or eligibility levels for the Harness. A run requires the existing `conversation.chat` capability. When a turn has newly selected Skills and the chosen route also exposes the existing `file.upload` capability, the Harness attempts to attach those Markdown files before that turn's Prompt.
 
-| Level | Minimum proven behavior |
-| --- | --- |
-| `qa` | Submit one prompt and return one correlated complete response |
-| `continuable` | Reopen and continue the exact durable conversation without identity ambiguity |
-| `harness_agent` | Deliver the required instruction fidelity, follow the control protocol, complete tool-result round trips, and reach a bounded final result through real browser E2E |
+The only Provider capability names consulted by this V1 flow are `conversation.chat` and `file.upload`; there is no additional Skill-specific capability. If `file.upload` is absent, a selected file is over the local or Provider limit, resolution fails, or the upload action fails, the Harness records the bounded delivery outcome and continues the chat without treating the Skill as a run prerequisite.
 
-An `agent.run` route requires every capability needed by that run, including normal chat, exact continuation, the selected instruction-delivery mode, attachments or native workspace when requested, and a real-E2E-closed harness protocol route.
+Skipped Skill delivery is silent in the normal task experience: it does not add a warning to the user Prompt, Provider Prompt, or final answer. The bounded requested/delivered/skipped record remains inspectable through run diagnostics when troubleshooting is needed.
 
-ChatGPT is the only initial `harness_agent` candidate. Claude, Gemini, Grok, Qwen, DeepSeek, and future providers remain `qa` or `continuable` until the same real-boundary criteria close independently. Similar UI labels or one successful demonstration do not establish parity.
+ChatGPT remains the first implementation target. Other Providers can use the same `conversation.chat` plus optional `file.upload` behavior without first entering a separate Harness capability tier.
 
 Once the first provider turn mutates a conversation, the run is pinned to that provider, profile, workspace, conversation, instruction revision, and tool-catalog revision. Mid-run provider fallback is not allowed because model state, tool decisions, and prior mutations are not portable.
 
@@ -342,13 +349,15 @@ Tokenless must not claim a native `system` role when a provider website does not
 | `conversation_bootstrap` | Instructions are delivered as a visible first conversation message and verified through the resulting conversation |
 | `unsupported` | The required instruction semantics cannot be delivered or verified safely |
 
-Project instructions are preferred for the stable Harness contract when the exact Project is Tokenless-owned or the user explicitly approved the update. Tokenless never overwrites unrelated user instructions. Stable Harness behavior, including the complete-batch requirement, belongs in a versioned Project instruction or equivalent durable instruction surface. Dynamic task context, caller-selected Skill revisions, tool schemas, run nonce, and limits belong in the fresh conversation bootstrap so Project instructions do not churn on every run.
+Project instructions are preferred for the stable Harness contract when the exact Project is Tokenless-owned or the user explicitly approved the update. Tokenless never overwrites unrelated user instructions. Stable Harness behavior, including the complete-batch requirement and the rule for interpreting Tokenless Skill attachments, belongs in a versioned Project instruction or equivalent durable instruction surface. Dynamic task context, the initial delivered-Skill manifest, tool schemas, run nonce, and limits belong in the fresh conversation bootstrap; later delivered-Skill manifest revisions belong in their corresponding turn Prompts so Project instructions do not churn.
+
+Selected Skills are conversation-scoped inputs, not permanent Project knowledge. V1 may upload them before the first Prompt or attach newly selected Skills before any later Prompt. Successfully uploaded files remain associated with the current chat according to the Provider's normal behavior; Tokenless does not require a separate retention capability and does not accumulate them in a reused Project file store.
 
 Instruction compilation uses this precedence:
 
 1. immutable Tokenless safety and control-protocol contract;
 2. explicit user and organization policy;
-3. caller-selected Skill instructions in the order frozen by the run request;
+3. successfully delivered caller-selected Skill instructions in the order recorded by successive manifest revisions;
 4. tool catalog and per-tool usage guidance;
 5. task goal and Context Envelope; and
 6. prior filesystem, MCP, and other external tool results, which are always marked as untrusted data.
@@ -359,8 +368,9 @@ Lower layers cannot grant permissions, add tools, or rewrite higher-layer policy
 
 The Harness optimizes provider turns before optimizing prompt bytes. Each task turn should contain enough bounded information for the model to make every decision that does not depend on an unknown future tool result:
 
-- inject the complete bodies of every caller-selected `SKILL.md` before the first task turn;
+- for every turn, stage each newly selected `SKILL.md` that resolves within the soft limits and attempt to attach it before that turn's Prompt when `file.upload` is available;
 - do not advertise an ambient Skill catalog or ask the web model to select additional Skills in V1;
+- include a bounded manifest entry only for successfully delivered Skill files, with each Skill name, collision-free attachment name, full digest, selection provenance, and instruction order; do not duplicate the Skill bodies inline;
 - include the complete selected tool schemas, effects, and usage guidance when they fit the run budget; never advertise a tool that the Harness cannot validate and dispatch;
 - include every result from the preceding batch in one ordered aggregate provider turn; when bounded text does not fit comfortably in the message, attach one or more indexed, content-addressed result artifacts in that same turn and include their manifest in the prompt;
 - include every locally collected answer, denial, authentication completion, and approval outcome together when resuming the model.
@@ -374,7 +384,7 @@ Tokenless's visible-site interface does not receive the native function-call eve
 - `action_batch`: all actions whose arguments are currently known plus all known missing user inputs; or
 - `final`: the final Markdown or structured result and declared artifacts.
 
-An `action_batch` may contain many filesystem, registered-local, and MCP calls. It may also contain many missing-input items. Skill selection and injection happen before the first web turn and are not represented as tool calls. At least one list must be non-empty. The model must not use empty batches, prose promises, or serial one-call responses to defer work it can already specify.
+An `action_batch` may contain many filesystem, registered-local, and MCP calls. It may also contain many missing-input items. Skill selection and file delivery happen before the corresponding web turn and are not represented as tool calls. At least one list must be non-empty. The model must not use empty batches, prose promises, or serial one-call responses to defer work it can already specify.
 
 The conceptual envelope is:
 
@@ -462,7 +472,7 @@ The Harness-to-model continuation is one `action_batch_result`, conceptually:
 
 This envelope is input compiled by the Harness, not model output and not an authorization surface. It is sent only after every call and need in the original batch is stable: calls are `succeeded`, `denied`, `failed`, or `cancelled`, and needs are answered, denied, or cancelled. Authentication completion is reported without credentials. If the bounded inline representation is too large, the same continuation contains an ordered artifact manifest instead of splitting the batch across provider turns.
 
-Batch completeness is partly a model behavior rather than something a JSON validator can prove. A provider becomes `harness_agent` eligible only when real-browser acceptance shows that it reliably groups multiple independent actions and missing inputs instead of forcing avoidable provider turns.
+Batch completeness is partly a model behavior rather than something a JSON validator can prove. Real-browser checks should observe whether a Provider groups multiple independent actions and missing inputs, but V1 does not encode that observation as a separate Provider capability or eligibility tier.
 
 ### Model Output Validation Pipeline
 
@@ -597,19 +607,23 @@ Each local tool must declare exact resource scopes and side effects. Filesystem 
 
 A Skill is an Agent Skills-compatible instruction package, not executable authority. V1 separates selection from delivery:
 
-1. the upstream caller decides which Skills apply to the current interaction, either because the user explicitly selected them or because the caller Agent selected them using its own interaction context;
-2. the caller sends the complete ordered selection through `AgentRunSpec` over the package interface, daemon HTTP, or CLI, preserving whether each selection came from `explicit_user` or `caller_agent`;
-3. the Harness resolves only those selections from the exact bound worktree conventions or explicitly configured roots, validates name, frontmatter, file size, symlink containment, compatibility, and access policy, and freezes each selected `SKILL.md` revision;
-4. the Harness injects all selected `SKILL.md` bodies into the initial visible instruction payload in deterministic order; and
-5. the web model receives no ambient Skill catalog and has no `skill.load` tool in V1.
+1. before the initial or any later Tokenless turn invocation, the upstream caller decides which new Skills apply, either because the user explicitly selected them or because the caller Agent selected them using its own interaction context;
+2. the caller sends the ordered additions through `AgentRunSpec` or the later turn intervention over the package interface, daemon HTTP, or CLI, preserving whether each selection came from `explicit_user` or `caller_agent`;
+3. the Harness resolves those selections from the exact bound worktree conventions or explicitly configured roots and validates name, frontmatter, file size, symlink containment, compatibility, and access policy on a best-effort basis;
+4. the Harness stages each exact body into its run-owned private attachment bundle with a display name such as `tokenless-skill--<name>--<digest-prefix>.md`, preserving the full digest and deterministic instruction order;
+5. when `file.upload` is available, the Provider attempts to upload the bounded attachment set before that turn's Prompt; individual resolution, staging, limit, capability, or upload failures are recorded and skipped without failing the run;
+6. that turn's Prompt carries a bounded manifest naming only successfully delivered attachments and their instruction order without duplicating the bodies inline; and
+7. the web model receives no ambient Skill catalog and has no `skill.load` tool in V1.
 
 The caller normally transmits Skill identities and selection provenance, not copied Skill bodies. The Harness resolves and reads the local `SKILL.md` under its own approved-root and revision checks so a caller cannot silently substitute different instruction content under a trusted Skill name.
 
-“Automatic Skill selection” therefore means automatic selection by the caller Agent before the Tokenless invocation. It never means that the Web Harness scans installed Skills and guesses from the task, or that the slower web model spends another turn choosing them. If the caller supplies no selection, the Harness injects no Skill.
+V1 recognizes the exact bound worktree's `.agents/skills/` root and the user-approved global `~/.agents/skills/` root. Additional compatibility roots remain explicit configuration. A caller adapter should include a logical `sourceRootId` when it knows the selected source. If the same Skill name resolves in more than one approved root without that identity, the Harness skips that ambiguous selection instead of choosing by incidental search order.
 
-V1 reads only `SKILL.md`. It accepts the standard `name`, `description`, `license`, `compatibility`, and string-map `metadata` fields, but the experimental `allowed-tools` field and product-specific metadata never grant permission. The Harness does not read, enumerate, upload, or expose `references/`, `assets/`, or `scripts/`; it does not follow remote Skill URLs, download packages, install dependencies, or execute anything from a Skill directory. Those resource types require a later explicit, bounded, provenance-preserving attachment or tool design.
+“Automatic Skill selection” therefore means automatic selection by the caller Agent before any Tokenless turn invocation. It never means that the Web Harness scans installed Skills and guesses from the task, or that the slower web model spends another turn choosing them. If the caller supplies no new selection, the Harness uploads no new Skill file.
 
-The Harness records one `SkillSelectionRevision` containing the caller provenance, resolved identity, content digest, validation outcome, and deterministic injection order for every selected Skill. It renders all accepted bodies together as source-attributed instruction layers before the first task turn, not as external tool data. This treatment can influence the web model but cannot influence local authorization.
+V1 reads and uploads only `SKILL.md`. It accepts the standard `name`, `description`, `license`, `compatibility`, and string-map `metadata` fields, but the experimental `allowed-tools` field and product-specific metadata never grant permission. The Harness does not read, enumerate, upload, or expose `references/`, `assets/`, or `scripts/`; it does not follow remote Skill URLs, download packages, install dependencies, or execute anything from a Skill directory. Those resource types require a later explicit, bounded, provenance-preserving attachment or tool design.
+
+The Harness records an ordered `SkillSelectionRevision` for each turn containing caller provenance, resolved identity, content digest, validation outcome, optional staged attachment identity, optional visible acceptance outcome, skip reason, and instruction order for every selected Skill. The attachment files are instruction carriers, not executable authority or ordinary external tool results. This treatment can influence the web model but cannot influence local authorization.
 
 Activating a skill may:
 
@@ -618,7 +632,7 @@ Activating a skill may:
 - narrow recommended usage or default limits; and
 - contribute output validation or artifact-handling guidance.
 
-A Skill cannot launch a process, add an MCP server, widen a filesystem root, approve a tool call, or bypass a higher-priority policy merely by being installed, selected, or mentioned. Missing required tools fail Skill preparation before the first provider mutation.
+A Skill cannot launch a process, add an MCP server, widen a filesystem root, approve a tool call, or bypass a higher-priority policy merely by being installed, selected, or mentioned. Missing required tools or preparation failures produce a soft Skill-delivery diagnostic and do not fail the chat run.
 
 ## Authorization and Containment
 
@@ -643,10 +657,10 @@ Tokenless never requests, reads, logs, or sends browser credentials, cookies, st
 One durable `AgentRun` owns ordered child records:
 
 - `AgentTurn` for each provider request and correlated response;
-- `InstructionRevision`, `SkillSelectionRevision`, and `ToolCatalogRevision` frozen for the run;
+- `InstructionRevision` and `ToolCatalogRevision` frozen for the run plus ordered `SkillSelectionRevision` records added by individual turns;
 - `ActionBatch` for each complete model proposal, including its dependency graph and validation outcome;
 - `RunNeed` for every model-requested input and Harness-discovered approval, authentication, elicitation, or ambiguity;
-- `SkillInjection` for each exact selected Skill revision delivered before the first task turn;
+- `SkillDelivery` for each selected Skill's resolved, staged, delivered, or skipped outcome before the corresponding task turn;
 - `ToolCall` for the model proposal and validation outcome;
 - `ApprovalDecision` bound to the exact call digest;
 - `ToolExecution` for dispatch, completion, error, or ambiguity;
@@ -662,7 +676,7 @@ Recovery follows explicit evidence:
 - a mutating call with ambiguous dispatch waits for user resolution and is never replayed automatically;
 - a completed tool result may be returned to the same provider conversation again only when the prior visible submission is proven absent;
 - an ambiguous provider submission uses the existing at-most-once replay policy; and
-- resume reuses the same provider conversation, instruction revision, catalog revision, limits, batch, call ids, arguments, dependencies, and already completed outcomes.
+- resume reuses the same provider conversation, instruction revision, Skill-selection revision, staged Skill attachment identities, catalog revision, limits, batch, call ids, arguments, dependencies, and already completed outcomes.
 
 Cancellation stops future turns and requests MCP cancellation where supported. It does not claim to reverse an external side effect or guarantee that a server lacking cancellation stopped its work.
 
@@ -670,13 +684,13 @@ Cancellation stops future turns and requests MCP cancellation where supported. I
 
 ### Phase 0: Seams, Contracts, Package, HTTP, and CLI
 
-- Define the four-entry-point `WebAgentHarness` interface plus `AgentRunSpec`, `AgentTurnContext`, `SkillSelection`, `SkillSelectionRevision`, `AgentRun`, `AgentTurn`, `ActionBatch`, `ValidatedCallBatch`, `RunNeed`, `ActionBatchResult`, `BatchExecutionContext`, `ToolBatchOutcome`, `ProviderTurnRequest`, `ProviderTurnRef`, `ProviderTurnState`, `ProviderTurnClient`, `InstructionDeliveryPlan`, `ToolDescriptor`, `ToolCall`, `ToolOutcome`, and approval-policy schemas.
+- Define the four-entry-point `WebAgentHarness` interface plus `AgentRunSpec`, `AgentTurnContext`, `SkillSelection`, `SkillSelectionRevision`, `SkillAttachment`, `SkillAttachmentManifest`, `SkillDelivery`, `AgentRun`, `AgentTurn`, `ActionBatch`, `ValidatedCallBatch`, `RunNeed`, `ActionBatchResult`, `BatchExecutionContext`, `ToolBatchOutcome`, `ProviderTurnRequest`, `ProviderTurnRef`, `ProviderTurnState`, `ProviderTurnClient`, `InstructionDeliveryPlan`, `ToolDescriptor`, `ToolCall`, `ToolOutcome`, and approval-policy schemas.
 - Keep visible browser actions behind provider adapters and expose one provider-turn interface to the harness.
 - Add an independently buildable harness workspace package with no imports from provider, Playwright, daemon-storage, profile, DOM, or CLI implementation modules.
 - Add authenticated daemon HTTP and CLI adapters for the same four durable Harness operations and request/result schemas; do not duplicate Harness logic in either adapter.
 - Add a provider-turn client adapter over the authenticated durable daemon interface and version the wire schemas it consumes.
 - Give the harness ownership of its AgentRun state and migrations; correlate provider jobs only through opaque public identifiers.
-- Define `qa`, `continuable`, and `harness_agent` evidence without enabling a route from product reconnaissance alone.
+- Reuse the existing `conversation.chat` and `file.upload` capability definitions without adding a Harness-specific Provider capability or eligibility tier.
 - Persist parent/child identity, turn intent, limits, checkpoints, dispatch certainty, and failure codes before any later tool mutation exists.
 - Document the caller MCP interface and web-model-driven MCP tool-execution roles without directional terminology.
 
@@ -688,19 +702,21 @@ Exit: the same no-tool `AgentRunSpec` can be started, read, resumed, and cancell
 - Add explicit Project-instruction merge, preview, revision, and rollback behavior without overwriting unrelated instructions.
 - Implement the versioned `action_batch` and `final` envelopes, per-turn nonce, whole-batch validation before dispatch, consolidated missing-input requests, aggregate batch results, Markdown and JSON Schema final-output contracts, and one bounded repair turn.
 - Freeze and report instruction and Context Envelope revisions.
-- Prove exact continuation in the same conversation.
+- Prove that the Harness can submit the next turn to the same active chat used by the run.
 
-Exit: real ChatGPT returns a schema-valid final envelope, consolidates multiple known missing inputs into one `action_batch`, and can complete one bounded protocol repair through the built CLI, packaged daemon, managed profile, and visible website.
+Exit: real ChatGPT returns a schema-valid final envelope, consolidates multiple known missing inputs into one `action_batch`, and can complete one bounded protocol repair in the same chat through the built CLI, packaged daemon, managed profile, and visible website.
 
-### Phase 2: Caller-Selected `SKILL.md` Injection
+### Phase 2: Best-Effort Caller-Selected `SKILL.md` File Delivery
 
-- Accept an ordered Skill selection from the package, daemon HTTP, and CLI request, including `explicit_user` or `caller_agent` provenance for each item.
+- Accept ordered Skill additions from the initial request and later turn interventions through package, daemon HTTP, and CLI, including `explicit_user` or `caller_agent` provenance for each item.
 - Resolve only the selected Agent Skills-compatible `SKILL.md` files from the bound worktree conventions and explicitly configured roots.
-- Validate frontmatter, names, containment, compatibility, duplicate handling, access policy, and byte limits; content-address each accepted revision.
-- Inject every selected `SKILL.md` body before the first task turn and freeze one `SkillSelectionRevision` for the run.
+- Validate frontmatter, names, containment, compatibility, duplicate handling, access policy, and byte limits; content-address accepted revisions and record skip reasons for the rest.
+- Reuse the existing private visible-attachment staging implementation to snapshot each accepted `SKILL.md` under one run-owned bundle, assign a collision-free Markdown display name, and create one ordered per-turn `SkillSelectionRevision` and manifest.
+- When the chosen chat route exposes `file.upload`, attempt one visible file action for the bounded staged subset before that turn's Prompt. If upload is unavailable or fails, continue without making Skill delivery a run error.
+- Name only successfully delivered files in that turn's manifest; do not inline their bodies or ask the web model to select Skills.
 - Do not advertise an ambient Skill catalog, expose `skill.load`, or read, enumerate, upload, or execute `references/`, `assets/`, or `scripts/` in V1.
 
-Exit: the same run submitted through package, authenticated daemon HTTP, and built CLI carries three caller-selected, uniquely canaried `SKILL.md` revisions into the first visible ChatGPT task turn and returns a schema-valid final result using all three canaries without a Skill-selection provider round trip. An unavailable, unauthorized, malformed, duplicate, ambiguous, or changed-after-snapshot selection fails before provider mutation, and no Skill resource or script is read.
+Exit: the same run submitted through package, authenticated daemon HTTP, and built CLI can upload initial Skill files before the first Prompt and newly selected Skill files before a later Prompt. Missing, invalid, ambiguous, changed, unsupported, over-count, over-byte, unavailable-upload, and failed-upload cases are recorded as skipped while the chat continues, and no Skill resource or script is read.
 
 ### Phase 3: Rooted Filesystem and Approval
 
@@ -725,7 +741,7 @@ Exit: one real ChatGPT run uses a caller-selected Skill and multiple real local 
 
 ### Phase 5: Recovery and Failure Hardening
 
-- Persist every turn, action batch, need, Skill selection and injection, call, approval, authentication handoff, execution, aggregate result, artifact, output-validation result, and evidence transition.
+- Persist every turn, action batch, need, Skill selection, staging, upload and skip outcomes, call, approval, authentication handoff, execution, aggregate result, artifact, output-validation result, and evidence transition.
 - Enforce turn, call, byte, wall-time, concurrency, and catalog limits across mixed skill, filesystem, and MCP runs.
 - Handle unknown tools, invalid arguments, denial, timeout, server failure, provider blocker, cancellation, and ambiguous mutation.
 - Resume the same run and conversation after daemon, runner, browser, or MCP process restart when evidence makes continuation safe.
@@ -758,11 +774,12 @@ All support and release claims use the built CLI, packaged TypeScript daemon, re
 The initial acceptance flow must prove:
 
 - visible instruction installation or conversation bootstrap with exact revision evidence;
-- fresh conversation creation and exact continuation;
+- fresh conversation creation and another Harness turn in the same active chat;
 - the same ordered caller-selected Skill set and provenance crossing package, authenticated daemon HTTP, and CLI access paths;
-- complete injection of every selected `SKILL.md` before the first task turn, with no ambient Skill catalog or web-model Skill-selection turn;
+- private immutable staging of accepted `SKILL.md` selections, followed by a best-effort visible upload before the corresponding Prompt when `file.upload` is available;
+- an initial Skill manifest and a later-turn manifest revision that reference only successfully delivered collision-free attachments without inlining the bodies;
+- a missing, invalid, over-limit, unavailable-upload, or failed-upload Skill that is recorded as skipped while the chat continues normally;
 - one schema-valid `action_batch` containing multiple known missing inputs, followed by one consolidated local request and one aggregate provider continuation;
-- a final answer that uses unique canaries available only in every selected `SKILL.md` body;
 - no read, enumeration, upload, or execution of Skill `references/`, `assets/`, or `scripts/`;
 - structured final-output validation, artifact-reference validation, invalid arguments, unknown tools, duplicate envelopes, stale nonce, size limits, and bounded protocol repair;
 - no workspace write, arbitrary file read, process execution, network call, or MCP server during the initial skill slice;
@@ -772,7 +789,7 @@ The initial acceptance flow must prove:
 - final text, artifacts, citations, conversation identity, calls, approvals, and execution outcomes are durably correlated; and
 - the profile test target retains keychain-neutral flags, production Chromium sandboxing remains enabled, processes are cleaned up, and no Keychain prompt appears.
 
-No provider fixtures, route interception, simulated responses, invented DOM, fake runtime, synthetic fetch, or source-regex test can close `harness_agent` support. Redacted real DOM fixtures may still support focused selector or parser maintenance under the repository fixture policy, but they are not agent-loop acceptance evidence.
+No provider fixtures, route interception, simulated responses, invented DOM, fake runtime, synthetic fetch, or source-regex test can close Harness support claims. Redacted real DOM fixtures may still support focused selector or parser maintenance under the repository fixture policy, but they are not agent-loop acceptance evidence.
 
 Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval and does not collect screenshots, full DOM, storage, credentials, or unrelated account content.
 
@@ -784,20 +801,21 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 - Removing the harness package leaves all normal provider CLI, daemon, and browser execution behavior working.
 - Extracting the harness to another repository requires no provider source move and no harness source reorganization.
 - The provider runtime can still execute a normal one-turn QA job without loading MCP or agent-harness modules.
-- ChatGPT is the only initial `harness_agent` route, and its first support claim is backed by real visible caller-selected `SKILL.md` injection and batch-control behavior before filesystem or MCP claims are added.
-- Every new agent run uses a fresh conversation and freezes exact caller-turn, instruction, context, Skill-selection, tool-catalog, provider, profile, workspace, and limit revisions.
+- ChatGPT is the first Harness implementation target, using only the existing `conversation.chat` and optional `file.upload` Provider capabilities before filesystem or MCP work is added.
+- Every new agent run uses a fresh conversation and freezes exact initial caller-turn, instruction, context, tool-catalog, provider, profile, workspace, and limit revisions while allowing ordered Skill-selection revisions on later turns.
 - Project instructions are changed only in a Tokenless-owned Project or after explicit preview and approval; unrelated instructions are never overwritten.
 - Visible instruction delivery is reported honestly and is never mislabeled as a native system role.
 - Every model response is exactly one complete `action_batch` or `final` envelope and passes framing, syntax, schema, correlation, capability, authority, and output-contract validation as applicable before any tool action or terminal success.
 - One invalid item rejects the entire undispatched batch; partial execution never precedes a protocol repair.
-- A valid batch lists all currently well-defined actions and all known missing user inputs; providers that repeatedly serialize independent work across avoidable turns are not `harness_agent` eligible.
+- A valid batch lists all currently well-defined actions and all known missing user inputs; batching remains a Harness protocol behavior rather than a Provider capability tier.
 - The Harness persists blocked calls and resumes their exact ids and arguments after approval, authentication, or elicitation instead of asking the model to replan.
 - All stable outcomes from one batch return to the provider in one ordered aggregate continuation.
 - Tool names and arguments must match the frozen schema snapshot; parser success never implies authorization.
 - MCP annotations and model claims never override locally assigned effects or approval policy.
 - The first skill slice launches no MCP server, executes no process, and has no general workspace read or write authority.
 - The first MCP phase launches only explicitly configured local `stdio` servers with bounded environment, resource policy, processes, logs, and results.
-- Skills are selected upstream, resolved only through approved roots, injected by exact `SKILL.md` revision before the first task turn, and may contribute instructions and tool requirements but cannot execute or authorize operations.
+- Skills may be selected upstream for the initial or a later turn, resolved only through approved roots, and staged and uploaded by exact `SKILL.md` revision on a best-effort basis before the corresponding Prompt.
+- Provider selection requires only `conversation.chat`; the Harness attempts Skill delivery when the same route exposes `file.upload`, and every Skill resolution, limit, capability, or upload failure remains non-terminal.
 - Package, authenticated daemon HTTP, and CLI expose the same four durable Harness operations and do not contain competing Harness implementations.
 - Filesystem writes occur only through schema-valid, rooted, stale-preimage-safe tool calls; final prose and artifact declarations never write implicitly.
 - No mutating call executes without a matching explicit policy rule or exact approval digest.
@@ -811,15 +829,18 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 
 | Risk | Response |
 | --- | --- |
-| A provider follows the control protocol inconsistently | Provider-specific real E2E, strict validation, one repair turn, finite limits, and honest `qa` fallback |
-| A provider returns one independent call or one missing question per slow turn | Make batch completeness part of the stable Harness instruction and `harness_agent` acceptance; fail or downgrade providers that repeatedly force avoidable turns |
+| A provider follows the control protocol inconsistently | Provider-specific real E2E, strict validation, one repair turn, finite limits, and a clear run error when valid agent output cannot be obtained |
+| A provider returns one independent call or one missing question per slow turn | Keep batch completeness in the stable Harness instruction and observe the extra-turn cost without inventing another Provider capability tier |
 | One batch is too large to validate, execute, or return safely | Bound calls, needs, dependencies, schemas, results, and artifacts; reject over-limit batches and require task or tool selection to narrow the run |
 | One call in a batch needs login or approval | Persist every call first, finish unrelated safe work, consolidate local interaction, resume the exact blocked call, and send one aggregate result only after all outcomes are stable |
 | Visible instructions are weaker than a native system role | Record fidelity, prefer approved Project instructions, enforce safety in the local runtime, and never claim semantic parity |
 | Tool output injects instructions into the model | Delimit it as untrusted data and make local policy authoritative even if the next model turn is compromised |
 | The model invents a tool or malformed arguments | Frozen schema snapshot, strict validation, structured error result, and bounded recovery |
 | The caller Agent automatically selects the wrong Skill | Preserve selection provenance, expose the selected list in run state, allow explicit caller overrides, and never add another Skill from web-model inference |
-| Duplicate or conflicting Skills change model behavior unpredictably | Validate only the caller selection, fail duplicate or ambiguous identities, apply access policy, and freeze exact content-addressed revisions and order per run |
+| Duplicate or conflicting Skills change model behavior unpredictably | Validate only the caller selection, skip duplicate or ambiguous identities, apply access policy, and record exact content-addressed revisions and order per turn |
+| A Provider accepts the Skill file visibly but ignores its contents | Accept that Skill delivery is best-effort in V1; do not turn semantic use into another capability or terminal condition |
+| Skill files collide by filename or change during upload | Stage immutable digest-bound copies with collision-free display names and skip any source identity change |
+| Selected Skills exceed Provider attachment count or byte limits | Upload the bounded subset that fits, record the remaining selections as skipped, and continue without an inline fallback |
 | A selected Skill contains references, assets, or scripts | V1 reads only `SKILL.md`; all other Skill-directory content remains untouched until a later explicit resource-delivery design |
 | MCP tool annotations understate side effects | Treat annotations as hints and assign effects and scopes through reviewed local policy |
 | A crash duplicates an external mutation | Persist intent first, use call ids and evidence, and stop on ambiguous dispatch |
@@ -842,6 +863,8 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 - Treating installed skills as trusted executable code or ambient permission
 - Letting the Web Harness or web model automatically discover or select additional Skills in V1
 - Reading, uploading, or executing Skill `references/`, `assets/`, or `scripts/` in V1
+- Inlining selected `SKILL.md` bodies into the task Prompt or silently switching delivery modes when file upload is unavailable in V1
+- Treating missing, skipped, or failed Skill delivery as a terminal chat error in V1
 - Reproducing an OpenAI-compatible one-tool-call-at-a-time loop when multiple actions or missing inputs are already knowable
 - Multi-agent handoffs, delegation, autonomous planning graphs, or cross-provider continuation in V1
 - Automatically applying generated code, patches, messages, or destructive changes without the applicable local review and approval

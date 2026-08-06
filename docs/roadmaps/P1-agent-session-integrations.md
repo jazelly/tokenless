@@ -4,7 +4,7 @@ Status: proposed | Priority: P1 | First integration: caller-facing local MCP ser
 
 Depends on: stable local job identity, typed provider capabilities, and the Context Envelope contract
 
-Related: [Web Agent Harness](P0-web-agent-harness.md) owns the independently buildable harness package, caller-selected Skill resolution and injection, MCP tool execution, tool authorization, and web-model action-batch loop; this roadmap owns Agent adapters that capture and transmit current-turn context and Skill selections
+Related: [Web Agent Harness](P0-web-agent-harness.md) owns the independently buildable harness package, caller-selected Skill resolution and Markdown file delivery, MCP tool execution, tool authorization, and web-model action-batch loop; this roadmap owns Agent adapters that capture and transmit current-turn context and Skill selections
 
 ## Outcome
 
@@ -161,7 +161,7 @@ MCP does not make provider-specific semantics generic. It lets the router hide t
 
 This roadmap owns the caller MCP interface: Tokenless is an MCP server called by Codex or another agent host. It does not own the separate MCP tool-execution role in which the Web Agent Harness is the MCP host/client executing action batches proposed by a web model. That role, its credentials, approvals, authentication resume, tool schemas, aggregate results, and durable loop belong to [Web Agent Harness](P0-web-agent-harness.md).
 
-This roadmap is therefore an integration interface, not an early Agent Harness. Its tools expose the Web Provider layer's durable web operations and bind them to an external session. It does not inject skills into the web model, teach the web model the action-batch protocol, execute model-proposed MCP calls, consolidate their local requirements, return aggregate results to the provider conversation, or own the agent loop. When the separate harness package is available, an agent-run interface calls that package; harness logic does not move into this P1 adapter.
+This roadmap is therefore an integration interface, not an early Agent Harness. Its tools expose the Web Provider layer's durable web operations and bind them to an external session. It does not resolve or deliver Skill files to the web model, teach the web model the action-batch protocol, execute model-proposed MCP calls, consolidate their local requirements, return aggregate results to the provider conversation, or own the agent loop. When the separate harness package is available, an agent-run interface calls that package; harness logic does not move into this P1 adapter.
 
 ## Minimal MCP Tool Surface
 
@@ -291,9 +291,9 @@ The primary flow is:
 
 1. `SessionStart` sends `session_id`, `cwd`, and adapter version to the local Tokenless control plane.
 2. Tokenless canonicalizes the working directory, resolves the project root and worktree, and persists the binding.
-3. On an explicit Tokenless invocation, the adapter sends the same session id, exact turn id, bounded current user goal, and all explicitly or caller-Agent-selected Skill identities with provenance.
-4. Tokenless resolves the provider workspace and selected Skills from the exact session/project binding and approved roots.
-5. The Harness injects every selected `SKILL.md` before the first web task turn; it does not ask the web model to choose Skills again.
+3. On each explicit initial or later Tokenless turn invocation, the adapter sends the same session id, exact turn id, bounded current user goal, and any newly explicit or caller-Agent-selected Skill identities with provenance.
+4. Tokenless resolves the provider workspace and new Skill selections from the exact session/project binding and approved roots.
+5. When `file.upload` is available, the Harness attempts to stage and upload the selected `SKILL.md` files before the corresponding web Prompt; skipped or failed Skills do not fail the chat, and the Harness does not ask the web model to choose Skills.
 6. The web result returns to the requesting session with job id, context revision, Skill-selection revision, provider conversation identity, and artifacts.
 7. `SessionEnd` marks the binding inactive without deleting retained user-approved history.
 

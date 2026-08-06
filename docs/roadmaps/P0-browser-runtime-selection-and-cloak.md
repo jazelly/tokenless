@@ -30,7 +30,7 @@ The plan is saved in the root of `docs/roadmaps/`, which is the repository's aut
 
 The unchecked acceptance items are authoritative: Brave 144 format behavior, authenticated Brave sign-in portability, Windows Brave parity, Windows x64 Intel, Windows x64 AMD, Windows Chrome 150 profile-inventory classification, Windows 146 managed-to-Cloak importability parity, and authenticated provider closure across the selected runtimes. Arc import is a deliberate product exclusion rather than an open support gate. Public-surface results remain observational even though the latest strict Cloak run completed successfully; they do not replace authenticated provider acceptance.
 
-Detailed Windows AMD and Intel execution, source-browser version cases, headed/headless surface coverage, Chrome challenge observation, isolated Cloak fallback, evidence requirements, and completion state are tracked in the active [Windows x64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-x64-browser-acceptance-test-plan.md). This parent roadmap remains the product-support authority; the test plan is the executable Windows evidence ledger.
+Detailed Windows AMD64 execution, source-browser version cases, headed/headless surface coverage, Chrome challenge observation, isolated Cloak fallback, evidence requirements, and completion state are tracked in the active [Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). This parent roadmap remains the product-support authority; the test plan is its AMD-hardware evidence ledger. Intel-hardware acceptance remains a separate unchecked gate in this parent roadmap.
 
 ## Product Decisions
 
@@ -453,7 +453,7 @@ This ledger is updated as implementation and evidence land. A checked code item 
 
 ### Milestone 6: Real-boundary acceptance
 
-Windows AMD and Intel execution for the following gates is specified and recorded in the active [Windows x64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-x64-browser-acceptance-test-plan.md). The same runtime, visibility, surface, fallback, isolation, and evidence assertions apply to both hardware classes.
+Windows AMD64 execution for the following gates is specified and recorded in the active [Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). The Intel setup/runtime gate remains tracked only in this parent roadmap.
 
 - [x] macOS Apple Silicon: the revised built-CLI browser-runtime gate proved `auto` installs or reuses and launches managed Chrome for Testing 145 even when supported system browsers are present.
 - [x] macOS Apple Silicon: the direct manager and built-CLI gates completed download, checksum, extraction, version, sandboxed smoke launch, atomic cache commit, profile binding, and doctor inspection for managed Chrome for Testing `145.0.7632.6`.
@@ -465,9 +465,7 @@ Windows AMD and Intel execution for the following gates is specified and recorde
 - [ ] macOS Apple Silicon: after explicit user login and native Keychain approval, verify that Brave 143 and Brave 145 sign-in state—not only visible History—remains usable in both managed Chrome for Testing 145 and Cloak 145, with clean browser shutdown after every case.
 - [ ] Windows x64 on Intel hardware: system, managed, and Cloak paths pass the same setup/runtime checks.
 - [ ] Windows x64 on AMD hardware: system, managed, and Cloak paths pass the same setup/runtime checks.
-- [ ] Windows x64 on Intel hardware: Cloak 146 passes the complete public-provider surface matrix in both headed and headless modes.
 - [ ] Windows x64 on AMD hardware: Cloak 146 passes the complete public-provider surface matrix in both headed and headless modes.
-- [ ] Windows x64 on Intel hardware: system Chrome and managed Chrome for Testing complete headed and headless observations, and naturally observed provider failures are cleared by isolated Cloak fallback profiles.
 - [ ] Windows x64 on AMD hardware: system Chrome and managed Chrome for Testing complete headed and headless observations, and naturally observed provider failures are cleared by isolated Cloak fallback profiles.
 - [ ] Windows x64: every surface attempt writes evidence before assertion; no required provider is skipped or internally retried, and no fixture, interception, simulation, profile reuse, automated login, or challenge interaction is used.
 - [ ] Windows x64: an unauthenticated managed Chrome for Testing `146.0.7680.165` profile passes the same importability criteria in both managed Chrome for Testing 146 and Cloak 146.
