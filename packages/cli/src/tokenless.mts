@@ -39,10 +39,11 @@ import {
   type VisibleAction,
 } from './playwright/index.js'
 import {
-  SUPPORTED_PROFILE_IMPORT_BROWSER,
-  classifyCloakProfileCompatibility,
+  DEFAULT_PROFILE_IMPORT_BROWSER,
+  SUPPORTED_PROFILE_IMPORT_BROWSERS,
+  classifyProfileImportCompatibility,
   isSupportedProfileImportBrowser,
-  type CloakProfileCompatibility,
+  type ProfileImportCompatibility,
 } from './playwright/profiles/import-policy.js'
 
 import {
@@ -212,22 +213,25 @@ type SetupCliVersionCheck = {
   } | undefined
 }
 
-type SetupCloakProfileCandidate = {
+type SetupProfileCandidate = {
   browser: ManagedChromiumBrowserId
   browserDisplayName: string
   userDataDir: string
   directoryKey: string
   detectedVersion: string | null
   versionSource: 'profile' | 'installed_browser' | 'unknown'
-  compatibility: CloakProfileCompatibility
+  compatibility: ProfileImportCompatibility
 }
-type SetupCloakProfileInventory = {
-  projectUrl: string
+type SetupProfileInventory = {
+  targetDisplayName: string
+  targetFamily: 'managed-chromium' | 'cloak'
+  targetPlatform: 'darwin-arm64' | 'win32-x64'
+  projectUrl: string | null
   artifactVersion: string
   browserVersion: string
-  candidates: SetupCloakProfileCandidate[]
+  candidates: SetupProfileCandidate[]
 }
-type SetupCloakImportSelection = {
+type SetupImportSelection = {
   browser: ManagedChromiumBrowserId
   userDataDir: string
   directoryKey: string
@@ -444,7 +448,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
           browser,
           ...(args.chromeUserDataDir === undefined ? {} : { userDataDirs: [String(args.chromeUserDataDir)] }),
         })
-    const cloakInventory = buildCloakProfileInventory(roots, [])
+    const cloakInventory = buildProfileImportInventory(roots, [], 'cloak')
     printPayload({
       ok: true,
       browser,
@@ -515,7 +519,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const source = importKey ? await resolveOpaqueProfileSource(args, importKey) : null
     if (source) {
       assertNewProfileImportTargetSupported(profileRuntime)
-      assertCloakProfileImportCompatible(source, profileRuntime)
+      assertProfileImportCompatible(source, profileRuntime)
     }
     let record = await registry.addProfile({
       slug,
@@ -559,13 +563,23 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     if (!record.import) {
       throw usageError('profile_reset_requires_import', `Managed profile '${record.slug}' was not imported and has no source to reset from.`)
     }
-    assertProfileImportBrowserSupported(record.import.browser ?? SUPPORTED_PROFILE_IMPORT_BROWSER)
+    assertProfileImportBrowserSupported(record.import.browser ?? DEFAULT_PROFILE_IMPORT_BROWSER)
     const config = await readTokenlessConfig(homeDir)
+    const source = await resolveChromeProfile(record.import.source, record.import.profileDirectoryKey)
+    const runtime = await new BrowserRuntimeManager({ homeDir }).resolveForProfile(record, {
+      browserExecutablePath: record.runtimeBinding?.browserId === config.browser
+        ? config.browserExecutablePath
+        : null,
+    })
+    assertProfileImportCompatible({
+      directoryKey: source.directoryKey,
+      browser: record.import.browser ?? DEFAULT_PROFILE_IMPORT_BROWSER,
+      browserVersion: source.browserVersion,
+    }, runtime)
     const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir, daemonUrl: config.daemonUrl ?? undefined })
     if (runner.state === 'unsafe') {
       throw usageError('profile_reset_runner_unsafe', 'Cannot reset the managed profile while its Playwright runner identity is unverified.')
     }
-    const source = await resolveChromeProfile(record.import.source, record.import.profileDirectoryKey)
     await registry.updateLifecycle(record.slug, 'importing')
     try {
       const imported = await copyOpaqueChromiumProfile({
@@ -1234,17 +1248,22 @@ function comparePrereleaseIdentifier(left: string, right: string) {
 }
 
 function normalizeProfileDiscoveryBrowser(value: unknown): ManagedChromiumBrowserId | 'all' {
-  if (typeof value === 'string' && value.trim().toLowerCase() === 'all') return 'all'
-  const browser = value === undefined ? 'chrome' : normalizeCliBrowser(value)
+  const browser = value === undefined
+    ? 'chrome'
+    : typeof value === 'string'
+      ? value.trim().toLowerCase().replace(/[_\s]+/g, '-')
+      : ''
+  if (browser === 'all') return 'all'
   if (
     browser !== 'chrome' &&
+    browser !== 'brave' &&
     browser !== 'edge' &&
     browser !== 'chromium' &&
     browser !== 'chrome-for-testing'
   ) {
     throw usageError(
       'profile_discovery_browser_invalid',
-      'Browser profile discovery supports all, Chrome, Edge, Chromium, or Chrome for Testing.',
+      'Browser profile discovery supports all, Chrome, Brave, Edge, Chromium, or Chrome for Testing.',
     )
   }
   return browser
@@ -1262,12 +1281,17 @@ async function resolveOpaqueProfileSource(
   args: CliArgs,
   directoryKey: string,
 ) {
-  const configuredImportBrowser = MANAGED_CHROMIUM_BROWSER_IDS.includes(
-    args.setupImportBrowser as ManagedChromiumBrowserId,
-  ) ? args.setupImportBrowser as ManagedChromiumBrowserId : null
-  const browser = configuredImportBrowser ?? SUPPORTED_PROFILE_IMPORT_BROWSER
-  assertProfileImportBrowserSupported(browser)
+  const browser = profileImportBrowserFromArgs(args)
   return await resolveOpaqueProfileSourceForBrowser(args, browser, directoryKey)
+}
+
+function profileImportBrowserFromArgs(args: CliArgs): ManagedChromiumBrowserId {
+  if (args.setupImportBrowser === undefined) return DEFAULT_PROFILE_IMPORT_BROWSER
+  const browser = typeof args.setupImportBrowser === 'string'
+    ? args.setupImportBrowser.trim().toLowerCase()
+    : ''
+  assertProfileImportBrowserSupported(browser)
+  return browser
 }
 
 async function resolveOpaqueProfileSourceForBrowser(
@@ -1290,31 +1314,38 @@ async function resolveOpaqueProfileSourceForBrowser(
   return matches[0]!
 }
 
-function assertCloakProfileImportCompatible(
+function assertProfileImportCompatible(
   source: { directoryKey: string; browser: string; browserVersion: string | null },
   runtime: ResolvedBrowserRuntime,
 ) {
   assertProfileImportBrowserSupported(source.browser)
-  if (runtime.family !== 'cloak' || source.browserVersion === runtime.actualVersion) return
+  const compatibility = classifyProfileImportCompatibility({
+    browser: source.browser,
+    sourceVersion: source.browserVersion,
+    targetVersion: runtime.actualVersion,
+    targetPlatform: runtime.platform,
+    targetFamily: runtime.family,
+  })
+  if (compatibility === 'aligned') return
   throw usageError(
-    'cloak_profile_version_incompatible',
-    `Browser profile '${source.directoryKey}' uses Chromium ${source.browserVersion ?? 'unknown'}; installed CloakBrowser requires ${runtime.actualVersion}.`,
+    'browser_profile_version_incompatible',
+    `Browser profile '${source.directoryKey}' from ${chromiumProfileBrowserDisplayName(source.browser as ManagedChromiumBrowserId)} uses Chromium ${source.browserVersion ?? 'unknown'} and is not compatible with ${runtime.displayName} ${runtime.actualVersion} on ${runtime.platform}.`,
   )
 }
 
-function assertProfileImportBrowserSupported(browser: string) {
+function assertProfileImportBrowserSupported(browser: string): asserts browser is ManagedChromiumBrowserId {
   if (isSupportedProfileImportBrowser(browser)) return
   throw usageError(
     'profile_import_browser_unsupported',
-    `Profile import supports only Google Chrome; ${browser} is not supported.`,
+    `Profile import supports Google Chrome and compatible Brave profiles only; ${browser} is not supported.`,
   )
 }
 
 function assertNewProfileImportTargetSupported(runtime: ResolvedBrowserRuntime) {
-  if (runtime.family === 'cloak') return
+  if (runtime.family === 'cloak' || runtime.family === 'managed-chromium') return
   throw usageError(
     'profile_import_runtime_unsupported',
-    'Experimental profile import is available only when setting up CloakBrowser; managed Chrome for Testing starts clean.',
+    'Experimental profile import requires Tokenless-managed Chrome for Testing or CloakBrowser.',
   )
 }
 
@@ -2814,14 +2845,14 @@ async function setupCommand(args: CliArgs) {
       })
     }
     const providers = await selectSetupProviders({ args, config, homeDir, prompt, presenter })
-    const profileArgs = selectedBrowser.cloakImportSelection === null
+    const profileArgs = selectedBrowser.profileImportSelection === null
       ? args
       : {
           ...args,
-          importChromeProfile: selectedBrowser.cloakImportSelection.directoryKey,
-          chromeUserDataDir: selectedBrowser.cloakImportSelection.userDataDir,
+          importChromeProfile: selectedBrowser.profileImportSelection.directoryKey,
+          chromeUserDataDir: selectedBrowser.profileImportSelection.userDataDir,
           consentLocalProfileCopy: true,
-          setupImportBrowser: selectedBrowser.cloakImportSelection.browser,
+          setupImportBrowser: selectedBrowser.profileImportSelection.browser,
         }
     const profile = await ensureSetupManagedProfile({
       args: profileArgs,
@@ -2970,9 +3001,9 @@ async function setupCommand(args: CliArgs) {
         executablePath: selectedBrowser.runtime.executablePath,
         checksumVerified: selectedBrowser.runtime.checksumVerified,
         installed: true,
-        ...(selectedBrowser.cloakProfileInventory === null
+        ...(selectedBrowser.profileInventory === null
           ? {}
-          : { profileInventory: selectedBrowser.cloakProfileInventory }),
+          : { profileInventory: selectedBrowser.profileInventory }),
       },
       providers,
       readiness,
@@ -3158,7 +3189,7 @@ async function ensureSetupManagedProfile({
       requireOpaqueProfileCopyConsent(args)
       const source = args.importChromeProfile === undefined
         ? (selectedProfile.import
-          ? { ...await resolveChromeProfile(selectedProfile.import.source, selectedProfile.import.profileDirectoryKey), browser: selectedProfile.import.browser ?? SUPPORTED_PROFILE_IMPORT_BROWSER }
+          ? { ...await resolveChromeProfile(selectedProfile.import.source, selectedProfile.import.profileDirectoryKey), browser: selectedProfile.import.browser ?? DEFAULT_PROFILE_IMPORT_BROWSER }
           : null)
         : await resolveOpaqueProfileSource(
           args,
@@ -3167,7 +3198,7 @@ async function ensureSetupManagedProfile({
       if (!source) {
         throw usageError('setup_reimport_source_required', `Managed profile '${selectedProfile.slug}' has no recorded import source.`)
       }
-      assertCloakProfileImportCompatible(source, runtime)
+      assertProfileImportCompatible(source, runtime)
       await quiesceBrowserRuntimeForProfileMutation({ homeDir })
       await registry.updateLifecycle(selectedProfile.slug, 'importing')
       try {
@@ -3220,7 +3251,7 @@ async function ensureSetupManagedProfile({
     )
   if (source) {
     assertNewProfileImportTargetSupported(runtime)
-    assertCloakProfileImportCompatible(source, runtime)
+    assertProfileImportCompatible(source, runtime)
   }
   if (source) requireOpaqueProfileCopyConsent(args)
   if (!prompt && args.freshProfile !== true && args.setupDefaults !== true && !source) {
@@ -3358,34 +3389,39 @@ function createSetupPrompt(colorEnabled = false) {
   }
 }
 
-async function discoverSetupCloakProfileInventory(
+async function discoverSetupProfileInventory(
   installedBrowsers: readonly BrowserCandidate[],
-): Promise<SetupCloakProfileInventory> {
-  return buildCloakProfileInventory(
-    await discoverKnownChromiumProfiles({ browsers: [SUPPORTED_PROFILE_IMPORT_BROWSER] }),
+  targetFamily: 'managed-chromium' | 'cloak',
+): Promise<SetupProfileInventory> {
+  return buildProfileImportInventory(
+    await discoverKnownChromiumProfiles({ browsers: SUPPORTED_PROFILE_IMPORT_BROWSERS }),
     installedBrowsers,
+    targetFamily,
   )
 }
 
-function buildCloakProfileInventory(
+function buildProfileImportInventory(
   roots: readonly ChromiumUserDataRoot[],
   installedBrowsers: readonly BrowserCandidate[],
-): SetupCloakProfileInventory {
-  const cloak = managedBrowserCatalogEntry('cloak')
+  targetFamily: 'managed-chromium' | 'cloak',
+): SetupProfileInventory {
+  const target = managedBrowserCatalogEntry(targetFamily)
   const candidates = roots.flatMap((root) => {
     const installedVersion = installedBrowsers.find((browser) => browser.browserId === root.browser)?.version ?? null
     const detectedVersion = root.browserVersion ?? installedVersion
-    const versionSource: SetupCloakProfileCandidate['versionSource'] = root.browserVersion
+    const versionSource: SetupProfileCandidate['versionSource'] = root.browserVersion
       ? 'profile'
       : installedVersion
       ? 'installed_browser'
       : 'unknown'
-    const compatibility = classifyCloakProfileCompatibility({
+    const compatibility = classifyProfileImportCompatibility({
       browser: root.browser,
       sourceVersion: detectedVersion,
-      cloakVersion: cloak.browserVersion,
+      targetVersion: target.browserVersion,
+      targetPlatform: target.platform,
+      targetFamily: target.family,
     })
-    return root.profiles.map((profile): SetupCloakProfileCandidate => ({
+    return root.profiles.map((profile): SetupProfileCandidate => ({
       browser: root.browser,
       browserDisplayName: chromiumProfileBrowserDisplayName(root.browser),
       userDataDir: root.userDataDir,
@@ -3400,65 +3436,82 @@ function buildCloakProfileInventory(
     left.directoryKey.localeCompare(right.directoryKey)
   )
   return {
-    projectUrl: CLOAK_BROWSER_PROJECT_URL,
-    artifactVersion: cloak.artifactVersion,
-    browserVersion: cloak.browserVersion,
+    targetDisplayName: target.displayName,
+    targetFamily,
+    targetPlatform: target.platform,
+    projectUrl: targetFamily === 'cloak' ? CLOAK_BROWSER_PROJECT_URL : null,
+    artifactVersion: target.artifactVersion,
+    browserVersion: target.browserVersion,
     candidates,
   }
 }
 
-function presentSetupCloakProfileInventory(
-  inventory: SetupCloakProfileInventory,
+function presentSetupProfileInventory(
+  inventory: SetupProfileInventory,
   presenter: SetupPresenter,
 ) {
   presenter.explain({
-    title: 'Anti-Detect mode',
+    title: inventory.targetFamily === 'cloak' ? 'Anti-Detect mode' : 'Managed browser profile import',
     lines: [
-      `CloakBrowser project: ${inventory.projectUrl}`,
-      `Supported CloakBrowser on this platform: artifact ${inventory.artifactVersion} (Chromium ${inventory.browserVersion}).`,
-      'Google Chrome profile import is experimental. It may fail on some browser versions or platforms, and a profile opening successfully does not guarantee that sign-in state transfers.',
+      ...(inventory.projectUrl ? [`CloakBrowser project: ${inventory.projectUrl}`] : []),
+      `Supported ${inventory.targetDisplayName} on this platform: artifact ${inventory.artifactVersion} (Chromium ${inventory.browserVersion}).`,
+      'Google Chrome and Brave profile import is experimental. Only verified macOS source versions are eligible, and a profile opening successfully does not guarantee that sign-in state transfers.',
       'Discovery checks only profile directory names and browser versions; it does not read authentication values.',
     ],
   })
   if (inventory.candidates.length === 0) {
-    presenter.note('No local Google Chrome profiles were found.')
+    presenter.note('No local Google Chrome or Brave profiles were found.')
     return
   }
   presenter.explain({
-    title: 'Experimental Google Chrome profile compatibility',
+    title: 'Experimental browser profile compatibility',
     lines: inventory.candidates.map((candidate) => {
       const version = candidate.detectedVersion ?? 'unknown'
       const compatibility = candidate.compatibility === 'aligned'
         ? 'version-aligned (eligible for import)'
         : candidate.compatibility === 'not_aligned'
         ? 'not version-aligned'
+        : candidate.compatibility === 'unsupported_platform'
+        ? 'not supported on this platform'
+        : candidate.compatibility === 'unsupported_browser'
+        ? 'browser not supported'
+        : candidate.compatibility === 'unsupported_target'
+        ? 'target not supported'
         : 'version unknown'
       return `${candidate.browserDisplayName} profile ${candidate.directoryKey} at ${candidate.userDataDir}: version ${version}; ${compatibility}.`
     }),
   })
 }
 
-async function selectSetupCloakImport({
+async function selectSetupProfileImport({
   args,
   inventory,
   prompt,
   presenter,
 }: {
   args: CliArgs
-  inventory: SetupCloakProfileInventory
+  inventory: SetupProfileInventory
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
-}): Promise<SetupCloakImportSelection | null> {
+}): Promise<SetupImportSelection | null> {
   if (args.importChromeProfile !== undefined) {
+    const configuredImportBrowser = profileImportBrowserFromArgs(args)
     const source = await resolveOpaqueProfileSourceForBrowser(
       args,
-      SUPPORTED_PROFILE_IMPORT_BROWSER,
+      configuredImportBrowser,
       validateChromeProfileDirectoryKey(String(args.importChromeProfile)),
     )
-    if (source.browserVersion !== inventory.browserVersion) {
+    const compatibility = classifyProfileImportCompatibility({
+      browser: source.browser,
+      sourceVersion: source.browserVersion,
+      targetVersion: inventory.browserVersion,
+      targetPlatform: inventory.targetPlatform,
+      targetFamily: inventory.targetFamily,
+    })
+    if (compatibility !== 'aligned') {
       throw usageError(
-        'cloak_profile_version_incompatible',
-        `Browser profile '${source.directoryKey}' uses Chromium ${source.browserVersion ?? 'unknown'}; this platform's supported CloakBrowser requires ${inventory.browserVersion}.`,
+        'browser_profile_version_incompatible',
+        `Browser profile '${source.directoryKey}' from ${chromiumProfileBrowserDisplayName(source.browser)} uses Chromium ${source.browserVersion ?? 'unknown'} and is not compatible with ${inventory.targetDisplayName} ${inventory.browserVersion} on ${inventory.targetPlatform}.`,
       )
     }
     return {
@@ -3471,19 +3524,19 @@ async function selectSetupCloakImport({
   const compatible = inventory.candidates.filter((candidate) => candidate.compatibility === 'aligned')
   if (!prompt || compatible.length === 0) {
     if (compatible.length === 0) {
-      presenter.note('No version-compatible local Google Chrome profile was found; CloakBrowser will use a clean profile.')
+      presenter.note(`No compatible local Google Chrome or Brave profile was found; ${inventory.targetDisplayName} will use a clean profile.`)
     }
     return null
   }
   presenter.explain({
-    title: 'Experimental Google Chrome profile import',
+    title: 'Experimental browser profile import',
     lines: [
-      'Only Google Chrome profiles are supported. Edge, Chromium, Chrome for Testing, Brave, Arc, and other browser profiles are not eligible for import.',
+      'Google Chrome major 145 and Brave Chromium major 143 or 145 are eligible on Apple Silicon macOS. Edge, Chromium, Chrome for Testing, Arc, other versions, and Windows sources are not eligible.',
       'Selecting an existing profile explicitly authorizes Tokenless to copy that entire profile folder into the managed profile as an opaque local filesystem tree. Tokenless does not inspect cookies, tokens, browser storage, or other authentication values.',
     ],
   })
   const selectedIndex = await prompt.select(
-    'Choose how CloakBrowser should initialize its managed profile',
+    `Choose how ${inventory.targetDisplayName} should initialize its managed profile`,
     [
       { label: 'Start clean', value: '__clean__' },
       ...compatible.map((candidate, index) => ({
@@ -3506,6 +3559,7 @@ async function selectSetupCloakImport({
 function chromiumProfileBrowserDisplayName(browser: ManagedChromiumBrowserId) {
   const names: Record<ManagedChromiumBrowserId, string> = {
     chrome: 'Google Chrome',
+    brave: 'Brave',
     edge: 'Microsoft Edge',
     chromium: 'Chromium',
     'chrome-for-testing': 'Google Chrome for Testing',
@@ -3529,8 +3583,8 @@ async function selectSetupBrowser({
   selection: BrowserSelection
   runtime: ResolvedBrowserRuntime
   detectedChromeVersion: string | null
-  cloakProfileInventory: SetupCloakProfileInventory | null
-  cloakImportSelection: SetupCloakImportSelection | null
+  profileInventory: SetupProfileInventory | null
+  profileImportSelection: SetupImportSelection | null
 }> {
   const explicit = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
   const explicitCloakSelection = args.antiDetect === true || explicit === 'cloak'
@@ -3539,7 +3593,7 @@ async function selectSetupBrowser({
   }
   const configured = explicit ?? normalizeBrowserSelection(config.browser) ?? 'auto'
   const installedBrowsers: BrowserCandidate[] = []
-  let cloakImportSelection: SetupCloakImportSelection | null = null
+  let profileImportSelection: SetupImportSelection | null = null
   let selection: BrowserSelection
   if (args.antiDetect === true) {
     selection = 'cloak'
@@ -3556,7 +3610,6 @@ async function selectSetupBrowser({
       selection = configured === 'cloak' ? 'managed-chromium' : configured
     }
   }
-  let cloakProfileInventory: SetupCloakProfileInventory | null = null
   if (selection === 'cloak') {
     if (!prompt && !explicitCloakSelection) {
       throw usageError(
@@ -3564,21 +3617,27 @@ async function selectSetupBrowser({
         'Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.',
       )
     }
-    cloakProfileInventory = await presenter.withProgress(
-      'Finding Google Chrome profiles',
-      () => discoverSetupCloakProfileInventory(installedBrowsers),
-    )
-    presentSetupCloakProfileInventory(cloakProfileInventory, presenter)
-    cloakImportSelection = await selectSetupCloakImport({
-      args,
-      inventory: cloakProfileInventory,
-      prompt,
-      presenter,
-    })
   }
   const preparedSelection = selection === 'auto'
     ? 'managed-chromium'
     : selection
+  const targetFamily = preparedSelection === 'managed-chromium' || preparedSelection === 'cloak'
+    ? preparedSelection
+    : null
+  let profileInventory: SetupProfileInventory | null = null
+  if (targetFamily) {
+    profileInventory = await presenter.withProgress(
+      'Finding Google Chrome and Brave profiles',
+      () => discoverSetupProfileInventory(installedBrowsers, targetFamily),
+    )
+    presentSetupProfileInventory(profileInventory, presenter)
+    profileImportSelection = await selectSetupProfileImport({
+      args,
+      inventory: profileInventory,
+      prompt,
+      presenter,
+    })
+  }
   const discoveredExecutablePath = installedBrowsers.find(
     (browser) => browser.selection === preparedSelection,
   )?.executablePath ?? null
@@ -3596,7 +3655,7 @@ async function selectSetupBrowser({
   presenter.success(`Using ${runtime.displayName} ${runtime.actualVersion} (${runtime.source}).`)
   const detectedChromeVersion = installedBrowsers.find((browser) => browser.browserId === 'chrome')?.version ??
     (runtime.browserId === 'chrome' ? runtime.actualVersion : null)
-  return { selection, runtime, detectedChromeVersion, cloakProfileInventory, cloakImportSelection }
+  return { selection, runtime, detectedChromeVersion, profileInventory, profileImportSelection }
 }
 
 function setupBrowserSelectionLabel(selection: BrowserSelection) {
@@ -4700,16 +4759,16 @@ function createCommandContracts(): CommandContract[] {
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--anti-detect|--browser <browser>] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--no-browser-download] [--repair-browser] [--defaults|--fresh] --json'], options: ['home', 'json', 'quiet', 'profile', 'antiDetect', 'browser', 'providerWhitelist', 'noOpen', 'noBrowserDownload', 'repairBrowser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
+    { command: 'setup', usage: ['tokenless setup [--anti-detect|--browser <browser>] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--no-browser-download] [--repair-browser] [--defaults|--fresh] --json'], options: ['home', 'json', 'quiet', 'profile', 'antiDetect', 'browser', 'providerWhitelist', 'noOpen', 'noBrowserDownload', 'repairBrowser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'setupImportBrowser', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
     { command: 'config', usage: ['tokenless config [--profile <slug>] [--provider-whitelist <list>] [--browser-visibility <mode>] [--proxy-server <url> --proxy-bypass <list>|--clear-proxy] [--language <en|zh-CN>] [--browser <browser>] [--browser-executable-path <path>|--clear-browser-executable-path] [--daemon-url <url>] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'proxyServer', 'proxyBypass', 'clearProxy', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
-    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'label', 'providerWhitelist', 'setDefault'] },
+    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'chromeUserDataDir', 'consentLocalProfileCopy', 'importChromeProfile', 'setupImportBrowser', 'label', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
-    { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <all|chrome|edge|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
+    { command: 'profiles', subcommand: 'discover', usage: ['tokenless profiles discover [--browser <all|chrome|brave|edge|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json'], options: ['json', 'browser', 'chromeUserDataDir'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
     { command: 'profiles', subcommand: 'reset', usage: ['tokenless profiles reset [--profile <slug>] --consent-local-profile-copy --json'], options: ['home', 'json', 'profile', 'consentLocalProfileCopy'] },
     { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
@@ -4759,6 +4818,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--label': 'label',
     '--import-chrome-profile': 'importChromeProfile',
     '--import-browser-profile': 'importChromeProfile',
+    '--import-browser': 'setupImportBrowser',
     '--chrome-user-data-dir': 'chromeUserDataDir',
     '--browser-user-data-dir': 'chromeUserDataDir',
     '--preferred-providers': 'providerWhitelist',
@@ -5104,6 +5164,12 @@ function assertCommandRoutingArguments(command: string, subcommand: string | und
     throw usageError(
       'browser_runtime_repair_download_conflict',
       '--repair-browser cannot be combined with --no-browser-download.',
+    )
+  }
+  if (args.setupImportBrowser !== undefined && args.importChromeProfile === undefined) {
+    throw usageError(
+      'profile_import_browser_requires_profile',
+      '--import-browser requires --import-browser-profile.',
     )
   }
 }
@@ -5787,7 +5853,7 @@ function usage(args: CliArgs) {
     },
     {
       title: 'Setup',
-      description: 'Automate browser runtime and clean-profile setup.',
+      description: 'Automate managed browser runtime and profile setup.',
       commands: [
         'tokenless setup --anti-detect --profile <slug> --fresh --json',
         'tokenless setup --profile <slug> --browser <browser> --fresh --json',
@@ -5796,10 +5862,10 @@ function usage(args: CliArgs) {
     },
     {
       title: 'Profile',
-      description: 'Discover metadata or manage clean browser profiles.',
+      description: 'Discover metadata or manage browser profiles.',
       commands: [
         'tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
-        'tokenless profiles discover [--browser <all|chrome|edge|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json',
+        'tokenless profiles discover [--browser <all|chrome|brave|edge|chromium|chrome-for-testing>] [--browser-user-data-dir <dir>] --json',
         'tokenless profiles clear (--profile <slug>|--all)',
         'tokenless profiles set-default --profile <slug> --json',
         'tokenless profiles remove --profile <slug> --confirm-delete --json',
@@ -5960,6 +6026,7 @@ function optionUsageLabel(option: string) {
     home: '--home <dir>',
     idempotencyKey: '--idempotency-key <key>',
     importChromeProfile: '--import-browser-profile <key>',
+    setupImportBrowser: '--import-browser <chrome|brave>',
     json: '--json',
     jobId: '--job-id <job-id>',
     label: '--label <name>',

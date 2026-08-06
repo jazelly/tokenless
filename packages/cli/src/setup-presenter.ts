@@ -43,7 +43,7 @@ const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 const REPLACE_TERMINAL_LINE = '\u001b[2K\u001b[1G'
 
 export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
-  'Normal setup starts clean in the platform-pinned Tokenless-managed Chrome for Testing and keeps usable sign-ins there between jobs. Experimental Google Chrome profile import is offered only for CloakBrowser setup; it may fail by version or platform and does not guarantee sign-in-state transfer.',
+  'Profiles start clean by default in the platform-pinned Tokenless-managed browser. On Apple Silicon macOS, experimental opaque import supports Google Chrome 145 and Brave Chromium 143 or 145 for managed Chrome for Testing 145 or CloakBrowser 145; it does not guarantee sign-in-state transfer.',
 ])
 
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([

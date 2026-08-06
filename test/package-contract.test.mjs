@@ -279,8 +279,8 @@ test('CLI help separates canonical and advanced commands into described workflow
     'Manage AI providers and their visible controls.',
     'Use miscellaneous maintenance and help commands.',
     'Customize, inspect, resume, or cancel jobs.',
-    'Automate browser runtime and clean-profile setup.',
-    'Discover metadata or manage clean browser profiles.',
+    'Automate managed browser runtime and profile setup.',
+    'Discover metadata or manage browser profiles.',
     'Use low-level actions and provider-specific controls.',
     'Inspect or update persistent Tokenless configuration.',
   ]) {
@@ -803,7 +803,7 @@ test('CLI rejects removed local fallback routes before network access', () => {
   assert.equal(JSON.parse(removedProjectRouteFlag.stdout).error.code, 'unknown_argument')
 })
 
-test('built CLI classifies Google Chrome profile directories and rejects other browsers for Cloak import without reading browser state', () => {
+test('built CLI classifies eligible Chrome and Brave profile directories without reading browser state', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-inventory-'))
   const expectedCloakVersion = process.platform === 'win32'
     ? '146.0.7680.177'
@@ -829,14 +829,17 @@ test('built CLI classifies Google Chrome profile directories and rejects other b
     const alignedPayload = JSON.parse(aligned.stdout)
     assert.equal(alignedPayload.cloak.browserVersion, expectedCloakVersion)
     assert.equal(alignedPayload.roots[0].browser, 'chrome')
+    const compatibleOnThisPlatform = process.platform === 'darwin' && process.arch === 'arm64'
+      ? 'aligned'
+      : 'unsupported_platform'
     assert.deepEqual(
       alignedPayload.roots[0].profiles.map((profile) => ({
         directoryKey: profile.directoryKey,
         compatibility: profile.cloakCompatibility,
       })),
       [
-        { directoryKey: 'Default', compatibility: 'aligned' },
-        { directoryKey: 'Profile 1', compatibility: 'aligned' },
+        { directoryKey: 'Default', compatibility: compatibleOnThisPlatform },
+        { directoryKey: 'Profile 1', compatibility: compatibleOnThisPlatform },
       ],
     )
 
@@ -854,7 +857,9 @@ test('built CLI classifies Google Chrome profile directories and rejects other b
     assert.equal(mismatched.status, 0, mismatched.stderr || mismatched.stdout)
     assert.deepEqual(
       JSON.parse(mismatched.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
-      ['not_aligned', 'not_aligned'],
+      process.platform === 'darwin' && process.arch === 'arm64'
+        ? ['not_aligned', 'not_aligned']
+        : ['unsupported_platform', 'unsupported_platform'],
     )
 
     fs.writeFileSync(path.join(root, 'Last Version'), '146.0.7680')
@@ -889,6 +894,24 @@ test('built CLI classifies Google Chrome profile directories and rejects other b
     assert.deepEqual(
       JSON.parse(unsupported.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
       ['unsupported_browser', 'unsupported_browser'],
+    )
+
+    fs.writeFileSync(path.join(root, 'Last Version'), '143.1.85.120')
+    const brave = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'discover',
+      '--browser',
+      'brave',
+      '--browser-user-data-dir',
+      root,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(brave.status, 0, brave.stderr || brave.stdout)
+    assert.equal(JSON.parse(brave.stdout).roots[0].browser, 'brave')
+    assert.deepEqual(
+      JSON.parse(brave.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
+      [compatibleOnThisPlatform, compatibleOnThisPlatform],
     )
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
@@ -932,7 +955,7 @@ test('built CLI rejects a recorded non-Chrome source at the profile reset copy b
   }
 })
 
-test('built CLI keeps normal managed-profile creation clean and reserves new imports for CloakBrowser', async () => {
+test('built CLI rejects profile import into an explicitly selected system browser', async () => {
   const temporaryRoot = fs.realpathSync(os.tmpdir())
   const sourceRoot = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-normal-import-source-'))
   const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-normal-import-home-'))
@@ -977,38 +1000,80 @@ test('built CLI keeps normal managed-profile creation clean and reserves new imp
   }
 })
 
-test('Cloak setup gates explicit profile import on an exact supported browser version before download', () => {
+test('managed browser setup gates Chrome and Brave imports on the observed macOS compatibility policy before download', () => {
   const temporaryRoot = fs.realpathSync(os.tmpdir())
   const profileRoot = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-cloak-import-profile-'))
   const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-cloak-import-home-'))
-  const expectedCloakVersion = process.platform === 'win32'
-    ? '146.0.7680.177'
-    : '145.0.7632.109'
-  const setupArgs = [
-    cliEntry,
-    'setup',
-    '--browser', 'cloak',
-    '--import-browser-profile', 'Default',
-    '--browser-user-data-dir', profileRoot,
-    '--consent-local-profile-copy',
-    '--defaults',
-    '--no-browser-download',
-    '--home', homeDir,
-    '--json',
-  ]
   try {
     fs.mkdirSync(path.join(profileRoot, 'Default'))
     fs.writeFileSync(path.join(profileRoot, 'Last Version'), '150.0.7871.187')
     fs.writeFileSync(path.join(profileRoot, 'Local State'), 'intentionally invalid and never read')
+    for (const target of ['managed-chromium', 'cloak']) {
+      const targetHome = path.join(homeDir, target)
+      const setupArgs = [
+        cliEntry,
+        'setup',
+        '--browser', target,
+        '--import-browser-profile', 'Default',
+        '--browser-user-data-dir', profileRoot,
+        '--consent-local-profile-copy',
+        '--defaults',
+        '--no-browser-download',
+        '--home', targetHome,
+        '--json',
+      ]
 
-    const mismatched = spawnSync(process.execPath, setupArgs, { cwd: root, encoding: 'utf8' })
-    assert.equal(mismatched.status, 1, mismatched.stderr || mismatched.stdout)
-    assert.equal(JSON.parse(mismatched.stdout).error.code, 'cloak_profile_version_incompatible')
+      const mismatched = spawnSync(process.execPath, setupArgs, { cwd: root, encoding: 'utf8' })
+      assert.equal(mismatched.status, 1, mismatched.stderr || mismatched.stdout)
+      assert.equal(JSON.parse(mismatched.stdout).error.code, 'browser_profile_version_incompatible')
 
-    fs.writeFileSync(path.join(profileRoot, 'Last Version'), expectedCloakVersion)
-    const aligned = spawnSync(process.execPath, setupArgs, { cwd: root, encoding: 'utf8' })
-    assert.equal(aligned.status, 1, aligned.stderr || aligned.stdout)
-    assert.equal(JSON.parse(aligned.stdout).error.code, 'browser_runtime_download_required')
+      fs.writeFileSync(path.join(profileRoot, 'Last Version'), '145.0.7632.160')
+      const chrome = spawnSync(process.execPath, setupArgs, { cwd: root, encoding: 'utf8' })
+      assert.equal(chrome.status, 1, chrome.stderr || chrome.stdout)
+      assert.equal(
+        JSON.parse(chrome.stdout).error.code,
+        process.platform === 'darwin' && process.arch === 'arm64'
+          ? 'browser_runtime_download_required'
+          : 'browser_profile_version_incompatible',
+      )
+
+      fs.writeFileSync(path.join(profileRoot, 'Last Version'), '143.1.85.120')
+      const brave = spawnSync(process.execPath, [
+        ...setupArgs,
+        '--import-browser', 'brave',
+      ], { cwd: root, encoding: 'utf8' })
+      assert.equal(brave.status, 1, brave.stderr || brave.stdout)
+      assert.equal(
+        JSON.parse(brave.stdout).error.code,
+        process.platform === 'darwin' && process.arch === 'arm64'
+          ? 'browser_runtime_download_required'
+          : 'browser_profile_version_incompatible',
+      )
+
+      fs.writeFileSync(path.join(profileRoot, 'Last Version'), '146.1.88.138')
+      const newerBrave = spawnSync(process.execPath, [
+        ...setupArgs,
+        '--import-browser', 'brave',
+      ], { cwd: root, encoding: 'utf8' })
+      assert.equal(newerBrave.status, 1, newerBrave.stderr || newerBrave.stdout)
+      assert.equal(JSON.parse(newerBrave.stdout).error.code, 'browser_profile_version_incompatible')
+    }
+
+    const arc = spawnSync(process.execPath, [
+      cliEntry,
+      'setup',
+      '--browser', 'managed-chromium',
+      '--import-browser-profile', 'Default',
+      '--import-browser', 'arc',
+      '--browser-user-data-dir', profileRoot,
+      '--consent-local-profile-copy',
+      '--defaults',
+      '--no-browser-download',
+      '--home', path.join(homeDir, 'arc'),
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(arc.status, 1, arc.stderr || arc.stdout)
+    assert.equal(JSON.parse(arc.stdout).error.code, 'profile_import_browser_unsupported')
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
     fs.rmSync(profileRoot, { recursive: true, force: true })

@@ -23,12 +23,12 @@ The plan is saved in the root of `docs/roadmaps/`, which is the repository's aut
 | Runtime foundation | 5 / 5 | Production catalog, manager, exact executable resolution, transactional installation, and independent Playwright pin exist. |
 | Durable selection and profile binding | 6 / 6 | Production config/profile paths implement exact runtime binding, clean family changes, downgrade protection, and explicit-consent opaque profile copying without authentication-value inspection. |
 | Setup and daemon integration | 6 / 6 | Interactive and non-interactive setup, lazy download policy, atomic persistence ordering, and daemon resolution paths exist. |
-| Safe Chromium profile inventory | 5 / 5 | Diagnostic discovery can enumerate known Chromium-family profile directories without browser state; experimental setup import admits only exact-aligned Google Chrome sources, presents bilingual limitations, and keeps every other browser ineligible. |
+| Safe Chromium profile inventory | 5 / 5 | Diagnostic discovery enumerates known Chromium-family profile directories without browser state; experimental setup import admits only the macOS Chrome/Brave source majors listed in the shipping matrix, presents bilingual limitations, and keeps Arc and every unverified combination ineligible. |
 | Exact Playwright launch | 4 / 4 | The resolved executable and launch policy reach Playwright/CDP; sandboxing, production native credential storage, disposable-profile keychain neutrality, and cleanup are preserved. |
 | Inspection, recovery, and documentation | 5 / 5 | Doctor, cache reuse/repair, bilingual docs, licensing, and cross-platform release-gate launchers exist. |
-| Real-boundary acceptance | 12 / 18 | macOS managed-only `auto`, positive runtime paths, focused major-145 importability parity, source-family format observations, and the locally executable fail-closed paths are proven. Six platform-, source-prerequisite-, or authentication-dependent release gates remain open; implementation completion is not release completion. |
+| Real-boundary acceptance | 13 / 21 | macOS managed-only `auto`, positive runtime paths, focused major-145 importability parity, source-family format observations, setup admission boundaries, and the locally executable fail-closed paths are proven. Eight platform-, source-version-, or authentication-dependent release gates remain open; implementation completion is not release completion. |
 
-The unchecked acceptance items are authoritative: safe Arc source-family parity on macOS, Windows x64 Intel, Windows x64 AMD, Windows Chrome 150 profile-inventory classification, Windows 146 managed-to-Cloak importability parity, and authenticated provider closure across the selected runtimes. Public-surface results remain observational even though the latest strict Cloak run completed successfully; they do not replace authenticated provider acceptance.
+The unchecked acceptance items are authoritative: Brave 144 format behavior, authenticated Brave sign-in portability, Windows Brave parity, Windows x64 Intel, Windows x64 AMD, Windows Chrome 150 profile-inventory classification, Windows 146 managed-to-Cloak importability parity, and authenticated provider closure across the selected runtimes. Arc import is a deliberate product exclusion rather than an open support gate. Public-surface results remain observational even though the latest strict Cloak run completed successfully; they do not replace authenticated provider acceptance.
 
 Detailed Windows AMD64 execution, source-browser version cases, evidence requirements, and completion state are tracked in the active [Windows AMD64 Cloak Setup Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). This parent roadmap remains the product-support authority; the test plan is its AMD-hardware evidence ledger. Intel-hardware acceptance remains a separate unchecked gate in this parent roadmap.
 
@@ -58,7 +58,7 @@ The catalog is owned by production code and records exact version, official sour
 
 The normal managed runtime is described accurately as Chrome for Testing. Playwright's library version and the managed browser catalog are independent pins; upgrading Playwright must not implicitly change the selected browser runtime.
 
-### Cloak support and profile-version classification
+### Managed-target profile import classification
 
 Tokenless v1 supports only the no-license-key Cloak artifacts pinned in the production catalog. The upstream release list may contain newer Pro builds, but their existence does not make them Tokenless-supported. Tokenless does not request, store, or manage a Cloak license key in this scope.
 
@@ -67,9 +67,17 @@ Tokenless v1 supports only the no-license-key Cloak artifacts pinned in the prod
 | `darwin-arm64` | `145.0.7632.109.2` | `145.0.7632.109` | Supported and locked. |
 | `win32-x64` | `146.0.7680.177.5` | `146.0.7680.177` | Supported and locked. |
 
-The fifth component is Cloak's artifact revision; Chromium profile comparison uses the four-component browser version. A candidate is version-aligned only when its owning browser's complete four-component version equals the platform catalog entry's `browserVersion`. A major-only value such as `150` is insufficient for a positive match. A Windows profile last used by any Chromium 150 build is not aligned with the currently supported Windows Cloak 146 runtime.
+The fifth component is Cloak's artifact revision; source classification uses the Chromium major recorded by the owning browser's safe `Last Version` metadata. Admission is an evidence-bound product policy, not a Chromium compatibility guarantee. The first shipping matrix is intentionally narrow:
 
-Version alignment is an admission policy, not proof that Chromium guarantees profile portability. User-facing profile import is explicitly experimental, is offered only while creating a CloakBrowser profile, and supports only a source identified as Google Chrome; Edge, Chromium, Chrome for Testing, Brave, Arc, and every other browser are ineligible even when their Chromium version aligns. Normal managed Chrome for Testing profiles always start clean. Tokenless may enumerate only non-secret metadata: browser identity, executable version, user-data root, validated profile directory key, and safe `Last Version` metadata. After explicit user consent, Tokenless may copy the selected profile only as an opaque local filesystem tree into a new user-controlled CloakBrowser profile. It must not parse `Local State`, `Preferences`, cookies, tokens, browser storage, encryption keys, account names, emails, avatars, or authentication state. A source that is unsupported, unknown, or not exactly aligned with the supported Cloak pin fails before copy; `Start clean` remains the safe default. A successful open does not guarantee authentication-state portability.
+| Platform | Source browser | Eligible source Chromium major | Managed CFT target | Cloak target | Shipping decision |
+| --- | --- | :---: | :---: | :---: | --- |
+| `darwin-arm64` | Google Chrome | `145` | ✅ `145` | ✅ `145` | Experimental; explicit consent required. |
+| `darwin-arm64` | Brave | `143`, `145` | ✅ `145` | ✅ `145` | Experimental; explicit source-browser selection and consent required. |
+| `darwin-arm64` | Brave | every other major | ❌ | ❌ | Fail before copy. |
+| `darwin-arm64` | Arc | every major | ❌ | ❌ | Not supported; Arc is not offered as an import source. |
+| `win32-x64` | Any browser | any major | ❌ | ❌ | Not supported until the Windows matrix is completed. |
+
+Edge, Chromium, Chrome for Testing, Arc, and every other source browser remain ineligible even when an experimental format row opened successfully. Tokenless may enumerate only non-secret metadata: browser identity, user-data root, validated profile directory key, and safe `Last Version` metadata. The setup UI requires the user to identify Google Chrome or Brave before a custom root is scanned; the CLI equivalent is `--import-browser <chrome|brave>`. After explicit consent, Tokenless may copy the selected profile only as an opaque local filesystem tree into a new user-controlled managed Chrome for Testing 145 or CloakBrowser 145 profile. It must not parse `Local State`, `Preferences`, cookies, tokens, browser storage, encryption keys, account names, emails, avatars, or authentication state. Unsupported browsers, platforms, targets, unknown versions, and unlisted source majors fail before copy; `Start clean` remains the safe default. A successful open does not guarantee authentication-state portability.
 
 ### Selection semantics
 
@@ -182,17 +190,17 @@ Setup performs browser work before daemon readiness:
 
 1. read config and stop or quiesce a running local daemon when the selected runtime/profile may change;
 2. ask whether to enable Anti-Detect mode and state in that question that accepting will download and install the verified platform-pinned CloakBrowser when needed;
-3. when Anti-Detect is declined, select the platform-pinned managed Chrome for Testing runtime and a clean profile; do not discover or adopt the user's installed browser;
-4. when Cloak is selected, label profile import as experimental, state that it may fail by version or platform and does not guarantee sign-in transfer, and enumerate safe metadata only for local Google Chrome profiles;
-5. classify exact four-component alignment against the platform Cloak catalog entry and show both aligned and non-aligned Google Chrome candidates without reading browser secrets;
-6. when aligned candidates exist, present one profile-source choice containing `Start clean` and the aligned Google Chrome profiles; selecting a profile explicitly authorizes its opaque local copy, with no separate import, copy-consent, or installation confirmation;
-7. when no candidate aligns, select a clean Cloak profile without asking a profile-source question;
+3. when Anti-Detect is declined, select the platform-pinned managed Chrome for Testing runtime; do not discover or adopt the user's installed browser as the target runtime;
+4. for either managed Chrome for Testing or Cloak, label source-profile import as experimental, state that it may fail by version or platform and does not guarantee sign-in transfer, and enumerate safe metadata only for local Google Chrome and Brave profiles;
+5. classify candidates against the platform-specific shipping matrix above and show eligible and ineligible Google Chrome/Brave candidates without reading browser secrets;
+6. present one profile-source choice containing `Start clean` and only eligible profiles; choosing Brave or a custom root requires an explicit source-browser selection, and selecting a profile authorizes its opaque local copy with no separate interactive copy confirmation;
+7. when no candidate is eligible, use a clean managed profile;
 8. resolve or install the selected runtime, verify it, and immediately persist the concrete browser and executable path;
 9. provision or select a compatible managed profile, recheck Cloak/profile version compatibility at the copy boundary, and perform an explicitly authorized opaque copy when selected;
 10. persist profile preferences and the provider whitelist;
 11. start the daemon, verify runtime/profile readiness, and leave one headed review tab open for every enabled provider.
 
-The Anti-Detect question carries the installation disclosure; there is no later installation confirmation. The profile-source step separately carries the experimental-status, Google-Chrome-only, version/platform variability, and sign-in non-guarantee disclosures. English and Simplified Chinese flows carry equivalent meaning. In non-interactive setup, explicit `--anti-detect` or `--browser cloak` authorizes installation, while an inherited Cloak preference without either flag fails before download with `setup_cloak_confirmation_required`. Non-interactive profile import additionally requires `--consent-local-profile-copy` because no visible profile-source selection occurred.
+The Anti-Detect question carries the installation disclosure; there is no later installation confirmation. The profile-source step separately carries the experimental status, exact Chrome/Brave eligibility, Arc exclusion, version/platform variability, and sign-in non-guarantee disclosures. English and Simplified Chinese flows carry equivalent meaning. In non-interactive setup, explicit `--anti-detect` or `--browser cloak` authorizes installation, while an inherited Cloak preference without either flag fails before download with `setup_cloak_confirmation_required`. Non-interactive profile import additionally requires `--import-browser <chrome|brave>` when the source is not Chrome and always requires `--consent-local-profile-copy` because no visible profile-source selection occurred.
 
 ### Playwright launch contract
 
@@ -269,11 +277,12 @@ The three historical sources came from [official Brave GitHub releases](https://
 | Source profile | CFT 145 opened | CFT 145 marker | CFT 145 close | Cloak 145 opened | Cloak 145 marker | Cloak 145 close |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | Brave `1.85.120` / Chromium `143.0.7499.192` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Brave release on Chromium `144` (exact artifact pending) | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | Brave `1.87.192` / Chromium `145.0.7632.160` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Brave `1.88.138` / Chromium `146.0.7680.178` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Brave `1.92.140` / Chromium `150.0.7871.125` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
-Brave reproduces the same observed major boundary as Chrome for Testing for these anchors. It remains an internal format experiment only: setup and the shipping import boundary continue to admit Google Chrome sources only, not Brave.
+Brave reproduces the same observed major boundary as Chrome for Testing for these anchors. The isolated roots wrote `Last Version` values `143.1.85.120`, `145.1.87.192`, `146.1.88.138`, and `150.1.92.140`, so production can identify the tested Chromium major without reading `Local State` or another browser-state file. Setup now experimentally admits only the observed macOS Brave 143 and 145 source majors into either pinned major-145 target; Brave 146, Brave 150, unknown versions, and every Windows combination fail before copy.
 
 #### macOS — Arc to both major-145 targets
 
@@ -288,7 +297,7 @@ The attempts that touched Arc's standard profile path were discarded as invalid 
 | Arc `1.140.0` / Chromium `146.0.7680.165` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | Arc `1.156.0` / Chromium `150.0.7871.125` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 
-Arc can be retested only with a safely isolated, user-authorized Arc profile that is already past mandatory sign-in. Tokenless must not automate Arc login, copy the user's ordinary Arc profile implicitly, or weaken this prerequisite merely to fill the matrix.
+Arc can be researched again only with a safely isolated, user-authorized Arc profile that is already past mandatory sign-in. Tokenless must not automate Arc login, copy the user's ordinary Arc profile implicitly, or weaken this prerequisite merely to fill the matrix. Regardless of that future experiment, Arc is explicitly excluded from the v1 setup import source list and is not an open support requirement.
 
 ### Experimental macOS importability observations (2026-08-05)
 
@@ -363,6 +372,7 @@ Run the same opaque profile importability runbook on `win32-x64` against both pi
 | Chrome for Testing `147.0.7727.15` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | Chrome for Testing `150.0.7871.124` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | Brave `1.85.120` / Chromium `143` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
+| Brave release on Chromium `144` (exact artifact pending) | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | Brave `1.87.192` / Chromium `145` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | Brave `1.88.138` / Chromium `146` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | Brave current stable above Chromium `146` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
@@ -371,7 +381,7 @@ Run the same opaque profile importability runbook on `win32-x64` against both pi
 | Arc candidate on Chromium `146` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 | Arc current stable above Chromium `146` | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ |
 
-The branded Google Chrome rows require real installed builds or vendor-controlled enterprise rollback media; Chrome for Testing must not be relabeled as branded Chrome. The Arc rows also require an isolated source path that does not reuse the user's ordinary Arc profile or automate account login. Brave and Arc rows remain research-only and cannot broaden the Google-Chrome-only shipping import policy.
+The branded Google Chrome rows require real installed builds or vendor-controlled enterprise rollback media; Chrome for Testing must not be relabeled as branded Chrome. The Arc rows also require an isolated source path that does not reuse the user's ordinary Arc profile or automate account login. The Brave rows are required evidence before any Windows Brave admission can be enabled. Arc rows remain research-only and cannot broaden the shipping import policy.
 
 Keep each platform's evidence and admission policy independent.
 
@@ -386,7 +396,7 @@ Additional observations and limits:
 - The observed boundary is not simply "same major works": Cloak 145 accepted the tested runnable sources through major 145 and rejected newer majors, while Cloak 150 accepted every runnable Chrome/Chromium source tested through 149 plus its own native 150 profile but rejected the tested Chrome/Chrome for Testing 150 profiles on both sides of target patch `.114`.
 - Chrome for Testing 143 succeeding does not prove that every older Chrome version works. The older 113, 115, 125, 130, and 135 anchors increase confidence in long upgrade paths, but untested majors and patches remain unproven, pre-Chrome-for-Testing releases are outside this runbook, and major 120 is explicitly unresolved on this host.
 - The evidence does not identify the crashing file or prove a Chromium guarantee. The opaque-profile rule intentionally prevents file-by-file inspection, and successful history migration does not prove macOS Keychain-encrypted login portability.
-- Keep the production admission rule fail-closed at exact four-component alignment until a supported, platform-specific built-CLI matrix establishes a safer policy. The macOS evidence may inform a future macOS rule for the locked Cloak 145 target, but it does not establish Windows compatibility with the locked Cloak 146 target. These experimental cross-version successes must not silently broaden setup eligibility.
+- Keep production admission fail-closed to the explicit platform/source/target matrix in this document. The macOS evidence supports only Chrome 145 and Brave 143/145 into the two locked major-145 targets; it does not establish Brave 144, any other source major, Windows compatibility with either locked major-146 target, or login portability. Experimental successes outside the shipping rows must not silently broaden setup eligibility.
 
 ## Delivery Plan and Alignment Ledger
 
@@ -407,7 +417,7 @@ This ledger is updated as implementation and evidence land. A checked code item 
 - [x] Add runtime binding to newly provisioned profiles.
 - [x] Fail before browser launch when a profile/runtime family or downgrade invariant is violated.
 - [x] Create a clean profile when setup changes runtime family.
-- [x] Add experimental, explicit-consent opaque Google Chrome profile copying into a new CloakBrowser-bound managed profile while keeping normal managed profiles clean and unsupported-browser, unconsented, unsafe-destination, symlink, and source-version mismatch paths fail-closed.
+- [x] Add experimental, explicit-consent opaque Google Chrome/Brave profile copying into a new managed Chrome for Testing 145 or CloakBrowser 145 profile while keeping clean creation as the default and unsupported-browser, platform, target, unconsented, unsafe-destination, symlink, and source-version mismatch paths fail-closed.
 
 ### Milestone 3: Setup and daemon integration
 
@@ -421,10 +431,10 @@ This ledger is updated as implementation and evidence land. A checked code item 
 ### Milestone 3A: Safe Chromium profile inventory
 
 - [x] Replace `Local State`-based setup discovery with directory-only profile enumeration that cannot read account or browser-secret fields.
-- [x] Keep safe diagnostic discovery for known Chrome, Edge, Chromium, and Chrome for Testing roots on supported macOS and Windows platforms while admitting only Google Chrome to profile import.
+- [x] Keep safe diagnostic discovery for known Chrome, Brave, Edge, Chromium, and Chrome for Testing roots on supported macOS and Windows platforms while admitting only the explicit macOS Chrome/Brave shipping rows to profile import.
 - [x] Map every candidate to its safe profile `Last Version`, falling back to the exact owning installed-browser version when needed; never infer Chrome's version for another Chromium browser.
-- [x] Classify Google Chrome candidates against the production Cloak catalog and present aligned and non-aligned results in equivalent English and Simplified Chinese output, including the official CloakBrowser reference and experimental-import disclosure.
-- [x] Add one safe setup profile-source choice containing `Start clean` plus exactly aligned local Google Chrome sources; selection authorizes only an opaque copy and never authentication-value inspection.
+- [x] Classify Google Chrome and Brave candidates against both production managed targets and present eligible and ineligible results in equivalent English and Simplified Chinese output, including the official CloakBrowser reference and experimental-import disclosure.
+- [x] Add one safe setup profile-source choice containing `Start clean` plus eligible local Google Chrome/Brave sources, with an explicit source-browser selector for custom roots; selection authorizes only an opaque copy and never authentication-value inspection.
 
 ### Milestone 4: Exact Playwright launch
 
@@ -450,10 +460,13 @@ Windows AMD64 execution for the following gates is specified and recorded in the
 - [x] macOS Apple Silicon: the direct manager and built-CLI gates completed the same install, repair, profile-binding, and doctor checks for Cloak `145.0.7632.109.2`; the production daemon resolved and launched that exact runtime, while authenticated built-CLI provider closure remains pending below.
 - [x] macOS Apple Silicon: an unauthenticated managed Chrome for Testing `145.0.7632.6` profile copied through the production opaque boundary, opened in both managed Chrome for Testing 145 and Cloak 145, preserved its visible history marker, and closed cleanly.
 - [x] macOS Apple Silicon: Chrome for Testing source anchors through major 145 opened in both major-145 targets while tested 146-150 sources did not; isolated Brave 143 and 145 sources passed both targets while Brave 146 and 150 did not. The isolated Google Chrome 151 source also failed both downgrade targets before context.
-- [ ] macOS Apple Silicon: Arc source-family parity remains unexercised because Arc ignores `--user-data-dir` and a safely redirected fresh Arc home requires account sign-in before it creates an automation-ready Chromium profile; no login or ordinary user-profile copy is authorized for this experiment.
+- [x] Arc is explicitly excluded from v1 setup import: the source browser is absent from the selector and the built CLI rejects `--import-browser arc` before copy. The unexercised Arc format experiment is research-only because Arc ignores `--user-data-dir` and a safely redirected fresh Arc home requires account sign-in.
+- [ ] macOS Apple Silicon: establish Brave 144 source behavior against both major-145 targets before considering it eligible; interpolation from Brave 143 and 145 is not sufficient.
+- [ ] macOS Apple Silicon: after explicit user login and native Keychain approval, verify that Brave 143 and Brave 145 sign-in state—not only visible History—remains usable in both managed Chrome for Testing 145 and Cloak 145, with clean browser shutdown after every case.
 - [ ] Windows x64 on Intel hardware: system, managed, and Cloak paths pass the same setup/runtime checks.
 - [ ] Windows x64 on AMD hardware: system, managed, and Cloak paths pass the same setup/runtime checks.
 - [ ] Windows x64: an unauthenticated managed Chrome for Testing `146.0.7680.165` profile passes the same importability criteria in both managed Chrome for Testing 146 and Cloak 146.
+- [ ] Windows x64: Brave 143 and Brave 145 isolated profiles are tested against both managed Chrome for Testing 146 and Cloak 146 before any Windows Brave source is admitted.
 - [ ] Windows x64 with a real Chrome 150 profile: setup lists only safe directory/version metadata, classifies it as non-aligned with Cloak 146, offers a clean Cloak profile instead of import, and leaves the source profile unchanged.
 - [x] Offline-style rerun with downloads disabled reused the previously verified managed Chrome for Testing runtime and performed no download.
 - [x] Corrupted managed-cache checksum or browser-version metadata fails closed without changing config or the profile registry.
@@ -487,7 +500,7 @@ Windows AMD64 execution for the following gates is specified and recorded in the
 - The managed-artifact security integration called the same production verifier used immediately after a real download and before cache commit. With real tar.gz bytes, the real filesystem, the system `tar` executable, and a real version subprocess, it received exact `browser_runtime_checksum_mismatch`, `browser_runtime_archive_unsafe`, and `browser_runtime_version_mismatch` errors. The checksum case created no payload, the unsafe entry escaped nowhere, and config/profile sentinel files remained byte-for-byte unchanged in all three cases. The complete built-CLI browser-runtime gate passed again in 75 seconds after this refactor, proving the official managed Chrome and Cloak positive install paths still work. A later targeted managed-browser surface rerun also visited every provider successfully and isolated its current blockers to the Claude Cloudflare interstitial and Google `/sorry`.
 - The current selected user profile is bound to system Chrome rather than Cloak, and `doctor` reports no usable provider readiness observations for ChatGPT, Claude, Gemini, or Grok. Tokenless must not silently switch that profile or automate provider login. Authenticated cross-runtime closure therefore requires the user to explicitly select a clean runtime-bound profile, sign in visibly, and then invoke the manual provider gates.
 - The official release list now also exposes Cloak Pro Chromium 150 builds for macOS and Windows, but obtaining the current Pro binary requires a Cloak key. The current Tokenless scope remains the no-license-key catalog pins above; Pro 150 is not silently added to the supported set. See the [official CloakBrowser releases](https://github.com/CloakHQ/CloakBrowser/releases).
-- Historical diagnostic evidence: the built CLI's real filesystem inventory found the current macOS Chromium-family profile roots without parsing `Local State`. Chrome `150.0.7871.127` and Chrome for Testing `147.0.7727.15` were non-aligned; Chromium `145.0.7632.109` matched the macOS Cloak version, and Edge had no standard persistent profile directory to list. The current admission policy supersedes the former cross-browser classification: only Google Chrome can be import-eligible, while those other browser identities are `unsupported_browser` regardless of version.
+- Historical diagnostic evidence: the built CLI's real filesystem inventory found the current macOS Chromium-family profile roots without parsing `Local State`. Chrome `150.0.7871.127` and Chrome for Testing `147.0.7727.15` were non-aligned; Chromium `145.0.7632.109` matched the macOS Cloak version, and Edge had no standard persistent profile directory to list. The current evidence-bound policy supersedes that former exact-version classification: only the explicit macOS Chrome 145 and Brave 143/145 rows can be eligible, while every other browser identity or combination remains fail-closed.
 - Historical evidence: a real interactive built-CLI setup used an isolated Tokenless home, selected Anti-Detect, displayed the official project link, exact Cloak/Chromium pin, all discovered candidate classifications, and the former second clean-profile confirmation. Declining returned `setup_cloak_profile_declined` before mutation. That redundant second confirmation has since been superseded by the installation disclosure in the initial Anti-Detect question and the single profile-source choice.
 - The focused built-CLI filesystem integration passed with real `Default` and `Profile 1` directories, an exact aligned `Last Version`, a mismatched Chromium 150 version, and deliberately invalid `Local State` contents. It classified both versions correctly and succeeded without parsing the invalid browser-state file.
 - Historical evidence: the former positive interactive path accepted both Anti-Detect confirmations in an isolated home, reused the checksum-verified Cloak cache with downloads disabled, reported exact Cloak browser `145.0.7632.109`, and reached provider/profile selection. The current flow removes the redundant second confirmation. A separate built-CLI clean-profile boundary against that exact cache created a ready default profile bound to runtime `cloak:darwin-arm64:145.0.7632.109.2`, family/browser `cloak`, and created-with version `145.0.7632.109`.

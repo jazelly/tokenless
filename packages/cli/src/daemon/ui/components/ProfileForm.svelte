@@ -53,7 +53,7 @@
         roleLabel,
         browserVisibility,
         enabledProviders,
-        ...(!profile && snapshot.config.browser === 'cloak' && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
+        ...(!profile && ['auto', 'managed-chromium', 'cloak'].includes(snapshot.config.browser) && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
         proxy: proxy.trim()
           ? {
               server: proxy.trim(),
@@ -100,13 +100,14 @@
     </div>
   </div>
 
-  {#if !profile && snapshot.config.browser === 'cloak'}
+  {#if !profile && ['auto', 'managed-chromium', 'cloak'].includes(snapshot.config.browser)}
     <BrowserProfileSourcePicker
       bind:sourceId={importSourceId}
       bind:consent={consentLocalProfileCopy}
       {t}
       {busy}
       testId="profile"
+      targetBrowser={String(snapshot.config.browser)}
       ondiscover={ondiscoverprofiles}
     />
   {/if}

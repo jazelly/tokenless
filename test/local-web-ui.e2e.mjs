@@ -37,6 +37,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
 
     try {
       await createClosedChromiumProfile(importSourceDir)
+      fs.writeFileSync(path.join(importSourceDir, 'Last Version'), '145.0.7632.160')
       const context = await manager.ensureContext(browserProfile, 'headless')
       const page = await context.acquireReservedPage({ key: 'tokenless:control-plane:web-e2e' })
       await page.setViewportSize({ width: 1920, height: 1080 })
@@ -79,7 +80,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('setup-browser').selectOption('cloak')
       await page.getByTestId('setup-profile-source-copy').click()
       assert.match(await page.getByTestId('setup-profile-source-copy').textContent(), /experimental/i)
-      assert.match(await page.locator('.profile-source-panel .prominent-note').textContent(), /only Google Chrome/i)
+      assert.match(await page.locator('.profile-source-panel .prominent-note').textContent(), /Google Chrome major 145.*Brave Chromium major 143 or 145/i)
       const unsupportedImportSource = await page.evaluate(async (userDataDir) => {
         const session = await (await fetch('/ui-api/v1/session')).json()
         const response = await fetch('/ui-api/v1/browser-profile-sources/discover', {
@@ -95,12 +96,18 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(unsupportedImportSource.status, 400)
       assert.equal(unsupportedImportSource.body.error.code, 'profile_import_browser_unsupported')
       await page.locator('.source-advanced summary').click()
-      assert.equal(await page.getByTestId('setup-profile-source-browser').count(), 0)
+      assert.equal(await page.getByTestId('setup-profile-source-browser').count(), 1)
       await page.getByTestId('setup-profile-source-root').fill(importSourceDir)
       await page.getByTestId('setup-profile-source-scan').click()
       await page.getByTestId('setup-profile-source-select').waitFor()
       assert.match(await page.getByTestId('setup-profile-source-select').locator('option:checked').textContent(), /Google Chrome · Default/)
+      await page.getByTestId('setup-profile-source-browser').selectOption('brave')
+      await page.getByTestId('setup-profile-source-scan').click()
+      await page.getByTestId('setup-profile-source-select').waitFor()
+      assert.match(await page.getByTestId('setup-profile-source-select').locator('option:checked').textContent(), /Brave · Default/)
       await page.getByTestId('setup-profile-source-consent').check()
+      await page.getByTestId('setup-browser').selectOption('managed-chromium')
+      assert.equal(await page.getByTestId('setup-profile-source-picker').count(), 1)
       await page.getByTestId('setup-browser').selectOption('chrome-for-testing')
       assert.equal(await page.getByTestId('setup-profile-source-picker').count(), 0)
       assert.equal(await page.locator('.provider-pill').filter({ hasText: 'ChatGPT' }).locator('input').isChecked(), true)

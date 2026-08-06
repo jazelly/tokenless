@@ -586,7 +586,7 @@ function normalizeLabel(label: string | undefined, fallback: string) {
 
 function normalizeImportedBrowser(value: string) {
   const browser = value.trim().toLowerCase()
-  if (!['chrome', 'edge', 'chromium', 'chrome-for-testing'].includes(browser)) {
+  if (!['chrome', 'brave', 'edge', 'chromium', 'chrome-for-testing'].includes(browser)) {
     throw tokenlessError('invalid_profile_registry', 'Managed profile import browser is invalid.')
   }
   return browser

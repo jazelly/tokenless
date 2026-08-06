@@ -21,6 +21,7 @@ export type ChromeUserDataRoot = {
 
 export const MANAGED_CHROMIUM_BROWSER_IDS = Object.freeze([
   'chrome',
+  'brave',
   'edge',
   'chromium',
   'chrome-for-testing',
@@ -53,6 +54,7 @@ export function standardChromiumUserDataDirs(
   if (browser === 'chrome') return standardChromeUserDataDirs(osPlatform, home, env)
   if (osPlatform === 'darwin') {
     const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome'>, string> = {
+      brave: join('BraveSoftware', 'Brave-Browser'),
       edge: 'Microsoft Edge',
       chromium: 'Chromium',
       'chrome-for-testing': join('Google', 'Chrome for Testing'),
@@ -63,6 +65,7 @@ export function standardChromiumUserDataDirs(
     const localAppData = env.LOCALAPPDATA
     if (!localAppData) return []
     const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome'>, string> = {
+      brave: join('BraveSoftware', 'Brave-Browser', 'User Data'),
       edge: join('Microsoft', 'Edge', 'User Data'),
       chromium: join('Chromium', 'User Data'),
       'chrome-for-testing': join('Google', 'Chrome for Testing', 'User Data'),
@@ -70,6 +73,7 @@ export function standardChromiumUserDataDirs(
     return [join(localAppData, relativePaths[browser])]
   }
   const relativePaths: Record<Exclude<ManagedChromiumBrowserId, 'chrome'>, readonly string[]> = {
+    brave: [join('BraveSoftware', 'Brave-Browser')],
     edge: ['microsoft-edge', 'microsoft-edge-stable'],
     chromium: ['chromium'],
     'chrome-for-testing': ['chrome-for-testing'],

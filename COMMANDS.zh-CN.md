@@ -16,13 +16,13 @@
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
-| `tokenless profiles discover` | 读取已知 Chromium profile 的安全目录/版本元数据，并按当前平台 Cloak pin 分类。 | 否 |
-| `tokenless profiles add` | 创建 clean managed browser profile。 | 否 |
+| `tokenless profiles discover` | 读取已知 Chromium profile 的安全目录/版本元数据，并分类 import compatibility。 | 否 |
+| `tokenless profiles add` | 创建 clean managed browser profile，或执行符合条件的实验性导入。 | 否 |
 | `tokenless profiles list` | 列出 profiles 及其最后保存的 provider 检查结果。 | 否 |
 | `tokenless profiles status` | 实时检查一家 provider，并把结果保存到 profile registry。 | 是 |
 | `tokenless profiles open` | 以 headed browser 打开 managed profile，可选择是否导航到 provider。 | 可选 |
 | `tokenless profiles set-default` | 设置默认 managed profile。 | 否 |
-| `tokenless profiles reset` | 旧版兼容命令；profile copy 已禁用。 | 否 |
+| `tokenless profiles reset` | 在再次同意并重新校验兼容性后，从已记录来源重新导入 imported profile。 | 否 |
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
@@ -172,16 +172,16 @@ tokenless setup --browser managed-chromium --profile managed-default --fresh --j
 - `--no-browser-download` 在缺少 managed runtime 时直接失败，而不是下载。
 - `--repair-browser` 显式重新安装所选 `managed-chromium` 或 `cloak` runtime；不能与 `--no-browser-download` 同时使用。
 - `--fresh` 或 `-f` 创建 clean managed profile。
-- `--import-browser-profile <key> --consent-local-profile-copy` 以实验性方式把一个明确选定、版本兼容的 Google Chrome profile 复制进新的 CloakBrowser profile，并且不解析认证值。
+- `--import-browser-profile <key> --consent-local-profile-copy` 以实验性方式把一个符合条件的 profile 复制进新的 managed Chrome for Testing 或 CloakBrowser profile，并且不解析认证值。Brave 来源还需添加 `--import-browser brave`；默认来源 family 是 Chrome。
 - `--defaults` 选择非交互默认值。
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
 
-`auto` 会解析为按平台固定版本的 Tokenless-managed Chrome for Testing。交互式 setup 会询问是否使用 Anti-Detect；拒绝后不再打开单独的 browser-runtime 选择器，而是选择 managed Chrome for Testing 并创建 clean profile。若 cache 中尚不存在，setup 会把经过 checksum 固定的官方 artifact 下载到 `$TOKENLESS_HOME/browser/runtimes`：Apple Silicon macOS 使用 `145.0.7632.6`，Windows x64 使用 `146.0.7680.165`。Browser binary 不会内嵌进 npm package。已有的显式 system-browser selection 继续受支持，并会先验证缓存 executable，再扫描标准安装路径；显式选择但找不到的 system browser 会失败，并给出准确的 config 命令和 dashboard 字段。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
+`auto` 会解析为按平台固定版本的 Tokenless-managed Chrome for Testing。交互式 setup 会询问是否使用 Anti-Detect；拒绝后选择 managed Chrome for Testing，但不会采用用户已安装的浏览器作为 target。两个 managed target 都默认创建 clean profile。若 cache 中尚不存在，setup 会把经过 checksum 固定的官方 artifact 下载到 `$TOKENLESS_HOME/browser/runtimes`：Apple Silicon macOS 使用 `145.0.7632.6`，Windows x64 使用 `146.0.7680.165`。Browser binary 不会内嵌进 npm package。已有的显式 system-browser selection 继续受支持，并会先验证缓存 executable，再扫描标准安装路径；显式选择但找不到的 system browser 会失败，并给出准确的 config 命令和 dashboard 字段。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
 
 只有明确选择的 system browser 才允许 `browserExecutablePath` 指向 `TOKENLESS_HOME` 外部。`managed-chromium` 与 `cloak` 的路径由 catalog 锁定的 runtime 决定，并位于 `$TOKENLESS_HOME/browser/runtimes`；config 中的任意路径不能替换或绕过该 managed runtime。
 
-Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。选择 Anti-Detect 后，setup 不会为了选择 runtime 而扫描 system-browser executable。它会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并且只扫描 Google Chrome profile 目录作为 import candidate。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。有兼容 profile 时，setup 只显示一次选择，其中包含 `Start clean` 和兼容 profile 来源；选择某个 profile 本身就构成对 opaque 本地复制的明确授权，不再另外询问是否 import 或是否同意 copy。没有匹配项时会跳过来源选择并使用 clean profile。用户显式要求导入版本不匹配、browser 不受支持或版本未知的 profile 时，会在下载前明确失败，而不是静默忽略。Installer 随后依次下载、校验、解包、检查版本并 smoke-launch Cloak；setup 会立即持久化 `browser: "cloak"` 及其 managed `browserExecutablePath`。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 因为没有发生可见的 profile 来源选择，仍要求 `--consent-local-profile-copy`。
+Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。Setup 不会为了选择 target 而扫描 system-browser executable。对两个 managed target，实验性 import step 只扫描用户选择的 Google Chrome 或 Brave profile root，读取目录 key 和安全的 `Last Version`，并应用 evidence-bound policy：在 Apple Silicon macOS 上，Chrome major 145 和 Brave Chromium major 143/145 可导入 managed Chrome for Testing 145 或 CloakBrowser 145。Edge、Chromium、Chrome for Testing、Arc、其他来源版本和所有 Windows import 组合都会在复制前失败。选择 profile 即授权 opaque 本地复制；`Start clean` 仍是默认值。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 需要 `--consent-local-profile-copy`，Brave 还需要 `--import-browser brave`。
 
 Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 会创建 clean profile。实验性 Google Chrome import 只能填充新的 CloakBrowser-bound profile。之后由 managed profile 自己跨 job 保留 browser-managed session。未来若提供 managed Chrome for Testing 到 Cloak 的迁移，必须另行取得平台 parity 与认证状态证据；当前产品尚未暴露该能力。
 
@@ -320,7 +320,7 @@ tokenless daemon stop --json
 
 ### `tokenless profiles discover`
 
-只读取 Chrome、Edge、Chromium 或 Chrome for Testing 的安全 profile 目录/版本元数据，不复制或修改 browser data。每个 profile 都会根据当前平台 Cloak pin 返回 `aligned`、`not_aligned` 或 `unknown`。Discovery 不代表 profile 可以被导入，也不会解析 `Local State`。
+只读取 Chrome、Brave、Edge、Chromium 或 Chrome for Testing 的安全 profile 目录/版本元数据，不复制或修改 browser data。每个 profile 都会返回相对当前平台 Cloak pin 的 compatibility。Discovery 本身不代表 profile 可以被导入，也不会解析 `Local State`。
 
 ```bash
 tokenless profiles discover --browser all --json
@@ -329,14 +329,15 @@ tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user
 
 ### `tokenless profiles add`
 
-创建 clean managed profile；或者只在使用 CloakBrowser 时，经明确同意后以实验性方式复制一个版本兼容的本机 Google Chrome profile：
+创建 clean managed profile；或者经明确同意后，以实验性方式把符合条件的 macOS Google Chrome/Brave profile 复制进 managed Chrome for Testing 145 或 CloakBrowser 145 profile：
 
 ```bash
 tokenless profiles add -P work --label "Work" --set-default --json
 tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
+tokenless profiles add -P brave-work --browser managed-chromium --import-browser-profile Default --import-browser brave --consent-local-profile-copy --set-default --json
 ```
 
-复制只发生在本机，并保持 opaque。Tokenless 会复制文件系统条目，但不会检查或报告 cookies、storage、密码、tokens 或 Keychain 数据。Edge、Chromium、Chrome for Testing、Brave、Arc 和其他 browser profile 均不可导入。
+复制只发生在本机，并保持 opaque。Tokenless 会复制文件系统条目，但不会检查或报告 cookies、storage、密码、tokens 或 Keychain 数据。Arc 不受支持；Windows 和所有不在已记录 matrix 中的 source/target/version 组合都会 fail closed。
 
 ### `tokenless profiles list`
 

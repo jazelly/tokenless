@@ -9,6 +9,7 @@
     t,
     busy,
     testId,
+    targetBrowser,
     ondiscover,
   }: {
     sourceId: string
@@ -16,6 +17,7 @@
     t: (key: any) => string
     busy: boolean
     testId: 'setup' | 'profile'
+    targetBrowser: string
     ondiscover: (input: JsonRecord) => Promise<JsonRecord>
   } = $props()
 
@@ -24,6 +26,7 @@
   let scanning = $state(false)
   let error = $state('')
   let advanced = $state(false)
+  let sourceBrowser = $state<'chrome' | 'brave'>('chrome')
   let userDataDir = $state('')
   let errorElement = $state<HTMLDivElement>()
   let selected = $derived(sources.find((source) => source.id === sourceId))
@@ -37,6 +40,13 @@
     }
   }
 
+  function resetDiscovery() {
+    sourceId = ''
+    consent = false
+    sources = []
+    error = ''
+  }
+
   async function discover() {
     scanning = true
     sourceId = ''
@@ -44,7 +54,8 @@
     error = ''
     try {
       const result = await ondiscover({
-        browser: 'chrome',
+        browser: sourceBrowser,
+        targetBrowser,
         ...(advanced && userDataDir.trim() ? { userDataDir: userDataDir.trim() } : {}),
       })
       sources = Array.isArray(result.sources) ? result.sources : []
@@ -81,6 +92,13 @@
   {#if mode === 'copy'}
     <div class="profile-source-panel">
       <p class="form-note prominent-note">{t('profileImportExperimentalHelp')}</p>
+      <label class="field">
+        <span>{t('sourceBrowser')}</span>
+        <select name="profileSourceBrowser" bind:value={sourceBrowser} onchange={resetDiscovery} data-testid={`${testId}-profile-source-browser`}>
+          <option value="chrome">Google Chrome</option>
+          <option value="brave">Brave</option>
+        </select>
+      </label>
       <div class="source-discovery-row">
         <div>
           <strong>{t('browserProfiles')}</strong>

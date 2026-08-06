@@ -16,13 +16,13 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
-| `tokenless profiles discover` | Read safe directory/version metadata for known Chromium profiles and classify alignment with the platform Cloak pin. | None |
-| `tokenless profiles add` | Create a clean managed browser profile. | None |
+| `tokenless profiles discover` | Read safe directory/version metadata for known Chromium profiles and classify import compatibility. | None |
+| `tokenless profiles add` | Create a clean managed browser profile or an eligible experimental import. | None |
 | `tokenless profiles list` | List profiles and their last saved provider observations. | None |
 | `tokenless profiles status` | Check one provider live and save the observation to the profile registry. | Yes |
 | `tokenless profiles open` | Open a managed profile headed, optionally navigating to one provider. | Optional |
 | `tokenless profiles set-default` | Select the default managed profile. | None |
-| `tokenless profiles reset` | Legacy compatibility command; profile copying is disabled. | None |
+| `tokenless profiles reset` | Re-import an imported profile from its recorded source after consent and compatibility revalidation. | None |
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
@@ -172,16 +172,16 @@ Main options:
 - `--no-browser-download` fails instead of downloading a missing managed runtime.
 - `--repair-browser` explicitly reinstalls a selected `managed-chromium` or `cloak` runtime. It cannot be combined with `--no-browser-download`.
 - `--fresh` or `-f` creates a clean managed profile.
-- `--import-browser-profile <key> --consent-local-profile-copy` experimentally copies one explicitly selected, version-compatible Google Chrome profile into a new CloakBrowser profile without parsing authentication values.
+- `--import-browser-profile <key> --consent-local-profile-copy` experimentally copies one eligible profile into a new managed Chrome for Testing or CloakBrowser profile without parsing authentication values. Add `--import-browser brave` for a Brave source; Chrome is the default source family.
 - `--defaults` selects non-interactive defaults.
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
 
-`auto` resolves to the platform-pinned Tokenless-managed Chrome for Testing. Interactive setup asks whether to use Anti-Detect; declining selects managed Chrome for Testing without a separate browser-runtime picker and creates a clean profile. Setup downloads the checksum-pinned official `145.0.7632.6` artifact on Apple Silicon macOS or `146.0.7680.165` artifact on Windows x64 into `$TOKENLESS_HOME/browser/runtimes` when it is not already cached. The browser binary is not embedded in the npm package. Existing explicit system-browser selections remain supported and verify their cached executable before scanning standard installation paths; an explicit missing system browser fails with the exact config command and dashboard field needed to supply a path. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first runtime targets are Apple Silicon macOS and Windows x64 (Intel and AMD); Windows remains prerelease until its real-hardware gates pass.
+`auto` resolves to the platform-pinned Tokenless-managed Chrome for Testing. Interactive setup asks whether to use Anti-Detect; declining selects managed Chrome for Testing without adopting the user's installed browser. Both managed targets start clean by default. Setup downloads the checksum-pinned official `145.0.7632.6` artifact on Apple Silicon macOS or `146.0.7680.165` artifact on Windows x64 into `$TOKENLESS_HOME/browser/runtimes` when it is not already cached. The browser binary is not embedded in the npm package. Existing explicit system-browser selections remain supported and verify their cached executable before scanning standard installation paths; an explicit missing system browser fails with the exact config command and dashboard field needed to supply a path. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first runtime targets are Apple Silicon macOS and Windows x64 (Intel and AMD); Windows remains prerelease until its real-hardware gates pass.
 
 `browserExecutablePath` may point outside `TOKENLESS_HOME` only for an explicitly selected system browser. Paths for `managed-chromium` and `cloak` are derived from the catalog-pinned runtime under `$TOKENLESS_HOME/browser/runtimes`; an arbitrary config value cannot replace or bypass that managed runtime.
 
-The Anti-Detect question states that accepting it will download and install the verified, platform-pinned CloakBrowser when needed; there is no later installation confirmation. After Anti-Detect is selected, setup does not run system-browser executable discovery for runtime selection. It links to the official CloakBrowser project, shows the exact platform artifact and Chromium version, and scans only Google Chrome profile directories for import candidates. Discovery reads only the directory key and `Last Version` and classifies an exact four-component match. When compatible profiles exist, setup presents one choice containing `Start clean` and the compatible profile sources. Selecting a profile explicitly authorizes its opaque local copy; there are no separate import or copy-consent questions. When none align, setup skips the source choice and uses a clean profile. An explicitly requested incompatible, unsupported-browser, or unknown-version import fails before download instead of being silently ignored. The installer then downloads, verifies, extracts, version-checks, and smoke-launches Cloak; setup immediately persists `browser: "cloak"` and its managed `browserExecutablePath`. Copying remains opaque: Tokenless does not parse `Local State`, cookies, browser storage, or authentication values. Non-interactive import still requires `--consent-local-profile-copy` because no visible profile-source selection occurred.
+The Anti-Detect question states that accepting it will download and install the verified, platform-pinned CloakBrowser when needed; there is no later installation confirmation. Setup does not run system-browser executable discovery for target selection. For either managed target, the experimental import step scans only the selected Google Chrome or Brave profile root, reads the directory key and safe `Last Version`, and applies the evidence-bound policy: on Apple Silicon macOS, Chrome major 145 and Brave Chromium major 143/145 may target managed Chrome for Testing 145 or CloakBrowser 145. Edge, Chromium, Chrome for Testing, Arc, other source versions, and every Windows import combination fail before copy. Selecting a profile explicitly authorizes its opaque local copy; `Start clean` remains the default. Copying remains opaque: Tokenless does not parse `Local State`, cookies, browser storage, or authentication values. Non-interactive import requires `--consent-local-profile-copy`, and Brave additionally requires `--import-browser brave`.
 
 Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing runtime family creates a clean profile. Experimental Google Chrome import can populate only a new CloakBrowser-bound profile. The managed profile then preserves its browser-managed session across jobs. A future managed Chrome-for-Testing-to-Cloak migration requires separate platform parity and authentication-state evidence; it is not currently exposed.
 
@@ -320,7 +320,7 @@ A managed profile is one persistent local browser identity. One profile may hold
 
 ### `tokenless profiles discover`
 
-Reads safe profile directory/version metadata for Chrome, Edge, Chromium, or Chrome for Testing without copying or modifying browser data. Each profile reports `aligned`, `not_aligned`, or `unknown` against the current platform Cloak pin. Discovery does not make a profile importable and does not parse `Local State`.
+Reads safe profile directory/version metadata for Chrome, Brave, Edge, Chromium, or Chrome for Testing without copying or modifying browser data. Each profile reports its compatibility against the current platform Cloak pin. Discovery alone does not make a profile importable and does not parse `Local State`.
 
 ```bash
 tokenless profiles discover --browser all --json
@@ -329,14 +329,15 @@ tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user
 
 ### `tokenless profiles add`
 
-Creates a clean managed profile or, only for CloakBrowser, experimentally copies a version-compatible local Google Chrome profile after explicit consent:
+Creates a clean managed profile or experimentally copies an eligible macOS Google Chrome/Brave profile into a managed Chrome for Testing 145 or CloakBrowser 145 profile after explicit consent:
 
 ```bash
 tokenless profiles add -P work --label "Work" --set-default --json
 tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
+tokenless profiles add -P brave-work --browser managed-chromium --import-browser-profile Default --import-browser brave --consent-local-profile-copy --set-default --json
 ```
 
-The copy remains local and opaque. Tokenless copies filesystem entries but does not inspect or report cookies, storage, passwords, tokens, or Keychain data. Edge, Chromium, Chrome for Testing, Brave, Arc, and other browser profiles are not eligible.
+The copy remains local and opaque. Tokenless copies filesystem entries but does not inspect or report cookies, storage, passwords, tokens, or Keychain data. Arc is unsupported; Windows and every source/target/version combination outside the documented matrix fail closed.
 
 ### `tokenless profiles list`
 
