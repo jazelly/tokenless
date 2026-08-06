@@ -14,16 +14,16 @@ The implementation must improve browser realism without silently changing a prof
 
 ## Review Snapshot
 
-Plan identity: `P0-browser-runtime-selection-and-cloak.md` | Lifecycle: active | Delivery status: in progress | Audited: 2026-08-01
+Plan identity: `P0-browser-runtime-selection-and-cloak.md` | Lifecycle: active | Delivery status: in progress | Audited: 2026-08-05
 
 The plan is saved in the root of `docs/roadmaps/`, which is the repository's authoritative active-roadmap location, and is linked from `docs/roadmaps/README.md` under the name **Browser Runtime Selection and Cloak Integration**.
 
 | Plan area | Marked complete | Audit interpretation |
 | --- | ---: | --- |
 | Runtime foundation | 5 / 5 | Production catalog, manager, exact executable resolution, transactional installation, and independent Playwright pin exist. |
-| Durable selection and profile binding | 6 / 6 | Production config/profile paths implement exact runtime binding, clean family changes, downgrade protection, and no profile/auth-state copying. |
+| Durable selection and profile binding | 6 / 6 | Production config/profile paths implement exact runtime binding, clean family changes, downgrade protection, and explicit-consent opaque profile copying without authentication-value inspection. |
 | Setup and daemon integration | 6 / 6 | Interactive and non-interactive setup, lazy download policy, atomic persistence ordering, and daemon resolution paths exist. |
-| Safe Chromium profile inventory | 5 / 5 | Setup enumerates known Chromium profile directories without browser state, resolves safe version metadata, classifies exact platform-pin alignment, presents bilingual results, and requires a clean-profile confirmation before download. |
+| Safe Chromium profile inventory | 5 / 5 | Setup enumerates known Chromium profile directories without browser state, resolves safe version metadata, classifies exact platform-pin alignment, presents bilingual results, and offers one explicit profile-source choice when an aligned source exists. |
 | Exact Playwright launch | 4 / 4 | The resolved executable and launch policy reach Playwright/CDP; sandboxing, production native credential storage, disposable-profile keychain neutrality, and cleanup are preserved. |
 | Inspection, recovery, and documentation | 5 / 5 | Doctor, cache reuse/repair, bilingual docs, licensing, and cross-platform release-gate launchers exist. |
 | Real-boundary acceptance | 10 / 15 | macOS positive runtime paths and the locally executable fail-closed paths are proven. Five environment-dependent release gates remain open; implementation completion is not release completion. |
@@ -69,7 +69,7 @@ Tokenless v1 supports only the no-license-key Cloak artifacts pinned in the prod
 
 The fifth component is Cloak's artifact revision; Chromium profile comparison uses the four-component browser version. A candidate is version-aligned only when its owning browser's complete four-component version equals the platform catalog entry's `browserVersion`. A major-only value such as `150` is insufficient for a positive match. A Windows profile last used by any Chromium 150 build is not aligned with the currently supported Windows Cloak 146 runtime.
 
-Version alignment is informational and does not make a profile importable by Tokenless. Tokenless may enumerate only non-secret metadata: browser identity, executable version, user-data root, and validated profile directory key. It must not read `Local State`, `Preferences`, cookies, tokens, browser storage, encryption keys, account names, emails, avatars, or authentication state for this flow. It must not copy a profile directory or open the source browser's profile with Cloak. The safe follow-up is to create a clean Cloak-bound profile and let the user sign in visibly.
+Version alignment is an admission policy, not proof that Chromium guarantees profile portability. Tokenless may enumerate only non-secret metadata: browser identity, executable version, user-data root, validated profile directory key, and safe `Last Version` metadata. After explicit user consent, Tokenless may copy the selected profile only as an opaque local filesystem tree into a new user-controlled managed profile. It must not parse `Local State`, `Preferences`, cookies, tokens, browser storage, encryption keys, account names, emails, avatars, or authentication state. A source that is unknown or not exactly aligned with the supported Cloak pin fails before copy; `Start clean` remains the safe default.
 
 ### Selection semantics
 
@@ -104,8 +104,9 @@ The invariant is strict:
 - Changing from a system browser to managed Chrome for Testing or Cloak provisions a new clean managed profile.
 - Removing a system browser does not cause its existing profile to open with the managed fallback.
 - System browser in-family updates remain supported, but the observed version is recorded and downgrade compatibility fails closed.
-- Tokenless never copies a local browser or Cloak profile into a managed profile. This includes opaque file copies: cookies, tokens, browser storage, Keychain-linked state, and other authentication data are never migrated by Tokenless.
-- Users authenticate inside the clean Tokenless-managed profile through the visible browser. The browser owns that profile's session afterward, and Tokenless may reuse the same runtime-bound profile without reading its authentication data.
+- Tokenless copies a local Chromium profile only after explicit user selection or the non-interactive consent flag, only into a new runtime-bound managed profile, and only as an opaque filesystem tree. The source remains untouched.
+- Tokenless never inspects, exports, logs, or promises migration of authentication values. Browser-managed login state may remain unusable when the source and target rely on different macOS Safe Storage identities even if the copied profile opens.
+- Users may instead authenticate inside a clean Tokenless-managed profile through the visible browser. The browser owns that profile's session afterward, and Tokenless may reuse the same runtime-bound profile without reading its authentication data.
 
 ## Architecture
 
@@ -199,6 +200,60 @@ The standard policy preserves the browser-managed session while supplying the ar
 
 Production managed-profile launches suppress Playwright's `--password-store=basic` and `--use-mock-keychain` defaults so the selected browser can use its normal OS credential storage. On macOS this permits the matching browser runtime to request access to its Safe Storage Keychain item and decrypt browser-managed profile state. Tokenless never reads that item itself, and approval remains a manual user action. Disposable installer smoke profiles and unauthenticated browser-surface profiles remain keychain-neutral because they carry no reusable authentication state.
 
+### Opaque profile importability runbook
+
+This manual runbook measures whether a copied profile can be opened by a target Cloak runtime and whether one non-sensitive browser-history marker survives the copy. It does not measure login-state portability, provider readiness, CAPTCHA behavior, or product support.
+
+1. Record the source executable's exact four-component Chromium version and the target Cloak artifact/browser versions using executable `--version` output or other safe version metadata.
+2. Use a new unauthenticated source user-data directory. In a real headed browser, issue one uniquely named Google Search and confirm the resulting URL is present through the visible unfiltered `chrome://history/` surface. Do not read the History database, browser storage, `Local State`, `Preferences`, credentials, or account content.
+3. Close the source with `context.close()` and verify that its browser process exited before copying.
+4. Invoke the production `copyOpaqueChromiumProfile` boundary with explicit consent. Copy `Default` plus the approved root metadata as an opaque tree into a new UUID destination; never modify the source.
+5. Launch exactly one target persistent context with Chromium sandboxing enabled. Production-style target launches suppress Playwright's `--password-store=basic` and `--use-mock-keychain` defaults so macOS uses native credential storage.
+6. Treat a returned context plus the expected target `browser.version()` as launch success. For a source with the non-sensitive marker, open the visible unfiltered `chrome://history/` UI and require the marker URL to appear.
+7. Close every returned context with `context.close()`. For keyed Cloak, query the server-side seat with an info probe that cannot launch Chromium and require `active: 0` before the next case. If the process exits before a context is returned, record the signal or exit category and do not describe it as a clean close.
+8. Run cases sequentially without internal retry. Record real Google outcomes separately; a `/sorry/` response does not invalidate the history-copy check and is not a CAPTCHA-support result.
+
+### Experimental macOS importability observations (2026-08-05)
+
+The following matrix ran on `darwin-arm64` with real headed browsers, the real Google network, production opaque-copy code, native target credential storage, enabled Chromium sandboxing, and sequential cleanup. Cloak targets were no-key artifact `145.0.7632.109.2` (browser `145.0.7632.109`) and keyed Pro artifact `150.0.7871.114.3` (browser `150.0.7871.114`) through JavaScript wrapper `0.5.4`. Pro/free licensing and the Cloak 150 artifact remain outside the supported Tokenless catalog; these rows are experimental evidence only.
+
+| Source profile | Cloak 145 result | Cloak 150 result |
+| --- | --- | --- |
+| Chrome for Testing `113.0.5672.63` | Opened; Google history marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `115.0.5790.170` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing 120 (`120.0.6099.71` and `120.0.6099.109`) | Not tested: both source binaries exited with `SIGSEGV`/139 before a profile could be created on this host | Not tested for the same host-runtime reason |
+| Chrome for Testing `125.0.6422.141` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `130.0.6723.116` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `135.0.7049.114` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `140.0.7339.207` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `141.0.7390.122` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `142.0.7444.175` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `143.0.7499.192` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `144.0.7559.133` | Opened; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `145.0.7632.6` | Opened; Google history marker preserved; clean close | Opened; marker preserved; clean close |
+| Chromium `145.0.7632.159` | Opened despite the source patch being newer; marker preserved; clean close | Opened; marker preserved; clean close |
+| Chrome for Testing `146.0.7680.165` | `SIGTRAP` before context | Opened; marker preserved; clean close |
+| Chrome for Testing `147.0.7727.15` | `SIGTRAP` before context | Opened; marker preserved; clean close |
+| Chrome for Testing `148.0.7778.96` | `SIGTRAP` before context | Opened; marker preserved; clean close |
+| Chrome for Testing `149.0.7827.55` | `SIGTRAP` before context | Opened; marker preserved; clean close |
+| Chrome for Testing `150.0.7871.49` | `SIGTRAP` before context | `SIGTRAP` before context |
+| Chrome for Testing `150.0.7871.124` | `SIGTRAP` before context | `SIGTRAP` before context |
+| Cloak `150.0.7871.114` native source | `SIGTRAP` before context | Opened; marker preserved; clean close |
+| Existing full Chrome `150.0.7871.187` opaque copy | `SIGTRAP` before context; user history was not inspected | Previously observed `SIGTRAP` for full, profile-only, and tab-restore-stripped variants; the decisive stripped case started and ended with `active: 0` |
+
+Additional observations and limits:
+
+- A separately user-prepared Chrome for Testing `145.0.7632.6` profile also copied 258 opaque files into Cloak 145 and opened a visible window. Account and login state were not inspected.
+- Eighteen anonymous Chrome/Chromium source profiles recorded exactly one unique Google URL in their visible History UI before copy. All 28 successful Chrome/Chromium copied targets preserved that marker and closed cleanly; the same-runtime Cloak 150 control did as well, bringing the expanded automated target ledger to 29 successes and 10 pre-context `SIGTRAP` failures.
+- The contiguous 140–145 source range opened in Cloak 145, while 146–150 did not. Cloak 150 opened every runnable Chrome/Chromium source tested in the 113–149 range; major 120 could not be exercised because two official Chrome for Testing 120 builds crashed directly on the host before profile creation.
+- Ordinary Chrome/Chromium source searches returned HTTP 200 at Google `/sorry/index`; the native Cloak 150 source returned HTTP 200 at `/search`. These are network observations only and make no CAPTCHA-bypass claim.
+- Every successful Cloak 150 context closed cleanly and its free-tier seat returned to `active: 0` before the next case. Earlier stale-seat observations explain prior exit-code-76 noise but do not explain these `SIGTRAP` results.
+- A clean Chrome for Testing 150 profile with one history item failed, as did the previously tab-restore-stripped Chrome 150 copy. Profile size, restored tabs, login state, and a source patch newer than the target are therefore not necessary for the Chrome/CFT 150 failure.
+- The observed boundary is not simply "same major works": Cloak 145 accepted the tested runnable sources through major 145 and rejected newer majors, while Cloak 150 accepted every runnable Chrome/Chromium source tested through 149 plus its own native 150 profile but rejected the tested Chrome/Chrome for Testing 150 profiles on both sides of target patch `.114`.
+- Chrome for Testing 143 succeeding does not prove that every older Chrome version works. The older 113, 115, 125, 130, and 135 anchors increase confidence in long upgrade paths, but untested majors and patches remain unproven, pre-Chrome-for-Testing releases are outside this runbook, and major 120 is explicitly unresolved on this host.
+- The evidence does not identify the crashing file or prove a Chromium guarantee. The opaque-profile rule intentionally prevents file-by-file inspection, and successful history migration does not prove macOS Keychain-encrypted login portability.
+- Keep the production admission rule fail-closed at exact four-component alignment until a supported built-CLI matrix establishes a safer policy. These experimental cross-version successes must not silently broaden setup eligibility.
+
 ## Delivery Plan and Alignment Ledger
 
 This ledger is updated as implementation and evidence land. A checked code item means the production path exists; a checked evidence item means the stated real-boundary proof has been inspected and recorded.
@@ -218,7 +273,7 @@ This ledger is updated as implementation and evidence land. A checked code item 
 - [x] Add runtime binding to newly provisioned profiles.
 - [x] Fail before browser launch when a profile/runtime family or downgrade invariant is violated.
 - [x] Create a clean profile when setup changes runtime family.
-- [x] Remove browser-profile and authentication-state copy paths; legacy copy flags fail closed with `browser_profile_copy_disabled`.
+- [x] Add explicit-consent opaque local profile copying into a new runtime-bound managed profile while keeping unconsented, unsafe-destination, symlink, and source-version mismatch paths fail-closed.
 
 ### Milestone 3: Setup and daemon integration
 
@@ -235,7 +290,7 @@ This ledger is updated as implementation and evidence land. A checked code item 
 - [x] Cover known Chrome, Edge, Chromium, and Chrome for Testing roots on supported macOS and Windows platforms.
 - [x] Map every candidate to its safe profile `Last Version`, falling back to the exact owning installed-browser version when needed; never infer Chrome's version for another Chromium browser.
 - [x] Classify candidates against the production Cloak catalog and present aligned and non-aligned results in equivalent English and Simplified Chinese output, including the official CloakBrowser reference.
-- [x] Add the safe second setup choice to continue with a clean Cloak profile; keep profile/authentication-state import absent and legacy copy flags fail-closed.
+- [x] Add one safe setup profile-source choice containing `Start clean` plus exactly aligned local sources; selection authorizes only an opaque copy and never authentication-value inspection.
 
 ### Milestone 4: Exact Playwright launch
 
@@ -301,4 +356,4 @@ Windows AMD64 execution for the following gates is specified and recorded in the
 
 This roadmap remains in progress until every supported-platform path is implemented and the real-boundary acceptance evidence is complete. A macOS-only proof may advance the implementation but cannot establish Windows support. Prototype scripts, fixture checks, source-string assertions, or a browser opening a page are development evidence only and cannot replace built-CLI setup, daemon, profile, and real-provider verification.
 
-No Cloak binary may be included in npm packages, installers, GitHub release artifacts, or repository history. No release may claim profile portability across runtime families, authentication-state migration, or CAPTCHA bypass. No-license-key support must remain distinct from upstream Pro/keyed builds. The release must instead state the exact supported platforms, locked managed-runtime versions, selection rules, clean-profile isolation behavior, and observed provider evidence.
+No Cloak binary may be included in npm packages, installers, GitHub release artifacts, or repository history. No release may claim general profile portability across runtime families, guaranteed authentication-state migration, or CAPTCHA bypass. No-license-key support must remain distinct from upstream Pro/keyed builds. The release must instead state the exact supported platforms, locked managed-runtime versions, profile-copy admission rules, clean-profile isolation behavior, and observed provider evidence.
