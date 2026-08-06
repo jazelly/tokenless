@@ -1,6 +1,6 @@
 # Web Agent Harness
 
-Status: proposed | Priority: P0 | First provider: ChatGPT
+Status: proposed | Priority: P0 | First provider: ChatGPT | First harness capability: Agent Skills
 
 Depends on: the typed visible-provider capability seam, durable daemon jobs and conversation lanes, the Context Envelope contract, and real ChatGPT Project, instruction, upload, and continuation evidence
 
@@ -16,15 +16,17 @@ The current repository remains the Web Provider API project. It converts evidenc
 
 The first complete path is ChatGPT because it is the current strategic target for persistent Projects, instructions, files, exact conversation continuation, and tool-loop instruction following. This is a sequencing decision, not a permanent claim that other providers cannot support agent runs.
 
-V1 proves one bounded loop:
+V1 proves one bounded, skill-aware loop before adding general filesystem or MCP authority:
 
 1. create or resolve an exact ChatGPT Project and a fresh conversation;
-2. deliver an explicit, versioned harness instruction set and the task context through visible provider surfaces;
+2. discover and validate skills inside explicitly approved roots, freeze their revisions, and deliver only the permitted skill name and description catalog with the versioned harness instruction set;
 3. submit the user goal through the existing provider runtime;
-4. parse a schema-valid tool request from the complete visible response;
-5. authorize and execute configured local MCP tools;
-6. return bounded structured tool results to the same conversation; and
+4. parse either a schema-valid `skill.load` request or a schema-valid final result from the complete visible response;
+5. authorize the requested skill against the frozen catalog and return its exact `SKILL.md` revision as bounded, source-attributed instruction content below local safety and user policy;
+6. continue the exact same conversation with the correlated skill result; and
 7. repeat until ChatGPT returns a schema-valid final result or the run reaches a waiting or terminal state.
+
+This first slice deliberately has no workspace write, arbitrary file read, process execution, network tool, or MCP server. It proves the hard web-specific parts—visible instruction delivery, output framing, correlation, validation, continuation, and durable looping—using a useful read-only capability. Filesystem and MCP then enter through the same tool-runtime seam instead of creating separate agent loops.
 
 ## AI Turn Versus Agent Run
 
@@ -52,16 +54,20 @@ Provider-native Agent, Research, apps, connectors, or other modes remain visible
 ```mermaid
 flowchart TB
   Caller["Caller"]
-  Skills["Activated skills<br/>instructions + tool guidance"]
+  Skills["Approved skill roots<br/>SKILL.md + resources"]
+  Harness["Layer 2: Web Agent Harness<br/>instructions + validated agent loop"]
+  Tools["Harness tool runtime<br/>skill + filesystem + MCP adapters"]
+  Files["Approved workspace roots"]
   MCP["Configured MCP servers"]
-  Harness["Layer 2: Web Agent Harness<br/>skill injection + MCP tool loop + approval"]
   Provider["Layer 1: Web Provider API<br/>Projects + files + conversations + turns"]
   Playwright["Playwright provider adapters"]
   Websites["Visible AI provider websites"]
 
   Caller --> Harness
   Skills --> Harness
-  Harness <--> MCP
+  Harness <--> Tools
+  Tools <--> Files
+  Tools <--> MCP
   Harness <--> Provider
   Provider <--> Playwright
   Playwright <--> Websites
@@ -78,14 +84,14 @@ The intended end state contains two independently useful projects:
 | Module and eventual project | Owns | Does not own |
 | --- | --- | --- |
 | Web Provider API | Playwright provider adapters, managed browser execution, Projects, files, conversations, visible model controls, durable provider turns, routing, scheduling, scaling, evidence, and the versioned Web Provider interface | Skill injection, MCP tool execution, approvals, or an agent loop |
-| Web Agent Harness | Agent runs, web-specific instruction delivery, skill injection, visible tool-call protocol, southbound MCP clients, registered local tools, approvals, loop policy, and harness-owned run state | Provider DOM, browser profiles, selectors, credentials, or direct Playwright operations |
+| Web Agent Harness | Agent runs, web-specific instruction delivery, skill discovery and progressive loading, visible tool-call protocol, bounded filesystem tools, southbound MCP clients, registered local tools, approvals, output validation, loop policy, and harness-owned run state | Provider DOM, browser profiles, selectors, credentials, or direct Playwright operations |
 
 The repository is not split while both interfaces are still moving. The delivery sequence is:
 
 1. keep the existing Web Provider API implementation in this repository;
 2. add the harness as an independently buildable workspace package, provisionally `packages/web-agent-harness/`;
 3. make that package depend only on a versioned provider-turn client and shared wire schemas;
-4. prove the complete ChatGPT tool loop and stabilize the cross-package interface; and
+4. prove the complete ChatGPT skill loop, then the first external-tool loop, and stabilize the cross-package interface; and
 5. extract the harness package into its own project only when doing so is a mechanical repository move rather than an architectural rewrite.
 
 No external package scope, registry namespace, or final package name is assumed by this roadmap. Those names require separate ownership verification before publication.
@@ -107,6 +113,40 @@ The harness package must not import from provider adapters, Playwright, daemon j
 The provider-turn client is an adapter over the durable daemon interface, not a wrapper that exposes internal classes. Opaque provider job, workspace, conversation, and evidence identifiers cross the seam; database handles, tables, browser objects, and internal state-machine values do not.
 
 The harness owns its AgentRun persistence schema and migrations behind its own module. It may initially be hosted in the same installation or process topology, but the Web Provider implementation never reads harness tables and the harness never reads provider tables. Correlation happens through public opaque identifiers.
+
+### Initial Package Shape
+
+The first implementation belongs at `packages/web-agent-harness/`. That location makes the dependency rule mechanically enforceable while both sides of the Provider interface are still changing. It is not a claim on an external package name or a commitment to keep the Harness in this repository permanently.
+
+```text
+packages/web-agent-harness/
+  package.json
+  src/
+    index.ts                  # the only public package surface
+    harness.ts                # durable run entry points
+    internal/
+      control/                # visible envelope schemas, framing, and validation
+      instructions/           # precedence, provenance, budgets, and rendering
+      skills/                 # discovery, validation, catalog snapshots, and loading
+      tools/                  # registry, policy, execution, and bounded outcomes
+        filesystem/           # rooted read, search, patch, and artifact materialization
+        mcp/                  # southbound MCP adapters
+      artifacts/              # content-addressed results and provider artifacts
+      persistence/            # harness-owned AgentRun records and migrations
+```
+
+Only `src/index.ts` is an exported package path. Internal directories express ownership and locality, not public extension points. The public Harness interface remains small:
+
+```ts
+interface WebAgentHarness {
+  start(spec: AgentRunSpec): Promise<AgentRunRef>
+  read(ref: AgentRunRef): Promise<AgentRunState>
+  resume(ref: AgentRunRef, input?: AgentRunIntervention): Promise<AgentRunState>
+  cancel(ref: AgentRunRef): Promise<AgentRunState>
+}
+```
+
+Callers do not invoke `loadSkill`, `readFile`, `writeFile`, or `callMcpTool` directly through this interface. Those operations are model proposals handled inside one run. CLI, local UI, and northbound MCP remain adapters over the same four durable entry points.
 
 ### Web-Harness Specificity
 
@@ -201,7 +241,7 @@ An `AgentRunSpec` contains:
 - the user goal and optional structured output requirement;
 - an exact caller/session/project binding when available;
 - a Context Envelope and selected attachments;
-- activated instruction and skill revisions;
+- approved skill roots, skill access rules, and any explicitly pre-activated skills;
 - an explicit tool-set reference, not an ambient global tool dump;
 - approval policy and local resource scopes;
 - provider/profile constraints and required provider capabilities; and
@@ -210,10 +250,11 @@ An `AgentRunSpec` contains:
 The harness implementation owns:
 
 - compiling instruction layers with explicit precedence and provenance;
+- discovering valid skill metadata and freezing a content-addressed, permission-filtered skill catalog for the run;
 - freezing a bounded tool-catalog snapshot for the run;
 - creating a fresh provider conversation for each new run;
 - driving provider turns through the provider runtime interface;
-- parsing and validating the visible control protocol;
+- parsing and validating the visible control protocol and the requested final-output contract;
 - authorizing and dispatching tool calls;
 - delimiting, truncating, storing, and returning tool results;
 - persisting checkpoints before every external mutation;
@@ -254,10 +295,10 @@ Instruction compilation uses this precedence:
 
 1. immutable Tokenless safety and control-protocol contract;
 2. explicit user and organization policy;
-3. activated skill instructions;
+3. explicitly pre-activated and model-loaded skill instructions in activation order;
 4. tool catalog and per-tool usage guidance;
 5. task goal and Context Envelope; and
-6. prior tool results, which are always marked as untrusted data.
+6. prior filesystem, MCP, and other external tool results, which are always marked as untrusted data.
 
 Lower layers cannot grant permissions, add tools, or rewrite higher-layer policy. Instructions are source-attributed and content-addressed. A run stores the exact instruction revision that was visibly delivered.
 
@@ -280,9 +321,9 @@ The conceptual envelope is:
   "calls": [
     {
       "id": "call_opaque",
-      "tool": "mcp.filesystem.read_text_file",
+      "tool": "skill.load",
       "arguments": {
-        "path": "README.md"
+        "name": "pdf-processing"
       }
     }
   ]
@@ -295,7 +336,23 @@ The nonce detects stale or replayed envelopes; it is not authorization. Valid mo
 
 Malformed output receives at most one bounded protocol-repair turn containing validation errors but no new authority. A second malformed response fails the run. Unknown tools, invalid arguments, denied calls, and tool execution errors return structured results to the model so it may recover within the remaining turn budget.
 
-Tool results use the same versioned framing and preserve the original call ids. Large or binary results are stored as local artifacts and represented by bounded metadata or approved excerpts. Tool output is delimited as untrusted data and cannot modify the tool catalog, instruction precedence, or authorization policy.
+Every tool outcome uses versioned framing and preserves the original call ids. A successful `skill.load` creates a source-attributed skill instruction revision as described below; it still cannot modify authorization. Filesystem, MCP, and other external tool results are delimited as untrusted data. Large or binary results are stored as local artifacts and represented by bounded metadata or approved excerpts. No tool outcome can modify the frozen catalog, higher-priority instruction layers, or authorization policy.
+
+### Model Output Validation Pipeline
+
+Validation is a staged gate. No tool dispatch, file mutation, approval request, or terminal success occurs until every applicable stage passes:
+
+1. **Framing:** extract exactly one bounded control envelope from the complete correlated visible response; reject missing, duplicate, nested, or trailing executable envelopes.
+2. **Syntax:** parse strict JSON with duplicate-key rejection plus configured depth, property-count, string, and byte limits; never evaluate code or repair JSON locally.
+3. **Schema:** validate the declared protocol version and exact `tool_calls` or `final` shape against canonical JSON Schema.
+4. **Correlation:** require the current run id, turn number, nonce, unique call ids, and a response belonging to the exact provider conversation.
+5. **Capability:** for `tool_calls`, require every canonical tool name and argument to match the frozen catalog and input schema; for `final`, require every declared artifact to resolve to a provider result or harness artifact already owned by this run.
+6. **Authority:** evaluate each valid call against local policy and current resource state. Schema validity and model assertions never imply permission.
+7. **Output contract:** validate the terminal value as bounded Markdown by default or against the caller's frozen JSON Schema when structured output was requested. Reject undeclared files, unknown artifact ids, media-type or digest mismatches, and output that exceeds the run budget.
+
+Protocol errors return one bounded repair turn with machine-readable validation issues and the same authority. A repair cannot add a tool, change a root, relax a schema, or increase a limit. A second invalid response fails clearly.
+
+Provider-native generated images, files, citations, and other multimodal results remain Layer 1 result artifacts. The Harness may correlate and return those artifact references after validation. It never treats assistant prose such as “I wrote `x.png`” as filesystem evidence, and it materializes an artifact into the local workspace only through an explicit authorized filesystem tool call.
 
 ## Durable Agent Loop
 
@@ -334,7 +391,13 @@ Read-only calls in one model response may execute concurrently only when their l
 
 ## Tool Runtime
 
-The tool runtime is a separate deep module with at least two real adapters: MCP tools and registered local tools. Its interface accepts an already parsed call plus authorization context and returns a bounded `ToolOutcome`.
+The tool runtime is an internal deep module with three concrete adapter families: Harness-owned built-ins such as `skill.load`, bounded filesystem operations, and southbound MCP tools. Its one execution interface accepts an already parsed call plus authorization context and returns a bounded `ToolOutcome`. Adapter-specific lifecycle, transport, path handling, and result conversion stay behind that seam.
+
+```ts
+interface ToolRuntime {
+  execute(call: ValidatedToolCall, context: AuthorizationContext): Promise<ToolOutcome>
+}
+```
 
 Every tool descriptor records:
 
@@ -360,9 +423,9 @@ Tokenless participates in MCP in two different directions:
 
 The two directions share durable run identity and policy types but not transport sessions, credentials, tools, or approval decisions. A northbound caller invoking Tokenless never becomes trusted to approve arbitrary southbound actions implicitly.
 
-### Southbound MCP V1
+### Southbound MCP Adapter
 
-V1 supports explicitly configured local `stdio` servers through the official MCP TypeScript SDK v2, with an explicit legacy, pinned modern `2026-07-28`, or opt-in auto-negotiation mode:
+The first MCP phase supports explicitly configured local `stdio` servers through the official MCP TypeScript SDK v2, with an explicit legacy, pinned modern `2026-07-28`, or opt-in auto-negotiation mode:
 
 - Tokenless launches each server with a minimal allowlisted environment and an explicit working directory;
 - each server receives one isolated MCP client and transport binding;
@@ -370,13 +433,30 @@ V1 supports explicitly configured local `stdio` servers through the official MCP
 - `tools/list` is snapshotted and namespaced by a stable local server alias;
 - `tools/call` arguments and structured results are schema-validated and size-bounded;
 - server stderr is bounded diagnostic data and never becomes model context automatically;
-- roots and other client capabilities expose only explicitly approved resources;
-- server-initiated sampling is disabled in V1 to prevent a recursive model loop; and
+- deprecated MCP Roots are not used as an access-control mechanism; local resource scope is enforced by Harness policy and the concrete tool adapter;
+- server-initiated sampling is disabled in the first MCP phase to prevent a recursive model loop; and
 - elicitation becomes `waiting_for_user`; the web model never supplies credentials or sensitive answers on the user's behalf.
 
 MCP prompts and resources are not automatically exposed as tools. A later phase may map selected resources into the Context Envelope and selected prompts into skill instructions with explicit provenance.
 
 Remote Streamable HTTP is deferred until Tokenless has a concrete remote-server use case and can implement the current MCP authorization requirements, OAuth discovery, PKCE, resource/audience binding, secure token storage, consent, and origin protections without leaking credentials to the provider page.
+
+### Filesystem Adapter
+
+Filesystem support is a first-party adapter, not a requirement to install an MCP filesystem server. That keeps core coding behavior deterministic and lets Tokenless enforce scope before any third-party process sees a path.
+
+The first read-only catalog is intentionally small: `fs.list`, `fs.read_text`, and `fs.search`. A later mutating catalog adds `fs.apply_patch`, `fs.write_file`, `fs.create_directory`, and `fs.materialize_artifact` only when their real-boundary approval and recovery behavior is proven. There is no generic shell command.
+
+Every filesystem call:
+
+- resolves from a logical workspace-relative path under one frozen run root;
+- canonicalizes existing ancestors and rejects symlink or mount escapes before access;
+- rejects browser profiles, Tokenless state, VCS credential stores, SSH directories, broad home-directory access, and any path outside the approved roots;
+- applies per-call file-count, byte, depth, search-result, and binary-media limits;
+- records the preimage identity before mutation and the resulting digest, diff, or artifact identity after completion; and
+- returns bounded content or an artifact reference rather than silently placing arbitrary provider output on disk.
+
+Writes are proposed only through a schema-valid tool call. They execute serially, require an exact approval or pre-reviewed policy rule, and fail on stale preimage rather than overwriting a concurrently changed file. A `final` response, Markdown fence, provider-generated patch, or image declaration can never write by itself.
 
 ### Registered Local Tools
 
@@ -386,14 +466,26 @@ Each local tool must declare exact resource scopes and side effects. Filesystem 
 
 ### Skills
 
-A skill is an instruction package, not an executable authority. Activating a skill may:
+A skill is an Agent Skills-compatible instruction package, not executable authority. The Harness follows OpenCode's useful progressive-disclosure pattern rather than loading every installed skill into the model:
+
+1. walk from the exact bound session directory up to its worktree root—and no farther—to discover `.agents/skills/`, `.claude/skills/`, and `.opencode/{skill,skills}/` candidates, then add only explicitly configured global or additional roots;
+2. validate the Agent Skills frontmatter, parent-directory/name match, file size, symlink containment, and compatibility constraints;
+3. apply skill access policy before visibility, fail on duplicate visible names, content-address every accepted file, and freeze a deterministic catalog for the run;
+4. send only the permitted `name`, `description`, and stable catalog revision in the instruction bootstrap; and
+5. expose the Harness-owned `skill.load` tool so the model can request one exact revision on demand.
+
+V1 accepts the standard `name`, `description`, `license`, `compatibility`, and string-map `metadata` fields. The experimental `allowed-tools` field and product-specific metadata never grant permission. Remote skill URLs, implicit downloads, package installation, and automatic execution of `scripts/` are out of scope for V1.
+
+`skill.load` returns the complete bounded `SKILL.md` body, skill revision, and logical base URI. After successful authorization, the Harness records a new `InstructionRevision` and renders that body in the next visible message as a source-attributed skill instruction layer, not as external tool data. This special treatment can influence the model but cannot influence local authorization. The same result may include a bounded manifest of `references/`, `assets/`, and `scripts/`, but it does not execute or read those files automatically. `skill.resource.read` may later read a declared resource through the same rooted read-only filesystem implementation. Script execution, if ever added, is a separately registered and authorized tool; it is never a property of skill activation.
+
+Activating a skill may:
 
 - add versioned instructions and examples to the instruction compiler;
 - request named tools already present in the configured tool registry;
 - narrow recommended usage or default limits; and
 - contribute output validation or artifact-handling guidance.
 
-A skill cannot launch a process, add an MCP server, widen a filesystem root, approve a tool call, or bypass a higher-priority policy merely by being installed or mentioned. Missing required tools fail skill activation with a repair instruction.
+A skill cannot launch a process, add an MCP server, widen a filesystem root, approve a tool call, or bypass a higher-priority policy merely by being installed, loaded, or mentioned. Missing required tools fail skill activation with a repair instruction.
 
 ## Authorization and Containment
 
@@ -418,11 +510,12 @@ Tokenless never requests, reads, logs, or sends browser credentials, cookies, st
 One durable `AgentRun` owns ordered child records:
 
 - `AgentTurn` for each provider request and correlated response;
-- `InstructionRevision` and `ToolCatalogRevision` frozen for the run;
+- `InstructionRevision`, `SkillCatalogRevision`, and `ToolCatalogRevision` frozen for the run;
+- `SkillActivation` for each exact skill revision visibly returned to the model;
 - `ToolCall` for the model proposal and validation outcome;
 - `ApprovalDecision` bound to the exact call digest;
 - `ToolExecution` for dispatch, completion, error, or ambiguity; and
-- final artifacts, citations, provider identity, and completion evidence.
+- the final output-validation result, artifacts, citations, provider identity, and completion evidence.
 
 Persist intent before every provider or tool mutation. A tool call id is unique within a run and cannot produce a second execution record accidentally.
 
@@ -441,58 +534,68 @@ Cancellation stops future turns and requests MCP cancellation where supported. I
 
 ### Phase 0: Seams, Contracts, and Package Skeleton
 
-- Define `AgentRunSpec`, `AgentRun`, `AgentTurn`, `ProviderTurnRequest`, `ProviderTurnRef`, `ProviderTurnState`, `ProviderTurnClient`, `InstructionDeliveryPlan`, `ToolDescriptor`, `ToolCall`, `ToolOutcome`, and approval-policy schemas.
+- Define the four-entry-point `WebAgentHarness` interface plus `AgentRunSpec`, `AgentRun`, `AgentTurn`, `ProviderTurnRequest`, `ProviderTurnRef`, `ProviderTurnState`, `ProviderTurnClient`, `InstructionDeliveryPlan`, `ToolDescriptor`, `ToolCall`, `ToolOutcome`, and approval-policy schemas.
 - Keep visible browser actions behind provider adapters and expose one provider-turn interface to the harness.
 - Add an independently buildable harness workspace package with no imports from provider, Playwright, daemon-storage, profile, DOM, or CLI implementation modules.
 - Add a provider-turn client adapter over the authenticated durable daemon interface and version the wire schemas it consumes.
 - Give the harness ownership of its AgentRun state and migrations; correlate provider jobs only through opaque public identifiers.
 - Define `qa`, `continuable`, and `harness_agent` evidence without enabling a route from product reconnaissance alone.
-- Define parent/child durable identity, limits, checkpoints, and failure codes.
+- Persist parent/child identity, turn intent, limits, checkpoints, dispatch certainty, and failure codes before any later tool mutation exists.
 - Document northbound and southbound MCP directionality in public diagnostics.
 
 Exit: the built CLI can execute today's normal ChatGPT QA flow through the provider-turn interface with unchanged visible behavior; removing the harness package leaves that flow intact; and the independently built harness can persist a no-tool AgentRun using only the provider-turn client.
 
-### Phase 1: ChatGPT Instruction and Control Protocol
+### Phase 1: ChatGPT Instruction, Control Protocol, and Final Validation
 
 - Create or resolve an exact ChatGPT Project and a fresh conversation per run.
 - Add explicit Project-instruction merge, preview, revision, and rollback behavior without overwriting unrelated instructions.
-- Implement the versioned visible response envelope, per-turn nonce, strict parser, final result, and one bounded repair turn.
+- Implement the versioned visible response envelope, per-turn nonce, staged validation pipeline, Markdown and JSON Schema final-output contracts, and one bounded repair turn.
 - Freeze and report instruction and Context Envelope revisions.
 - Prove exact continuation in the same conversation.
 
 Exit: real ChatGPT returns a schema-valid final envelope and can complete a two-turn protocol repair through the built CLI, packaged daemon, managed profile, and visible website.
 
-### Phase 2: Southbound MCP V1 and Approval
+### Phase 2: Agent Skills Progressive-Disclosure Slice
 
-- Implement the MCP host/client module for configured local `stdio` servers.
-- Negotiate capabilities, snapshot and namespace tool schemas, and expose only the selected bounded tool set to ChatGPT.
-- Add locally assigned effects, scopes, limits, allow, deny, and approval-wait behavior.
-- Execute schema-valid calls, preserve call ids, and return bounded structured results to the same ChatGPT conversation.
-- Disable server sampling and surface elicitation as user input required.
+- Discover Agent Skills-compatible `SKILL.md` files only from the bound worktree conventions and explicitly configured roots.
+- Validate frontmatter, names, containment, compatibility, duplicate handling, and byte limits; content-address each accepted revision.
+- Freeze a permission-filtered catalog and deliver only names and descriptions in the initial instruction context.
+- Implement `skill.load` as the first Harness-owned tool and return the exact bounded skill body to the same conversation with the original call id.
+- Record skill visibility, load permission, activation order, exact revision, and any validation failure without granting executable authority.
 
-Exit: ChatGPT requests a real read-only MCP filesystem operation inside an approved root, receives the real result, and produces a correlated final answer; a real mutating tool pauses before execution and proceeds only after exact approval.
+Exit: through the built CLI, packaged daemon, managed profile, and real ChatGPT website, ChatGPT selects a uniquely canaried skill from metadata, requests `skill.load`, demonstrably uses content that was absent from the metadata catalog, and returns a schema-valid final result in the same conversation. A denied, malformed, duplicate, or changed-after-snapshot skill fails closed.
 
-### Phase 3: Durable Loop, Failure, and Recovery
+### Phase 3: Rooted Filesystem and Approval
 
-- Persist every turn, call, approval, execution, result, and evidence transition.
-- Enforce turn, call, byte, wall-time, and concurrency limits.
+- Add the first-party rooted filesystem adapter with `fs.list`, `fs.read_text`, and `fs.search` before any write operation.
+- Add stale-preimage-safe `fs.apply_patch`, bounded `fs.write_file`, and `fs.materialize_artifact` only after exact path, policy, approval, and journal checks pass.
+- Keep skill resource reads inside the skill root and workspace reads and writes inside separately approved roots.
+- Persist intent before mutation, return bounded diffs and digests, and stop on ambiguous completion or concurrent file change.
+- Prove denial, symlink escape, broad-root, secret-path, binary, size-limit, and cancellation behavior through the real filesystem.
+
+Exit: ChatGPT reads a real canary from an approved temporary worktree and produces a correlated final answer; a proposed real patch cannot execute before exact approval, cannot escape the worktree, and is not duplicated across a process restart.
+
+### Phase 4: Southbound MCP
+
+- Implement the MCP host/client adapter for explicitly configured local `stdio` servers.
+- Negotiate the configured protocol mode, snapshot and namespace valid tool schemas, and expose only the selected bounded tool set to ChatGPT.
+- Apply the same local effects, scopes, limits, allow, deny, approval, artifact, and audit contracts as the filesystem adapter.
+- Disable server sampling, treat tool annotations as untrusted, and surface elicitation or Multi Round-Trip input requirements as `waiting_for_user`.
+- Validate skill-required MCP tool references before the first provider mutation without letting a skill add or configure a server.
+
+Exit: one real ChatGPT run uses both an activated skill and a real local MCP tool under one frozen policy; it consumes a unique real tool result and reaches a correlated final answer, while a real mutating MCP tool pauses before exact approval.
+
+### Phase 5: Recovery and Failure Hardening
+
+- Persist every turn, skill activation, call, approval, execution, result, artifact, output-validation result, and evidence transition.
+- Enforce turn, call, byte, wall-time, concurrency, and catalog limits across mixed skill, filesystem, and MCP runs.
 - Handle unknown tools, invalid arguments, denial, timeout, server failure, provider blocker, cancellation, and ambiguous mutation.
 - Resume the same run and conversation after daemon, runner, browser, or MCP process restart when evidence makes continuation safe.
 - Return structured state through CLI, daemon, local control plane, and the northbound MCP adapter.
 
-Exit: focused real-process restart checks prove no duplicate provider submission or tool mutation, and every ambiguous external mutation stops for user resolution.
+Exit: focused real-process restart checks prove no duplicate provider submission, filesystem mutation, or MCP mutation, and every ambiguous external mutation stops for user resolution.
 
-### Phase 4: Registered Local Tools and Skills
-
-- Add the local tool adapter with the same schemas, policy, audit, and result contracts as MCP.
-- Support explicitly activated, content-addressed skill instruction bundles.
-- Validate skill-required tool references before provider mutation.
-- Keep arbitrary shell execution, implicit process launch, and permission widening out of the skill interface.
-- Add artifact references for large local and MCP outputs.
-
-Exit: one ChatGPT run uses both an MCP tool and a registered local tool under one policy, while an activated skill changes instructions without changing executable authority.
-
-### Phase 5: Caller Integrations and Approval UX
+### Phase 6: Caller Integrations and Approval UX
 
 - Add `agent.run` to the canonical caller capability catalog only after the ChatGPT route is E2E-closed.
 - Expose agent-run creation, state, pending approvals, resume, cancel, final result, and audit summary through the CLI and northbound local MCP server.
@@ -501,7 +604,7 @@ Exit: one ChatGPT run uses both an MCP tool and a registered local tool under on
 
 Exit: a Codex session can explicitly start a Tokenless web-agent run, resolve a pending tool approval, and receive the final result in the same originating session without gaining direct browser or southbound MCP authority.
 
-### Phase 6: Additional Providers and Remote MCP
+### Phase 7: Additional Providers and Remote MCP
 
 - Evaluate each provider independently for instruction fidelity, exact continuation, protocol adherence, and bounded real tool loops.
 - Add provider routes only after real browser E2E closes all required outcomes.
@@ -512,17 +615,18 @@ Exit: a second provider or remote MCP transport satisfies the same interface and
 
 ## Real-Boundary Verification
 
-All support and release claims use the built CLI, packaged TypeScript daemon, real SQLite state, managed browser, explicitly selected setup-managed profile, real ChatGPT website, provider network, and real MCP server processes.
+All support and release claims use the built CLI, packaged TypeScript daemon, real SQLite state, real filesystem, managed browser, explicitly selected setup-managed profile, real ChatGPT website and provider network, plus real MCP server processes where the claimed capability involves MCP.
 
 The initial acceptance flow must prove:
 
 - visible instruction installation or conversation bootstrap with exact revision evidence;
 - fresh conversation creation and exact continuation;
-- a schema-valid read-only tool request, real MCP execution, result return, and final answer that uses a unique canary from the tool result;
-- a mutating tool request that cannot execute before exact approval;
-- denial, invalid arguments, unknown tool, timeout, and bounded protocol repair;
+- a frozen metadata-only skill catalog, a schema-valid `skill.load` request, exact skill revision return, and a final answer that uses a unique canary available only in the loaded body;
+- structured final-output validation, artifact-reference validation, invalid arguments, unknown tools, duplicate envelopes, stale nonce, size limits, and bounded protocol repair;
+- no workspace write, arbitrary file read, process execution, network call, or MCP server during the initial skill slice;
+- in later filesystem and MCP phases, a mutating tool request that cannot execute before exact approval;
 - prompt-injection text inside tool output cannot widen policy or execute an unapproved tool;
-- daemon and MCP process restart does not duplicate a provider submission or tool mutation;
+- daemon and, where applicable, MCP process restart does not duplicate a provider submission or tool mutation;
 - final text, artifacts, citations, conversation identity, calls, approvals, and execution outcomes are durably correlated; and
 - the profile test target retains keychain-neutral flags, production Chromium sandboxing remains enabled, processes are cleaned up, and no Keychain prompt appears.
 
@@ -533,26 +637,28 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 ## Acceptance Criteria
 
 - The harness and provider runtime communicate only through the provider-turn interface; harness code contains no provider selectors or page operations.
-- The harness is an independently buildable workspace package and imports no provider adapter, Playwright, daemon storage, profile, DOM, or CLI implementation module.
+- The harness is an independently buildable workspace package, exports only its declared root interface, and imports no provider adapter, Playwright, daemon storage, profile, DOM, or CLI implementation module.
 - Provider Integration and Harness own separate persistence schemas and correlate only through versioned public identifiers.
 - Removing the harness package leaves all normal provider CLI, daemon, and browser execution behavior working.
 - Extracting the harness to another repository requires no provider source move and no harness source reorganization.
 - The provider runtime can still execute a normal one-turn QA job without loading MCP or agent-harness modules.
-- ChatGPT is the only initial `harness_agent` route, and its support is backed by a complete real visible tool loop.
-- Every new agent run uses a fresh conversation and freezes exact instruction, context, tool-catalog, provider, profile, workspace, and limit revisions.
+- ChatGPT is the only initial `harness_agent` route, and its first support claim is backed by a complete real visible `skill.load` loop before filesystem or MCP claims are added.
+- Every new agent run uses a fresh conversation and freezes exact instruction, context, skill-catalog, tool-catalog, provider, profile, workspace, and limit revisions.
 - Project instructions are changed only in a Tokenless-owned Project or after explicit preview and approval; unrelated instructions are never overwritten.
 - Visible instruction delivery is reported honestly and is never mislabeled as a native system role.
-- Every model response is validated against one versioned control envelope before any tool action.
+- Every model response passes framing, syntax, schema, correlation, capability, authority, and output-contract validation as applicable before any tool action or terminal success.
 - Tool names and arguments must match the frozen schema snapshot; parser success never implies authorization.
 - MCP annotations and model claims never override locally assigned effects or approval policy.
-- V1 launches only explicitly configured local `stdio` MCP servers with bounded environment, roots, processes, logs, and results.
-- Skills contribute instructions and tool requirements but cannot execute or authorize operations.
+- The first skill slice launches no MCP server, executes no process, and has no general workspace read or write authority.
+- The first MCP phase launches only explicitly configured local `stdio` servers with bounded environment, resource policy, processes, logs, and results.
+- Skills are discovered through approved roots, progressively loaded by exact revision, and may contribute instructions and tool requirements but cannot execute or authorize operations.
+- Filesystem writes occur only through schema-valid, rooted, stale-preimage-safe tool calls; final prose and artifact declarations never write implicitly.
 - No mutating call executes without a matching explicit policy rule or exact approval digest.
 - Every provider and tool mutation has durable pre-dispatch intent and unambiguous completion or waiting state.
 - Ambiguous external mutations are never retried automatically.
 - Turn, call, time, byte, and parallelism limits prevent infinite or unbounded loops.
 - Mid-run provider fallback, arbitrary shell execution, secret delivery, and implicit approval are absent from V1.
-- Final results contain bounded user-facing output and evidence, not hidden chain-of-thought or unrelated provider content.
+- Final results satisfy the frozen Markdown or JSON Schema contract, contain only valid run-owned artifact references and bounded user-facing evidence, and exclude hidden chain-of-thought or unrelated provider content.
 
 ## Risks and Responses
 
@@ -562,9 +668,11 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 | Visible instructions are weaker than a native system role | Record fidelity, prefer approved Project instructions, enforce safety in the local runtime, and never claim semantic parity |
 | Tool output injects instructions into the model | Delimit it as untrusted data and make local policy authoritative even if the next model turn is compromised |
 | The model invents a tool or malformed arguments | Frozen schema snapshot, strict validation, structured error result, and bounded recovery |
+| Duplicate or conflicting skills change model behavior unpredictably | Strict Agent Skills validation, deterministic discovery, duplicate-name failure, permission filtering, and a content-addressed catalog frozen per run |
+| A skill references scripts or files outside its root | Treat references as inert text until an explicit rooted tool call; never execute a skill script on activation |
 | MCP tool annotations understate side effects | Treat annotations as hints and assign effects and scopes through reviewed local policy |
 | A crash duplicates an external mutation | Persist intent first, use call ids and evidence, and stop on ambiguous dispatch |
-| Tool catalogs are too large for a web prompt | Require an explicit selected tool set and byte budget; add tool search only after V1 evidence |
+| Tool catalogs are too large for a web prompt | Require an explicit selected tool set and byte budget; add tool search only after real full-catalog evidence |
 | Project instructions collide with user content | Use Tokenless-owned Projects by default and require previewed merge or conversation bootstrap elsewhere |
 | Provider state changes during a long loop | Pin exact identity, re-check visible preconditions each turn, and wait rather than switch providers |
 | A local MCP server receives excessive ambient authority | Explicit configuration, minimal environment, scoped roots, bounded processes, and per-call policy |
@@ -591,6 +699,11 @@ Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval an
 
 - [OpenAI Agents SDK runner lifecycle and tool loop](https://openai.github.io/openai-agents-js/guides/running-agents/)
 - [ChatGPT Projects, files, and Project instructions](https://help.openai.com/en/articles/10169521-using-projects-in-chatgpt)
+- [Agent Skills format and progressive disclosure](https://agentskills.io/specification)
+- [OpenCode Agent Skills behavior](https://opencode.ai/docs/skills/)
+- [OpenCode skill discovery implementation](https://github.com/anomalyco/opencode/blob/16caaa222955ae10406d054f2fa84cd78985c09f/packages/opencode/src/skill/index.ts)
+- [OpenCode on-demand skill tool implementation](https://github.com/anomalyco/opencode/blob/16caaa222955ae10406d054f2fa84cd78985c09f/packages/opencode/src/tool/skill.ts)
+- [MCP 2026-07-28 release changes](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
 - [MCP versioning and modern/legacy compatibility](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning)
 - [MCP tools, schemas, results, annotations, and trust guidance](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
 - [MCP stdio and Streamable HTTP transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 
 import { BrowserRuntimeManager } from '../packages/cli/dist/src/browser-runtime/manager.js'
@@ -19,24 +20,87 @@ if (!(
 }
 
 const selection = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION
-if (!['auto', 'managed-chromium', 'cloak'].includes(selection)) {
-  throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION to auto, managed-chromium, or cloak.')
+if (!['auto', 'chrome', 'managed-chromium', 'cloak'].includes(selection)) {
+  throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION to auto, chrome, managed-chromium, or cloak.')
+}
+const visibility = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY
+if (!['headed', 'headless'].includes(visibility)) {
+  throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY to headed or headless.')
+}
+const fallbackSelection = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_FALLBACK_SELECTION?.trim() || null
+if (fallbackSelection !== null && !['auto', 'chrome', 'managed-chromium', 'cloak'].includes(fallbackSelection)) {
+  throw new Error('TOKENLESS_LIVE_BROWSER_SURFACE_FALLBACK_SELECTION must be auto, chrome, managed-chromium, or cloak.')
+}
+if (fallbackSelection === selection) {
+  throw new Error('Browser surface fallback selection must differ from the primary selection.')
 }
 
-test(`${selection} reaches every provider surface and Google Search without a detected anti-bot challenge`, { timeout: 20 * 60_000 }, async () => {
+test(`${selection} ${visibility} reaches every provider surface and Google Search${fallbackSelection ? ` with ${fallbackSelection} fallback` : ' without a detected anti-bot challenge'}`, { timeout: 20 * 60_000 }, async () => {
   const temporaryRoot = await fs.realpath(os.tmpdir())
   const suppliedHome = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_HOME
   const homeDir = suppliedHome
     ? path.resolve(suppliedHome)
     : await fs.mkdtemp(path.join(temporaryRoot, 'tokenless-browser-surface-home-'))
   const ownsHome = !suppliedHome
-  const profileDir = await fs.mkdtemp(path.join(temporaryRoot, 'tokenless-browser-surface-profile-'))
+  const evidence = {
+    schema: 'tokenless.live-browser-surface-fallback-result.v2',
+    observedAt: new Date().toISOString(),
+    platform: `${process.platform}-${process.arch}`,
+    visibility,
+    primary: null,
+    primaryProviderFailures: [],
+    primaryControlFailures: [],
+    fallback: null,
+    fallbackProviderFailures: [],
+    fallbackControlFailures: [],
+  }
+  try {
+    evidence.primary = await runSurfaceAttempt({
+      selection,
+      visibility,
+      homeDir,
+      temporaryRoot,
+    })
+    evidence.primaryProviderFailures = providerSurfaceFailures(evidence.primary)
+    evidence.primaryControlFailures = googleControlFailures(evidence.primary)
+    if (evidence.primaryProviderFailures.length > 0 && fallbackSelection !== null) {
+      evidence.fallback = await runSurfaceAttempt({
+        selection: fallbackSelection,
+        visibility,
+        homeDir,
+        temporaryRoot,
+      })
+      evidence.fallbackProviderFailures = providerSurfaceFailures(evidence.fallback)
+      evidence.fallbackControlFailures = googleControlFailures(evidence.fallback)
+    }
+    const reportPath = await writeEvidence(evidence)
+    console.log(`Browser surface evidence: ${reportPath}`)
+    console.log(JSON.stringify(evidence, null, 2))
+    if (fallbackSelection === null) {
+      assert.deepEqual([
+        ...evidence.primaryProviderFailures,
+        ...evidence.primaryControlFailures,
+      ], [])
+      return
+    }
+    assert.ok(
+      evidence.primaryProviderFailures.length > 0,
+      'Explicit browser fallback gate did not observe a primary provider failure.',
+    )
+    assert.ok(evidence.fallback, 'Fallback browser attempt was not recorded.')
+    assert.deepEqual(evidence.fallbackProviderFailures, [])
+  } finally {
+    if (ownsHome) await fs.rm(homeDir, { recursive: true, force: true })
+  }
+})
+
+async function runSurfaceAttempt({ selection, visibility, homeDir, temporaryRoot }) {
+  const profileDir = await fs.mkdtemp(path.join(temporaryRoot, `tokenless-browser-surface-${selection}-profile-`))
   const runtime = await new BrowserRuntimeManager({ homeDir }).ensure(selection, { allowDownload: true })
   if (runtime.managed) assert.equal(runtime.actualVersion, runtime.expectedVersion)
-
   const context = await chromium.launchPersistentContext(profileDir, {
     executablePath: runtime.executablePath,
-    headless: false,
+    headless: visibility === 'headless',
     chromiumSandbox: true,
     args: [
       '--password-store=basic',
@@ -49,7 +113,7 @@ test(`${selection} reaches every provider surface and Google Search without a de
       ? { ignoreDefaultArgs: ['--enable-automation', '--enable-unsafe-swiftshader'] }
       : {}),
   })
-  const evidence = {
+  const attempt = {
     selection,
     runtimeId: runtime.runtimeId,
     family: runtime.family,
@@ -62,36 +126,54 @@ test(`${selection} reaches every provider surface and Google Search without a de
     const page = context.pages()[0] ?? await context.newPage()
     for (const descriptor of listProviderDescriptors().filter((candidate) => candidate.stage !== 'disabled')) {
       const result = await visitSurface(page, descriptor.navigation.homeUrl)
-      evidence.providers.push({
+      attempt.providers.push({
         provider: descriptor.id === 'grok' ? 'grok-cloud' : descriptor.id,
         ...result,
       })
     }
-
     const googleTarget = new URL('https://www.google.com/search')
     googleTarget.searchParams.set('q', 'OpenAI API documentation')
-    evidence.google = await visitGoogle(page, googleTarget.toString())
-    console.log(JSON.stringify(evidence, null, 2))
-    assert.deepEqual(surfaceFailures(evidence), [])
+    attempt.google = await visitGoogle(page, googleTarget.toString())
+    return attempt
   } finally {
     await context.close().catch(() => undefined)
     await fs.rm(profileDir, { recursive: true, force: true })
-    if (ownsHome) await fs.rm(homeDir, { recursive: true, force: true })
   }
-})
+}
 
-function surfaceFailures(evidence) {
+async function writeEvidence(evidence) {
+  const reportDirectory = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'test-results', 'live-browser-surfaces')
+  await fs.mkdir(reportDirectory, { recursive: true, mode: 0o700 })
+  const timestamp = evidence.observedAt.replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
+  const suffix = fallbackSelection === null ? '' : `-fallback-${fallbackSelection}`
+  const reportPath = path.join(reportDirectory, `${timestamp}-${selection}-${visibility}${suffix}.json`)
+  await fs.writeFile(reportPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 })
+  return reportPath
+}
+
+function providerSurfaceFailures(evidence) {
   const failures = []
   for (const provider of evidence.providers) {
     if (provider.navigationError) {
       failures.push(`${provider.provider} navigation failed: ${provider.navigationError}`)
     }
+    if (provider.httpStatus !== null && provider.httpStatus >= 400) {
+      failures.push(`${provider.provider} returned HTTP ${provider.httpStatus}.`)
+    }
     if (provider.challenge) {
       failures.push(`${provider.provider} showed ${provider.challenge.code}.`)
     }
   }
+  return failures
+}
+
+function googleControlFailures(evidence) {
+  const failures = []
   if (evidence.google.navigationError) {
     failures.push(`Google navigation failed: ${evidence.google.navigationError}`)
+  }
+  if (evidence.google.httpStatus !== null && evidence.google.httpStatus >= 400) {
+    failures.push(`Google returned HTTP ${evidence.google.httpStatus}.`)
   }
   if (evidence.google.captchaTriggered) {
     failures.push(`Google showed ${evidence.google.challenge?.code ?? 'a CAPTCHA'}.`)

@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-04
+Status: active product direction | Last reviewed: 2026-08-06
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -42,7 +42,8 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
-| [Web Agent Harness](P0-web-agent-harness.md) | Build a ChatGPT-first, Web-Provider-specific harness package that injects skills and an MCP calling protocol over the current Web Provider API, ready for later extraction into its own project. | P0 |
+| [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md) | Define the versioned, provider-neutral turn interface through which the Web Agent Harness drives durable visible-provider work without importing browser or daemon internals. | P0 |
+| [Web Agent Harness](P0-web-agent-harness.md) | Build a ChatGPT-first, Web-Provider-specific harness package that first proves progressive Agent Skills loading and strict output validation, then adds rooted filesystem and southbound MCP tools through one durable loop. | P0 |
 | [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
 | [Agent Session Integrations](P1-agent-session-integrations.md) | Expose the current Web Provider operations through a northbound local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration; this is not the Web Agent Harness. | P1 |
@@ -67,7 +68,8 @@ flowchart LR
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
   Context["Context envelope<br/>provenance + policy + limits"]
   Harness["Web agent harness<br/>instructions + durable tool loop"]
-  Tools["Tool runtime<br/>southbound MCP + local tools"]
+  Protocol["Web AI Interaction Protocol<br/>provider turns + state + evidence"]
+  Tools["Tool runtime<br/>skill + filesystem + southbound MCP"]
   Graph["Project knowledge graph<br/>rules + architecture + symbols"]
   Browser["Browser runtime manager<br/>system + managed + Cloak"]
   Provider["Provider adapters<br/>visible capabilities"]
@@ -83,7 +85,8 @@ flowchart LR
   API --> Harness
   Session --> Harness
   Context --> Harness
-  Harness --> Scheduler
+  Harness --> Protocol
+  Protocol --> Scheduler
   Harness --> Tools
   Tools --> Harness
   Context --> Provider
@@ -103,10 +106,11 @@ The shared contracts should be built before provider-specific shortcuts:
 5. Add the authenticated local web control plane over shared application services without exposing the daemon bearer token to browser JavaScript.
 6. Keep the daemon's small built-in HTTP server and make polling the explicit asynchronous caller and UI contract.
 7. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
-8. Build the ChatGPT-first web agent harness as an independently buildable package over exact provider turns, durable checkpoints, explicit approvals, southbound MCP tools, and finite loop limits; defer repository extraction until the interface is stable.
-9. Expand provider coverage using the same visible-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
-10. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
-11. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
+8. Specify the minimal Web AI Interaction Protocol slice for capability negotiation, exact workspace and conversation identity, one durable provider turn, waiting, recovery, results, and evidence; adopt it on the current Provider side before treating the Harness dependency as stable.
+9. Build the ChatGPT-first web agent harness as an independently buildable package over exact protocol turns, durable checkpoints, strict output validation, progressive Agent Skills loading, explicit approvals, rooted filesystem operations, southbound MCP tools, and finite loop limits; defer repository extraction until the interface is stable.
+10. Expand provider coverage using the same visible-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
+11. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
+12. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 

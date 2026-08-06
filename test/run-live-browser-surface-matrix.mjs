@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const surfaceTest = path.join(root, 'test/live-browser-provider-surfaces.e2e.mjs')
-const supportedSelections = Object.freeze(['auto', 'managed-chromium', 'cloak'])
-const selections = resolveSelections(process.argv.slice(2))
+const defaultSelections = Object.freeze(['auto', 'managed-chromium', 'cloak'])
+const supportedSelections = Object.freeze(['auto', 'chrome', 'managed-chromium', 'cloak'])
+const supportedVisibilities = Object.freeze(['headed', 'headless'])
+const options = resolveOptions(process.argv.slice(2))
 const suppliedHome = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_HOME
 const temporaryRoot = await fs.realpath(os.tmpdir())
 const homeDir = suppliedHome
@@ -28,9 +30,12 @@ process.once('SIGTERM', onSigterm)
 
 let failed = false
 try {
-  for (const selection of selections) {
-    const result = await runSelection(selection)
-    if (result.code !== 0) failed = true
+  for (const visibility of options.visibilities) {
+    for (const selection of options.selections) {
+      const result = await runSelection(selection, visibility)
+      if (result.code !== 0) failed = true
+      if (interruptedSignal) break
+    }
     if (interruptedSignal) break
   }
 } finally {
@@ -42,7 +47,7 @@ try {
 if (interruptedSignal) process.exitCode = interruptedSignal === 'SIGINT' ? 130 : 143
 else if (failed) process.exitCode = 1
 
-function runSelection(selection) {
+function runSelection(selection, visibility) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
       '--test',
@@ -54,6 +59,10 @@ function runSelection(selection) {
         ...process.env,
         TOKENLESS_LIVE_BROWSER_SURFACE_GATE: '1',
         TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION: selection,
+        TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY: visibility,
+        ...(options.fallback === null
+          ? {}
+          : { TOKENLESS_LIVE_BROWSER_SURFACE_FALLBACK_SELECTION: options.fallback }),
         TOKENLESS_LIVE_BROWSER_SURFACE_HOME: homeDir,
       },
       stdio: 'inherit',
@@ -67,20 +76,48 @@ function runSelection(selection) {
   })
 }
 
-function resolveSelections(arguments_) {
-  if (arguments_.length === 0) return supportedSelections
-  if (arguments_.length !== 2 || arguments_[0] !== '--selection') {
-    failUsage('Expected exactly --selection <browser>')
+function resolveOptions(arguments_) {
+  let selection = null
+  let visibility = 'headed'
+  let fallback = null
+  for (let index = 0; index < arguments_.length; index += 2) {
+    const flag = arguments_[index]
+    const value = arguments_[index + 1]
+    if (!value) failUsage(`${flag ?? 'argument'} requires a value`)
+    if (flag === '--selection') selection = value
+    else if (flag === '--visibility') visibility = value
+    else if (flag === '--fallback') fallback = value
+    else failUsage(`Unsupported argument: ${flag}`)
   }
-  const selection = arguments_[1]
-  if (!supportedSelections.includes(selection)) {
+  if (selection !== null && !supportedSelections.includes(selection)) {
     failUsage(`Unsupported browser selection: ${selection}`)
   }
-  return Object.freeze([selection])
+  if (!supportedVisibilities.includes(visibility)) {
+    failUsage(`Unsupported browser visibility: ${visibility}`)
+  }
+  if (fallback !== null && !supportedSelections.includes(fallback)) {
+    failUsage(`Unsupported fallback browser selection: ${fallback}`)
+  }
+  if (fallback !== null && selection === null) {
+    failUsage('--fallback requires one explicit --selection')
+  }
+  if (fallback === selection) {
+    failUsage('Fallback browser selection must differ from the primary selection')
+  }
+  return Object.freeze({
+    selections: selection === null ? defaultSelections : Object.freeze([selection]),
+    visibilities: Object.freeze([visibility]),
+    fallback,
+  })
 }
 
 function failUsage(message) {
   console.error(message)
-  console.error(`Usage: node test/run-live-browser-surface-matrix.mjs [--selection ${supportedSelections.join('|')}]`)
+  console.error(
+    `Usage: node test/run-live-browser-surface-matrix.mjs ` +
+    `[--selection ${supportedSelections.join('|')}] ` +
+    `[--visibility ${supportedVisibilities.join('|')}] ` +
+    `[--fallback ${supportedSelections.join('|')}]`,
+  )
   process.exit(2)
 }
