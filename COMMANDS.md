@@ -205,7 +205,7 @@ tokenless agents uninstall codex
 
 Users continue launching Codex normally. The hooks observe lifecycle events and react only when an actual Tokenless Bash or MCP call occurs. They bind hook `session_id` (the current Codex chat/thread), `turn_id`, and `tool_use_id` to one Harness project, conversation, and invocation. A bounded best-effort App Server `thread/read` adds the separate session-tree ID and available lineage; it does not start, resume, relay, or proxy a Codex TUI.
 
-`status` reports the exact instruction and hook paths plus installation state without creating Harness state. `inspect` reads one exact chat from the separate Harness database, including local project, turns, invocations, stable provider task identity, and provider Project/conversation bindings. The ledger stores hashes rather than raw prompts and does not store transcripts, assistant messages, credentials, or browser state. `uninstall` removes only Tokenless-owned guidance and hook groups; retained Harness history is not deleted.
+`status` reports the exact instruction and hook paths and verifies the current guidance body and hook command without creating Harness state; stale or edited definitions report as not installed and `install` repairs them. `inspect` reads one exact chat from the separate Harness database, including local project, turns, invocations, stable provider task identity, and provider Project/conversation bindings. The ledger stores hashes rather than raw prompts and does not store transcripts, assistant messages, credentials, or browser state. `uninstall` removes Tokenless-owned guidance from both global instruction filenames and removes only Tokenless hook groups; retained Harness history is not deleted.
 
 Main options:
 

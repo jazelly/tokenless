@@ -160,7 +160,7 @@ The Web Provider API owns:
 - durable jobs and provider-visible execution; and
 - the authoritative provider mapping records.
 
-The CLI transports an opaque upstream context envelope into a provider job and returns normal `providerContext` mapping fields. The Harness consumes those returned IDs in `PostToolUse`. Provider code does not parse Codex hooks or own the agent hierarchy.
+The CLI transports an opaque upstream context envelope into a provider job and returns normal `providerContext` mapping fields. A bound CLI records the result directly before printing it; `PostToolUse` remains an idempotent fallback and is the structured completion path for MCP calls. Provider code does not parse Codex hooks or own the agent hierarchy.
 
 ## Persistence and Privacy
 
@@ -181,11 +181,9 @@ Provider Project and conversation mappings remain absent until the exact Codex c
 - Separate Harness-owned SQLite storage with raw prompt exclusion.
 - Real built-CLI/filesystem integration coverage and an explicit real App Server E2E.
 
-## Remaining Release Work
+## Release Evidence and Remaining Gate
 
-- Run the complete repository validation suite and package-contract checks.
-- Complete bilingual public command documentation and release notes.
-- Run applicable manually gated real-provider E2E before release so provider Project/conversation mapping is proven on the supported provider surfaces.
+The built CLI/filesystem integration suite, bilingual command documentation, pure-JavaScript offline package contract, full default repository suite, and explicit real Codex App Server E2E are complete. Before a release, run the applicable manually gated real-provider E2E so provider Project/conversation mapping is re-proven on the selected live provider surfaces.
 
 Custom-model replacement, complete Codex request interception, and Tokenless-launched Codex remain out of scope.
 

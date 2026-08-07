@@ -63,6 +63,36 @@ test('built CLI installs, preserves, reports, and uninstalls the Codex integrati
       )).length, 1)
     }
 
+    fs.writeFileSync(
+      path.join(fixture.codexHome, 'AGENTS.md'),
+      guidanceAgain.replace('Tokenless is an optional', 'Tokenless is a modified'),
+    )
+    const staleHandler = hooksAgain.hooks.SessionStart
+      .flatMap((group) => group.hooks)
+      .find((hook) => hook.command.includes('tokenless-agent-hook-v1'))
+    assert.ok(staleHandler)
+    staleHandler.command += ' --stale'
+    fs.writeFileSync(path.join(fixture.codexHome, 'hooks.json'), JSON.stringify(hooksAgain))
+    const stale = runCli([
+      'agents', 'status', 'codex',
+      '--codex-home', fixture.codexHome,
+      '--home', fixture.tokenlessHome,
+      '--json',
+    ])
+    assert.equal(stale.status, 0, stale.stderr || stale.stdout)
+    assert.equal(JSON.parse(stale.stdout).status.guidance.installed, false)
+    assert.equal(JSON.parse(stale.stdout).status.hooks.installed, false)
+
+    const repaired = runCli([
+      'agents', 'install', 'codex',
+      '--codex-home', fixture.codexHome,
+      '--home', fixture.tokenlessHome,
+      '--json',
+    ])
+    assert.equal(repaired.status, 0, repaired.stderr || repaired.stdout)
+    assert.equal(JSON.parse(repaired.stdout).status.guidance.installed, true)
+    assert.equal(JSON.parse(repaired.stdout).status.hooks.installed, true)
+
     fs.writeFileSync(path.join(fixture.codexHome, 'AGENTS.override.md'), '# Later active override\n')
 
     const removed = runCli([

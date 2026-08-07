@@ -205,7 +205,7 @@ tokenless agents uninstall codex
 
 用户仍然按照原来的方式启动 Codex。Hooks 会观察 lifecycle events，但只在一次真实的 Tokenless Bash 或 MCP 调用发生时执行绑定。它们把 hook `session_id`（当前 Codex chat/thread）、`turn_id` 和 `tool_use_id` 绑定到一个 Harness project、conversation 和 invocation。一次受限且 best-effort 的 App Server `thread/read` 会补充独立的 session-tree ID 和可用 lineage；它不会启动、恢复、relay 或 proxy Codex TUI。
 
-`status` 会报告准确的 instruction/hook paths 和安装状态，而且不会创建 Harness state。`inspect` 从独立的 Harness 数据库读取一个精确 chat，包括 local project、turns、invocations、稳定的 provider task identity，以及 provider Project/conversation bindings。Ledger 只保存 prompt hash，不保存原始 prompts、transcripts、assistant messages、credentials 或 browser state。`uninstall` 只移除 Tokenless 自己的 guidance 和 hook groups，不删除已经保留的 Harness history。
+`status` 会报告准确的 instruction/hook paths，并验证当前 guidance body 与 hook command；它不会创建 Harness state。过期或被修改的 definition 会显示为未安装，再次运行 `install` 即可修复。`inspect` 从独立的 Harness 数据库读取一个精确 chat，包括 local project、turns、invocations、稳定的 provider task identity，以及 provider Project/conversation bindings。Ledger 只保存 prompt hash，不保存原始 prompts、transcripts、assistant messages、credentials 或 browser state。`uninstall` 会从两个全局 instruction filenames 中移除 Tokenless guidance，并且只移除 Tokenless hook groups；已经保留的 Harness history 不会删除。
 
 主要选项：
 
