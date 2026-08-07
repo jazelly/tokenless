@@ -438,7 +438,7 @@ The projection reports the matched catalog plan and rules, local usage, publishe
 
 ### `tokenless savings`
 
-Manage the optional output-only savings estimate. It is disabled by default and setup never enables or downloads it.
+Manage the output-only savings estimate. It is enabled by default, while setup and dashboard reads never download the tokenizer.
 
 ```bash
 tokenless savings status --json
@@ -448,7 +448,7 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-`enable` lazily downloads and verifies the pinned `o200k_base` WASM tokenizer before setting `outputSavings.enabled` to `true`. `disable` stops future measurements while retaining history and the runtime. `clear` removes the durable measurement history, and `uninstall` disables measurement and removes the runtime; both destructive operations require `--confirm-delete`. `status` is read-only with respect to configuration and tokenizer installation. None of these commands opens a provider page.
+`enable` downloads and verifies the pinned `o200k_base` WASM tokenizer before setting `outputSavings.enabled` to `true`. Normal default-on use instead installs it lazily after the first provider job has already completed and durably handed its measurement work to the daemon. `disable` discards queued text and prevents in-flight results from being saved while retaining history and the runtime. `clear` discards pre-clear work and removes the durable measurement history, and `uninstall` disables measurement, discards work, and removes the runtime; both destructive operations require `--confirm-delete`. `status` is read-only with respect to configuration and tokenizer installation. None of these commands opens a provider page.
 
 Measurements cover only normalized visible assistant output and are attributed to the triggering durable job and response. They are stable cross-provider estimates, not provider billing values; input tokens, hidden reasoning, and private backend traffic are excluded.
 

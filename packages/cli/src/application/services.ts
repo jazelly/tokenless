@@ -62,11 +62,13 @@ import {
 } from '../daemon/job-store.js'
 import type { BrowserRuntimeController } from '../daemon/browser-runtime-controller.js'
 import { OUTPUT_SAVINGS_ESTIMATOR } from '../output-savings/catalog.js'
+import type { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
 
 export type UiApplicationServicesOptions = {
   store: JobStore
   runtimeController?: BrowserRuntimeController | undefined
+  outputSavingsProcessor?: OutputSavingsProcessor | undefined
   origin: () => string
   startedAt: number
 }
@@ -114,6 +116,7 @@ export class TokenlessApplicationServices {
   readonly outputSavingsRuntimeManager: OutputSavingsRuntimeManager
 
   private readonly runtimeController: BrowserRuntimeController | undefined
+  private readonly outputSavingsProcessor: OutputSavingsProcessor | undefined
   private readonly origin: () => string
   private readonly startedAt: number
   private browserDiscoveryCache: { expiresAt: number, candidates: BrowserCandidate[] } | undefined
@@ -125,6 +128,7 @@ export class TokenlessApplicationServices {
     this.runtimeManager = new BrowserRuntimeManager({ homeDir: options.store.homeDir })
     this.outputSavingsRuntimeManager = new OutputSavingsRuntimeManager(options.store.homeDir)
     this.runtimeController = options.runtimeController
+    this.outputSavingsProcessor = options.outputSavingsProcessor
     this.origin = options.origin
     this.startedAt = options.startedAt
   }
@@ -239,6 +243,7 @@ export class TokenlessApplicationServices {
       homeDir: this.store.homeDir,
       outputSavings: { enabled: false },
     })
+    await this.discardPendingOutputSavingsWork()
     return await this.outputSavingsState(config)
   }
 
@@ -254,6 +259,7 @@ export class TokenlessApplicationServices {
       homeDir: this.store.homeDir,
       outputSavings: { enabled: false },
     })
+    await this.discardPendingOutputSavingsWork()
     await this.outputSavingsRuntimeManager.remove()
     return await this.outputSavingsState(config)
   }
@@ -266,11 +272,20 @@ export class TokenlessApplicationServices {
         'Output savings history removal requires explicit confirmation.',
       )
     }
+    await this.discardPendingOutputSavingsWork()
     const cleared = this.store.clearOutputSavings().cleared
     return {
       ...await this.outputSavingsState(),
       cleared,
     }
+  }
+
+  private async discardPendingOutputSavingsWork() {
+    if (this.outputSavingsProcessor) {
+      await this.outputSavingsProcessor.discardPending()
+      return
+    }
+    this.store.discardOutputSavingsWork()
   }
 
   async browserRuntimes() {

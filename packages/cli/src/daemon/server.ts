@@ -87,6 +87,7 @@ export async function serveHttp({
     services: new TokenlessApplicationServices({
       store,
       runtimeController,
+      outputSavingsProcessor,
       origin,
       startedAt,
     }),

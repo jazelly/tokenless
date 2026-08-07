@@ -116,18 +116,24 @@ export class OutputSavingsRuntimeManager {
     }
   }
 
-  async ensureInstalled(): Promise<OutputSavingsRuntimeInspection> {
+  async ensureInstalled(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<OutputSavingsRuntimeInspection> {
+    throwIfRuntimeOperationAborted(options.signal)
     const cached = await this.inspect()
     if (cached.state === 'ready') return cached
+    throwIfRuntimeOperationAborted(options.signal)
     await fs.mkdir(this.tokenizerRoot, { recursive: true, mode: 0o700 })
     await fs.chmod(this.tokenizerRoot, 0o700).catch(() => undefined)
     return await withPrivateSqliteWriterLock(this.installLockFile, async () => {
+      throwIfRuntimeOperationAborted(options.signal)
       const afterLock = await this.inspect()
       if (afterLock.state === 'ready') return afterLock
       if (afterLock.state === 'invalid') {
         await fs.rm(this.runtimeDirectory, { recursive: true, force: true })
       }
-      await this.install()
+      throwIfRuntimeOperationAborted(options.signal)
+      await this.install(options.signal)
       const installed = await this.inspect()
       if (installed.state !== 'ready') {
         throw tokenlessError(
@@ -136,7 +142,7 @@ export class OutputSavingsRuntimeManager {
         )
       }
       return installed
-    })
+    }, options.signal ? { signal: options.signal } : {})
   }
 
   async remove(): Promise<OutputSavingsRuntimeInspection> {
@@ -162,7 +168,7 @@ export class OutputSavingsRuntimeManager {
     let inspection = await this.inspect()
     if (inspection.state !== 'ready' && options.installIfMissing) {
       try {
-        inspection = await this.ensureInstalled()
+        inspection = await this.ensureInstalled(options.signal ? { signal: options.signal } : {})
       } catch {
         return unavailable(options.signal?.aborted ? 'measurement_canceled' : 'runtime_not_ready')
       }
@@ -192,22 +198,24 @@ export class OutputSavingsRuntimeManager {
     }
   }
 
-  private async install() {
+  private async install(signal?: AbortSignal) {
+    throwIfRuntimeOperationAborted(signal)
     const temporaryRoot = path.join(this.tokenizerRoot, `.install-${randomUUID()}`)
     const archivePath = path.join(temporaryRoot, 'tiktoken.tgz')
     const extractedDirectory = path.join(temporaryRoot, 'extracted')
     const payloadDirectory = path.join(temporaryRoot, 'payload')
     await fs.mkdir(temporaryRoot, { recursive: false, mode: 0o700 })
     try {
-      await downloadArtifact(archivePath)
-      const archiveSha256 = await sha256File(archivePath)
+      await downloadArtifact(archivePath, signal)
+      const archiveSha256 = await sha256File(archivePath, signal)
       if (archiveSha256 !== OUTPUT_SAVINGS_RUNTIME_CATALOG.archiveSha256) {
         throw tokenlessError(
           'output_savings_runtime_checksum_mismatch',
           'The output savings runtime checksum did not match the pinned catalog.',
         )
       }
-      await validateArchivePaths(archivePath)
+      await validateArchivePaths(archivePath, signal)
+      throwIfRuntimeOperationAborted(signal)
       await fs.mkdir(extractedDirectory, { recursive: false, mode: 0o700 })
       await execFileAsync('tar', [
         '-xzf',
@@ -215,9 +223,11 @@ export class OutputSavingsRuntimeManager {
         '-C',
         extractedDirectory,
         ...OUTPUT_SAVINGS_RUNTIME_CATALOG.files.map((file) => file.archivePath),
-      ], { timeout: ARCHIVE_TIMEOUT_MS, maxBuffer: MAX_ARCHIVE_LIST_BYTES })
+      ], { timeout: ARCHIVE_TIMEOUT_MS, maxBuffer: MAX_ARCHIVE_LIST_BYTES, signal })
+      throwIfRuntimeOperationAborted(signal)
       await fs.mkdir(payloadDirectory, { recursive: false, mode: 0o700 })
       for (const file of OUTPUT_SAVINGS_RUNTIME_CATALOG.files) {
+        throwIfRuntimeOperationAborted(signal)
         const source = path.join(extractedDirectory, file.archivePath)
         if (!await verifyStandaloneFile(source, file)) {
           throw tokenlessError(
@@ -230,7 +240,7 @@ export class OutputSavingsRuntimeManager {
         await fs.copyFile(source, destination)
         await fs.chmod(destination, 0o600).catch(() => undefined)
       }
-      const selfTestTokens = await runWorker(payloadDirectory, 'hello world')
+      const selfTestTokens = await runWorker(payloadDirectory, 'hello world', signal)
       if (selfTestTokens !== 2) {
         throw tokenlessError(
           'output_savings_runtime_self_test_failed',
@@ -257,6 +267,7 @@ export class OutputSavingsRuntimeManager {
       )
       await writeJsonAtomic(path.join(payloadDirectory, RUNTIME_MANIFEST_FILE), manifest)
       await fs.mkdir(this.runtimesRoot, { recursive: true, mode: 0o700 })
+      throwIfRuntimeOperationAborted(signal)
       await fs.rename(payloadDirectory, this.runtimeDirectory)
     } catch (error) {
       if (isOutputSavingsRuntimeError(error)) throw error
@@ -303,9 +314,16 @@ function runtimeInspectionBase(): RuntimeInspectionBase {
   }
 }
 
-async function downloadArtifact(destination: string) {
+async function downloadArtifact(destination: string, signal?: AbortSignal) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS)
+  let timedOut = false
+  const abort = () => controller.abort()
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, DOWNLOAD_TIMEOUT_MS)
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) abort()
   try {
     const response = await fetch(OUTPUT_SAVINGS_RUNTIME_CATALOG.downloadUrl, {
       redirect: 'follow',
@@ -336,27 +354,38 @@ async function downloadArtifact(destination: string) {
       Readable.fromWeb(response.body as never),
       limit,
       createWriteStream(destination, { flags: 'wx', mode: 0o600 }),
+      { signal: controller.signal },
     )
   } catch (error) {
     if (isOutputSavingsRuntimeError(error)) throw error
+    if (signal?.aborted) {
+      throw tokenlessError(
+        'output_savings_runtime_operation_canceled',
+        'The output savings runtime operation was canceled.',
+        { cause: error },
+      )
+    }
     throw tokenlessError(
-      controller.signal.aborted
+      timedOut
         ? 'output_savings_runtime_download_timeout'
         : 'output_savings_runtime_download_failed',
-      controller.signal.aborted
+      timedOut
         ? 'The output savings runtime download timed out.'
         : 'The output savings runtime download failed.',
-      { cause: error, retryable: !controller.signal.aborted },
+      { cause: error, retryable: !timedOut },
     )
   } finally {
     clearTimeout(timeout)
+    signal?.removeEventListener('abort', abort)
   }
 }
 
-async function validateArchivePaths(archivePath: string) {
+async function validateArchivePaths(archivePath: string, signal?: AbortSignal) {
+  throwIfRuntimeOperationAborted(signal)
   const listing = await execFileAsync('tar', ['-tf', archivePath], {
     timeout: ARCHIVE_TIMEOUT_MS,
     maxBuffer: MAX_ARCHIVE_LIST_BYTES,
+    signal,
   })
   const entries = listing.stdout.split(/\r?\n/).filter(Boolean)
   if (entries.length === 0) {
@@ -413,9 +442,12 @@ async function verifyStandaloneFile(
   }
 }
 
-async function sha256File(file: string) {
+async function sha256File(file: string, signal?: AbortSignal) {
   const hash = createHash('sha256')
-  for await (const chunk of createReadStream(file)) hash.update(chunk)
+  for await (const chunk of createReadStream(file)) {
+    throwIfRuntimeOperationAborted(signal)
+    hash.update(chunk)
+  }
   return hash.digest('hex')
 }
 
@@ -436,6 +468,7 @@ async function runWorker(runtimeDirectory: string, text: string, signal?: AbortS
     const abort = () => child.kill()
     const cleanupSignal = () => signal?.removeEventListener('abort', abort)
     signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
     child.stdout.on('data', (chunk: Buffer) => {
       outputBytes += chunk.length
       if (outputBytes <= 1024 * 1024) output.push(chunk)
@@ -510,6 +543,14 @@ async function writeJsonAtomic(file: string, payload: unknown) {
 
 function isOutputSavingsRuntimeError(error: unknown) {
   return isRecord(error) && typeof error.code === 'string' && error.code.startsWith('output_savings_runtime_')
+}
+
+function throwIfRuntimeOperationAborted(signal: AbortSignal | undefined) {
+  if (!signal?.aborted) return
+  throw tokenlessError(
+    'output_savings_runtime_operation_canceled',
+    'The output savings runtime operation was canceled.',
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

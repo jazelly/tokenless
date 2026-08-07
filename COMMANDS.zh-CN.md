@@ -438,7 +438,7 @@ tokenless limits inspect --profile default --provider chatgpt --json
 
 ### `tokenless savings`
 
-管理可选、只计算 output 的节省估算。它默认停用，setup 也绝不会启用或下载 tokenizer。
+管理只计算 output 的节省估算。它默认开启，但 setup 和 Dashboard 读取绝不会下载 tokenizer。
 
 ```bash
 tokenless savings status --json
@@ -448,7 +448,7 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-`enable` 会先按需下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。`disable` 停止后续计量，但保留历史和 runtime。`clear` 删除持久化计量历史；`uninstall` 停用计量并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
+`enable` 会先下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。正常的默认开启流程则会等到第一个 provider job 已经完成、并把计量工作持久交接给 daemon 后，才在后台懒安装。`disable` 会丢弃排队文本、阻止进行中的结果被保存，并保留历史和 runtime。`clear` 会丢弃清空前的工作并删除持久化计量历史；`uninstall` 会停用计量、丢弃工作并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
 
 计量范围仅包括经过规范化的可见 assistant 输出，并归属到触发它的 durable job 和 response。它是稳定的跨 provider estimate，不是 provider billing 数值；input token、隐藏推理和私有 backend traffic 都不在范围内。
 

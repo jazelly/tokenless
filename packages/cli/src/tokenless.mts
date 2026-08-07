@@ -4485,6 +4485,9 @@ async function savingsCommand(subcommand: string | undefined, args: CliArgs) {
   let summary
   let cleared: number | undefined
   try {
+    if (subcommand === 'disable' || subcommand === 'uninstall') {
+      store.discardOutputSavingsWork()
+    }
     if (subcommand === 'clear') cleared = store.clearOutputSavings().cleared
     summary = store.reconcileOutputSavings()
   } finally {

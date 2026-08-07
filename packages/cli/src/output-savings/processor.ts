@@ -55,9 +55,11 @@ export class OutputSavingsProcessor {
     await this.drainPromise?.catch(() => undefined)
   }
 
-  discardPending() {
+  async discardPending() {
     this.activeController?.abort()
-    return this.store.discardOutputSavingsWork()
+    const discarded = this.store.discardOutputSavingsWork()
+    await this.drainPromise?.catch(() => undefined)
+    return discarded
   }
 
   private async drain() {
@@ -76,19 +78,19 @@ export class OutputSavingsProcessor {
   }
 
   private async process(work: OutputSavingsWork) {
+    let controller: AbortController | undefined
     try {
       const config = await readTokenlessConfig(this.store.homeDir)
       if (!config.outputSavings.enabled) {
         this.store.discardOutputSavingsWork(work.work_id)
         return
       }
-      const controller = new AbortController()
+      controller = new AbortController()
       this.activeController = controller
       const result = await this.runtimeManager.measure(work.source_text, {
         signal: controller.signal,
         installIfMissing: true,
       })
-      if (this.activeController === controller) this.activeController = undefined
       if (!this.started || controller.signal.aborted) return
       const currentConfig = await readTokenlessConfig(this.store.homeDir)
       if (!currentConfig.outputSavings.enabled) {
@@ -117,13 +119,14 @@ export class OutputSavingsProcessor {
         retryDelayMs(work.attempt_count),
       )
     } catch (error) {
-      this.activeController = undefined
       if (!this.started) return
       this.store.deferOutputSavingsWork(
         work.work_id,
         backgroundErrorCode(error),
         retryDelayMs(work.attempt_count),
       )
+    } finally {
+      if (this.activeController === controller) this.activeController = undefined
     }
   }
 

@@ -92,7 +92,7 @@ Output savings measurement is enabled by default, but tokenizer installation is 
 tokenless savings enable --json
 ```
 
-The first measurement or explicit install downloads a checksum-pinned `tiktoken` 1.0.22 archive (10,611,708 bytes, about 10.1 MiB) and installs only the `o200k_base` WASM runtime and vocabulary (3,413,323 bytes, about 3.3 MiB) under `TOKENLESS_HOME`. This is a deterministic tokenizer, not a local AI model. It needs no GPU and runs in a short-lived, single-concurrency Node.js subprocess only when Tokenless finishes reading a visible assistant response. A local benchmark observed roughly 100 MB of transient memory; exact CPU time and peak memory vary by response and machine.
+The first measurement or explicit install downloads a checksum-pinned `tiktoken` 1.0.22 archive (10,611,708 bytes, about 10.1 MiB) and installs only the `o200k_base` WASM runtime and vocabulary (3,413,323 bytes, about 3.3 MiB) under `TOKENLESS_HOME`. This is a deterministic tokenizer, not a local AI model. It needs no GPU. Provider job completion durably queues the visible text and returns without awaiting installation or measurement; the existing daemon then runs each measurement at single concurrency in a short-lived Node.js subprocess. A local benchmark observed roughly 100 MB of transient memory; exact CPU time and peak memory vary by response and machine.
 
 Tokenless measures only normalized visible assistant output. It does not estimate input tokens, intercept private provider APIs, inspect hidden reasoning, or claim provider billing accuracy. `o200k_base` provides one stable cross-provider estimate, so totals are labeled estimates and can differ from a provider's model-specific tokenizer. Measurements are attributed idempotently to the triggering durable job and response.
 
@@ -103,7 +103,7 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-Disabling stops future measurement but keeps the verified runtime and history. The main dashboard keeps the savings section visible and grays it out until measurement is turned back on. Clearing deletes measurement history without changing the toggle. Uninstalling disables the feature and removes its local runtime. The tokenizer is not included in the Tokenless npm package; only a first enabled measurement or an explicit dashboard/CLI install downloads it.
+Disabling discards queued text, prevents in-flight results from being saved, and keeps the verified runtime and history; the dashboard control also cancels daemon-local active work. The main dashboard keeps the savings section visible and grays it out until measurement is turned back on. Clearing discards pre-clear work and deletes measurement history without changing the toggle. Uninstalling disables the feature, discards work, and removes its local runtime. The tokenizer is not included in the Tokenless npm package; only a first enabled measurement or an explicit dashboard/CLI install downloads it.
 
 ## Run
 

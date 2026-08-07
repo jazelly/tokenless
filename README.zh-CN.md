@@ -92,7 +92,7 @@ Config 使用 `providerWhitelist` 作为 provider routing 边界。默认值包�
 tokenless savings enable --json
 ```
 
-首次计量或显式安装会下载经过 checksum 固定的 `tiktoken` 1.0.22 archive（10,611,708 bytes，约 10.1 MiB），并且只把 `o200k_base` 的 WASM runtime 和 vocabulary（3,413,323 bytes，约 3.3 MiB）安装到 `TOKENLESS_HOME`。它是确定性 tokenizer，不是本地 AI model；不需要 GPU。只有 Tokenless 读完一条可见 assistant 回复时，才会在单并发、短生命周期的 Node.js subprocess 中运行。一次本机 benchmark 观测到约 100 MB 的瞬时内存；实际 CPU 时间和峰值内存会随回复内容和机器变化。
+首次计量或显式安装会下载经过 checksum 固定的 `tiktoken` 1.0.22 archive（10,611,708 bytes，约 10.1 MiB），并且只把 `o200k_base` 的 WASM runtime 和 vocabulary（3,413,323 bytes，约 3.3 MiB）安装到 `TOKENLESS_HOME`。它是确定性 tokenizer，不是本地 AI model，也不需要 GPU。Provider job completion 会先把可见文本持久交接给队列，然后直接返回，不会等待安装或计量；现有 daemon 随后以单并发方式，为每次计量启动一个短生命周期的 Node.js subprocess。一次本机 benchmark 观测到约 100 MB 的瞬时内存；实际 CPU 时间和峰值内存会随回复内容和机器变化。
 
 Tokenless 只计量经过规范化的可见 assistant 输出；不估算 input token，不截取 provider 私有 API，不读取隐藏推理，也不声称与 provider billing 完全一致。`o200k_base` 提供统一、稳定的跨 provider 估算，因此界面始终标注为 estimate；结果可能与 provider 的 model-specific tokenizer 不同。每条计量会幂等归属到触发它的 durable job 和 response。
 
@@ -103,7 +103,7 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-停用后不再产生新计量，但保留已验证的 runtime 和历史；主 Dashboard 仍保留输出节省区块，并灰显至重新开启。清空只删除计量历史，不改变开关；卸载会停用该功能并删除本地 runtime。Tokenizer 不包含在 Tokenless npm package 中，只有默认开启后的首次计量，或控制台/CLI 的显式安装才会触发下载。
+停用会丢弃排队文本、阻止进行中的结果被保存，并保留已验证的 runtime 和历史；通过 Dashboard 操作时还会取消 daemon 内的 active work。主 Dashboard 仍保留输出节省区块，并灰显至重新开启。清空会丢弃清空前的工作并删除计量历史，但不改变开关；卸载会停用该功能、丢弃工作并删除本地 runtime。Tokenizer 不包含在 Tokenless npm package 中，只有默认开启后的首次计量，或控制台/CLI 的显式安装才会触发下载。
 
 ## 执行
 
