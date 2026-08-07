@@ -5,7 +5,7 @@ import type { Page } from 'playwright-core'
 import type { ProviderDomDefinition } from '../provider-definition.js'
 import type { ProviderActionObservation, ProviderActionPreparation } from '../contracts.js'
 import type { VisibleCitation } from '../../playwright/actions.js'
-import type { MeasureVisibleOutput } from '../../output-savings/index.js'
+import type { CaptureVisibleOutput } from '../../output-savings/index.js'
 
 export const RESPONSE_CURSOR_SCHEMA = 'tokenless.provider.response-cursor.v2'
 
@@ -81,7 +81,7 @@ export function validateDomResponsePreparation(provider: ProviderDomDefinition, 
 export async function readDomResponse(
   provider: ProviderDomDefinition,
   page: Page,
-  measureVisibleOutput?: MeasureVisibleOutput,
+  captureVisibleOutput?: CaptureVisibleOutput,
 ) {
   const answer = await latestLocator(page, provider.answerSelectors)
   if (!answer) {
@@ -92,9 +92,7 @@ export async function readDomResponse(
     }
   }
   const completeText = normalizeVisibleText(await answer.innerText({ timeout: 5000 }))
-  const outputSavings = measureVisibleOutput
-    ? await measureVisibleOutput(completeText)
-    : undefined
+  captureVisibleOutput?.(completeText)
   const text = boundVisibleText(completeText)
   const citations = await answer.locator('a[href]').evaluateAll((anchors) => anchors.slice(0, 24).map((anchor) => ({
     label: (anchor.textContent ?? '').trim().slice(0, 120),
@@ -104,7 +102,6 @@ export async function readDomResponse(
     text,
     citations,
     visibleProof: 'visible-answer-read',
-    ...(outputSavings === undefined ? {} : { outputSavings }),
   }
 }
 

@@ -32,6 +32,9 @@ import {
 
 export type { JobStatus } from './errors.js'
 
+const MAX_OUTPUT_SAVINGS_SOURCE_BYTES = 4 * 1024 * 1024
+const OUTPUT_SAVINGS_HANDOFF_DELAY_MS = 750
+
 export type ExecutionBackend = 'playwright'
 
 export type Job = {
@@ -114,6 +117,30 @@ export type OutputSavingsSummary = {
   job_count: number
   first_measured_at: string | null
   last_measured_at: string | null
+}
+
+export type OutputSavingsWorkInput = {
+  response_request_id: string
+  source_text: string
+}
+
+export type OutputSavingsWork = OutputSavingsWorkInput & {
+  work_id: number
+  job_id: string
+  created_at: string
+  available_at_ms: number
+  attempt_count: number
+  last_error_code: string | null
+}
+
+export type CompletedOutputSavingsWork = {
+  estimated_output_tokens: number
+  visible_characters: number
+  estimator: string
+  estimator_revision: string
+  basis: 'visible_assistant_text'
+  source_text_sha256: string
+  measured_at: string
 }
 
 export type ListJobsInput = {
@@ -213,6 +240,7 @@ export class JobStore {
 
   #db: DatabaseSync
   #closed = false
+  #outputSavingsWorkListener: (() => void) | undefined
 
   static async open(homeDir = defaultHomeDir(), claimLeaseMs = DEFAULT_CLAIM_LEASE_MS) {
     await ensureTokenlessHome(homeDir)
@@ -1107,7 +1135,13 @@ export class JobStore {
     })
   }
 
-  completeJob(jobId: string, claimToken: string, completion: { result_json: unknown } | { error_json: unknown }) {
+  completeJob(
+    jobId: string,
+    claimToken: string,
+    completion:
+      | { result_json: unknown; output_savings_work?: readonly OutputSavingsWorkInput[] | undefined }
+      | { error_json: unknown },
+  ) {
     const nowMs = nowUnixMillis()
     const now = nowRfc3339()
     const status: JobStatus = 'result_json' in completion ? 'succeeded' : 'failed'
@@ -1120,34 +1154,52 @@ export class JobStore {
       ...attempts.slice(0, -1),
       { ...current, status, completedAt: now },
     ]
-    const result = this.run(
-      `UPDATE jobs
-       SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL,
-           checkpoint_json = NULL, resume_json = NULL,
-           provider_attempts_json = ?, updated_at = ?, claim_expires_at = NULL,
-           outcome_revision = outcome_revision + 1
-       WHERE job_id = ?
-         AND claim_token = ?
-         AND status IN ('claimed', 'running', 'waiting_for_user')
-         AND claim_expires_at > ?`,
-      status,
-      resultJson,
-      errorJson,
-      stringifyJson(completedAttempts),
-      now,
-      jobId,
-      claimToken,
-      nowMs
-    )
-    if (result.changes === 1) {
+    let workEnqueued = false
+    const completed = this.transaction(() => {
+      const result = this.run(
+        `UPDATE jobs
+         SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL,
+             checkpoint_json = NULL, resume_json = NULL,
+             provider_attempts_json = ?, updated_at = ?, claim_expires_at = NULL,
+             outcome_revision = outcome_revision + 1
+         WHERE job_id = ?
+           AND claim_token = ?
+           AND status IN ('claimed', 'running', 'waiting_for_user')
+           AND claim_expires_at > ?`,
+        status,
+        resultJson,
+        errorJson,
+        stringifyJson(completedAttempts),
+        now,
+        jobId,
+        claimToken,
+        nowMs,
+      )
+      if (result.changes !== 1) return null
+      if ('result_json' in completion) {
+        try {
+          workEnqueued = this.enqueueOutputSavingsWork(
+            jobId,
+            completion.output_savings_work ?? [],
+            nowMs,
+            now,
+          )
+        } catch {
+          // Optional work handoff never changes the provider job outcome.
+        }
+      }
+      return this.getJobWithoutRecovery(jobId)
+    })
+    if (completed) {
       if ('result_json' in completion) {
         try {
           this.recordOutputSavingsForJob(jobId, completion.result_json)
         } catch {
-          // Optional measurement persistence never changes the provider job outcome.
+          // Legacy measurement reconciliation never changes the provider job outcome.
         }
       }
-      return this.getJobWithoutRecovery(jobId)
+      if (workEnqueued) this.#outputSavingsWorkListener?.()
+      return completed
     }
     return this.explainActiveClaimFailure(jobId, claimToken, nowMs)
   }
@@ -1202,6 +1254,87 @@ export class JobStore {
     ).map(rowToOutputSavingsEvent)
   }
 
+  pendingOutputSavingsWorkCount() {
+    const row = this.get('SELECT COUNT(*) AS count FROM output_savings_work')
+    return Number(row?.count ?? 0)
+  }
+
+  nextOutputSavingsWork(nowMs = nowUnixMillis()): OutputSavingsWork | null {
+    const row = this.get(
+      `SELECT work_id, job_id, response_request_id, source_text, created_at,
+              available_at_ms, attempt_count, last_error_code
+       FROM output_savings_work
+       WHERE available_at_ms <= ?
+       ORDER BY available_at_ms ASC, work_id ASC
+       LIMIT 1`,
+      nowMs,
+    )
+    return row ? rowToOutputSavingsWork(row) : null
+  }
+
+  nextOutputSavingsWorkAvailableAt(): number | null {
+    const row = this.get('SELECT MIN(available_at_ms) AS available_at_ms FROM output_savings_work')
+    return row?.available_at_ms === null || row?.available_at_ms === undefined
+      ? null
+      : Number(row.available_at_ms)
+  }
+
+  completeOutputSavingsWork(workId: number, measurement: CompletedOutputSavingsWork) {
+    return this.transaction(() => {
+      const work = this.get(
+        `SELECT work_id, job_id, response_request_id
+         FROM output_savings_work
+         WHERE work_id = ?`,
+        workId,
+      )
+      if (!work) return false
+      this.run(
+        `INSERT OR IGNORE INTO output_savings_events (
+           job_id, response_request_id, estimated_output_tokens, visible_characters,
+           estimator, estimator_revision, basis, source_text_sha256, measured_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        String(work.job_id),
+        String(work.response_request_id),
+        measurement.estimated_output_tokens,
+        measurement.visible_characters,
+        measurement.estimator,
+        measurement.estimator_revision,
+        measurement.basis,
+        measurement.source_text_sha256,
+        measurement.measured_at,
+      )
+      this.run('DELETE FROM output_savings_work WHERE work_id = ?', workId)
+      return true
+    })
+  }
+
+  deferOutputSavingsWork(workId: number, errorCode: string, delayMs: number) {
+    const boundedDelay = Math.max(1_000, Math.min(60_000, Math.floor(delayMs)))
+    const result = this.run(
+      `UPDATE output_savings_work
+       SET attempt_count = attempt_count + 1,
+           last_error_code = ?,
+           available_at_ms = ?
+       WHERE work_id = ?`,
+      errorCode.slice(0, 128),
+      nowUnixMillis() + boundedDelay,
+      workId,
+    )
+    if (result.changes === 1) this.#outputSavingsWorkListener?.()
+    return result.changes === 1
+  }
+
+  discardOutputSavingsWork(workId?: number) {
+    const result = workId === undefined
+      ? this.run('DELETE FROM output_savings_work')
+      : this.run('DELETE FROM output_savings_work WHERE work_id = ?', workId)
+    return Number(result.changes)
+  }
+
+  setOutputSavingsWorkListener(listener: (() => void) | undefined) {
+    this.#outputSavingsWorkListener = listener
+  }
+
   clearOutputSavings() {
     return this.transaction(() => {
       const clearedThrough = nowRfc3339()
@@ -1253,6 +1386,7 @@ export class JobStore {
          ON CONFLICT(singleton) DO UPDATE SET cleared_through = excluded.cleared_through`,
         clearedThrough,
       )
+      this.run('DELETE FROM output_savings_work')
       const result = this.run('DELETE FROM output_savings_events')
       return { cleared: Number(result.changes) }
     })
@@ -1292,6 +1426,30 @@ export class JobStore {
         )
       }
     })
+  }
+
+  private enqueueOutputSavingsWork(
+    jobId: string,
+    work: readonly OutputSavingsWorkInput[],
+    nowMs: number,
+    now: string,
+  ) {
+    let enqueued = false
+    for (const candidate of work) {
+      if (!isOutputSavingsWorkInput(candidate)) continue
+      const result = this.run(
+        `INSERT OR IGNORE INTO output_savings_work (
+           job_id, response_request_id, source_text, created_at, available_at_ms
+         ) VALUES (?, ?, ?, ?, ?)`,
+        jobId,
+        candidate.response_request_id,
+        candidate.source_text,
+        now,
+        nowMs + OUTPUT_SAVINGS_HANDOFF_DELAY_MS,
+      )
+      enqueued ||= result.changes === 1
+    }
+    return enqueued
   }
 
   async cancelJob(jobId: string, reason: unknown | undefined) {
@@ -1655,6 +1813,17 @@ export class JobStore {
         measured_at TEXT NOT NULL,
         PRIMARY KEY (job_id, response_request_id, estimator_revision)
       );
+      CREATE TABLE IF NOT EXISTS output_savings_work (
+        work_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+        response_request_id TEXT NOT NULL CHECK (length(response_request_id) BETWEEN 1 AND 128),
+        source_text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        available_at_ms INTEGER NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) BETWEEN 1 AND 128),
+        UNIQUE (job_id, response_request_id)
+      );
       CREATE TABLE IF NOT EXISTS output_savings_state (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         cleared_through TEXT
@@ -1741,6 +1910,8 @@ export class JobStore {
         ON provider_task_conversations(proved_job_id);
       CREATE INDEX IF NOT EXISTS output_savings_measured_at_idx
         ON output_savings_events(measured_at, job_id);
+      CREATE INDEX IF NOT EXISTS output_savings_work_available_idx
+        ON output_savings_work(available_at_ms, work_id);
     `)
   }
 
@@ -2132,6 +2303,30 @@ function rowToOutputSavingsEvent(row: Record<string, unknown>): OutputSavingsEve
     source_text_sha256: String(row.source_text_sha256),
     measured_at: String(row.measured_at),
   }
+}
+
+function rowToOutputSavingsWork(row: Record<string, unknown>): OutputSavingsWork {
+  return {
+    work_id: Number(row.work_id),
+    job_id: String(row.job_id),
+    response_request_id: String(row.response_request_id),
+    source_text: String(row.source_text),
+    created_at: String(row.created_at),
+    available_at_ms: Number(row.available_at_ms),
+    attempt_count: Number(row.attempt_count),
+    last_error_code: nullableString(row.last_error_code),
+  }
+}
+
+function isOutputSavingsWorkInput(value: unknown): value is OutputSavingsWorkInput {
+  return Boolean(value) &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof (value as OutputSavingsWorkInput).response_request_id === 'string' &&
+    (value as OutputSavingsWorkInput).response_request_id.length >= 1 &&
+    (value as OutputSavingsWorkInput).response_request_id.length <= 128 &&
+    typeof (value as OutputSavingsWorkInput).source_text === 'string' &&
+    Buffer.byteLength((value as OutputSavingsWorkInput).source_text, 'utf8') <= MAX_OUTPUT_SAVINGS_SOURCE_BYTES
 }
 
 function outputSavingsEventsFromResult(jobId: string, resultJson: unknown): OutputSavingsEvent[] {

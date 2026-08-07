@@ -1194,6 +1194,62 @@ test('SQLite durably and idempotently attributes measured visible output to its 
   }
 })
 
+test('SQLite completes the provider job before durable output savings work is processed', async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-output-savings-handoff-')
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  let store = await JobStore.open(homeDir)
+  try {
+    const created = store.createJob({
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      request_json: { taskId: 'savings-handoff-task' },
+      profile_id: 'savings-profile',
+    })
+    const claimed = store.claimJob(created.job_id, created.claim_token)
+    store.markRunning(claimed.job_id, claimed.claim_token)
+    const result = {
+      protocol: 'tokenless.playwright.job.v3',
+      provider: 'chatgpt',
+      responses: [{
+        protocol: 'tokenless.playwright.visible-action.v3',
+        requestId: 'savings-handoff-response',
+        provider: 'chatgpt',
+        action: 'response.read',
+        ok: true,
+        result: {
+          text: 'hello world',
+          citations: [],
+          visibleProof: 'visible-answer-read',
+        },
+        error: null,
+      }],
+    }
+    const completed = store.completeJob(claimed.job_id, claimed.claim_token, {
+      result_json: result,
+      output_savings_work: [{
+        response_request_id: 'savings-handoff-response',
+        source_text: 'hello world',
+      }],
+    })
+    assert.equal(completed.status, 'succeeded')
+    assert.deepEqual(completed.result_json, result)
+    assert.equal(JSON.stringify(completed.result_json).includes('source_text'), false)
+    assert.equal(store.outputSavingsSummary().estimated_output_tokens, 0)
+    assert.equal(store.pendingOutputSavingsWorkCount(), 1)
+
+    store.close()
+    store = await JobStore.open(homeDir)
+    const work = store.nextOutputSavingsWork(Date.now() + 10_000)
+    assert.equal(work.job_id, created.job_id)
+    assert.equal(work.response_request_id, 'savings-handoff-response')
+    assert.equal(work.source_text, 'hello world')
+  } finally {
+    store.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 for (const browserConnectionMode of ['playwright', 'cdp']) {
 test(`profiles open without provider uses ${browserConnectionMode} through daemon browser runtime control`, {
   timeout: 60_000,

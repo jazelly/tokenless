@@ -275,7 +275,7 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
   }
 
   protected readResponse(page: Page, context: ProviderExecutionContext): Promise<VisibleActionResult> {
-    return readDomResponse(this.definition, page, context.measureVisibleOutput)
+    return readDomResponse(this.definition, page, context.captureVisibleOutput)
   }
 
   private executePromptAction(

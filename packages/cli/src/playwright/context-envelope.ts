@@ -56,6 +56,7 @@ export function createContextEnvelope(options: {
   requirements: readonly TaskCapabilityId[]
   actions: readonly VisibleActionRequest[]
   language?: 'en' | 'zh-CN' | null | undefined
+  upstream?: ContextEnvelope['upstream'] | undefined
 }): ContextEnvelope {
   const prompts = promptActions(options.actions)
   return Object.freeze({
@@ -70,7 +71,7 @@ export function createContextEnvelope(options: {
     references: Object.freeze(attachmentReferences(options.actions)),
     outputContract: Object.freeze({ language: options.language ?? null, format: null }),
     constraints: Object.freeze({ tokenBudget: null, deadline: null }),
-    upstream: Object.freeze({ agentKind: null, sessionId: null, state: null }),
+    upstream: Object.freeze(options.upstream ?? { agentKind: null, sessionId: null, state: null }),
     delivery: Object.freeze({
       mode: 'visible_actions' as const,
       promptActions: Object.freeze(prompts.map(({ requestId, text }) => Object.freeze({

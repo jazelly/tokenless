@@ -30,7 +30,7 @@ The protocol covers capabilities, workspace and conversation identity, instructi
 | --- | --- | --- | --- |
 | This protocol | Normative contract and shared compatibility boundary | Semantics, wire schemas, lifecycle, capability negotiation, errors, versioning, conformance rules, and language bindings | Tokenless storage, daemon routes, Playwright, provider selectors, MCP, tools, approvals, or agent policy |
 | Tokenless Layer 1 / current repository | First Provider Runtime and reference Provider implementation | Visible browser execution, provider adapters, durable provider turns, exact provider-side resources, and evidence-backed outcomes | Harness prompts, action-batch parsing, MCP clients, approval policy, or agent-loop state |
-| [Web Agent Harness](P0-web-agent-harness.md) / Layer 2 | First Client implementation and primary design consumer | Agent runs, uploaded System Prompt Bundle, Skill registry and `SKILL.md` staging, attachment manifests, visible action-batch and final envelopes, tools, consolidated user input, approvals, MCP execution, aggregate results, limits, and run persistence | Provider DOM, browser profiles, selectors, Tokenless database tables, or private daemon modules |
+| [Web Agent Harness](P0-web-agent-harness.md) / Layer 2 | First Client implementation and primary design consumer | Agent adapters and identity, Harness context/run persistence, uploaded System Prompt Bundle, Skill registry and `SKILL.md` staging, attachment manifests, visible action-batch and final envelopes, tools, consolidated user input, approvals, MCP execution, aggregate results, and limits | Provider DOM, browser profiles, selectors, Provider database tables, or private daemon modules |
 | Visible Web-Agent Control Protocol | A separate Layer 2-to-model text contract carried inside protocol messages | Tool-request and final-result envelopes visible in model text | Provider runtime semantics or Layer 1 parsing |
 | [Agent Session Integrations](P1-agent-session-integrations.md) | Caller integration that may invoke Layer 1 or the Harness | Caller-session binding and local MCP exposure | Replacing the Client/Provider protocol or inheriting web-model tool-execution authority |
 | OpenAI-compatible mapping profile | Optional, explicitly lossy compatibility adapter | Simple stateless request/result mappings | Defining the canonical resource, lifecycle, identity, waiting, resume, or evidence model |
@@ -83,6 +83,12 @@ The protocol standardizes one Provider's externally observable ability to:
 - classify failures and user-intervention requirements without exposing secrets or implementation details.
 
 It does not standardize how the Provider achieves those outcomes. A compliant Provider may use a browser runtime, extension, remote service, or another implementation, provided its declared capabilities and observable behavior satisfy the protocol.
+
+### Upstream Agent Correlation
+
+A Client may attach a versioned opaque correlation object to a provider turn, such as a Harness project, conversation, turn, or invocation ID. The Provider preserves and returns that object for correlation but does not interpret its agent-specific hierarchy or make it provider resource identity.
+
+Provider workspace, conversation, and turn references remain Provider-owned results. The Client binds those results to its own agent records after completion. This permits exact Codex-to-provider continuity without moving hook parsing, Codex IDs, or Harness persistence into the Web Provider API.
 
 ### Explicit Exclusions
 

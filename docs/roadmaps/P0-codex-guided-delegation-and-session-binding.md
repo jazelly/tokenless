@@ -1,79 +1,52 @@
 # Codex Guided Delegation and Session Binding
 
-Status: proposed | Priority: P0 | First surface: Tokenless-launched Codex CLI sessions
+Status: in progress | Priority: P0 | First surface: normally launched Codex sessions
 
-Depends on: the existing Tokenless routing Skill and packaged CLI/daemon, stable local project identity, and a release-matched Codex App Server adapter
+Depends on: the packaged Tokenless CLI, the Web Agent Harness package, durable provider jobs and mappings, Codex `AGENTS.md`, Codex hooks, and a release-compatible Codex App Server
 
-Related: [Agent Session Integrations](P1-agent-session-integrations.md) owns the generic caller MCP interface and later non-Codex adapters; [Web Agent Harness](P0-web-agent-harness.md) owns delegated web-model execution; this roadmap owns always-on Codex guidance plus exact Codex project, thread, and turn binding
+Related: [Web Agent Harness](P0-web-agent-harness.md) owns agent context and delegated web-model execution; [Agent Session Integrations](P1-agent-session-integrations.md) generalizes the adapter contract to agents beyond Codex; the existing Web Provider API owns provider Projects, conversations, jobs, and visible website operations
 
-Supersedes the previously proposed Codex Intercept Mode as the first Codex delivery. Full custom-model-provider replacement remains a possible future mode, not current implementation scope.
+Supersedes the proposed Tokenless-launched Codex relay and custom-model replacement as the first integration. Tokenless never launches, wraps, proxies, or replaces Codex in this roadmap.
 
 ## Outcome
 
-Add an opt-in Codex mode that broadens Tokenless use through durable prompt guidance while leaving Codex's normal model provider and model traffic unchanged. Codex continues to spend its own model tokens, perform local coding work, run tools, and manage approvals. The Codex model may delegate selected work to Tokenless through the existing Skill and later caller MCP surface.
+Users start Codex in their normal way. An explicit, reversible Tokenless installation adds two independent capabilities:
 
-The same opt-in launcher runs Codex through a release-matched App Server control path so Tokenless can bind every observed session to the exact local project, Codex thread/chat, and Codex turn. Provider Project and conversation ids are created and persisted only when that exact Codex thread actually delegates work to Tokenless.
+1. a concise global instruction block asks Codex to consider Tokenless for bounded delegated work while ordinary Codex work continues to use Codex; and
+2. native Codex lifecycle hooks bind an actual Tokenless tool invocation to the exact Codex chat, turn, and tool call before the Tokenless CLI accepts it.
 
-The user-visible invariants are:
+The integration does not intercept ordinary model traffic, create a Tokenless custom model provider, or try to avoid all Codex token use. Tokenless receives work only when Codex or the user invokes the Tokenless CLI or MCP surface.
 
-> Guided mode changes Codex's durable routing guidance, not its model provider. A normal Codex turn remains a normal Codex turn unless the user or Codex explicitly invokes Tokenless.
+The primary invariant is:
 
-> In a Tokenless-launched Codex session, Tokenless knows the exact local project, Codex session tree, thread/chat id, and active turn id before accepting a delegated run. It never guesses identity from display names.
+> A user-launched Codex session remains a Codex session. When that session explicitly invokes Tokenless, the invocation is correlated to the exact Codex chat, turn, tool call, local project, Tokenless conversation, provider Project, and provider conversation without guessing from names or recency.
 
-## Progressive Codex Modes
+## Why RTK Uses `AGENTS.md`
 
-| Mode | Codex model traffic | Tokenless activation | Identity | Status |
-| --- | --- | --- | --- | --- |
-| `skill` | Unchanged | User or Codex explicitly selects the Tokenless Skill | Explicit invocation metadata; exact App Server binding when launched through Tokenless | Existing baseline |
-| `guided` | Unchanged | Always-on `AGENTS.md` policy tells Codex when to invoke the Skill or MCP tool | Exact App Server project, thread, turn, and lineage binding in Tokenless-launched sessions | First new mode |
-| `replace` | Tokenless custom model provider | Every supported Codex model request | Full request and model-round correlation | Deferred; not part of this roadmap |
+RTK needs guidance to affect ordinary command selection in every task. That is an always-on working agreement, while a Skill is a task workflow that may or may not be selected and loaded for a particular request. RTK therefore installs prompt-level guidance instead of relying on Skill activation.
 
-Guided mode begins with one `selective` coverage policy: delegate high-context research, comparison, external-provider, or independently useful reasoning work; keep trivial local inspection, small edits, deterministic commands, and latency-sensitive work in Codex. A later `broad` policy may expand eligible delegation after real usage evidence. Do not introduce several unproven policy presets in V1.
+RTK performs persistent filesystem installation. It writes `RTK.md` and adds an `@.../RTK.md` reference to an `AGENTS.md`; a new Codex session then loads the effective instruction file. There is no hidden runtime system-prompt injection API involved.
 
-## Why RTK Uses `AGENTS.md` Instead of a Skill
+Tokenless adopts the useful prompt-level property but not the undocumented include assumption. Codex documents file discovery and precedence, not `@file.md` expansion. Tokenless writes its small marker block directly into the effective global instruction file.
 
-RTK's current Codex integration explicitly describes itself as prompt-level guidance with no programmatic hook. Its behavior must apply to ordinary shell-command decisions across every task and project. That is an always-on working agreement, while a Skill is a reusable task workflow whose activation remains explicit or model-selected.
+## What `AGENTS.override.md` Actually Overrides
 
-The repository does not contain a maintainer statement that Skills were evaluated and rejected. The practical explanation is an inference from its implementation and Codex's surfaces:
+Within one directory, a non-empty `AGENTS.override.md` is selected instead of `AGENTS.md`. It does not erase developer, system, or nearer project instructions, and it is not merged with the same-directory `AGENTS.md` by Codex.
 
-- RTK needs Codex to consider its command prefix on every relevant tool decision, not only after a Skill is selected;
-- global `AGENTS.md` guidance is loaded at the start of every Codex run and therefore provides cross-project awareness;
-- a Skill's catalog entry may be present without its full body being loaded for a particular task;
-- Codex did not originally expose the input-rewrite semantics RTK needs for a transparent command hook; and
-- prompt-level guidance is small and works without replacing Codex's model provider.
+The installer therefore:
 
-This makes RTK's Codex integration broader than a task Skill but weaker than a hook: it relies on the model following instructions and does not guarantee command rewriting.
+- patches an existing non-empty `$CODEX_HOME/AGENTS.override.md` because it is the active global file;
+- otherwise patches `$CODEX_HOME/AGENTS.md`;
+- never creates `AGENTS.override.md` merely to outrank the user's file;
+- preserves all unrelated content;
+- applies one versioned inline marker block idempotently; and
+- removes only its own marker block during uninstall.
 
-## What `rtk init --codex` Actually Does
+This behavior is verified through the built CLI and real filesystem boundaries.
 
-Current RTK source performs persistent filesystem installation rather than runtime system-prompt injection:
+## Installed Guidance Contract
 
-1. `rtk init -g --codex` resolves `$CODEX_HOME`, falling back to `~/.codex`.
-2. It writes a small embedded awareness document to `$CODEX_HOME/RTK.md`.
-3. It appends an absolute `@<CODEX_HOME>/RTK.md` line to `$CODEX_HOME/AGENTS.md`; project-local installation writes `RTK.md` and `AGENTS.md` in the current directory and uses `@RTK.md`.
-4. The patch is idempotent, uses atomic writes, migrates an older inline RTK marker block, and preserves unrelated `AGENTS.md` content.
-5. Uninstall removes the RTK-owned file and exact reference while preserving other content.
-6. A newly launched Codex session discovers the effective global and project `AGENTS.md` files and places their content in the model-visible instruction chain.
-
-The observed system-prompt change comes from step 6. RTK does not call a hidden Codex prompt-injection API.
-
-### Do not copy RTK's fragile parts
-
-Codex's documented `AGENTS.md` discovery loads file contents; it does not document `@other-file.md` as an include directive. Current open-source Codex loaders read the selected global and project files as raw text. RTK also has open reports that `@RTK.md` did not expand and that writing `AGENTS.md` can be ineffective when a non-empty global `AGENTS.override.md` takes precedence.
-
-Tokenless must therefore:
-
-- place a concise Tokenless-owned marker block directly in the effective instruction file;
-- patch non-empty `$CODEX_HOME/AGENTS.override.md` when it is the active global source, otherwise patch `$CODEX_HOME/AGENTS.md`;
-- never create an override merely to outrank the user's base guidance;
-- preserve all unrelated content and refuse malformed Tokenless marker blocks;
-- record the exact file, prior digest, installed digest, and marker version;
-- verify the installed path appears in App Server `instructionSources`; and
-- describe guided behavior as best-effort model policy, never transparent interception.
-
-## Guided Instruction Contract
-
-The installed English instruction block should stay short and stable:
+The installed block is internal English agent guidance:
 
 ```md
 <!-- tokenless-codex-guidance v1 -->
@@ -81,153 +54,161 @@ The installed English instruction block should stay short and stable:
 
 - Codex remains the primary coding agent and model provider.
 - Consider Tokenless for bounded high-context research, comparison, external-provider, or independently useful reasoning tasks.
-- Use the installed Tokenless Skill or MCP tools; do not claim that an ordinary Codex turn was routed through Tokenless.
+- Use the installed Tokenless Skill, CLI, or MCP tools only when delegation is useful.
 - Keep trivial local inspection, deterministic commands, small edits, and latency-sensitive work in Codex.
 - Share only the current bounded goal and explicitly authorized files or context.
-- Reuse the current Tokenless project and conversation binding when continuing the same Codex thread.
+- Reuse the hook-supplied Tokenless project and conversation identity; do not invent or replace it.
+- Do not start Codex through Tokenless. The user starts Codex normally.
 <!-- /tokenless-codex-guidance -->
 ```
 
-Localized install, status, repair, and uninstall messages must be available in English and Simplified Chinese. The instruction block remains English because it is internal Agent guidance.
+Guidance is best-effort prompt policy. Exact invocation correlation is a separate programmatic hook capability.
 
-The proposed CLI shape is:
+## Native Hook Integration
 
-```text
-tokenless codex install --mode guided --scope global
-tokenless codex status
-tokenless codex
-tokenless codex uninstall
+The public commands are:
+
+```bash
+tokenless agents install codex
+tokenless agents status codex
+tokenless agents inspect codex --chat-id <codex-thread-id>
+tokenless agents uninstall codex
 ```
 
-The installer must not replace the `codex` executable, add a shell alias silently, alter Codex authentication, change `model_provider`, or write browser credentials.
+Installation merges Tokenless-owned groups into `$CODEX_HOME/hooks.json` for:
 
-## Exact App Server Observation
+- `SessionStart`
+- `UserPromptSubmit`
+- `PreToolUse`
+- `PostToolUse`
+- `Stop`
+- `SessionEnd`
 
-App Server is the identity and input observation surface, not the model transport. The first supported launcher should use a private local control path:
+Other hook definitions remain untouched. Codex requires the user to restart and trust the installed hook definition through `/hooks`; Tokenless does not bypass that security decision.
+
+The `PreToolUse` handler reacts only to an actual Tokenless Bash command or Tokenless MCP tool. For Bash, it prepends hook-owned environment variables. For MCP, it adds an equivalent structured `tokenlessContext` object. An explicit conflicting `--task-id` is rejected before provider access, so a caller cannot silently replace the bound conversation.
+
+Hook failures never block ordinary Codex work. They make automatic Tokenless continuity unavailable for that invocation and return a diagnostic system message.
+
+## Exact Identity Hierarchy
 
 ```mermaid
-flowchart LR
-  User["User"]
-  TUI["Codex TUI<br/>normal Codex model"]
-  Relay["Tokenless App Server relay<br/>observe + forward JSON-RPC"]
-  AppServer["Release-matched Codex App Server"]
-  Ledger["Tokenless Agent binding ledger"]
-  Skill["Tokenless Skill or caller MCP"]
-  Provider["Visible web provider<br/>delegated work only"]
+flowchart TD
+  LP["Local project\ncanonical repository/worktree root"]
+  CT["Codex chat/thread\nhook session_id = ThreadId"]
+  ST["Codex session tree\nApp Server thread.sessionId"]
+  TR["Codex turn\nhook turn_id"]
+  TC["Tokenless invocation\nhook tool_use_id"]
+  TP["Tokenless project"]
+  CV["Tokenless conversation / provider taskId"]
+  PP["Provider Project resource ID"]
+  PC["Provider conversation reference"]
 
-  User --> TUI
-  TUI <--> Relay
-  Relay <--> AppServer
-  Relay --> Ledger
-  TUI -. explicit delegation .-> Skill
-  Skill --> Ledger
-  Skill --> Provider
+  ST --> CT
+  LP --> CT
+  LP --> TP
+  CT --> TR
+  CT --> CV
+  TR --> TC
+  TC --> CV
+  TP -. "created or resolved on delegation" .-> PP
+  CV -. "created or resolved on delegation" .-> PC
 ```
 
-`tokenless codex` starts a release-matched `codex app-server` on a private Unix socket or another verified local transport, starts a transparent local JSON-RPC relay, then connects the real Codex TUI through `codex --remote`. The relay forwards App Server messages without changing thread, turn, approval, tool, or model semantics and records only the bounded identity events Tokenless owns.
-
-Do not assume a second App Server client receives another client's full thread stream. The relay path makes the observed TUI control connection authoritative and avoids calling `thread/resume` merely to subscribe, which could change session state.
-
-Raw `codex` sessions launched outside this path may still receive global guidance, but Tokenless must report their exact binding as unavailable. Do not scan rollout files or infer the active chat from the most recently modified session.
-
-## Canonical Identity Hierarchy
-
-```text
-LocalProjectBinding
-└── CodexSessionTree (thread.sessionId)
-    ├── CodexThread (thread.id) <-> optional ProviderConversationBinding
-    │   └── CodexTurn (turn.id)
-    │       └── zero or more explicit Tokenless delegated runs
-    └── Child or forked CodexThread <-> separate optional ProviderConversationBinding
-```
-
-| Identity | Source | Meaning |
+| Identity | Authoritative source | Durable meaning |
 | --- | --- | --- |
-| Local project | Canonical `cwd`, repository root, worktree realpath, credential-free Git identity | Exact local project; display name is metadata only |
-| Codex session tree | `thread.sessionId` | Root plus descendant grouping; not a chat id |
-| Codex chat | `thread.id` | Exact Codex conversation/thread |
-| Codex turn | `turn.id` with `threadId` | One user request and the Codex work that follows |
-| Lineage | `parentThreadId` and `forkedFromId` | Subagent and fork relationships |
-| Provider Project | Provider-native opaque id | Created or resolved only when the local project first delegates to that provider/profile |
-| Provider conversation | Provider-native opaque id | One per Codex thread and provider/profile after the first delegation |
-| Delegated run | Tokenless job id plus Codex turn id | One explicit Tokenless invocation within the exact Codex turn |
+| Local project | Canonical Git/worktree root resolved from hook `cwd` | Stable local project; display name is metadata |
+| Codex chat | Hook `session_id`, whose value is the current Codex `ThreadId` | One exact Codex conversation |
+| Codex session tree | App Server `thread/read` result `thread.sessionId` | Root/descendant grouping; not the chat ID |
+| Codex turn | Hook `turn_id` | One user round inside the chat |
+| Tool invocation | Hook `tool_use_id` | One explicit Tokenless call inside the turn |
+| Tokenless project | Harness deterministic opaque project ID | Local project binding owned by the Harness |
+| Tokenless conversation | Harness deterministic opaque conversation ID and stable provider `taskId` | One Tokenless conversation for one Codex chat |
+| Provider Project | Web Provider API mapping `resource_id` | Real provider-native Project, when available |
+| Provider conversation | Web Provider API mapping `canonical_url` | Real provider conversation used for continuation |
 
-The durable Codex conversation key is `agentKind + thread.id`, not `sessionId`. Descendant threads can share a session tree while remaining different chats.
+`hook.session_id` and App Server `thread.sessionId` are different identifiers. The former is the active chat/thread and is the durable conversation key. The latter groups related threads in a session tree. Tokenless never merges chats merely because they share a session tree.
 
-A Codex-only turn creates no fake provider turn. When delegation occurs, Tokenless appends the delegated request to the provider conversation bound to that Codex thread and records the originating `turn.id`. Poll, resume, and result retrieval remain the same delegated run rather than creating new provider chat turns.
+## App Server Role
 
-App Server `thread/start`, `thread/resume`, and `thread/fork` responses also return `instructionSources`. Tokenless uses them to prove which guidance file was active for that exact thread. The installed Codex version's generated schema is authoritative; experimental fields remain version-gated.
+Hooks provide the authoritative live chat, turn, and tool-call IDs. On an actual Tokenless `PreToolUse`, the Harness starts a short-lived independent `codex app-server --listen stdio://` client and calls `thread/read` for the hook's chat ID. This enriches the binding with:
 
-## Privacy and Failure Semantics
+- App Server `thread.id` confirmation;
+- session tree ID;
+- parent/fork lineage when available;
+- canonical thread `cwd`, source, and credential-free Git metadata.
 
-- Observing identity does not authorize uploading the user prompt, transcript, repository files, or App Server item bodies.
-- Persist bounded ids, canonical local identity, lineage, versions, timestamps, instruction-source digests, and delegation links by default.
-- Share a goal or attachment only through an explicit Skill/MCP invocation and its normal authorization boundary.
-- Never inspect Codex authentication, browser secrets, hidden prompts, private reasoning, or macOS Keychain state.
-- If App Server compatibility, exact thread identity, or guidance verification fails, guided delegation remains visibly unavailable for that session; Codex itself may continue normally.
-- The launcher must never switch Codex's configured model provider or block ordinary Codex work merely because Tokenless is unavailable.
+This read does not start a Codex TUI, resume the thread, proxy another control connection, or subscribe to model traffic. It is bounded and best-effort because the hook IDs already establish exact live correlation. Failure to enrich does not make the hook invent a replacement ID.
 
-## Delivery Phases
+The repository includes an explicit real App Server E2E that starts the installed `codex app-server`, materializes a thread without a model request, and proves that the independently packaged Harness can read the same thread and session tree.
 
-### Phase 0: RTK-Style Guided Installation
+## Harness and Provider Boundaries
 
-- Add `install`, `status`, and `uninstall` for the inline marker block.
-- Resolve the effective global `AGENTS.override.md` versus `AGENTS.md` source correctly.
-- Preserve unrelated content with atomic, idempotent, reversible edits and a mutation ledger.
-- Keep the existing Tokenless Skill as the actual explicit invocation surface.
-- Verify behavior through a real built Codex process and a new session, not source-text assertions.
+The Web Agent Harness owns:
 
-Exit: a fresh Codex session reports the exact installed file in `instructionSources`, summarizes the Tokenless delegation policy correctly, and ordinary prompts still use Codex's configured model provider.
+- the separate `harness.sqlite3` agent-context ledger;
+- Codex adapter installation and hook handling;
+- canonical local project identity;
+- agent chat, turn, tool-call, lineage, and invocation records;
+- stable Tokenless project/conversation IDs and provider `taskId`; and
+- the binding from those IDs to provider mapping results.
 
-### Phase 1: App Server Launcher and Binding Ledger
+The Web Provider API owns:
 
-- Generate schemas from the installed Codex version.
-- Add the private App Server process, transparent relay, and real TUI launch path.
-- Record project, worktree, session tree, thread, turn, lineage, source, model provider, and instruction sources.
-- Support new, resume, and fork flows without attaching to a guessed latest thread.
+- managed provider/profile selection;
+- real provider Project and conversation discovery/creation;
+- durable jobs and provider-visible execution; and
+- the authoritative provider mapping records.
 
-Exit: two same-named projects, two Codex threads, a resumed thread, and a fork produce the exact distinct bindings observed through the real App Server boundary.
+The CLI transports an opaque upstream context envelope into a provider job and returns normal `providerContext` mapping fields. The Harness consumes those returned IDs in `PostToolUse`. Provider code does not parse Codex hooks or own the agent hierarchy.
 
-### Phase 2: Bound Skill and MCP Delegation
+## Persistence and Privacy
 
-- Attach the active project, thread, and turn ids automatically to Tokenless Skill/MCP invocations from a launched session.
-- Create or reuse the exact provider Project and provider conversation binding only on delegation.
-- Return job, provider Project, provider conversation, and originating Codex turn identity in state output.
-- Preserve the same binding across wait, resume, and result retrieval.
+The Harness database stores bounded identifiers, canonical project paths, hashes, lifecycle timestamps, provider mapping references, and job IDs. It does not store the raw Codex prompt, transcript, assistant message, tool response, repository contents, credentials, browser state, or private reasoning. Prompt and tool input correlation uses SHA-256 digests.
 
-Exit: two Codex chats in one project delegate to two distinct provider conversations under one provider Project, while their non-delegated Codex turns remain absent from the provider.
+Provider Project and conversation mappings remain absent until the exact Codex chat delegates to Tokenless and the Web Provider API observes them. A Codex-only turn creates no fake provider turn.
 
-### Phase 3: Bounded Inputs and Capability Awareness
+## Implemented Slice
 
-- Observe ordered App Server input items for provenance without treating them as authorization.
-- Pass only explicitly selected goals, Skills, attachments, and context references into Tokenless.
-- Record stable model, Skill, MCP, hook, and permission capability snapshots needed for diagnostics.
-- Keep full model-provider replacement outside this phase.
+- Built CLI install, status, inspect, and uninstall commands.
+- Correct `AGENTS.override.md` precedence and reversible inline guidance.
+- Idempotent merging of six native hook lifecycle events.
+- Exact hook binding for chat, turn, tool call, project, and Tokenless conversation.
+- App Server thread/session-tree enrichment through the real stdio protocol.
+- Hook-supplied context enforcement at the CLI boundary.
+- Opaque upstream context in provider job envelopes.
+- Provider Project/conversation result capture and next-turn provider/profile reuse.
+- Separate Harness-owned SQLite storage with raw prompt exclusion.
+- Real built-CLI/filesystem integration coverage and an explicit real App Server E2E.
 
-Exit: each delegated input is attributable to one Codex turn and one explicit authorization decision, and ambient project data is never uploaded.
+## Remaining Release Work
+
+- Run the complete repository validation suite and package-contract checks.
+- Complete bilingual public command documentation and release notes.
+- Run applicable manually gated real-provider E2E before release so provider Project/conversation mapping is proven on the supported provider surfaces.
+
+Custom-model replacement, complete Codex request interception, and Tokenless-launched Codex remain out of scope.
 
 ## Acceptance Criteria
 
-- Guided mode does not configure a Tokenless custom model provider and does not route ordinary Codex model requests through Tokenless.
-- The installed marker block is concise, versioned, idempotent, reversible, and preserves all unrelated global or project guidance.
-- A non-empty global `AGENTS.override.md` cannot silently hide guidance installed only into `AGENTS.md`.
-- Installation does not rely on undocumented `@file.md` expansion.
-- App Server `instructionSources` proves the exact guidance source loaded for the current thread.
-- Exact binding uses canonical local project identity, `thread.sessionId`, `thread.id`, `turn.id`, and available lineage fields.
-- The durable chat key uses `thread.id`; a shared session tree never merges subagent or fork chats.
-- Provider Project and conversation ids are absent until delegation and are never guessed from names.
-- Two Codex threads in one project reuse the intended provider Project but never share a provider conversation implicitly.
-- Sessions not launched through the supported App Server path are reported as unbound rather than matched through recency or transcript scanning.
-- Tests exercise the built Tokenless CLI, real filesystem mutations, real Codex App Server/TUI process boundary, and real delegated provider flow without mocks, fixtures, or simulated provider responses.
+- Users launch Codex normally; Tokenless installs no wrapper, alias, relay, or custom model provider.
+- Ordinary Codex turns remain ordinary Codex turns until an explicit Tokenless tool call occurs.
+- A non-empty global `AGENTS.override.md` cannot hide guidance installed only into `AGENTS.md`.
+- Guidance and hooks are idempotent, reversible, atomic, and preserve unrelated user content.
+- The user explicitly trusts hooks in Codex; Tokenless never bypasses hook trust.
+- Hook `session_id`, `turn_id`, and `tool_use_id` bind the exact chat, round, and invocation.
+- App Server `thread.sessionId` is stored only as the session-tree identity and never substituted for the chat ID.
+- One Codex chat reuses one Tokenless conversation and provider `taskId`; a different chat gets a different conversation.
+- Provider Project and conversation IDs come only from the Web Provider API's observed mappings.
+- The agent-context ledger contains no raw prompt or transcript text.
+- Tests cross the built CLI, real filesystem, packaged Harness, real SQLite, and real Codex App Server boundaries without mocks or fake provider claims.
 
 ## Sources Consulted
 
-- [Codex custom instructions with `AGENTS.md`](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-- [Codex App Server](https://learn.chatgpt.com/docs/app-server)
+- [Codex custom instructions with `AGENTS.md`](https://developers.openai.com/codex/guides/agents-md)
+- [Codex hooks](https://developers.openai.com/codex/config/hooks)
+- [Codex App Server](https://developers.openai.com/codex/app-server)
 - [OpenAI Codex global instruction loader](https://github.com/openai/codex/blob/main/codex-rs/codex-home/src/instructions/mod.rs)
 - [OpenAI Codex project instruction loader](https://github.com/openai/codex/blob/main/codex-rs/core/src/agents_md.rs)
 - [RTK Codex integration](https://github.com/rtk-ai/rtk/blob/master/hooks/codex/README.md)
-- [RTK Codex installer implementation](https://github.com/rtk-ai/rtk/blob/master/src/hooks/init.rs)
-- [RTK report: `@RTK.md` did not resolve](https://github.com/rtk-ai/rtk/issues/842)
-- [RTK report: global override precedence](https://github.com/rtk-ai/rtk/issues/1943)
-- [RTK discussion: Codex guidance is explicit rather than an implicit hook](https://github.com/rtk-ai/rtk/issues/649)
+- [RTK installer implementation](https://github.com/rtk-ai/rtk/blob/master/src/hooks/init.rs)

@@ -29,6 +29,7 @@ import { JobStore, publicView, type ExecutionBackend, type JobStatus } from './j
 import { TokenlessApplicationServices } from '../application/services.js'
 import { TokenlessUiServer } from './ui-server.js'
 import { UiSessionManager } from './ui-session.js'
+import { OutputSavingsProcessor } from '../output-savings/processor.js'
 
 export type DaemonServer = {
   activate(): void
@@ -73,9 +74,10 @@ export async function serveHttp({
   const deactivate = () => {
     active = false
   }
+  const outputSavingsProcessor = new OutputSavingsProcessor(store)
   let closePromise: Promise<void> | undefined
   const close = () => {
-    closePromise ??= closeServer(server, store, beforeClose)
+    closePromise ??= closeServer(server, store, outputSavingsProcessor, beforeClose)
     return closePromise
   }
   const startedAt = Date.now()
@@ -107,6 +109,7 @@ export async function serveHttp({
     server.once('listening', onListening)
     server.listen(port, host)
   })
+  outputSavingsProcessor.start()
   return {
     activate,
     server,
@@ -660,6 +663,7 @@ function optionalQueryExecutionBackend(value: string | null) {
 async function closeServer(
   server: http.Server,
   store: JobStore,
+  outputSavingsProcessor: OutputSavingsProcessor,
   beforeClose: (() => Promise<void>) | undefined
 ) {
   const httpClose = new Promise<void>((resolve, reject) => {
@@ -669,7 +673,11 @@ async function closeServer(
     })
   }).catch(() => undefined)
   const runtimeClose = beforeClose?.() ?? Promise.resolve()
-  const results = await Promise.allSettled([httpClose, runtimeClose])
+  const results = await Promise.allSettled([
+    httpClose,
+    runtimeClose,
+    outputSavingsProcessor.stop(),
+  ])
   store.close()
   const failed = results.find((result) => result.status === 'rejected')
   if (failed?.status === 'rejected') throw failed.reason

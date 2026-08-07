@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline/promises'
+import { fileURLToPath } from 'node:url'
 
 import {
   MANAGED_PLAYWRIGHT_JOB_ACTION,
@@ -289,6 +291,7 @@ const TOP_LEVEL_USAGE = [
   'tokenless limits inspect --profile <slug> --provider <provider> --json',
   'tokenless replay --agent-kind <kind> --agent-session-id <id> --json',
   'tokenless profiles <subcommand> [options]',
+  'tokenless agents <install|status|inspect|uninstall> codex [options]',
   'tokenless dashboard [--no-open] [--json]',
   'tokenless savings <status|enable|disable|uninstall|clear> --json',
   'tokenless daemon stop [--json]',
@@ -320,11 +323,15 @@ try {
   } else {
     command = argv[0]?.startsWith('-') ? 'prompt' : (argv.shift() ?? 'help')
   }
-  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings') && argv[0] && !argv[0].startsWith('-')
+  const subcommand = (command === 'profiles' || command === 'daemon' || command === 'capabilities' || command === 'limits' || command === 'savings' || command === 'agents') && argv[0] && !argv[0].startsWith('-')
+    ? argv.shift()
+    : undefined
+  const agentTarget = command === 'agents' && argv[0] && !argv[0].startsWith('-')
     ? argv.shift()
     : undefined
   assertKnownTopLevelCommand(command)
   args = parseArgs(argv, { command, subcommand })
+  if (agentTarget !== undefined) args.agent = agentTarget
   if (helpRequested) {
     printCommandHelp({ command: 'tokenless' }, args)
     process.exit(0)
@@ -353,6 +360,8 @@ try {
     await profilesCommand(subcommand, args)
   } else if (command === 'daemon') {
     await daemonCommand(subcommand, args)
+  } else if (command === 'agents') {
+    await agentsCommand(subcommand, args)
   } else if (command === 'dashboard') {
     await dashboardCommand(args)
   } else if (command === 'run') {
@@ -1491,6 +1500,7 @@ function isUsableProviderAccess(access: unknown): access is ProviderAccessClass 
 }
 
 async function runCommand(args: CliArgs) {
+  args = applyBoundAgentContext(args)
   assertVisibleRunArguments(args)
   const prompt = await promptFromArgs(args)
   await executeDaemonJob({ args, action: args.action || 'submit_and_read', prompt })
@@ -1958,6 +1968,7 @@ async function executeDaemonJob({
       taskId: taskId ?? null,
       capabilityRoute: recordedCapabilityRoute,
       contextLanguage: config.language,
+      contextUpstream: agentContextEnvelopeFromEnvironment(),
       fallback: fallbackAlternatives.length === 0 ? null : {
         protocol: 'tokenless.provider-fallback.v1',
         mode: 'automatic',
@@ -2042,6 +2053,15 @@ async function executeDaemonJob({
       return
     }
 
+    const providerContext = await resolveProviderContextForOutput({
+      homeDir,
+      daemonUrl: submitted.daemonUrl,
+      provider: resolvedProvider,
+      profileId: submitted.profile.id,
+      projectName,
+      taskId,
+    })
+
     printPayload({
       ok: true,
       transport: 'daemon',
@@ -2054,6 +2074,7 @@ async function executeDaemonJob({
       profile: publicManagedProfile(submitted.profile, submitted.profile.slug),
       projectName,
       chatName,
+      providerContext,
       idempotencyKey: taskId,
       result: publicDaemonResult(result),
       compactOutput: result?.compactOutput,
@@ -2210,6 +2231,7 @@ async function executeManagedPlaywrightJob({
         ...agentRecipientFromArgs(args),
       })
   return {
+    daemonUrl: actualDaemonUrl,
     profile,
     runner,
     job,
@@ -2762,6 +2784,147 @@ async function daemonCommand(subcommand: string | undefined, args: CliArgs) {
     timeoutMs: args.timeoutMs === undefined ? undefined : strictPositiveInteger(args.timeoutMs, '--timeout-ms'),
   })
   printPayload(result, args)
+}
+
+async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
+  const agent = String(args.agent ?? '').trim().toLowerCase()
+  if (agent !== 'codex') {
+    throw usageError('agent_integration_unsupported', 'Tokenless agent integration currently supports codex.')
+  }
+  const harness = await loadWebAgentHarness()
+  const input = {
+    codexHome: path.resolve(String(args.codexHome || process.env.CODEX_HOME || path.join(os.homedir(), '.codex'))),
+    tokenlessHome: tokenlessHome(args.home),
+    command: {
+      executable: process.execPath,
+      script: fileURLToPath(import.meta.url),
+    },
+  }
+
+  if (subcommand === 'hook') {
+    if (args.integrationId !== 'tokenless-agent-hook-v1') {
+      process.stdout.write('{}')
+      return
+    }
+    try {
+      const hookInput = JSON.parse(await readBoundedStdin(8 * 1024 * 1024)) as unknown
+      const result = await harness.handleCodexHook({
+        tokenlessHome: input.tokenlessHome,
+        codexHome: input.codexHome,
+        input: hookInput,
+      })
+      process.stdout.write(JSON.stringify(result))
+    } catch {
+      process.stdout.write(JSON.stringify({
+        systemMessage: 'Tokenless could not bind this Codex invocation to its Harness context. The tool call will continue without automatic conversation continuity.',
+      }))
+    }
+    return
+  }
+
+  if (subcommand === 'install') {
+    const status = await harness.installCodexIntegration(input)
+    printPayload({
+      ok: true,
+      status,
+      nextStep: 'Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.',
+      compactOutput: 'Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.',
+    }, args)
+    return
+  }
+  if (subcommand === 'uninstall') {
+    const status = await harness.uninstallCodexIntegration(input)
+    printPayload({
+      ok: true,
+      status,
+      compactOutput: 'Tokenless Codex guidance and hook handlers were removed without changing other Codex instructions or hooks.',
+    }, args)
+    return
+  }
+  if (subcommand === 'status') {
+    const status = await harness.inspectCodexIntegration(input)
+    printPayload({ ok: true, status }, args)
+    return
+  }
+  if (subcommand === 'inspect') {
+    const chatId = requiredAdminValue(args.chatId, '--chat-id')
+    const context = await harness.inspectCodexContext({
+      tokenlessHome: input.tokenlessHome,
+      chatId,
+    })
+    printPayload({ ok: true, context }, args)
+    return
+  }
+  throw usageError('agents_subcommand_required', 'Usage: tokenless agents <install|status|inspect|uninstall> codex.')
+}
+
+function applyBoundAgentContext(args: CliArgs): CliArgs {
+  const bindingId = process.env.TOKENLESS_CONTEXT_BINDING_ID
+  if (!bindingId) return args
+  const required = {
+    agentKind: process.env.TOKENLESS_AGENT_KIND,
+    agentSessionId: process.env.TOKENLESS_AGENT_SESSION_ID,
+    taskId: process.env.TOKENLESS_TASK_ID,
+    projectName: process.env.TOKENLESS_PROJECT_NAME,
+    chatName: process.env.TOKENLESS_CHAT_NAME,
+  }
+  for (const [field, value] of Object.entries(required)) {
+    if (!value) throw usageError('agent_context_incomplete', `Hook-bound Tokenless context is missing ${field}.`)
+  }
+  if (args.taskId !== undefined && args.taskId !== required.taskId) {
+    throw usageError('agent_context_task_conflict', '--task-id cannot replace the conversation identity supplied by the Tokenless Codex hook.')
+  }
+  return {
+    ...args,
+    taskId: required.taskId,
+    projectName: args.projectName ?? required.projectName,
+    chatName: args.chatName ?? required.chatName,
+    profile: args.profile ?? process.env.TOKENLESS_PROFILE,
+    provider: args.provider ?? process.env.TOKENLESS_PROVIDER,
+    agentKind: args.agentKind ?? required.agentKind,
+    agentSessionId: args.agentSessionId ?? required.agentSessionId,
+  }
+}
+
+function agentContextEnvelopeFromEnvironment() {
+  const bindingId = process.env.TOKENLESS_CONTEXT_BINDING_ID
+  if (!bindingId) return undefined
+  return {
+    agentKind: process.env.TOKENLESS_AGENT_KIND ?? null,
+    sessionId: process.env.TOKENLESS_AGENT_SESSION_ID ?? null,
+    state: {
+      protocol: 'tokenless.agent-context/v1',
+      bindingId,
+      turnId: process.env.TOKENLESS_AGENT_TURN_ID ?? null,
+      toolCallId: process.env.TOKENLESS_AGENT_TOOL_CALL_ID ?? null,
+      sessionTreeId: process.env.TOKENLESS_AGENT_SESSION_TREE_ID ?? null,
+      projectId: process.env.TOKENLESS_PROJECT_ID ?? null,
+      conversationId: process.env.TOKENLESS_CONVERSATION_ID ?? null,
+    },
+  }
+}
+
+async function loadWebAgentHarness(): Promise<{
+  handleCodexHook(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  inspectCodexContext(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  inspectCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  installCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  uninstallCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
+}> {
+  const moduleUrl = new URL('../web-agent-harness/src/index.js', import.meta.url)
+  return await import(moduleUrl.href)
+}
+
+async function readBoundedStdin(maxBytes: number) {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of process.stdin) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += bytes.byteLength
+    if (size > maxBytes) throw new Error('Codex hook input exceeds the bounded input limit.')
+    chunks.push(bytes)
+  }
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 async function installCommand(args: CliArgs) {
@@ -4400,6 +4563,56 @@ async function mappedDaemonTarget({
   }
 }
 
+async function resolveProviderContextForOutput({
+  homeDir,
+  daemonUrl,
+  provider,
+  profileId,
+  projectName,
+  taskId,
+}: {
+  homeDir: string
+  daemonUrl: string
+  provider: string
+  profileId: string
+  projectName?: string | undefined
+  taskId?: string | null | undefined
+}) {
+  try {
+    if (projectName) {
+      const resolved = await resolveProviderMapping({
+        homeDir,
+        daemonUrl,
+        provider,
+        profileId,
+        projectName,
+        ...(taskId ? { taskId } : {}),
+      })
+      return {
+        project: resolved.mapping?.project ?? null,
+        conversation: resolved.mapping?.conversation ?? null,
+      }
+    }
+    if (taskId) {
+      const resolved = await resolveProviderConversation({
+        homeDir,
+        daemonUrl,
+        provider,
+        profileId,
+        taskId,
+      })
+      return {
+        project: null,
+        conversation: resolved.mapping,
+      }
+    }
+  } catch {
+    // Provider identity is supplemental output. A completed job remains valid
+    // when the daemon has not observed a durable provider mapping yet.
+  }
+  return { project: null, conversation: null }
+}
+
 function publicDaemonJobState(job: Record<string, any>) {
   const request = objectRecord(job.request_json)
   const metadata = objectRecord(request.metadata)
@@ -4776,6 +4989,11 @@ function createCommandContracts(): CommandContract[] {
     { command: 'profiles', subcommand: 'set-default', usage: ['tokenless profiles set-default --profile <slug> --json'], options: ['home', 'json', 'profile'] },
     { command: 'profiles', subcommand: 'remove', usage: ['tokenless profiles remove --profile <slug> --confirm-delete --json'], options: ['home', 'json', 'profile', 'confirmDelete'] },
     { command: 'daemon', subcommand: 'stop', usage: ['tokenless daemon stop [--daemon-url <loopback-url>] [--timeout-ms <ms>] --json'], options: ['home', 'json', 'daemonUrl', 'timeoutMs'] },
+    { command: 'agents', subcommand: 'install', usage: ['tokenless agents install codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
+    { command: 'agents', subcommand: 'status', usage: ['tokenless agents status codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
+    { command: 'agents', subcommand: 'inspect', usage: ['tokenless agents inspect codex --chat-id <id> [--home <dir>] --json'], options: ['agent', 'chatId', 'codexHome', 'home', 'json'] },
+    { command: 'agents', subcommand: 'uninstall', usage: ['tokenless agents uninstall codex [--codex-home <dir>] [--home <dir>] --json'], options: ['agent', 'codexHome', 'home', 'json'] },
+    { command: 'agents', subcommand: 'hook', usage: ['tokenless agents hook codex --integration-id <id> [--codex-home <dir>] [--home <dir>]'], options: ['agent', 'codexHome', 'home', 'integrationId'] },
   ]
   return contracts.map((contract) => ({
     ...contract,
@@ -4864,6 +5082,9 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--kimi-plugin': 'kimiPlugin',
     '--kimi-skill': 'kimiSkill',
     '--chat-surface': 'chatSurface',
+    '--codex-home': 'codexHome',
+    '--chat-id': 'chatId',
+    '--integration-id': 'integrationId',
   }
   const booleanFlags: Record<string, string> = {
     '--include-text': 'includeText',
@@ -6011,12 +6232,14 @@ function optionUsageLabel(option: string) {
     cancelTimeoutMs: '--cancel-timeout-ms <ms>',
     color: '--color',
     chatName: '--chat-name <name>',
+    chatId: '--chat-id <id>',
     chatSurface: '--chat-surface <surface>',
     chromeUserDataDir: '--browser-user-data-dir <dir>',
     confirmDelete: '--confirm-delete',
     consentLocalProfileCopy: '--consent-local-profile-copy',
     context: '--context <text>',
     contextFile: '--context-file <path>',
+    codexHome: '--codex-home <dir>',
     daemonStartTimeoutMs: '--daemon-start-timeout-ms <ms>',
     daemonUrl: '--daemon-url <url>',
     effort: '--effort <label>',
@@ -6025,6 +6248,7 @@ function optionUsageLabel(option: string) {
     help: '-h, --help',
     home: '--home <dir>',
     idempotencyKey: '--idempotency-key <key>',
+    integrationId: '--integration-id <id>',
     importChromeProfile: '--import-browser-profile <key>',
     setupImportBrowser: '--import-browser <chrome|brave>',
     json: '--json',

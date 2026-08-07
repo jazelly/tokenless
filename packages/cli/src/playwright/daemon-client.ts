@@ -1,5 +1,6 @@
 import type { DaemonJob } from '../daemon-client.js'
 import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
+import type { OutputSavingsWorkInput } from '../daemon/job-store.js'
 
 export type { DaemonJob } from '../daemon-client.js'
 
@@ -51,7 +52,11 @@ export type ManagedDaemonClient = {
     blocker: unknown
   }): Promise<DaemonJob>
   renewJobClaim(options: ClaimedJobOptions): Promise<DaemonJob>
-  completeJob(options: ClaimedJobOptions & { result?: unknown, error?: unknown }): Promise<DaemonJob>
+  completeJob(options: ClaimedJobOptions & {
+    result?: unknown
+    error?: unknown
+    outputSavingsWork?: readonly OutputSavingsWorkInput[] | undefined
+  }): Promise<DaemonJob>
   upsertProviderProject(options: ClaimedJobOptions & {
     provider: string
     profileId: string

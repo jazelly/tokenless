@@ -261,51 +261,49 @@ A generic caller without a deep adapter supplies the same fields explicitly thro
 
 ## Why Codex First
 
-Current Codex App Server exposes the exact hierarchy needed for first-party binding:
+Codex is first because its native hooks expose the exact live invocation hierarchy needed for binding:
 
-- `Thread.id` as the Codex conversation/chat id;
-- `Thread.sessionId` as the shared root of a session tree;
-- `Turn.id` as the active user request and Agent work unit;
-- `cwd`, source, model provider, Git metadata, `parentThreadId`, and `forkedFromId`;
-- ordered user input and Agent item events; and
-- `instructionSources` on start, resume, and fork responses.
+- hook `session_id` as the current Codex `ThreadId` and therefore chat identity;
+- hook `turn_id` as the active user round;
+- hook `tool_use_id` as one exact CLI or MCP invocation; and
+- hook lifecycle events for session, prompt, tool, stop, and end observation.
 
-Codex also defines `CODEX_HOME` as its state root, with `~/.codex` as the default. Directly scanning rollout files or selecting the most recently modified session is not an identity boundary. The P0 Codex launcher observes the actual TUI control connection through a transparent App Server relay and generates schemas from the installed Codex version.
+Codex App Server supplies secondary enrichment. `thread/read` confirms `Thread.id` and exposes `Thread.sessionId` as the shared root of a session tree plus `cwd`, source, Git metadata, `parentThreadId`, and `forkedFromId`. `Thread.sessionId` is not the chat ID and never replaces hook `session_id`.
 
-Lifecycle hooks may later provide supplemental health or shutdown signals. They are not the primary identity source, and transcript reading remains optional, consented, version-detected, and unnecessary for exact binding.
+Codex defines `CODEX_HOME` as its state root, with `~/.codex` as the default. Directly scanning rollout files or selecting the most recently modified session is not an identity boundary. The implemented adapter relies on the exact hook payload and performs bounded best-effort App Server reads only when an actual Tokenless invocation occurs. Transcript reading is unnecessary and disabled.
 
 Official references:
 
-- [Codex App Server](https://learn.chatgpt.com/docs/app-server)
-- [Codex custom instructions with `AGENTS.md`](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-- [Codex hooks](https://learn.chatgpt.com/docs/hooks)
-- [Codex configuration and state locations](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations)
+- [Codex App Server](https://developers.openai.com/codex/app-server)
+- [Codex custom instructions with `AGENTS.md`](https://developers.openai.com/codex/guides/agents-md)
+- [Codex hooks](https://developers.openai.com/codex/config/hooks)
+- [Codex configuration](https://developers.openai.com/codex/config-reference)
 - [Codex plugins](https://developers.openai.com/plugins)
 
 ## Codex Integration Shape
 
-The first Codex integration should combine:
+The first Codex integration combines:
 
 - the existing Tokenless routing Skill for explicit user or Agent invocation;
 - a reversible inline `AGENTS.md` guidance block that broadens when Codex considers that invocation;
-- a Tokenless-launched, release-matched App Server and transparent TUI relay that records exact identity without changing normal Codex model traffic;
-- an adapter that emits the bounded current `AgentTurnContext` and ordered Skill selection for an explicit Tokenless invocation;
+- native Codex hooks that bind a normally launched Codex chat, turn, and tool call;
+- a short-lived App Server reader that enriches the hook binding without starting or resuming the TUI;
+- an adapter that emits bounded opaque agent context for an explicit Tokenless invocation;
 - configuration for the local Tokenless MCP server when that caller surface is available;
 - schemas for context export and Tokenless result import; and
 - clear permission, privacy, status, repair, and uninstall behavior.
 
 The primary flow is:
 
-1. Guided installation writes a versioned Tokenless marker block into the effective global Codex instruction file without changing the configured model provider.
-2. `tokenless codex` launches a release-matched App Server and connects the real Codex TUI through a transparent local relay.
-3. The relay observes new, resumed, and forked thread responses plus turn events; Tokenless canonicalizes `cwd`, resolves the project root and worktree, and persists session-tree, thread, turn, and lineage identity.
-4. On each explicit initial or later Tokenless invocation, the adapter sends the exact thread and turn ids, bounded current user goal, and any newly explicit or caller-Agent-selected Skill identities with provenance.
-5. Tokenless resolves or creates the provider workspace and the provider conversation bound to that Codex thread, then resolves caller preselections against the Harness registry.
-6. The Harness uploads its System Prompt Bundle and successfully staged inputs before the first web Prompt and may later batch-load additional Skills requested by the web model.
-7. The web result returns to the requesting Codex turn with job id, context revision, provider Project, provider conversation identity, and artifacts.
-8. Thread close or process exit marks the observation inactive without deleting retained user-approved history.
+1. Guided installation writes a versioned Tokenless marker block into the effective global Codex instruction file and merges Tokenless-owned lifecycle groups into `hooks.json` without changing the configured model provider.
+2. The user restarts and trusts the hook definition, then launches Codex normally.
+3. An actual Tokenless `PreToolUse` supplies the exact hook chat, turn, and tool-call IDs; the Harness canonicalizes `cwd`, resolves the project root, and optionally enriches session-tree and lineage through `thread/read`.
+4. The hook injects a stable Harness project, conversation, and provider task identity into that one CLI or MCP call. The CLI rejects attempts to replace the hook-bound task identity.
+5. The Web Provider API resolves or creates the provider workspace and conversation, executes the durable job, and returns its normal provider mapping result.
+6. `PostToolUse` binds those provider IDs and job ID back to the exact Harness invocation; the next turn in the same Codex chat reuses the provider and profile automatically.
+7. The future full Harness run path uploads its System Prompt Bundle and selected inputs, then returns its result to the same bound Codex chat.
 
-Guidance, App Server observation, and adapters do not start a Tokenless run, upload files, or share a transcript implicitly. Those actions remain tied to an explicit Skill/MCP invocation and its declared sharing policy.
+Guidance, hooks, App Server observation, and adapters do not start a Tokenless run, upload files, or share a transcript implicitly. Those actions remain tied to an explicit CLI/Skill/MCP invocation and its declared sharing policy.
 
 ## Delivery Phases
 
@@ -333,22 +331,22 @@ Exit: an MCP client can request `research.deep` without naming Qwen, observe an 
 ### Phase 2: Shared Agent Binding Contract
 
 - Finalize separate session-tree, thread/chat, turn, project, worktree, provider-workspace, and provider-conversation fields.
-- Accept exact identity from the P0 Codex App Server adapter and later conforming Agent adapters.
+- Adopt the implemented `tokenless.agent-context/v1` contract and accept exact identity from the P0 Codex hook adapter and later conforming Agent adapters.
 - Resolve realpath, repository root, worktree, branch, and current revision.
-- Persist bindings in the local daemon and expose bounded resolved identity in state output without leaking raw private paths.
+- Keep Harness bindings in Harness-owned persistence and expose bounded resolved identity without making the Provider daemon own agent state.
 - Reject adapters that collapse descendant threads into one conversation key.
 
-Exit: two Agent chats in different worktrees or directories resolve to different bindings even when project names are identical, and related child threads retain lineage without sharing chat identity.
+Exit: two Agent chats in different worktrees or directories resolve to different bindings even when project names are identical, and related child threads retain lineage without sharing chat identity. The Codex slice meets this exit through built CLI/filesystem integration coverage.
 
 ### Phase 3: Codex Adapter Adoption
 
-- Adopt the guided installation and App Server relay defined by [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md).
+- Adopt the guided installation, native hook adapter, and bounded App Server reader defined by [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md).
 - Configure the local MCP server as an additional explicit Tokenless tool surface when available.
-- Use the invocation adapter to capture the exact current thread, turn, and complete Skill selection without requiring the routing Skill to reconstruct conversation state.
+- Use hook context to capture the exact current thread, turn, and tool call without requiring the routing Skill to invent conversation state.
 - Keep prompt submission explicit and observable; do not change Codex's normal model provider.
-- Treat lifecycle hooks as optional diagnostics rather than the authoritative identity boundary.
+- Use App Server only to enrich session-tree and lineage fields; never launch or proxy Codex.
 
-Exit: starting or resuming a Tokenless-launched Codex chat creates or refreshes the exact App Server binding with no project-name guess, and an explicit invocation transmits the exact current turn plus every selected Skill in one request.
+Exit: a normally launched Codex chat creates or refreshes its exact hook binding with no project-name or recency guess, and an explicit invocation transmits the exact current chat, turn, tool call, and stable Tokenless conversation identity. This slice is implemented; MCP and complete Skill-selection transfer remain future work.
 
 ### Phase 4: Authorized Context Export
 
@@ -382,10 +380,10 @@ Exit: a second agent can complete the same exact-binding and context-handoff wor
 - Session resume preserves identity; session fork creates a distinct identity with explicit lineage when available.
 - A missing or stale binding fails with a repair instruction instead of falling back to name guessing.
 - `AGENTS.md` guidance installation is local, bounded, reviewable, idempotent, and reversible.
-- Codex exact identity is observed through the real App Server/TUI control path; lifecycle hooks are not required for binding.
+- Codex exact invocation identity comes from native hooks; a real App Server boundary enriches session-tree and lineage without owning or launching the TUI.
 - Transcript access is off by default and the core workflow does not depend on its file format.
 - Plugin removal or binding revocation stops future integration without deleting unrelated Tokenless state.
-- Integration tests exercise the built CLI/daemon and the real Codex App Server/TUI process boundary; no fake Agent implementation is treated as product proof.
+- Integration tests exercise the built CLI/filesystem/SQLite boundaries and the real Codex App Server process boundary; no fake Agent implementation is treated as product proof.
 
 ## Risks and Responses
 

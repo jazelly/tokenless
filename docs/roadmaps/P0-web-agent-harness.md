@@ -1,10 +1,10 @@
 # Web Agent Harness
 
-Status: proposed | Priority: P0 | First provider: ChatGPT | First harness capability: Uploaded System Prompt Bundle and Skill Registry
+Status: in progress | Priority: P0 | First provider: ChatGPT | First harness capabilities: Codex context adapter, uploaded System Prompt Bundle, and Skill Registry
 
 Depends on: the typed visible-provider capability seam, durable daemon jobs and conversation lanes, the Context Envelope contract, and real ChatGPT Markdown file upload and chat evidence
 
-Related: [Agent Session Integrations](P1-agent-session-integrations.md) owns the caller-facing local MCP server and generic Agent adapters that may transmit preselected Skills; [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md) binds exact Codex chats and sends only explicitly delegated runs into this Harness; this roadmap owns the uploaded System Prompt Bundle, Skill registry and loading protocol, output validation, and execution of MCP tool calls proposed by the web model
+Related: [Agent Session Integrations](P1-agent-session-integrations.md) owns the caller-facing local MCP server and the conformance contract for future Agent adapters; [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md) defines Codex behavior; this roadmap owns the installed Codex adapter implementation, Harness context ledger, uploaded System Prompt Bundle, Skill registry and loading protocol, output validation, and execution of MCP tool calls proposed by the web model
 
 Packaging direction: one independently buildable workspace package as the implementation owner, exposed through authenticated daemon HTTP and CLI in the same first usable slice; separate Harness project only after the provider-turn interface and real agent loop are stable
 
@@ -12,7 +12,22 @@ Packaging direction: one independently buildable workspace package as the implem
 
 Tokenless treats visible AI websites as model providers, not as the agent harness itself. A caller can start one durable agent run whose model turns happen through a real provider website while the Harness owns System Prompt compilation, Skill discovery and delivery, tool discovery, output validation, authorization, execution, result return, loop limits, recovery, and the final run result.
 
-The current repository remains the Web Provider API project. It converts evidence-backed visible website workflows into durable, provider-neutral jobs and results. Today's CLI, daemon, capability, and planned P1 integration interfaces are different ways to call that same Web Provider layer; they do not add an agent loop. The new harness is not another provider capability implementation. It begins as a separate package built specifically on top of the Web Provider interface.
+This repository contains two strictly separated modules. The existing Web Provider API converts evidence-backed visible website workflows into durable, provider-neutral jobs and results. The independently buildable Harness package owns agent adapters, agent identity, System Prompt and Skill delivery, and eventually the agent loop. The Harness consumes opaque Provider API results; provider adapters never parse Codex hooks or read Harness persistence.
+
+## Current Implementation Slice
+
+The first packaged Harness slice now includes:
+
+- a Codex integration installer that preserves unrelated global instructions and hooks;
+- a native hook handler for exact chat, turn, and tool-call correlation;
+- a bounded Codex App Server client for thread, session-tree, and lineage enrichment;
+- a separate Harness SQLite ledger for local projects, agent conversations, turns, invocations, and provider bindings;
+- deterministic Tokenless project, conversation, and provider task identities;
+- opaque upstream context passed through the existing Provider job Context Envelope;
+- Provider Project and conversation mapping references consumed from normal Provider API results; and
+- the System Prompt Bundle and Skill-registry preparation/validation slice described below.
+
+The Provider API continues to own provider Projects, conversations, profiles, durable jobs, and website execution. It receives only versioned opaque upstream correlation metadata and returns its ordinary observed resource mappings. It does not own the Codex session hierarchy or the Harness database.
 
 The first complete path is ChatGPT. Harness routing requires only the existing `conversation.chat` and `file.upload` capabilities: chat supplies the model turns and file upload carries the required System Prompt Bundle plus later instruction and result files. This is a sequencing decision, not a permanent claim that other providers cannot support agent runs.
 
@@ -119,8 +134,8 @@ The intended end state contains two independently useful projects:
 
 | Module and eventual project | Owns | Does not own |
 | --- | --- | --- |
-| Web Provider API | Playwright provider adapters, managed browser execution, Projects, files, conversations, visible model controls, durable provider turns, routing, scheduling, scaling, evidence, and the versioned Web Provider interface | Skill selection or instruction semantics, MCP tool execution, approvals, or an agent loop |
-| Web Agent Harness | Agent runs, System Prompt Bundle compilation, Skill registry and on-demand Skill resolution, web-specific high-payload instruction delivery, complete action batches, bounded filesystem tools, MCP tool execution, consolidated approvals and input, aggregate results, output validation, loop policy, and harness-owned run state | Provider DOM, browser profiles, selectors, credentials, or direct Playwright operations |
+| Web Provider API | Playwright provider adapters, managed browser execution, provider Projects, files, provider conversations, visible model controls, durable provider turns, routing, scheduling, scaling, evidence, provider resource mappings, and the versioned Web Provider interface | Agent hooks, agent project/chat/turn identity, Skill selection or instruction semantics, MCP tool execution, approvals, or an agent loop |
+| Web Agent Harness | Agent adapters and hooks, local project/chat/turn/tool-call bindings, Harness persistence, Agent runs, System Prompt Bundle compilation, Skill registry and on-demand Skill resolution, web-specific high-payload instruction delivery, complete action batches, bounded filesystem tools, MCP tool execution, consolidated approvals and input, aggregate results, output validation, and loop policy | Provider DOM, browser profiles, selectors, credentials, direct Playwright operations, or authoritative provider resource creation |
 
 The repository is not split while both interfaces are still moving. The delivery sequence is:
 
@@ -159,6 +174,10 @@ packages/web-agent-harness/
   package.json
   src/
     index.ts                  # the only public package surface
+    agent-contracts.ts        # versioned agent identity and inspection contracts
+    agent-context-store.ts    # Harness-owned agent context and provider-binding ledger
+    codex-integration.ts      # reversible guidance/hooks and exact invocation binding
+    codex-app-server.ts       # bounded read-only App Server enrichment adapter
     harness.ts                # durable run entry points
     internal/
       control/                # visible envelope schemas, framing, and validation

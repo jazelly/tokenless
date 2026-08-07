@@ -70,7 +70,12 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       return publicJobView(store.completeJob(
         options.jobId,
         options.claimToken,
-        hasResult ? { result_json: options.result } : { error_json: options.error }
+        hasResult
+          ? {
+              result_json: options.result,
+              output_savings_work: options.outputSavingsWork,
+            }
+          : { error_json: options.error }
       ))
     }),
     upsertProviderProject: (options) => claimRequest(options, () => {
