@@ -6,6 +6,7 @@ export {
 export type {
   AgentConversationContext,
   AgentInvocationContext,
+  AgentInvocationOutcome,
   AgentKind,
   AgentProjectContext,
   CodexAppServerThread,
@@ -19,6 +20,7 @@ export type {
 
 export {
   handleCodexHook,
+  completeBoundAgentInvocation,
   inspectCodexContext,
   inspectCodexIntegration,
   installCodexIntegration,

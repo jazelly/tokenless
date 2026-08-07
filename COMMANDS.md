@@ -12,6 +12,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless --version` | Print the installed CLI version. | None |
 | `tokenless install` | Low-level local runtime provisioning; use `tokenless upgrade` for normal maintenance. | None |
 | `tokenless setup` | Configure skills, browser, profiles, daemon, and one-time provider sign-in checks. | Yes |
+| `tokenless agents <install\|status\|inspect\|uninstall> codex` | Manage the optional Codex guidance, native hooks, and exact Harness context binding. | None |
 | `tokenless dashboard` | Open or mint a one-time URL for the authenticated local web control plane. | None |
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
@@ -188,6 +189,30 @@ Managed profiles record a runtime binding. Setup will not open a profile with a 
 Interactive `setup` lists every supported provider, enables all of them by default, and lets the user remove providers by replying with their displayed numbers; pressing Enter keeps them all. Non-interactive setup uses `--provider-whitelist`, the existing profile scope, or the persisted default whitelist. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
 
 The default `providerWhitelist` contains every non-disabled provider, including Gemini. Interactive setup lets the user remove providers by number; the list can also be changed with `--provider-whitelist` or through the dashboard.
+
+### `tokenless agents <install|status|inspect|uninstall> codex`
+
+Manages the optional Codex integration without launching, wrapping, or replacing Codex:
+
+```bash
+tokenless agents install codex
+tokenless agents status codex --json
+tokenless agents inspect codex --chat-id <codex-thread-id> --json
+tokenless agents uninstall codex
+```
+
+`install` writes one versioned inline guidance block into the effective global Codex instruction file and merges Tokenless-owned groups into `$CODEX_HOME/hooks.json`. A non-empty `AGENTS.override.md` is the effective same-directory source, so Tokenless patches it instead of `AGENTS.md`; the command never creates an override. Existing instructions and non-Tokenless hooks are preserved. Restart Codex, open `/hooks`, and explicitly trust the Tokenless hook definition before relying on automatic binding.
+
+Users continue launching Codex normally. The hooks observe lifecycle events and react only when an actual Tokenless Bash or MCP call occurs. They bind hook `session_id` (the current Codex chat/thread), `turn_id`, and `tool_use_id` to one Harness project, conversation, and invocation. A bounded best-effort App Server `thread/read` adds the separate session-tree ID and available lineage; it does not start, resume, relay, or proxy a Codex TUI.
+
+`status` reports the exact instruction and hook paths plus installation state without creating Harness state. `inspect` reads one exact chat from the separate Harness database, including local project, turns, invocations, stable provider task identity, and provider Project/conversation bindings. The ledger stores hashes rather than raw prompts and does not store transcripts, assistant messages, credentials, or browser state. `uninstall` removes only Tokenless-owned guidance and hook groups; retained Harness history is not deleted.
+
+Main options:
+
+- `--codex-home <dir>` selects an explicit Codex state root instead of `CODEX_HOME` or `~/.codex`.
+- `--home <dir>` selects the Tokenless state root.
+- `--chat-id <id>` is required by `inspect` and must be the exact Codex thread ID.
+- `--json` returns the structured status or context contract.
 
 ### `tokenless dashboard`
 

@@ -1,15 +1,15 @@
-import { createRequire } from 'node:module'
 import type { ErrorObject } from 'ajv'
+import * as Ajv2020Module from 'ajv/dist/2020.js'
 import type { Ajv2020 as Ajv2020Instance } from 'ajv/dist/2020.js'
+import * as AddFormatsModule from 'ajv-formats'
 import type { FormatsPlugin } from 'ajv-formats'
 
 import { HarnessSkillError, type JsonValue } from '../contracts.js'
 
-const require = createRequire(import.meta.url)
-const Ajv2020 = require('ajv/dist/2020.js') as new (
+const Ajv2020 = (Ajv2020Module.default ?? Ajv2020Module) as unknown as new (
   options?: ConstructorParameters<typeof Ajv2020Instance>[0]
 ) => Ajv2020Instance
-const addFormats = require('ajv-formats') as FormatsPlugin
+const addFormats = (AddFormatsModule.default ?? AddFormatsModule) as unknown as FormatsPlugin
 
 export function assertValidJsonSchema(schema: JsonValue, label: string) {
   createValidator(schema, label)

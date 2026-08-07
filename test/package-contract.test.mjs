@@ -295,6 +295,7 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(canonicalUsage, /tokenless capabilities list --json/)
   assert.match(canonicalUsage, /tokenless run --capability <capability>/)
   assert.match(canonicalUsage, /tokenless setup/)
+  assert.match(canonicalUsage, /tokenless agents install codex/)
   assert.match(canonicalUsage, /tokenless profiles list/)
   assert.match(canonicalUsage, /tokenless provider-status/)
   assert.match(canonicalUsage, /tokenless doctor/)
@@ -309,6 +310,7 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(advancedUsage, /tokenless state/)
   assert.match(advancedUsage, /tokenless profiles remove/)
   assert.match(advancedUsage, /tokenless config/)
+  assert.match(advancedUsage, /tokenless agents inspect codex/)
   assert.match(advancedUsage, /tokenless savings enable --json/)
   assert.match(result.stderr, /^Short options:$/m)
   assert.match(result.stderr, /^  -P, --profile <slug>        Select a managed browser profile\.$/m)
@@ -647,6 +649,8 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.d.ts'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/daemon-entry.mjs'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/tokenless.mjs'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/web-agent-harness/src/index.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/web-agent-harness/src/index.d.ts'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/index.html'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/app.js'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/styles.css'))
@@ -682,6 +686,19 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', '@tokenless', 'playwright')), false)
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', 'tokenless-native-darwin-arm64')), false)
     assert.equal(fs.existsSync(installedDaemonEntry), true)
+    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'web-agent-harness', 'src', 'index.js')), true)
+
+    const codexHome = path.join(installDir, 'codex-home')
+    const tokenlessHome = path.join(installDir, 'tokenless-home')
+    const installedCodex = spawnSync(process.execPath, [
+      path.join(installedCli, 'dist', 'src', 'tokenless.mjs'),
+      'agents', 'install', 'codex',
+      '--codex-home', codexHome,
+      '--home', tokenlessHome,
+      '--json',
+    ], { cwd: installDir, encoding: 'utf8' })
+    assert.equal(installedCodex.status, 0, installedCodex.stderr || installedCodex.stdout)
+    assert.equal(JSON.parse(installedCodex.stdout).status.hooks.installed, true)
 
     const buildInfo = JSON.parse(execFileSync(process.execPath, [installedDaemonEntry, '--tokenless-build-info'], {
       encoding: 'utf8',

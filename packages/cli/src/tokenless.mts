@@ -2061,6 +2061,18 @@ async function executeDaemonJob({
       projectName,
       taskId,
     })
+    await recordBoundAgentInvocation({
+      homeDir,
+      outcome: {
+        ok: true,
+        provider: resolvedProvider,
+        profile: submitted.profile.slug,
+        jobId: job.job_id,
+        taskId: taskId ?? null,
+        providerProjectId: optionalProviderContextValue(providerContext.project, 'resource_id'),
+        providerConversationRef: optionalProviderContextValue(providerContext.conversation, 'canonical_url'),
+      },
+    })
 
     printPayload({
       ok: true,
@@ -2088,6 +2100,18 @@ async function executeDaemonJob({
         bundleId: stagedAttachmentBundleId,
       }).catch(() => undefined)
     }
+    await recordBoundAgentInvocation({
+      homeDir,
+      outcome: {
+        ok: false,
+        provider: null,
+        profile: null,
+        jobId: null,
+        taskId: taskId ?? null,
+        providerProjectId: null,
+        providerConversationRef: null,
+      },
+    })
     throw error
   }
 }
@@ -2827,8 +2851,8 @@ async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
     printPayload({
       ok: true,
       status,
-      nextStep: 'Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.',
-      compactOutput: 'Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.',
+      nextStep: localizeText('Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.'),
+      compactOutput: localizeText('Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.'),
     }, args)
     return
   }
@@ -2837,7 +2861,7 @@ async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
     printPayload({
       ok: true,
       status,
-      compactOutput: 'Tokenless Codex guidance and hook handlers were removed without changing other Codex instructions or hooks.',
+      compactOutput: localizeText('Tokenless Codex guidance and hook handlers were removed without changing other Codex instructions or hooks.'),
     }, args)
     return
   }
@@ -2874,15 +2898,28 @@ function applyBoundAgentContext(args: CliArgs): CliArgs {
   if (args.taskId !== undefined && args.taskId !== required.taskId) {
     throw usageError('agent_context_task_conflict', '--task-id cannot replace the conversation identity supplied by the Tokenless Codex hook.')
   }
+  for (const [field, flag] of [
+    ['projectName', '--project-name'],
+    ['chatName', '--chat-name'],
+    ['agentKind', '--agent-kind'],
+    ['agentSessionId', '--agent-session-id'],
+  ] as const) {
+    if (args[field] !== undefined && args[field] !== required[field]) {
+      throw usageError(
+        'agent_context_identity_conflict',
+        `${flag} cannot replace identity supplied by the Tokenless Codex hook.`,
+      )
+    }
+  }
   return {
     ...args,
     taskId: required.taskId,
-    projectName: args.projectName ?? required.projectName,
-    chatName: args.chatName ?? required.chatName,
+    projectName: required.projectName,
+    chatName: required.chatName,
     profile: args.profile ?? process.env.TOKENLESS_PROFILE,
     provider: args.provider ?? process.env.TOKENLESS_PROVIDER,
-    agentKind: args.agentKind ?? required.agentKind,
-    agentSessionId: args.agentSessionId ?? required.agentSessionId,
+    agentKind: required.agentKind,
+    agentSessionId: required.agentSessionId,
   }
 }
 
@@ -2905,6 +2942,7 @@ function agentContextEnvelopeFromEnvironment() {
 }
 
 async function loadWebAgentHarness(): Promise<{
+  completeBoundAgentInvocation(input: Record<string, unknown>): Promise<void>
   handleCodexHook(input: Record<string, unknown>): Promise<Record<string, unknown>>
   inspectCodexContext(input: Record<string, unknown>): Promise<Record<string, unknown>>
   inspectCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
@@ -2913,6 +2951,28 @@ async function loadWebAgentHarness(): Promise<{
 }> {
   const moduleUrl = new URL('../web-agent-harness/src/index.js', import.meta.url)
   return await import(moduleUrl.href)
+}
+
+async function recordBoundAgentInvocation({
+  homeDir,
+  outcome,
+}: {
+  homeDir: string
+  outcome: Record<string, unknown>
+}) {
+  const bindingId = process.env.TOKENLESS_CONTEXT_BINDING_ID
+  if (!bindingId) return
+  const harness = await loadWebAgentHarness()
+  await harness.completeBoundAgentInvocation({
+    tokenlessHome: homeDir,
+    bindingId,
+    outcome,
+  }).catch(() => undefined)
+}
+
+function optionalProviderContextValue(value: Record<string, unknown> | null, field: string) {
+  const candidate = value?.[field]
+  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null
 }
 
 async function readBoundedStdin(maxBytes: number) {
@@ -4581,8 +4641,10 @@ async function resolveProviderContextForOutput({
   projectName?: string | undefined
   taskId?: string | null | undefined
 }) {
-  try {
-    if (projectName) {
+  let project: Record<string, unknown> | null = null
+  let conversation: Record<string, unknown> | null = null
+  if (projectName) {
+    try {
       const resolved = await resolveProviderMapping({
         homeDir,
         daemonUrl,
@@ -4591,12 +4653,14 @@ async function resolveProviderContextForOutput({
         projectName,
         ...(taskId ? { taskId } : {}),
       })
-      return {
-        project: resolved.mapping?.project ?? null,
-        conversation: resolved.mapping?.conversation ?? null,
-      }
+      project = resolved.mapping?.project ?? null
+      conversation = resolved.mapping?.conversation ?? null
+    } catch {
+      // Native provider Project identity may not exist for this route.
     }
-    if (taskId) {
+  }
+  if (!conversation && taskId) {
+    try {
       const resolved = await resolveProviderConversation({
         homeDir,
         daemonUrl,
@@ -4604,16 +4668,12 @@ async function resolveProviderContextForOutput({
         profileId,
         taskId,
       })
-      return {
-        project: null,
-        conversation: resolved.mapping,
-      }
+      conversation = resolved.mapping
+    } catch {
+      // A completed job can precede durable conversation observation.
     }
-  } catch {
-    // Provider identity is supplemental output. A completed job remains valid
-    // when the daemon has not observed a durable provider mapping yet.
   }
-  return { project: null, conversation: null }
+  return { project, conversation }
 }
 
 function publicDaemonJobState(job: Record<string, any>) {
@@ -6026,6 +6086,7 @@ function usage(args: CliArgs) {
       commands: [
         'tokenless setup',
         'tokenless dashboard',
+        'tokenless agents install codex',
         'tokenless setup --fresh --json',
       ],
     },
@@ -6111,6 +6172,9 @@ function usage(args: CliArgs) {
       commands: [
         `tokenless config --language <en|zh-CN> --provider-whitelist ${supportedVisibleProviderIds().join(',')} --browser chrome --browser-visibility auto --json`,
         'tokenless dashboard [--profile <slug>] [--no-open] --json',
+        'tokenless agents status codex --json',
+        'tokenless agents inspect codex --chat-id <codex-thread-id> --json',
+        'tokenless agents uninstall codex',
         'tokenless savings enable --json',
         'tokenless savings disable --json',
         'tokenless savings uninstall --confirm-delete --json',

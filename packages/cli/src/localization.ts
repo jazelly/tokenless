@@ -128,6 +128,12 @@ const ZH_TEXT = new Map<string, string>([
   ['error:', '错误：'],
   ['(none)', '（无）'],
   ['Tokenless CLI failed.', 'Tokenless CLI 执行失败。'],
+  ['Tokenless agent integration currently supports codex.', 'Tokenless agent integration 当前只支持 codex。'],
+  ['Usage: tokenless agents <install|status|inspect|uninstall> codex.', '用法：tokenless agents <install|status|inspect|uninstall> codex。'],
+  ['Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.', '请重启 Codex，打开 /hooks，并信任 Tokenless hook definition，之后才能使用自动 chat/turn 绑定。'],
+  ['Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.', 'Tokenless 已安装到普通 Codex sessions。请重启 Codex，并在 /hooks 中信任 Tokenless hooks。'],
+  ['Tokenless Codex guidance and hook handlers were removed without changing other Codex instructions or hooks.', 'Tokenless Codex guidance 和 hook handlers 已移除；其他 Codex instructions 与 hooks 未被修改。'],
+  ['--task-id cannot replace the conversation identity supplied by the Tokenless Codex hook.', '--task-id 不能替换 Tokenless Codex hook 提供的 conversation identity。'],
   ['Invalid Tokenless language; expected en or zh-CN.', '无效的 Tokenless language；应为 en 或 zh-CN。'],
   ['Profile import supports Google Chrome and compatible Brave profiles only.', 'Profile 导入仅支持 Google Chrome 和符合条件的 Brave profile。'],
   ['Proxy configuration requires --profile <slug>.', 'Proxy 配置必须提供 --profile <slug>。'],
@@ -156,6 +162,8 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^(tokenless(?: [\w-]+)*) does not accept options?: (.+)\.$/, '$1 不接受选项：$2。')
     .replace(/^(\S+) requires a value\.$/, '$1 需要一个值。')
     .replace(/^(\S+) is required\.$/, '必须提供 $1。')
+    .replace(/^Hook-bound Tokenless context is missing (.+)\.$/, 'Hook-bound Tokenless context 缺少 $1。')
+    .replace(/^(--\S+) cannot replace identity supplied by the Tokenless Codex hook\.$/, '$1 不能替换 Tokenless Codex hook 提供的 identity。')
     .replace(/^Provider must be one of: (.+)\.$/, 'Provider 必须是以下值之一：$1。')
     .replace(/^Provider capacity for (.+) \/ (.+): (.+)\.$/, 'Provider $1 / profile $2 的容量：$3。')
     .replace(/^Browser must be one of: (.+)\.$/, 'Browser 必须是以下值之一：$1。')

@@ -19,6 +19,7 @@ fs.cpSync(
   path.join(distRoot, 'web-agent-harness'),
   { recursive: true },
 )
+run('vite', ['build', '--config', 'vite.harness.config.mjs', '--logLevel', 'error'])
 
 const uiRoot = path.join(distRoot, 'src', 'daemon', 'ui')
 const providersRoot = path.join(distRoot, 'src', 'providers')

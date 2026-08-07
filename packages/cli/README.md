@@ -24,6 +24,16 @@ tokenless setup --fresh --json
 
 Fresh setup creates or reuses a profile only when its runtime binding is compatible, resolves the selected browser, and uses the persisted `providerWhitelist`. Its default contains every provider whose registry stage is not `disabled`, including Gemini; interactive setup lets you remove providers by number. A runtime-family change creates a clean profile instead of opening existing data with another browser. The default includes experimental Qwen, DeepSeek, Perplexity, Z.ai, and Doubao. Setup reports sign-in state without opening a sign-in handoff.
 
+## Optional Codex Integration
+
+```bash
+tokenless agents install codex
+```
+
+Restart Codex and trust the Tokenless definition in `/hooks`, then continue launching Codex normally. Tokenless does not provide a Codex wrapper, relay, or custom model provider. It adds reversible global guidance plus native hooks that bind an actual Tokenless invocation to the exact Codex chat, turn, tool call, local project, Harness conversation, and observed provider Project/conversation.
+
+Use `tokenless agents status codex --json`, `tokenless agents inspect codex --chat-id <codex-thread-id> --json`, and `tokenless agents uninstall codex` for inspection and removal. The separate Harness ledger stores bounded IDs and hashes, not raw Codex prompts, transcripts, credentials, or browser state.
+
 ## Run
 
 ```bash

@@ -84,6 +84,28 @@ Config 使用 `providerWhitelist` 作为 provider routing 边界。默认值包�
 
 需要 Node.js 22.13+。首批 browser runtime 目标平台是 Apple Silicon Mac 和 Windows x64；Windows x64 同时覆盖 Intel 与 AMD CPU。Windows 在真机 gate 通过前仍属于 prerelease。
 
+## 可选的 Codex 集成
+
+Tokenless 可以为 Codex 增加更广泛的委派指导和精确的调用连续性，但不会启动、包装或替换 Codex：
+
+```bash
+tokenless agents install codex
+```
+
+安装后重启 Codex，打开 `/hooks`，并信任 Tokenless hook definition。之后仍然完全按照原来的方式启动 Codex。普通 Codex model traffic 继续走 Codex；只有用户或 Codex 明确调用 Tokenless CLI、Skill 或 MCP surface 时，才会运行 Tokenless。
+
+安装器会保留已有 instructions 和 hooks。如果全局目录已经存在非空的 `AGENTS.override.md`，Codex 会选择它而不是同目录的 `AGENTS.md`，因此 Tokenless 会修改这个实际生效的文件；Tokenless 不会为了压过用户规则而创建 override。Native hooks 会把一次真实的 Tokenless 调用绑定到精确的 Codex chat/thread、turn 和 tool call。一次受限的 App Server 读取可以补充 session-tree 与 lineage metadata，但 Tokenless 不会启动或恢复 Codex TUI。
+
+可以用以下命令检查或移除集成：
+
+```bash
+tokenless agents status codex --json
+tokenless agents inspect codex --chat-id <codex-thread-id> --json
+tokenless agents uninstall codex
+```
+
+Agent context 保存在独立的本地 Harness 数据库中。数据库只保存有限的 IDs、hashes、timestamps 和 provider Project/conversation references，不保存原始 Codex prompts、transcripts、assistant messages、credentials 或 browser state。
+
 ## 输出节省计量
 
 输出节省计量默认开启，但安装 tokenizer 不属于 setup 流程。Setup、status 检查和打开控制台都不会下载或运行 tokenizer；只有第一条可见 assistant 响应确实需要计量时，Tokenless 才会懒安装它。也可以在控制台的“系统”页面提前安装，或在主动停用后重新开启；对应 CLI 命令为：

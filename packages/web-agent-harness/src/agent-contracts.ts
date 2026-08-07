@@ -37,6 +37,16 @@ export type AgentInvocationContext = {
   activeProfile: string | null
 }
 
+export type AgentInvocationOutcome = {
+  ok: boolean | null
+  provider: string | null
+  profile: string | null
+  jobId: string | null
+  taskId: string | null
+  providerProjectId: string | null
+  providerConversationRef: string | null
+}
+
 export type CodexAppServerThread = {
   id: string
   sessionId: string

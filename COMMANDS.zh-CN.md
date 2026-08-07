@@ -12,6 +12,7 @@
 | `tokenless --version` | 输出当前安装的 CLI 版本。 | 否 |
 | `tokenless install` | 底层本地 runtime provisioning；日常维护请使用 `tokenless upgrade`。 | 否 |
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
+| `tokenless agents <install\|status\|inspect\|uninstall> codex` | 管理可选的 Codex guidance、native hooks 和精确 Harness context binding。 | 否 |
 | `tokenless dashboard` | 打开已认证的本地 Web 控制台，或生成一次性 URL。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
@@ -188,6 +189,30 @@ Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family
 交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会依次使用 `--provider-whitelist`、已有 profile 范围或持久化的默认 whitelist。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
 
 默认 `providerWhitelist` 包含所有非 `disabled` provider，包括 Gemini。交互式 setup 可以通过回复编号移除 provider，也可以通过 `--provider-whitelist` 或控制台修改名单。
+
+### `tokenless agents <install|status|inspect|uninstall> codex`
+
+管理可选的 Codex 集成，但不会启动、包装或替换 Codex：
+
+```bash
+tokenless agents install codex
+tokenless agents status codex --json
+tokenless agents inspect codex --chat-id <codex-thread-id> --json
+tokenless agents uninstall codex
+```
+
+`install` 会把一个 versioned inline guidance block 写入实际生效的全局 Codex instruction file，并把 Tokenless 自己的 groups 合并到 `$CODEX_HOME/hooks.json`。同目录存在非空 `AGENTS.override.md` 时，它是实际生效的 source，所以 Tokenless 会修改它而不是 `AGENTS.md`；命令本身不会创建 override。已有 instructions 和非 Tokenless hooks 都会保留。安装后必须重启 Codex，打开 `/hooks`，并显式信任 Tokenless hook definition，之后才能依赖自动绑定。
+
+用户仍然按照原来的方式启动 Codex。Hooks 会观察 lifecycle events，但只在一次真实的 Tokenless Bash 或 MCP 调用发生时执行绑定。它们把 hook `session_id`（当前 Codex chat/thread）、`turn_id` 和 `tool_use_id` 绑定到一个 Harness project、conversation 和 invocation。一次受限且 best-effort 的 App Server `thread/read` 会补充独立的 session-tree ID 和可用 lineage；它不会启动、恢复、relay 或 proxy Codex TUI。
+
+`status` 会报告准确的 instruction/hook paths 和安装状态，而且不会创建 Harness state。`inspect` 从独立的 Harness 数据库读取一个精确 chat，包括 local project、turns、invocations、稳定的 provider task identity，以及 provider Project/conversation bindings。Ledger 只保存 prompt hash，不保存原始 prompts、transcripts、assistant messages、credentials 或 browser state。`uninstall` 只移除 Tokenless 自己的 guidance 和 hook groups，不删除已经保留的 Harness history。
+
+主要选项：
+
+- `--codex-home <dir>` 显式选择 Codex state root，而不是使用 `CODEX_HOME` 或 `~/.codex`。
+- `--home <dir>` 选择 Tokenless state root。
+- `--chat-id <id>` 是 `inspect` 的必填项，必须传精确的 Codex thread ID。
+- `--json` 返回结构化 status 或 context contract。
 
 ### `tokenless dashboard`
 

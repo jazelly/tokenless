@@ -8,6 +8,7 @@ import {
   AGENT_CONTEXT_PROTOCOL,
   type AgentConversationContext,
   type AgentInvocationContext,
+  type AgentInvocationOutcome,
   type CodexAppServerThread,
   type CodexContextInspection,
 } from './agent-contracts.js'
@@ -138,15 +139,26 @@ export class AgentContextStore {
 
   completeCodexTurn(chatId: string, turnId: string) {
     const now = new Date().toISOString()
-    this.run(
-      `UPDATE harness_agent_turns
-       SET completed_at = COALESCE(completed_at, ?), last_seen_at = ?
-       WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?`,
-      now,
-      now,
-      chatId,
-      turnId,
-    )
+    this.transaction(() => {
+      this.run(
+        `UPDATE harness_agent_turns
+         SET completed_at = COALESCE(completed_at, ?), last_seen_at = ?
+         WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?`,
+        now,
+        now,
+        chatId,
+        turnId,
+      )
+      this.run(
+        `UPDATE harness_tool_invocations
+         SET status = 'completed_without_result', updated_at = ?
+         WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?
+           AND status = 'pending'`,
+        now,
+        chatId,
+        turnId,
+      )
+    })
   }
 
   createCodexInvocation({
@@ -223,18 +235,10 @@ export class AgentContextStore {
   }: {
     chatId: string
     toolCallId: string
-    outcome: {
-      ok: boolean | null
-      provider: string | null
-      profile: string | null
-      jobId: string | null
-      taskId: string | null
-      providerProjectId: string | null
-      providerConversationRef: string | null
-    }
+    outcome: AgentInvocationOutcome
   }) {
     const row = this.get(
-      `SELECT i.binding_id, c.conversation_id, i.provider_task_id
+      `SELECT i.binding_id, i.agent_chat_id, c.conversation_id, i.provider_task_id
        FROM harness_tool_invocations i
        JOIN harness_agent_conversations c
          ON c.agent_kind = i.agent_kind AND c.agent_chat_id = i.agent_chat_id
@@ -242,9 +246,26 @@ export class AgentContextStore {
       chatId,
       toolCallId,
     )
+    this.completeInvocationRecord(row, outcome)
+  }
+
+  completeBoundInvocation(bindingId: string, outcome: AgentInvocationOutcome) {
+    const row = this.get(
+      `SELECT i.binding_id, i.agent_chat_id, c.conversation_id, i.provider_task_id
+       FROM harness_tool_invocations i
+       JOIN harness_agent_conversations c
+         ON c.agent_kind = i.agent_kind AND c.agent_chat_id = i.agent_chat_id
+       WHERE i.binding_id = ?`,
+      bindingId,
+    )
+    this.completeInvocationRecord(row, outcome)
+  }
+
+  private completeInvocationRecord(row: Record<string, unknown> | undefined, outcome: AgentInvocationOutcome) {
     if (!row) return
     const providerTaskId = String(row.provider_task_id)
     if (outcome.taskId && outcome.taskId !== providerTaskId) return
+    const chatId = String(row.agent_chat_id)
     const now = new Date().toISOString()
     this.transaction(() => {
       this.run(

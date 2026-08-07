@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import {
   CODEX_HOOK_PROTOCOL,
+  type AgentInvocationOutcome,
   type CodexContextInspection,
   type CodexHookInput,
   type CodexHookResult,
@@ -28,17 +29,29 @@ const SUPPORTED_HOOK_EVENTS = [
 export async function installCodexIntegration(input: CodexIntegrationInput): Promise<CodexIntegrationStatus> {
   const resolved = await resolveIntegrationInput(input, true)
   const guidancePath = await effectiveGuidancePath(resolved.codexHome)
+  const guidancePaths = globalGuidancePaths(resolved.codexHome)
   const hooksPath = path.join(resolved.codexHome, 'hooks.json')
-  const previousGuidance = await readOptionalFile(guidancePath)
+  const previousGuidance = new Map(await Promise.all(guidancePaths.map(async (candidate) => (
+    [candidate, await readOptionalFile(candidate)] as const
+  ))))
   const previousHooks = await readOptionalFile(hooksPath)
-  const nextGuidance = upsertGuidance(previousGuidance ?? '')
+  const nextGuidance = upsertGuidance(previousGuidance.get(guidancePath) ?? '')
   const nextHooks = mergeHooks(parseHooksFile(previousHooks, hooksPath), hookCommand(resolved))
+  const changedGuidance: string[] = []
 
-  await writeAtomic(guidancePath, nextGuidance)
   try {
+    changedGuidance.push(guidancePath)
+    await writeAtomic(guidancePath, nextGuidance)
+    for (const candidate of guidancePaths) {
+      if (candidate === guidancePath) continue
+      const previous = previousGuidance.get(candidate)
+      if (previous === null || previous === undefined || !hasGuidance(previous)) continue
+      changedGuidance.push(candidate)
+      await writeAtomic(candidate, removeGuidance(previous))
+    }
     await writeAtomic(hooksPath, `${JSON.stringify(nextHooks, null, 2)}\n`)
   } catch (error) {
-    await restoreFile(guidancePath, previousGuidance).catch(() => undefined)
+    await restoreGuidanceFiles(changedGuidance, previousGuidance)
     throw error
   }
   return await inspectCodexIntegration(resolved)
@@ -46,18 +59,25 @@ export async function installCodexIntegration(input: CodexIntegrationInput): Pro
 
 export async function uninstallCodexIntegration(input: CodexIntegrationInput): Promise<CodexIntegrationStatus> {
   const resolved = await resolveIntegrationInput(input, false)
-  const guidancePath = await effectiveGuidancePath(resolved.codexHome)
+  const guidancePaths = globalGuidancePaths(resolved.codexHome)
   const hooksPath = path.join(resolved.codexHome, 'hooks.json')
-  const previousGuidance = await readOptionalFile(guidancePath)
+  const previousGuidance = new Map(await Promise.all(guidancePaths.map(async (candidate) => (
+    [candidate, await readOptionalFile(candidate)] as const
+  ))))
   const previousHooks = await readOptionalFile(hooksPath)
-  const nextGuidance = removeGuidance(previousGuidance ?? '')
   const nextHooks = removeHooks(parseHooksFile(previousHooks, hooksPath))
+  const changedGuidance: string[] = []
 
-  if (previousGuidance !== null) await writeAtomic(guidancePath, nextGuidance)
   try {
+    for (const candidate of guidancePaths) {
+      const previous = previousGuidance.get(candidate)
+      if (previous === null || previous === undefined || !hasGuidance(previous)) continue
+      changedGuidance.push(candidate)
+      await writeAtomic(candidate, removeGuidance(previous))
+    }
     if (previousHooks !== null) await writeAtomic(hooksPath, `${JSON.stringify(nextHooks, null, 2)}\n`)
   } catch (error) {
-    if (previousGuidance !== null) await restoreFile(guidancePath, previousGuidance).catch(() => undefined)
+    await restoreGuidanceFiles(changedGuidance, previousGuidance)
     throw error
   }
   return await inspectCodexIntegration(resolved)
@@ -70,7 +90,7 @@ export async function inspectCodexIntegration(input: CodexIntegrationInput): Pro
   const guidance = await readOptionalFile(guidancePath)
   const rawHooks = await readOptionalFile(hooksPath)
   const hooks = parseHooksFile(rawHooks, hooksPath)
-  const installedEvents = installedHookEvents(hooks)
+  const installedEvents = installedHookEvents(hooks, hookCommand(resolved))
   const databasePath = path.join(resolved.tokenlessHome, 'harness.sqlite3')
   const databaseExists = await fileExists(databasePath)
   const store = databaseExists ? await AgentContextStore.open(resolved.tokenlessHome) : null
@@ -81,7 +101,7 @@ export async function inspectCodexIntegration(input: CodexIntegrationInput): Pro
       codexHome: resolved.codexHome,
       tokenlessHome: resolved.tokenlessHome,
       guidance: {
-        installed: hasGuidance(guidance ?? ''),
+        installed: hasCurrentGuidance(guidance ?? ''),
         path: guidancePath,
         usesOverride: path.basename(guidancePath) === 'AGENTS.override.md',
       },
@@ -114,6 +134,23 @@ export async function inspectCodexContext({
   const store = await AgentContextStore.open(path.resolve(tokenlessHome))
   try {
     return store.inspectCodexConversation(nonempty(chatId, 'chatId'))
+  } finally {
+    store.close()
+  }
+}
+
+export async function completeBoundAgentInvocation({
+  tokenlessHome,
+  bindingId,
+  outcome,
+}: {
+  tokenlessHome: string
+  bindingId: string
+  outcome: AgentInvocationOutcome
+}) {
+  const store = await AgentContextStore.open(path.resolve(tokenlessHome))
+  try {
+    store.completeBoundInvocation(nonempty(bindingId, 'bindingId'), normalizeInvocationOutcome(outcome))
   } finally {
     store.close()
   }
@@ -269,25 +306,25 @@ function extractTokenlessOutcome(value: unknown) {
   }
 }
 
+function normalizeInvocationOutcome(value: AgentInvocationOutcome): AgentInvocationOutcome {
+  const outcome = jsonRecord(value)
+  return {
+    ok: typeof outcome.ok === 'boolean' ? outcome.ok : null,
+    provider: optionalString(outcome.provider),
+    profile: optionalString(outcome.profile),
+    jobId: optionalString(outcome.jobId),
+    taskId: optionalString(outcome.taskId),
+    providerProjectId: optionalString(outcome.providerProjectId),
+    providerConversationRef: optionalString(outcome.providerConversationRef),
+  }
+}
+
 function tokenlessPayload(value: unknown): Record<string, any> | null {
   if (typeof value === 'string') {
     const source = value.trim()
-    try {
-      return jsonRecord(JSON.parse(source))
-    } catch {
-      const start = source.indexOf('{')
-      const end = source.lastIndexOf('}')
-      if (start >= 0 && end > start) {
-        try {
-          return jsonRecord(JSON.parse(source.slice(start, end + 1)))
-        } catch {
-          return null
-        }
-      }
-      return null
-    }
+    return tokenlessTextPayload(source)
   }
-  const record = jsonRecord(value)
+  const record = jsonRecordOrNull(value)
   if (!record) return null
   for (const key of ['structuredContent', 'content', 'output', 'result']) {
     const nested = record[key]
@@ -301,6 +338,67 @@ function tokenlessPayload(value: unknown): Record<string, any> | null {
     }
   }
   return record
+}
+
+function tokenlessTextPayload(source: string) {
+  const direct = parseJsonRecord(source)
+  if (direct && looksLikeTokenlessPayload(direct)) return direct
+
+  const lines = source.split(/\r?\n/)
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const candidate = parseJsonRecord(lines[index]!.trim())
+    if (candidate && looksLikeTokenlessPayload(candidate)) return candidate
+  }
+
+  let cursor = source.length - 1
+  for (let candidates = 0; cursor >= 0 && candidates < 512; candidates += 1) {
+    const start = source.lastIndexOf('{', cursor)
+    if (start < 0) break
+    const end = matchingJsonObjectEnd(source, start)
+    if (end >= 0) {
+      const candidate = parseJsonRecord(source.slice(start, end + 1))
+      if (candidate && looksLikeTokenlessPayload(candidate)) return candidate
+    }
+    cursor = start - 1
+  }
+  return null
+}
+
+function matchingJsonObjectEnd(source: string, start: number) {
+  let depth = 0
+  let quoted = false
+  let escaped = false
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index]!
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') quoted = false
+      continue
+    }
+    if (character === '"') quoted = true
+    else if (character === '{') depth += 1
+    else if (character === '}') {
+      depth -= 1
+      if (depth === 0) return index
+      if (depth < 0) return -1
+    }
+  }
+  return -1
+}
+
+function parseJsonRecord(source: string) {
+  try {
+    return jsonRecordOrNull(JSON.parse(source))
+  } catch {
+    return null
+  }
+}
+
+function looksLikeTokenlessPayload(value: Record<string, any>) {
+  return typeof value.ok === 'boolean' ||
+    typeof value.taskId === 'string' ||
+    typeof value.task_id === 'string'
 }
 
 function hookCommand(input: Awaited<ReturnType<typeof resolveIntegrationInput>>) {
@@ -367,12 +465,14 @@ function removeTokenlessGroups(groups: unknown[]) {
   })
 }
 
-function installedHookEvents(value: Record<string, any>) {
+function installedHookEvents(value: Record<string, any>, expectedCommand: string) {
   const hooks = jsonRecord(value.hooks) ?? {}
   return SUPPORTED_HOOK_EVENTS.filter((event) => (
     Array.isArray(hooks[event]) && hooks[event].some((group: unknown) => {
       const record = jsonRecord(group)
-      return Array.isArray(record.hooks) && record.hooks.some(isTokenlessHandler)
+      return Array.isArray(record.hooks) && record.hooks.some((handler: unknown) => (
+        isTokenlessHandler(handler) && jsonRecord(handler).command === expectedCommand
+      ))
     })
   ))
 }
@@ -390,17 +490,27 @@ function upsertGuidance(value: string) {
 }
 
 function removeGuidance(value: string) {
-  const start = value.indexOf(GUIDANCE_START)
-  if (start < 0) return value
-  const end = value.indexOf(GUIDANCE_END, start)
-  if (end < 0) throw new Error('Tokenless guidance marker is incomplete; refusing to edit the instruction file.')
-  return `${value.slice(0, start).trimEnd()}${value.slice(end + GUIDANCE_END.length)}`.trimEnd() + '\n'
+  let next = value
+  let removed = false
+  while (true) {
+    const start = next.indexOf(GUIDANCE_START)
+    if (start < 0) break
+    const end = next.indexOf(GUIDANCE_END, start)
+    if (end < 0) throw new Error('Tokenless guidance marker is incomplete; refusing to edit the instruction file.')
+    next = `${next.slice(0, start).trimEnd()}${next.slice(end + GUIDANCE_END.length)}`
+    removed = true
+  }
+  return removed ? `${next.trimEnd()}\n` : value
 }
 
 function hasGuidance(value: string) {
   const start = value.indexOf(GUIDANCE_START)
   const end = value.indexOf(GUIDANCE_END)
   return start >= 0 && end > start
+}
+
+function hasCurrentGuidance(value: string) {
+  return value.includes(guidanceBlock())
 }
 
 function guidanceBlock() {
@@ -423,6 +533,19 @@ async function effectiveGuidancePath(codexHome: string) {
   const override = path.join(codexHome, 'AGENTS.override.md')
   const overrideContent = await readOptionalFile(override)
   return overrideContent?.trim() ? override : path.join(codexHome, 'AGENTS.md')
+}
+
+function globalGuidancePaths(codexHome: string) {
+  return [
+    path.join(codexHome, 'AGENTS.md'),
+    path.join(codexHome, 'AGENTS.override.md'),
+  ]
+}
+
+async function restoreGuidanceFiles(paths: readonly string[], previous: ReadonlyMap<string, string | null>) {
+  for (const candidate of [...paths].reverse()) {
+    await restoreFile(candidate, previous.get(candidate) ?? null).catch(() => undefined)
+  }
 }
 
 async function resolveIntegrationInput(input: CodexIntegrationInput, create: boolean) {

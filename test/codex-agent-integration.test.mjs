@@ -63,6 +63,8 @@ test('built CLI installs, preserves, reports, and uninstalls the Codex integrati
       )).length, 1)
     }
 
+    fs.writeFileSync(path.join(fixture.codexHome, 'AGENTS.override.md'), '# Later active override\n')
+
     const removed = runCli([
       'agents', 'uninstall', 'codex',
       '--codex-home', fixture.codexHome,
@@ -72,6 +74,7 @@ test('built CLI installs, preserves, reports, and uninstalls the Codex integrati
     assert.equal(removed.status, 0, removed.stderr || removed.stdout)
     assert.equal(JSON.parse(removed.stdout).status.guidance.installed, false)
     assert.equal(fs.readFileSync(path.join(fixture.codexHome, 'AGENTS.md'), 'utf8'), '# Existing guidance\n')
+    assert.equal(fs.readFileSync(path.join(fixture.codexHome, 'AGENTS.override.md'), 'utf8'), '# Later active override\n')
     const hooksAfter = JSON.parse(fs.readFileSync(path.join(fixture.codexHome, 'hooks.json'), 'utf8'))
     assert.equal(hooksAfter.description, 'Existing user hooks.')
     assert.deepEqual(hooksAfter.hooks.PreToolUse, [
@@ -87,6 +90,15 @@ test('Codex installer patches the effective nonempty AGENTS.override.md instead 
   try {
     fs.mkdirSync(fixture.codexHome, { recursive: true })
     fs.writeFileSync(path.join(fixture.codexHome, 'AGENTS.md'), '# Base guidance\n')
+    const baseInstalled = runCli([
+      'agents', 'install', 'codex',
+      '--codex-home', fixture.codexHome,
+      '--home', fixture.tokenlessHome,
+      '--json',
+    ])
+    assert.equal(baseInstalled.status, 0, baseInstalled.stderr || baseInstalled.stdout)
+    assert.match(fs.readFileSync(path.join(fixture.codexHome, 'AGENTS.md'), 'utf8'), /tokenless-codex-guidance/)
+
     fs.writeFileSync(path.join(fixture.codexHome, 'AGENTS.override.md'), '# Active override\n')
     const installed = runCli([
       'agents', 'install', 'codex',
@@ -99,6 +111,28 @@ test('Codex installer patches the effective nonempty AGENTS.override.md instead 
     assert.equal(payload.status.guidance.usesOverride, true)
     assert.equal(fs.readFileSync(path.join(fixture.codexHome, 'AGENTS.md'), 'utf8'), '# Base guidance\n')
     assert.match(fs.readFileSync(path.join(fixture.codexHome, 'AGENTS.override.md'), 'utf8'), /tokenless-codex-guidance/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('Codex integration install output follows the persisted Simplified Chinese preference', () => {
+  const fixture = createFixture()
+  try {
+    const configured = runCli([
+      'config',
+      '--home', fixture.tokenlessHome,
+      '--language', 'zh-CN',
+      '--json',
+    ])
+    assert.equal(configured.status, 0, configured.stderr || configured.stdout)
+    const installed = runCli([
+      'agents', 'install', 'codex',
+      '--codex-home', fixture.codexHome,
+      '--home', fixture.tokenlessHome,
+    ])
+    assert.equal(installed.status, 0, installed.stderr || installed.stdout)
+    assert.match(installed.stdout, /Tokenless 已安装到普通 Codex sessions/)
   } finally {
     fixture.cleanup()
   }
@@ -158,7 +192,9 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
       tool_name: 'Bash',
       tool_use_id: 'tool-one',
       tool_input: firstPre.hookSpecificOutput.updatedInput,
-      tool_response: JSON.stringify({
+      tool_response: [
+        'Tokenless status {"event":"daemon_ready","jobId":"status-only"}',
+        JSON.stringify({
         ok: true,
         jobId: 'job-provider-one',
         taskId,
@@ -168,7 +204,9 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
           project: { resource_id: 'provider-project-one' },
           conversation: { canonical_url: 'https://chatgpt.com/c/provider-conversation-one' },
         },
-      }),
+        }, null, 2),
+        'Process exited with code 0',
+      ].join('\n'),
     }), {})
     assert.deepEqual(runHook(fixture, {
       ...hookBase,
@@ -233,6 +271,93 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
     })
     assert.equal(conflict.status, 1)
     assert.equal(JSON.parse(conflict.stdout).error.code, 'agent_context_task_conflict')
+
+    const identityConflict = runCli([
+      'run',
+      '--project-name', 'wrong-project',
+      '--prompt', 'must also fail before provider access',
+      '--json',
+    ], {
+      TOKENLESS_CONTEXT_BINDING_ID: 'binding-conflict',
+      TOKENLESS_AGENT_KIND: 'codex',
+      TOKENLESS_AGENT_SESSION_ID: 'thr_integration_chat',
+      TOKENLESS_TASK_ID: taskId,
+      TOKENLESS_PROJECT_NAME: 'project-name',
+      TOKENLESS_CHAT_NAME: 'chat-name',
+    })
+    assert.equal(identityConflict.status, 1)
+    assert.equal(JSON.parse(identityConflict.stdout).error.code, 'agent_context_identity_conflict')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('Codex hooks bind a Tokenless MCP call through native structured tool payloads', () => {
+  const fixture = createFixture()
+  try {
+    const hookBase = {
+      session_id: 'thr_mcp_chat',
+      transcript_path: null,
+      cwd: root,
+      model: 'gpt-test',
+      permission_mode: 'default',
+    }
+    runHook(fixture, {
+      ...hookBase,
+      hook_event_name: 'UserPromptSubmit',
+      turn_id: 'turn-mcp',
+      prompt: 'delegate through MCP',
+    })
+    const pre = runHook(fixture, {
+      ...hookBase,
+      hook_event_name: 'PreToolUse',
+      turn_id: 'turn-mcp',
+      tool_name: 'mcp__tokenless__run',
+      tool_use_id: 'tool-mcp',
+      tool_input: { prompt: 'hello' },
+    })
+    const tokenlessContext = pre.hookSpecificOutput.updatedInput.tokenlessContext
+    assert.equal(tokenlessContext.chatId, 'thr_mcp_chat')
+    assert.equal(tokenlessContext.turnId, 'turn-mcp')
+    assert.match(tokenlessContext.projectId, /^project_[a-f0-9]{24}$/)
+
+    runHook(fixture, {
+      ...hookBase,
+      hook_event_name: 'PostToolUse',
+      turn_id: 'turn-mcp',
+      tool_name: 'mcp__tokenless__run',
+      tool_use_id: 'tool-mcp',
+      tool_input: pre.hookSpecificOutput.updatedInput,
+      tool_response: {
+        content: [],
+        structuredContent: {
+          ok: true,
+          jobId: 'job-mcp',
+          taskId: tokenlessContext.taskId,
+          provider: 'claude',
+          profile: { id: 'work' },
+          providerContext: {
+            project: null,
+            conversation: { canonical_url: 'https://claude.ai/chat/provider-mcp' },
+          },
+        },
+        isError: false,
+      },
+    })
+
+    const inspected = runCli([
+      'agents', 'inspect', 'codex',
+      '--chat-id', 'thr_mcp_chat',
+      '--home', fixture.tokenlessHome,
+      '--codex-home', fixture.codexHome,
+      '--json',
+    ])
+    assert.equal(inspected.status, 0, inspected.stderr || inspected.stdout)
+    const context = JSON.parse(inspected.stdout).context
+    assert.equal(context.invocations[0].toolName, 'mcp__tokenless__run')
+    assert.equal(context.invocations[0].status, 'succeeded')
+    assert.equal(context.providerBindings[0].provider, 'claude')
+    assert.equal(context.providerBindings[0].providerConversationRef, 'https://claude.ai/chat/provider-mcp')
   } finally {
     fixture.cleanup()
   }

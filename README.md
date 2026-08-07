@@ -84,6 +84,28 @@ For browser capability evaluation, the config file accepts experimental `browser
 
 Requires Node.js 22.13+. The first browser-runtime targets are Apple Silicon macOS and x64 Windows; Windows x64 covers Intel and AMD processors. Windows remains prerelease until its real-hardware gates pass.
 
+## Optional Codex Integration
+
+Tokenless can add broader delegation guidance and exact invocation continuity to Codex without launching, wrapping, or replacing Codex:
+
+```bash
+tokenless agents install codex
+```
+
+Restart Codex, open `/hooks`, and trust the Tokenless hook definition. Continue starting Codex exactly as you normally do. Ordinary Codex model traffic remains in Codex; Tokenless runs only when the user or Codex explicitly invokes the Tokenless CLI, Skill, or MCP surface.
+
+The installer preserves existing instructions and hooks. If a non-empty global `AGENTS.override.md` already exists, Codex selects it instead of the same-directory `AGENTS.md`, so Tokenless patches that active file; it never creates an override to outrank the user's guidance. Native hooks bind an actual Tokenless call to the exact Codex chat/thread, turn, and tool call. A bounded App Server read may add session-tree and lineage metadata, but Tokenless never starts or resumes the Codex TUI.
+
+Inspect or remove the integration with:
+
+```bash
+tokenless agents status codex --json
+tokenless agents inspect codex --chat-id <codex-thread-id> --json
+tokenless agents uninstall codex
+```
+
+Agent context lives in a separate local Harness database. It stores bounded IDs, hashes, timestamps, and provider Project/conversation references; it does not store raw Codex prompts, transcripts, assistant messages, credentials, or browser state.
+
 ## Output Savings Measurement
 
 Output savings measurement is enabled by default, but tokenizer installation is not part of setup. Setup, status checks, and opening the dashboard do not download or run the tokenizer. Tokenless lazily installs it only when the first visible assistant response needs measurement. You can also preinstall it, or turn measurement back on after opting out, from the dashboard's System page or with:
