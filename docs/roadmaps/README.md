@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-06
+Status: active product direction | Last reviewed: 2026-08-07
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -43,10 +43,11 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
 | [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md) | Define the versioned, provider-neutral turn interface through which the Web Agent Harness drives durable visible-provider work without importing browser or daemon internals. | P0 |
-| [Web Agent Harness](P0-web-agent-harness.md) | Build a ChatGPT-first, Web-Provider-specific harness that accepts caller-selected Skills on initial and later turns, attempts their `SKILL.md` file delivery when `file.upload` is available, and minimizes slow web turns through complete action batches, consolidated user input, rooted filesystem work, and resumable MCP tool execution. | P0 |
+| [Web Agent Harness](P0-web-agent-harness.md) | Build a ChatGPT-first, file-based web Harness that uploads a compiled System Prompt Bundle with the global Skill registry and event protocol, batch-loads requested `SKILL.md` files, validates model output, and minimizes slow web turns through complete action batches, consolidated user input, rooted filesystem work, and resumable MCP tool execution. | P0 |
+| [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md) | Keep Codex's normal model provider while adding RTK-style always-on delegation guidance and an App Server launch path that binds the exact local project, Codex chat, turn, and provider conversation used by each delegated run. | P0 |
 | [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
-| [Agent Session Integrations](P1-agent-session-integrations.md) | Expose current Web Provider and later Harness operations through a caller-facing local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration. | P1 |
+| [Agent Session Integrations](P1-agent-session-integrations.md) | Expose current Web Provider and later Harness operations through a caller-facing local MCP interface, then bind jobs to exact Agent projects, threads, and turns with Codex as the first exact identity integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](P1-project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
 | [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a default-on, opt-out, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
 
@@ -64,7 +65,8 @@ flowchart LR
   Caller["Trusted local caller<br/>HTTP create + polling"]
   UI["Local web control plane<br/>profiles + providers + jobs"]
   API["Local daemon API<br/>auth + schemas + job reads"]
-  Session["Agent session binding<br/>session id + working directory"]
+  Session["Agent session binding<br/>session tree + thread + working directory"]
+  Codex["Codex guided delegation<br/>AGENTS + App Server binding"]
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
   Context["Context envelope<br/>provenance + policy + limits"]
   Harness["Web agent harness<br/>instructions + durable tool loop"]
@@ -79,6 +81,8 @@ flowchart LR
   Caller --> API
   UI --> API
   Session --> API
+  Session --> Codex
+  Codex --> Harness
   API --> Scheduler
   Scheduler --> Context
   Graph --> Context
@@ -107,28 +111,29 @@ The shared contracts should be built before provider-specific shortcuts:
 6. Keep the daemon's small built-in HTTP server and make polling the explicit asynchronous caller and UI contract.
 7. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
 8. Specify the minimal Web AI Interaction Protocol slice for capability negotiation, exact workspace and conversation identity, one durable provider turn, waiting, recovery, results, and evidence; adopt it on the current Provider side before treating the Harness dependency as stable.
-9. Build the ChatGPT-first web agent harness as one independently buildable deep module exposed through package, authenticated daemon HTTP, and CLI adapters; accept initial and later caller-Agent Skill selections, attempt best-effort delivery of selected `SKILL.md` revisions through the existing `file.upload` capability, and add durable checkpoints, strict output validation, complete action batches, consolidated user interactions, rooted filesystem operations, resumable MCP tool execution, aggregate results, and finite loop limits; defer repository extraction until the interface is stable.
+9. Build the ChatGPT-first web agent harness as one independently buildable deep module exposed through package, authenticated daemon HTTP, and CLI adapters; require existing `conversation.chat` plus `file.upload`, compile and upload one System Prompt Bundle containing the global Skill registry and event protocol, accept upstream Skill preselections and batched web-model `skillLoads`, deliver individual `SKILL.md` revisions on a best-effort basis, and add durable checkpoints, strict output validation, complete action batches, consolidated user interactions, rooted filesystem operations, resumable MCP tool execution, aggregate results, and finite loop limits; defer repository extraction until the interface is stable.
 10. Expand provider coverage using the same visible-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
-11. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
+11. Add Codex guided delegation through a reversible inline `AGENTS.md` policy and a release-matched App Server launch path, preserving exact project, session-tree, thread, turn, and lineage identity while leaving ordinary Codex model traffic unchanged.
 12. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 
 - **Visible provider boundary:** operate provider websites through visible controls and visible postconditions. Do not depend on private provider APIs.
 - **Harness-owned agency:** provider websites supply verified model turns; Tokenless owns instruction precedence, tool authorization, execution, durable looping, and termination.
-- **Caller-owned Skill selection:** explicit or automatic Skill selection happens in the caller Agent and may cross the initial or any later Tokenless turn request with provenance; the Harness never asks the web model to choose.
-- **Soft Skill delivery:** Provider selection requires only `conversation.chat`; when `file.upload` is present, V1 attempts to attach selected `SKILL.md` files, records skipped or failed items, and continues the chat without inventing another capability gate.
-- **Web-turn efficiency:** upload each turn's bounded set of newly selected `SKILL.md` files in one attachment action when possible, then include the delivered-file manifest and selected tool context in that Prompt; require each non-final model response to contain all currently knowable actions and missing inputs; return one aggregate batch result; spend another provider turn only when prior results reveal a genuinely new dependency.
+- **Registry-driven Skill selection:** upstream Agent preselections are a fast path, while the uploaded System Prompt Bundle exposes every valid global Skill's bounded metadata so the web model can request additional Skills by name on any turn.
+- **Hard bootstrap, soft Skill bodies:** every Harness route requires `conversation.chat` and `file.upload`, and the System Prompt Bundle must arrive before the first task Prompt; individual `SKILL.md` resolution or upload failures are recorded and omitted without terminating the bootstrapped chat.
+- **Web-turn efficiency:** upload the System Prompt Bundle and initial preselections in one first attachment action, then batch-upload every later requested Skill before the next Prompt; require each non-final model response to contain all currently needed Skills, knowable actions, and missing inputs; return one aggregate batch result; spend another provider turn only when new instructions or prior results reveal a genuinely new dependency.
 - **Role-based MCP separation:** the caller MCP interface and web-model-driven MCP tool execution use separate sessions, credentials, tools, and approval decisions; caller authority never transfers implicitly.
 - **Evidence before availability:** selectors or menu presence are not success. A capability is supported only when a real visible-session sequence proves the final outcome.
 - **Fail closed for required inputs:** ambiguous identity, navigation, required attachment state, workspace selection, or required context delivery returns an explicit unavailable or unknown result; explicitly best-effort Skill delivery is instead recorded and skipped.
 - **Exact identity over names:** use provider/profile/resource identifiers and agent/session/worktree identity. Human-readable project and chat names are metadata, not primary keys.
+- **Hierarchy-preserving Agent delegation:** an Agent project maps to one exact provider workspace binding when it first delegates, each Agent thread maps to its own provider conversation, delegated runs retain their originating Agent turn, and forks or subagents preserve explicit lineage without sharing conversations implicitly.
 - **Daemon-owned concurrency:** every invocation is durably admitted, deduplicated, scheduled, leased, checkpointed, and completed through the local daemon.
 - **Conversation single-writer:** one conversation accepts at most one mutating job at a time; unrelated conversations may run concurrently only within explicit profile and provider limits.
 - **Local-first and consent-based:** indexing, session binding, and staging happen locally. Upload only the bounded artifacts a user or authorized agent has approved.
 - **Provenance-preserving context:** every instruction and source must retain its origin, scope, freshness, and sharing policy.
 - **No hidden-prompt extraction:** Tokenless may carry instructions explicitly supplied or exported by the caller. It must not scrape concealed platform, developer, or provider prompts.
-- **Real-boundary testing:** provider and agent integrations require focused integration or browser E2E evidence through the built CLI, daemon, filesystem, lifecycle hook, and real visible provider session.
+- **Real-boundary testing:** provider and Agent integrations require focused integration or browser E2E evidence through the built CLI, daemon, filesystem, supported Agent control surface, and real visible provider session.
 - **Honest degradation:** when a provider cannot represent a system instruction, Project, graph artifact, or other semantic layer natively, report the fallback instead of claiming parity.
 
 ## Roadmap Maintenance
