@@ -344,6 +344,39 @@ export async function parseHarnessModelResponse(input: ParseHarnessModelResponse
   const runDirectory = await resolveRunDirectory(input.stagingRoot, input.runId)
   const state = await readHarnessSkillState(runDirectory, input.runId) as HarnessSkillStateWithBootstrap
   assertBootstrapFinalized(state)
+  return parseHarnessModelResponseFromState(input, state)
+}
+
+export async function validateHarnessBootstrapCompletionResponse(input: ParseHarnessModelResponseInput) {
+  const runDirectory = await resolveRunDirectory(input.stagingRoot, input.runId)
+  const state = await readHarnessSkillState(runDirectory, input.runId) as HarnessSkillStateWithBootstrap
+  const bootstrap = readBootstrapTurn(state)
+  if (bootstrap.nonce !== input.nonce) {
+    throw new HarnessSkillError('harness_bootstrap_correlation_invalid', 'Bootstrap nonce does not match the pending turn.')
+  }
+  if (!isSkillDeliveryRevision(bootstrap.candidateDelivery) || !isExactCandidateSources(bootstrap.candidateSources, bootstrap.candidateDelivery.attachments)) {
+    throw new HarnessSkillError('harness_state_invalid', 'Harness bootstrap candidate state is invalid.')
+  }
+  if (
+    bootstrap.candidateDelivery.attachments.length !== 0 ||
+    bootstrap.candidateDelivery.omissions.length !== 0
+  ) {
+    throw new HarnessSkillError('harness_bootstrap_skills_unsupported', 'V0 local HTTP bootstrap completion requires a no-Skill run.')
+  }
+  if (state.tools.length !== 0) {
+    throw new HarnessSkillError('harness_bootstrap_tools_unsupported', 'V0 local HTTP bootstrap completion requires an empty tool catalog.')
+  }
+  if (bootstrap.status === 'finalized') assertFinalizedBootstrapState(state, bootstrap)
+  return {
+    response: parseHarnessModelResponseFromState(input, state),
+    systemPrompt: state.systemPrompt,
+  }
+}
+
+function parseHarnessModelResponseFromState(
+  input: ParseHarnessModelResponseInput,
+  state: HarnessSkillState,
+) {
   if (input.turn !== state.nextTurn) {
     throw new HarnessSkillError(
       'harness_turn_unexpected',

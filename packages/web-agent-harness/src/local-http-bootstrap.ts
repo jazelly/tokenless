@@ -5,18 +5,27 @@ import type { StartTurnRequest, TurnState } from 'tokenless-web-ai-interaction-p
 
 import {
   HarnessSkillError,
+  type CompleteHarnessLocalHttpBootstrapInput,
+  type HarnessBootstrapTurn,
+  type HarnessLocalHttpBootstrapCompletion,
   type ReadHarnessLocalHttpTurnInput,
   type StartHarnessLocalHttpBootstrapInput,
 } from './contracts.js'
 import { renderPromptManifest } from './internal/system-prompt.js'
 import {
   assertHarnessBootstrapStaticInput,
+  finalizeHarnessBootstrapTurn,
   prepareHarnessBootstrapTurn,
   renderHarnessBootstrapPrompt,
+  validateHarnessBootstrapCompletionResponse,
 } from './skill-harness.js'
 
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
 const MAX_V0_SYSTEM_PROMPT_BYTES = 1024 * 1024
+const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024
+const MAX_PROVIDER_CHROME_BYTES = 256
+const OPEN_MARKER = '<TOKENLESS_HARNESS_RESPONSE>'
+const CLOSE_MARKER = '</TOKENLESS_HARNESS_RESPONSE>'
 
 /**
  * Starts one V0 new-conversation turn with the compiled System Prompt.
@@ -87,6 +96,54 @@ export async function cancelHarnessLocalHttpTurn(input: ReadHarnessLocalHttpTurn
   return createLocalHttpClient({ baseUrl: input.baseUrl, token: input.token }).cancel(input.turnRef)
 }
 
+export async function completeHarnessLocalHttpBootstrap(
+  input: CompleteHarnessLocalHttpBootstrapInput,
+): Promise<HarnessLocalHttpBootstrapCompletion> {
+  const turnState = await readHarnessLocalHttpTurn(input)
+  if (
+    turnState.lifecycle !== 'succeeded' ||
+    turnState.dispatchCertainty !== 'dispatched' ||
+    turnState.attachmentDelivery.status !== 'delivered' ||
+    turnState.result.text.trim() === ''
+  ) {
+    throw new HarnessSkillError(
+      'harness_bootstrap_turn_incomplete',
+      'The local provider turn has not succeeded with delivered System Prompt evidence.',
+    )
+  }
+
+  const responseText = normalizeProviderResponse(turnState.result.text)
+  const validated = await validateHarnessBootstrapCompletionResponse({
+    runId: input.runId,
+    stagingRoot: input.stagingRoot,
+    responseText,
+    turn: 1,
+    nonce: input.nonce,
+  })
+  if (turnState.attachmentDelivery.sha256 !== validated.systemPrompt.sha256) {
+    throw new HarnessSkillError(
+      'harness_system_prompt_delivery_mismatch',
+      'The delivered attachment does not match the pending Harness System Prompt.',
+    )
+  }
+
+  const bootstrap = await finalizeHarnessBootstrapTurn({
+    runId: input.runId,
+    stagingRoot: input.stagingRoot,
+    nonce: input.nonce,
+    attachmentAcceptances: [{
+      name: validated.systemPrompt.name,
+      sha256: validated.systemPrompt.sha256,
+      accepted: true,
+    }],
+  })
+  return {
+    turnState,
+    bootstrap: publicFinalizedBootstrap(bootstrap),
+    response: validated.response,
+  }
+}
+
 function assertSupportedStaticInput(input: StartHarnessLocalHttpBootstrapInput) {
   const value = input.selectedSkills
   if (value !== undefined && (!Array.isArray(value) || value.length !== 0)) {
@@ -109,6 +166,57 @@ function assertRequiredCapabilities(capabilities: readonly string[]) {
 function assertV0BootstrapText(value: string) {
   if (Array.from(value).length > 4_000 || Buffer.byteLength(value, 'utf8') > 8 * 1024) {
     throw new HarnessSkillError('harness_bootstrap_message_too_large', 'V0 local HTTP bootstrap text exceeds protocol limits.')
+  }
+}
+
+function normalizeProviderResponse(value: string) {
+  if (Buffer.byteLength(value, 'utf8') > MAX_PROVIDER_RESPONSE_BYTES) {
+    throw new HarnessSkillError('harness_response_too_large', `Harness response must be at most ${MAX_PROVIDER_RESPONSE_BYTES} bytes.`)
+  }
+  if (value.startsWith(OPEN_MARKER) && value.endsWith(CLOSE_MARKER)) return value
+
+  if (countOccurrences(value, OPEN_MARKER) !== 1 || countOccurrences(value, CLOSE_MARKER) !== 1) {
+    throw new HarnessSkillError('harness_response_framing_invalid', 'Provider response must contain exactly one Harness response envelope.')
+  }
+  const open = value.indexOf(OPEN_MARKER)
+  const close = value.indexOf(CLOSE_MARKER)
+  if (open < 0 || close < open + OPEN_MARKER.length) {
+    throw new HarnessSkillError('harness_response_framing_invalid', 'Provider response Harness markers are not ordered.')
+  }
+  assertBoundedProviderChrome(value.slice(0, open))
+  assertBoundedProviderChrome(value.slice(close + CLOSE_MARKER.length))
+  return value.slice(open, close + CLOSE_MARKER.length)
+}
+
+function assertBoundedProviderChrome(value: string) {
+  if (
+    Buffer.byteLength(value, 'utf8') > MAX_PROVIDER_CHROME_BYTES ||
+    /[<>\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)
+  ) {
+    throw new HarnessSkillError('harness_response_framing_invalid', 'Provider response chrome is not a bounded single line.')
+  }
+}
+
+function countOccurrences(value: string, pattern: string) {
+  return value.split(pattern).length - 1
+}
+
+function publicFinalizedBootstrap(bootstrap: HarnessBootstrapTurn) {
+  return {
+    protocol: bootstrap.protocol,
+    kind: bootstrap.kind,
+    status: 'finalized' as const,
+    runId: bootstrap.runId,
+    turn: bootstrap.turn,
+    nonce: bootstrap.nonce,
+    systemPrompt: {
+      kind: bootstrap.systemPrompt.kind,
+      name: bootstrap.systemPrompt.name,
+      mediaType: bootstrap.systemPrompt.mediaType,
+      size: bootstrap.systemPrompt.size,
+      sha256: bootstrap.systemPrompt.sha256,
+    },
+    promptManifest: bootstrap.promptManifest,
   }
 }
 

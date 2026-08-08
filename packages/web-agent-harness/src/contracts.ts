@@ -1,3 +1,5 @@
+import type { TurnState } from 'tokenless-web-ai-interaction-protocol'
+
 export const WEB_AGENT_PROTOCOL = 'tokenless.web-agent/v1' as const
 export const HARNESS_SKILL_MODULE_PROTOCOL = 'tokenless.web-agent.skills/v1' as const
 export const HARNESS_SKILL_STATE_PROTOCOL = 'tokenless.web-agent.skills-state/v1' as const
@@ -65,6 +67,29 @@ export type ReadHarnessLocalHttpTurnInput = {
   baseUrl: string
   token: string
   turnRef: string
+}
+
+export type CompleteHarnessLocalHttpBootstrapInput = ReadHarnessLocalHttpTurnInput & {
+  runId: string
+  stagingRoot: string
+  nonce: string
+}
+
+export type HarnessLocalHttpFinalizedBootstrap = {
+  protocol: typeof WEB_AGENT_PROTOCOL
+  kind: 'bootstrap_turn'
+  status: 'finalized'
+  runId: string
+  turn: 1
+  nonce: string
+  systemPrompt: Pick<HarnessAttachment, 'kind' | 'name' | 'mediaType' | 'size' | 'sha256'>
+  promptManifest: string
+}
+
+export type HarnessLocalHttpBootstrapCompletion = {
+  turnState: TurnState
+  bootstrap: HarnessLocalHttpFinalizedBootstrap
+  response: HarnessModelResponse
 }
 
 export type HarnessBootstrapAttachmentAcceptance = {

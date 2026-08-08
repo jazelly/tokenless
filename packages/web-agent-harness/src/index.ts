@@ -47,9 +47,12 @@ export type {
   HarnessBootstrapAttachmentAcceptance,
   HarnessBootstrapTurn,
   HarnessBootstrapTurnPreparation,
+  CompleteHarnessLocalHttpBootstrapInput,
   HarnessFinalOutputContract,
   HarnessFinalResponse,
   HarnessModelResponse,
+  HarnessLocalHttpBootstrapCompletion,
+  HarnessLocalHttpFinalizedBootstrap,
   HarnessRunNeed,
   HarnessSkillLimits,
   HarnessSkillRunPreparation,
@@ -86,6 +89,7 @@ export {
 
 export {
   cancelHarnessLocalHttpTurn,
+  completeHarnessLocalHttpBootstrap,
   readHarnessLocalHttpTurn,
   startHarnessLocalHttpBootstrap,
 } from './local-http-bootstrap.js'

@@ -34,7 +34,12 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
       const { ManagedProfileRegistry } = await import(profileRegistry)
       const profile = await new ManagedProfileRegistry(homeDir).addProfile({ slug: 'harness-chatgpt', lifecycle: 'ready' })
       const token = (await fs.readFile(path.join(homeDir, 'daemon.token'), 'utf8')).trim()
-      const { cancelHarnessLocalHttpTurn, readHarnessLocalHttpTurn, startHarnessLocalHttpBootstrap } = await import(harnessModule)
+      const {
+        cancelHarnessLocalHttpTurn,
+        completeHarnessLocalHttpBootstrap,
+        readHarnessLocalHttpTurn,
+        startHarnessLocalHttpBootstrap,
+      } = await import(harnessModule)
 
       const queued = await startHarnessLocalHttpBootstrap({
         baseUrl: daemon.origin,
@@ -77,6 +82,20 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
 
       const read = await readHarnessLocalHttpTurn({ baseUrl: daemon.origin, token, turnRef: queued.turnRef })
       assert.equal(read.turnRef, queued.turnRef)
+      await assert.rejects(
+        completeHarnessLocalHttpBootstrap({
+          baseUrl: daemon.origin,
+          token,
+          turnRef: queued.turnRef,
+          runId: 'local-http-bootstrap',
+          stagingRoot: fixture.stagingRoot,
+          nonce: 'local-http-bootstrap-nonce',
+        }),
+        (error) => error?.code === 'harness_bootstrap_turn_incomplete',
+      )
+      const incompleteState = JSON.parse(await fs.readFile(path.join(fixture.stagingRoot, 'local-http-bootstrap', 'state.json'), 'utf8'))
+      assert.equal(incompleteState.bootstrapTurn.status, 'pending')
+      assert.equal(Object.hasOwn(incompleteState.bootstrapTurn, 'acceptanceOutcomes'), false)
       const cancelled = await cancelHarnessLocalHttpTurn({ baseUrl: daemon.origin, token, turnRef: queued.turnRef })
       assert.equal(cancelled.turnRef, queued.turnRef)
       assert.equal(cancelled.lifecycle, 'cancelled')
