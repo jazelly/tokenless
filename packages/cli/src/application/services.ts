@@ -713,7 +713,7 @@ export class TokenlessApplicationServices {
     if (!preferences.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before opening it.')
     }
-    const job = this.createProviderActionJob(profile, provider.id, preferences, action)
+    const job = this.createProviderActionJob(profile, provider.id, action)
     await this.runtimeController?.wake()
     return job
   }
@@ -724,7 +724,7 @@ export class TokenlessApplicationServices {
     const enabled = new Set(preferences.enabledProviders)
     const jobs = listProviderInstances()
       .filter((provider) => provider.descriptor.stage !== 'disabled' && enabled.has(provider.id))
-      .map((provider) => this.createProviderActionJob(profile, provider.id, preferences, 'readiness'))
+      .map((provider) => this.createProviderActionJob(profile, provider.id, 'readiness'))
     if (jobs.length > 0) await this.runtimeController?.wake()
     return { profileSlug: profile.slug, jobs }
   }
@@ -732,7 +732,6 @@ export class TokenlessApplicationServices {
   private createProviderActionJob(
     profile: ManagedProfileRecord,
     provider: ProviderId,
-    preferences: ManagedProfilePreferences,
     action: 'open' | 'readiness' | 'controls',
   ) {
     const visibleAction = action === 'readiness'
@@ -749,7 +748,7 @@ export class TokenlessApplicationServices {
       : [{ action: visibleAction, payload: {} }]
     const request = createManagedPlaywrightJobRequest({
       provider,
-      browserVisibility: action === 'readiness' ? preferences.browserVisibility : 'headed',
+      browserVisibility: 'headed',
       userHandoff: action === 'open',
       taskId: `ui:${action}:${randomUUID()}`,
       actions,

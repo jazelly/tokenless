@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { randomBytes, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -9,6 +8,8 @@ import { chromium } from 'playwright-core'
 
 import { startDaemon } from '../packages/cli/dist/src/daemon/lifecycle.js'
 import {
+  getDaemonJob,
+  listDaemonJobs,
   openBrowserRuntimeProfile,
   openBrowserRuntimeProviderTabs,
   openTokenlessDashboard,
@@ -16,27 +17,33 @@ import {
 import { writeTokenlessConfig } from '../packages/cli/dist/src/job-store.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
 
-test('packaged daemon completes headed provider tab creation and keeps the dashboard context live', { timeout: 60_000 }, async () => {
+test('packaged daemon completes headed provider tabs and keeps the dashboard context live through readiness refresh', { timeout: 60_000 }, async () => {
   const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-tab-lifecycle-')))
   const previousEnvironment = new Map([
     ['TOKENLESS_BROWSER_EXECUTABLE', process.env.TOKENLESS_BROWSER_EXECUTABLE],
-    ['TOKENLESS_E2E_BROWSER_INSPECTION', process.env.TOKENLESS_E2E_BROWSER_INSPECTION],
-    ['TOKENLESS_E2E_RUN_ID', process.env.TOKENLESS_E2E_RUN_ID],
-    ['TOKENLESS_E2E_NONCE', process.env.TOKENLESS_E2E_NONCE],
-    ['TOKENLESS_E2E_OBSERVER_TIMEOUT_MS', process.env.TOKENLESS_E2E_OBSERVER_TIMEOUT_MS],
   ])
   let daemon
   try {
     process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
-    process.env.TOKENLESS_E2E_BROWSER_INSPECTION = '1'
-    process.env.TOKENLESS_E2E_RUN_ID = `tab-lifecycle-${randomUUID()}`
-    process.env.TOKENLESS_E2E_NONCE = randomBytes(32).toString('base64url')
-    process.env.TOKENLESS_E2E_OBSERVER_TIMEOUT_MS = '30000'
-    await writeTokenlessConfig({ homeDir, browser: 'profile' })
-    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
-
     const registry = new ManagedProfileRegistry(homeDir)
     const profile = await registry.addProfile({ slug: 'tab-lifecycle', lifecycle: 'ready', setDefault: true })
+    await writeTokenlessConfig({
+      homeDir,
+      browser: 'profile',
+      browserVisibility: 'auto',
+      browserConnectionMode: 'cdp',
+      providerWhitelist: ['chatgpt'],
+      profilePreferences: {
+        [profile.slug]: {
+          profileId: profile.slug,
+          roleLabel: '',
+          enabledProviders: ['chatgpt'],
+          browserVisibility: 'auto',
+          proxy: null,
+        },
+      },
+    })
+    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
     const profileOpened = await openBrowserRuntimeProfile({
       daemonUrl: daemon.origin,
       homeDir,
@@ -90,6 +97,27 @@ test('packaged daemon completes headed provider tab creation and keeps the dashb
     })
     assert.equal(reopenedDashboard.opened?.reused, true)
     assert.equal(reopenedDashboard.opened?.pageCount, 2)
+
+    await dashboardPage.getByTestId('overview-readiness-refresh').click()
+    const readinessSummary = await waitForValue(async () => {
+      const jobs = await listDaemonJobs({
+        daemonUrl: daemon.origin,
+        homeDir,
+        profileId: profile.id,
+        provider: 'chatgpt',
+      })
+      return jobs.find((job) => typeof job.request_json?.taskId === 'string' && job.request_json.taskId.startsWith('ui:readiness:'))
+    })
+    const readinessJob = await getDaemonJob({ daemonUrl: daemon.origin, homeDir, jobId: readinessSummary.job_id })
+    const readinessContext = await waitForValue(() => {
+      if (!observer.isConnected()) return 'replaced'
+      return browserContext.pages().length > 2 ? 'reused' : null
+    })
+    assert.equal(readinessContext, 'reused')
+    assert.equal(readinessJob.request_json.browserVisibility, 'headed')
+    assert.equal(observer.isConnected(), true)
+    assert.equal(chatgpt.isClosed(), false)
+    assert.equal(dashboardPage.isClosed(), false)
   } finally {
     await daemon?.close()
     for (const [key, value] of previousEnvironment) {
