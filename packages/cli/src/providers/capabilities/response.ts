@@ -8,6 +8,7 @@ import type { ResponseDecisionDiagnostics, ResponseDecisionElement, VisibleCitat
 import type { CaptureVisibleOutput } from '../../output-savings/index.js'
 
 export const RESPONSE_CURSOR_SCHEMA = 'tokenless.provider.response-cursor.v2'
+const RESPONSE_CONFIRMATION_WINDOW_MS = 3_000
 
 const GENERATION_STOP_SELECTOR = [
   'button[data-testid="stop-button"]',
@@ -54,17 +55,15 @@ export async function observeDomResponseAction(
 ): Promise<ProviderActionObservation> {
   const baseline = validateDomResponsePreparation(provider, preparation)
   const observation = await observeDomResponseCursor(provider, page)
-  const hasNewAnswer = (
-    observation.answerCount > baseline.answerCount &&
-    observation.latestAnswerFingerprint !== null
-  ) ||
-    (
-      baseline.latestAnswerFingerprint !== null &&
-      observation.latestAnswerFingerprint !== null &&
-      observation.latestAnswerFingerprint !== baseline.latestAnswerFingerprint
-    )
+  if (!isReadyResponseObservation(observation, baseline)) return { state: 'pending' as const }
+  await page.waitForTimeout(RESPONSE_CONFIRMATION_WINDOW_MS)
+  const confirmation = await observeDomResponseCursor(provider, page)
   return {
-    state: hasNewAnswer && !observation.busy ? 'ready' as const : 'pending' as const,
+    state: isReadyResponseObservation(confirmation, baseline) &&
+      confirmation.answerCount === observation.answerCount &&
+      confirmation.latestAnswerFingerprint === observation.latestAnswerFingerprint
+      ? 'ready' as const
+      : 'pending' as const,
   }
 }
 
@@ -178,6 +177,22 @@ function createResponsePreparation(
       latestAnswerFingerprint: validateFingerprint(latestAnswerFingerprint),
     }),
   })
+}
+
+function isReadyResponseObservation(
+  observation: ResponseCursorObservation,
+  baseline: { answerCount: number, latestAnswerFingerprint: string | null },
+) {
+  const hasNewAnswer = (
+    observation.answerCount > baseline.answerCount &&
+    observation.latestAnswerFingerprint !== null
+  ) ||
+    (
+      baseline.latestAnswerFingerprint !== null &&
+      observation.latestAnswerFingerprint !== null &&
+      observation.latestAnswerFingerprint !== baseline.latestAnswerFingerprint
+    )
+  return hasNewAnswer && !observation.busy
 }
 
 function normalizeVisibleText(text: string) {
