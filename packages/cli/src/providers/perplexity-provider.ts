@@ -68,7 +68,10 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
         'button[aria-label="Model"]',
       ]),
       effortControlSelectors: Object.freeze([]),
-      authIndicators: Object.freeze([]),
+      authIndicators: Object.freeze([
+        'button:has(img[alt="Profile avatar"])',
+        'button[aria-label^="Profile avatar"]',
+      ]),
       loginIndicators: Object.freeze([
         'button:has-text("Sign In")',
       ]),

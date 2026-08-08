@@ -63,7 +63,10 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       effortControlSelectors: Object.freeze([
         '.qwen-select-thinking',
       ]),
-      authIndicators: Object.freeze([]),
+      authIndicators: Object.freeze([
+        'button:has(img[alt="User profile"])',
+        'button[aria-label^="User profile"]',
+      ]),
       loginIndicators: Object.freeze([
         'button:has-text("Log in")',
         'button:has-text("Sign up")',
