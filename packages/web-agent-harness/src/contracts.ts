@@ -280,6 +280,43 @@ export type HarnessFinalResponse = {
 
 export type HarnessModelResponse = HarnessActionBatch | HarnessFinalResponse
 
+/** Immutable admission input for one locally durable sequential Harness mission. */
+export type EnqueueSequentialHarnessMissionInput = {
+  provider: string
+  profileId: string
+  taskPrompt: string
+  finalOutput?: HarnessFinalOutputContract | undefined
+  maxTurns?: number | undefined
+  cooldownMs?: number | undefined
+}
+
+export type OpenSequentialHarnessMissionQueueInput = {
+  tokenlessHome: string
+  stagingRoot: string
+}
+
+export type HarnessMissionStatus = 'queued' | 'preparing' | 'canceled'
+
+/** Redacted admission state. The frozen prompt and profile identity stay private in SQLite. */
+export type HarnessMissionView = {
+  mode: 'sequential'
+  taskRef: string
+  status: HarnessMissionStatus
+  cancellationRequested: boolean
+  promptSha256: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type SequentialHarnessMissionQueue = {
+  enqueue(input: EnqueueSequentialHarnessMissionInput): HarnessMissionView
+  read(taskRef: string): HarnessMissionView | null
+  list(): readonly HarnessMissionView[]
+  activateNext(): HarnessMissionView | null
+  cancel(taskRef: string): HarnessMissionView | null
+  close(): void
+}
+
 export class HarnessSkillError extends Error {
   readonly code: string
   readonly context: Readonly<Record<string, JsonValue>> | undefined

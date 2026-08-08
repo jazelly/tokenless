@@ -53,6 +53,8 @@ export type {
   HarnessModelResponse,
   HarnessLocalHttpBootstrapCompletion,
   HarnessLocalHttpFinalizedBootstrap,
+  HarnessMissionStatus,
+  HarnessMissionView,
   HarnessRunNeed,
   HarnessSkillLimits,
   HarnessSkillRunPreparation,
@@ -61,6 +63,8 @@ export type {
   HarnessToolDescriptor,
   JsonPrimitive,
   JsonValue,
+  EnqueueSequentialHarnessMissionInput,
+  OpenSequentialHarnessMissionQueueInput,
   ParseHarnessModelResponseInput,
   FinalizeHarnessBootstrapTurnInput,
   PrepareHarnessBootstrapTurnInput,
@@ -77,6 +81,7 @@ export type {
   SkillRegistryRevision,
   SkillSelection,
   SkillSelectionSource,
+  SequentialHarnessMissionQueue,
 } from './contracts.js'
 
 export {
@@ -93,3 +98,7 @@ export {
   readHarnessLocalHttpTurn,
   startHarnessLocalHttpBootstrap,
 } from './local-http-bootstrap.js'
+
+export {
+  openSequentialHarnessMissionQueue,
+} from './mission-queue.js'

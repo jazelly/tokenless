@@ -25,6 +25,10 @@ The package reads only `SKILL.md`. It never reads or executes `references/`, `as
 
 Provider transport stays outside this package: the selected adapter must support both `conversation.chat` and `file.upload`. It must visibly accept the System Prompt before it calls `finalizeHarnessBootstrapTurn`; a rejected Skill becomes a soft `provider_upload_failed` omission, while a rejected System Prompt produces no prompt and no task submission. A run is single-writer; callers must not prepare the same turn concurrently.
 
+### Sequential mission admission
+
+`openSequentialHarnessMissionQueue` is a durable local admission ledger only: it freezes a bounded private mission specification in `harness.sqlite3`, exposes a redacted task projection, and atomically admits at most one `preparing` task. It does not start a daemon, contact a provider, prepare a bootstrap, or finalize output.
+
 ### Local HTTP V0 bootstrap
 
 `startHarnessLocalHttpBootstrap` is the intentionally narrow local-control-plane seam. It binds the configured provider/profile, compiles and reads the required System Prompt Markdown, stages those exact bytes, and starts one canonical V0 new-conversation request. It returns the protocol `TurnState`; `readHarnessLocalHttpTurn` and `cancelHarnessLocalHttpTurn` operate on its opaque `turnRef`.
