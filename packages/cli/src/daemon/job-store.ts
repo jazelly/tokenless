@@ -225,10 +225,21 @@ export type WebAiTurn = {
   provider_ref: string
   conversation_ref: string
   attachment_ref: string
+  request_ref: string | null
+  request_sha256: string | null
   job_id: string
   cancelled: boolean
   cancel_dispatch_certainty: 'not_dispatched' | 'dispatched' | 'ambiguous'
   cancel_attachment_delivery: 'pending' | 'delivered'
+}
+
+export class WebAiRequestRefConflictError extends Error {
+  readonly code = 'web_ai_request_ref_conflict'
+
+  constructor() {
+    super('web ai requestRef was already used for a different request')
+    this.name = 'WebAiRequestRefConflictError'
+  }
 }
 
 const DATABASE_FILE_NAME = 'tokenless.sqlite3'
@@ -519,10 +530,14 @@ export class JobStore {
     binding_ref: string
     conversation_ref: string
     attachment_ref: string
+    request_ref: string
+    request_sha256: string
     job: CreateJobInput
   }) {
     const turnRef = webAiRef(input.turn_ref, 'turn_ref')
     const conversationRef = webAiRef(input.conversation_ref, 'conversation_ref')
+    const requestRef = webAiRequestRef(input.request_ref)
+    const requestSha256 = webAiRequestSha256(input.request_sha256)
     const binding = this.getWebAiBinding(input.binding_ref)
     if (!binding) throw invalidInput('web ai provider binding was not found')
     const attachment = this.getWebAiStagedAttachment(input.attachment_ref)
@@ -530,6 +545,11 @@ export class JobStore {
       throw invalidInput('web ai staged attachment was not found')
     }
     return this.transaction(() => {
+      const existing = this.getWebAiTurnByRequestRef(requestRef)
+      if (existing) {
+        if (existing.request_sha256 !== requestSha256) throw new WebAiRequestRefConflictError()
+        return existing
+      }
       const unused = this.run(
         'UPDATE web_ai_v0_staged_attachments SET consumed_turn_ref = ? WHERE attachment_ref = ? AND consumed_turn_ref IS NULL',
         turnRef,
@@ -540,14 +560,16 @@ export class JobStore {
       this.run(
         `INSERT INTO web_ai_v0_turns (
           turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-          cancel_dispatch_certainty, cancel_attachment_delivery, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, 'not_dispatched', 'pending', ?)`,
+          cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 'not_dispatched', 'pending', ?, ?, ?)`,
         turnRef,
         binding.binding_ref,
         binding.provider_ref,
         conversationRef,
         attachment.attachment_ref,
         job.job_id,
+        requestRef,
+        requestSha256,
         nowRfc3339(),
       )
       return this.getWebAiTurn(turnRef)!
@@ -557,9 +579,19 @@ export class JobStore {
   getWebAiTurn(turnRef: string) {
     const row = this.get(
       `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
-              cancel_dispatch_certainty, cancel_attachment_delivery
+              cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256
        FROM web_ai_v0_turns WHERE turn_ref = ?`,
       webAiRef(turnRef, 'turn_ref'),
+    )
+    return row ? rowToWebAiTurn(row) : null
+  }
+
+  getWebAiTurnByRequestRef(requestRef: string) {
+    const row = this.get(
+      `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
+              cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256
+       FROM web_ai_v0_turns WHERE request_ref = ?`,
+      webAiRequestRef(requestRef),
     )
     return row ? rowToWebAiTurn(row) : null
   }
@@ -1990,6 +2022,8 @@ export class JobStore {
     const columns = new Set(this.all('PRAGMA table_info(web_ai_v0_turns)').map((row) => String(row.name)))
     if (!columns.has('cancel_dispatch_certainty')) this.exec("ALTER TABLE web_ai_v0_turns ADD COLUMN cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched'")
     if (!columns.has('cancel_attachment_delivery')) this.exec("ALTER TABLE web_ai_v0_turns ADD COLUMN cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending'")
+    if (!columns.has('request_ref')) this.exec('ALTER TABLE web_ai_v0_turns ADD COLUMN request_ref TEXT')
+    if (!columns.has('request_sha256')) this.exec('ALTER TABLE web_ai_v0_turns ADD COLUMN request_sha256 TEXT')
   }
 
   private createBaseTables() {
@@ -2161,7 +2195,10 @@ export class JobStore {
         cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
         cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched' CHECK (cancel_dispatch_certainty IN ('not_dispatched', 'dispatched', 'ambiguous')),
         cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending' CHECK (cancel_attachment_delivery IN ('pending', 'delivered')),
-        created_at TEXT NOT NULL
+        request_ref TEXT CHECK (request_ref IS NULL OR (length(request_ref) = 40 AND substr(request_ref, 1, 8) = 'request:' AND substr(request_ref, 9) NOT GLOB '*[^0-9a-f]*')),
+        request_sha256 TEXT CHECK (request_sha256 IS NULL OR (length(request_sha256) = 64 AND request_sha256 NOT GLOB '*[^0-9a-f]*')),
+        created_at TEXT NOT NULL,
+        CHECK ((request_ref IS NULL AND request_sha256 IS NULL) OR (request_ref IS NOT NULL AND request_sha256 IS NOT NULL))
       );
     `)
   }
@@ -2205,6 +2242,9 @@ export class JobStore {
         ON web_ai_v0_staged_attachments(consumed_turn_ref, created_at);
       CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_bundle_attachment_idx
         ON web_ai_v0_staged_attachments(bundle_id, attachment_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_turns_request_ref_idx
+        ON web_ai_v0_turns(request_ref)
+        WHERE request_ref IS NOT NULL;
     `)
   }
 
@@ -2516,6 +2556,20 @@ function webAiRef(value: unknown, field: string) {
   return value
 }
 
+function webAiRequestRef(value: unknown) {
+  if (typeof value !== 'string' || !/^request:[a-f0-9]{32}$/.test(value)) {
+    throw invalidInput('request_ref is invalid')
+  }
+  return value
+}
+
+function webAiRequestSha256(value: unknown) {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw invalidInput('request_sha256 is invalid')
+  }
+  return value
+}
+
 function rowToWebAiBinding(row: Record<string, unknown>): WebAiBinding {
   return {
     binding_ref: webAiRef(row.binding_ref, 'binding_ref'),
@@ -2564,6 +2618,8 @@ function rowToWebAiTurn(row: Record<string, unknown>): WebAiTurn {
     provider_ref: webAiRef(row.provider_ref, 'provider_ref'),
     conversation_ref: webAiRef(row.conversation_ref, 'conversation_ref'),
     attachment_ref: webAiRef(row.attachment_ref, 'attachment_ref'),
+    request_ref: row.request_ref === null ? null : webAiRequestRef(row.request_ref),
+    request_sha256: row.request_sha256 === null ? null : webAiRequestSha256(row.request_sha256),
     job_id: normalizeNonempty(String(row.job_id), 'job_id'),
     cancelled: Number(row.cancelled) === 1,
     cancel_dispatch_certainty: row.cancel_dispatch_certainty === 'dispatched' || row.cancel_dispatch_certainty === 'ambiguous'

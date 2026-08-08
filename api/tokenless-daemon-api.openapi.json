@@ -218,7 +218,7 @@
         "summary": "Atomically consume a staged attachment and queue one V0 turn",
         "parameters": [{ "$ref": "#/components/parameters/web_ai_binding_ref" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiStartRequest" } } } },
-        "responses": { "200": { "description": "Core V0 turn state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiTurnResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+        "responses": { "200": { "description": "Core V0 turn state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiTurnResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/WebAiRequestRefConflict" } }
       }
     },
     "/v1/web-ai/turns/{turnRef}": {
@@ -920,6 +920,16 @@
           }
         }
       },
+      "WebAiRequestRefConflict": {
+        "description": "The immutable requestRef is already bound to a different Web AI V0 start request; no new turn or job was created.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/WebAiRequestRefConflictResponse"
+            }
+          }
+        }
+      },
       "InternalError": {
         "description": "Daemon internal failure",
         "content": {
@@ -971,6 +981,19 @@
       "WebAiTurnResponse": {
         "type": "object", "additionalProperties": false, "required": ["turn"],
         "properties": { "turn": { "$ref": "#/components/schemas/WebAiTurnState" } }
+      },
+      "WebAiRequestRefConflictResponse": {
+        "type": "object", "additionalProperties": false, "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object", "additionalProperties": false, "required": ["code", "message", "retryable"],
+            "properties": {
+              "code": { "const": "web_ai_request_ref_conflict" },
+              "message": { "const": "The request reference is already bound to a different request." },
+              "retryable": { "const": false }
+            }
+          }
+        }
       },
       "WebAiTurnStateBase": {
         "type": "object", "additionalProperties": false,

@@ -40,6 +40,28 @@ test('marker cleanup only targets V0 markers', async () => {
   })
 })
 
+test('requestRef migration upgrades a persisted legacy V0 turns schema', async () => {
+  await withHome(async (homeDir) => {
+    persistLegacyWebAiTurnsSchema(homeDir)
+    const daemon = await startControlPlane(homeDir)
+    try {
+      const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+      try {
+        const columns = new Map(database.prepare('PRAGMA table_info(web_ai_v0_turns)').all().map((column) => [column.name, column]))
+        assert.equal(columns.get('request_ref')?.notnull, 0)
+        assert.equal(columns.get('request_sha256')?.notnull, 0)
+        const index = database.prepare('PRAGMA index_list(web_ai_v0_turns)').all().find((entry) => entry.name === 'web_ai_v0_turns_request_ref_idx')
+        assert.equal(index?.unique, 1)
+        assert.equal(index?.partial, 1)
+      } finally {
+        database.close()
+      }
+    } finally {
+      await daemon.close()
+    }
+  })
+})
+
 test('oversize stage is bounded and sanitized', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
@@ -210,6 +232,75 @@ test('canonical start conformance rejects the same adversarial corpus at core, c
   })
 })
 
+test('requestRef replays one durable turn across restart and rejects a conflicting request', async () => {
+  await withHome(async (homeDir) => {
+    let daemon = await startControlPlane(homeDir)
+    try {
+      const { client, binding, token } = await configuredClient(homeDir, daemon, 'chatgpt', 'request-ref')
+      const bytes = new TextEncoder().encode('# system\n')
+      const firstAttachment = await client.stage(binding.providerBindingRef, bytes)
+      const firstRequest = requestFor(binding, firstAttachment, '7')
+      const first = await client.start(binding.providerBindingRef, firstRequest)
+      const firstMapping = daemon.store.getWebAiTurn(first.turnRef)
+      assert.ok(firstMapping)
+      assert.equal(firstMapping.request_ref, firstRequest.requestRef)
+      assert.equal(firstMapping.request_sha256?.length, 64)
+      assert.equal(webAiJobCount(homeDir), 1)
+
+      const replayAttachment = await client.stage(binding.providerBindingRef, bytes)
+      const replay = await client.start(binding.providerBindingRef, requestFor(binding, replayAttachment, '7'))
+      assert.equal(replay.turnRef, first.turnRef)
+      assert.equal(webAiJobCount(homeDir), 1)
+      assert.equal(daemon.store.webAiCounts().turns, 1)
+      assert.equal(daemon.store.webAiStageStatus(replayAttachment.attachmentRef)?.consumed, false)
+
+      await daemon.close()
+      daemon = await startControlPlane(homeDir)
+      const restartedClient = createLocalHttpClient({ baseUrl: daemon.origin, token })
+      const afterRestart = await restartedClient.start(
+        binding.providerBindingRef,
+        requestFor(binding, replayAttachment, '7'),
+      )
+      assert.equal(afterRestart.turnRef, first.turnRef)
+      assert.equal(webAiJobCount(homeDir), 1)
+
+      const shaOnlyAttachment = await restartedClient.stage(binding.providerBindingRef, new TextEncoder().encode('# syStem\n'))
+      assert.equal(shaOnlyAttachment.byteLength, firstAttachment.byteLength)
+      assert.notEqual(shaOnlyAttachment.sha256, firstAttachment.sha256)
+      await assertRequestRefConflict(restartedClient, binding.providerBindingRef, requestFor(binding, shaOnlyAttachment, '7'))
+
+      const byteLengthConflict = requestFor(binding, replayAttachment, '7')
+      byteLengthConflict.bootstrap.attachments[0].byteLength += 1
+      await assertRequestRefConflict(restartedClient, binding.providerBindingRef, byteLengthConflict)
+
+      const { client: otherClient, binding: otherBinding } = await configuredClient(homeDir, daemon, 'chatgpt', 'request-ref-other-profile')
+      const otherAttachment = await otherClient.stage(otherBinding.providerBindingRef, bytes)
+      await assertRequestRefConflict(otherClient, otherBinding.providerBindingRef, requestFor(otherBinding, otherAttachment, '7'))
+
+      const conflict = requestFor(binding, replayAttachment, '7')
+      conflict.bootstrap.text = 'different text'
+      await assertRequestRefConflict(restartedClient, binding.providerBindingRef, conflict)
+      const response = await fetch(`${daemon.origin}/v1/web-ai/bindings/${encodeURIComponent(binding.providerBindingRef)}/turns`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(conflict),
+      })
+      assert.equal(response.status, 409)
+      const body = await response.json()
+      assert.deepEqual(body.error, {
+        code: 'web_ai_request_ref_conflict',
+        message: 'The request reference is already bound to a different request.',
+        retryable: false,
+      })
+      assertSanitized(body, token)
+      assert.equal(webAiJobCount(homeDir), 1)
+      assert.equal(daemon.store.webAiCounts().turns, 1)
+    } finally {
+      await daemon.close()
+    }
+  })
+})
+
 test('canonical and OpenAPI TurnState schemas reject global certainty counterexamples', () => {
   const running = readCanonicalExample('turn-state-running.json')
   const waiting = readCanonicalExample('turn-state-waiting.json')
@@ -337,6 +428,50 @@ function injectJobState(homeDir, jobId, status, error) {
   } finally {
     database.close()
   }
+}
+
+function webAiJobCount(homeDir) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+  try {
+    return Number(database.prepare('SELECT COUNT(*) AS count FROM jobs').get().count)
+  } finally {
+    database.close()
+  }
+}
+
+function persistLegacyWebAiTurnsSchema(homeDir) {
+  const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+  try {
+    database.exec(`
+      CREATE TABLE web_ai_v0_turns (
+        turn_ref TEXT PRIMARY KEY NOT NULL CHECK (length(turn_ref) BETWEEN 1 AND 128),
+        binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE RESTRICT,
+        provider_ref TEXT NOT NULL CHECK (length(provider_ref) BETWEEN 1 AND 128),
+        conversation_ref TEXT NOT NULL CHECK (length(conversation_ref) BETWEEN 1 AND 128),
+        attachment_ref TEXT NOT NULL UNIQUE REFERENCES web_ai_v0_staged_attachments(attachment_ref) ON DELETE RESTRICT,
+        job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE RESTRICT,
+        cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
+        cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched' CHECK (cancel_dispatch_certainty IN ('not_dispatched', 'dispatched', 'ambiguous')),
+        cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending' CHECK (cancel_attachment_delivery IN ('pending', 'delivered')),
+        created_at TEXT NOT NULL
+      );
+    `)
+  } finally {
+    database.close()
+  }
+}
+
+async function assertRequestRefConflict(client, bindingRef, request) {
+  await assert.rejects(client.start(bindingRef, request), (error) => {
+    assert.ok(error instanceof LocalHttpError)
+    assert.equal(error.status, 409)
+    assert.deepEqual(error.error, {
+      code: 'web_ai_request_ref_conflict',
+      message: 'The request reference is already bound to a different request.',
+      retryable: false,
+    })
+    return true
+  })
 }
 
 async function assertLocalHttpError(promise, status, code) {

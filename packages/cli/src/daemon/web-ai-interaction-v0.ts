@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
 import { deriveTaskId, readTokenlessConfig } from '../job-store.js'
@@ -9,7 +9,13 @@ import { checkpointIndicatesPromptSubmission } from '../playwright/submission-ce
 import { getProviderInstanceById, resolveTaskCapabilityRoute, type TaskCapabilityId } from '../providers/registry.js'
 import { DEFAULT_MAX_VISIBLE_ATTACHMENT_BYTES, listMarkedWebAiStageBundles, removeStagedVisibleAttachmentBundle, stageVisibleAttachmentStream } from '../visible-attachments.js'
 import { invalidInput } from './errors.js'
-import type { Job, JobStore, WebAiBinding, WebAiTurn } from './job-store.js'
+import {
+  WebAiRequestRefConflictError,
+  type Job,
+  type JobStore,
+  type WebAiBinding,
+  type WebAiTurn,
+} from './job-store.js'
 
 const SYSTEM_PROMPT_LIMIT_BYTES = 1024 * 1024
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
@@ -21,8 +27,11 @@ type CapabilityDocument = {
   supportedCapabilities: readonly ['conversation.chat'] | readonly ['file.upload'] | typeof REQUIRED_CAPABILITIES
 }
 type StartTurnRequest = {
+  requestRef: string
   providerRef: string
   providerBindingRef: string
+  requiredCapabilities: readonly ['conversation.chat', 'file.upload']
+  conversation: { mode: 'new' }
   bootstrap: { text: string; attachments: readonly [{ attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }] }
 }
 type TurnState = Record<string, unknown>
@@ -94,6 +103,15 @@ export class WebAiInteractionV0Adapter {
     } catch (error) {
       throw invalidInput(`web ai start request is invalid: ${error instanceof Error ? error.message : String(error)}`)
     }
+    const requestSha256 = canonicalStartRequestSha256(binding, request)
+    const existing = this.store.getWebAiTurnByRequestRef(request.requestRef)
+    if (existing) {
+      if (existing.request_sha256 !== requestSha256) throw new WebAiRequestRefConflictError()
+      if (request.providerBindingRef !== binding.binding_ref || request.providerRef !== binding.provider_ref) {
+        throw invalidInput('web ai request binding does not match the route')
+      }
+      return this.project(existing, this.store.getJob(existing.job_id))
+    }
     if (request.providerBindingRef !== binding.binding_ref || request.providerRef !== binding.provider_ref) {
       throw invalidInput('web ai request binding does not match the route')
     }
@@ -138,6 +156,8 @@ export class WebAiInteractionV0Adapter {
       binding_ref: binding.binding_ref,
       conversation_ref: conversationRef,
       attachment_ref: attachment.attachment_ref,
+      request_ref: request.requestRef,
+      request_sha256: requestSha256,
       job: {
         provider: binding.provider,
         action: MANAGED_PLAYWRIGHT_JOB_ACTION,
@@ -265,6 +285,26 @@ function parseStartTurnRequest(value: unknown): StartTurnRequest {
     throw new Error('start_turn_request attachment is invalid')
   }
   return request as unknown as StartTurnRequest
+}
+
+function canonicalStartRequestSha256(binding: WebAiBinding, request: StartTurnRequest) {
+  const attachment = request.bootstrap.attachments[0]!
+  return createHash('sha256').update(JSON.stringify({
+    provider: binding.provider,
+    profileId: binding.profile_id,
+    providerRef: request.providerRef,
+    providerBindingRef: request.providerBindingRef,
+    requiredCapabilities: request.requiredCapabilities,
+    conversation: request.conversation,
+    bootstrap: {
+      text: request.bootstrap.text,
+      attachment: {
+        mediaType: attachment.mediaType,
+        byteLength: attachment.byteLength,
+        sha256: attachment.sha256,
+      },
+    },
+  })).digest('hex')
 }
 
 function turnState(value: Record<string, unknown>): TurnState {

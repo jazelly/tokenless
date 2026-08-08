@@ -25,7 +25,7 @@ import {
   toDaemonError,
   type DaemonError,
 } from './errors.js'
-import { JobStore, publicView, type ExecutionBackend, type JobStatus } from './job-store.js'
+import { JobStore, WebAiRequestRefConflictError, publicView, type ExecutionBackend, type JobStatus } from './job-store.js'
 import { TokenlessApplicationServices } from '../application/services.js'
 import { TokenlessUiServer } from './ui-server.js'
 import { UiSessionManager } from './ui-session.js'
@@ -499,12 +499,13 @@ async function handleWebAiRequest(
 
 function writeWebAiError(response: ServerResponse, error: unknown) {
   const daemonError = toDaemonError(error)
+  const requestRefConflict = error instanceof WebAiRequestRefConflictError
   const invalid = daemonError.kind === 'invalid_input'
-  writeJson(response, invalid ? 400 : 500, {
+  writeJson(response, requestRefConflict ? 409 : invalid ? 400 : 500, {
     error: {
-      code: invalid ? 'invalid_input' : 'local_http_error',
-      message: invalid ? 'The local Web AI request was rejected.' : 'The local Web AI service encountered an error.',
-      retryable: !invalid,
+      code: requestRefConflict ? 'web_ai_request_ref_conflict' : invalid ? 'invalid_input' : 'local_http_error',
+      message: requestRefConflict ? 'The request reference is already bound to a different request.' : invalid ? 'The local Web AI request was rejected.' : 'The local Web AI service encountered an error.',
+      retryable: requestRefConflict ? false : !invalid,
     },
   })
 }

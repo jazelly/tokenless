@@ -120,6 +120,7 @@ function safeError(value: unknown) {
     ['control_auth_missing', { message: 'Local daemon authentication is required.', retryable: false }],
     ['control_auth_rejected', { message: 'Local daemon authentication was rejected.', retryable: false }],
     ['daemon_starting', { message: 'The local daemon is still starting.', retryable: true }],
+    ['web_ai_request_ref_conflict', { message: 'The request reference is already bound to a different request.', retryable: false }],
   ])
   const mapped = known.get(error.code)
   return mapped ? { code: error.code, ...mapped } : { code: 'local_http_error', message: 'The local daemon rejected the request.', retryable: false }
