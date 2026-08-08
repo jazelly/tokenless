@@ -329,37 +329,56 @@ export class ManagedPlaywrightRunnerService {
       claimedPages.add(initialBlankPage)
       knownProviderTabs.set(initialProvider.id, initialBlankPage)
       pendingProviderTabs.add(initialProvider.id)
-      tabs.push({
-        provider: initialProvider.id,
-        url: initialProvider.descriptor.navigation.entryUrl,
-        reused: false,
-      })
-      void initialBlankPage.goto(initialProvider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
-        .catch(() => knownProviderTabs.delete(initialProvider.id))
-        .finally(() => pendingProviderTabs.delete(initialProvider.id))
+      try {
+        await initialBlankPage.goto(initialProvider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
+        tabs.push({
+          provider: initialProvider.id,
+          url: initialProvider.descriptor.navigation.entryUrl,
+          reused: false,
+        })
+      } catch (error) {
+        knownProviderTabs.delete(initialProvider.id)
+        failures.push(providerTabOpenFailure(initialProvider.id, error))
+      } finally {
+        pendingProviderTabs.delete(initialProvider.id)
+      }
     }
     if (missing.length > 0) {
       const browser = managedContext.browserContext.browser()
       if (!browser) throw tokenlessError('playwright_browser_closed', 'Managed browser is no longer connected.')
       const session = await browser.newBrowserCDPSession()
-      const requests = missing.map((provider) => {
+      const requests = missing.map(async (provider) => {
         pendingProviderTabs.add(provider.id)
-        tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: false })
-        return session.send('Target.createTarget', {
-          url: provider.descriptor.navigation.entryUrl,
-          background: true,
-          focus: false,
-        }).then(async (created) => {
+        try {
+          const created = await session.send('Target.createTarget', {
+            url: provider.descriptor.navigation.entryUrl,
+            background: true,
+            focus: false,
+          })
           const createdPages = await waitForChromiumTargetPages(
             managedContext.browserContext,
             new Set([created.targetId]),
             10_000,
           )
           const page = createdPages.get(created.targetId)
-          if (page) knownProviderTabs.set(provider.id, page)
-        }).finally(() => pendingProviderTabs.delete(provider.id))
+          if (!page) {
+            throw tokenlessError(
+              'playwright_background_page_unavailable',
+              `Chromium created the ${provider.id} tab but Playwright did not expose its page.`,
+              { retryable: true, details: { provider: provider.id, targetId: created.targetId } },
+            )
+          }
+          knownProviderTabs.set(provider.id, page)
+          tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: false })
+        } catch (error) {
+          knownProviderTabs.delete(provider.id)
+          failures.push(providerTabOpenFailure(provider.id, error))
+        } finally {
+          pendingProviderTabs.delete(provider.id)
+        }
       })
-      void Promise.allSettled(requests).finally(() => session.detach().catch(() => undefined))
+      await Promise.all(requests)
+      await session.detach().catch(() => undefined)
     }
     if (pendingProviderTabs.size === 0) {
       this.pendingProviderTabsByProfile.delete(profile.id)
@@ -2098,6 +2117,14 @@ function providerOwnsPage(
 ) {
   const classification = provider.navigation.classify(page.url())
   return classification.kind === 'approved' || classification.kind === 'trusted_sign_in'
+}
+
+function providerTabOpenFailure(provider: string, error: unknown) {
+  return {
+    provider,
+    code: 'provider_tab_open_failed' as const,
+    message: errorResponse(error).message,
+  }
 }
 
 function fallbackBlocker(page: Page, provider: RunnerProvider): VisibleBlocker {
