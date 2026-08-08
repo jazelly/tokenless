@@ -33,6 +33,7 @@ import {
   readRegularFile,
   resolveRunDirectory,
   sha256,
+  validateRunId,
   writePrivateFile,
 } from './internal/filesystem.js'
 import { resolveHarnessSkillLimits } from './internal/limits.js'
@@ -97,8 +98,7 @@ type HarnessSkillStateWithBootstrap = HarnessSkillState & {
 export async function prepareHarnessBootstrapTurn(
   input: PrepareHarnessBootstrapTurnInput,
 ): Promise<HarnessBootstrapTurnPreparation> {
-  const taskPrompt = validateBootstrapTaskPrompt(input.taskPrompt)
-  const nonce = validateBootstrapNonce(input.nonce)
+  const { taskPrompt, nonce } = assertHarnessBootstrapStaticInput(input)
   const prepared = await prepareInitialHarnessSkillRun(input, { taskPrompt, nonce })
   return {
     protocol: HARNESS_SKILL_MODULE_PROTOCOL,
@@ -113,6 +113,17 @@ export async function prepareHarnessBootstrapTurn(
     systemPrompt: prepared.systemPrompt,
     candidateDelivery: prepared.delivery,
   }
+}
+
+export function assertHarnessBootstrapStaticInput(
+  input: Pick<PrepareHarnessBootstrapTurnInput, 'runId' | 'taskPrompt' | 'nonce' | 'finalOutput' | 'limits'>,
+) {
+  validateRunId(input.runId)
+  const taskPrompt = validateBootstrapTaskPrompt(input.taskPrompt)
+  const nonce = validateBootstrapNonce(input.nonce)
+  resolveHarnessSkillLimits(input.limits)
+  validateFinalOutput(input.finalOutput)
+  return { taskPrompt, nonce }
 }
 
 /** @deprecated Legacy staging-only API; use prepareHarnessBootstrapTurn and finalizeHarnessBootstrapTurn for a first provider turn. */
@@ -195,7 +206,7 @@ function buildFinalizedBootstrapTurn({
     nonce: bootstrap.nonce,
     requiredProviderCapabilities: REQUIRED_HARNESS_PROVIDER_CAPABILITIES,
     acceptedAttachments: [state.systemPrompt, ...delivery.attachments],
-    prompt: renderBootstrapPrompt({
+    prompt: renderHarnessBootstrapPrompt({
       runId: state.runId,
       nonce: bootstrap.nonce,
       taskPrompt: bootstrap.taskPrompt,
@@ -791,7 +802,7 @@ function selectionSourceForCandidate(
   ))?.selectedBy ?? 'caller_agent'
 }
 
-function renderBootstrapPrompt({
+export function renderHarnessBootstrapPrompt({
   runId,
   nonce,
   taskPrompt,

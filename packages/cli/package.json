@@ -16,6 +16,7 @@
   },
   "files": [
     "dist/src",
+    "dist/schemas",
     "dist/web-agent-harness",
     "README.md",
     "package.json"

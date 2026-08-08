@@ -19,6 +19,11 @@ fs.cpSync(
   path.join(distRoot, 'web-agent-harness'),
   { recursive: true },
 )
+fs.cpSync(
+  path.join(packageRoot, '..', 'web-ai-interaction-protocol', 'schemas', 'v0'),
+  path.join(distRoot, 'schemas', 'v0'),
+  { recursive: true },
+)
 run('vite', ['build', '--config', 'vite.harness.config.mjs', '--logLevel', 'error'])
 
 const uiRoot = path.join(distRoot, 'src', 'daemon', 'ui')

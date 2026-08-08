@@ -63,6 +63,8 @@ export type {
   PrepareHarnessBootstrapTurnInput,
   PrepareHarnessSkillRunInput,
   PrepareHarnessSkillTurnInput,
+  ReadHarnessLocalHttpTurnInput,
+  StartHarnessLocalHttpBootstrapInput,
   SkillDeliveryOmission,
   SkillDeliveryOmissionCode,
   SkillDeliveryRevision,
@@ -81,3 +83,9 @@ export {
   prepareHarnessSkillRun,
   prepareHarnessSkillTurn,
 } from './skill-harness.js'
+
+export {
+  cancelHarnessLocalHttpTurn,
+  readHarnessLocalHttpTurn,
+  startHarnessLocalHttpBootstrap,
+} from './local-http-bootstrap.js'
