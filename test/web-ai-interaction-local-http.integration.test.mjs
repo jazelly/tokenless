@@ -197,6 +197,13 @@ test('canonical start conformance rejects the same adversarial corpus at core, c
       assert.equal(turn.lifecycle, 'queued')
       assert.equal(turn.dispatchCertainty, 'not_dispatched')
       assert.equal(turn.attachmentDelivery.status, 'pending')
+      const turnMapping = daemon.store.getWebAiTurn(turn.turnRef)
+      assert.ok(turnMapping)
+      assert.equal(turnMapping.conversation_ref, turn.conversationRef)
+      const job = daemon.store.getJob(turnMapping.job_id)
+      assert.equal(job.request_json.taskId, `chat:${turn.turnRef}`)
+      assert.equal(Object.hasOwn(turn, 'jobId'), false)
+      assert.equal(Object.hasOwn(turn, 'url'), false)
     } finally {
       await daemon.close()
     }

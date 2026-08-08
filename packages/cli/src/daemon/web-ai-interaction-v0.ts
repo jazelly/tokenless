@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 
-import { readTokenlessConfig } from '../job-store.js'
+import { deriveTaskId, readTokenlessConfig } from '../job-store.js'
 import { createManagedPlaywrightJobRequest, MANAGED_PLAYWRIGHT_JOB_ACTION } from '../playwright/job-contract.js'
 import { VISIBLE_ACTIONS, createVisibleActionRequest } from '../playwright/actions.js'
 import { ManagedProfileRegistry } from '../playwright/profiles/registry.js'
@@ -110,9 +110,11 @@ export class WebAiInteractionV0Adapter {
     })
     if (!route.ok) throw invalidInput('web ai provider does not have a static chat and upload route')
 
+    const turnRef = opaqueRef('turn')
+    const conversationRef = opaqueRef('conversation')
     const requestJson = createManagedPlaywrightJobRequest({
       provider: binding.provider,
-      taskId: null,
+      taskId: deriveTaskId({ chatName: turnRef }),
       capabilityRoute: route.route,
       fallback: null,
       browserVisibility: 'auto',
@@ -132,9 +134,9 @@ export class WebAiInteractionV0Adapter {
       ],
     })
     const turn = this.store.createWebAiTurn({
-      turn_ref: opaqueRef('turn'),
+      turn_ref: turnRef,
       binding_ref: binding.binding_ref,
-      conversation_ref: opaqueRef('conversation'),
+      conversation_ref: conversationRef,
       attachment_ref: attachment.attachment_ref,
       job: {
         provider: binding.provider,
