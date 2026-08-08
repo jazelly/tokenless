@@ -976,6 +976,32 @@ test('built CLI rejects a recorded non-Chrome source at the profile reset copy b
   }
 })
 
+test('built CLI reads managed profile registries without enforcing POSIX mode bits', async () => {
+  const temporaryRoot = fs.realpathSync(os.tmpdir())
+  const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-profile-registry-mode-'))
+  try {
+    const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'mode-visible', lifecycle: 'ready' })
+    fs.chmodSync(registry.paths.registryFile, 0o644)
+
+    const listed = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'list',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(listed.status, 0, listed.stderr || listed.stdout)
+    const payload = JSON.parse(listed.stdout)
+    assert.equal(payload.ok, true)
+    assert.deepEqual(payload.profiles.map((profile) => profile.slug), ['mode-visible'])
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('built CLI rejects profile import into an explicitly selected system browser', async () => {
   const temporaryRoot = fs.realpathSync(os.tmpdir())
   const sourceRoot = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-normal-import-source-'))

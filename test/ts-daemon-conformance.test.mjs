@@ -1354,7 +1354,7 @@ test('TS daemon closes when the embedded managed Playwright scheduler exits fata
 }, async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-ts-embedded-scheduler-fatal-')
-  createOverlyPermissiveManagedProfileRegistry(homeDir)
+  createMalformedManagedProfileRegistry(homeDir)
   const port = await freePort()
   const url = `http://127.0.0.1:${port}`
   const child = spawn(process.execPath, [
@@ -1542,17 +1542,12 @@ function assertProfileDirectoryEmpty(profileDir) {
   assert.deepEqual(fs.readdirSync(profileDir).sort(), [])
 }
 
-function createOverlyPermissiveManagedProfileRegistry(homeDir) {
+function createMalformedManagedProfileRegistry(homeDir) {
   const browserDir = path.join(homeDir, 'browser')
   const profilesRoot = path.join(browserDir, 'profiles')
   fs.mkdirSync(profilesRoot, { recursive: true, mode: 0o700 })
   const registryPath = path.join(browserDir, 'profiles.json')
-  fs.writeFileSync(registryPath, `${JSON.stringify({
-    version: 1,
-    defaultProfile: null,
-    profiles: {},
-  }, null, 2)}\n`, { mode: 0o644 })
-  fs.chmodSync(registryPath, 0o644)
+  fs.writeFileSync(registryPath, '{}\n', { mode: 0o600 })
 }
 
 async function waitForDaemonJobStatus(daemonUrl, token, jobId, status, timeoutMs) {

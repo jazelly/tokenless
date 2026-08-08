@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { constants as fsConstants } from 'node:fs'
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { getProviderDescriptorById } from '../../providers/registry.js'
@@ -301,15 +300,6 @@ export class ManagedProfileRegistry {
   private async readUnlocked(): Promise<ManagedProfileRegistryData> {
     await this.ensureDirectories()
     try {
-      const handle = await open(this.paths.registryFile, fsConstants.O_RDONLY)
-      try {
-        const fileStat = await handle.stat()
-        if ((fileStat.mode & 0o077) !== 0) {
-          throw tokenlessError('profile_registry_permissions', 'Managed profile registry permissions are too broad.')
-        }
-      } finally {
-        await handle.close()
-      }
       const parsed = JSON.parse(await readFile(this.paths.registryFile, 'utf8')) as unknown
       return parseRegistry(parsed, this.paths.profilesRoot)
     } catch (error) {
@@ -352,15 +342,6 @@ export class ManagedProfileRegistry {
 export async function readManagedProfileRegistryReadOnly(tokenlessHome = tokenlessHomeFromEnv()): Promise<ManagedProfileRegistryData> {
   const registry = new ManagedProfileRegistry(tokenlessHome)
   try {
-    const handle = await open(registry.paths.registryFile, fsConstants.O_RDONLY)
-    try {
-      const fileStat = await handle.stat()
-      if ((fileStat.mode & 0o077) !== 0) {
-        throw tokenlessError('profile_registry_permissions', 'Managed profile registry permissions are too broad.')
-      }
-    } finally {
-      await handle.close()
-    }
     const parsed = JSON.parse(await readFile(registry.paths.registryFile, 'utf8')) as unknown
     return parseRegistry(parsed, registry.paths.profilesRoot)
   } catch (error) {
