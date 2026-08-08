@@ -444,6 +444,44 @@ export type VisibleCitation = {
   href: string
 }
 
+export type SnapshotDiagnosticElement = {
+  tag: 'article' | 'blockquote' | 'button' | 'code' | 'div' | 'element' | 'li' | 'main' | 'ol' | 'p' | 'pre' | 'section' | 'span' | 'ul'
+  role?: 'button' | 'textbox' | 'menuitem' | 'option' | 'combobox' | 'listbox'
+  dataTestId?: string
+  ariaBusy?: 'true' | 'false'
+  ariaLive?: 'assertive' | 'off' | 'polite'
+  dataIsStreaming?: 'true' | 'false'
+  dataState?: 'active' | 'closed' | 'complete' | 'idle' | 'inactive' | 'loading' | 'open' | 'pending'
+  classTokens?: readonly string[]
+}
+
+export type SnapshotResponseCandidate = SnapshotDiagnosticElement & {
+  visibleTextLength: number
+  ancestors: readonly SnapshotDiagnosticElement[]
+}
+
+export type SnapshotResponseSelectorDiagnostics = {
+  selectorIndex: number
+  total: number
+  visible: number
+  truncated: boolean
+  candidates: readonly SnapshotResponseCandidate[]
+}
+
+export type SnapshotResponseDiagnostics = {
+  truncated: boolean
+  answerSelectors: {
+    configured: number
+    truncated: boolean
+    selectors: readonly SnapshotResponseSelectorDiagnostics[]
+  }
+  busySelectors: {
+    configured: number
+    truncated: boolean
+    selectors: readonly SnapshotResponseSelectorDiagnostics[]
+  }
+}
+
 export type SnapshotResult = {
   status: 'snapshotted'
   provider: ProviderId
@@ -459,6 +497,7 @@ export type SnapshotResult = {
     login: number
     blocker: number
   }
+  responseDiagnostics: SnapshotResponseDiagnostics
   page: {
     origin: string
   }
