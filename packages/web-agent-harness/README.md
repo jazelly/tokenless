@@ -15,38 +15,53 @@ Codex integration and context:
 
 Skill preparation and visible response control:
 
-- `prepareHarnessSkillRun` discovers the global Agent Skills registry, compiles the required System Prompt Markdown file, and stages caller-preselected `SKILL.md` files.
+- `prepareHarnessBootstrapTurn` stages ordered first-turn attachment candidates and persists their pending acceptance state without producing a prompt.
+- `finalizeHarnessBootstrapTurn` validates exact provider acceptance outcomes, soft-omits rejected Skills, and then returns the first correlated provider prompt.
+- `prepareHarnessSkillRun` is the legacy file-staging API; it does not represent provider acceptance and is not the acceptance-aware bootstrap flow.
 - `parseHarnessModelResponse` validates one framed visible-provider response and returns a correlated `action_batch` or `final` result.
 - `prepareHarnessSkillTurn` resolves caller additions plus the model's complete `skillLoads` list and stages every successful `SKILL.md` file for the next provider prompt.
 
 The package reads only `SKILL.md`. It never reads or executes `references/`, `assets/`, or `scripts/`. The System Prompt is a required attachment; individual Skill attachments use soft omission results.
 
-Provider transport stays outside this package: the selected adapter must support both `conversation.chat` and `file.upload`, upload the returned attachment paths, and include the returned manifest in the related prompt. A run is single-writer; callers must not prepare the same turn concurrently.
+Provider transport stays outside this package: the selected adapter must support both `conversation.chat` and `file.upload`. It must visibly accept the System Prompt before it calls `finalizeHarnessBootstrapTurn`; a rejected Skill becomes a soft `provider_upload_failed` omission, while a rejected System Prompt produces no prompt and no task submission. A run is single-writer; callers must not prepare the same turn concurrently.
 
 Agent context is stored separately in `<TOKENLESS_HOME>/harness.sqlite3`. The ledger stores bounded IDs, canonical project identity, hashes, timestamps, provider mapping references, and job IDs. It does not store raw Codex prompts, transcripts, assistant messages, tool results, browser state, or credentials. The Web Provider API owns real provider Projects, conversations, and jobs; this package binds their returned opaque IDs to Harness conversations.
 
 ```ts
 import {
+  finalizeHarnessBootstrapTurn,
   parseHarnessModelResponse,
-  prepareHarnessSkillRun,
+  prepareHarnessBootstrapTurn,
   prepareHarnessSkillTurn,
 } from 'tokenless-web-agent-harness'
 
-const prepared = await prepareHarnessSkillRun({
+const preparation = await prepareHarnessBootstrapTurn({
   runId: 'run-123',
   stagingRoot: '/private/tokenless/harness',
   selectedSkills: [{ name: 'legal-writing', selectedBy: 'explicit_user' }],
+  taskPrompt: 'Review this contract for material risks.',
+  nonce: 'first-turn-nonce',
 })
 
-// Upload prepared.systemPrompt and prepared.delivery.attachments, then send
-// the task prompt plus prepared.promptManifest through a Provider route that
-// supports conversation.chat and file.upload.
+// Upload preparation.attachments in order through a Provider route that supports
+// conversation.chat and file.upload, then collect one exact acceptance outcome
+// for every attachment by its name and SHA-256.
+const bootstrap = await finalizeHarnessBootstrapTurn({
+  runId: 'run-123',
+  stagingRoot: '/private/tokenless/harness',
+  nonce: 'first-turn-nonce',
+  attachmentAcceptances: visibleUploadOutcomes,
+})
+
+// Send bootstrap.prompt only after finalization succeeds. A rejected Skill is
+// omitted from the manifest; a rejected System Prompt prevents this result.
+// bootstrap.acceptedAttachments is audit-only: do not upload it again.
 
 const response = await parseHarnessModelResponse({
   runId: 'run-123',
   stagingRoot: '/private/tokenless/harness',
   turn: 1,
-  nonce: 'current-turn-nonce',
+  nonce: 'first-turn-nonce',
   responseText: visibleProviderText,
 })
 

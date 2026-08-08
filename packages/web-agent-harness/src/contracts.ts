@@ -44,6 +44,24 @@ export type PrepareHarnessSkillRunInput = {
   limits?: HarnessSkillLimits | undefined
 }
 
+export type PrepareHarnessBootstrapTurnInput = PrepareHarnessSkillRunInput & {
+  taskPrompt: string
+  nonce: string
+}
+
+export type HarnessBootstrapAttachmentAcceptance = {
+  name: string
+  sha256: string
+  accepted: boolean
+}
+
+export type FinalizeHarnessBootstrapTurnInput = {
+  runId: string
+  stagingRoot: string
+  nonce: string
+  attachmentAcceptances: readonly HarnessBootstrapAttachmentAcceptance[]
+}
+
 export type PrepareHarnessSkillTurnInput = {
   runId: string
   stagingRoot: string
@@ -116,6 +134,7 @@ export type SkillDeliveryOmissionCode =
   | 'attachment_count_limit'
   | 'attachment_byte_limit'
   | 'attachment_write_failed'
+  | 'provider_upload_failed'
 
 export type SkillDeliveryOmission = {
   name: string
@@ -137,6 +156,36 @@ export type HarnessSkillRunPreparation = {
   runId: string
   runDirectory: string
   requiredProviderCapabilities: typeof REQUIRED_HARNESS_PROVIDER_CAPABILITIES
+  registry: SkillRegistryRevision
+  systemPrompt: HarnessAttachment
+  delivery: SkillDeliveryRevision
+  promptManifest: string
+}
+
+export type HarnessBootstrapTurnPreparation = {
+  protocol: typeof HARNESS_SKILL_MODULE_PROTOCOL
+  kind: 'bootstrap_turn_preparation'
+  runId: string
+  turn: 1
+  nonce: string
+  requiredProviderCapabilities: typeof REQUIRED_HARNESS_PROVIDER_CAPABILITIES
+  attachments: readonly HarnessAttachment[]
+  runDirectory: string
+  registry: SkillRegistryRevision
+  systemPrompt: HarnessAttachment
+  candidateDelivery: SkillDeliveryRevision
+}
+
+export type HarnessBootstrapTurn = {
+  protocol: typeof WEB_AGENT_PROTOCOL
+  kind: 'bootstrap_turn'
+  runId: string
+  turn: 1
+  nonce: string
+  requiredProviderCapabilities: typeof REQUIRED_HARNESS_PROVIDER_CAPABILITIES
+  acceptedAttachments: readonly HarnessAttachment[]
+  prompt: string
+  runDirectory: string
   registry: SkillRegistryRevision
   systemPrompt: HarnessAttachment
   delivery: SkillDeliveryRevision

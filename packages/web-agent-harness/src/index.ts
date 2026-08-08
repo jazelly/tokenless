@@ -44,6 +44,9 @@ export {
 export type {
   HarnessActionBatch,
   HarnessAttachment,
+  HarnessBootstrapAttachmentAcceptance,
+  HarnessBootstrapTurn,
+  HarnessBootstrapTurnPreparation,
   HarnessFinalOutputContract,
   HarnessFinalResponse,
   HarnessModelResponse,
@@ -56,6 +59,8 @@ export type {
   JsonPrimitive,
   JsonValue,
   ParseHarnessModelResponseInput,
+  FinalizeHarnessBootstrapTurnInput,
+  PrepareHarnessBootstrapTurnInput,
   PrepareHarnessSkillRunInput,
   PrepareHarnessSkillTurnInput,
   SkillDeliveryOmission,
@@ -70,7 +75,9 @@ export type {
 } from './contracts.js'
 
 export {
+  finalizeHarnessBootstrapTurn,
   parseHarnessModelResponse,
+  prepareHarnessBootstrapTurn,
   prepareHarnessSkillRun,
   prepareHarnessSkillTurn,
 } from './skill-harness.js'
