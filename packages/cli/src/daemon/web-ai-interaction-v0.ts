@@ -35,6 +35,13 @@ type StartTurnRequest = {
   bootstrap: { text: string; attachments: readonly [{ attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }] }
 }
 type TurnState = Record<string, unknown>
+type RequestCancellationIdentity = {
+  turnRef: string
+  conversationRef: string
+}
+type RequestCancellationTurn =
+  | (RequestCancellationIdentity & { lifecycle: 'cancelled'; dispatchCertainty: 'not_dispatched'; attachmentDeliveryStatus: 'pending' })
+  | (RequestCancellationIdentity & { lifecycle: 'cancelled'; dispatchCertainty: 'dispatched' | 'ambiguous'; attachmentDeliveryStatus: 'delivered' })
 
 export class WebAiInteractionV0Adapter {
   private readonly profiles: ManagedProfileRegistry
@@ -187,6 +194,18 @@ export class WebAiInteractionV0Adapter {
     return this.project(turn, this.store.getJob(turn.job_id))
   }
 
+  /** Cancels a durable request intent even when no opaque turn reference was returned. */
+  async cancelRequest(requestRef: string) {
+    const cancelled = this.store.cancelWebAiRequest(requestRef)
+    if (cancelled.kind === 'cancelled_before_start') return cancelled
+    const turn = cancelled.turn
+    if (turn.cancelled && turn.cancel_attachment_delivery === 'pending') {
+      const attachment = this.store.getWebAiStagedAttachment(turn.attachment_ref)
+      if (attachment) await removeStagedVisibleAttachmentBundle({ homeDir: this.store.homeDir, bundleId: attachment.bundle_id }).catch(() => undefined)
+    }
+    return { kind: 'turn' as const, turn: this.cancellationProjection(turn, this.store.getJob(turn.job_id)) }
+  }
+
   async initializeCleanup() {
     const marked = await listMarkedWebAiStageBundles(this.store.homeDir)
     const expired = new Set(this.store.cleanupAbandonedWebAiStages(Date.now() - 24 * 60 * 60 * 1000).map((attachment) => attachment.bundle_id))
@@ -260,6 +279,22 @@ export class WebAiInteractionV0Adapter {
     if (!delivered && errorCode.includes('upload')) return turnState({ ...base, lifecycle: 'failed', dispatchCertainty: 'not_dispatched', attachmentDelivery: { ...attachment, status: 'rejected' }, error: { code: 'upload_failed', message: 'The provider rejected the staged attachment.' } })
     if (!delivered && errorCode.includes('ambiguous')) return turnState({ ...base, lifecycle: 'failed', dispatchCertainty: 'ambiguous', attachmentDelivery: { ...attachment, status: 'delivered' }, error: { code: 'ambiguous_external_mutation', message: 'Provider submission certainty could not be established.' } })
     return turnState({ ...base, lifecycle: 'failed', dispatchCertainty: delivered ? 'dispatched' : 'not_dispatched', attachmentDelivery: { ...attachment, status: delivered ? 'delivered' : 'pending' }, error: { code: errorCode.includes('submit') ? 'submission_failed' : errorCode.includes('provider') ? 'provider_unavailable' : 'response_failed', message: 'The provider turn did not produce a verifiable response.' } })
+  }
+
+  private cancellationProjection(turn: WebAiTurn, job: Job): RequestCancellationTurn {
+    const state = this.project(turn, job)
+    const attachment = state.attachmentDelivery
+    if (!isPlainRecord(attachment) || state.lifecycle !== 'cancelled') {
+      throw invalidInput('web ai cancellation projection is invalid')
+    }
+    const identity = { turnRef: turn.turn_ref, conversationRef: turn.conversation_ref, lifecycle: 'cancelled' as const }
+    if (state.dispatchCertainty === 'not_dispatched' && attachment.status === 'pending') {
+      return { ...identity, dispatchCertainty: 'not_dispatched', attachmentDeliveryStatus: 'pending' }
+    }
+    if ((state.dispatchCertainty === 'dispatched' || state.dispatchCertainty === 'ambiguous') && attachment.status === 'delivered') {
+      return { ...identity, dispatchCertainty: state.dispatchCertainty, attachmentDeliveryStatus: 'delivered' }
+    }
+    throw invalidInput('web ai cancellation projection is invalid')
   }
 }
 

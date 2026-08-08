@@ -22,6 +22,28 @@ export type LocalHttpAttachment = {
   sha256: string
 }
 
+/** A strictly bounded outcome for cancelling a durable request intent. */
+export type LocalHttpRequestCancellation =
+  | { kind: 'cancelled_before_start' }
+  | { kind: 'turn'; turn: LocalHttpRequestCancellationTurn }
+
+type LocalHttpRequestCancellationIdentity = {
+  turnRef: string
+  conversationRef: string
+}
+
+export type LocalHttpRequestCancellationTurn =
+  | (LocalHttpRequestCancellationIdentity & {
+    lifecycle: 'cancelled'
+    dispatchCertainty: 'not_dispatched'
+    attachmentDeliveryStatus: 'pending'
+  })
+  | (LocalHttpRequestCancellationIdentity & {
+    lifecycle: 'cancelled'
+    dispatchCertainty: 'dispatched' | 'ambiguous'
+    attachmentDeliveryStatus: 'delivered'
+  })
+
 /** Browser-independent local control-plane client. Callers supply credentials and bytes explicitly. */
 export function createLocalHttpClient(options: LocalHttpClientOptions) {
   const baseUrl = normalizeBaseUrl(options.baseUrl)
@@ -42,11 +64,11 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
       return parseBinding(await call('/v1/web-ai/bindings', jsonPost({ provider, profileId })))
     },
     async capabilities(providerBindingRef: string): Promise<LocalHttpBinding> {
-      return parseBinding(await call(`/v1/web-ai/bindings/${encodeURIComponent(ref(providerBindingRef, 'providerBindingRef'))}/capabilities`))
+      return parseBinding(await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/capabilities`))
     },
     async stage(providerBindingRef: string, bytes: Uint8Array): Promise<LocalHttpAttachment> {
       if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) throw new TypeError('bytes must be a nonempty Uint8Array.')
-      const value = await call(`/v1/web-ai/bindings/${encodeURIComponent(ref(providerBindingRef, 'providerBindingRef'))}/attachments`, {
+      const value = await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/attachments`, {
         method: 'POST', body: bytes as unknown as BodyInit, headers: { 'content-type': 'text/markdown' },
       })
       return parseAttachment(value)
@@ -54,13 +76,16 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
     async start(providerBindingRef: string, requestValue: unknown): Promise<TurnState> {
       const start = parseStartTurnRequest(requestValue)
       if (start.providerBindingRef !== providerBindingRef) throw new TypeError('request providerBindingRef does not match the route.')
-      return parseTurnEnvelope(await call(`/v1/web-ai/bindings/${encodeURIComponent(ref(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
+      return parseTurnEnvelope(await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/turns`, jsonPost(start)))
     },
     async read(turnRef: string): Promise<TurnState> {
-      return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(ref(turnRef, 'turnRef'))}`))
+      return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(turnRefValue(turnRef))}`))
     },
     async cancel(turnRef: string): Promise<TurnState> {
-      return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(ref(turnRef, 'turnRef'))}/cancel`, jsonPost({})))
+      return parseTurnEnvelope(await call(`/v1/web-ai/turns/${encodeURIComponent(turnRefValue(turnRef))}/cancel`, jsonPost({})))
+    },
+    async cancelRequest(requestRef: string): Promise<LocalHttpRequestCancellation> {
+      return parseRequestCancellation(await call(`/v1/web-ai/requests/${encodeURIComponent(requestRefValue(requestRef))}/cancel`, jsonPost({})))
     },
   }
 }
@@ -85,14 +110,24 @@ function normalizeBaseUrl(value: string) {
   return url.origin
 }
 
-function ref(value: string, field: string) {
-  if (typeof value !== 'string' || !/^(?:binding|turn):[a-f0-9]{32}$/.test(value)) throw new TypeError(`${field} is invalid.`)
+function bindingRef(value: string, field: string) {
+  if (typeof value !== 'string' || !/^binding:[a-f0-9]{32}$/.test(value)) throw new TypeError(`${field} is invalid.`)
+  return value
+}
+
+function turnRefValue(value: string) {
+  if (typeof value !== 'string' || !/^turn:[a-f0-9]{32}$/.test(value)) throw new TypeError('turnRef is invalid.')
+  return value
+}
+
+function requestRefValue(value: string) {
+  if (typeof value !== 'string' || !/^request:[a-f0-9]{32}$/.test(value)) throw new TypeError('requestRef is invalid.')
   return value
 }
 
 function parseBinding(value: unknown): LocalHttpBinding {
   if (!isRecord(value) || Object.keys(value).length !== 2 || typeof value.providerBindingRef !== 'string') throw new TypeError('Invalid local binding envelope.')
-  return { providerBindingRef: ref(value.providerBindingRef, 'providerBindingRef'), capabilities: parseCapabilityDocument(value.capabilities) }
+  return { providerBindingRef: bindingRef(value.providerBindingRef, 'providerBindingRef'), capabilities: parseCapabilityDocument(value.capabilities) }
 }
 
 function parseAttachment(value: unknown): LocalHttpAttachment {
@@ -108,6 +143,33 @@ function parseTurnEnvelope(value: unknown): TurnState {
   return parseTurnState(value.turn)
 }
 
+function parseRequestCancellation(value: unknown): LocalHttpRequestCancellation {
+  if (!isRecord(value) || typeof value.kind !== 'string') throw new TypeError('Invalid local request cancellation envelope.')
+  if (value.kind === 'cancelled_before_start' && Object.keys(value).length === 1) return { kind: 'cancelled_before_start' }
+  if (value.kind === 'turn' && Object.keys(value).length === 2) return { kind: 'turn', turn: parseRequestCancellationTurn(value.turn) }
+  throw new TypeError('Invalid local request cancellation envelope.')
+}
+
+function parseRequestCancellationTurn(value: unknown): LocalHttpRequestCancellationTurn {
+  if (!isRecord(value) || Object.keys(value).length !== 5 ||
+    typeof value.turnRef !== 'string' || typeof value.conversationRef !== 'string' ||
+    typeof value.lifecycle !== 'string' || typeof value.dispatchCertainty !== 'string' ||
+    typeof value.attachmentDeliveryStatus !== 'string') {
+    throw new TypeError('Invalid local request cancellation turn.')
+  }
+  const turnRef = turnRefValue(value.turnRef)
+  if (!/^conversation:[a-f0-9]{32}$/.test(value.conversationRef) || value.lifecycle !== 'cancelled') {
+    throw new TypeError('Invalid local request cancellation turn.')
+  }
+  if (value.dispatchCertainty === 'not_dispatched' && value.attachmentDeliveryStatus === 'pending') {
+    return { turnRef, conversationRef: value.conversationRef, lifecycle: 'cancelled', dispatchCertainty: 'not_dispatched', attachmentDeliveryStatus: 'pending' }
+  }
+  if ((value.dispatchCertainty === 'dispatched' || value.dispatchCertainty === 'ambiguous') && value.attachmentDeliveryStatus === 'delivered') {
+    return { turnRef, conversationRef: value.conversationRef, lifecycle: 'cancelled', dispatchCertainty: value.dispatchCertainty, attachmentDeliveryStatus: 'delivered' }
+  }
+  throw new TypeError('Invalid local request cancellation turn.')
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype)
 }
@@ -121,6 +183,7 @@ function safeError(value: unknown) {
     ['control_auth_rejected', { message: 'Local daemon authentication was rejected.', retryable: false }],
     ['daemon_starting', { message: 'The local daemon is still starting.', retryable: true }],
     ['web_ai_request_ref_conflict', { message: 'The request reference is already bound to a different request.', retryable: false }],
+    ['web_ai_request_cancelled', { message: 'The request reference was cancelled before a turn could be created.', retryable: false }],
   ])
   const mapped = known.get(error.code)
   return mapped ? { code: error.code, ...mapped } : { code: 'local_http_error', message: 'The local daemon rejected the request.', retryable: false }

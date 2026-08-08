@@ -25,7 +25,7 @@ import {
   toDaemonError,
   type DaemonError,
 } from './errors.js'
-import { JobStore, WebAiRequestRefConflictError, publicView, type ExecutionBackend, type JobStatus } from './job-store.js'
+import { JobStore, WebAiRequestCancelledError, WebAiRequestRefConflictError, publicView, type ExecutionBackend, type JobStatus } from './job-store.js'
 import { TokenlessApplicationServices } from '../application/services.js'
 import { TokenlessUiServer } from './ui-server.js'
 import { UiSessionManager } from './ui-session.js'
@@ -479,6 +479,13 @@ async function handleWebAiRequest(
       return true
     }
   }
+  const requestRoute = /^\/v1\/web-ai\/requests\/([^/]+)\/cancel$/.exec(url.pathname)
+  if (requestRoute && method === 'POST') {
+    const rawBody = await readBody(request)
+    if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai request cancel body must be empty')
+    writeJson(response, 200, await webAi.cancelRequest(decodeURIComponent(requestRoute[1] ?? '')))
+    return true
+  }
   const turnRoute = /^\/v1\/web-ai\/turns\/([^/]+)(?:\/(cancel))?$/.exec(url.pathname)
   if (turnRoute) {
     const turnRef = decodeURIComponent(turnRoute[1] ?? '')
@@ -500,12 +507,13 @@ async function handleWebAiRequest(
 function writeWebAiError(response: ServerResponse, error: unknown) {
   const daemonError = toDaemonError(error)
   const requestRefConflict = error instanceof WebAiRequestRefConflictError
+  const requestCancelled = error instanceof WebAiRequestCancelledError
   const invalid = daemonError.kind === 'invalid_input'
-  writeJson(response, requestRefConflict ? 409 : invalid ? 400 : 500, {
+  writeJson(response, requestRefConflict || requestCancelled ? 409 : invalid ? 400 : 500, {
     error: {
-      code: requestRefConflict ? 'web_ai_request_ref_conflict' : invalid ? 'invalid_input' : 'local_http_error',
-      message: requestRefConflict ? 'The request reference is already bound to a different request.' : invalid ? 'The local Web AI request was rejected.' : 'The local Web AI service encountered an error.',
-      retryable: requestRefConflict ? false : !invalid,
+      code: requestRefConflict ? 'web_ai_request_ref_conflict' : requestCancelled ? 'web_ai_request_cancelled' : invalid ? 'invalid_input' : 'local_http_error',
+      message: requestRefConflict ? 'The request reference is already bound to a different request.' : requestCancelled ? 'The request reference was cancelled before a turn could be created.' : invalid ? 'The local Web AI request was rejected.' : 'The local Web AI service encountered an error.',
+      retryable: requestRefConflict || requestCancelled ? false : !invalid,
     },
   })
 }

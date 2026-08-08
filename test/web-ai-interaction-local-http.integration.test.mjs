@@ -301,6 +301,108 @@ test('requestRef replays one durable turn across restart and rejects a conflicti
   })
 })
 
+test('requestRef cancellation durably fences starts and returns compact cancellation state', async () => {
+  await withHome(async (homeDir) => {
+    let daemon = await startControlPlane(homeDir)
+    try {
+      const { client, binding, token } = await configuredClient(homeDir, daemon, 'chatgpt', 'request-cancel')
+      const requestRef = `request:${'c'.repeat(32)}`
+      const endpoint = `${daemon.origin}/v1/web-ai/requests/${encodeURIComponent(requestRef)}/cancel`
+      const unauthorized = await fetch(endpoint, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      })
+      assert.equal(unauthorized.status, 401)
+      await assert.rejects(client.cancel(`binding:${'b'.repeat(32)}`), (error) => {
+        assert.ok(error instanceof TypeError)
+        assert.equal(error.message, 'turnRef is invalid.')
+        return true
+      })
+      assert.equal(daemon.store.webAiCounts().turns, 0)
+
+      assert.deepEqual(await client.cancelRequest(requestRef), { kind: 'cancelled_before_start' })
+      assert.deepEqual(await client.cancelRequest(requestRef), { kind: 'cancelled_before_start' })
+      const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
+      try {
+        assert.equal(Number(database.prepare(
+          'SELECT COUNT(*) AS count FROM web_ai_v0_request_cancellations WHERE request_ref = ?',
+        ).get(requestRef).count), 1)
+      } finally {
+        database.close()
+      }
+      assert.equal(webAiJobCount(homeDir), 0)
+      assert.equal(daemon.store.webAiCounts().turns, 0)
+
+      const blockedAttachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# system\n'))
+      const blockedRequest = requestFor(binding, blockedAttachment, 'c')
+      await assert.rejects(client.start(binding.providerBindingRef, blockedRequest), (error) => {
+        assert.ok(error instanceof LocalHttpError)
+        assert.equal(error.status, 409)
+        assert.deepEqual(error.error, {
+          code: 'web_ai_request_cancelled',
+          message: 'The request reference was cancelled before a turn could be created.',
+          retryable: false,
+        })
+        return true
+      })
+      assert.equal(webAiJobCount(homeDir), 0)
+      assert.equal(daemon.store.webAiCounts().turns, 0)
+      assert.equal(daemon.store.webAiStageStatus(blockedAttachment.attachmentRef)?.consumed, false)
+
+      await daemon.close()
+      daemon = await startControlPlane(homeDir)
+      const restartedClient = createLocalHttpClient({ baseUrl: daemon.origin, token })
+      assert.deepEqual(await restartedClient.cancelRequest(requestRef), { kind: 'cancelled_before_start' })
+      const afterRestartAttachment = await restartedClient.stage(binding.providerBindingRef, new TextEncoder().encode('# second system\n'))
+      await assertRequestCancelled(restartedClient, binding.providerBindingRef, requestFor(binding, afterRestartAttachment, 'c'))
+      assert.equal(webAiJobCount(homeDir), 0)
+      assert.equal(daemon.store.webAiCounts().turns, 0)
+
+      const liveAttachment = await restartedClient.stage(binding.providerBindingRef, new TextEncoder().encode('# live system\n'))
+      const live = await restartedClient.start(binding.providerBindingRef, requestFor(binding, liveAttachment, 'd'))
+      const raw = await fetch(`${daemon.origin}/v1/web-ai/requests/${encodeURIComponent(`request:${'d'.repeat(32)}`)}/cancel`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: '{}',
+      })
+      assert.equal(raw.status, 200)
+      const body = await raw.json()
+      assert.deepEqual(Object.keys(body).sort(), ['kind', 'turn'])
+      assert.equal(body.kind, 'turn')
+      assert.deepEqual(Object.keys(body.turn).sort(), [
+        'attachmentDeliveryStatus', 'conversationRef', 'dispatchCertainty', 'lifecycle', 'turnRef',
+      ])
+      assert.equal(body.turn.turnRef, live.turnRef)
+      assert.equal(body.turn.lifecycle, 'cancelled')
+      assert.equal(body.turn.dispatchCertainty, 'not_dispatched')
+      assert.equal(body.turn.attachmentDeliveryStatus, 'pending')
+      assert.equal(/provider|profile|job|result|citation|url|path|attachmentRef|sha256/i.test(JSON.stringify(body)), false)
+      assertSanitized(body, token)
+
+      const repeated = await restartedClient.cancelRequest(`request:${'d'.repeat(32)}`)
+      assert.equal(repeated.kind, 'turn')
+      assert.deepEqual(Object.keys(repeated.turn).sort(), [
+        'attachmentDeliveryStatus', 'conversationRef', 'dispatchCertainty', 'lifecycle', 'turnRef',
+      ])
+      assert.equal(repeated.turn.turnRef, live.turnRef)
+      assert.equal(repeated.turn.lifecycle, 'cancelled')
+      const mapping = daemon.store.getWebAiTurn(live.turnRef)
+      assert.ok(mapping)
+      assert.equal(daemon.store.getJob(mapping.job_id).status, 'canceled')
+
+      const uncertainAttachment = await restartedClient.stage(binding.providerBindingRef, new TextEncoder().encode('# uncertain system\n'))
+      const uncertain = await restartedClient.start(binding.providerBindingRef, requestFor(binding, uncertainAttachment, 'e'))
+      await checkpointStartedAction(daemon.store, uncertain.turnRef, 'prompt.submit')
+      const uncertainCancelled = await restartedClient.cancelRequest(`request:${'e'.repeat(32)}`)
+      assert.equal(uncertainCancelled.kind, 'turn')
+      assert.equal(uncertainCancelled.turn.lifecycle, 'cancelled')
+      assert.equal(uncertainCancelled.turn.dispatchCertainty, 'ambiguous')
+      assert.equal(uncertainCancelled.turn.attachmentDeliveryStatus, 'delivered')
+    } finally {
+      await daemon.close()
+    }
+  })
+})
+
 test('canonical and OpenAPI TurnState schemas reject global certainty counterexamples', () => {
   const running = readCanonicalExample('turn-state-running.json')
   const waiting = readCanonicalExample('turn-state-waiting.json')
@@ -468,6 +570,19 @@ async function assertRequestRefConflict(client, bindingRef, request) {
     assert.deepEqual(error.error, {
       code: 'web_ai_request_ref_conflict',
       message: 'The request reference is already bound to a different request.',
+      retryable: false,
+    })
+    return true
+  })
+}
+
+async function assertRequestCancelled(client, bindingRef, request) {
+  await assert.rejects(client.start(bindingRef, request), (error) => {
+    assert.ok(error instanceof LocalHttpError)
+    assert.equal(error.status, 409)
+    assert.deepEqual(error.error, {
+      code: 'web_ai_request_cancelled',
+      message: 'The request reference was cancelled before a turn could be created.',
       retryable: false,
     })
     return true

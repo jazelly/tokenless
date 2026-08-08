@@ -233,12 +233,26 @@ export type WebAiTurn = {
   cancel_attachment_delivery: 'pending' | 'delivered'
 }
 
+export type WebAiRequestCancellation =
+  | { kind: 'cancelled_before_start' }
+  | { kind: 'turn'; turn: WebAiTurn }
+
 export class WebAiRequestRefConflictError extends Error {
   readonly code = 'web_ai_request_ref_conflict'
 
   constructor() {
     super('web ai requestRef was already used for a different request')
     this.name = 'WebAiRequestRefConflictError'
+  }
+}
+
+/** A durable request cancellation was recorded before a V0 turn could be created. */
+export class WebAiRequestCancelledError extends Error {
+  readonly code = 'web_ai_request_cancelled'
+
+  constructor() {
+    super('web ai requestRef was cancelled before turn creation')
+    this.name = 'WebAiRequestCancelledError'
   }
 }
 
@@ -550,6 +564,7 @@ export class JobStore {
         if (existing.request_sha256 !== requestSha256) throw new WebAiRequestRefConflictError()
         return existing
       }
+      if (this.hasWebAiRequestCancellation(requestRef)) throw new WebAiRequestCancelledError()
       const unused = this.run(
         'UPDATE web_ai_v0_staged_attachments SET consumed_turn_ref = ? WHERE attachment_ref = ? AND consumed_turn_ref IS NULL',
         turnRef,
@@ -597,31 +612,57 @@ export class JobStore {
   }
 
   cancelWebAiTurn(turnRef: string) {
-    const turn = this.getWebAiTurn(turnRef)
-    if (!turn) return null
     return this.transaction(() => {
-      const job = this.getJobWithoutRecovery(turn.job_id)
-      if (turn.cancelled || job.status === 'canceled') return turn
-      if (!['queued', 'claimed', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
-      const certainty = job.provider_submitted_at !== null
-        ? 'dispatched'
-        : (checkpointIndicatesPromptSubmission(job.checkpoint_json) ? 'ambiguous' : 'not_dispatched')
-      const delivery = certainty === 'not_dispatched' ? 'pending' : 'delivered'
-      const now = nowRfc3339()
-      const attempts = updateCurrentProviderAttempt(job, 'canceled', null, now)
-      this.run(
-        `UPDATE jobs SET status = 'canceled', result_json = NULL, error_json = ?, blocker_json = NULL,
-          checkpoint_json = NULL, resume_json = NULL, provider_attempts_json = ?, updated_at = ?,
-          claim_expires_at = NULL, outcome_revision = outcome_revision + 1
-         WHERE job_id = ? AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')`,
-        stringifyJson({ code: 'job_canceled', reason: 'web ai client requested cancellation' }),
-        stringifyJson(attempts),
-        now,
-        turn.job_id,
-      )
-      this.run('UPDATE web_ai_v0_turns SET cancelled = 1, cancel_dispatch_certainty = ?, cancel_attachment_delivery = ? WHERE turn_ref = ?', certainty, delivery, turn.turn_ref)
-      return this.getWebAiTurn(turn.turn_ref)
+      const turn = this.getWebAiTurn(turnRef)
+      return turn ? this.cancelWebAiTurnInTransaction(turn) : null
     })
+  }
+
+  /** Atomically prevents a new turn for this requestRef, or cancels its existing turn. */
+  cancelWebAiRequest(requestRef: string): WebAiRequestCancellation {
+    const canonicalRequestRef = webAiRequestRef(requestRef)
+    return this.transaction(() => {
+      const turn = this.getWebAiTurnByRequestRef(canonicalRequestRef)
+      if (turn) return { kind: 'turn', turn: this.cancelWebAiTurnInTransaction(turn) }
+      this.run(
+        `INSERT OR IGNORE INTO web_ai_v0_request_cancellations (request_ref, created_at)
+         VALUES (?, ?)`,
+        canonicalRequestRef,
+        nowRfc3339(),
+      )
+      return { kind: 'cancelled_before_start' }
+    })
+  }
+
+  private cancelWebAiTurnInTransaction(turn: WebAiTurn) {
+    const job = this.getJobWithoutRecovery(turn.job_id)
+    if (turn.cancelled || job.status === 'canceled') return turn
+    if (!['queued', 'claimed', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
+    const certainty = job.provider_submitted_at !== null
+      ? 'dispatched'
+      : (checkpointIndicatesPromptSubmission(job.checkpoint_json) ? 'ambiguous' : 'not_dispatched')
+    const delivery = certainty === 'not_dispatched' ? 'pending' : 'delivered'
+    const now = nowRfc3339()
+    const attempts = updateCurrentProviderAttempt(job, 'canceled', null, now)
+    this.run(
+      `UPDATE jobs SET status = 'canceled', result_json = NULL, error_json = ?, blocker_json = NULL,
+        checkpoint_json = NULL, resume_json = NULL, provider_attempts_json = ?, updated_at = ?,
+        claim_expires_at = NULL, outcome_revision = outcome_revision + 1
+       WHERE job_id = ? AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')`,
+      stringifyJson({ code: 'job_canceled', reason: 'web ai client requested cancellation' }),
+      stringifyJson(attempts),
+      now,
+      turn.job_id,
+    )
+    this.run('UPDATE web_ai_v0_turns SET cancelled = 1, cancel_dispatch_certainty = ?, cancel_attachment_delivery = ? WHERE turn_ref = ?', certainty, delivery, turn.turn_ref)
+    return this.getWebAiTurn(turn.turn_ref)!
+  }
+
+  private hasWebAiRequestCancellation(requestRef: string) {
+    return this.get(
+      'SELECT request_ref FROM web_ai_v0_request_cancellations WHERE request_ref = ?',
+      webAiRequestRef(requestRef),
+    ) !== undefined
   }
 
   drainReplaySummaries(recipientInput: AgentRecipient, requestedLimit?: number) {
@@ -2199,6 +2240,10 @@ export class JobStore {
         request_sha256 TEXT CHECK (request_sha256 IS NULL OR (length(request_sha256) = 64 AND request_sha256 NOT GLOB '*[^0-9a-f]*')),
         created_at TEXT NOT NULL,
         CHECK ((request_ref IS NULL AND request_sha256 IS NULL) OR (request_ref IS NOT NULL AND request_sha256 IS NOT NULL))
+      );
+      CREATE TABLE IF NOT EXISTS web_ai_v0_request_cancellations (
+        request_ref TEXT PRIMARY KEY NOT NULL CHECK (length(request_ref) = 40 AND substr(request_ref, 1, 8) = 'request:' AND substr(request_ref, 9) NOT GLOB '*[^0-9a-f]*'),
+        created_at TEXT NOT NULL
       );
     `)
   }
