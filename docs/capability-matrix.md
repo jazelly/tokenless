@@ -38,7 +38,7 @@ Tokenless combines explicit requirements with structural inference:
 - a normal submit-and-read run requires `conversation.chat`;
 - any attachment requires `file.upload`;
 - image, audio, and video attachments additionally require their matching input capability; and
-- `--workspace-mode native` requires `workspace.native`.
+- `--workspace-mode auto` or `native` requires `workspace.native`.
 
 Implications are expanded before provider selection. One provider must satisfy the complete requirement set; Tokenless never silently drops a required outcome.
 

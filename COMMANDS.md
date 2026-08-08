@@ -496,7 +496,7 @@ Provider selection:
 
 - Explicit `--provider <provider>` or `TOKENLESS_PROVIDER` is exact and is not replaced based on cached usability.
 - `--capability <capability>` is repeatable and requests canonical caller outcomes rather than provider-specific controls.
-- Tokenless merges explicit capabilities with structural inference: a normal `submit_and_read` run requires `conversation.chat`, `--attach-file` requires `file.upload` plus `image.input`, `audio.input`, or `video.input` when applicable, and `--workspace-mode native` requires `workspace.native`.
+- Tokenless merges explicit capabilities with structural inference: a normal `submit_and_read` run requires `conversation.chat`, `--attach-file` requires `file.upload` plus `image.input`, `audio.input`, or `video.input` when applicable, and `--workspace-mode auto` or `native` requires `workspace.native`.
 - When no provider is explicit, the configured provider list filters membership. Tokenless then filters for providers that satisfy the full implication-expanded requirement set and ranks routes by fresh cached eligibility and evidence maturity (`supported` before `experimental`); configured list position is the final tie-breaker and cannot override those stronger signals. Stale usable observations remain `unchecked` until the runner performs its live read-only preflight.
 - An explicit provider that cannot satisfy the full requirement set fails before daemon submission instead of silently switching.
 - Unknown and sign-in-required observations are not usable for implicit routing. If no cached provider is usable, the CLI returns `provider_unavailable` with provider observation context before creating a daemon job.
@@ -533,7 +533,7 @@ Identity and continuity:
 
 - `--task-id <id>` supplies durable task identity.
 - `--idempotency-key <id>` supplies the same identity when no task ID is used.
-- `--project-name <name>` and `--chat-name <name>` contribute to derived task identity.
+- `--project-name <name>` and `--chat-name <name>` contribute to derived task identity without requesting Workspace handling.
 - `--workspace-mode <auto|native|conversation>` explicitly requests Workspace handling and requires `--project-name`.
 - `--project-instructions <text>` or `--project-instructions-file <path>` supplies optional Workspace instructions.
 - `--agent-kind <kind>` and `--agent-session-id <id>` address the job to one agent recipient. Both are required together; the same values may come from `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID`.

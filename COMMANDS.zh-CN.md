@@ -496,7 +496,7 @@ Provider 选择：
 
 - 显式 `--provider <provider>` 或 `TOKENLESS_PROVIDER` 会保持精确匹配，不会因为缓存可用性而被替换。
 - `--capability <capability>` 可以重复使用，用于请求 canonical caller outcome，而不是 provider 专属控件。
-- Tokenless 会合并显式 capabilities 与结构化推导：普通 `submit_and_read` run 要求 `conversation.chat`，`--attach-file` 要求 `file.upload`，并在适用时增加 `image.input`、`audio.input` 或 `video.input`；`--workspace-mode native` 要求 `workspace.native`。
+- Tokenless 会合并显式 capabilities 与结构化推导：普通 `submit_and_read` run 要求 `conversation.chat`，`--attach-file` 要求 `file.upload`，并在适用时增加 `image.input`、`audio.input` 或 `video.input`；`--workspace-mode auto` 或 `native` 要求 `workspace.native`。
 - 未显式指定 provider 时，配置的 provider list 会过滤 membership。Tokenless 会再筛出满足完整 implication-expanded requirement set 的 providers，并按照 fresh cached eligibility 和 evidence maturity（`supported` 优先于 `experimental`）对 routes 排序；配置 list 的 position 仅作为最终 tie-breaker，不能覆盖这些更强的信号。过期但曾可用的 observation 会保持为 `unchecked`，直到 runner 执行实时只读 preflight。
 - 显式 provider 无法满足完整 requirement set 时，会在提交 daemon job 前失败，不会静默切换。
 - Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
@@ -533,7 +533,7 @@ Identity 与 continuity：
 
 - `--task-id <id>` 提供持久化 task identity。
 - `--idempotency-key <id>` 在没有 task ID 时提供相同 identity。
-- `--project-name <name>` 和 `--chat-name <name>` 会参与推导 task identity。
+- `--project-name <name>` 和 `--chat-name <name>` 会参与推导 task identity，但不会请求 Workspace 处理。
 - `--workspace-mode <auto|native|conversation>` 显式请求 Workspace 处理，并要求同时提供 `--project-name`。
 - `--project-instructions <text>` 或 `--project-instructions-file <path>` 提供可选 Workspace instructions。
 - `--agent-kind <kind>` 和 `--agent-session-id <id>` 将 job 定向到一个 agent recipient。两者必须同时提供，也可通过 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。

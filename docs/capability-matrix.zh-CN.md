@@ -38,7 +38,7 @@ Tokenless 会合并显式 requirement 与结构化推导：
 - 普通 submit-and-read run 要求 `conversation.chat`；
 - 任意 attachment 要求 `file.upload`；
 - image、audio、video attachment 还会要求对应 input capability；
-- `--workspace-mode native` 要求 `workspace.native`。
+- `--workspace-mode auto` 或 `native` 要求 `workspace.native`。
 
 Provider selection 前会展开所有 implication。同一家 provider 必须满足完整 requirement set；Tokenless 不会静默丢弃任何必需 outcome。
 

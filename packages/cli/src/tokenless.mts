@@ -1898,7 +1898,7 @@ async function executeDaemonJob({
   const requestId = visibleRequestId(visibleAction ? (taskId ?? randomUUID()) : (taskId ?? randomUUID()))
   const managedJobId = managedPlaywrightJobId()
   const workspaceMode = args.workspaceMode === undefined
-    ? (process.env.TOKENLESS_CONTEXT_BINDING_ID ? 'auto' : undefined)
+    ? undefined
     : normalizeWorkspaceMode(args.workspaceMode)
   const workspace = visibleAction || workspaceMode === undefined
     ? undefined
@@ -5673,7 +5673,10 @@ function taskCapabilityRequirementsForExecution(
       if (mediaType.startsWith('video/')) inferred.push(TASK_CAPABILITIES.VIDEO_INPUT)
     }
   }
-  if (args.workspaceMode !== undefined && normalizeWorkspaceMode(args.workspaceMode) === 'native') {
+  if (
+    args.workspaceMode !== undefined &&
+    normalizeWorkspaceMode(args.workspaceMode) !== 'conversation'
+  ) {
     inferred.push(TASK_CAPABILITIES.WORKSPACE_NATIVE)
   }
   return normalizeTaskCapabilityRequirements([...explicit, ...inferred])
