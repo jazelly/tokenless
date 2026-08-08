@@ -16,11 +16,13 @@ export type {
   CodexIntegrationCommand,
   CodexIntegrationInput,
   CodexIntegrationStatus,
+  ResolveCodexInvocationContextInput,
 } from './agent-contracts.js'
 
 export {
   handleCodexHook,
   completeBoundAgentInvocation,
+  resolveCodexInvocationContext,
   inspectCodexContext,
   inspectCodexIntegration,
   installCodexIntegration,

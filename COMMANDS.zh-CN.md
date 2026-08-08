@@ -147,7 +147,7 @@ tokenless install --browsers chrome,edge --json
 
 ### `tokenless setup`
 
-执行完整 onboarding：发现 system 与 cached runtimes，解析或安装精确的所选 browser，创建或选择 runtime-compatible managed profile，保存已验证的 selection，upsert 全局 Tokenless agent skills，将 daemon 对齐已安装 CLI 版本，并对所有 enabled providers 各执行一次实时登录检查。Skill maintenance 以 `~/.agents/skills` 为 canonical，并刷新已经存在的常见 agent root（包括 `~/.codex/skills` 和 `~/.claude/skills`）中的 direct copy；同时修复 legacy 的 `~/.agent/skills`。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
+执行完整 onboarding：发现 system 与 cached runtimes，解析或安装精确的所选 browser，创建或选择 runtime-compatible managed profile，保存已验证的 selection，upsert 全局 Tokenless agent skills，将 daemon 对齐已安装 CLI 版本，并对所有 enabled providers 各执行一次实时登录检查。使用 `--install-codex` 时，setup 会在保存 preferences 之后、skill maintenance 之前显式安装 Tokenless guidance 与 hooks；不带该 flag 时不会安装，非交互运行也不会静默安装。Codex `/hooks` 中的手工信任仍然是必需步骤。Skill maintenance 以 `~/.agents/skills` 为 canonical，并刷新已经存在的常见 agent root（包括 `~/.codex/skills` 和 `~/.claude/skills`）中的 direct copy；同时修复 legacy 的 `~/.agent/skills`。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
 
 交互式 setup：
 
@@ -161,11 +161,14 @@ tokenless setup
 tokenless setup --profile default --fresh --json
 tokenless setup --anti-detect --profile cloak-default --fresh --json
 tokenless setup --browser managed-chromium --profile managed-default --fresh --json
+tokenless setup --install-codex --codex-home <dir> --profile default --fresh --json
 ```
 
 主要选项：
 
 - `--profile <slug>` 选择或命名 managed profile。
+- `--install-codex` 在 setup 中显式安装可选的 Codex guidance、native hooks 和 skills。
+- `--codex-home <dir>` 选择自定义 Codex state root，并且必须与 `--install-codex` 同时使用。
 - `--anti-detect` 显式选择 catalog 锁定的 CloakBrowser runtime，并在非交互 setup 中确认使用 clean 且绑定 Cloak 的 profile。显式 `--browser cloak` 具有相同确认语义；仅有已保存的 Cloak preference 会在下载前失败。
 - `--provider-whitelist <list>` 在非交互 setup 中设置该 profile 的 provider membership。
 - `--no-open` 完成 setup，但不打开控制台。
@@ -203,7 +206,7 @@ tokenless agents uninstall codex
 
 `install` 会把一个 versioned inline guidance block 写入实际生效的全局 Codex instruction file，并把 Tokenless 自己的 groups 合并到 `$CODEX_HOME/hooks.json`。同目录存在非空 `AGENTS.override.md` 时，它是实际生效的 source，所以 Tokenless 会修改它而不是 `AGENTS.md`；命令本身不会创建 override。已有 instructions 和非 Tokenless hooks 都会保留。安装后必须重启 Codex，打开 `/hooks`，并显式信任 Tokenless hook definition，之后才能依赖自动绑定。
 
-用户仍然按照原来的方式启动 Codex。Hooks 会观察 lifecycle events，但只在一次真实的 Tokenless Bash 或 MCP 调用发生时执行绑定。它们把 hook `session_id`（当前 Codex chat/thread）、`turn_id` 和 `tool_use_id` 绑定到一个 Harness project、conversation 和 invocation。一次受限且 best-effort 的 App Server `thread/read` 会补充独立的 session-tree ID 和可用 lineage；它不会启动、恢复、relay 或 proxy Codex TUI。
+用户仍然按照原来的方式启动 Codex。Hooks 会观察 lifecycle events，但只在一次真实的 Tokenless Bash 或 MCP 调用发生时执行绑定。Hook `session_id` 是不可变的 session-tree provenance；`turn_id` 与 `tool_use_id` 标识 Hook lifecycle records。对于 CLI/shell 执行，Codex 通过 `CODEX_THREAD_ID` 提供具体 task，Tokenless 会在访问 provider 前解析该 ID，避免 descendant 被合并到 root conversation。一次受限且 best-effort 的 App Server `thread/read` 会确认具体 task、canonical cwd、session tree 和可用 lineage；它不会启动、恢复、relay 或 proxy Codex TUI。
 
 `status` 会报告准确的 instruction/hook paths，并验证当前 guidance body 与 hook command；它不会创建 Harness state。过期或被修改的 definition 会显示为未安装，再次运行 `install` 即可修复。`inspect` 从独立的 Harness 数据库读取一个精确 chat，包括 local project、turns、invocations、稳定的 provider task identity，以及 provider Project/conversation bindings。Ledger 只保存 prompt hash，不保存原始 prompts、transcripts、assistant messages、credentials 或 browser state。`uninstall` 会从两个全局 instruction filenames 中移除 Tokenless guidance，并且只移除 Tokenless hook groups；已经保留的 Harness history 不会删除。
 

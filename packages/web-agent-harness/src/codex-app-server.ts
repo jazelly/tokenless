@@ -4,6 +4,8 @@ import type { CodexAppServerThread } from './agent-contracts.js'
 
 const DEFAULT_TIMEOUT_MS = 1_500
 const MAX_LINE_BYTES = 2 * 1024 * 1024
+const SHUTDOWN_GRACE_MS = 250
+const FORCE_KILL_GRACE_MS = 500
 
 export async function readCodexThreadFromAppServer({
   threadId,
@@ -23,25 +25,86 @@ export async function readCodexThreadFromAppServer({
   })
 
   let stdoutBuffer = ''
+  let stdoutBytes = 0
   let stderrBytes = 0
   let initialized = false
   let settled = false
 
   return await new Promise<CodexAppServerThread>((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error('Codex App Server thread/read timed out.')), timeoutMs)
+    let completion: {
+      error: Error | null
+      value: CodexAppServerThread | undefined
+    } | null = null
+    let closeObserved = false
+    let terminationRequested = false
+    let operationTimer: ReturnType<typeof setTimeout>
+    let shutdownTimer: ReturnType<typeof setTimeout> | undefined
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined
 
-    const finish = (error: Error | null, value?: CodexAppServerThread) => {
-      if (settled) return
+    const settleAfterClose = () => {
+      if (settled || !closeObserved || !completion) return
       settled = true
-      clearTimeout(timer)
-      child.kill()
-      if (error) reject(error)
-      else resolve(value!)
+      clearTimeout(operationTimer)
+      if (shutdownTimer) clearTimeout(shutdownTimer)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+      if (completion.error) reject(completion.error)
+      else resolve(completion.value!)
     }
 
+    const requestTermination = () => {
+      if (closeObserved || terminationRequested) return
+      terminationRequested = true
+      try {
+        child.kill()
+      } catch {
+        // A close event may already be queued; the force-kill fallback remains armed.
+      }
+      forceKillTimer = setTimeout(() => {
+        if (closeObserved) return
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // Resolution still waits for close, so callers never race live App Server handles.
+        }
+      }, FORCE_KILL_GRACE_MS)
+    }
+
+    const finish = (error: Error | null, value?: CodexAppServerThread) => {
+      if (completion) return
+      completion = { error, value }
+      clearTimeout(operationTimer)
+      if (closeObserved) {
+        settleAfterClose()
+        return
+      }
+      shutdownTimer = setTimeout(requestTermination, SHUTDOWN_GRACE_MS)
+      try {
+        child.stdin.end()
+      } catch {
+        requestTermination()
+      }
+    }
+
+    operationTimer = setTimeout(
+      () => finish(new Error('Codex App Server thread/read timed out.')),
+      timeoutMs,
+    )
+
     child.on('error', (error) => finish(error))
-    child.on('exit', (code) => {
-      if (!settled) finish(new Error(`Codex App Server exited before thread/read completed (${String(code)}).`))
+    child.on('close', (code, signal) => {
+      closeObserved = true
+      if (!completion) {
+        completion = {
+          error: new Error(
+            `Codex App Server exited before thread/read completed (${String(code)}, ${String(signal)}).`,
+          ),
+          value: undefined,
+        }
+      }
+      settleAfterClose()
+    })
+    child.stdin.on('error', (error) => {
+      if (!completion) finish(error)
     })
     child.stderr.on('data', (chunk: Buffer | string) => {
       stderrBytes += Buffer.byteLength(chunk)
@@ -49,11 +112,13 @@ export async function readCodexThreadFromAppServer({
     })
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
-      stdoutBuffer += chunk
-      if (Buffer.byteLength(stdoutBuffer, 'utf8') > MAX_LINE_BYTES) {
+      if (completion) return
+      stdoutBytes += Buffer.byteLength(chunk, 'utf8')
+      if (stdoutBytes > MAX_LINE_BYTES) {
         finish(new Error('Codex App Server response exceeded the bounded response limit.'))
         return
       }
+      stdoutBuffer += chunk
       while (stdoutBuffer.includes('\n')) {
         const newline = stdoutBuffer.indexOf('\n')
         const line = stdoutBuffer.slice(0, newline).trim()
@@ -74,12 +139,17 @@ export async function readCodexThreadFromAppServer({
             return
           }
           initialized = true
-          writeMessage(child, { method: 'initialized', params: {} })
-          writeMessage(child, {
-            method: 'thread/read',
-            id: 2,
-            params: { threadId, includeTurns: false },
-          })
+          try {
+            writeMessage(child, { method: 'initialized', params: {} })
+            writeMessage(child, {
+              method: 'thread/read',
+              id: 2,
+              params: { threadId, includeTurns: false },
+            })
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error(String(error)))
+            return
+          }
           continue
         }
         if (record.id !== 2 || !initialized) continue
@@ -99,21 +169,26 @@ export async function readCodexThreadFromAppServer({
         }
       }
     })
+    child.stdout.on('error', (error) => finish(error))
 
-    writeMessage(child, {
-      method: 'initialize',
-      id: 1,
-      params: {
-        clientInfo: {
-          name: 'tokenless',
-          title: 'Tokenless Agent Context Resolver',
-          version: '0.1.0',
+    try {
+      writeMessage(child, {
+        method: 'initialize',
+        id: 1,
+        params: {
+          clientInfo: {
+            name: 'tokenless',
+            title: 'Tokenless Agent Context Resolver',
+            version: '0.1.0',
+          },
+          capabilities: {
+            optOutNotificationMethods: [],
+          },
         },
-        capabilities: {
-          optOutNotificationMethods: [],
-        },
-      },
-    })
+      })
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)))
+    }
   })
 }
 

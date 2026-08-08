@@ -13,7 +13,7 @@ Supersedes the proposed Tokenless-launched Codex relay and custom-model replacem
 Users start Codex in their normal way. An explicit, reversible Tokenless installation adds two independent capabilities:
 
 1. a concise global instruction block asks Codex to consider Tokenless for bounded delegated work while ordinary Codex work continues to use Codex; and
-2. native Codex lifecycle hooks bind an actual Tokenless tool invocation to the exact Codex chat, turn, and tool call before the Tokenless CLI accepts it.
+2. native Codex lifecycle hooks preserve session-tree, turn, and tool-call provenance, while the CLI resolves per-command `CODEX_THREAD_ID` to the concrete chat before provider access.
 
 The integration does not intercept ordinary model traffic, create a Tokenless custom model provider, or try to avoid all Codex token use. Tokenless receives work only when Codex or the user invokes the Tokenless CLI or MCP surface.
 
@@ -95,8 +95,8 @@ Hook failures never block ordinary Codex work. They make automatic Tokenless con
 ```mermaid
 flowchart TD
   LP["Local project\ncanonical repository/worktree root"]
-  CT["Codex chat/thread\nhook session_id = ThreadId"]
-  ST["Codex session tree\nApp Server thread.sessionId"]
+  CT["Concrete Codex task\nCODEX_THREAD_ID = Thread.id"]
+  ST["Codex session tree\nHook session_id = Thread.sessionId"]
   TR["Codex turn\nhook turn_id"]
   TC["Tokenless invocation\nhook tool_use_id"]
   TP["Tokenless project"]
@@ -118,8 +118,8 @@ flowchart TD
 | Identity | Authoritative source | Durable meaning |
 | --- | --- | --- |
 | Local project | Canonical Git/worktree root resolved from hook `cwd` | Stable local project; display name is metadata |
-| Codex chat | Hook `session_id`, whose value is the current Codex `ThreadId` | One exact Codex conversation |
-| Codex session tree | App Server `thread/read` result `thread.sessionId` | Root/descendant grouping; not the chat ID |
+| Codex chat | Per-command `CODEX_THREAD_ID`, optionally confirmed by App Server `thread.id` | One exact concrete Codex conversation, including descendants |
+| Codex session tree | Hook `session_id`, confirmed when available by App Server `thread.sessionId` | Immutable Hook provenance and root/descendant grouping; not the concrete chat ID |
 | Codex turn | Hook `turn_id` | One user round inside the chat |
 | Tool invocation | Hook `tool_use_id` | One explicit Tokenless call inside the turn |
 | Tokenless project | Harness deterministic opaque project ID | Local project binding owned by the Harness |
@@ -127,11 +127,11 @@ flowchart TD
 | Provider Project | Web Provider API mapping `resource_id` | Real provider-native Project, when available |
 | Provider conversation | Web Provider API mapping `canonical_url` | Real provider conversation used for continuation |
 
-`hook.session_id` and App Server `thread.sessionId` are different identifiers. The former is the active chat/thread and is the durable conversation key. The latter groups related threads in a session tree. Tokenless never merges chats merely because they share a session tree.
+`hook.session_id` is the session-tree/root identity shared by descendants, while `CODEX_THREAD_ID` is the concrete thread identity injected into each shell execution. They are equal for a root task and differ for descendants. Tokenless stores the Hook value as immutable provenance, keys the Tokenless conversation by the concrete thread, and never merges chats merely because they share a session tree.
 
 ## App Server Role
 
-Hooks provide the authoritative live chat, turn, and tool-call IDs. On an actual Tokenless `PreToolUse`, the Harness starts a short-lived independent `codex app-server --listen stdio://` client and calls `thread/read` for the hook's chat ID. This enriches the binding with:
+Hooks provide authoritative session-tree, turn, and tool-call provenance. On an actual Tokenless CLI execution, `CODEX_THREAD_ID` supplies the concrete thread. The Harness starts a short-lived independent `codex app-server --listen stdio://` client and calls `thread/read` for that concrete ID when available. This enriches the binding with:
 
 - App Server `thread.id` confirmation;
 - session tree ID;
@@ -176,6 +176,7 @@ Provider Project and conversation mappings remain absent until the exact Codex c
 - Exact hook binding for chat, turn, tool call, project, and Tokenless conversation.
 - App Server thread/session-tree enrichment through the real stdio protocol.
 - Hook-supplied context enforcement at the CLI boundary.
+- Concrete CLI task rebinding through `CODEX_THREAD_ID` with immutable Hook provenance and fail-closed stale-binding/project checks.
 - Opaque upstream context in provider job envelopes.
 - Provider Project/conversation result capture and next-turn provider/profile reuse.
 - Separate Harness-owned SQLite storage with raw prompt exclusion.
@@ -183,7 +184,7 @@ Provider Project and conversation mappings remain absent until the exact Codex c
 
 ## Release Evidence and Remaining Gate
 
-The built CLI/filesystem integration suite, bilingual command documentation, pure-JavaScript offline package contract, full default repository suite, and explicit real Codex App Server E2E are complete. Before a release, run the applicable manually gated real-provider E2E so provider Project/conversation mapping is re-proven on the selected live provider surfaces.
+The focused built CLI/filesystem integration suite and explicit real Codex App Server matrix pass on Windows, including concrete task rebinding, Hook provenance completion, multiple workspaces, forks, Luna, and `xhigh`. The full default repository suite and the manually gated Cloak real-provider Project/conversation matrix remain release gates.
 
 Custom-model replacement, complete Codex request interception, and Tokenless-launched Codex remain out of scope.
 
@@ -194,8 +195,9 @@ Custom-model replacement, complete Codex request interception, and Tokenless-lau
 - A non-empty global `AGENTS.override.md` cannot hide guidance installed only into `AGENTS.md`.
 - Guidance and hooks are idempotent, reversible, atomic, and preserve unrelated user content.
 - The user explicitly trusts hooks in Codex; Tokenless never bypasses hook trust.
-- Hook `session_id`, `turn_id`, and `tool_use_id` bind the exact chat, round, and invocation.
-- App Server `thread.sessionId` is stored only as the session-tree identity and never substituted for the chat ID.
+- Hook `session_id`, `turn_id`, and `tool_use_id` preserve the exact session-tree, round, and invocation provenance.
+- `CODEX_THREAD_ID` is the concrete CLI/shell chat identity; App Server `thread.id` may confirm it, and `thread.sessionId` never substitutes for it.
+- `PostToolUse` can complete the same binding after it has been rebound from the Hook root to a concrete descendant.
 - One Codex chat reuses one Tokenless conversation and provider `taskId`; a different chat gets a different conversation.
 - Provider Project and conversation IDs come only from the Web Provider API's observed mappings.
 - The agent-context ledger contains no raw prompt or transcript text.

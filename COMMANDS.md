@@ -147,7 +147,7 @@ This command does not update the global npm CLI, configure a managed profile, or
 
 ### `tokenless setup`
 
-Runs the complete onboarding flow: discovers system and cached runtimes, resolves or installs the exact selected browser, creates or selects a runtime-compatible managed profile, saves the verified selection, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and performs one live sign-in check for every enabled provider. Skill maintenance keeps `~/.agents/skills` canonical and refreshes direct copies for already-present common agent roots, including `~/.codex/skills` and `~/.claude/skills`; it also repairs the legacy `~/.agent/skills` location. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
+Runs the complete onboarding flow: discovers system and cached runtimes, resolves or installs the exact selected browser, creates or selects a runtime-compatible managed profile, saves the verified selection, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and performs one live sign-in check for every enabled provider. With `--install-codex`, setup explicitly installs Tokenless guidance and hooks after preferences are saved and before skill maintenance; setup without the flag never installs them, including non-interactive runs. Manual trust in Codex `/hooks` remains required. Skill maintenance keeps `~/.agents/skills` canonical and refreshes direct copies for already-present common agent roots, including `~/.codex/skills` and `~/.claude/skills`; it also repairs the legacy `~/.agent/skills` location. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
 
 Interactive setup:
 
@@ -161,11 +161,14 @@ Create or reuse a clean profile non-interactively:
 tokenless setup --profile default --fresh --json
 tokenless setup --anti-detect --profile cloak-default --fresh --json
 tokenless setup --browser managed-chromium --profile managed-default --fresh --json
+tokenless setup --install-codex --codex-home <dir> --profile default --fresh --json
 ```
 
 Main options:
 
 - `--profile <slug>` selects or names the managed profile.
+- `--install-codex` explicitly installs the optional Codex guidance, native hooks, and skills during setup.
+- `--codex-home <dir>` selects a custom Codex state root and requires `--install-codex`.
 - `--anti-detect` explicitly selects the catalog-pinned CloakBrowser runtime and confirms a clean Cloak-bound profile in non-interactive setup. Explicit `--browser cloak` carries the same confirmation; a stored Cloak preference alone fails before download.
 - `--provider-whitelist <list>` selects provider membership for that profile during non-interactive setup.
 - `--no-open` completes setup without opening the dashboard.
@@ -203,7 +206,7 @@ tokenless agents uninstall codex
 
 `install` writes one versioned inline guidance block into the effective global Codex instruction file and merges Tokenless-owned groups into `$CODEX_HOME/hooks.json`. A non-empty `AGENTS.override.md` is the effective same-directory source, so Tokenless patches it instead of `AGENTS.md`; the command never creates an override. Existing instructions and non-Tokenless hooks are preserved. Restart Codex, open `/hooks`, and explicitly trust the Tokenless hook definition before relying on automatic binding.
 
-Users continue launching Codex normally. The hooks observe lifecycle events and react only when an actual Tokenless Bash or MCP call occurs. They bind hook `session_id` (the current Codex chat/thread), `turn_id`, and `tool_use_id` to one Harness project, conversation, and invocation. A bounded best-effort App Server `thread/read` adds the separate session-tree ID and available lineage; it does not start, resume, relay, or proxy a Codex TUI.
+Users continue launching Codex normally. The hooks observe lifecycle events and react only when an actual Tokenless Bash or MCP call occurs. Hook `session_id` is immutable session-tree provenance; `turn_id` and `tool_use_id` identify the Hook lifecycle records. For CLI/shell execution, Codex supplies the concrete task as `CODEX_THREAD_ID`, and Tokenless resolves it before provider access so descendants do not collapse into the root conversation. A bounded best-effort App Server `thread/read` confirms the concrete task, canonical cwd, session tree, and available lineage; it does not start, resume, relay, or proxy a Codex TUI.
 
 `status` reports the exact instruction and hook paths and verifies the current guidance body and hook command without creating Harness state; stale or edited definitions report as not installed and `install` repairs them. `inspect` reads one exact chat from the separate Harness database, including local project, turns, invocations, stable provider task identity, and provider Project/conversation bindings. The ledger stores hashes rather than raw prompts and does not store transcripts, assistant messages, credentials, or browser state. `uninstall` removes Tokenless-owned guidance from both global instruction filenames and removes only Tokenless hook groups; retained Harness history is not deleted.
 

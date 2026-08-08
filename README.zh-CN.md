@@ -62,6 +62,14 @@ npm install --global tokenless@latest
 tokenless setup
 ```
 
+如需在同一次 setup 中显式安装可选的 Codex 集成：
+
+```bash
+tokenless setup --install-codex
+```
+
+Setup 默认不会安装 Codex 集成，非交互运行也不会静默安装。`--codex-home <dir>` 用于选择自定义 Codex state root，并且只能与 `--install-codex` 一起使用。显式安装发生在保存 setup preferences 之后、skill maintenance 之前，因此新创建的 Codex root 会在同一次运行中收到 Tokenless skills。完成后请重启 Codex，打开 `/hooks`，并手工信任 Tokenless hook definition。
+
 交互式 setup 会先询问是否使用 Anti-Detect 模式。拒绝后会选择经过验证、按平台固定版本的 Tokenless-managed Chrome for Testing：Apple Silicon macOS 使用 major 145，Windows x64 使用 major 146。接受 Anti-Detect 时，问题会说明 setup 会在需要时安装按平台固定版本的 CloakBrowser；两个 target 都默认创建 clean profile。仅在 Apple Silicon macOS 上，setup 还会实验性地提供 opaque 导入：Google Chrome major 145 或 Brave Chromium major 143/145 可导入 managed Chrome for Testing 145 或 CloakBrowser 145。用户必须明确选择来源浏览器；setup 只扫描安全的 profile 目录和 `Last Version` 元数据。Edge、Chromium、Chrome for Testing、Arc、其他来源版本和所有 Windows 导入组合均不可用。选择 profile 即授权 opaque 本地复制，Tokenless 不会检查认证值；成功打开也不保证登录状态能够迁移。非交互 setup 中，Brave 还需要 `--import-browser brave`，每次导入都需要 `--consent-local-profile-copy`；显式 `--anti-detect` 或 `--browser cloak` 授权 Cloak 安装，仅有已保存的 Cloak preference 不会触发下载。之后 setup 会列出所有受支持的 provider，默认全部启用，并允许你回复编号移除 provider；直接回车则保留全部。它只检查剩余 provider，通过一次并发后台批处理为每个 provider 保留一个 headed 页面供用户审核登录状态，并在一个保留的前台标签页中打开 Tokenless 本地控制台。之后可随时重新打开控制台：
 
 ```bash
@@ -89,6 +97,8 @@ Config 使用 `providerWhitelist` 作为 provider routing 边界。默认值包�
 Tokenless 可以为 Codex 增加更广泛的委派指导和精确的调用连续性，但不会启动、包装或替换 Codex：
 
 ```bash
+tokenless setup --install-codex
+# 也可以在 setup 后单独安装：
 tokenless agents install codex
 ```
 

@@ -25,6 +25,7 @@ export type AgentConversationContext = {
 export type AgentInvocationContext = {
   protocol: typeof AGENT_CONTEXT_PROTOCOL
   bindingId: string
+  hookSessionId: string | null
   agentKind: AgentKind
   agentChatId: string
   agentTurnId: string
@@ -45,6 +46,20 @@ export type AgentInvocationOutcome = {
   taskId: string | null
   providerProjectId: string | null
   providerConversationRef: string | null
+}
+
+export type ResolveCodexInvocationContextInput = {
+  tokenlessHome: string
+  codexHome: string
+  threadId: string
+  cwd: string
+  sessionTreeId?: string | null | undefined
+  bindingId?: string | null | undefined
+  turnId?: string | null | undefined
+  toolCallId?: string | null | undefined
+  toolName?: string | null | undefined
+  toolInput?: unknown
+  model?: string | null | undefined
 }
 
 export type CodexAppServerThread = {
@@ -124,6 +139,7 @@ export type CodexContextInspection = {
   }[]
   invocations: readonly {
     bindingId: string
+    hookSessionId: string | null
     turnId: string
     toolCallId: string
     toolName: string

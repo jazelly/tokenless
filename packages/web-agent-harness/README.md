@@ -7,7 +7,8 @@ Its public interface includes two groups of operations.
 Codex integration and context:
 
 - `installCodexIntegration`, `inspectCodexIntegration`, and `uninstallCodexIntegration` manage a reversible inline guidance block and Tokenless-owned native hook groups while preserving unrelated Codex files.
-- `handleCodexHook` binds exact hook chat, turn, and tool-call IDs, optionally enriches the chat with a bounded App Server `thread/read`, and injects opaque Tokenless context into an actual CLI or MCP invocation.
+- `handleCodexHook` preserves Hook session-tree, turn, and tool-call provenance and injects opaque Tokenless context into an actual CLI or MCP invocation.
+- `resolveCodexInvocationContext` resolves per-command `CODEX_THREAD_ID` to the concrete CLI chat, optionally confirms it through a bounded App Server `thread/read`, and atomically rebinds the invocation without losing Hook provenance.
 - `completeBoundAgentInvocation` lets the bound Tokenless CLI persist its exact provider result before rendering output; `PostToolUse` provides an idempotent fallback and covers native MCP result envelopes.
 - `inspectCodexContext` reads the Harness-owned project, conversation, turn, invocation, and provider binding ledger for one exact Codex chat.
 - `readCodexThreadFromAppServer` is a bounded independent App Server client. It does not start, resume, wrap, or proxy a Codex TUI.

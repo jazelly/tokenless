@@ -263,12 +263,12 @@ A generic caller without a deep adapter supplies the same fields explicitly thro
 
 Codex is first because its native hooks expose the exact live invocation hierarchy needed for binding:
 
-- hook `session_id` as the current Codex `ThreadId` and therefore chat identity;
+- hook `session_id` as immutable session-tree/root provenance;
 - hook `turn_id` as the active user round;
 - hook `tool_use_id` as one exact CLI or MCP invocation; and
 - hook lifecycle events for session, prompt, tool, stop, and end observation.
 
-Codex App Server supplies secondary enrichment. `thread/read` confirms `Thread.id` and exposes `Thread.sessionId` as the shared root of a session tree plus `cwd`, source, Git metadata, `parentThreadId`, and `forkedFromId`. `Thread.sessionId` is not the chat ID and never replaces hook `session_id`.
+For CLI/shell execution, Codex supplies the concrete task through per-command `CODEX_THREAD_ID`. App Server `thread/read` confirms `Thread.id` and exposes `Thread.sessionId` as the session-tree root plus `cwd`, source, Git metadata, `parentThreadId`, and `forkedFromId`. Root tasks have equal Hook/tree and concrete IDs; descendants do not.
 
 Codex defines `CODEX_HOME` as its state root, with `~/.codex` as the default. Directly scanning rollout files or selecting the most recently modified session is not an identity boundary. The implemented adapter relies on the exact hook payload and performs bounded best-effort App Server reads only when an actual Tokenless invocation occurs. Transcript reading is unnecessary and disabled.
 
@@ -297,7 +297,7 @@ The primary flow is:
 
 1. Guided installation writes a versioned Tokenless marker block into the effective global Codex instruction file and merges Tokenless-owned lifecycle groups into `hooks.json` without changing the configured model provider.
 2. The user restarts and trusts the hook definition, then launches Codex normally.
-3. An actual Tokenless `PreToolUse` supplies the exact hook chat, turn, and tool-call IDs; the Harness canonicalizes `cwd`, resolves the project root, and optionally enriches session-tree and lineage through `thread/read`.
+3. An actual Tokenless `PreToolUse` supplies session-tree, turn, and tool-call provenance; the CLI adds concrete `CODEX_THREAD_ID`, and the Harness canonicalizes `cwd`, resolves the project root, and optionally confirms tree/lineage through `thread/read`.
 4. The hook injects a stable Harness project, conversation, and provider task identity into that one CLI or MCP call. The CLI rejects attempts to replace the hook-bound task identity.
 5. The Web Provider API resolves or creates the provider workspace and conversation, executes the durable job, and returns its normal provider mapping result.
 6. `PostToolUse` binds those provider IDs and job ID back to the exact Harness invocation; the next turn in the same Codex chat reuses the provider and profile automatically.

@@ -4,12 +4,14 @@ import path from 'node:path'
 
 import {
   CODEX_HOOK_PROTOCOL,
+  type AgentInvocationContext,
   type AgentInvocationOutcome,
   type CodexContextInspection,
   type CodexHookInput,
   type CodexHookResult,
   type CodexIntegrationInput,
   type CodexIntegrationStatus,
+  type ResolveCodexInvocationContextInput,
 } from './agent-contracts.js'
 import { AgentContextStore } from './agent-context-store.js'
 import { readCodexThreadFromAppServer } from './codex-app-server.js'
@@ -139,6 +141,50 @@ export async function inspectCodexContext({
   }
 }
 
+export async function resolveCodexInvocationContext(
+  input: ResolveCodexInvocationContextInput,
+): Promise<AgentInvocationContext> {
+  const tokenlessHome = path.resolve(nonempty(input.tokenlessHome, 'tokenlessHome'))
+  const codexHome = path.resolve(nonempty(input.codexHome, 'codexHome'))
+  const threadId = nonempty(input.threadId, 'threadId')
+  const fallbackCwd = path.resolve(nonempty(input.cwd, 'cwd'))
+  const sessionTreeId = optionalIdentifier(input.sessionTreeId, 'sessionTreeId')
+  const bindingId = optionalIdentifier(input.bindingId, 'bindingId')
+  const turnId = optionalIdentifier(input.turnId, 'turnId')
+  const toolCallId = optionalIdentifier(input.toolCallId, 'toolCallId')
+  const appServerThread = await readCodexThreadFromAppServer({
+    threadId,
+    codexHome,
+  }).catch(() => null)
+
+  if (appServerThread && sessionTreeId && appServerThread.sessionId !== sessionTreeId) {
+    throw new Error('Codex App Server session tree conflicts with the explicit Hook session tree.')
+  }
+  if (appServerThread) {
+    const threadCwd = nonempty(appServerThread.cwd, 'thread.cwd')
+    const stats = await fs.stat(threadCwd)
+    if (!stats.isDirectory()) throw new Error('Codex App Server thread cwd is not a directory.')
+  }
+
+  const store = await AgentContextStore.open(tokenlessHome)
+  try {
+    return store.resolveCodexThreadInvocation({
+      chatId: threadId,
+      cwd: appServerThread ? path.resolve(appServerThread.cwd) : fallbackCwd,
+      sessionTreeId: sessionTreeId ?? appServerThread?.sessionId ?? null,
+      bindingId,
+      turnId,
+      toolCallId,
+      toolName: optionalString(input.toolName),
+      toolInput: input.toolInput,
+      model: optionalString(input.model) ?? undefined,
+      appServerThread,
+    })
+  } finally {
+    store.close()
+  }
+}
+
 export async function completeBoundAgentInvocation({
   tokenlessHome,
   bindingId,
@@ -173,6 +219,7 @@ export async function handleCodexHook({
         chatId: hook.session_id,
         cwd: hook.cwd,
         model: hook.model,
+        sessionTreeId: hook.session_id,
       })
       return {}
     }
@@ -205,7 +252,7 @@ export async function handleCodexHook({
     const appServerThread = await readCodexThreadFromAppServer({
       threadId: hook.session_id,
       codexHome: path.resolve(codexHome),
-    }).catch(() => null)
+    }).then((thread) => thread.sessionId === hook.session_id ? thread : null).catch(() => null)
     const context = store.createCodexInvocation({
       chatId: hook.session_id,
       turnId: requiredHookField(hook.turn_id, 'turn_id'),
@@ -214,6 +261,7 @@ export async function handleCodexHook({
       toolInput: hook.tool_input,
       cwd: hook.cwd,
       model: hook.model,
+      sessionTreeId: hook.session_id,
       appServerThread,
     })
     return preToolUseOutput(hook, context)
@@ -235,9 +283,7 @@ function preToolUseOutput(hook: CodexHookInput, context: ReturnType<AgentContext
     TOKENLESS_TASK_ID: context.providerTaskId,
     TOKENLESS_PROJECT_NAME: context.project.providerProjectName,
     TOKENLESS_CHAT_NAME: `Codex ${context.agentChatId.slice(0, 12)}`,
-    ...(context.agentSessionTreeId
-      ? { TOKENLESS_AGENT_SESSION_TREE_ID: context.agentSessionTreeId }
-      : {}),
+    TOKENLESS_AGENT_SESSION_TREE_ID: hook.session_id,
     ...(context.activeProvider ? { TOKENLESS_PROVIDER: context.activeProvider } : {}),
     ...(context.activeProfile ? { TOKENLESS_PROFILE: context.activeProfile } : {}),
   }
@@ -255,7 +301,7 @@ function preToolUseOutput(hook: CodexHookInput, context: ReturnType<AgentContext
           conversationId: context.conversationId,
           chatId: context.agentChatId,
           turnId: context.agentTurnId,
-          sessionTreeId: context.agentSessionTreeId,
+          sessionTreeId: hook.session_id,
           taskId: context.providerTaskId,
         },
       }
@@ -686,4 +732,10 @@ function nonempty(value: string, field: string) {
 
 function optionalString(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function optionalIdentifier(value: unknown, field: string) {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string') throw new Error(`${field} must be a string when provided.`)
+  return nonempty(value, field)
 }

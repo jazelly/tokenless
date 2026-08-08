@@ -286,6 +286,7 @@ const TOP_LEVEL_COMMANDS = new Set(COMMAND_CONTRACTS.filter((contract) => !contr
 const COMMAND_CONTRACT_BY_KEY = new Map(COMMAND_CONTRACTS.map((contract) => [commandContractKey(contract), contract]))
 const TOP_LEVEL_USAGE = [
   'tokenless <command> [options]',
+  'tokenless setup [--install-codex [--codex-home <dir>]]',
   `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
   'tokenless capabilities list --json',
   'tokenless limits inspect --profile <slug> --provider <provider> --json',
@@ -1500,6 +1501,7 @@ function isUsableProviderAccess(access: unknown): access is ProviderAccessClass 
 }
 
 async function runCommand(args: CliArgs) {
+  args = await applyCodexInvocationContext(args)
   args = applyBoundAgentContext(args)
   assertVisibleRunArguments(args)
   const prompt = await promptFromArgs(args)
@@ -1895,7 +1897,9 @@ async function executeDaemonJob({
   })
   const requestId = visibleRequestId(visibleAction ? (taskId ?? randomUUID()) : (taskId ?? randomUUID()))
   const managedJobId = managedPlaywrightJobId()
-  const workspaceMode = args.workspaceMode === undefined ? undefined : normalizeWorkspaceMode(args.workspaceMode)
+  const workspaceMode = args.workspaceMode === undefined
+    ? (process.env.TOKENLESS_CONTEXT_BINDING_ID ? 'auto' : undefined)
+    : normalizeWorkspaceMode(args.workspaceMode)
   const workspace = visibleAction || workspaceMode === undefined
     ? undefined
     : await workspaceEnsurePayloadFromArgs(args, workspaceMode)
@@ -2816,14 +2820,7 @@ async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
     throw usageError('agent_integration_unsupported', 'Tokenless agent integration currently supports codex.')
   }
   const harness = await loadWebAgentHarness()
-  const input = {
-    codexHome: path.resolve(String(args.codexHome || process.env.CODEX_HOME || path.join(os.homedir(), '.codex'))),
-    tokenlessHome: tokenlessHome(args.home),
-    command: {
-      executable: process.execPath,
-      script: fileURLToPath(import.meta.url),
-    },
-  }
+  const input = codexIntegrationInput(args)
 
   if (subcommand === 'hook') {
     if (args.integrationId !== 'tokenless-agent-hook-v1') {
@@ -2882,6 +2879,17 @@ async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
   throw usageError('agents_subcommand_required', 'Usage: tokenless agents <install|status|inspect|uninstall> codex.')
 }
 
+function codexIntegrationInput(args: CliArgs, homeDir = tokenlessHome(args.home)) {
+  return {
+    codexHome: path.resolve(String(args.codexHome || process.env.CODEX_HOME || path.join(os.homedir(), '.codex'))),
+    tokenlessHome: homeDir,
+    command: {
+      executable: process.execPath,
+      script: fileURLToPath(import.meta.url),
+    },
+  }
+}
+
 function applyBoundAgentContext(args: CliArgs): CliArgs {
   const bindingId = process.env.TOKENLESS_CONTEXT_BINDING_ID
   if (!bindingId) return args
@@ -2923,6 +2931,54 @@ function applyBoundAgentContext(args: CliArgs): CliArgs {
   }
 }
 
+async function applyCodexInvocationContext(args: CliArgs): Promise<CliArgs> {
+  const threadId = optionalEnvironmentValue(process.env.CODEX_THREAD_ID)
+  if (!threadId) return args
+  const bindingId = optionalEnvironmentValue(process.env.TOKENLESS_CONTEXT_BINDING_ID)
+  const harness = await loadWebAgentHarness()
+  const context = await harness.resolveCodexInvocationContext({
+    tokenlessHome: tokenlessHome(args.home),
+    codexHome: path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex')),
+    threadId,
+    cwd: process.cwd(),
+    sessionTreeId: bindingId
+      ? optionalEnvironmentValue(process.env.TOKENLESS_AGENT_SESSION_TREE_ID)
+      : null,
+    bindingId,
+    turnId: bindingId
+      ? optionalEnvironmentValue(process.env.TOKENLESS_AGENT_TURN_ID)
+      : null,
+    toolCallId: bindingId
+      ? optionalEnvironmentValue(process.env.TOKENLESS_AGENT_TOOL_CALL_ID)
+      : null,
+    toolName: 'tokenless.cli',
+    toolInput: { argv: process.argv.slice(2) },
+  })
+  setEnvironmentValue('TOKENLESS_CONTEXT_BINDING_ID', context.bindingId)
+  setEnvironmentValue('TOKENLESS_AGENT_KIND', context.agentKind)
+  setEnvironmentValue('TOKENLESS_AGENT_SESSION_ID', context.agentChatId)
+  setEnvironmentValue('TOKENLESS_AGENT_TURN_ID', context.agentTurnId)
+  setEnvironmentValue('TOKENLESS_AGENT_TOOL_CALL_ID', context.agentToolCallId)
+  setEnvironmentValue('TOKENLESS_AGENT_SESSION_TREE_ID', context.agentSessionTreeId)
+  setEnvironmentValue('TOKENLESS_PROJECT_ID', context.project.projectId)
+  setEnvironmentValue('TOKENLESS_CONVERSATION_ID', context.conversationId)
+  setEnvironmentValue('TOKENLESS_TASK_ID', context.providerTaskId)
+  setEnvironmentValue('TOKENLESS_PROJECT_NAME', context.project.providerProjectName)
+  setEnvironmentValue('TOKENLESS_CHAT_NAME', `Codex ${context.agentChatId.slice(0, 12)}`)
+  setEnvironmentValue('TOKENLESS_PROVIDER', context.activeProvider)
+  setEnvironmentValue('TOKENLESS_PROFILE', context.activeProfile)
+  return args
+}
+
+function optionalEnvironmentValue(value: string | undefined) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function setEnvironmentValue(key: string, value: string | null) {
+  if (value === null) delete process.env[key]
+  else process.env[key] = value
+}
+
 function agentContextEnvelopeFromEnvironment() {
   const bindingId = process.env.TOKENLESS_CONTEXT_BINDING_ID
   if (!bindingId) return undefined
@@ -2944,6 +3000,22 @@ function agentContextEnvelopeFromEnvironment() {
 async function loadWebAgentHarness(): Promise<{
   completeBoundAgentInvocation(input: Record<string, unknown>): Promise<void>
   handleCodexHook(input: Record<string, unknown>): Promise<Record<string, unknown>>
+  resolveCodexInvocationContext(input: Record<string, unknown>): Promise<{
+    bindingId: string
+    agentKind: string
+    agentChatId: string
+    agentTurnId: string
+    agentToolCallId: string
+    agentSessionTreeId: string | null
+    conversationId: string
+    providerTaskId: string
+    project: {
+      projectId: string
+      providerProjectName: string
+    }
+    activeProvider: string | null
+    activeProfile: string | null
+  }>
   inspectCodexContext(input: Record<string, unknown>): Promise<Record<string, unknown>>
   inspectCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
   installCodexIntegration(input: Record<string, unknown>): Promise<Record<string, unknown>>
@@ -3010,6 +3082,57 @@ async function installCommand(args: CliArgs) {
     },
     nextStep: 'Run "tokenless setup" to configure a managed browser profile, the provider whitelist, and a one-time visible sign-in status report.',
   }, args)
+}
+
+async function setupCodexIntegration({
+  args,
+  homeDir,
+  presenter,
+}: {
+  args: CliArgs
+  homeDir: string
+  presenter: SetupPresenter
+}) {
+  const input = codexIntegrationInput(args, homeDir)
+  if (args.installCodex !== true) {
+    const message = localizeText('Codex integration was not installed; add --install-codex to opt in.')
+    const nextStep = localizeText('To install the optional Codex integration, rerun setup with --install-codex.')
+    presenter.note(message)
+    return {
+      requested: false,
+      installed: false,
+      codexHome: input.codexHome,
+      hooksTrustRequired: false,
+      message,
+      nextStep,
+    }
+  }
+
+  const harness = await loadWebAgentHarness()
+  const status = await presenter.withProgress(
+    'Installing Tokenless Codex integration',
+    () => harness.installCodexIntegration(input),
+  )
+  const guidance = objectRecord(status.guidance)
+  const hooks = objectRecord(status.hooks)
+  if (guidance.installed !== true || hooks.installed !== true) {
+    const error = new Error('Tokenless Codex integration installation could not be verified.') as CliError
+    error.code = 'codex_integration_install_unverified'
+    error.context = { status }
+    throw error
+  }
+  const message = localizeText('Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.')
+  const nextStep = localizeText('Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.')
+  presenter.note(nextStep)
+  return {
+    requested: true,
+    installed: true,
+    codexHome: input.codexHome,
+    hooksTrustRequired: hooks.trustRequired === true,
+    status,
+    message,
+    nextStep,
+  }
 }
 
 async function setupCommand(args: CliArgs) {
@@ -3106,12 +3229,28 @@ async function setupCommand(args: CliArgs) {
         language: config.language,
       })
     })
-    const maintenance = await reconcileTokenlessMaintenance({
-      homeDir,
-      daemonUrl: configuredDaemonUrl,
-      daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
-      runStep: (_phase, label, task) => presenter.withProgress(label, task),
-    })
+    const codexIntegration = await setupCodexIntegration({ args, homeDir, presenter })
+    const { message: codexIntegrationMessage, nextStep, ...codexIntegrationStatus } = codexIntegration
+    let maintenance: Awaited<ReturnType<typeof reconcileTokenlessMaintenance>>
+    try {
+      maintenance = await reconcileTokenlessMaintenance({
+        homeDir,
+        daemonUrl: configuredDaemonUrl,
+        daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
+        ...(codexIntegration.requested ? { codexHome: codexIntegration.codexHome } : {}),
+        runStep: (_phase, label, task) => presenter.withProgress(label, task),
+      })
+    } catch (error) {
+      if (error instanceof Error) {
+        const failure = error as CliError
+        failure.context = {
+          ...(failure.context ?? {}),
+          codexIntegration: codexIntegrationStatus,
+          nextStep,
+        }
+      }
+      throw error
+    }
     const skills = maintenance.skills
     const localRuntime = maintenance.daemon
     const registry = new ManagedProfileRegistry(homeDir)
@@ -3211,6 +3350,8 @@ async function setupCommand(args: CliArgs) {
       transport: 'daemon',
       backend: PLAYWRIGHT_EXECUTION_BACKEND,
       skills,
+      codexIntegration: codexIntegrationStatus,
+      nextStep,
       browser: {
         id: selectedBrowser.runtime.selection,
         antiDetect: selectedBrowser.runtime.selection === 'cloak',
@@ -3255,8 +3396,8 @@ async function setupCommand(args: CliArgs) {
       },
       dashboard,
       compactOutput: failed
-        ? `${setupFailedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)}`
-        : `${setupReportedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)}`,
+        ? `${setupFailedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)} ${codexIntegrationMessage}`
+        : `${setupReportedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)} ${codexIntegrationMessage}`,
     }, args)
   } finally {
     prompt?.close()
@@ -5035,7 +5176,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--anti-detect|--browser <browser>] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--no-browser-download] [--repair-browser] [--defaults|--fresh] --json'], options: ['home', 'json', 'quiet', 'profile', 'antiDetect', 'browser', 'providerWhitelist', 'noOpen', 'noBrowserDownload', 'repairBrowser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'setupImportBrowser', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy'] },
+    { command: 'setup', usage: ['tokenless setup [--install-codex [--codex-home <dir>]] [--anti-detect|--browser <browser>] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--no-browser-download] [--repair-browser] [--defaults|--fresh] --json'], options: ['home', 'json', 'quiet', 'profile', 'antiDetect', 'browser', 'providerWhitelist', 'noOpen', 'noBrowserDownload', 'repairBrowser', 'browserVisibility', 'chromeUserDataDir', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'importChromeProfile', 'setupImportBrowser', 'freshProfile', 'reimportProfile', 'setupDefaults', 'consentLocalProfileCopy', 'installCodex', 'codexHome'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
@@ -5160,6 +5301,7 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--color': 'color',
     '--no-color': 'noColor',
     '--anti-detect': 'antiDetect',
+    '--install-codex': 'installCodex',
     '--no-open': 'noOpen',
     '--clear-proxy': 'clearProxy',
     '--clear-browser-executable-path': 'clearBrowserExecutablePath',
@@ -5449,6 +5591,9 @@ function assertCommandRoutingArguments(command: string, subcommand: string | und
       'browser_runtime_repair_download_conflict',
       '--repair-browser cannot be combined with --no-browser-download.',
     )
+  }
+  if (command === 'setup' && args.codexHome !== undefined && args.installCodex !== true) {
+    throw usageError('codex_home_requires_install', '--codex-home requires --install-codex during setup.')
   }
   if (args.setupImportBrowser !== undefined && args.importChromeProfile === undefined) {
     throw usageError(
@@ -6316,6 +6461,7 @@ function optionUsageLabel(option: string) {
     home: '--home <dir>',
     idempotencyKey: '--idempotency-key <key>',
     integrationId: '--integration-id <id>',
+    installCodex: '--install-codex',
     importChromeProfile: '--import-browser-profile <key>',
     setupImportBrowser: '--import-browser <chrome|brave>',
     json: '--json',

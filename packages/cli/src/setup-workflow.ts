@@ -42,13 +42,16 @@ export type TokenlessSkillCheck = {
   }>
 }
 
-export async function inspectTokenlessSkills(home = os.homedir()): Promise<TokenlessSkillCheck> {
+export async function inspectTokenlessSkills(
+  home = os.homedir(),
+  { codexHome }: { codexHome?: string | undefined } = {},
+): Promise<TokenlessSkillCheck> {
   const sharedRoot = path.join(home, '.agents')
   const lockFile = path.join(sharedRoot, '.skill-lock.json')
   const lock = await readJson(lockFile)
   const lockedSkills = isRecord(lock?.skills) ? lock.skills : {}
   const skills = await inspectCanonicalSkills(sharedRoot, lockedSkills)
-  const targets = await inspectTokenlessSkillTargets(home, skills)
+  const targets = await inspectTokenlessSkillTargets(home, skills, codexHome)
   return {
     ok: TOKENLESS_SKILL_NAMES.every((name) => skills[name].ok) &&
       Object.values(targets).every((target) => TOKENLESS_SKILL_NAMES.every((name) => target.skills[name].ok)),
@@ -61,9 +64,11 @@ export async function inspectTokenlessSkills(home = os.homedir()): Promise<Token
 
 export async function installTokenlessSkills({
   home = os.homedir(),
+  codexHome,
   run = runSkillsCli,
 }: {
   home?: string
+  codexHome?: string | undefined
   run?: (command: string, args: readonly string[], options: { env: NodeJS.ProcessEnv }) => Promise<void>
 } = {}) {
   const command = process.platform === 'win32' ? 'npx.cmd' : 'npx'
@@ -92,8 +97,8 @@ export async function installTokenlessSkills({
     error.code = 'tokenless_skill_install_unverified'
     throw error
   }
-  await syncTokenlessSkillRoots(home)
-  const check = await inspectTokenlessSkills(home)
+  await syncTokenlessSkillRoots(home, codexHome)
+  const check = await inspectTokenlessSkills(home, { codexHome })
   if (!check.ok) {
     const error = new Error('Tokenless skills command completed, but the GitHub-backed installation could not be verified.') as Error & { code?: string }
     error.code = 'tokenless_skill_install_unverified'
@@ -123,10 +128,11 @@ async function inspectCanonicalSkills(
 async function inspectTokenlessSkillTargets(
   home: string,
   canonicalSkills: TokenlessSkillCheck['skills'],
+  codexHome?: string | undefined,
 ): Promise<TokenlessSkillCheck['targets']> {
   const roots = [
     { name: 'universal', root: path.join(home, '.agents') },
-    ...(await existingTokenlessAgentTargets(home)).map((target) => ({
+    ...(await existingTokenlessAgentTargets(home, codexHome)).map((target) => ({
       name: target.agent,
       root: target.root,
     })),
@@ -160,10 +166,12 @@ async function inspectSkillRoot(
   }))) as TokenlessSkillCheck['targets'][string]['skills']
 }
 
-async function existingTokenlessAgentTargets(home: string) {
+async function existingTokenlessAgentTargets(home: string, codexHome?: string | undefined) {
   const targets = []
   for (const target of TOKENLESS_AGENT_SKILL_TARGETS) {
-    const root = resolveTokenlessAgentRoot(home, target.agent, target.directory)
+    const root = target.agent === 'codex' && codexHome
+      ? path.resolve(codexHome)
+      : resolveTokenlessAgentRoot(home, target.agent, target.directory)
     if (await isDirectory(root)) targets.push({ ...target, root })
   }
   return targets
@@ -206,9 +214,9 @@ function skillsCliEnvironment(home: string): NodeJS.ProcessEnv {
   return environment
 }
 
-async function syncTokenlessSkillRoots(home: string) {
+async function syncTokenlessSkillRoots(home: string, codexHome?: string | undefined) {
   const roots = [
-    ...(await existingTokenlessAgentTargets(home)).map((target) => target.root),
+    ...(await existingTokenlessAgentTargets(home, codexHome)).map((target) => target.root),
     ...(await existingLegacyTokenlessSkillRoots(home)),
   ]
   const uniqueRoots = [...new Set(roots)]
@@ -225,8 +233,14 @@ async function syncTokenlessSkillRoots(home: string) {
 }
 
 async function runSkillsCli(command: string, args: readonly string[], options: { env: NodeJS.ProcessEnv }) {
+  const executable = process.platform === 'win32'
+    ? process.env.ComSpec?.trim() || 'cmd.exe'
+    : command
+  const executableArgs = process.platform === 'win32'
+    ? ['/d', '/s', '/c', command, ...args]
+    : [...args]
   await new Promise<void>((resolve, reject) => {
-    execFile(command, [...args], {
+    execFile(executable, executableArgs, {
       env: options.env,
       timeout: 120_000,
       maxBuffer: 4 * 1024 * 1024,

@@ -62,6 +62,14 @@ Then follow the interactive setup:
 tokenless setup
 ```
 
+To install the optional Codex integration in the same explicit setup run:
+
+```bash
+tokenless setup --install-codex
+```
+
+Setup never installs the Codex integration by default, including non-interactive runs. `--codex-home <dir>` selects a custom Codex state root and is accepted only with `--install-codex`. The explicit install runs after setup preferences are saved and before skill maintenance, so a newly created Codex root receives the Tokenless skills in the same run. Restart Codex afterward, open `/hooks`, and manually trust the Tokenless hook definition.
+
 Interactive setup first asks whether to use Anti-Detect mode. Declining selects the verified, platform-pinned Tokenless-managed Chrome for Testing—major 145 on Apple Silicon macOS and major 146 on Windows x64. Accepting Anti-Detect states that setup will install the platform-pinned CloakBrowser when needed. A clean profile remains the default for both targets. On Apple Silicon macOS only, setup also offers experimental opaque import from Google Chrome major 145 or Brave Chromium major 143/145 into managed Chrome for Testing 145 or CloakBrowser 145. The source browser must be selected explicitly, and setup scans only safe profile-directory and `Last Version` metadata. Edge, Chromium, Chrome for Testing, Arc, other source versions, and every Windows import combination are ineligible. Selecting a profile authorizes its opaque local copy without Tokenless inspecting authentication values; a successful open does not guarantee sign-in transfer. In non-interactive setup, Brave additionally requires `--import-browser brave`, every import requires `--consent-local-profile-copy`, explicit `--anti-detect` or `--browser cloak` authorizes Cloak installation, and a saved Cloak preference alone cannot start a download. Setup then lists all supported providers, keeps them all enabled by default, and lets you remove providers by replying with their numbers; press Enter to keep them all. It checks only the remaining providers, leaves one headed provider page open per provider in a concurrent background batch for visible sign-in review, and opens the local Tokenless dashboard in a reserved foreground tab. Reopen the dashboard at any time with:
 
 ```bash
@@ -89,6 +97,8 @@ Requires Node.js 22.13+. The first browser-runtime targets are Apple Silicon mac
 Tokenless can add broader delegation guidance and exact invocation continuity to Codex without launching, wrapping, or replacing Codex:
 
 ```bash
+tokenless setup --install-codex
+# Or install it separately after setup:
 tokenless agents install codex
 ```
 

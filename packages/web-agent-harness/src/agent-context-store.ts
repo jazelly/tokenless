@@ -49,61 +49,22 @@ export class AgentContextStore {
     chatId,
     cwd,
     model,
+    sessionTreeId,
     appServerThread,
   }: {
     chatId: string
     cwd: string
     model?: string | undefined
+    sessionTreeId?: string | null | undefined
     appServerThread?: CodexAppServerThread | null | undefined
   }) {
-    const project = resolveProject(cwd)
-    const conversation = conversationIdentity(chatId, project)
-    const now = new Date().toISOString()
-    this.transaction(() => {
-      this.run(
-        `INSERT INTO harness_projects (
-          project_id, canonical_root, provider_project_name, first_seen_at, last_seen_at
-        ) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(project_id) DO UPDATE SET
-          canonical_root = excluded.canonical_root,
-          provider_project_name = excluded.provider_project_name,
-          last_seen_at = excluded.last_seen_at`,
-        project.projectId,
-        project.canonicalRoot,
-        project.providerProjectName,
-        now,
-        now,
-      )
-      this.run(
-        `INSERT INTO harness_agent_conversations (
-          agent_kind, agent_chat_id, conversation_id, project_id, provider_task_id,
-          agent_session_tree_id, parent_chat_id, forked_from_chat_id, model,
-          app_server_status, first_seen_at, last_seen_at
-        ) VALUES ('codex', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(agent_kind, agent_chat_id) DO UPDATE SET
-          project_id = excluded.project_id,
-          agent_session_tree_id = COALESCE(excluded.agent_session_tree_id, harness_agent_conversations.agent_session_tree_id),
-          parent_chat_id = COALESCE(excluded.parent_chat_id, harness_agent_conversations.parent_chat_id),
-          forked_from_chat_id = COALESCE(excluded.forked_from_chat_id, harness_agent_conversations.forked_from_chat_id),
-          model = COALESCE(excluded.model, harness_agent_conversations.model),
-          app_server_status = CASE
-            WHEN excluded.app_server_status = 'resolved' THEN 'resolved'
-            ELSE harness_agent_conversations.app_server_status
-          END,
-          last_seen_at = excluded.last_seen_at`,
-        chatId,
-        conversation.conversationId,
-        project.projectId,
-        conversation.providerTaskId,
-        appServerThread?.sessionId ?? null,
-        appServerThread?.parentThreadId ?? null,
-        appServerThread?.forkedFromId ?? null,
-        normalizeOptional(model),
-        appServerThread ? 'resolved' : 'not_resolved',
-        now,
-        now,
-      )
-    })
+    this.transaction(() => this.upsertCodexSession({
+      chatId,
+      cwd,
+      model,
+      sessionTreeId,
+      appServerThread,
+    }))
     return this.conversation(chatId)
   }
 
@@ -169,6 +130,7 @@ export class AgentContextStore {
     toolInput,
     cwd,
     model,
+    sessionTreeId,
     appServerThread,
   }: {
     chatId: string
@@ -178,9 +140,10 @@ export class AgentContextStore {
     toolInput: unknown
     cwd: string
     model?: string | undefined
+    sessionTreeId?: string | null | undefined
     appServerThread?: CodexAppServerThread | null | undefined
   }): AgentInvocationContext {
-    const conversation = this.observeCodexSession({ chatId, cwd, model, appServerThread })
+    const conversation = this.observeCodexSession({ chatId, cwd, model, sessionTreeId, appServerThread })
     this.observeCodexTurn({ chatId, turnId, cwd, model })
     const existing = this.get(
       `SELECT binding_id
@@ -193,16 +156,18 @@ export class AgentContextStore {
     const now = new Date().toISOString()
     this.run(
       `INSERT INTO harness_tool_invocations (
-        binding_id, agent_kind, agent_chat_id, agent_turn_id, agent_tool_call_id,
+        binding_id, hook_session_id, agent_kind, agent_chat_id, agent_turn_id, agent_tool_call_id,
         tool_name, tool_input_sha256, status, provider, profile, job_id,
         provider_task_id, created_at, updated_at
-      ) VALUES (?, 'codex', ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?, ?)
+      ) VALUES (?, ?, 'codex', ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?, ?)
       ON CONFLICT(agent_kind, agent_chat_id, agent_tool_call_id) DO UPDATE SET
+        hook_session_id = COALESCE(harness_tool_invocations.hook_session_id, excluded.hook_session_id),
         agent_turn_id = excluded.agent_turn_id,
         tool_name = excluded.tool_name,
         tool_input_sha256 = excluded.tool_input_sha256,
         updated_at = excluded.updated_at`,
       bindingId,
+      chatId,
       chatId,
       turnId,
       toolCallId,
@@ -215,6 +180,7 @@ export class AgentContextStore {
     return {
       protocol: AGENT_CONTEXT_PROTOCOL,
       bindingId,
+      hookSessionId: chatId,
       agentKind: 'codex',
       agentChatId: chatId,
       agentTurnId: turnId,
@@ -228,6 +194,130 @@ export class AgentContextStore {
     }
   }
 
+  resolveCodexThreadInvocation({
+    chatId,
+    cwd,
+    sessionTreeId,
+    bindingId,
+    turnId,
+    toolCallId,
+    toolName,
+    toolInput,
+    model,
+    appServerThread,
+  }: {
+    chatId: string
+    cwd: string
+    sessionTreeId?: string | null | undefined
+    bindingId?: string | null | undefined
+    turnId?: string | null | undefined
+    toolCallId?: string | null | undefined
+    toolName?: string | null | undefined
+    toolInput?: unknown
+    model?: string | undefined
+    appServerThread?: CodexAppServerThread | null | undefined
+  }): AgentInvocationContext {
+    let resolvedBindingId = ''
+    let resolvedHookSessionId: string | null = null
+    let resolvedTurnId = ''
+    let resolvedToolCallId = ''
+
+    this.transaction(() => {
+      const targetProject = resolveProject(cwd)
+      const registeredProject = this.get(
+        `SELECT project_id
+         FROM harness_agent_conversations
+         WHERE agent_kind = 'codex' AND agent_chat_id = ?`,
+        chatId,
+      )
+      if (registeredProject && String(registeredProject.project_id) !== targetProject.projectId) {
+        throw new Error('Codex thread is already bound to a different canonical project.')
+      }
+      const identity = this.upsertCodexSession({
+        chatId,
+        cwd,
+        model,
+        sessionTreeId,
+        appServerThread,
+      })
+      const existing = bindingId
+        ? this.get(
+            `SELECT i.*, c.agent_session_tree_id
+             FROM harness_tool_invocations i
+             JOIN harness_agent_conversations c
+               ON c.agent_kind = i.agent_kind AND c.agent_chat_id = i.agent_chat_id
+             WHERE i.binding_id = ?`,
+            bindingId,
+          )
+        : undefined
+
+      if (bindingId && !existing) {
+        throw new Error('Codex hook binding was not found.')
+      }
+
+      if (existing) {
+        const hookSessionId = nullableString(existing.hook_session_id)
+        const existingTreeId = hookSessionId ?? nullableString(existing.agent_session_tree_id)
+        if (!hookSessionId) {
+          throw new Error('Codex hook binding is missing immutable Hook provenance.')
+        }
+        if (sessionTreeId && existingTreeId !== sessionTreeId) {
+          throw new Error('Codex hook binding belongs to a different session tree.')
+        }
+        resolvedBindingId = String(existing.binding_id)
+        resolvedHookSessionId = hookSessionId
+        resolvedTurnId = String(existing.agent_turn_id)
+        resolvedToolCallId = String(existing.agent_tool_call_id)
+        this.copyCodexTurn({
+          fromChatId: String(existing.agent_chat_id),
+          toChatId: chatId,
+          turnId: resolvedTurnId,
+        })
+        this.run(
+          `UPDATE harness_tool_invocations
+           SET agent_chat_id = ?, provider_task_id = ?, updated_at = ?
+           WHERE binding_id = ?`,
+          chatId,
+          identity.providerTaskId,
+          new Date().toISOString(),
+          resolvedBindingId,
+        )
+        return
+      }
+
+      resolvedBindingId = `binding_direct_${randomUUID()}`
+      resolvedHookSessionId = null
+      resolvedTurnId = turnId ?? `turn_direct_${randomUUID()}`
+      resolvedToolCallId = toolCallId ?? `tool_direct_${randomUUID()}`
+      this.upsertCodexTurn({ chatId, turnId: resolvedTurnId })
+      const now = new Date().toISOString()
+      this.run(
+        `INSERT INTO harness_tool_invocations (
+          binding_id, hook_session_id, agent_kind, agent_chat_id, agent_turn_id, agent_tool_call_id,
+          tool_name, tool_input_sha256, status, provider, profile, job_id,
+          provider_task_id, created_at, updated_at
+        ) VALUES (?, NULL, 'codex', ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?, ?)`,
+        resolvedBindingId,
+        chatId,
+        resolvedTurnId,
+        resolvedToolCallId,
+        toolName ?? 'tokenless.direct',
+        sha256(canonicalJson(toolInput)),
+        identity.providerTaskId,
+        now,
+        now,
+      )
+    })
+
+    return invocationContext(
+      this.conversation(chatId),
+      resolvedBindingId,
+      resolvedHookSessionId,
+      resolvedTurnId,
+      resolvedToolCallId,
+    )
+  }
+
   completeCodexInvocation({
     chatId,
     toolCallId,
@@ -237,16 +327,27 @@ export class AgentContextStore {
     toolCallId: string
     outcome: AgentInvocationOutcome
   }) {
-    const row = this.get(
+    const rows = this.all(
       `SELECT i.binding_id, i.agent_chat_id, c.conversation_id, i.provider_task_id
        FROM harness_tool_invocations i
        JOIN harness_agent_conversations c
          ON c.agent_kind = i.agent_kind AND c.agent_chat_id = i.agent_chat_id
-       WHERE i.agent_kind = 'codex' AND i.agent_chat_id = ? AND i.agent_tool_call_id = ?`,
-      chatId,
+       WHERE i.agent_kind = 'codex'
+         AND i.agent_tool_call_id = ?
+         AND (
+           i.hook_session_id = ?
+           OR (i.hook_session_id IS NULL AND i.agent_chat_id = ?)
+         )`,
       toolCallId,
+      chatId,
+      chatId,
     )
-    this.completeInvocationRecord(row, outcome)
+    if (rows.length !== 1) {
+      throw new Error(rows.length === 0
+        ? 'Codex Hook invocation was not registered.'
+        : 'Codex Hook invocation provenance is ambiguous.')
+    }
+    this.completeInvocationRecord(rows[0], outcome)
   }
 
   completeBoundInvocation(bindingId: string, outcome: AgentInvocationOutcome) {
@@ -262,9 +363,11 @@ export class AgentContextStore {
   }
 
   private completeInvocationRecord(row: Record<string, unknown> | undefined, outcome: AgentInvocationOutcome) {
-    if (!row) return
+    if (!row) throw new Error('Codex invocation binding was not registered.')
     const providerTaskId = String(row.provider_task_id)
-    if (outcome.taskId && outcome.taskId !== providerTaskId) return
+    if (outcome.taskId && outcome.taskId !== providerTaskId) {
+      throw new Error('Tokenless provider result belongs to a different bound task.')
+    }
     const chatId = String(row.agent_chat_id)
     const now = new Date().toISOString()
     this.transaction(() => {
@@ -341,7 +444,7 @@ export class AgentContextStore {
       completedAt: nullableString(row.completed_at),
     }))
     const invocations = this.all(
-      `SELECT binding_id, agent_turn_id, agent_tool_call_id, tool_name, status,
+      `SELECT binding_id, hook_session_id, agent_turn_id, agent_tool_call_id, tool_name, status,
               provider, profile, job_id, provider_task_id, created_at, updated_at
        FROM harness_tool_invocations
        WHERE agent_kind = 'codex' AND agent_chat_id = ?
@@ -349,6 +452,7 @@ export class AgentContextStore {
       chatId,
     ).map((row) => ({
       bindingId: String(row.binding_id),
+      hookSessionId: nullableString(row.hook_session_id),
       turnId: String(row.agent_turn_id),
       toolCallId: String(row.agent_tool_call_id),
       toolName: String(row.tool_name),
@@ -387,6 +491,119 @@ export class AgentContextStore {
       turns: this.count('harness_agent_turns'),
       invocations: this.count('harness_tool_invocations'),
     }
+  }
+
+  private upsertCodexSession({
+    chatId,
+    cwd,
+    model,
+    sessionTreeId,
+    appServerThread,
+  }: {
+    chatId: string
+    cwd: string
+    model?: string | undefined
+    sessionTreeId?: string | null | undefined
+    appServerThread?: CodexAppServerThread | null | undefined
+  }) {
+    if (sessionTreeId && appServerThread && sessionTreeId !== appServerThread.sessionId) {
+      throw new Error('Codex App Server session tree does not match the explicit Hook session tree.')
+    }
+    const project = resolveProject(cwd)
+    const identity = conversationIdentity(chatId, project)
+    const now = new Date().toISOString()
+    this.run(
+      `INSERT INTO harness_projects (
+        project_id, canonical_root, provider_project_name, first_seen_at, last_seen_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET
+        canonical_root = excluded.canonical_root,
+        provider_project_name = excluded.provider_project_name,
+        last_seen_at = excluded.last_seen_at`,
+      project.projectId,
+      project.canonicalRoot,
+      project.providerProjectName,
+      now,
+      now,
+    )
+    this.run(
+      `INSERT INTO harness_agent_conversations (
+        agent_kind, agent_chat_id, conversation_id, project_id, provider_task_id,
+        agent_session_tree_id, parent_chat_id, forked_from_chat_id, model,
+        app_server_status, first_seen_at, last_seen_at
+      ) VALUES ('codex', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(agent_kind, agent_chat_id) DO UPDATE SET
+        agent_session_tree_id = COALESCE(excluded.agent_session_tree_id, harness_agent_conversations.agent_session_tree_id),
+        parent_chat_id = COALESCE(excluded.parent_chat_id, harness_agent_conversations.parent_chat_id),
+        forked_from_chat_id = COALESCE(excluded.forked_from_chat_id, harness_agent_conversations.forked_from_chat_id),
+        model = COALESCE(excluded.model, harness_agent_conversations.model),
+        app_server_status = CASE
+          WHEN excluded.app_server_status = 'resolved' THEN 'resolved'
+          ELSE harness_agent_conversations.app_server_status
+        END,
+        last_seen_at = excluded.last_seen_at`,
+      chatId,
+      identity.conversationId,
+      project.projectId,
+      identity.providerTaskId,
+      sessionTreeId ?? appServerThread?.sessionId ?? null,
+      appServerThread?.parentThreadId ?? null,
+      appServerThread?.forkedFromId ?? null,
+      normalizeOptional(model),
+      appServerThread ? 'resolved' : 'not_resolved',
+      now,
+      now,
+    )
+    return identity
+  }
+
+  private upsertCodexTurn({ chatId, turnId }: { chatId: string; turnId: string }) {
+    const now = new Date().toISOString()
+    this.run(
+      `INSERT INTO harness_agent_turns (
+        agent_kind, agent_chat_id, agent_turn_id, prompt_sha256, started_at, last_seen_at, completed_at
+      ) VALUES ('codex', ?, ?, NULL, ?, ?, NULL)
+      ON CONFLICT(agent_kind, agent_chat_id, agent_turn_id) DO UPDATE SET
+        last_seen_at = excluded.last_seen_at`,
+      chatId,
+      turnId,
+      now,
+      now,
+    )
+  }
+
+  private copyCodexTurn({
+    fromChatId,
+    toChatId,
+    turnId,
+  }: {
+    fromChatId: string
+    toChatId: string
+    turnId: string
+  }) {
+    this.run(
+      `INSERT INTO harness_agent_turns (
+        agent_kind, agent_chat_id, agent_turn_id, prompt_sha256, started_at, last_seen_at, completed_at
+      )
+      SELECT 'codex', ?, agent_turn_id, prompt_sha256, started_at, last_seen_at, completed_at
+      FROM harness_agent_turns
+      WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?
+      ON CONFLICT(agent_kind, agent_chat_id, agent_turn_id) DO UPDATE SET
+        prompt_sha256 = COALESCE(excluded.prompt_sha256, harness_agent_turns.prompt_sha256),
+        last_seen_at = excluded.last_seen_at,
+        completed_at = COALESCE(excluded.completed_at, harness_agent_turns.completed_at)`,
+      toChatId,
+      fromChatId,
+      turnId,
+    )
+    const copied = this.get(
+      `SELECT 1 AS present
+       FROM harness_agent_turns
+       WHERE agent_kind = 'codex' AND agent_chat_id = ? AND agent_turn_id = ?`,
+      toChatId,
+      turnId,
+    )
+    if (!copied) throw new Error('Codex Hook binding references a missing turn.')
   }
 
   private count(table: string) {
@@ -436,6 +653,7 @@ export class AgentContextStore {
       );
       CREATE TABLE IF NOT EXISTS harness_tool_invocations (
         binding_id TEXT PRIMARY KEY NOT NULL,
+        hook_session_id TEXT,
         agent_kind TEXT NOT NULL,
         agent_chat_id TEXT NOT NULL,
         agent_turn_id TEXT NOT NULL,
@@ -476,6 +694,12 @@ export class AgentContextStore {
     `)
     this.ensureColumn('harness_provider_bindings', 'provider_project_id', 'TEXT')
     this.ensureColumn('harness_provider_bindings', 'provider_conversation_ref', 'TEXT')
+    this.ensureColumn('harness_tool_invocations', 'hook_session_id', 'TEXT')
+    this.#db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS harness_invocations_hook_idx
+        ON harness_tool_invocations(agent_kind, hook_session_id, agent_tool_call_id)
+        WHERE hook_session_id IS NOT NULL;
+    `)
     if (process.platform !== 'win32') fsSync.chmodSync(this.databasePath, 0o600)
   }
 
@@ -538,6 +762,30 @@ function conversationIdentity(chatId: string, project: ReturnType<typeof resolve
     conversationId: `conversation_${digest.slice(0, 24)}`,
     providerTaskId: `agent:codex:${digest.slice(0, 40)}`,
     project,
+  }
+}
+
+function invocationContext(
+  conversation: AgentConversationContext,
+  bindingId: string,
+  hookSessionId: string | null,
+  turnId: string,
+  toolCallId: string,
+): AgentInvocationContext {
+  return {
+    protocol: AGENT_CONTEXT_PROTOCOL,
+    bindingId,
+    hookSessionId,
+    agentKind: 'codex',
+    agentChatId: conversation.agentChatId,
+    agentTurnId: turnId,
+    agentToolCallId: toolCallId,
+    agentSessionTreeId: conversation.agentSessionTreeId,
+    conversationId: conversation.conversationId,
+    providerTaskId: conversation.providerTaskId,
+    project: conversation.project,
+    activeProvider: conversation.activeProvider,
+    activeProfile: conversation.activeProfile,
   }
 }
 

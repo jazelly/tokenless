@@ -16,6 +16,7 @@ export type ReconcileTokenlessMaintenanceOptions = {
   daemonUrl?: string | undefined
   daemonStartTimeoutMs?: number | undefined
   skillHome?: string | undefined
+  codexHome?: string | undefined
   runStep?: TokenlessMaintenanceStepRunner | undefined
 }
 
@@ -24,6 +25,7 @@ export async function reconcileTokenlessMaintenance({
   daemonUrl,
   daemonStartTimeoutMs,
   skillHome = process.env.TOKENLESS_SETUP_SKILL_HOME,
+  codexHome,
   runStep = runMaintenanceStep,
 }: ReconcileTokenlessMaintenanceOptions = {}) {
   const skillInstall = await runStep(
@@ -31,6 +33,7 @@ export async function reconcileTokenlessMaintenance({
     'Upserting global Tokenless agent skills',
     () => installTokenlessSkills({
       ...(skillHome ? { home: skillHome } : {}),
+      ...(codexHome ? { codexHome } : {}),
     }),
   )
   const daemon = await runStep(

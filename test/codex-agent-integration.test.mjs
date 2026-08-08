@@ -8,6 +8,32 @@ import test from 'node:test'
 const root = path.resolve(import.meta.dirname, '..')
 const cliEntry = path.join(root, 'packages', 'cli', 'dist', 'src', 'tokenless.mjs')
 
+test('setup exposes an explicit Codex opt-in without accepting a custom Codex home implicitly', () => {
+  const fixture = createFixture()
+  try {
+    const help = runCli(['setup', '--help'])
+    assert.equal(help.status, 0, help.stderr || help.stdout)
+    assert.equal(help.stdout, '')
+    assert.match(help.stderr, /tokenless setup \[--install-codex \[--codex-home <dir>\]\]/)
+    assert.match(help.stderr, /^  --install-codex$/m)
+    assert.match(help.stderr, /^  --codex-home <dir>$/m)
+
+    const implicit = runCli([
+      'setup',
+      '--codex-home', fixture.codexHome,
+      '--home', fixture.tokenlessHome,
+      '--json',
+    ])
+    assert.equal(implicit.status, 1, implicit.stderr || implicit.stdout)
+    assert.equal(implicit.stderr, '')
+    assert.equal(JSON.parse(implicit.stdout).error.code, 'codex_home_requires_install')
+    assert.equal(fs.existsSync(fixture.codexHome), false)
+    assert.equal(fs.existsSync(fixture.tokenlessHome), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test('built CLI installs, preserves, reports, and uninstalls the Codex integration', () => {
   const fixture = createFixture()
   try {
@@ -208,11 +234,12 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
       tool_input: { command: 'tokenless run --provider chatgpt --prompt hello --json' },
     })
     const firstCommand = firstPre.hookSpecificOutput.updatedInput.command
-    assert.match(firstCommand, /TOKENLESS_AGENT_SESSION_ID='thr_integration_chat'/)
-    assert.match(firstCommand, /TOKENLESS_AGENT_TURN_ID='turn-one'/)
-    assert.match(firstCommand, /TOKENLESS_AGENT_TOOL_CALL_ID='tool-one'/)
-    assert.match(firstCommand, /TOKENLESS_PROJECT_ID='project_[a-f0-9]{24}'/)
-    assert.match(firstCommand, /TOKENLESS_CONVERSATION_ID='conversation_[a-f0-9]{24}'/)
+    assert.equal(environmentValue(firstCommand, 'TOKENLESS_AGENT_SESSION_ID'), 'thr_integration_chat')
+    assert.equal(environmentValue(firstCommand, 'TOKENLESS_AGENT_SESSION_TREE_ID'), 'thr_integration_chat')
+    assert.equal(environmentValue(firstCommand, 'TOKENLESS_AGENT_TURN_ID'), 'turn-one')
+    assert.equal(environmentValue(firstCommand, 'TOKENLESS_AGENT_TOOL_CALL_ID'), 'tool-one')
+    assert.match(environmentValue(firstCommand, 'TOKENLESS_PROJECT_ID'), /^project_[a-f0-9]{24}$/)
+    assert.match(environmentValue(firstCommand, 'TOKENLESS_CONVERSATION_ID'), /^conversation_[a-f0-9]{24}$/)
     const taskId = environmentValue(firstCommand, 'TOKENLESS_TASK_ID')
 
     assert.deepEqual(runHook(fixture, {
@@ -322,6 +349,143 @@ test('Codex hooks bind exact chat, turn, tool call, project, and provider contin
   }
 })
 
+test('Codex CLI rebinds root Hook provenance to the concrete thread and PostToolUse completes it', async () => {
+  const fixture = createFixture()
+  try {
+    const hookBase = {
+      session_id: 'thr_tree_root',
+      transcript_path: null,
+      cwd: root,
+      model: 'gpt-5.6-luna',
+      permission_mode: 'default',
+    }
+    runHook(fixture, {
+      ...hookBase,
+      hook_event_name: 'UserPromptSubmit',
+      turn_id: 'turn-child',
+      prompt: 'delegate from a concrete child thread',
+    })
+    const pre = runHook(fixture, {
+      ...hookBase,
+      hook_event_name: 'PreToolUse',
+      turn_id: 'turn-child',
+      tool_name: 'Bash',
+      tool_use_id: 'tool-child',
+      tool_input: { command: 'tokenless run --prompt hello --json' },
+    })
+    const injected = injectedEnvironment(pre.hookSpecificOutput.updatedInput.command)
+    const bindingId = injected.TOKENLESS_CONTEXT_BINDING_ID
+    assert.ok(bindingId)
+
+    const rebound = runCli([
+      'run',
+      '--home', fixture.tokenlessHome,
+      '--task-id', 'conflict-proves-binding-ran-before-provider-access',
+      '--prompt', 'must fail before provider access',
+      '--json',
+    ], {
+      ...injected,
+      CODEX_HOME: fixture.codexHome,
+      CODEX_THREAD_ID: 'thr_concrete_child',
+    })
+    assert.equal(rebound.status, 1, rebound.stderr || rebound.stdout)
+    assert.equal(JSON.parse(rebound.stdout).error.code, 'agent_context_task_conflict')
+
+    const pending = inspectContext(fixture, 'thr_concrete_child')
+    assert.equal(pending.conversation.agentChatId, 'thr_concrete_child')
+    assert.equal(pending.conversation.agentSessionTreeId, 'thr_tree_root')
+    assert.equal(pending.invocations[0].bindingId, bindingId)
+    assert.equal(pending.invocations[0].hookSessionId, 'thr_tree_root')
+    assert.equal(pending.invocations[0].status, 'pending')
+
+    const { completeBoundAgentInvocation } = await import('../packages/web-agent-harness/dist/src/index.js')
+    await completeBoundAgentInvocation({
+      tokenlessHome: fixture.tokenlessHome,
+      bindingId,
+      outcome: {
+        ok: true,
+        provider: 'claude',
+        profile: 'work',
+        jobId: 'job-cli-outcome',
+        taskId: pending.conversation.providerTaskId,
+        providerProjectId: 'provider-project-shared',
+        providerConversationRef: 'https://claude.ai/chat/from-cli-outcome',
+      },
+    })
+
+    assert.deepEqual(runHook(fixture, {
+      ...hookBase,
+      hook_event_name: 'PostToolUse',
+      turn_id: 'turn-child',
+      tool_name: 'Bash',
+      tool_use_id: 'tool-child',
+      tool_input: pre.hookSpecificOutput.updatedInput,
+      tool_response: JSON.stringify({
+        ok: true,
+        provider: 'claude',
+        profile: { slug: 'work' },
+        jobId: 'job-post-hook',
+        taskId: pending.conversation.providerTaskId,
+        providerContext: {
+          project: { resource_id: 'provider-project-shared' },
+          conversation: { canonical_url: 'https://claude.ai/chat/from-post-hook' },
+        },
+      }),
+    }), {})
+
+    const completed = inspectContext(fixture, 'thr_concrete_child')
+    assert.equal(completed.invocations[0].status, 'succeeded')
+    assert.equal(completed.invocations[0].jobId, 'job-post-hook')
+    assert.equal(completed.providerBindings[0].providerProjectId, 'provider-project-shared')
+    assert.equal(completed.providerBindings[0].providerConversationRef, 'https://claude.ai/chat/from-post-hook')
+    const rootContext = inspectContext(fixture, 'thr_tree_root')
+    assert.equal(rootContext.conversation.project.projectId, completed.conversation.project.projectId)
+    assert.notEqual(rootContext.conversation.conversationId, completed.conversation.conversationId)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('CODEX_THREAD_ID derives one stable project per cwd and one conversation per concrete thread', () => {
+  const fixture = createFixture()
+  const projectOne = path.join(fixture.directory, 'project-one')
+  const projectTwo = path.join(fixture.directory, 'project-two')
+  fs.mkdirSync(projectOne)
+  fs.mkdirSync(projectTwo)
+  try {
+    for (const [threadId, cwd] of [
+      ['thr_project_one_a', projectOne],
+      ['thr_project_one_b', projectOne],
+      ['thr_project_two_c', projectTwo],
+    ]) {
+      const result = runCli([
+        'run',
+        '--home', fixture.tokenlessHome,
+        '--task-id', 'conflict-before-provider-access',
+        '--prompt', 'identity probe',
+        '--json',
+      ], {
+        CODEX_HOME: fixture.codexHome,
+        CODEX_THREAD_ID: threadId,
+      }, undefined, cwd)
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, 'agent_context_task_conflict')
+    }
+
+    const first = inspectContext(fixture, 'thr_project_one_a').conversation
+    const second = inspectContext(fixture, 'thr_project_one_b').conversation
+    const other = inspectContext(fixture, 'thr_project_two_c').conversation
+    assert.equal(first.project.projectId, second.project.projectId)
+    assert.equal(first.project.canonicalRoot, second.project.canonicalRoot)
+    assert.notEqual(first.conversationId, second.conversationId)
+    assert.notEqual(first.providerTaskId, second.providerTaskId)
+    assert.notEqual(first.project.projectId, other.project.projectId)
+    assert.notEqual(first.conversationId, other.conversationId)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test('Codex hooks bind a Tokenless MCP call through native structured tool payloads', () => {
   const fixture = createFixture()
   try {
@@ -404,13 +568,27 @@ function runHook(fixture, input) {
   return JSON.parse(result.stdout)
 }
 
-function runCli(args, extraEnv = {}, input = undefined) {
+function inspectContext(fixture, chatId) {
+  const inspected = runCli([
+    'agents', 'inspect', 'codex',
+    '--chat-id', chatId,
+    '--home', fixture.tokenlessHome,
+    '--codex-home', fixture.codexHome,
+    '--json',
+  ])
+  assert.equal(inspected.status, 0, inspected.stderr || inspected.stdout)
+  return JSON.parse(inspected.stdout).context
+}
+
+function runCli(args, extraEnv = {}, input = undefined, cwd = root) {
+  const environment = { ...process.env, ...extraEnv }
+  if (!Object.hasOwn(extraEnv, 'CODEX_THREAD_ID')) delete environment.CODEX_THREAD_ID
   return spawnSync(process.execPath, [cliEntry, ...args], {
-    cwd: root,
+    cwd,
     encoding: 'utf8',
     input,
     timeout: 10_000,
-    env: { ...process.env, ...extraEnv },
+    env: environment,
   })
 }
 
@@ -425,9 +603,28 @@ function createFixture() {
 }
 
 function environmentValue(command, key) {
-  const match = new RegExp(`export ${key}='([^']*)'`).exec(command)
-  assert.ok(match, `missing ${key}`)
-  return match[1]
+  const posix = new RegExp(`export ${key}='([^']*)'`).exec(command)
+  if (posix) return posix[1]
+  const powershell = new RegExp(`\\$env:${key} = '((?:''|[^'])*)'`).exec(command)
+  assert.ok(powershell, `missing ${key}`)
+  return powershell[1].replace(/''/g, String.fromCharCode(39))
+}
+
+function injectedEnvironment(command) {
+  const keys = [
+    'TOKENLESS_CONTEXT_BINDING_ID',
+    'TOKENLESS_AGENT_KIND',
+    'TOKENLESS_AGENT_SESSION_ID',
+    'TOKENLESS_AGENT_TURN_ID',
+    'TOKENLESS_AGENT_TOOL_CALL_ID',
+    'TOKENLESS_AGENT_SESSION_TREE_ID',
+    'TOKENLESS_PROJECT_ID',
+    'TOKENLESS_CONVERSATION_ID',
+    'TOKENLESS_TASK_ID',
+    'TOKENLESS_PROJECT_NAME',
+    'TOKENLESS_CHAT_NAME',
+  ]
+  return Object.fromEntries(keys.map((key) => [key, environmentValue(command, key)]))
 }
 
 function count(value, search) {
