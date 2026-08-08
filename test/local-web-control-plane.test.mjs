@@ -18,6 +18,7 @@ const uiApiDocument = JSON.parse(fs.readFileSync(path.resolve('api/tokenless-ui-
 const validateUiSession = uiSchemaValidator('UiSession')
 const validateUiSnapshot = uiSchemaValidator('UiSnapshot')
 const validateUiError = uiSchemaValidator('ErrorEnvelope')
+const validateProviderReadinessRefresh = uiSchemaValidator('ProviderReadinessRefresh')
 
 test('local web control plane enforces one-time bootstrap, session, CSRF, Origin, Host, and redaction', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
@@ -277,6 +278,26 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
     assert.deepEqual(afterProfile.profiles[0].preferences.enabledProviders, ['chatgpt', 'claude'])
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabled, true)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'gemini').profiles[0].enabled, false)
+
+    const readinessRefresh = await fetch(`${daemon.origin}/ui-api/v1/profiles/work/providers/actions/readiness`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    })
+    assert.equal(readinessRefresh.status, 202)
+    const readinessBody = await readinessRefresh.json()
+    assertUiSchema(validateProviderReadinessRefresh, readinessBody)
+    assert.equal(readinessBody.profileSlug, 'work')
+    assert.deepEqual(readinessBody.jobs.map((job) => job.provider), ['chatgpt', 'claude'])
+    assert.equal(readinessBody.jobs.every((job) => job.status === 'queued' && job.taskId.startsWith('ui:readiness:')), true)
+    await Promise.all(readinessBody.jobs.map((job) => (
+      daemon.store.cancelJob(job.jobId, { source: 'test-cleanup' }).catch(() => undefined)
+    )))
 
     assert.equal(await requestWithHost(daemon.port, 'evil.invalid'), 403)
   })

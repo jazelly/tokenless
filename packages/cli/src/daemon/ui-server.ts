@@ -174,6 +174,13 @@ export class TokenlessUiServer {
       ))
       return true
     }
+    const profileReadinessMatch = /^\/ui-api\/v1\/profiles\/([^/]+)\/providers\/actions\/readiness$/.exec(url.pathname)
+    if (profileReadinessMatch && method === 'POST') {
+      this.writeJson(response, 202, await this.services.refreshProviderReadiness(
+        decodeURIComponent(profileReadinessMatch[1] ?? ''),
+      ))
+      return true
+    }
     const providerMatch = /^\/ui-api\/v1\/profiles\/([^/]+)\/providers\/([^/]+)\/actions\/(open|readiness|controls)$/.exec(url.pathname)
     if (providerMatch && method === 'POST') {
       this.writeJson(response, 202, await this.services.providerAction(

@@ -9,6 +9,14 @@
 - Keep paired docs, such as `README.md` and `README.zh-CN.md`, structurally and semantically aligned.
 - Internal technical docs may remain English when translation adds no user value.
 
+## Documentation style
+
+- Do not ship walls of text. Keep paragraphs to one to three short sentences, and use a list, table, diagram, or screenshot when it makes the same point faster.
+- Keep product READMEs as scannable landing pages: lead with the value proposition and product visual, then show providers, quick start, and links to deeper documentation.
+- Put detailed reference material in the focused document that owns it and link there instead of duplicating long explanations.
+- Prefer one clear sentence over a section, and a few concrete bullets over a paragraph that merely enumerates features or steps.
+- Label illustrative or staged screenshots and metrics so they cannot be mistaken for benchmarks or production telemetry.
+
 ## Tokenless skill
 
 - Do not read or invoke the external `tokenless` skill during repository work. Use this file, source, and tests.

@@ -172,6 +172,15 @@
         "responses": { "200": { "$ref": "#/components/responses/Profile" }, "400": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/profiles/{profileId}/providers/actions/readiness": {
+      "post": {
+        "operationId": "refreshUiProviderReadiness",
+        "security": [{ "uiSession": [], "csrf": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/ProfileId" }],
+        "requestBody": { "$ref": "#/components/requestBodies/EmptyObject" },
+        "responses": { "202": { "$ref": "#/components/responses/ProviderReadinessRefresh" }, "400": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/profiles/{profileId}/providers/{providerId}/actions/{action}": {
       "post": {
         "operationId": "runUiProviderAction",
@@ -261,6 +270,7 @@
       "Profile": { "description": "Purpose-built managed profile view.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Profile" } } } },
       "ProfileRemoval": { "description": "Profile removal acknowledgement.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileRemoval" } } } },
       "JobSummary": { "description": "Redacted durable job summary.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobSummary" } } } },
+      "ProviderReadinessRefresh": { "description": "Queued provider readiness jobs for one profile.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderReadinessRefresh" } } } },
       "JobDetail": { "description": "Redacted durable job detail.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobDetail" } } } },
       "RuntimeOpen": { "description": "Managed profile browser open result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RuntimeOpenResult" } } } },
       "RuntimeOperation": { "description": "Browser runtime operation result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RuntimeStatus" } } } },
@@ -566,6 +576,15 @@
           "updatedAt": { "type": "string", "format": "date-time" }
         },
         "required": ["jobId", "profileId", "profileSlug", "provider", "action", "status", "taskId", "capabilityRoute", "agent", "blocker", "outputSavings", "createdAt", "updatedAt"],
+        "additionalProperties": false
+      },
+      "ProviderReadinessRefresh": {
+        "type": "object",
+        "properties": {
+          "profileSlug": { "$ref": "#/components/schemas/ProfileId" },
+          "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/JobSummary" } }
+        },
+        "required": ["profileSlug", "jobs"],
         "additionalProperties": false
       },
       "JobDetail": {

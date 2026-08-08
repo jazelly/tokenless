@@ -76,7 +76,7 @@
         </header>
         <div class="provider-account">
           <span>{t('account')}</span>
-          <strong>{state?.observation?.account?.name ?? state?.observation?.access ?? t('neverChecked')}</strong>
+          <strong>{state?.observation?.account?.name ?? (state?.observation?.access ? stateLabel(language, state.observation.access) : t('neverChecked'))}</strong>
         </div>
         {#if state?.controls?.model?.length}
           <label class="field compact-field"><span>{t('model')}</span><select name={`${provider.id}-model`} disabled={!state.enabled || busy} onchange={(event) => choose(provider, 'model', event.currentTarget.value)}>{#each state.controls.model as choice}<option value={choice.label} selected={choice.selected} disabled={!choice.enabled} translate="no">{choice.label}</option>{/each}</select></label>

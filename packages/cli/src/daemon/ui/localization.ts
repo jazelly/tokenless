@@ -12,6 +12,7 @@ const messages = {
     save: 'Save', cancel: 'Cancel', open: 'Open', remove: 'Remove', setDefault: 'Set default', default: 'Default', imported: 'Legacy imported', clean: 'Clean',
     providerConfiguration: 'Provider configuration', providersLede: 'Intent, observed access, evidence, and routing eligibility stay separate.', selectProfile: 'Profile',
     enabled: 'Enabled', disabled: 'Disabled', neverChecked: 'Never checked', checkNow: 'Check readiness', inspectControls: 'Inspect controls',
+    refreshProviderReadiness: 'Refresh provider readiness', checkingProviderReadiness: 'Checking provider sign-in…', providerReadinessRefreshed: 'Provider readiness refreshed.', providerReadinessPartiallyRefreshed: 'Provider readiness refreshed; some checks could not complete.', providerReadinessRefreshTimedOut: 'Provider readiness checks are still running. Review Jobs for progress.', noEnabledProviders: 'No providers are enabled for this profile.',
     capabilityCatalog: 'Capability catalog', capabilitiesLede: 'Start from caller outcomes, then see which evidence-backed provider routes can satisfy them.', noRoute: 'No evidenced route',
     durableJobs: 'Durable jobs', jobsLede: 'Inspect exact state transitions, blockers, normalized results, and recovery actions.', allStatuses: 'All statuses', allProviders: 'All providers', allProfiles: 'All profiles', searchJobs: 'Search task or job…', details: 'Details', resume: 'Resume headed',
     settingsDiagnostics: 'System and diagnostics', systemLede: 'Shared preferences, runtime controls, compatibility, and redacted repair information.', language: 'Language', quiesce: 'Quiesce runtime', copyDiagnostics: 'Copy diagnostics', diagnostics: 'Diagnostics',
@@ -26,7 +27,7 @@ const messages = {
     profileBrowser: 'Browser', providersShort: 'Providers', profileReady: 'Ready', lastChecked: 'Last checked', openMenu: 'Open menu',
     addProfile: 'Add profile', noProfiles: 'No profiles', required: 'Required', optional: 'Optional', profileCreated: 'Profile created.',
     proxySettings: 'Proxy settings', providerAccess: 'Provider access', deleteProfile: 'Delete profile', deleteWarning: 'This removes the managed local browser identity.',
-    status: 'Status', version: 'Version', runtime: 'Runtime', ready: 'Ready', stopped: 'Stopped', selected: 'Selected',
+    status: 'Status', version: 'Version', runtime: 'Runtime', ready: 'Ready', stopped: 'Stopped', selected: 'Selected', signedIn: 'signed in',
     refresh: 'Refresh', search: 'Search', queued: 'Queued', succeeded: 'Succeeded', failed: 'Failed', waiting: 'Waiting',
     noResults: 'No matching results', copy: 'Copy', copied: 'Copied.', copyFailed: 'Could not copy diagnostics.', account: 'Account', model: 'Model', effort: 'Effort',
     useBrowser: 'Use browser', chooseProviders: 'Choose providers', setupProfileHelp: 'A profile keeps provider sessions isolated on this machine.',
@@ -58,6 +59,7 @@ const messages = {
     save: '保存', cancel: '取消', open: '打开', remove: '移除', setDefault: '设为默认', default: '默认', imported: '旧版导入', clean: '全新',
     providerConfiguration: 'Provider 配置', providersLede: '用户意图、实际观测、证据和路由资格分别展示，不混成一个状态。', selectProfile: 'Profile',
     enabled: '已启用', disabled: '已停用', neverChecked: '从未检查', checkNow: '检查就绪状态', inspectControls: '检查控件',
+    refreshProviderReadiness: '刷新 Provider 就绪状态', checkingProviderReadiness: '正在检查 Provider 登录状态…', providerReadinessRefreshed: 'Provider 就绪状态已刷新。', providerReadinessPartiallyRefreshed: 'Provider 就绪状态已刷新；部分检查未能完成。', providerReadinessRefreshTimedOut: 'Provider 就绪检查仍在运行，请前往任务页面查看进度。', noEnabledProviders: '此 Profile 没有已启用的 Provider。',
     capabilityCatalog: '能力目录', capabilitiesLede: '先看调用方需要的结果，再看哪些 provider 路由已有真实证据。', noRoute: '暂无证据路由',
     durableJobs: '持久任务', jobsLede: '检查精确状态、阻塞原因、标准化结果和恢复操作。', allStatuses: '全部状态', allProviders: '全部 provider', allProfiles: '全部 profile', searchJobs: '搜索 task 或 job…', details: '详情', resume: '以 headed 恢复',
     settingsDiagnostics: '系统与诊断', systemLede: '管理共享偏好、运行时控制、兼容性和已脱敏的修复信息。', language: '语言', quiesce: '静默浏览器运行时', copyDiagnostics: '复制诊断信息', diagnostics: '诊断',
@@ -72,7 +74,7 @@ const messages = {
     profileBrowser: '浏览器', providersShort: 'Provider', profileReady: '就绪', lastChecked: '上次检查', openMenu: '打开菜单',
     addProfile: '添加 profile', noProfiles: '暂无 profile', required: '必填', optional: '选填', profileCreated: 'Profile 已创建。',
     proxySettings: 'Proxy 设置', providerAccess: 'Provider 访问', deleteProfile: '删除 profile', deleteWarning: '这会移除本机的 managed browser 身份。',
-    status: '状态', version: '版本', runtime: '运行时', ready: '就绪', stopped: '已停止', selected: '已选择',
+    status: '状态', version: '版本', runtime: '运行时', ready: '就绪', stopped: '已停止', selected: '已选择', signedIn: '已登录',
     refresh: '刷新', search: '搜索', queued: '排队中', succeeded: '已完成', failed: '失败', waiting: '等待中',
     noResults: '没有匹配结果', copy: '复制', copied: '已复制。', copyFailed: '无法复制诊断信息。', account: '账号', model: '模型', effort: '推理强度',
     useBrowser: '使用浏览器', chooseProviders: '选择 provider', setupProfileHelp: 'Profile 会在这台机器上隔离不同的 provider 会话。',
@@ -140,6 +142,13 @@ const capabilityFamilyZh: Record<string, string> = {
   evidence_lifecycle: '证据与生命周期',
 }
 
+const stateEn: Record<string, string> = {
+  guest: 'Guest access',
+  signed_in_free: 'Signed in · free plan',
+  signed_in_paid: 'Signed in · paid plan',
+  signed_in_unknown: 'Signed in · plan unknown',
+}
+
 const stateZh: Record<string, string> = {
   ok: '正常',
   warning: '警告',
@@ -169,6 +178,10 @@ const stateZh: Record<string, string> = {
   partial: '部分支持',
   unavailable: '不可用',
   unknown: '未知',
+  guest: '访客模式',
+  signed_in_free: '已登录 · 免费方案',
+  signed_in_paid: '已登录 · 付费方案',
+  signed_in_unknown: '已登录 · 方案未知',
 }
 
 const uiErrorZh: Record<string, string> = {
@@ -241,6 +254,7 @@ export function capabilityFamilyLabel(language: Language, family: string) {
 export function stateLabel(language: Language, value: unknown) {
   const state = String(value ?? 'unknown')
   if (language === 'zh-CN') return stateZh[state] ?? state
+  if (stateEn[state]) return stateEn[state]
   if (state === 'ok') return 'OK'
   return state
     .replaceAll('_', ' ')

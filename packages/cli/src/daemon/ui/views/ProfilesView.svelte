@@ -248,7 +248,7 @@
                 <div class="provider-glyph">{provider.label.slice(0, 1)}</div>
                 <div>
                   <strong>{provider.label}</strong>
-                  <small>{state?.observation?.account?.name ?? state?.observation?.access ?? t('neverChecked')}</small>
+                  <small>{state?.observation?.account?.name ?? (state?.observation?.access ? stateLabel(language, state.observation.access) : t('neverChecked'))}</small>
                 </div>
                 <span class:ok={state?.runtimeEligibility === 'eligible'} class="status-dot" aria-label={stateLabel(language, state?.runtimeEligibility ?? 'ineligible')}></span>
                 {#if state?.enabled}<Check size={15} class="row-check" />{/if}

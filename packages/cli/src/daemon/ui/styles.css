@@ -100,6 +100,8 @@ main#main:focus { outline: none; }
 .content-panel { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .panel-title { display: flex; min-height: 70px; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--line-soft); }
 .panel-title p { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.panel-title-actions { display: flex; align-items: center; gap: 8px; }
+.icon-button.spinning svg { animation: spin 800ms linear infinite; }
 .row-list { min-width: 0; }
 .data-row { display: flex; width: 100%; min-height: 62px; align-items: center; gap: 13px; padding: 11px 18px; border: 0; border-bottom: 1px solid var(--line-soft); background: transparent; color: inherit; text-align: left; text-decoration: none; }
 a.data-row:hover, button.data-row:hover { background: #faf9f7; }
@@ -332,6 +334,7 @@ pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12
 .spinner { width: 18px; height: 18px; border: 2px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: spin 800ms linear infinite; }
 .spinner.mini { width: 13px; height: 13px; border-width: 1.5px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .icon-button.spinning svg { animation: none; } }
 .toast-region { position: fixed; z-index: 200; right: 22px; bottom: 22px; pointer-events: none; }
 .toast { max-width: 360px; padding: 11px 14px; border: 1px solid #3b3935; border-radius: 8px; background: var(--ink); box-shadow: 0 10px 30px rgb(0 0 0 / 14%); color: white; font-size: 11px; }
 

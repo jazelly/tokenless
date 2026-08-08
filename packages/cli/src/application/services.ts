@@ -713,6 +713,28 @@ export class TokenlessApplicationServices {
     if (!preferences.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before opening it.')
     }
+    const job = this.createProviderActionJob(profile, provider.id, preferences, action)
+    await this.runtimeController?.wake()
+    return job
+  }
+
+  async refreshProviderReadiness(slug: string) {
+    const profile = await this.profiles.resolveProfile(slug)
+    const preferences = profilePreferences(await this.migratedConfig(), profile)
+    const enabled = new Set(preferences.enabledProviders)
+    const jobs = listProviderInstances()
+      .filter((provider) => provider.descriptor.stage !== 'disabled' && enabled.has(provider.id))
+      .map((provider) => this.createProviderActionJob(profile, provider.id, preferences, 'readiness'))
+    if (jobs.length > 0) await this.runtimeController?.wake()
+    return { profileSlug: profile.slug, jobs }
+  }
+
+  private createProviderActionJob(
+    profile: ManagedProfileRecord,
+    provider: ProviderId,
+    preferences: ManagedProfilePreferences,
+    action: 'open' | 'readiness' | 'controls',
+  ) {
     const visibleAction = action === 'readiness'
       ? VISIBLE_ACTIONS.AUTH_STATUS
       : action === 'controls'
@@ -726,20 +748,19 @@ export class TokenlessApplicationServices {
         ]
       : [{ action: visibleAction, payload: {} }]
     const request = createManagedPlaywrightJobRequest({
-      provider: provider.id,
+      provider,
       browserVisibility: action === 'readiness' ? preferences.browserVisibility : 'headed',
       userHandoff: action === 'open',
       taskId: `ui:${action}:${randomUUID()}`,
       actions,
     })
     const job = this.store.createJob({
-      provider: provider.id,
+      provider,
       action: MANAGED_PLAYWRIGHT_JOB_ACTION,
       request_json: request,
       execution_backend: PLAYWRIGHT_EXECUTION_BACKEND,
       profile_id: profile.id,
     })
-    await this.runtimeController?.wake()
     return publicJobSummary(publicView(job), [profile])
   }
 

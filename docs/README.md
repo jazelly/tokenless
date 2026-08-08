@@ -25,6 +25,8 @@ This index separates user guidance, stable product contracts, implementation arc
 
 ## Adding Documentation
 
+- Do not ship walls of text: keep paragraphs short, and switch to bullets, tables, diagrams, or screenshots when they communicate the same information faster.
+- Keep the root README as a scannable landing page; move detailed explanations into the focused document that owns them and link to it.
 - Put installation and first-run guidance in the paired root READMEs.
 - Put stable user and developer contracts under `docs/` and link them from this index.
 - Put complete CLI syntax in the paired `COMMANDS` references rather than duplicating it across guides.

@@ -26,6 +26,7 @@
   let offline = $state(false)
   let busy = $state(false)
   let runtimeBusy = $state(false)
+  let readinessBusy = $state(false)
   let fatal = $state('')
   let toast = $state('')
   let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
@@ -173,6 +174,44 @@
     await runtimeCatalogRequest
   }
 
+  async function refreshProviderReadiness(profileSlug: string) {
+    if (readinessBusy) return
+    readinessBusy = true
+    try {
+      const result = await client.mutate(`/profiles/${encodeURIComponent(profileSlug)}/providers/actions/readiness`, {}) ?? {}
+      const jobIds = Array.isArray(result.jobs)
+        ? result.jobs.flatMap((job: JsonRecord) => typeof job.jobId === 'string' ? [job.jobId] : [])
+        : []
+      if (jobIds.length === 0) {
+        showToast(t('noEnabledProviders'))
+        return
+      }
+      const jobs = await waitForReadinessJobs(jobIds)
+      showToast(t(jobs.some((job) => job.status !== 'succeeded')
+        ? 'providerReadinessPartiallyRefreshed'
+        : 'providerReadinessRefreshed'))
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : t('requestFailed'))
+    } finally {
+      readinessBusy = false
+      await refresh()
+    }
+  }
+
+  async function waitForReadinessJobs(jobIds: string[]) {
+    const expected = new Set(jobIds)
+    const deadline = Date.now() + 120_000
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 750))
+      await refresh()
+      const jobs = snapshot?.jobs?.filter((job: JsonRecord) => expected.has(job.jobId)) ?? []
+      if (jobs.length === expected.size && jobs.every((job: JsonRecord) => !['queued', 'claimed', 'running'].includes(job.status))) {
+        return jobs as JsonRecord[]
+      }
+    }
+    throw new Error(t('providerReadinessRefreshTimedOut'))
+  }
+
   async function inspectBrowserRuntime(browser: string, executablePath?: string) {
     runtimeBusy = true
     try {
@@ -295,7 +334,7 @@
 
     <main id="main" tabindex="-1" class:profile-main={section === 'profiles'}>
       {#if section === 'overview'}
-        <OverviewView {snapshot} {selectedProfile} {language} {t} />
+        <OverviewView {snapshot} {selectedProfile} {language} {t} {readinessBusy} onrefreshreadiness={refreshProviderReadiness} />
       {:else if section === 'profiles'}
         <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} ondiscoverprofiles={discoverBrowserProfileSources} />
       {:else if section === 'providers'}

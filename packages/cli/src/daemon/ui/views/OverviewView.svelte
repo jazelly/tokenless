@@ -1,21 +1,24 @@
 <script lang="ts">
-  import { ArrowUpRight, Bot, Calculator, Clock3, Monitor, UserRound } from '@lucide/svelte'
+  import { ArrowUpRight, Bot, Calculator, Clock3, Monitor, RefreshCw, UserRound } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
   import { stateLabel } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
-  let { snapshot, selectedProfile, language, t }: {
+  let { snapshot, selectedProfile, language, t, readinessBusy, onrefreshreadiness }: {
     snapshot: JsonRecord
     selectedProfile: string
     language: Language
     t: (key: any) => string
+    readinessBusy: boolean
+    onrefreshreadiness: (profileSlug: string) => Promise<void>
   } = $props()
 
   let profile = $derived(snapshot.profiles.find((entry: JsonRecord) => entry.slug === selectedProfile) ?? snapshot.profiles[0])
   let waiting = $derived(snapshot.jobs.filter((job: JsonRecord) => job.status === 'waiting_for_user'))
   let running = $derived(snapshot.jobs.filter((job: JsonRecord) => ['queued', 'claimed', 'running'].includes(job.status)))
-  let readyProviders = $derived(snapshot.providers.filter((provider: JsonRecord) => provider.profiles?.some((entry: JsonRecord) => entry.profileId === profile?.slug && entry.enabled && entry.runtimeEligibility === 'eligible')))
+  let enabledProviders = $derived(snapshot.providers.filter((provider: JsonRecord) => profileState(provider)?.enabled))
+  let authenticatedProviders = $derived(enabledProviders.filter((provider: JsonRecord) => profileState(provider)?.observation?.auth === 'authenticated'))
   let savingsEnabled = $derived(snapshot.outputSavings.enabled === true)
   let savingsReady = $derived(savingsEnabled && snapshot.outputSavings.collection === 'enabled')
 
@@ -68,14 +71,30 @@
 
   <div class="overview-grid">
     <section class="content-panel">
-      <header class="panel-title"><div><h2>{t('providerReadiness')}</h2><p>{profile?.label}</p></div><span class="badge neutral">{formatNumber(readyProviders.length, language)}/{formatNumber(snapshot.providers.length, language)}</span></header>
+      <header class="panel-title">
+        <div><h2>{t('providerReadiness')}</h2><p>{profile?.label}</p></div>
+        <div class="panel-title-actions">
+          <span class="badge neutral" data-testid="overview-readiness-summary">{formatNumber(authenticatedProviders.length, language)}/{formatNumber(enabledProviders.length, language)} {t('signedIn')}</span>
+          <button
+            class:spinning={readinessBusy}
+            class="icon-button"
+            type="button"
+            disabled={readinessBusy || enabledProviders.length === 0}
+            aria-label={t(readinessBusy ? 'checkingProviderReadiness' : 'refreshProviderReadiness')}
+            aria-busy={readinessBusy}
+            title={t(readinessBusy ? 'checkingProviderReadiness' : 'refreshProviderReadiness')}
+            data-testid="overview-readiness-refresh"
+            onclick={() => profile?.slug && onrefreshreadiness(profile.slug)}
+          ><RefreshCw size={16} /></button>
+        </div>
+      </header>
       <div class="row-list">
         {#each snapshot.providers as provider (provider.id)}
           {@const state = profileState(provider)}
           <a class="data-row" href="#providers">
             <span class="provider-glyph">{provider.label.slice(0, 1)}</span>
-            <span class="data-row-main"><strong>{provider.label}</strong><small>{state?.observation?.access ?? t('neverChecked')}</small></span>
-            <span class:ok={state?.runtimeEligibility === 'eligible'} class="status-dot"></span>
+            <span class="data-row-main"><strong>{provider.label}</strong><small>{state?.observation?.access ? stateLabel(language, state.observation.access) : t('neverChecked')}</small></span>
+            <span class:ok={state?.observation?.auth === 'authenticated'} class="status-dot" aria-label={state?.observation?.access ? stateLabel(language, state.observation.access) : t('neverChecked')}></span>
             <ArrowUpRight size={15} />
           </a>
         {/each}
