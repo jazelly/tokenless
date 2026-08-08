@@ -13,7 +13,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless install` | Low-level local runtime provisioning; use `tokenless upgrade` for normal maintenance. | None |
 | `tokenless setup` | Configure skills, browser, profiles, daemon, and one-time provider sign-in checks. | Yes |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | Manage the optional Codex guidance, native hooks, and exact Harness context binding. | None |
-| `tokenless dashboard` | Open or mint a one-time URL for the authenticated local web control plane. | None |
+| `tokenless dashboard` | Open the local web control plane, or print its direct loopback URL. | None |
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
@@ -219,7 +219,7 @@ Main options:
 
 ### `tokenless dashboard`
 
-Starts or discovers the same-home daemon, mints a single-use 60-second bootstrap ticket, and opens one reserved dashboard tab in the selected managed profile:
+Starts or discovers the same-home daemon and opens one reserved dashboard tab in the selected managed profile. You can also open the daemon loopback URL directly in your browser:
 
 ```bash
 tokenless dashboard
@@ -227,7 +227,7 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` returns the one-time loopback bootstrap URL without launching a browser. The URL redirects immediately to `/ui/` after use and cannot be reused. The resulting browser session is short-lived, stored in an `HttpOnly` `SameSite=Strict` cookie, and uses exact-Origin plus CSRF checks for mutations. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
+`--no-open` prints the direct loopback console URL without launching a browser. Opening `/` redirects to `/ui/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. UI mutations continue to require exact-Origin and CSRF checks. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
 

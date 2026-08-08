@@ -196,6 +196,15 @@ async function handleRequest(
       return
     }
 
+    if (method === 'GET' && url.pathname === '/') {
+      try {
+        uiServer.redirectToConsole(request, response)
+      } catch (error) {
+        uiServer.writeError(response, error)
+      }
+      return
+    }
+
     if (url.pathname === '/ui' || url.pathname.startsWith('/ui/')) {
       try {
         await uiServer.handle(request, response, url)
@@ -227,18 +236,18 @@ async function handleRequest(
       return
     }
 
-    if (method === 'POST' && url.pathname === '/control/ui-bootstrap') {
+    if (method === 'POST' && url.pathname === '/control/dashboard') {
       const rawBody = await readBody(request)
       const body = rawBody ? parseJsonObject(rawBody) : {}
       if (Object.keys(body).some((key) => key !== 'profile_id' && key !== 'open')) {
         throw invalidInput('request body must be valid JSON: unknown field')
       }
       const profileId = optionalString(body.profile_id)
-      const ticket = uiServer.mintTicket(profileId)
+      const url = uiServer.consoleUrl(profileId)
       const opened = body.open === true && profileId
-        ? await runtimeController?.openControlPlane(profileId, ticket.bootstrapUrl)
+        ? await runtimeController?.openControlPlane(profileId, url)
         : null
-      writeJson(response, 200, { ...ticket, opened })
+      writeJson(response, 200, { url, opened })
       return
     }
 

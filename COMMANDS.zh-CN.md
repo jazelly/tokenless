@@ -13,7 +13,7 @@
 | `tokenless install` | 底层本地 runtime provisioning；日常维护请使用 `tokenless upgrade`。 | 否 |
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
 | `tokenless agents <install\|status\|inspect\|uninstall> codex` | 管理可选的 Codex guidance、native hooks 和精确 Harness context binding。 | 否 |
-| `tokenless dashboard` | 打开已认证的本地 Web 控制台，或生成一次性 URL。 | 否 |
+| `tokenless dashboard` | 打开本地 Web 控制台，或输出可直接访问的 loopback URL。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
@@ -219,7 +219,7 @@ tokenless agents uninstall codex
 
 ### `tokenless dashboard`
 
-启动或发现同一 Tokenless home 的 daemon，签发一个 60 秒内有效且只能使用一次的 bootstrap ticket，并在所选 managed profile 中打开一个保留的控制台标签页：
+启动或发现同一 Tokenless home 的 daemon，并在所选 managed profile 中打开一个保留的控制台标签页。也可以直接在浏览器中打开 daemon 的 loopback URL：
 
 ```bash
 tokenless dashboard
@@ -227,7 +227,7 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` 不启动浏览器，只返回一次性 loopback bootstrap URL。URL 使用后会立刻跳转到 `/ui/`，且不能重复使用。浏览器 session 有有效期，保存在 `HttpOnly`、`SameSite=Strict` cookie 中；所有 mutation 还会校验 exact Origin 和 CSRF。控制台不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
+`--no-open` 不启动浏览器，只输出可直接访问的 loopback 控制台 URL。打开 `/` 会跳转到 `/ui/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。控制台不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
 
 控制台包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 

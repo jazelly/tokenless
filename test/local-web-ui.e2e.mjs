@@ -21,8 +21,6 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       browserExecutablePath: customExecutablePath,
       providerWhitelist: initialConfig.providerWhitelist.filter((provider) => provider !== 'gemini'),
     })
-    const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
-    const minted = await mintTicket(daemon.origin, token)
     const browserProfileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-browser-'))
     const importSourceDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-import-source-')))
     const manager = new PersistentContextManager({
@@ -53,7 +51,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
         if (response.url().includes('/ui-api/') && response.status() >= 500) consoleFailures.push(`${response.status()} ${response.url()}`)
       })
 
-      await page.goto(minted.body.bootstrapUrl, { waitUntil: 'networkidle' })
+      await page.goto(`${daemon.origin}/`, { waitUntil: 'networkidle' })
       assert.equal(await page.title(), 'Tokenless local console')
       await page.getByTestId('setup-view').waitFor()
       assert.equal(await page.locator('.boot-state').count(), 0)
@@ -181,8 +179,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('profiles-view').waitFor()
       assert.equal(await page.getByTestId('profile-item-personal').getAttribute('class').then((value) => value.includes('active')), true)
       const personalProfile = await new ManagedProfileRegistry(homeDir).resolveProfile('personal')
-      const profileTicket = await mintTicket(daemon.origin, token, { profile_id: personalProfile.id })
-      await page.goto(profileTicket.body.bootstrapUrl, { waitUntil: 'networkidle' })
+      await page.goto(`${daemon.origin}/ui/?profile=${encodeURIComponent(personalProfile.id)}`, { waitUntil: 'networkidle' })
       await page.getByTestId('app-shell').waitFor()
       await page.waitForFunction(() => new URL(location.href).searchParams.get('profile') === 'personal')
       await page.locator('.rail [data-nav="profiles"]').click()
@@ -350,19 +347,6 @@ async function withDaemon(operation) {
     await daemon.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
-}
-
-async function mintTicket(origin, token, body = {}) {
-  const response = await fetch(`${origin}/control/ui-bootstrap`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-  assert.equal(response.status, 200)
-  return { response, body: await response.json() }
 }
 
 async function hasDocumentOverflow(page) {

@@ -2,48 +2,27 @@ import { randomBytes } from 'node:crypto'
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-const TICKET_TTL_MS = 60_000
 const SESSION_TTL_MS = 30 * 60_000
 const COOKIE_NAME = 'tokenless_ui_session'
-
-type Ticket = {
-  expiresAt: number
-  profileId: string | null
-}
 
 type UiSession = {
   id: string
   csrf: string
   expiresAt: number
-  initialProfileId: string | null
 }
 
 export class UiSessionManager {
-  private readonly tickets = new Map<string, Ticket>()
   private readonly sessions = new Map<string, UiSession>()
 
-  mintTicket(origin: string, profileId?: string | null) {
+  ensureSession(request: IncomingMessage, response: ServerResponse) {
     this.prune()
-    const ticket = secret()
-    const expiresAt = Date.now() + TICKET_TTL_MS
-    this.tickets.set(ticket, { expiresAt, profileId: profileId ?? null })
-    return {
-      ticket,
-      bootstrapUrl: `${origin}/ui/bootstrap?ticket=${encodeURIComponent(ticket)}`,
-      expiresAt: new Date(expiresAt).toISOString(),
-    }
-  }
-
-  consumeTicket(ticket: string, response: ServerResponse) {
-    this.prune()
-    const stored = this.tickets.get(ticket)
-    this.tickets.delete(ticket)
-    if (!stored || stored.expiresAt <= Date.now()) return null
+    const id = parseCookie(request.headers.cookie ?? '')[COOKIE_NAME]
+    const existing = id ? this.sessions.get(id) : undefined
+    if (existing && existing.expiresAt > Date.now()) return existing
     const session: UiSession = {
       id: secret(),
       csrf: secret(),
       expiresAt: Date.now() + SESSION_TTL_MS,
-      initialProfileId: stored.profileId,
     }
     this.sessions.set(session.id, session)
     response.setHeader('set-cookie', serializeCookie(session))
@@ -55,7 +34,7 @@ export class UiSessionManager {
     const id = parseCookie(request.headers.cookie ?? '')[COOKIE_NAME]
     const session = id ? this.sessions.get(id) : undefined
     if (!session || session.expiresAt <= Date.now()) {
-      throw uiAuthError('ui_session_required', 'Open the dashboard again from the Tokenless CLI.', 401)
+      throw uiAuthError('ui_session_required', 'Open the local console again to start a new session.', 401)
     }
     return session
   }
@@ -75,9 +54,6 @@ export class UiSessionManager {
 
   private prune() {
     const now = Date.now()
-    for (const [ticket, value] of this.tickets) {
-      if (value.expiresAt <= now) this.tickets.delete(ticket)
-    }
     for (const [id, value] of this.sessions) {
       if (value.expiresAt <= now) this.sessions.delete(id)
     }
@@ -86,7 +62,7 @@ export class UiSessionManager {
 
 function serializeCookie(session: UiSession) {
   const maxAge = Math.floor((session.expiresAt - Date.now()) / 1000)
-  return `${COOKIE_NAME}=${session.id}; HttpOnly; SameSite=Strict; Path=/ui-api/v1; Max-Age=${maxAge}`
+  return `${COOKIE_NAME}=${session.id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`
 }
 
 function parseCookie(value: string) {

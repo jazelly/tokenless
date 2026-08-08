@@ -16,7 +16,7 @@ const messages = {
     capabilityCatalog: 'Capability catalog', capabilitiesLede: 'Start from caller outcomes, then see which evidence-backed provider routes can satisfy them.', noRoute: 'No evidenced route',
     durableJobs: 'Durable jobs', jobsLede: 'Inspect exact state transitions, blockers, normalized results, and recovery actions.', allStatuses: 'All statuses', allProviders: 'All providers', allProfiles: 'All profiles', searchJobs: 'Search task or job…', details: 'Details', resume: 'Resume headed',
     settingsDiagnostics: 'System and diagnostics', systemLede: 'Shared preferences, runtime controls, compatibility, and redacted repair information.', language: 'Language', quiesce: 'Quiesce runtime', copyDiagnostics: 'Copy diagnostics', diagnostics: 'Diagnostics',
-    updateSaved: 'Changes saved.', requestFailed: 'Request failed.', offline: 'Console is offline', offlineBody: 'The daemon stopped responding. Polling will resume automatically.', sessionExpired: 'Dashboard session expired', reopen: 'Run tokenless dashboard again to reauthenticate.',
+    updateSaved: 'Changes saved.', requestFailed: 'Request failed.', offline: 'Console is offline', offlineBody: 'The daemon stopped responding. Polling will resume automatically.', sessionExpired: 'Dashboard session expired', reopen: 'Open the local console again to start a new session.',
     loading: 'Loading current state…', empty: 'Nothing to show', confirmRemove: 'Type the profile slug to confirm permanent removal:', create: 'Create', browserSelection: 'Browser for new profiles', browserExecutablePath: 'Browser executable path', browserExecutablePathPlaceholder: '/absolute/path/to/browser or Browser.app…', browserExecutablePathConfigured: 'A verified path is cached. Leave blank to keep it, or paste a replacement.', browserExecutablePathHelp: 'Paste an absolute executable path. On macOS, an application bundle such as Browser.app is also accepted.', defaultVisibility: 'Default visibility', proxy: 'Proxy server', proxyBypass: 'Proxy bypass (comma separated)', proxyRestartNote: 'Changing the proxy first quiesces active browser ownership and recreates this profile context.', none: 'None', openBrowser: 'Open browser', savedAt: 'Saved',
     stage: 'Stage', lifecycle: 'Lifecycle', evidence: 'Evidence', result: 'Result', error: 'Error', attempts: 'Provider attempts', created: 'Created', updated: 'Updated',
     primaryNavigation: 'Primary navigation', uptimeUnit: 'min uptime', activeUnit: 'active', configuredUnit: 'configured', durableUnit: 'durable',
@@ -63,7 +63,7 @@ const messages = {
     capabilityCatalog: '能力目录', capabilitiesLede: '先看调用方需要的结果，再看哪些 provider 路由已有真实证据。', noRoute: '暂无证据路由',
     durableJobs: '持久任务', jobsLede: '检查精确状态、阻塞原因、标准化结果和恢复操作。', allStatuses: '全部状态', allProviders: '全部 provider', allProfiles: '全部 profile', searchJobs: '搜索 task 或 job…', details: '详情', resume: '以 headed 恢复',
     settingsDiagnostics: '系统与诊断', systemLede: '管理共享偏好、运行时控制、兼容性和已脱敏的修复信息。', language: '语言', quiesce: '静默浏览器运行时', copyDiagnostics: '复制诊断信息', diagnostics: '诊断',
-    updateSaved: '更改已保存。', requestFailed: '请求失败。', offline: '控制台已离线', offlineBody: 'Daemon 暂时没有响应；连接恢复后会自动继续轮询。', sessionExpired: '控制台会话已过期', reopen: '请重新运行 tokenless dashboard 完成认证。',
+    updateSaved: '更改已保存。', requestFailed: '请求失败。', offline: '控制台已离线', offlineBody: 'Daemon 暂时没有响应；连接恢复后会自动继续轮询。', sessionExpired: '控制台会话已过期', reopen: '请重新打开本地控制台以建立新会话。',
     loading: '正在读取当前状态…', empty: '暂无内容', confirmRemove: '输入 profile slug 以确认永久移除：', create: '创建', browserSelection: '新 profile 使用的浏览器', browserExecutablePath: '浏览器 executable path', browserExecutablePathPlaceholder: '/浏览器的绝对路径或 Browser.app…', browserExecutablePathConfigured: '已缓存经过验证的路径。留空会保留，也可以粘贴新路径替换。', browserExecutablePathHelp: '粘贴 executable 的绝对路径；macOS 也可以直接填写 Browser.app 应用路径。', defaultVisibility: '默认可见性', proxy: 'Proxy server', proxyBypass: 'Proxy bypass（逗号分隔）', proxyRestartNote: '更改 proxy 会先让浏览器运行时进入静默状态，再重建该 profile 的 context。', none: '无', openBrowser: '打开浏览器', savedAt: '保存时间',
     stage: '阶段', lifecycle: '生命周期', evidence: '证据', result: '结果', error: '错误', attempts: 'Provider 尝试', created: '创建时间', updated: '更新时间',
     primaryNavigation: '主要导航', uptimeUnit: '分钟运行时间', activeUnit: '活跃', configuredUnit: '已配置', durableUnit: '持久任务',
@@ -185,10 +185,9 @@ const stateZh: Record<string, string> = {
 }
 
 const uiErrorZh: Record<string, string> = {
-  ui_session_required: '请从 Tokenless CLI 重新打开控制台。',
+  ui_session_required: '请重新打开本地控制台以建立新会话。',
   ui_origin_rejected: '请求来源不受允许。',
   ui_csrf_rejected: '请求安全令牌无效。',
-  ui_ticket_invalid: '控制台启动 ticket 无效或已过期。',
   ui_host_rejected: '请求 Host 不受允许。',
   ui_body_too_large: '请求内容过大。',
   ui_json_invalid: '请求内容必须是有效的 JSON object。',

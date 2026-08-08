@@ -4,7 +4,7 @@ Status: implemented; real-provider release evidence pending | Priority: P0
 
 Depends on: authenticated loopback daemon, managed profile lifecycle, provider registry and capability catalog, embedded browser-runtime supervision, durable jobs, and browser page ownership
 
-Implementation note (2026-08-04): phases 0–4 and the currently stable phase-5 surfaces are implemented in the bundled CLI package. This includes profile-scoped preferences and migration, shared application services, one-time UI bootstrap and browser sessions, the `/ui-api/v1` contract, reserved control-plane page ownership, first-run Web setup/dashboard handoff, all six administration areas, clean and explicit-consent imported profile flows, provider/browser/job mutations, capability-first routing views, freshly observed model/effort controls, revision/ETag polling that preserves unsaved edits, English and Simplified Chinese localization, URL-persisted profile and job filters, and redacted diagnostics. The browser application is a modular Svelte 5 application under `packages/cli/src/daemon/ui`, built by its own Vite boundary into deterministic self-hosted assets while remaining part of the CLI release artifact. Its separate Playwright Web E2E covers setup, installed-runtime discovery, executable-path validation, explicit opaque local profile copy and re-import, responsive display at desktop/mobile viewports, accessible navigation and dialogs, configuration and profile persistence, durable work display, polling-safe drafts, and reserved control-plane page ownership. One explicitly gated signed-in provider suite reuses one real completed ChatGPT job across fixture-composed desktop-fresh, desktop-reload, and mobile-fresh startup cases without rerunning the full provider matrix. Browser profile source handles are random, short-lived, and resolved only inside the daemon; the browser never receives source filesystem paths or authentication values. Scheduler projections and project/context-mirror views remain conditional on the separate roadmaps that own those contracts. The roadmap stays active until the required authenticated real-provider release matrix is run.
+Implementation note (2026-08-04): phases 0–4 and the currently stable phase-5 surfaces are implemented in the bundled CLI package. This includes profile-scoped preferences and migration, shared application services, direct loopback UI entry with automatic browser sessions, the `/ui-api/v1` contract, reserved control-plane page ownership, first-run Web setup/dashboard handoff, all six administration areas, clean and explicit-consent imported profile flows, provider/browser/job mutations, capability-first routing views, freshly observed model/effort controls, revision/ETag polling that preserves unsaved edits, English and Simplified Chinese localization, URL-persisted profile and job filters, and redacted diagnostics. The browser application is a modular Svelte 5 application under `packages/cli/src/daemon/ui`, built by its own Vite boundary into deterministic self-hosted assets while remaining part of the CLI release artifact. Its separate Playwright Web E2E covers setup, installed-runtime discovery, executable-path validation, explicit opaque local profile copy and re-import, responsive display at desktop/mobile viewports, accessible navigation and dialogs, configuration and profile persistence, durable work display, polling-safe drafts, and reserved control-plane page ownership. One explicitly gated signed-in provider suite reuses one real completed ChatGPT job across fixture-composed desktop-fresh, desktop-reload, and mobile-fresh startup cases without rerunning the full provider matrix. Browser profile source handles are random, short-lived, and resolved only inside the daemon; the browser never receives source filesystem paths or authentication values. Scheduler projections and project/context-mirror views remain conditional on the separate roadmaps that own those contracts. The roadmap stays active until the required authenticated real-provider release matrix is run.
 
 ## Outcome
 
@@ -216,7 +216,7 @@ Raw diagnostic JSON may be offered as an explicit copy action after redaction. T
 2. Setup records the user's provider choices instead of selecting every registered provider.
 3. Setup performs live checks only for the selected providers.
 4. Regardless of whether some provider checks succeed, require sign-in, or fail technically, setup opens the selected managed profile in headed mode.
-5. The browser receives a reserved Tokenless control-plane page and navigates it through a one-time UI bootstrap URL.
+5. The browser receives a reserved Tokenless control-plane page and navigates it to the direct loopback UI URL.
 6. The landing page displays the completed setup state and unresolved actions.
 
 Machine-oriented `setup --json`, non-interactive environments, and explicit no-open modes must not launch a visible browser. Their result includes a command that an authorized user can run later to open the control plane.
@@ -264,12 +264,12 @@ The daemon UI must not depend on the provider page scheduler to stay alive. Rese
 
 Keep the existing bearer-protected daemon API as the trusted machine control contract. Add a separate browser-facing surface under `/ui-api/v1` backed by the same application services.
 
-The browser must never receive the daemon control bearer token. Bootstrap uses a one-time, random, short-lived ticket minted by an authenticated CLI or internal daemon call:
+The browser must never receive the daemon control bearer token. Opening the daemon's loopback root redirects to `/ui/` and creates a short-lived UI session; allowed UI GET requests create a replacement session when needed:
 
-1. the CLI requests a UI bootstrap ticket over the existing authenticated control channel;
-2. Tokenless opens `/ui/bootstrap?ticket=<one-time-ticket>` in the managed browser;
-3. the daemon consumes the ticket once, creates a short-lived UI session, and immediately redirects to `/ui/` so the ticket is removed from browser history;
-4. the session is held in an `HttpOnly`, `SameSite=Strict`, path-scoped cookie; and
+1. the CLI may use its authenticated control channel to ask a managed browser to open the direct `/ui/` URL for a selected profile;
+2. users may open the daemon's loopback root directly, which redirects to `/ui/`;
+3. the session is held in an `HttpOnly`, `SameSite=Strict` cookie;
+4. UI GET requests establish the session without receiving the daemon bearer token; and
 5. mutating UI requests additionally require an exact same-origin check and a per-session CSRF header.
 
 Browser security requirements include:
@@ -280,11 +280,11 @@ Browser security requirements include:
 - a restrictive Content Security Policy with no remote scripts;
 - `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`;
 - bounded session expiry and invalidation on daemon restart;
-- no secrets in query strings after the one-time redirect;
+- no daemon bearer token or other secrets in query strings;
 - no daemon token, provider credentials, profile storage, or private filesystem paths in UI responses; and
-- explicit reauthentication through a fresh CLI-minted ticket after expiry.
+- direct reopening of the local console after expiry.
 
-Static UI assets may be served without authentication, but every personalized read and mutation requires the UI session. The first implementation should use bounded polling with `ETag` or revision cursors for overview, runtime, provider observations, and jobs. Do not add SSE or WebSockets until polling creates a measured product problem.
+Static UI assets and UI GETs establish the local session automatically; mutations require the UI session, Origin, and CSRF checks. The first implementation should use bounded polling with `ETag` or revision cursors for overview, runtime, provider observations, and jobs. Do not add SSE or WebSockets until polling creates a measured product problem.
 
 ## Application Service Boundary
 
@@ -341,13 +341,13 @@ Visual design requires a separate design target and review before frontend imple
 - Extract config, profile, provider-readiness, job, and diagnostic operations from CLI handlers into typed services.
 - Define per-profile provider preferences and a migration from global `preferredProviders` without changing routing silently.
 - Define browser-facing schemas and redaction policy.
-- Add UI bootstrap ticket and session contracts.
+- Add direct UI session contracts.
 - Add reserved control-plane page ownership to the managed browser context.
 
 ### Phase 1: Read-Only Operational Console
 
 - Package and serve the local SPA.
-- Implement authenticated UI bootstrap.
+- Implement direct loopback UI entry.
 - Show overview, daemon/browser status, profiles, provider observations, capability catalog, job list, job details, and diagnostics.
 - Add `tokenless dashboard` to start or discover the daemon, open the default managed profile, and focus the reserved console tab.
 - Keep all mutations in the CLI during this phase.
@@ -390,7 +390,7 @@ Follow the repository's real-boundary testing policy:
 - keep test-only profile launches keychain-neutral with `--password-store=basic` and `--use-mock-keychain`;
 - verify the control-plane page cannot be selected by provider page acquisition or replacement;
 - compose real-provider Web UI startup cases from an ignored local fixture that names the dedicated home, profile, provider, context mode, reload mode, and viewport;
-- verify bootstrap ticket expiry, single use, session invalidation, same-origin enforcement, CSRF rejection, Host validation, CSP, and redaction through real HTTP requests and browser behavior;
+- verify direct UI entry, automatic session creation, session invalidation, same-origin enforcement, CSRF rejection, Host validation, CSP, and redaction through real HTTP requests and browser behavior;
 - do not use mocks, fake daemons, fake pages, synthetic fetch implementations, or source-string assertions;
 - run provider readiness, sign-in handoff, capability inspection, and provider-side mutations against the real provider website under the explicit local E2E gate; and
 - treat any Tokenless-triggered Keychain prompt as a failed run and stop the responsible browser.

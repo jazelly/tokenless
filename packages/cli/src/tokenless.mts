@@ -821,13 +821,12 @@ async function dashboardCommand(args: CliArgs) {
     daemon: { url: daemon.url, started: daemon.started, pid: daemon.pid },
     profile: { slug: profile.slug, id: profile.id, label: profile.label },
     dashboard: {
-      url: dashboard.bootstrapUrl,
-      expiresAt: dashboard.expiresAt,
+      url: dashboard.url,
       opened: dashboard.opened !== null,
       reused: dashboard.opened?.reused ?? false,
     },
     compactOutput: args.noOpen === true
-      ? `Dashboard ready for managed profile '${profile.slug}': ${dashboard.bootstrapUrl}`
+      ? `Dashboard ready for managed profile '${profile.slug}': ${dashboard.url}`
       : `Opened the Tokenless dashboard in managed profile '${profile.slug}'.`,
   }, args)
 }

@@ -108,10 +108,10 @@ export class BrowserRuntimeController {
     })
   }
 
-  async openControlPlane(profileId: string, bootstrapUrl: string) {
+  async openControlPlane(profileId: string, consoleUrl: string) {
     return await this.enqueue(async () => {
       const runner = await this.ensureRunningInLane()
-      const opened = await runner.service.openControlPlane(profileId, bootstrapUrl)
+      const opened = await runner.service.openControlPlane(profileId, consoleUrl)
       return { ...opened, status: this.status() }
     })
   }

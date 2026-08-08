@@ -27,26 +27,25 @@ export class TokenlessUiServer {
     this.origin = options.origin
   }
 
-  mintTicket(profileId?: string | null) {
-    return this.sessions.mintTicket(this.origin(), profileId)
+  consoleUrl(profileId?: string | null) {
+    const url = new URL('/ui/', this.origin())
+    if (profileId) url.searchParams.set('profile', profileId)
+    return url.toString()
+  }
+
+  redirectToConsole(request: IncomingMessage, response: ServerResponse) {
+    this.requireHost(request)
+    this.sessions.ensureSession(request, response)
+    this.securityHeaders(response)
+    response.writeHead(303, { location: '/ui/' })
+    response.end()
   }
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL) {
     this.requireHost(request)
     const method = request.method ?? 'GET'
-    if (method === 'GET' && url.pathname === '/ui/bootstrap') {
-      const ticket = url.searchParams.get('ticket') ?? ''
-      const session = this.sessions.consumeTicket(ticket, response)
-      if (!session) throw uiError('ui_ticket_invalid', 'The dashboard bootstrap ticket is invalid or expired.', 401)
-      this.securityHeaders(response)
-      const location = session.initialProfileId
-        ? `/ui/?profile=${encodeURIComponent(session.initialProfileId)}`
-        : '/ui/'
-      response.writeHead(303, { location })
-      response.end()
-      return
-    }
     if (method === 'GET' && (url.pathname === '/ui' || url.pathname === '/ui/')) {
+      this.sessions.ensureSession(request, response)
       const language = await this.initialLanguage(request)
       const template = await fs.readFile(path.join(UI_ROOT, 'index.html'), 'utf8')
       const body = template
@@ -75,7 +74,7 @@ export class TokenlessUiServer {
 
     if (!url.pathname.startsWith('/ui-api/v1/')) return false
     const session = method === 'GET'
-      ? this.sessions.requireSession(request)
+      ? this.sessions.ensureSession(request, response)
       : this.sessions.requireMutation(request, this.origin())
     if (method === 'GET' && url.pathname === '/ui-api/v1/session') {
       this.writeJson(response, 200, {

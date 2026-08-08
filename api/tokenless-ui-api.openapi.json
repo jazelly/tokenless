@@ -3,7 +3,7 @@
   "info": {
     "title": "Tokenless Browser UI API",
     "version": "1.0.0",
-    "description": "Authenticated, loopback-only API consumed by the bundled Tokenless control plane. Browser JavaScript never receives the daemon bearer token."
+    "description": "Loopback-only API consumed by the bundled Tokenless control plane. UI GET requests establish an HttpOnly session automatically; browser JavaScript never receives the daemon bearer token."
   },
   "servers": [
     {
@@ -11,14 +11,12 @@
       "variables": { "port": { "default": "7331" } }
     }
   ],
-  "security": [{ "uiSession": [] }],
   "paths": {
     "/session": {
       "get": {
         "operationId": "getUiSession",
         "responses": {
-          "200": { "$ref": "#/components/responses/Session" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "200": { "$ref": "#/components/responses/Session" }
         }
       }
     },
@@ -30,8 +28,7 @@
         ],
         "responses": {
           "200": { "$ref": "#/components/responses/Snapshot" },
-          "304": { "description": "Snapshot revision is unchanged." },
-          "401": { "$ref": "#/components/responses/Error" }
+          "304": { "description": "Snapshot revision is unchanged." }
         }
       }
     },
@@ -39,8 +36,7 @@
       "get": {
         "operationId": "listUiBrowserRuntimes",
         "responses": {
-          "200": { "$ref": "#/components/responses/BrowserRuntimeCatalog" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "200": { "$ref": "#/components/responses/BrowserRuntimeCatalog" }
         }
       }
     },
@@ -238,7 +234,7 @@
   },
   "components": {
     "securitySchemes": {
-      "uiSession": { "type": "apiKey", "in": "cookie", "name": "tokenless_ui_session" },
+      "uiSession": { "type": "apiKey", "in": "cookie", "name": "tokenless_ui_session", "description": "Established automatically by an allowed UI GET request." },
       "csrf": { "type": "apiKey", "in": "header", "name": "X-Tokenless-CSRF" }
     },
     "parameters": {

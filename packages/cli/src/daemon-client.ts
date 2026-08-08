@@ -182,9 +182,7 @@ export type OpenDashboardOptions = DaemonClientOptions & {
 }
 
 export type OpenDashboardResponse = {
-  ticket: string
-  bootstrapUrl: string
-  expiresAt: string
+  url: string
   opened: null | (BrowserRuntimeOpenProfileResponse & { url: string, reused: boolean })
 }
 
@@ -597,7 +595,7 @@ export async function openTokenlessDashboard({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<OpenDashboardResponse>({
     daemonUrl: daemon.daemonUrl,
-    path: '/control/ui-bootstrap',
+    path: '/control/dashboard',
     body: {
       ...(profileId ? { profile_id: profileId } : {}),
       open,

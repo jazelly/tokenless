@@ -20,27 +20,26 @@ const validateUiSnapshot = uiSchemaValidator('UiSnapshot')
 const validateUiError = uiSchemaValidator('ErrorEnvelope')
 const validateProviderReadinessRefresh = uiSchemaValidator('ProviderReadinessRefresh')
 
-test('local web control plane enforces one-time bootstrap, session, CSRF, Origin, Host, and redaction', async () => {
+test('local web control plane opens directly, establishes UI sessions, and enforces CSRF, Origin, Host, and bearer boundaries', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
     const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
-    const minted = await mintTicket(daemon.origin, token)
-    assert.equal(minted.response.status, 200)
-    assert.equal(new URL(minted.body.bootstrapUrl).origin, daemon.origin)
+    const directSession = await fetch(`${daemon.origin}/ui-api/v1/session`)
+    assert.equal(directSession.status, 200)
+    assert.match(directSession.headers.get('set-cookie') ?? '', /^tokenless_ui_session=/)
 
-    const bootstrap = await fetch(minted.body.bootstrapUrl, { redirect: 'manual' })
-    assert.equal(bootstrap.status, 303)
-    assert.equal(bootstrap.headers.get('location'), '/ui/')
-    assert.equal(new URL(minted.body.bootstrapUrl).searchParams.has('ticket'), true)
-    const cookie = bootstrap.headers.get('set-cookie')?.split(';')[0]
+    const directSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`)
+    assert.equal(directSnapshot.status, 200)
+
+    const root = await fetch(`${daemon.origin}/`, { redirect: 'manual' })
+    assert.equal(root.status, 303)
+    assert.equal(root.headers.get('location'), '/ui/')
+    const cookie = root.headers.get('set-cookie')?.split(';')[0]
     assert.match(cookie ?? '', /^tokenless_ui_session=/)
-    assert.match(bootstrap.headers.get('set-cookie') ?? '', /HttpOnly/)
-    assert.match(bootstrap.headers.get('set-cookie') ?? '', /SameSite=Strict/)
-
-    const reused = await fetch(minted.body.bootstrapUrl, { redirect: 'manual' })
-    assert.equal(reused.status, 401)
+    assert.match(root.headers.get('set-cookie') ?? '', /HttpOnly/)
+    assert.match(root.headers.get('set-cookie') ?? '', /SameSite=Strict/)
 
     const initialHtml = await fetch(`${daemon.origin}/ui/`, {
-      headers: { 'accept-language': 'zh-CN,zh;q=0.9' },
+      headers: { cookie, 'accept-language': 'zh-CN,zh;q=0.9' },
     })
     assert.equal(initialHtml.status, 200)
     const html = await initialHtml.text()
@@ -57,6 +56,10 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
     const sessionBody = await session.json()
     assert.equal(typeof sessionBody.csrf, 'string')
     assertUiSchema(validateUiSession, sessionBody)
+
+    const machineRoute = await fetch(`${daemon.origin}/jobs`)
+    assert.equal(machineRoute.status, 401)
+    assert.equal((await machineRoute.json()).error.code, 'control_auth_missing')
 
     const snapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } })
     assert.equal(snapshot.status, 200)
@@ -203,10 +206,8 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
     assert.deepEqual(await registry.listProfiles(), [])
 
     const workProfile = await registry.addProfile({ slug: 'work', label: 'Work', lifecycle: 'ready', setDefault: true })
-    const profileTicket = await mintTicket(daemon.origin, token, { profile_id: workProfile.id })
-    const profileBootstrap = await fetch(profileTicket.body.bootstrapUrl, { redirect: 'manual' })
-    assert.equal(profileBootstrap.status, 303)
-    assert.equal(profileBootstrap.headers.get('location'), `/ui/?profile=${encodeURIComponent(workProfile.id)}`)
+    const profileConsole = await fetch(`${daemon.origin}/ui/?profile=${encodeURIComponent(workProfile.id)}`, { headers: { cookie } })
+    assert.equal(profileConsole.status, 200)
     const mappedJob = daemon.store.createJob({
       provider: 'chatgpt',
       action: 'profile-mapping-check',
@@ -250,6 +251,7 @@ test('local web control plane enforces one-time bootstrap, session, CSRF, Origin
     assert.equal(dashboardBody.profile.slug, 'work')
     assert.equal(dashboardBody.dashboard.opened, false)
     assert.equal(new URL(dashboardBody.dashboard.url).origin, daemon.origin)
+    assert.equal(new URL(dashboardBody.dashboard.url).searchParams.get('profile'), workProfile.id)
 
     const profileMutation = await fetch(`${daemon.origin}/ui-api/v1/profiles/work`, {
       method: 'PATCH',
@@ -307,16 +309,27 @@ test('dashboard sessions are invalidated when the real daemon restarts', async (
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-ui-restart-')))
   let daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
   try {
-    const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
-    const minted = await mintTicket(daemon.origin, token)
-    const bootstrap = await fetch(minted.body.bootstrapUrl, { redirect: 'manual' })
-    const cookie = bootstrap.headers.get('set-cookie')?.split(';')[0]
+    const root = await fetch(`${daemon.origin}/`, { redirect: 'manual' })
+    const cookie = root.headers.get('set-cookie')?.split(';')[0]
     assert.match(cookie ?? '', /^tokenless_ui_session=/)
     await daemon.close()
 
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
-    const staleSession = await fetch(`${daemon.origin}/ui-api/v1/session`, { headers: { cookie } })
-    assert.equal(staleSession.status, 401)
+    const staleMutation = await fetch(`${daemon.origin}/ui-api/v1/config`, {
+      method: 'PATCH',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': 'stale',
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    })
+    assert.equal(staleMutation.status, 401)
+
+    const replacementSession = await fetch(`${daemon.origin}/ui-api/v1/session`, { headers: { cookie } })
+    assert.equal(replacementSession.status, 200)
+    assert.match(replacementSession.headers.get('set-cookie') ?? '', /^tokenless_ui_session=/)
   } finally {
     await daemon.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -332,18 +345,6 @@ async function withDaemon(operation) {
     await daemon.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
-}
-
-async function mintTicket(origin, token, body = {}) {
-  const response = await fetch(`${origin}/control/ui-bootstrap`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-  return { response, body: await response.json() }
 }
 
 async function requestWithHost(port, host) {
