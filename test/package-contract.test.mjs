@@ -234,12 +234,18 @@ test('output savings defaults on without downloading its runtime during status c
 test('workspace packages keep standalone product names', () => {
   const cli = readJson('packages/cli/package.json')
   const harness = readJson('packages/web-agent-harness/package.json')
+  const protocol = readJson('packages/web-ai-interaction-protocol/package.json')
   assert.equal(cli.name, 'tokenless')
   assert.deepEqual(cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
   assert.ok(!cli.name.startsWith('@tokenless/'))
   assert.equal(harness.name, 'tokenless-web-agent-harness')
   assert.equal(harness.private, true)
   assert.deepEqual(harness.exports, { '.': './dist/src/index.js' })
+  assert.equal(protocol.name, 'tokenless-web-ai-interaction-protocol')
+  assert.equal(protocol.private, true)
+  assert.deepEqual(protocol.exports, { '.': './dist/src/index.js' })
+  assert.ok(protocol.files.includes('schemas/v0'))
+  assert.ok(protocol.files.includes('spec'))
   assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
 })
 

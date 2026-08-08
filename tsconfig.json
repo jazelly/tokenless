@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/cli" },
+    { "path": "./packages/web-ai-interaction-protocol" },
     { "path": "./packages/web-agent-harness" }
   ]
 }
