@@ -6,6 +6,12 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
+import {
+  VISIBLE_ACTIONS,
+  createVisibleActionRequest,
+  getProviderInstanceById,
+} from '../packages/cli/dist/src/playwright/index.js'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = path.join(root, 'test', 'fixtures', 'provider-dom')
 const scenarios = Object.freeze([
@@ -194,6 +200,89 @@ test('authenticated provider DOM fixtures retain only redacted, provenance-bound
           )
         }
         await assertSanitizedLinks(page, `${provider}/${scenario}`)
+      }
+    }
+  } finally {
+    await browser.close()
+  }
+})
+
+test('Gemini account status preserves captured authenticated and guest boundaries', {
+  timeout: 30000,
+}, async () => {
+  const provider = getProviderInstanceById('gemini')
+  assert.ok(provider, 'Gemini provider instance is required')
+  const cases = [
+    {
+      accountState: 'signed-in-unknown',
+      scenario: 'session-status',
+      expected: {
+        state: 'authenticated',
+        access: 'signed_in_unknown',
+        visibleProof: 'authenticated-account-control-visible',
+      },
+    },
+    {
+      accountState: 'signed-out-guest',
+      scenario: 'mode-picker',
+      expected: {
+        state: 'unauthenticated',
+        access: 'guest',
+        visibleProof: 'guest-composer-visible',
+      },
+    },
+  ]
+  const browser = await chromium.launch({ headless: true })
+  try {
+    for (const fixtureCase of cases) {
+      const context = await browser.newContext({ viewport: { width: 1100, height: 850 } })
+      const page = await context.newPage()
+      try {
+        const fixturePath = path.join(
+          fixtureRoot,
+          'gemini',
+          fixtureCase.accountState,
+          `${fixtureCase.scenario}.html`,
+        )
+        const provenancePath = fixturePath.replace(/\.html$/u, '.provenance.json')
+        const [fixture, provenanceText] = await Promise.all([
+          fs.readFile(fixturePath, 'utf8'),
+          fs.readFile(provenancePath, 'utf8'),
+        ])
+        const provenance = JSON.parse(provenanceText)
+        assert.equal(provenance.provider, 'gemini')
+        assert.equal(provenance.accountState, fixtureCase.accountState)
+        assert.equal(provenance.containsSyntheticBehavior, false)
+
+        await page.route('https://gemini.google.com/**', (route) => route.fulfill({
+          status: 200,
+          contentType: 'text/html',
+          body: fixture,
+        }))
+        await page.goto(provenance.sanitizedUrl, { waitUntil: 'domcontentloaded' })
+
+        const response = await provider.executeAction(
+          page,
+          createVisibleActionRequest({
+            requestId: `gemini-auth-${fixtureCase.accountState}`,
+            provider: 'gemini',
+            action: VISIBLE_ACTIONS.AUTH_STATUS,
+            payload: {},
+          }),
+          {
+            profileId: 'gemini-auth-fixture-profile',
+            operationId: `gemini-auth-${fixtureCase.accountState}`,
+          },
+        )
+
+        assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+        assert.deepEqual({
+          state: response.result?.state,
+          access: response.result?.access,
+          visibleProof: response.result?.visibleProof,
+        }, fixtureCase.expected)
+      } finally {
+        await context.close()
       }
     }
   } finally {

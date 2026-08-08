@@ -75,6 +75,7 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       effortControlSelectors: Object.freeze([]),
       authIndicators: Object.freeze([
         'a[href*="accounts.google.com/SignOutOptions"]',
+        'a[href="/search"][aria-label="Search chats"]',
       ]),
       loginIndicators: Object.freeze([
         'a[href*="accounts.google.com/ServiceLogin"]',

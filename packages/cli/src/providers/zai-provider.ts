@@ -51,7 +51,9 @@ export class ZaiProvider extends BaseProvider<'zai'> {
       fileUploadLocalSelectors: Object.freeze([]),
       modelControlSelectors: Object.freeze([]),
       effortControlSelectors: Object.freeze([]),
-      authIndicators: Object.freeze([]),
+      authIndicators: Object.freeze([
+        'button[aria-label="Open User Menu"]',
+      ]),
       loginIndicators: Object.freeze([
         'button:has-text("Continue with Google")',
         'button:has-text("Continue with Email")',

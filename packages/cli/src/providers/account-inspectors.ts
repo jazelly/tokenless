@@ -49,7 +49,8 @@ export async function inspectProviderAccountSession(
   provider: ProviderDomDefinition,
   signal: AbortSignal | undefined,
 ): Promise<AuthStatusResult> {
-  for (let attempt = 0; attempt <= 50; attempt += 1) {
+  const maximumAttempts = 50
+  for (let attempt = 0; attempt <= maximumAttempts; attempt += 1) {
     assertNotAborted(signal)
     if (isConfiguredSignInNavigation(page.url(), provider)) {
       return {
@@ -58,8 +59,17 @@ export async function inspectProviderAccountSession(
         visibleProof: 'provider-sign-in-navigation',
       }
     }
-    const loginVisible = await anyVisible(page, provider.loginIndicators)
+    const prioritizedAccountControl = provider.id === 'gemini'
+      ? await firstLocator(page, provider.authIndicators)
+      : null
+    const loginVisible = prioritizedAccountControl
+      ? false
+      : await anyVisible(page, provider.loginIndicators)
     if (loginVisible) {
+      if (provider.id === 'gemini' && attempt < maximumAttempts) {
+        await page.waitForTimeout(100)
+        continue
+      }
       const composerVisible = await anyVisible(page, provider.composerSelectors)
       const guestSupported = provider.access.guest === 'supported'
       const guest = guestSupported && composerVisible
@@ -79,7 +89,9 @@ export async function inspectProviderAccountSession(
               : 'login-indicator-visible',
       }
     }
-    const accountControl = await firstLocator(page, provider.authIndicators)
+    const accountControl = prioritizedAccountControl ?? (
+      provider.id === 'gemini' ? null : await firstLocator(page, provider.authIndicators)
+    )
     if (accountControl) {
       const account = await provider.account.inspector.inspect(page, provider, accountControl, signal)
       const tier = providerAccountTier(provider, account.subscription)
@@ -96,7 +108,7 @@ export async function inspectProviderAccountSession(
         },
       }
     }
-    if (attempt < 50) await page.waitForTimeout(100)
+    if (attempt < maximumAttempts) await page.waitForTimeout(100)
   }
   const composerVisible = await anyVisible(page, provider.composerSelectors)
   const guest = provider.access.guest === 'supported' && composerVisible
