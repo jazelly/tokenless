@@ -187,6 +187,56 @@
         }
       }
     },
+    "/v1/web-ai/bindings": {
+      "post": {
+        "operationId": "bindWebAiInteractionV0",
+        "summary": "Bind one configured provider and managed profile for Web AI Interaction Protocol V0",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiBindingRequest" } } } },
+        "responses": { "200": { "description": "Opaque provider binding and static capability projection", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiBindingResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/v1/web-ai/bindings/{bindingRef}/capabilities": {
+      "get": {
+        "operationId": "getWebAiInteractionV0Capabilities",
+        "summary": "Read the binding's static Web AI capability projection",
+        "parameters": [{ "$ref": "#/components/parameters/web_ai_binding_ref" }],
+        "responses": { "200": { "description": "Opaque provider binding and static capability projection", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiBindingResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/v1/web-ai/bindings/{bindingRef}/attachments": {
+      "post": {
+        "operationId": "stageWebAiInteractionV0Attachment",
+        "summary": "Stream one bounded markdown system prompt into an opaque staged attachment",
+        "parameters": [{ "$ref": "#/components/parameters/web_ai_binding_ref" }],
+        "requestBody": { "required": true, "content": { "text/markdown": { "schema": { "type": "string", "maxLength": 1048576 } } } },
+        "responses": { "200": { "description": "Core-safe staged attachment reference", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiAttachmentResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/v1/web-ai/bindings/{bindingRef}/turns": {
+      "post": {
+        "operationId": "startWebAiInteractionV0Turn",
+        "summary": "Atomically consume a staged attachment and queue one V0 turn",
+        "parameters": [{ "$ref": "#/components/parameters/web_ai_binding_ref" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiStartRequest" } } } },
+        "responses": { "200": { "description": "Core V0 turn state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiTurnResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/v1/web-ai/turns/{turnRef}": {
+      "get": {
+        "operationId": "getWebAiInteractionV0Turn",
+        "summary": "Read one core V0 turn state without exposing a daemon job",
+        "parameters": [{ "$ref": "#/components/parameters/web_ai_turn_ref" }],
+        "responses": { "200": { "description": "Core V0 turn state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiTurnResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/v1/web-ai/turns/{turnRef}/cancel": {
+      "post": {
+        "operationId": "cancelWebAiInteractionV0Turn",
+        "summary": "Cancel one V0 turn by opaque turn reference",
+        "parameters": [{ "$ref": "#/components/parameters/web_ai_turn_ref" }],
+        "responses": { "200": { "description": "Core V0 turn state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiTurnResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
     "/provider-mappings/resolve": {
       "get": {
         "operationId": "resolveProviderProjectMapping",
@@ -731,6 +781,18 @@
           "minLength": 1
         }
       },
+      "web_ai_binding_ref": {
+        "name": "bindingRef",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$" }
+      },
+      "web_ai_turn_ref": {
+        "name": "turnRef",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^turn:[a-f0-9]{32}$" }
+      },
       "status": {
         "name": "status",
         "in": "query",
@@ -870,6 +932,144 @@
       }
     },
     "schemas": {
+      "WebAiBindingRequest": {
+        "type": "object", "additionalProperties": false, "required": ["provider", "profileId"],
+        "properties": { "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" }, "profileId": { "type": "string", "pattern": "^[a-f0-9-]{36}$" } }
+      },
+      "WebAiBindingResponse": {
+        "type": "object", "additionalProperties": false, "required": ["providerBindingRef", "capabilities"],
+        "properties": { "providerBindingRef": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$" }, "capabilities": { "$ref": "#/components/schemas/WebAiCapabilityDocument" } }
+      },
+      "WebAiCapabilityDocument": {
+        "type": "object", "additionalProperties": false, "required": ["protocol", "providerRef", "supportedCapabilities"],
+        "properties": {
+          "protocol": { "const": "tokenless.internal.web-ai-interaction-protocol/v0" },
+          "providerRef": { "type": "string", "pattern": "^provider:[a-f0-9]{32}$" },
+          "supportedCapabilities": {
+            "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
+            "items": { "enum": ["conversation.chat", "file.upload"] }
+          }
+        }
+      },
+      "WebAiAttachmentResponse": {
+        "type": "object", "additionalProperties": false, "required": ["attachment"],
+        "properties": { "attachment": { "type": "object", "additionalProperties": false, "required": ["attachmentRef", "mediaType", "byteLength", "sha256"], "properties": { "attachmentRef": { "type": "string", "pattern": "^attachment:[a-f0-9]{32}$" }, "mediaType": { "const": "text/markdown" }, "byteLength": { "type": "integer", "minimum": 1, "maximum": 1048576 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } } }
+      },
+      "WebAiStartRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["protocol", "requestRef", "providerRef", "providerBindingRef", "requiredCapabilities", "conversation", "bootstrap"],
+        "properties": {
+          "protocol": { "const": "tokenless.internal.web-ai-interaction-protocol/v0" },
+          "requestRef": { "type": "string", "pattern": "^request:[a-f0-9]{32}$" },
+          "providerRef": { "type": "string", "pattern": "^provider:[a-f0-9]{32}$" },
+          "providerBindingRef": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$" },
+          "requiredCapabilities": { "type": "array", "prefixItems": [{ "const": "conversation.chat" }, { "const": "file.upload" }], "items": false, "minItems": 2, "maxItems": 2 },
+          "conversation": { "type": "object", "additionalProperties": false, "required": ["mode"], "properties": { "mode": { "const": "new" } } },
+          "bootstrap": { "type": "object", "additionalProperties": false, "required": ["text", "attachments"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000, "x-tokenless-internal-maxUtf8Bytes": 8192 }, "attachments": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["kind", "attachmentRef", "mediaType", "byteLength", "sha256"], "properties": { "kind": { "const": "system_prompt" }, "attachmentRef": { "type": "string", "pattern": "^attachment:[a-f0-9]{32}$" }, "mediaType": { "const": "text/markdown" }, "byteLength": { "type": "integer", "minimum": 1, "maximum": 1048576 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } } } } }
+        }
+      },
+      "WebAiTurnResponse": {
+        "type": "object", "additionalProperties": false, "required": ["turn"],
+        "properties": { "turn": { "$ref": "#/components/schemas/WebAiTurnState" } }
+      },
+      "WebAiTurnStateBase": {
+        "type": "object", "additionalProperties": false,
+        "required": ["protocol", "turnRef", "providerRef", "providerBindingRef", "conversationRef", "lifecycle", "dispatchCertainty", "attachmentDelivery"],
+        "properties": {
+          "protocol": { "const": "tokenless.internal.web-ai-interaction-protocol/v0" },
+          "turnRef": { "type": "string", "pattern": "^turn:[a-f0-9]{32}$" },
+          "providerRef": { "type": "string", "pattern": "^provider:[a-f0-9]{32}$" },
+          "providerBindingRef": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$" },
+          "conversationRef": { "type": "string", "pattern": "^conversation:[a-f0-9]{32}$" },
+          "lifecycle": { "enum": ["queued", "running", "waiting_for_user", "succeeded", "failed", "cancelled"] },
+          "dispatchCertainty": { "enum": ["not_dispatched", "dispatched", "ambiguous"] },
+          "attachmentDelivery": { "$ref": "#/components/schemas/WebAiAttachmentDelivery" },
+          "waitingReason": { "enum": ["authentication", "mfa", "captcha", "consent", "provider_blocker", "ambiguous_submission", "manual_intervention"] },
+          "result": { "$ref": "#/components/schemas/WebAiTerminalResult" },
+          "error": { "$ref": "#/components/schemas/WebAiStableError" },
+          "cancelReason": { "enum": ["client_requested", "provider_cancelled", "timeout", "user_declined", "shutdown"] }
+        }
+      },
+      "WebAiAttachmentDelivery": {
+        "type": "object", "additionalProperties": false, "required": ["status", "attachmentRef", "sha256"],
+        "properties": {
+          "status": { "enum": ["pending", "delivered", "rejected"] },
+          "attachmentRef": { "type": "string", "pattern": "^attachment:[a-f0-9]{32}$" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      },
+      "WebAiTerminalResult": {
+        "type": "object", "additionalProperties": false, "required": ["text", "citations"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1, "maxLength": 65536, "x-tokenless-internal-maxUtf8Bytes": 131072 },
+          "citations": { "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["url"], "properties": { "url": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048, "x-tokenless-internal-maxUtf8Bytes": 4096 }, "title": { "type": "string", "minLength": 1, "maxLength": 512, "x-tokenless-internal-maxUtf8Bytes": 1024 } } } }
+        }
+      },
+      "WebAiStableError": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": {
+          "code": { "enum": ["unsupported_capability", "invalid_request", "resource_not_found", "identity_mismatch", "authentication_required", "user_intervention_required", "provider_unavailable", "upload_failed", "submission_failed", "response_failed", "timeout", "cancellation_requested", "recovery_failed", "ambiguous_external_mutation"] },
+          "message": { "type": "string", "minLength": 1, "maxLength": 512, "x-tokenless-internal-maxUtf8Bytes": 1024 }
+        }
+      },
+      "WebAiTurnState": {
+        "allOf": [
+          { "$ref": "#/components/schemas/WebAiTurnStateBase" },
+          {
+            "if": { "type": "object", "properties": { "dispatchCertainty": { "enum": ["dispatched", "ambiguous"] } }, "required": ["dispatchCertainty"] },
+            "then": { "type": "object", "properties": { "attachmentDelivery": { "type": "object", "properties": { "status": { "const": "delivered" } }, "required": ["status"] } } }
+          },
+          {
+            "if": { "type": "object", "properties": { "attachmentDelivery": { "type": "object", "properties": { "status": { "const": "rejected" } }, "required": ["status"] } }, "required": ["attachmentDelivery"] },
+            "then": { "type": "object", "properties": { "lifecycle": { "const": "failed" }, "dispatchCertainty": { "const": "not_dispatched" } }, "required": ["error"] }
+          },
+          {
+            "if": { "type": "object", "properties": { "waitingReason": { "const": "ambiguous_submission" } }, "required": ["waitingReason"] },
+            "then": { "type": "object", "properties": { "dispatchCertainty": { "const": "ambiguous" } } }
+          }
+        ],
+        "oneOf": [
+          { "title": "queued", "type": "object", "properties": { "lifecycle": { "const": "queued" }, "dispatchCertainty": { "const": "not_dispatched" }, "attachmentDelivery": { "type": "object", "allOf": [{ "$ref": "#/components/schemas/WebAiAttachmentDelivery" }], "properties": { "status": { "const": "pending" } } } }, "required": ["lifecycle", "dispatchCertainty", "attachmentDelivery"], "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["result"] }, { "type": "object", "required": ["error"] }, { "type": "object", "required": ["cancelReason"] }] } },
+          { "title": "running", "type": "object", "properties": { "lifecycle": { "const": "running" }, "attachmentDelivery": { "type": "object", "allOf": [{ "$ref": "#/components/schemas/WebAiAttachmentDelivery" }], "properties": { "status": { "enum": ["pending", "delivered"] } } } }, "required": ["lifecycle", "attachmentDelivery"], "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["result"] }, { "type": "object", "required": ["error"] }, { "type": "object", "required": ["cancelReason"] }] } },
+          { "title": "waiting_for_user", "type": "object", "properties": { "lifecycle": { "const": "waiting_for_user" }, "attachmentDelivery": { "type": "object", "allOf": [{ "$ref": "#/components/schemas/WebAiAttachmentDelivery" }], "properties": { "status": { "enum": ["pending", "delivered"] } } } }, "required": ["lifecycle", "attachmentDelivery", "waitingReason"], "not": { "anyOf": [{ "type": "object", "required": ["result"] }, { "type": "object", "required": ["error"] }, { "type": "object", "required": ["cancelReason"] }] } },
+          { "title": "succeeded", "type": "object", "properties": { "lifecycle": { "const": "succeeded" }, "dispatchCertainty": { "const": "dispatched" }, "attachmentDelivery": { "type": "object", "allOf": [{ "$ref": "#/components/schemas/WebAiAttachmentDelivery" }], "properties": { "status": { "const": "delivered" } } } }, "required": ["lifecycle", "dispatchCertainty", "attachmentDelivery", "result"], "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["error"] }, { "type": "object", "required": ["cancelReason"] }] } },
+          {
+            "title": "failed", "type": "object",
+            "properties": { "lifecycle": { "const": "failed" } },
+            "required": ["lifecycle", "error"],
+            "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["result"] }, { "type": "object", "required": ["cancelReason"] }] },
+            "allOf": [
+              {
+                "if": { "type": "object",
+                  "properties": {
+                    "attachmentDelivery": { "type": "object",
+                      "properties": { "status": { "const": "rejected" } },
+                      "required": ["status"]
+                    }
+                  },
+                  "required": ["attachmentDelivery"]
+                },
+                "then": { "type": "object", "properties": { "dispatchCertainty": { "const": "not_dispatched" } } }
+              },
+              {
+                "if": { "type": "object",
+                  "properties": { "dispatchCertainty": { "enum": ["dispatched", "ambiguous"] } },
+                  "required": ["dispatchCertainty"]
+                },
+                "then": { "type": "object",
+                  "properties": {
+                    "attachmentDelivery": { "type": "object",
+                      "properties": { "status": { "const": "delivered" } },
+                      "required": ["status"]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          { "title": "cancelled", "type": "object", "properties": { "lifecycle": { "const": "cancelled" } }, "required": ["lifecycle", "cancelReason"], "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["result"] }, { "type": "object", "required": ["error"] }] }, "allOf": [{ "if": { "type": "object", "properties": { "dispatchCertainty": { "enum": ["dispatched", "ambiguous"] } }, "required": ["dispatchCertainty"] }, "then": { "type": "object", "properties": { "attachmentDelivery": { "type": "object", "properties": { "status": { "const": "delivered" } }, "required": ["status"] } } } }] }
+        ]
+      },
       "DaemonErrorResponse": {
         "type": "object",
         "required": [

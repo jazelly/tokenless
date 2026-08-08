@@ -43,6 +43,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as protocol from '${packageName}'
+import { createLocalHttpClient } from '${packageName}/local-http'
 
 const packageRoot = path.join(process.cwd(), 'node_modules', '${packageName}')
 const examplesDirectory = path.join(packageRoot, 'examples', 'v0')
@@ -53,6 +54,11 @@ const capabilities = await readJson('capability-document.json')
 const start = await readJson('start-turn-request.json')
 assert.deepEqual(protocol.parseCapabilityDocument(capabilities), capabilities)
 assert.deepEqual(protocol.parseStartTurnRequest(start), start)
+assert.equal(typeof createLocalHttpClient, 'function')
+assert.throws(() => createLocalHttpClient({
+  baseUrl: 'http://127.0.0.1.nip.io:7331',
+  token: 'a'.repeat(43),
+}))
 for (const name of [
   'turn-state-queued.json',
   'turn-state-running.json',

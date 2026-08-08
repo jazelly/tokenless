@@ -232,14 +232,16 @@ function escapeJsonPointer(value) {
 
 function newAjv() {
   const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false })
-  ajv.addKeyword({
-    keyword: 'x-tokenless-maxUtf8Bytes',
-    type: 'string',
-    schemaType: 'number',
-    validate(limit, value) {
-      return Buffer.byteLength(value, 'utf8') <= limit
-    },
-  })
+  for (const keyword of ['x-tokenless-maxUtf8Bytes', 'x-tokenless-internal-maxUtf8Bytes']) {
+    ajv.addKeyword({
+      keyword,
+      type: 'string',
+      schemaType: 'number',
+      validate(limit, value) {
+        return Buffer.byteLength(value, 'utf8') <= limit
+      },
+    })
+  }
   addFormats(ajv)
   return ajv
 }

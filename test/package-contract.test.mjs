@@ -243,7 +243,7 @@ test('workspace packages keep standalone product names', () => {
   assert.deepEqual(harness.exports, { '.': './dist/src/index.js' })
   assert.equal(protocol.name, 'tokenless-web-ai-interaction-protocol')
   assert.equal(protocol.private, true)
-  assert.deepEqual(protocol.exports, { '.': './dist/src/index.js' })
+  assert.deepEqual(protocol.exports, { '.': './dist/src/index.js', './local-http': './dist/src/local-http.js' })
   assert.ok(protocol.files.includes('schemas/v0'))
   assert.ok(protocol.files.includes('spec'))
   assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)

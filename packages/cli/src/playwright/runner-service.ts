@@ -31,6 +31,7 @@ import {
 } from './provider-failure-classification.js'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersion } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
+import { checkpointIndicatesExternalMutation } from './submission-certainty.js'
 import { readTokenlessConfig } from '../job-store.js'
 import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById, listTaskCapabilityDefinitions } from '../providers/registry.js'
 import type {
@@ -521,7 +522,7 @@ export class ManagedPlaywrightRunnerService {
 
     try {
       const request = this.validateClaimedJob(profile, job)
-      if (job.provider_submitted_at === null && !checkpointIndicatesSubmission(job.checkpoint_json)) {
+      if (job.provider_submitted_at === null && !checkpointIndicatesExternalMutation(job.checkpoint_json)) {
         const subscription = rateLimitSubscription(profile, job.provider)
         const projection = await this.daemonClient.projectJobProviderCapacity({
           jobId: job.job_id,
@@ -1336,13 +1337,6 @@ function rateLimitSubscription(profile: ManagedBrowserProfile, provider: string)
     tierLabel: observed?.account?.tier.label ?? null,
     subscriptionLabel: observed?.account?.subscription ?? null,
   }
-}
-
-function checkpointIndicatesSubmission(value: unknown) {
-  if (!isPlainRecord(value)) return false
-  if (value.submitted !== null && value.submitted !== undefined) return true
-  const phase = isPlainRecord(value.phase) ? value.phase : null
-  return phase?.state === 'started' && phase.mutating === true
 }
 
 function observedCapacityDelaySeconds(blocker: VisibleBlocker) {

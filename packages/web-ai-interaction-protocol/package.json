@@ -6,7 +6,8 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": "./dist/src/index.js"
+    ".": "./dist/src/index.js",
+    "./local-http": "./dist/src/local-http.js"
   },
   "files": [
     "dist/src",

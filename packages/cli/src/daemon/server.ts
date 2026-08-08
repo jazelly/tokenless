@@ -30,6 +30,7 @@ import { TokenlessApplicationServices } from '../application/services.js'
 import { TokenlessUiServer } from './ui-server.js'
 import { UiSessionManager } from './ui-session.js'
 import { OutputSavingsProcessor } from '../output-savings/processor.js'
+import { WebAiInteractionV0Adapter } from './web-ai-interaction-v0.js'
 
 export type DaemonServer = {
   activate(): void
@@ -94,8 +95,10 @@ export async function serveHttp({
     sessions: new UiSessionManager(),
     origin,
   })
+  const webAi = new WebAiInteractionV0Adapter(store)
+  await webAi.initializeCleanup()
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, uiServer, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, uiServer, webAi, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -160,6 +163,7 @@ async function handleRequest(
   deactivate: () => void,
   runtimeController: BrowserRuntimeController | undefined,
   uiServer: TokenlessUiServer,
+  webAi: WebAiInteractionV0Adapter,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -211,6 +215,17 @@ async function handleRequest(
     }
 
     requireControlAuth(store, request)
+
+    if (url.pathname.startsWith('/v1/web-ai/')) {
+      try {
+        const handled = await handleWebAiRequest(webAi, runtimeController, request, response, method, url)
+        if (handled) return
+        writeWebAiError(response, invalidInput('web ai route is invalid'))
+      } catch (error) {
+        writeWebAiError(response, error)
+      }
+      return
+    }
 
     if (method === 'POST' && url.pathname === '/control/ui-bootstrap') {
       const rawBody = await readBody(request)
@@ -427,6 +442,71 @@ async function handleRequest(
     }
     writeDaemonError(response, toDaemonError(error))
   }
+}
+
+async function handleWebAiRequest(
+  webAi: WebAiInteractionV0Adapter,
+  runtimeController: BrowserRuntimeController | undefined,
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  url: URL,
+) {
+  if (method === 'POST' && url.pathname === '/v1/web-ai/bindings') {
+    writeJson(response, 200, await webAi.bind(await readJsonObject(request)))
+    return true
+  }
+  const bindingRoute = /^\/v1\/web-ai\/bindings\/([^/]+)(?:\/(capabilities|attachments|turns))?$/.exec(url.pathname)
+  if (bindingRoute) {
+    const bindingRef = decodeURIComponent(bindingRoute[1] ?? '')
+    const action = bindingRoute[2] ?? null
+    if (method === 'GET' && action === 'capabilities') {
+      writeJson(response, 200, await webAi.capabilities(bindingRef))
+      return true
+    }
+    if (method === 'POST' && action === 'attachments') {
+      try {
+        writeJson(response, 200, { attachment: await webAi.stage(bindingRef, request, request.headers['content-type'] as string | undefined) })
+      } catch {
+        throw invalidInput('web ai attachment could not be staged')
+      }
+      return true
+    }
+    if (method === 'POST' && action === 'turns') {
+      const turn = await webAi.start(bindingRef, await readJsonObject(request))
+      await runtimeController?.wake()
+      writeJson(response, 200, { turn })
+      return true
+    }
+  }
+  const turnRoute = /^\/v1\/web-ai\/turns\/([^/]+)(?:\/(cancel))?$/.exec(url.pathname)
+  if (turnRoute) {
+    const turnRef = decodeURIComponent(turnRoute[1] ?? '')
+    const action = turnRoute[2] ?? null
+    if (method === 'GET' && action === null) {
+      writeJson(response, 200, { turn: await webAi.read(turnRef) })
+      return true
+    }
+    if (method === 'POST' && action === 'cancel') {
+      const rawBody = await readBody(request)
+      if (rawBody && Object.keys(parseJsonObject(rawBody)).length > 0) throw invalidInput('web ai cancel body must be empty')
+      writeJson(response, 200, { turn: await webAi.cancel(turnRef) })
+      return true
+    }
+  }
+  return false
+}
+
+function writeWebAiError(response: ServerResponse, error: unknown) {
+  const daemonError = toDaemonError(error)
+  const invalid = daemonError.kind === 'invalid_input'
+  writeJson(response, invalid ? 400 : 500, {
+    error: {
+      code: invalid ? 'invalid_input' : 'local_http_error',
+      message: invalid ? 'The local Web AI request was rejected.' : 'The local Web AI service encountered an error.',
+      retryable: !invalid,
+    },
+  })
 }
 
 function hasManagedPlaywrightProtocol(value: unknown) {

@@ -9,6 +9,7 @@ import {
   removeStagedVisibleAttachmentBundle,
   validateVisibleAttachmentDescriptor,
 } from '../visible-attachments.js'
+import { checkpointIndicatesPromptSubmission } from '../playwright/submission-certainty.js'
 import {
   providerCapacityPolicy,
   providerRateLimitCatalog,
@@ -201,6 +202,35 @@ export type ProviderTaskConversationMapping = {
   observed_at: string
 }
 
+export type WebAiBinding = {
+  binding_ref: string
+  provider_ref: string
+  provider: string
+  profile_id: string
+}
+
+export type WebAiStagedAttachment = {
+  attachment_ref: string
+  binding_ref: string
+  bundle_id: string
+  attachment_id: string
+  media_type: 'text/markdown'
+  byte_length: number
+  sha256: string
+}
+
+export type WebAiTurn = {
+  turn_ref: string
+  binding_ref: string
+  provider_ref: string
+  conversation_ref: string
+  attachment_ref: string
+  job_id: string
+  cancelled: boolean
+  cancel_dispatch_certainty: 'not_dispatched' | 'dispatched' | 'ambiguous'
+  cancel_attachment_delivery: 'pending' | 'delivered'
+}
+
 const DATABASE_FILE_NAME = 'tokenless.sqlite3'
 const CONTROL_TOKEN_FILE_NAME = 'daemon.token'
 const DEFAULT_CLAIM_LEASE_MS = 30_000
@@ -287,6 +317,10 @@ export class JobStore {
   }
 
   createJob(input: CreateJobInput) {
+    return this.transaction(() => this.insertJob(input))
+  }
+
+  private insertJob(input: CreateJobInput) {
     const provider = normalizeNonempty(String(input.provider ?? ''), 'provider')
     const action = normalizeNonempty(String(input.action ?? ''), 'action')
     const executionBackend = input.execution_backend ?? 'playwright'
@@ -304,8 +338,7 @@ export class JobStore {
     const requestJson = stringifyJson(input.request_json)
     const providerAttemptsJson = stringifyJson([providerAttempt(1, provider, 'queued', now)])
 
-    this.transaction(() => {
-      this.run(
+    this.run(
         `INSERT INTO jobs (
           job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
           provider, action, status, request_json,
@@ -335,12 +368,228 @@ export class JobStore {
         summary.chat_name,
         summary.idempotency_key
       )
-      for (const taskKey of summary.task_keys) {
-        this.run('INSERT INTO job_task_keys (job_id, task_id) VALUES (?, ?)', jobId, taskKey)
+    for (const taskKey of summary.task_keys) {
+      this.run('INSERT INTO job_task_keys (job_id, task_id) VALUES (?, ?)', jobId, taskKey)
+    }
+
+    return this.getJobWithoutRecovery(jobId)
+  }
+
+  getOrCreateWebAiBinding(input: { provider: string; profile_id: string; provider_ref: string; binding_ref: string }) {
+    const provider = mappingText(input.provider, 'provider', 128)
+    const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
+    const providerRef = webAiRef(input.provider_ref, 'provider_ref')
+    const bindingRef = webAiRef(input.binding_ref, 'binding_ref')
+    this.transaction(() => {
+      const existing = this.get(
+        'SELECT binding_ref, provider_ref FROM web_ai_v0_bindings WHERE provider = ? AND profile_id = ?',
+        provider,
+        profileId,
+      )
+      if (!existing) {
+        this.run(
+          'INSERT INTO web_ai_v0_bindings (binding_ref, provider_ref, provider, profile_id, created_at) VALUES (?, ?, ?, ?, ?)',
+          bindingRef,
+          providerRef,
+          provider,
+          profileId,
+          nowRfc3339(),
+        )
       }
     })
+    return this.requireWebAiBindingByProvider(provider, profileId)
+  }
 
-    return this.getJob(jobId)
+  getWebAiBinding(bindingRef: string) {
+    const row = this.get(
+      'SELECT binding_ref, provider_ref, provider, profile_id FROM web_ai_v0_bindings WHERE binding_ref = ?',
+      webAiRef(bindingRef, 'binding_ref'),
+    )
+    return row ? rowToWebAiBinding(row) : null
+  }
+
+  private requireWebAiBindingByProvider(provider: string, profileId: string) {
+    const row = this.get(
+      'SELECT binding_ref, provider_ref, provider, profile_id FROM web_ai_v0_bindings WHERE provider = ? AND profile_id = ?',
+      provider,
+      profileId,
+    )
+    if (!row) throw invalidInput('web ai provider binding was not found')
+    return rowToWebAiBinding(row)
+  }
+
+  createWebAiStagedAttachment(input: WebAiStagedAttachment) {
+    const binding = this.getWebAiBinding(input.binding_ref)
+    if (!binding) throw invalidInput('web ai provider binding was not found')
+    const staged = normalizeWebAiStagedAttachment(input)
+    this.run(
+      `INSERT INTO web_ai_v0_staged_attachments (
+         attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      staged.attachment_ref,
+      staged.binding_ref,
+      staged.bundle_id,
+      staged.attachment_id,
+      staged.media_type,
+      staged.byte_length,
+      staged.sha256,
+      nowRfc3339(),
+    )
+    return staged
+  }
+
+  getWebAiStagedAttachment(attachmentRef: string) {
+    const row = this.get(
+      `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
+       FROM web_ai_v0_staged_attachments WHERE attachment_ref = ?`,
+      webAiRef(attachmentRef, 'attachment_ref'),
+    )
+    return row ? rowToWebAiStagedAttachment(row) : null
+  }
+
+  /** Internal control-plane observability; never exposed by the HTTP protocol. */
+  webAiStageStatus(attachmentRef: string) {
+    const row = this.get(
+      'SELECT consumed_turn_ref FROM web_ai_v0_staged_attachments WHERE attachment_ref = ?',
+      webAiRef(attachmentRef, 'attachment_ref'),
+    )
+    return row ? { consumed: row.consumed_turn_ref !== null } : null
+  }
+
+  /** Internal aggregate counts used by daemon maintenance and control-plane diagnostics. */
+  webAiCounts() {
+    const count = (table: 'web_ai_v0_bindings' | 'web_ai_v0_staged_attachments' | 'web_ai_v0_turns') => {
+      const row = this.get(`SELECT count(*) AS count FROM ${table}`)
+      return Number(row?.count ?? 0)
+    }
+    return {
+      bindings: count('web_ai_v0_bindings'),
+      stagedAttachments: count('web_ai_v0_staged_attachments'),
+      turns: count('web_ai_v0_turns'),
+    }
+  }
+
+  getWebAiStagedAttachmentByBundle(bundleId: string) {
+    const row = this.get(
+      `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
+       FROM web_ai_v0_staged_attachments WHERE bundle_id = ?`,
+      mappingText(bundleId, 'bundle_id', 64),
+    )
+    return row ? rowToWebAiStagedAttachment(row) : null
+  }
+
+  webAiBundleCleanupDisposition(bundleId: string) {
+    const row = this.get(
+      `SELECT staged.consumed_turn_ref, turns.cancelled, turns.cancel_attachment_delivery
+       FROM web_ai_v0_staged_attachments AS staged
+       LEFT JOIN web_ai_v0_turns AS turns ON turns.attachment_ref = staged.attachment_ref
+       WHERE staged.bundle_id = ?`,
+      mappingText(bundleId, 'bundle_id', 64),
+    )
+    if (!row) return 'orphan' as const
+    if (row.consumed_turn_ref === null) return 'retained' as const
+    return Number(row.cancelled) === 1 && row.cancel_attachment_delivery === 'pending'
+      ? 'delete' as const : 'retained' as const
+  }
+
+  removeWebAiStagedAttachmentByBundle(bundleId: string) {
+    return this.run('DELETE FROM web_ai_v0_staged_attachments WHERE bundle_id = ? AND consumed_turn_ref IS NULL', mappingText(bundleId, 'bundle_id', 64)).changes === 1
+  }
+
+  cleanupAbandonedWebAiStages(olderThanMs: number) {
+    if (!Number.isSafeInteger(olderThanMs) || olderThanMs < 0) throw invalidInput('web ai stage cleanup time is invalid')
+    const cutoff = new Date(olderThanMs).toISOString()
+    return this.transaction(() => {
+      const rows = this.all(
+        `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
+         FROM web_ai_v0_staged_attachments
+         WHERE consumed_turn_ref IS NULL AND created_at < ?`,
+        cutoff,
+      ).map(rowToWebAiStagedAttachment)
+      if (rows.length > 0) this.run(
+        'DELETE FROM web_ai_v0_staged_attachments WHERE consumed_turn_ref IS NULL AND created_at < ?',
+        cutoff,
+      )
+      return rows
+    })
+  }
+
+  createWebAiTurn(input: {
+    turn_ref: string
+    binding_ref: string
+    conversation_ref: string
+    attachment_ref: string
+    job: CreateJobInput
+  }) {
+    const turnRef = webAiRef(input.turn_ref, 'turn_ref')
+    const conversationRef = webAiRef(input.conversation_ref, 'conversation_ref')
+    const binding = this.getWebAiBinding(input.binding_ref)
+    if (!binding) throw invalidInput('web ai provider binding was not found')
+    const attachment = this.getWebAiStagedAttachment(input.attachment_ref)
+    if (!attachment || attachment.binding_ref !== binding.binding_ref) {
+      throw invalidInput('web ai staged attachment was not found')
+    }
+    return this.transaction(() => {
+      const unused = this.run(
+        'UPDATE web_ai_v0_staged_attachments SET consumed_turn_ref = ? WHERE attachment_ref = ? AND consumed_turn_ref IS NULL',
+        turnRef,
+        attachment.attachment_ref,
+      )
+      if (unused.changes !== 1) throw invalidInput('web ai staged attachment has already been consumed')
+      const job = this.insertJob(input.job)
+      this.run(
+        `INSERT INTO web_ai_v0_turns (
+          turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
+          cancel_dispatch_certainty, cancel_attachment_delivery, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 'not_dispatched', 'pending', ?)`,
+        turnRef,
+        binding.binding_ref,
+        binding.provider_ref,
+        conversationRef,
+        attachment.attachment_ref,
+        job.job_id,
+        nowRfc3339(),
+      )
+      return this.getWebAiTurn(turnRef)!
+    })
+  }
+
+  getWebAiTurn(turnRef: string) {
+    const row = this.get(
+      `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
+              cancel_dispatch_certainty, cancel_attachment_delivery
+       FROM web_ai_v0_turns WHERE turn_ref = ?`,
+      webAiRef(turnRef, 'turn_ref'),
+    )
+    return row ? rowToWebAiTurn(row) : null
+  }
+
+  cancelWebAiTurn(turnRef: string) {
+    const turn = this.getWebAiTurn(turnRef)
+    if (!turn) return null
+    return this.transaction(() => {
+      const job = this.getJobWithoutRecovery(turn.job_id)
+      if (turn.cancelled || job.status === 'canceled') return turn
+      if (!['queued', 'claimed', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
+      const certainty = job.provider_submitted_at !== null
+        ? 'dispatched'
+        : (checkpointIndicatesPromptSubmission(job.checkpoint_json) ? 'ambiguous' : 'not_dispatched')
+      const delivery = certainty === 'not_dispatched' ? 'pending' : 'delivered'
+      const now = nowRfc3339()
+      const attempts = updateCurrentProviderAttempt(job, 'canceled', null, now)
+      this.run(
+        `UPDATE jobs SET status = 'canceled', result_json = NULL, error_json = ?, blocker_json = NULL,
+          checkpoint_json = NULL, resume_json = NULL, provider_attempts_json = ?, updated_at = ?,
+          claim_expires_at = NULL, outcome_revision = outcome_revision + 1
+         WHERE job_id = ? AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')`,
+        stringifyJson({ code: 'job_canceled', reason: 'web ai client requested cancellation' }),
+        stringifyJson(attempts),
+        now,
+        turn.job_id,
+      )
+      this.run('UPDATE web_ai_v0_turns SET cancelled = 1, cancel_dispatch_certainty = ?, cancel_attachment_delivery = ? WHERE turn_ref = ?', certainty, delivery, turn.turn_ref)
+      return this.getWebAiTurn(turn.turn_ref)
+    })
   }
 
   drainReplaySummaries(recipientInput: AgentRecipient, requestedLimit?: number) {
@@ -1729,9 +1978,18 @@ export class JobStore {
       PRAGMA foreign_keys = ON;
     `)
     this.createBaseTables()
+    this.ensureWebAiTurnColumns()
     this.migrateJobsTable()
     this.createIndexes()
     restrictFilePermissionsSync(this.databasePath)
+  }
+
+  private ensureWebAiTurnColumns() {
+    const tables = new Set(this.all("SELECT name FROM sqlite_master WHERE type = 'table'").map((row) => String(row.name)))
+    if (!tables.has('web_ai_v0_turns')) return
+    const columns = new Set(this.all('PRAGMA table_info(web_ai_v0_turns)').map((row) => String(row.name)))
+    if (!columns.has('cancel_dispatch_certainty')) this.exec("ALTER TABLE web_ai_v0_turns ADD COLUMN cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched'")
+    if (!columns.has('cancel_attachment_delivery')) this.exec("ALTER TABLE web_ai_v0_turns ADD COLUMN cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending'")
   }
 
   private createBaseTables() {
@@ -1874,6 +2132,37 @@ export class JobStore {
         observed_at TEXT NOT NULL,
         PRIMARY KEY (provider, profile_id, task_id)
       );
+      CREATE TABLE IF NOT EXISTS web_ai_v0_bindings (
+        binding_ref TEXT PRIMARY KEY NOT NULL CHECK (length(binding_ref) BETWEEN 1 AND 128),
+        provider_ref TEXT NOT NULL CHECK (length(provider_ref) BETWEEN 1 AND 128),
+        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
+        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
+        created_at TEXT NOT NULL,
+        UNIQUE (provider, profile_id)
+      );
+      CREATE TABLE IF NOT EXISTS web_ai_v0_staged_attachments (
+        attachment_ref TEXT PRIMARY KEY NOT NULL CHECK (length(attachment_ref) BETWEEN 1 AND 128),
+        binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE CASCADE,
+        bundle_id TEXT NOT NULL CHECK (length(bundle_id) BETWEEN 1 AND 64),
+        attachment_id TEXT NOT NULL CHECK (length(attachment_id) BETWEEN 1 AND 64),
+        media_type TEXT NOT NULL CHECK (media_type = 'text/markdown'),
+        byte_length INTEGER NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
+        sha256 TEXT NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+        consumed_turn_ref TEXT UNIQUE,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS web_ai_v0_turns (
+        turn_ref TEXT PRIMARY KEY NOT NULL CHECK (length(turn_ref) BETWEEN 1 AND 128),
+        binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE RESTRICT,
+        provider_ref TEXT NOT NULL CHECK (length(provider_ref) BETWEEN 1 AND 128),
+        conversation_ref TEXT NOT NULL CHECK (length(conversation_ref) BETWEEN 1 AND 128),
+        attachment_ref TEXT NOT NULL UNIQUE REFERENCES web_ai_v0_staged_attachments(attachment_ref) ON DELETE RESTRICT,
+        job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE RESTRICT,
+        cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
+        cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched' CHECK (cancel_dispatch_certainty IN ('not_dispatched', 'dispatched', 'ambiguous')),
+        cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending' CHECK (cancel_attachment_delivery IN ('pending', 'delivered')),
+        created_at TEXT NOT NULL
+      );
     `)
   }
 
@@ -1912,6 +2201,10 @@ export class JobStore {
         ON output_savings_events(measured_at, job_id);
       CREATE INDEX IF NOT EXISTS output_savings_work_available_idx
         ON output_savings_work(available_at_ms, work_id);
+      CREATE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_abandoned_idx
+        ON web_ai_v0_staged_attachments(consumed_turn_ref, created_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_bundle_attachment_idx
+        ON web_ai_v0_staged_attachments(bundle_id, attachment_id);
     `)
   }
 
@@ -2213,6 +2506,69 @@ function rowToJob(row: Record<string, unknown>): Job {
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     claim_expires_at_ms: nullableNumber(row.claim_expires_at),
+  }
+}
+
+function webAiRef(value: unknown, field: string) {
+  if (typeof value !== 'string' || !/^(?:provider|binding|attachment|turn|conversation):[a-f0-9]{32}$/.test(value)) {
+    throw invalidInput(`${field} is invalid`)
+  }
+  return value
+}
+
+function rowToWebAiBinding(row: Record<string, unknown>): WebAiBinding {
+  return {
+    binding_ref: webAiRef(row.binding_ref, 'binding_ref'),
+    provider_ref: webAiRef(row.provider_ref, 'provider_ref'),
+    provider: mappingText(row.provider, 'provider', 128),
+    profile_id: mappingText(row.profile_id, 'profile_id', PROFILE_ID_CHARS),
+  }
+}
+
+function normalizeWebAiStagedAttachment(value: WebAiStagedAttachment): WebAiStagedAttachment {
+  if (value.media_type !== 'text/markdown') throw invalidInput('web ai attachment media type is invalid')
+  if (!Number.isSafeInteger(value.byte_length) || value.byte_length < 1 || value.byte_length > 1024 * 1024) {
+    throw invalidInput('web ai attachment byte length is invalid')
+  }
+  if (!/^[a-f0-9]{64}$/.test(value.sha256)) throw invalidInput('web ai attachment sha256 is invalid')
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(value.bundle_id) || !/^[A-Za-z0-9_-]{1,64}$/.test(value.attachment_id)) {
+    throw invalidInput('web ai attachment storage identity is invalid')
+  }
+  return {
+    attachment_ref: webAiRef(value.attachment_ref, 'attachment_ref'),
+    binding_ref: webAiRef(value.binding_ref, 'binding_ref'),
+    bundle_id: value.bundle_id,
+    attachment_id: value.attachment_id,
+    media_type: value.media_type,
+    byte_length: value.byte_length,
+    sha256: value.sha256,
+  }
+}
+
+function rowToWebAiStagedAttachment(row: Record<string, unknown>): WebAiStagedAttachment {
+  return normalizeWebAiStagedAttachment({
+    attachment_ref: String(row.attachment_ref),
+    binding_ref: String(row.binding_ref),
+    bundle_id: String(row.bundle_id),
+    attachment_id: String(row.attachment_id),
+    media_type: String(row.media_type) as 'text/markdown',
+    byte_length: Number(row.byte_length),
+    sha256: String(row.sha256),
+  })
+}
+
+function rowToWebAiTurn(row: Record<string, unknown>): WebAiTurn {
+  return {
+    turn_ref: webAiRef(row.turn_ref, 'turn_ref'),
+    binding_ref: webAiRef(row.binding_ref, 'binding_ref'),
+    provider_ref: webAiRef(row.provider_ref, 'provider_ref'),
+    conversation_ref: webAiRef(row.conversation_ref, 'conversation_ref'),
+    attachment_ref: webAiRef(row.attachment_ref, 'attachment_ref'),
+    job_id: normalizeNonempty(String(row.job_id), 'job_id'),
+    cancelled: Number(row.cancelled) === 1,
+    cancel_dispatch_certainty: row.cancel_dispatch_certainty === 'dispatched' || row.cancel_dispatch_certainty === 'ambiguous'
+      ? row.cancel_dispatch_certainty : 'not_dispatched',
+    cancel_attachment_delivery: row.cancel_attachment_delivery === 'delivered' ? 'delivered' : 'pending',
   }
 }
 

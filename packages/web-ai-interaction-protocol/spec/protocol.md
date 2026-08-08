@@ -20,6 +20,6 @@ Every protocol reference is kind-specific and opaque: `request:`, `provider:`, `
 
 ## Local HTTP profile (not implemented)
 
-A later authenticated local HTTP profile may expose capability discovery, start, read, resume, and cancel operations. Paths, status codes, and authentication are profile concerns; they are not core fields and no network client or server is part of this package.
+A later authenticated local HTTP profile may expose capability discovery, start, read, and cancel operations. Paths, status codes, and authentication are profile concerns; they are not core fields and no network client or server is part of this package.
 
 An ambiguous dispatch must remain ambiguous across transport boundaries. A client must obtain provider-specific evidence before considering any new submission.
