@@ -2,4 +2,4 @@
 "tokenless": patch
 ---
 
-Persist bounded, text-free response selector diagnostics with sanitized snapshots.
+Persist bounded, text-free response selector diagnostics with sanitized snapshots and response reads.

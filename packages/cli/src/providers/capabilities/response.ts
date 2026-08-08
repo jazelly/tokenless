@@ -4,10 +4,19 @@ import { createHash } from 'node:crypto'
 import type { Page } from 'playwright-core'
 import type { ProviderDomDefinition } from '../provider-definition.js'
 import type { ProviderActionObservation, ProviderActionPreparation } from '../contracts.js'
-import type { VisibleCitation } from '../../playwright/actions.js'
+import type { ResponseDecisionDiagnostics, ResponseDecisionElement, VisibleCitation } from '../../playwright/actions.js'
 import type { CaptureVisibleOutput } from '../../output-savings/index.js'
 
 export const RESPONSE_CURSOR_SCHEMA = 'tokenless.provider.response-cursor.v2'
+
+const GENERATION_STOP_SELECTOR = [
+  'button[data-testid="stop-button"]',
+  'button[aria-label="Stop generating" i]',
+  'button[aria-label="Stop response" i]',
+  'button[aria-label="Cancel generation" i]',
+  '[role="button"][aria-label="Stop generating" i]',
+  '[role="button"][aria-label="Cancel generation" i]',
+].join(', ')
 
 export type ResponseCursorObservation = {
   answerCount: number
@@ -84,14 +93,51 @@ export async function readDomResponse(
   captureVisibleOutput?: CaptureVisibleOutput,
 ) {
   const answer = await latestLocator(page, provider.answerSelectors)
+  const observations = responseDecisionObservations(page, provider)
   if (!answer) {
     return {
       text: '',
       citations: [],
       visibleProof: 'no-visible-answer',
+      decisionDiagnostics: { selected: null, ...await observations },
     }
   }
-  const completeText = normalizeVisibleText(await answer.innerText({ timeout: 5000 }))
+  const response = await answer.evaluate((element) => {
+    const text = element instanceof HTMLElement ? element.innerText : ''
+    try {
+      const tags = new Set<ResponseDecisionElement['tag']>(['article', 'blockquote', 'button', 'code', 'div', 'element', 'li', 'main', 'ol', 'p', 'pre', 'section', 'span', 'ul'])
+      const roles = new Set<NonNullable<ResponseDecisionElement['role']>>(['button', 'textbox', 'menuitem', 'option', 'combobox', 'listbox'])
+      const live = new Set<NonNullable<ResponseDecisionElement['ariaLive']>>(['assertive', 'off', 'polite'])
+      const states = new Set<NonNullable<ResponseDecisionElement['dataState']>>(['active', 'closed', 'complete', 'idle', 'inactive', 'loading', 'open', 'pending'])
+      const booleans = new Set<NonNullable<ResponseDecisionElement['ariaBusy']>>(['true', 'false'])
+      const describe = (node: Element): ResponseDecisionElement => {
+        const tag = node.tagName.toLowerCase()
+        const role = (node.getAttribute('role') ?? '').toLowerCase()
+        const enumAttribute = <T extends string>(name: string, values: Set<T>) => {
+          const value = (node.getAttribute(name) ?? '').toLowerCase()
+          return values.has(value as T) ? value as T : undefined
+        }
+        const ariaBusy = enumAttribute('aria-busy', booleans)
+        const ariaLive = enumAttribute('aria-live', live)
+        const dataIsStreaming = enumAttribute('data-is-streaming', booleans)
+        const dataState = enumAttribute('data-state', states)
+        return {
+          tag: tags.has(tag as ResponseDecisionElement['tag']) ? tag as ResponseDecisionElement['tag'] : 'element',
+          ...(roles.has(role as NonNullable<ResponseDecisionElement['role']>) ? { role: role as NonNullable<ResponseDecisionElement['role']> } : {}),
+          ...(ariaBusy ? { ariaBusy } : {}),
+          ...(ariaLive ? { ariaLive } : {}),
+          ...(dataIsStreaming ? { dataIsStreaming } : {}),
+          ...(dataState ? { dataState } : {}),
+        }
+      }
+      const ancestors: ResponseDecisionElement[] = []
+      for (let parent = element.parentElement; parent && ancestors.length < 3; parent = parent.parentElement) ancestors.push(describe(parent))
+      return { text, selected: { ...describe(element), ancestors } }
+    } catch {
+      return { text, selected: null }
+    }
+  }, undefined, { timeout: 5000 })
+  const completeText = normalizeVisibleText(response.text)
   captureVisibleOutput?.(completeText)
   const text = boundVisibleText(completeText)
   const citations = await answer.locator('a[href]').evaluateAll((anchors) => anchors.slice(0, 24).map((anchor) => ({
@@ -102,7 +148,20 @@ export async function readDomResponse(
     text,
     citations,
     visibleProof: 'visible-answer-read',
+    decisionDiagnostics: { selected: response.selected, ...await observations },
   }
+}
+
+async function responseDecisionObservations(
+  page: Page,
+  provider: ProviderDomDefinition,
+): Promise<Omit<ResponseDecisionDiagnostics, 'selected'>> {
+  const [visibleAnswerCount, visibleBusyCount, generationStopVisible] = await Promise.all([
+    countVisibleLocators(page, provider.answerSelectors).catch(() => 0),
+    countVisibleLocators(page, provider.busySelectors).catch(() => 0),
+    page.locator(GENERATION_STOP_SELECTOR).filter({ visible: true }).first().isVisible({ timeout: 100 }).catch(() => false),
+  ])
+  return { visibleAnswerCount, visibleBusyCount, generationStopVisible }
 }
 
 function createResponsePreparation(
