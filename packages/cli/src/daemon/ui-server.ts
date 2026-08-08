@@ -34,7 +34,7 @@ export class TokenlessUiServer {
   }
 
   redirectToConsole(request: IncomingMessage, response: ServerResponse) {
-    this.requireHost(request)
+    this.requireOrigin(request)
     this.sessions.ensureSession(request, response)
     this.securityHeaders(response)
     response.writeHead(303, { location: '/ui/' })
@@ -42,7 +42,7 @@ export class TokenlessUiServer {
   }
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL) {
-    this.requireHost(request)
+    const requestOrigin = this.requireOrigin(request)
     const method = request.method ?? 'GET'
     if (method === 'GET' && (url.pathname === '/ui' || url.pathname === '/ui/')) {
       this.sessions.ensureSession(request, response)
@@ -75,7 +75,7 @@ export class TokenlessUiServer {
     if (!url.pathname.startsWith('/ui-api/v1/')) return false
     const session = method === 'GET'
       ? this.sessions.ensureSession(request, response)
-      : this.sessions.requireMutation(request, this.origin())
+      : this.sessions.requireMutation(request, requestOrigin)
     if (method === 'GET' && url.pathname === '/ui-api/v1/session') {
       this.writeJson(response, 200, {
         csrf: session.csrf,
@@ -234,10 +234,17 @@ export class TokenlessUiServer {
     return /(^|,)\s*zh(?:-|;|,|$)/i.test(accepted) ? 'zh-CN' : 'en'
   }
 
-  private requireHost(request: IncomingMessage) {
-    const expected = new URL(this.origin()).host.toLowerCase()
+  private requireOrigin(request: IncomingMessage) {
+    const expected = new URL(this.origin())
     const host = (request.headers.host ?? '').toLowerCase()
-    if (host !== expected) throw uiError('ui_host_rejected', 'The request Host is not allowed.', 403)
+    const allowedHosts = new Set([expected.host.toLowerCase()])
+    if (expected.hostname === '127.0.0.1' || expected.hostname === '[::1]') {
+      allowedHosts.add(`localhost${expected.port ? `:${expected.port}` : ''}`)
+    } else if (expected.hostname === 'localhost') {
+      allowedHosts.add(`127.0.0.1${expected.port ? `:${expected.port}` : ''}`)
+    }
+    if (!allowedHosts.has(host)) throw uiError('ui_host_rejected', 'The request Host is not allowed.', 403)
+    return `${expected.protocol}//${host}`
   }
 
   private securityHeaders(response: ServerResponse) {

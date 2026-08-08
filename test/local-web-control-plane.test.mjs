@@ -30,6 +30,26 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     const directSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`)
     assert.equal(directSnapshot.status, 200)
 
+    const localhostHost = `localhost:${daemon.port}`
+    const localhostOrigin = `http://${localhostHost}`
+    const localhostSession = await fetch(`${localhostOrigin}/ui-api/v1/session`)
+    assert.equal(localhostSession.status, 200)
+    const localhostCookie = localhostSession.headers.get('set-cookie')?.split(';')[0]
+    assert.match(localhostCookie ?? '', /^tokenless_ui_session=/)
+    const localhostSessionBody = await localhostSession.json()
+    const localhostMutation = await fetch(`${localhostOrigin}/ui-api/v1/config`, {
+      method: 'PATCH',
+      headers: {
+        cookie: localhostCookie,
+        origin: localhostOrigin,
+        'x-tokenless-csrf': localhostSessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ language: 'zh-CN' }),
+    })
+    const localhostMutationBody = await localhostMutation.json()
+    assert.equal(localhostMutation.status, 200, JSON.stringify(localhostMutationBody))
+
     const root = await fetch(`${daemon.origin}/`, { redirect: 'manual' })
     assert.equal(root.status, 303)
     assert.equal(root.headers.get('location'), '/ui/')
@@ -301,6 +321,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       daemon.store.cancelJob(job.jobId, { source: 'test-cleanup' }).catch(() => undefined)
     )))
 
+    assert.equal(await requestWithHost(daemon.port, localhostHost), 200)
     assert.equal(await requestWithHost(daemon.port, 'evil.invalid'), 403)
   })
 })

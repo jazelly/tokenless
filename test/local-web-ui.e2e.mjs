@@ -13,6 +13,7 @@ import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/prof
 
 test('Svelte Web UI completes setup, persists configuration, renders durable work, and remains responsive', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
+    const consoleOrigin = daemon.origin.replace('127.0.0.1', 'localhost')
     const customExecutablePath = chromium.executablePath()
     const initialConfig = await readTokenlessConfig(homeDir)
     await writeTokenlessConfig({
@@ -51,7 +52,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
         if (response.url().includes('/ui-api/') && response.status() >= 500) consoleFailures.push(`${response.status()} ${response.url()}`)
       })
 
-      await page.goto(`${daemon.origin}/`, { waitUntil: 'networkidle' })
+      await page.goto(`${consoleOrigin}/`, { waitUntil: 'networkidle' })
       assert.equal(await page.title(), 'Tokenless local console')
       await page.getByTestId('setup-view').waitFor()
       assert.equal(await page.locator('.boot-state').count(), 0)
@@ -179,7 +180,7 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       await page.getByTestId('profiles-view').waitFor()
       assert.equal(await page.getByTestId('profile-item-personal').getAttribute('class').then((value) => value.includes('active')), true)
       const personalProfile = await new ManagedProfileRegistry(homeDir).resolveProfile('personal')
-      await page.goto(`${daemon.origin}/ui/?profile=${encodeURIComponent(personalProfile.id)}`, { waitUntil: 'networkidle' })
+      await page.goto(`${consoleOrigin}/ui/?profile=${encodeURIComponent(personalProfile.id)}`, { waitUntil: 'networkidle' })
       await page.getByTestId('app-shell').waitFor()
       await page.waitForFunction(() => new URL(location.href).searchParams.get('profile') === 'personal')
       await page.locator('.rail [data-nav="profiles"]').click()
