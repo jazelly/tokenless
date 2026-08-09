@@ -52,9 +52,7 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
         'button[type="submit"]',
       ]),
       answerSelectors: Object.freeze([
-        '[data-testid="virtual-message-list"] .font-claude-response-body',
-        'main .font-claude-response-body',
-        '.font-claude-response-body',
+        '.font-claude-response :is(.standard-markdown, .progressive-markdown)',
       ]),
       fileInputSelectors: Object.freeze([
         'input#chat-input-file-upload-onpage[data-testid="file-upload"][type="file"]',
