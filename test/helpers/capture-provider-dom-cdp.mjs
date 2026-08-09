@@ -275,6 +275,40 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       projectLinks: [],
     },
   }),
+  dola: defineProvider({
+    id: 'dola',
+    label: 'Dola',
+    origin: 'https://www.dola.com',
+    url: 'https://www.dola.com/chat',
+    outputName: 'dola-dom.sanitized.html',
+    selectors: {
+      composers: [
+        'textarea.semi-input-textarea[placeholder="Message..."]',
+      ],
+      submits: [
+        'button[class*="send-msg-btn"]',
+      ],
+      answers: [
+        '[data-render-engine="node"]:not(.justify-end) [data-streaming].md-box-root',
+      ],
+      blockers: [
+        'iframe[src*="captcha" i]',
+        'iframe[src*="challenges.cloudflare.com" i]',
+      ],
+      busy: [
+        '[data-render-engine="node"]:not(.justify-end) [data-streaming="true"].md-box-root',
+      ],
+      modelPickers: [
+        'button[data-slot="dropdown-menu-trigger"]:has-text("Fast")',
+        'button[data-slot="dropdown-menu-trigger"]:has-text("Pro")',
+      ],
+      fileInputs: [
+        'input[type="file"]',
+        'div.max-w-full.min-w-0.flex-1.relative.flex.items-center.h-36 > div:first-child > button[data-dbx-name="button"]',
+      ],
+      projectLinks: [],
+    },
+  }),
 })
 
 export const providerDefinitions = PROVIDER_DEFINITIONS
@@ -305,7 +339,7 @@ export async function captureProviderDom({
     if (!provider) {
       throw usageError(
         'unsupported_provider',
-        'Provider must be one of: chatgpt, claude, gemini, grok, qwen.'
+        'Provider must be one of: chatgpt, claude, gemini, grok, qwen, deepseek, dola.'
       )
     }
     validateArgs(args)
@@ -698,6 +732,7 @@ export async function captureProviderDom({
           gemini: new Set(['/app', '/gems/view']),
           grok: new Set(['/']),
           qwen: new Set(['/', '/c/guest']),
+          dola: new Set(['/chat', '/chat/create-image']),
         }
         if (staticPaths[provider]?.has(normalized)) return normalized
 
@@ -707,6 +742,7 @@ export async function captureProviderDom({
           gemini: new Set(['app', 'gems', 'share']),
           grok: new Set(['c', 'share']),
           qwen: new Set(['c']),
+          dola: new Set(['chat']),
         }
         const firstSegment = normalized.split('/').filter(Boolean)[0]
         return firstSegment && knownRoutePrefixes[provider]?.has(firstSegment)

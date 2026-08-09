@@ -10,7 +10,7 @@ Tokenless supports a broader set of high-value AI web providers while preserving
 
 ## Current Implementation State
 
-As of 2026-08-04:
+As of 2026-08-09:
 
 - the shared registry extraction and OOP provider seam are complete and recorded in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md) roadmap;
 - Qwen / 千问 is registered as an `experimental` provider through one provider module and one registry entry;
@@ -36,6 +36,7 @@ As of 2026-08-04:
 - Doubao is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak non-submission gate closes readiness, prompt drafting, visible file acceptance, exact Fast/Expert/Work Task mode selection, nine coding-relevant Web skill selections, unavailable-state reporting, and restoration. Text-file `file.upload` is experimental and routeable. The same anti-detect configuration completed two direct correlated marker responses, while the built-product chat mutation release gate remains blocked by a visible provider verification iframe and fails closed as `visible_provider_blocker`; and
 - Kimi is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak gates close readiness, prompt drafting, Instant/K3/K3 Swarm model selection, Standard/High effort selection, text-file acceptance, attachment-grounded output, exact Web search selection with visible citations, exact Plugin/Skill control selection, second-process same-conversation continuation, restoration, and durable mapping. `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` are experimental and routeable; Plugin/Skill submitted outcomes are capacity-blocked, while Projects, research, agent, and artifact lifecycles remain gate-pending and unadvertised; and
 - Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
+- Dola is registered as an experimental signed-in provider from the user-selected `web-ai` managed profile. The visible session confirmed the chat composer, file picker, Fast/Pro menu, numeric conversation URLs, and image, writing, video, translation, and homework entry points. The adapter, sanitized-capture probes, and readiness/draft/model/file/two-turn release gates are implemented; no route is advertised until the built-product gates close.
 
 | Qwen capability | Current state | Evidence boundary |
 | --- | --- | --- |
@@ -82,6 +83,19 @@ As of 2026-08-04:
 | Plugins and Skills | Controls closed; outcomes gate-pending | Exact inspect/select passed; a submitted Plugin workflow previously completed, but the formal combined outcome gate is currently blocked by Kimi's visible capacity queue |
 | Projects | Implementation and gate pending | A uniquely named Project was created in manual probing, but the formal gate could not persist and visibly re-identify the exact Project name |
 | Research, agent, and artifact outcomes | Candidate only | Terminal reports, progress, clarification, generated artifacts, and background durability remain unclosed |
+
+| Dola capability | Current state | Evidence boundary |
+| --- | --- | --- |
+| Signed-in composer | Live observed; implementation available | User-selected runtime-bound Cloak profile; built-product gate pending |
+| Fast / Pro model menu | Live observed; exact-selection gate declared | Visible menu in the signed-in chat surface; selection and restoration pending |
+| File input | Visible picker; acceptance gate declared | Native file dialog opened from the signed-in composer; accepted-file postcondition pending |
+| Conversation and continuation | Adapter and gate declared | Numeric `/chat/:conversationId` routes were observed; correlated two-turn CLI closure pending |
+| Image generation | `image.generation` candidate | Create Image and the Seedream model/ratio/style/template surface are visible; completed image artifact pending |
+| Writing | `document.generation` or chat candidate | `write_assistant` is visible, but no completed document or downloadable file is proven |
+| Video generation | `video.generation` candidate | `video_generation` is visible; progress and terminal artifact pending |
+| Translation | `skill.invoke` and chat candidate | `translate` is visible; exact invocation and correlated translated output pending |
+| Homework | `skill.invoke`, chat, and possible extended-reasoning candidate | `exercise_assistant` is visible; terminal outcome pending |
+| Projects and file management | Unavailable | No Project, file library, persistent knowledge, or independent Create File surface was observed |
 
 The maintained [Provider Capability Census](../provider-capability-census.md) records official product surfaces, current Tokenless evidence, candidate providers, and the proposed canonical capability schema.
 

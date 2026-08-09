@@ -1,6 +1,6 @@
 # Provider DOM Fixtures
 
-This directory stores redacted, reduced DOM evidence captured from visible provider pages. It covers authenticated ChatGPT, Claude, Gemini, Grok, and DeepSeek sessions plus the public Qwen guest surface without retaining cookies, browser storage, tokens, account email addresses, chat content, or private route identifiers.
+This directory stores redacted, reduced DOM evidence captured from visible provider pages. It covers authenticated ChatGPT, Claude, Gemini, Grok, DeepSeek, and Dola sessions plus the public Qwen guest surface without retaining cookies, browser storage, tokens, account email addresses, chat content, or private route identifiers.
 
 The hierarchy is:
 
@@ -29,6 +29,7 @@ The deep workflow corpus currently covers:
 | Gemini | Existing conversation, chat search, upload/tools menu, connected upload sources, settings menu, image workspace, media library |
 | Grok | Attachment menu, skills, connectors, Imagine, automation list and creation, account settings, empty history, project creation |
 | DeepSeek | Instant, Expert, and Vision composer states with mode-dependent DeepThink, Search, and file controls |
+| Dola | Completed same-conversation response plus the model, attachment, image, writing, video, translation, and homework action bar |
 
 Run `node test/helpers/build-provider-workflow-fixtures.mjs` after changing the deep workflow descriptor. It rewrites those reduced HTML fixtures and their provenance sidecars, recalculates content digests, and regenerates the complete v2 manifest without replacing the older baseline fixture variants.
 

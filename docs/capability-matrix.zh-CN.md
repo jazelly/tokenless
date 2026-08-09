@@ -46,12 +46,12 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 下表概括 checked-in routes；CLI 输出是当前列表的权威来源。
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental |
-| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental |
-| `search.web` | — | — | — | — | — | — | — | — | — | Experimental |
-| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental | — |
+| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental | — |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — |
 
 `—` 表示目前没有公开 route，不一定代表 provider 产品没有该功能；也可能是 implementation 或真实 provider evidence 尚未完成。
 
@@ -80,6 +80,22 @@ Doubao `file.upload` 已作为 experimental route 对外提供文件选择能力
 豆包 `auth.status` 也会读取可见账号控件，且只打开它的账号菜单。可见的“升级到专业版”会被派生为 `免费版` / `signed_in_free`；尚未观察的付费账号状态仍返回 `signed_in_unknown`，不会把购买页默认选中的报价误当成已购套餐。
 
 Kimi `conversation.chat`、text-file `file.upload`、`search.web` 与基于搜索的 `response.citations` 已作为 experimental routes 对外提供，但只适用于选定的已登录 profile。Built CLI、packaged daemon、runtime-bound Cloak profile 与真实 provider network 已闭环 readiness、prompt drafting、精确模型与思考强度选择及恢复、文件接收、附件感知回答、Web search Auto/Off 精确选择、normalized 且可见的引用、第二个 CLI 进程在同一 conversation URL 上续聊，以及持久 task mapping。Plugin 与 Skill 的检查和精确可见选择也通过了 non-submission gate，但完整提交 outcome 当前受 Kimi 可见容量队列阻塞，因此未公开为 routes。Projects、Deep Research、agent workflows 与 artifact lifecycles 已有实现和 release gates，但真实 provider gates 尚未闭环，所以仍不公开。
+
+Dola 已注册为需要登录的 experimental provider。用户选定的 managed profile 已可见确认 chat composer、Fast/Pro model menu、文件选择器、conversation URL，以及 Create Image、Writing、Create Video、Translate 和 Homework 入口。在 built CLI 与 packaged daemon 闭环 readiness、drafting、model 恢复、可见文件接收、关联 response 与同 conversation 续聊前，不公开任何 Dola route；generation 与 specialist 入口也必须分别证明 terminal outcome 后才能成为 capability。
+
+| Dola 控件或界面 | Canonical outcome candidates | 当前证据与 route 状态 |
+| --- | --- | --- |
+| Chat 与同 conversation 续聊 | `conversation.chat`, `conversation.continue` | 选定 profile 中已完成两轮关联对话；built-product gates 待完成 |
+| Fast / Pro | `conversation.chat`；provider control `model.choice` | 两个选项均已 live-observed；exact selection 与 restoration gate 待完成 |
+| 添加文件 | `file.upload` | 已 live-observed native file chooser；可接收格式与 visible acceptance gate 待完成 |
+| Create Image / AI Creation | `image.generation` | 已 live-observed 入口及带 model、ratio、style、template 的 Seedream 图片界面；completed image 与 bounded artifact reference 待完成 |
+| Writing | `document.generation` 或 `conversation.chat` | 已 live-observed `write_assistant` 入口；尚未证明输出形态，因此不声明 document 或 downloadable file |
+| Create Video | `video.generation` | 已 live-observed `video_generation` 入口；progress、terminal video 与 bounded artifact reference 待完成 |
+| Translate | `skill.invoke`, `conversation.chat` | 已 live-observed `translate` 入口；exact invocation 与关联翻译结果待完成 |
+| Homework | `skill.invoke`, `conversation.chat`；可能对应 `reasoning.extended` | 已 live-observed `exercise_assistant` 入口；exact invocation 与 reasoning outcome 待完成 |
+| Projects、文件库或持久知识 | `workspace.native`, `workspace.knowledge`, `artifact.download` | Unavailable：没有观察到 Project、文件库或持久知识管理界面 |
+
+Dola 没有独立观察到的 **Create File** 控件。可见的 **Writing** 入口不能直接当作文件创建；只有真实运行产出完整 document 后才能映射 `document.generation`，若结果可下载，还需要 `artifact.download` evidence。
 
 | Doubao control | Canonical outcome candidates | Public route state |
 | --- | --- | --- |

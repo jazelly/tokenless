@@ -28,7 +28,7 @@
 
 ## 10 家 provider，一个本地接口
 
-目前有 4 家 provider 受支持，另外 6 家处于实验阶段；未经验证的工作流会明确停止。
+目前有 4 家 provider 受支持，另外 7 家处于实验阶段；未经验证的工作流会明确停止。
 
 <table>
   <tr>
@@ -44,6 +44,9 @@
     <td align="center" width="20%"><img src="https://z-cdn.chatglm.cn/z-ai/static/logo.svg" alt="Z.ai" width="32" height="32"><br><strong>Z.ai / GLM</strong><br><sub>实验性</sub></td>
     <td align="center" width="20%"><img src="https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/128x128.png" alt="Doubao" width="32" height="32"><br><strong>Doubao / 豆包</strong><br><sub>实验性</sub></td>
     <td align="center" width="20%"><img src="https://www.kimi.com/favicon-light.ico" alt="Kimi" width="32" height="32"><br><strong>Kimi</strong><br><sub>实验性</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="20%"><img src="https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/favicon-dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong><br><sub>实验性</sub></td>
   </tr>
 </table>
 

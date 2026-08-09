@@ -46,12 +46,12 @@ Implications are expanded before provider selection. One provider must satisfy t
 
 This table summarizes checked-in routes. The CLI output is the authoritative current list.
 
-| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental |
-| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental |
-| `search.web` | — | — | — | — | — | — | — | — | — | Experimental |
-| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental |
+| Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental | — |
+| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental | — |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — |
 
 `—` means no route is advertised. It does not necessarily mean the provider product lacks the feature; the implementation or real-provider evidence may still be incomplete.
 
@@ -80,6 +80,22 @@ Doubao also exposes provider-specific `doubao.mode` and `doubao.skill` actions. 
 Doubao `auth.status` also reads the visible account control and opens only its account menu. A visible `升级到专业版` item is derived as `免费版` / `signed_in_free`; unobserved paid-account states remain `signed_in_unknown` rather than being inferred from the purchase page's default selected offer.
 
 Kimi `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` are experimental and routeable only from a signed-in selected profile. The built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network closed readiness, prompt drafting, exact model and thinking-effort selection with restoration, file acceptance, an attachment-grounded response, exact Web search Auto/Off selection, normalized and visible citations, a second-process continuation on the same conversation URL, and durable task mapping. Plugin and Skill inspection and exact visible selection also passed the non-submission gate, but their complete submitted outcomes are currently blocked by Kimi's visible capacity queue and remain unadvertised. Projects, Deep Research, agent workflows, and artifact lifecycles have implementations and release gates but remain unadvertised because their real provider gates have not closed.
+
+Dola is registered as an experimental signed-in provider. The user-selected managed profile visibly confirmed the chat composer, Fast/Pro model menu, file picker, conversation URLs, and Create Image, Writing, Create Video, Translate, and Homework entry points. No Dola route is advertised until the built CLI and packaged daemon close readiness, drafting, model restoration, visible file acceptance, correlated responses, and same-conversation continuation; the generation and specialist entry points remain candidates until their terminal outcomes are independently proven.
+
+| Dola control or surface | Canonical outcome candidates | Current evidence and route state |
+| --- | --- | --- |
+| Chat and same-conversation follow-up | `conversation.chat`, `conversation.continue` | Two correlated turns completed in the selected profile; built-product gates pending |
+| Fast / Pro | `conversation.chat`; provider control `model.choice` | Both choices are live-observed; exact selection and restoration gate pending |
+| Add file | `file.upload` | Native file chooser is live-observed; accepted formats and visible acceptance gate pending |
+| Create Image / AI Creation | `image.generation` | Entry and Seedream image surface with model, ratio, style, and template controls are live-observed; completed image and bounded artifact reference pending |
+| Writing | `document.generation` or `conversation.chat` | `write_assistant` entry is live-observed; output form is not yet proven, so no document or downloadable-file claim |
+| Create Video | `video.generation` | `video_generation` entry is live-observed; progress, terminal video, and bounded artifact reference pending |
+| Translate | `skill.invoke`, `conversation.chat` | `translate` entry is live-observed; exact invocation and correlated translated output pending |
+| Homework | `skill.invoke`, `conversation.chat`; possible `reasoning.extended` | `exercise_assistant` entry is live-observed; exact invocation and reasoning outcome pending |
+| Projects, file library, or persistent knowledge | `workspace.native`, `workspace.knowledge`, `artifact.download` | Unavailable: no Project, file-library, or persistent knowledge-management surface was observed |
+
+Dola has no independently observed **Create File** control. The visible **Writing** entry must not be treated as file creation unless a real run produces a completed document; a downloadable result would additionally require `artifact.download` evidence.
 
 | Doubao control | Canonical outcome candidates | Public route state |
 | --- | --- | --- |

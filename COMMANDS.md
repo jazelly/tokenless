@@ -60,9 +60,11 @@ deepseek
 perplexity
 zai
 doubao
+kimi
+dola
 ```
 
-ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, and Doubao / 豆包 are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
+ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, and Dola are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
 
 Runtime browser values are `auto`, `chrome`, `edge`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. For new setup, `auto` resolves to the platform-pinned `managed-chromium`; explicit system-browser values remain available for existing or advanced configurations. `cloak` is explicit opt-in. New Tokenless profiles are clean and runtime-bound. Experimental opaque profile copy is available only when creating a CloakBrowser profile, requires `--consent-local-profile-copy`, and accepts only a version-compatible Google Chrome source.
 

@@ -473,6 +473,57 @@ test('Qwen guest fixtures preserve provenance-bound composer, mode, and complete
   }
 })
 
+test('Dola fixtures preserve the observed capability action bar and completed response boundary', {
+  timeout: 30000,
+}, async () => {
+  const accountRoot = path.join(fixtureRoot, 'dola', 'signed-in-unknown')
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  try {
+    for (const scenario of ['capability-action-bar', 'response-complete']) {
+      const [htmlBytes, provenanceText] = await Promise.all([
+        fs.readFile(path.join(accountRoot, `${scenario}.html`)),
+        fs.readFile(path.join(accountRoot, `${scenario}.provenance.json`), 'utf8'),
+      ])
+      const html = htmlBytes.toString('utf8')
+      const provenance = JSON.parse(provenanceText)
+      assert.equal(provenance.provider, 'dola')
+      assert.equal(provenance.accountState, 'signed-in-unknown')
+      assert.equal(provenance.observedOn, '2026-08-09')
+      assert.equal(provenance.containsProviderJavaScript, false)
+      assert.equal(provenance.containsSyntheticBehavior, false)
+      assert.equal(sha256(htmlBytes), provenance.contentSha256)
+      assertPrivacyBoundary(html)
+      assertPrivacyBoundary(provenanceText)
+
+      await page.setContent(html)
+      for (const evidence of provenance.evidenceSelectors) {
+        assert.equal(
+          await page.locator(evidence.selector).count(),
+          evidence.expectedCount,
+          `dola/${scenario} ${evidence.capability}: ${evidence.selector}`
+        )
+      }
+      for (const absence of provenance.absenceSelectors) {
+        assert.equal(
+          await page.locator(absence.selector).count(),
+          absence.expectedCount,
+          `dola/${scenario} ${absence.purpose}: ${absence.selector}`
+        )
+      }
+    }
+
+    await page.setContent(await fs.readFile(path.join(accountRoot, 'capability-action-bar.html'), 'utf8'))
+    assert.deepEqual(
+      await page.locator('main button[type="submit"]:not([data-dbx-name])').allTextContents(),
+      ['Create Image', 'Writing', 'Create Video', 'Translate', 'Homework'],
+    )
+    assert.equal(await page.locator('a[href="/chat/create-image"]').count(), 1)
+  } finally {
+    await browser.close()
+  }
+})
+
 test('deep workflow fixtures cover authenticated provider jobs, settings, connectors, uploads, and media', {
   timeout: 30000,
 }, async () => {
@@ -640,7 +691,7 @@ function sha256(bytes) {
 function assertPrivacyBoundary(artifact) {
   assert.doesNotMatch(artifact, /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)
   assert.doesNotMatch(artifact, /\b(?:cookie|localStorage|sessionStorage|authorization)\b/i)
-  assert.doesNotMatch(artifact, /\/(?:c|chat)\/[A-Za-z0-9_-]{6,}/)
+  assert.doesNotMatch(artifact, /\/(?:c|chat)\/(?!create-image\b)[A-Za-z0-9_-]{6,}/)
   assert.doesNotMatch(artifact, /(?:access|refresh|id)[_-]?token/i)
 }
 

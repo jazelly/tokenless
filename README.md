@@ -28,7 +28,7 @@
 
 ## 10 providers. One local interface.
 
-Four providers are supported today; six more are experimental and fail closed when a workflow is not verified.
+Four providers are supported today; seven more are experimental and fail closed when a workflow is not verified.
 
 <table>
   <tr>
@@ -44,6 +44,9 @@ Four providers are supported today; six more are experimental and fail closed wh
     <td align="center" width="20%"><img src="https://z-cdn.chatglm.cn/z-ai/static/logo.svg" alt="Z.ai" width="32" height="32"><br><strong>Z.ai / GLM</strong><br><sub>Experimental</sub></td>
     <td align="center" width="20%"><img src="https://lf-flow-web-cdn.doubao.com/obj/flow-doubao/favicon/new-doubao/128x128.png" alt="Doubao" width="32" height="32"><br><strong>Doubao / 豆包</strong><br><sub>Experimental</sub></td>
     <td align="center" width="20%"><img src="https://www.kimi.com/favicon-light.ico" alt="Kimi" width="32" height="32"><br><strong>Kimi</strong><br><sub>Experimental</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="20%"><img src="https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/favicon-dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong><br><sub>Experimental</sub></td>
   </tr>
 </table>
 

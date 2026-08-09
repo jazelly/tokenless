@@ -1,0 +1,33 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "dola",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "capability-action-bar",
+  "routeClass": "new-chat",
+  "operationPhase": "capability-inspection",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-08-09",
+  "sanitizedUrl": "https://www.dola.com/chat",
+  "source": "authenticated-user-visible-chromium-session-and-public-page-state",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "48f8fe0e125ccc55cf2f38a8d3f83bbbc88c7d460a94e110c55ea9c9d9a86d18",
+  "evidenceSelectors": [
+    { "capability": "file.upload.control", "selector": "button[data-dbx-name=\"button\"]", "expectedCount": 1 },
+    { "capability": "model.choice.control", "selector": "button[data-slot=\"dropdown-menu-trigger\"]", "expectedCount": 1 },
+    { "capability": "image.generation.entry", "selector": "button:has-text(\"Create Image\")", "expectedCount": 1 },
+    { "capability": "document.generation.candidate", "selector": "button:has-text(\"Writing\")", "expectedCount": 1 },
+    { "capability": "video.generation.entry", "selector": "button:has-text(\"Create Video\")", "expectedCount": 1 },
+    { "capability": "translation.skill.entry", "selector": "button:has-text(\"Translate\")", "expectedCount": 1 },
+    { "capability": "homework.skill.entry", "selector": "button:has-text(\"Homework\")", "expectedCount": 1 },
+    { "capability": "image.generation.surface", "selector": "a[href=\"/chat/create-image\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "native-project-not-observed", "selector": "a[href*=\"project\" i]", "expectedCount": 0 },
+    { "purpose": "file-library-not-observed", "selector": "a[href*=\"library\" i]", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "conversation history", "private route identifiers", "scripts", "styles"],
+  "notes": ["The five visible action-bar labels match public page-state keys image_generation, write_assistant, video_generation, translate, and exercise_assistant.", "Entry visibility proves only the control surface, not a completed generated or specialist outcome."]
+}

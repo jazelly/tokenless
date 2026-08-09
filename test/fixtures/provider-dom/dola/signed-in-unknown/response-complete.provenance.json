@@ -1,0 +1,30 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "dola",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "response-complete",
+  "routeClass": "conversation",
+  "operationPhase": "response-complete",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-08-09",
+  "sanitizedUrl": "https://www.dola.com/chat/[redacted]",
+  "source": "authenticated-user-visible-chromium-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "a3832adab977530cc107aee9ad9e4c2d7d148b7bf7f9f24c0f294e27e718ab1c",
+  "evidenceSelectors": [
+    { "capability": "session.readiness", "selector": "button[aria-haspopup=\"menu\"]:has(img)", "expectedCount": 1 },
+    { "capability": "response.read", "selector": "[data-render-engine=\"node\"]:not(.justify-end) [data-streaming].md-box-root", "expectedCount": 1 },
+    { "capability": "conversation.continue", "selector": "textarea.semi-input-textarea[placeholder=\"Message...\"]", "expectedCount": 1 },
+    { "capability": "prompt.submit", "selector": "button[class*=\"send-msg-btn\"], button[class*=\"send-msg-btn-disabled\"]", "expectedCount": 1 },
+    { "capability": "model.choice", "selector": "button[data-slot=\"dropdown-menu-trigger\"]", "expectedCount": 1 },
+    { "capability": "file.selection", "selector": "div.max-w-full.min-w-0.flex-1.relative.flex.items-center.h-36 > div:first-child > button[data-dbx-name=\"button\"]", "expectedCount": 1 }
+  ],
+  "absenceSelectors": [
+    { "purpose": "streaming-not-active", "selector": "[data-streaming=\"true\"].md-box-root", "expectedCount": 0 }
+  ],
+  "redactions": ["account identity", "conversation history", "prompt content", "response content", "private route identifiers", "scripts", "styles"],
+  "notes": ["Two correlated same-conversation turns completed with unique markers; this reduction preserves one prompt/response pair and the observed continuation controls."]
+}

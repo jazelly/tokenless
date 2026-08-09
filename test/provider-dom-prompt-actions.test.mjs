@@ -56,6 +56,15 @@ const providers = [
       'textarea.message-input-textarea',
     ],
   },
+  {
+    id: 'dola',
+    state: 'signed-in-unknown',
+    scenario: 'response-complete',
+    url: 'https://www.dola.com/chat',
+    composerSelectors: [
+      'textarea.semi-input-textarea[placeholder="Message..."]',
+    ],
+  },
 ]
 
 test('real Chromium inputs and clears drafts on provenance-bound provider DOM captures', {

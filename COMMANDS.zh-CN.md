@@ -60,9 +60,11 @@ deepseek
 perplexity
 zai
 doubao
+kimi
+dola
 ```
 
-ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM 和 Doubao / 豆包目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
+ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi 和 Dola 目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
 
 Runtime browser 可选值为 `auto`、`chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。新 setup 中，`auto` 会解析为按平台固定版本的 `managed-chromium`；显式 system-browser 值继续用于已有或 advanced 配置。`cloak` 必须显式选择。Tokenless 新建的 profile 为 clean 且绑定 runtime。实验性 opaque profile copy 只在创建 CloakBrowser profile 时提供，需要 `--consent-local-profile-copy`，并且只接受版本兼容的 Google Chrome 来源。
 
