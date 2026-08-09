@@ -31,7 +31,6 @@ test('packaged daemon keeps the implicit headless readiness browser resident aft
       homeDir,
       browser: 'profile',
       browserVisibility: 'auto',
-      browserConnectionMode: 'cdp',
       providerWhitelist: ['chatgpt'],
       profilePreferences: {
         [profile.slug]: {
@@ -94,7 +93,7 @@ test('daemon shutdown detaches and a replacement daemon reconnects to the reside
     process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
     const registry = new ManagedProfileRegistry(homeDir)
     const profile = await registry.addProfile({ slug: 'daemon-browser-handoff', lifecycle: 'ready', setDefault: true })
-    await writeTokenlessConfig({ homeDir, browser: 'profile', browserConnectionMode: 'cdp' })
+    await writeTokenlessConfig({ homeDir, browser: 'profile' })
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
     await openBrowserRuntimeProfile({
       daemonUrl: daemon.origin,
@@ -162,7 +161,6 @@ test('packaged daemon completes headed provider tabs and keeps the dashboard con
       homeDir,
       browser: 'profile',
       browserVisibility: 'auto',
-      browserConnectionMode: 'cdp',
       providerWhitelist: ['chatgpt'],
       profilePreferences: {
         [profile.slug]: {
@@ -216,6 +214,7 @@ test('packaged daemon completes headed provider tabs and keeps the dashboard con
     assert.equal(dashboard.opened?.pageCount, 2)
     const dashboardPage = await waitForValue(() => browserContext.pages().find((page) => page.url().startsWith(daemon.origin)))
     await dashboardPage.reload({ waitUntil: 'domcontentloaded' })
+    await dashboardPage.getByTestId('overview-view').waitFor()
     assert.equal(observer.isConnected(), true)
     assert.equal(chatgpt.isClosed(), false)
     assert.equal(dashboardPage.isClosed(), false)
@@ -229,6 +228,7 @@ test('packaged daemon completes headed provider tabs and keeps the dashboard con
     assert.equal(reopenedDashboard.opened?.reused, true)
     assert.equal(reopenedDashboard.opened?.pageCount, 2)
 
+    await dashboardPage.getByTestId('overview-view').waitFor()
     await dashboardPage.getByTestId('overview-readiness-refresh').click()
     const readinessSummary = await waitForValue(async () => {
       const jobs = await listDaemonJobs({

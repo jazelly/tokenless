@@ -43,7 +43,6 @@ import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
 import type { ProviderCapabilityId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
-import type { BrowserConnectionMode } from '../browser-connection-mode.js'
 import type { VisibleAction, VisibleActionRequest } from './actions.js'
 import type { VisibleActionResponse } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
@@ -59,7 +58,6 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   daemonClient: ManagedDaemonClient
   contextManager?: PersistentContextManagerType | undefined
   browser?: ManagedBrowserLaunchTarget | undefined
-  browserConnectionMode?: BrowserConnectionMode | undefined
   browserResolver?: ManagedBrowserResolver | undefined
   pollIdleMs?: number | undefined
   renewIntervalMs?: number | undefined
@@ -215,7 +213,6 @@ export class ManagedPlaywrightRunnerService {
     }
     this.daemonClient = options.daemonClient
     this.contextManager = options.contextManager ?? new PersistentContextManager({
-      connectionMode: options.browserConnectionMode ?? 'cdp',
       ...(options.browser ? { browser: options.browser } : {}),
       ...(options.browserResolver ? { browserResolver: options.browserResolver } : {}),
     })

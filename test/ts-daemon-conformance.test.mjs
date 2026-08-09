@@ -1250,8 +1250,7 @@ test('SQLite completes the provider job before durable output savings work is pr
   }
 })
 
-for (const browserConnectionMode of ['playwright', 'cdp']) {
-test(`profiles open canonicalizes ${browserConnectionMode} to resident CDP browser control`, {
+test('profiles open uses resident CDP browser control', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -1265,8 +1264,8 @@ test(`profiles open canonicalizes ${browserConnectionMode} to resident CDP brows
   process.env.TOKENLESS_PROVIDER = 'claude'
   let daemon
   try {
-    const config = await runtime.writeTokenlessConfig({ homeDir, browser: 'profile', browserConnectionMode })
-    assert.equal(config.browserConnectionMode, 'cdp')
+    const config = await runtime.writeTokenlessConfig({ homeDir, browser: 'profile' })
+    assert.equal(Object.hasOwn(config, 'browserConnectionMode'), false)
     daemon = await startTsDaemon(homeDir)
     await runtime.writeTokenlessConfig({ homeDir, daemonUrl: daemon.url })
 
@@ -1307,7 +1306,6 @@ test(`profiles open canonicalizes ${browserConnectionMode} to resident CDP brows
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
-}
 
 test('profile removal quiesces the TS browser runtime while preserving the old runner JSON shape', {
   timeout: 60_000,

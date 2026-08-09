@@ -408,7 +408,6 @@
           "providerWhitelist": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
           "browser": { "type": "string" },
           "browserExecutablePathConfigured": { "type": "boolean" },
-          "browserConnectionMode": { "type": "string", "enum": ["playwright", "cdp"] },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "daemonUrl": { "type": ["string", "null"], "format": "uri" },
           "language": { "type": "string", "enum": ["en", "zh-CN"] },
@@ -419,7 +418,7 @@
             "additionalProperties": false
           }
         },
-        "required": ["updatedAt", "providerWhitelist", "browser", "browserExecutablePathConfigured", "browserConnectionMode", "browserVisibility", "daemonUrl", "language", "outputSavings"],
+        "required": ["updatedAt", "providerWhitelist", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings"],
         "additionalProperties": false
       },
       "ConfirmedDeletion": {

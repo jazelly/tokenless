@@ -2,7 +2,6 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeBrowserVisibility } from './browser-visibility.js'
-import { normalizeBrowserConnectionMode, type BrowserConnectionMode } from './browser-connection-mode.js'
 import { normalizeTokenlessLanguage, type TokenlessLanguage } from './localization.js'
 import { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 import { providerRegistry } from './providers/registry.js'
@@ -28,7 +27,6 @@ export type TokenlessConfig = {
   profilePreferences: Record<string, ManagedProfilePreferences>
   browser: BrowserSelection
   browserExecutablePath: string | null
-  browserConnectionMode: BrowserConnectionMode
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
   language: TokenlessLanguage
@@ -116,7 +114,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.browserExecutablePath !== undefined && !isConfigBrowserExecutablePath(payload.browserExecutablePath)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (payload.browserConnectionMode !== undefined && !normalizeBrowserConnectionMode(payload.browserConnectionMode)) {
+  if (Object.hasOwn(payload, 'browserConnectionMode')) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
   if (payload.browserVisibility !== undefined && !normalizeBrowserVisibility(payload.browserVisibility)) {
@@ -141,7 +139,6 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     profilePreferences: normalizeProfilePreferences(payload.profilePreferences),
     browser,
     browserExecutablePath,
-    browserConnectionMode: 'cdp',
     browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
@@ -155,7 +152,6 @@ export async function writeTokenlessConfig({
   profilePreferences,
   browser,
   browserExecutablePath,
-  browserConnectionMode,
   browserVisibility,
   daemonUrl,
   language,
@@ -166,7 +162,6 @@ export async function writeTokenlessConfig({
   profilePreferences?: unknown
   browser?: unknown
   browserExecutablePath?: unknown
-  browserConnectionMode?: unknown
   browserVisibility?: unknown
   daemonUrl?: unknown
   language?: unknown
@@ -191,9 +186,6 @@ export async function writeTokenlessConfig({
       browserExecutablePath: browserExecutablePath === undefined
         ? (nextBrowser === current.browser ? current.browserExecutablePath : null)
         : validateConfigBrowserExecutablePath(browserExecutablePath),
-      browserConnectionMode: browserConnectionMode === undefined
-        ? current.browserConnectionMode
-        : validateConfigBrowserConnectionMode(browserConnectionMode),
       browserVisibility: browserVisibility === undefined
         ? current.browserVisibility
         : validateConfigBrowserVisibility(browserVisibility),
@@ -222,7 +214,6 @@ function emptyTokenlessConfig(): TokenlessConfig {
     profilePreferences: {},
     browser: 'managed-chromium',
     browserExecutablePath: null,
-    browserConnectionMode: 'cdp',
     browserVisibility: 'auto',
     daemonUrl: null,
     language: 'en',
@@ -374,17 +365,6 @@ function validateConfigLanguage(value: unknown): TokenlessLanguage {
   const language = normalizeTokenlessLanguage(value)
   if (!language) throw configError('tokenless_config_invalid', 'Invalid Tokenless language; expected en or zh-CN.')
   return language
-}
-
-function validateConfigBrowserConnectionMode(value: unknown): BrowserConnectionMode {
-  const connectionMode = normalizeBrowserConnectionMode(value)
-  if (!connectionMode) {
-    throw configError(
-      'tokenless_config_invalid',
-      'Invalid Tokenless browser connection mode; expected playwright or cdp.',
-    )
-  }
-  return 'cdp'
 }
 
 export async function hasConfiguredTokenlessLanguage(homeDir = tokenlessHome()) {

@@ -1,6 +1,16 @@
 # Browser Connection Mode Capability Evaluation
 
-Status: active, implementation and available-capability comparison complete | Priority: P0 | Last reviewed: 2026-08-05
+Status: completed 2026-08-09 | Priority: P0 | Last reviewed: 2026-08-09
+
+Disposition: completed after the measured native Playwright/CDP comparison supported a CDP-only browser-control boundary.
+
+## 最终决定
+
+Tokenless 只保留 CDP browser connection。Managed Chromium 由独立常驻进程承载，daemon 通过 `connectOverCDP` 首次连接或重新接入；后续自动化仍使用 Playwright 的 `Browser`、`BrowserContext`、`Page` 和 `Locator` API，不直接重写为手工 CDP commands。
+
+公开配置、API 和 UI 不再提供 `browserConnectionMode`。本地和 real-provider harness 也不再运行 `playwright × cdp` 双模式矩阵，而是把 CDP 作为唯一正常路径，并按 headed/headless、fresh launch/reconnect 和 daemon lifecycle 等真实运行维度验证。
+
+现有证据没有显示 CDP 会降低 Tokenless 已验证的 browser capability，也没有显示保留 native Playwright mode 能降低 provider 反自动化风险。因此双模式 abstraction 被删除；本文其余内容保留为当时评估过程和历史证据。
 
 ## Outcome
 
@@ -8,7 +18,7 @@ Determine whether Playwright's native persistent-context connection or `connectO
 
 This work protects capability fidelity, not an assumed notion of more realistic clicking. CDP is an opt-in persistent configuration value and is not a per-command CLI flag.
 
-## Configuration Contract
+## Historical Configuration Contract
 
 `~/.tokenless/config.json` accepts:
 
@@ -88,7 +98,7 @@ Mutation results:
 
 Project results were unavailable rather than connection-mode failures. Claude native Project failed authentication in both modes. Grok native Project failed because the create control was not visible in Playwright and because the later CDP run observed sign-in required. Neither mode has current native Project acceptance evidence from this profile.
 
-Current conclusion: CDP did not reduce any locally testable browser capability, produced exact parity across the available real-provider non-submission matrix, and passed the available ChatGPT and Gemini mutation workflows. The evidence is insufficient to change the default because native Project coverage, authenticated Claude/Grok coverage, and a real packaged browser-process crash/reconnect case remain open. Keep `playwright` as the default and `cdp` as an experimental config-only evaluation mode.
+The evaluation-stage conclusion was that CDP did not reduce any locally testable browser capability, produced exact parity across the available real-provider non-submission matrix, and passed the available ChatGPT and Gemini mutation workflows. At that stage the default remained `playwright` while additional product judgment was pending. The final 2026-08-09 decision above supersedes that temporary default recommendation.
 
 Final repository verification built successfully. The expanded parallel `npm test` run reported 72 of 78 passing because one package-contract `prepack` deleted and rebuilt `packages/cli/dist` while six tests in other files tried to execute it; all six failures were missing-artifact or empty-output failures. Re-running the affected package-contract and provider-control files serially after one build passed 16 of 16. The connection-mode browser and daemon cases passed in the complete run. This is a test-orchestration race, not a connection-mode product failure.
 
@@ -106,4 +116,4 @@ The provider E2E was subsequently simplified from one top-level test and implici
 
 ## Lifecycle
 
-Keep this roadmap active until the two-mode real-provider run is complete and a connection-mode decision is recorded. Archive it after the decision, preserving the measured results and linking any follow-up implementation roadmap.
+Archived on 2026-08-09 after the CDP-only decision was recorded and implemented. No replacement evaluation roadmap is required; ongoing browser evidence belongs to the normal CDP runtime and provider test surfaces.

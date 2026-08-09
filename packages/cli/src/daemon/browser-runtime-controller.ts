@@ -179,7 +179,6 @@ export class BrowserRuntimeController {
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
       daemonClient: createInProcessDaemonClient(this.store),
-      browserConnectionMode: 'cdp',
       browserResolver,
       recoverAbortedClaim: (job) => this.store.recoverActiveClaim(job.job_id, job.claim_token),
     })

@@ -26,7 +26,6 @@ const matrix = loadLiveProviderCapabilityMatrix()
 const gate = requiredGate()
 const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
 const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
-const browserConnectionMode = optionalConnectionMode(process.env.TOKENLESS_LIVE_BROWSER_CONNECTION_MODE)
 const providerFilter = optionalProviderFilter(process.env.TOKENLESS_LIVE_E2E_PROVIDER)
 const caseFilter = optionalCaseFilter(process.env.TOKENLESS_LIVE_E2E_CASES)
 const suiteRunMarker = `${compactTimestamp(new Date())}_${randomUUID().slice(0, 8)}`
@@ -72,18 +71,13 @@ const suiteReport = createLiveProviderE2eReport({
   runId: suiteRunMarker,
   startedAt: new Date().toISOString(),
   gate,
-  connectionMode: browserConnectionMode,
   profileSlug,
   matrix,
   selectedProviders,
 })
 let sharedSession
-let originalBrowserConnectionMode
 
 test.before(async () => {
-  const runtime = await import('../packages/cli/dist/src/index.js')
-  originalBrowserConnectionMode = (await runtime.readTokenlessConfig(homeDir)).browserConnectionMode
-  await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode })
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   sharedSession = await createLiveBrowserInspectionSession({
     homeDir,
@@ -96,14 +90,6 @@ test.after(async () => {
   const cleanupErrors = []
   try {
     await sharedSession?.close()
-  } catch (error) {
-    cleanupErrors.push(error)
-  }
-  try {
-    if (originalBrowserConnectionMode) {
-      const runtime = await import('../packages/cli/dist/src/index.js')
-      await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: originalBrowserConnectionMode })
-    }
   } catch (error) {
     cleanupErrors.push(error)
   }
@@ -1431,17 +1417,6 @@ function requiredGate() {
     throw e2eFailure('e2e_gate_invalid', 'TOKENLESS_LIVE_E2E_GATE must be all, non_submission, mutation, or project')
   }
   return value
-}
-
-function optionalConnectionMode(value) {
-  const connectionMode = value ?? 'playwright'
-  if (connectionMode !== 'playwright' && connectionMode !== 'cdp') {
-    throw e2eFailure(
-      'e2e_browser_connection_mode_invalid',
-      'TOKENLESS_LIVE_BROWSER_CONNECTION_MODE must be playwright or cdp',
-    )
-  }
-  return connectionMode
 }
 
 function optionalProviderFilter(value) {

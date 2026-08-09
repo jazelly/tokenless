@@ -6,7 +6,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI and a
 
 1. The `tokenless` CLI handles setup, profile management, job submission, state, cancellation, and diagnostics.
 2. The local TypeScript daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
-3. The Playwright worker claims managed-web jobs and runs them in persistent managed browser profiles.
+3. The Playwright worker claims managed-web jobs, connects over CDP to independently launched resident Chromium processes, and uses Playwright browser, page, and locator APIs inside persistent managed profiles.
 4. The provider navigation catalog centrally declares each entry URL, automation home, owned origins, known page patterns, and trusted sign-in routes; the provider registry adds access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, Qwen, DeepSeek, Perplexity, Z.ai, and Doubao.
 5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
@@ -124,7 +124,7 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 ## Browser boundary
 
 - Each active managed profile owns one browser instance backed by that profile's persistent user-data directory. Providers and conversations use independently keyed tabs inside their profile's browser. The daemon may retain up to four profile-owned instances and never closes one profile to launch another; additional profiles wait for capacity or fail explicitly at a direct open boundary.
-- Playwright launches the exact executable resolved from the profile's runtime binding with a persistent non-default user-data directory. The browser library and managed browser versions are independently pinned.
+- Tokenless independently launches the exact Chromium executable resolved from the profile's runtime binding with a persistent non-default user-data directory and a profile-scoped loopback DevTools endpoint. The worker attaches with Playwright `connectOverCDP`; provider automation still uses Playwright browser, context, page, and locator APIs. The browser library and managed browser versions are independently pinned.
 - Automation uses approved provider origins, visible page controls, and visible postconditions.
 - Provider credentials and browser sign-in data stay opaque inside the managed profile; only visible account display and subscription labels cross the boundary.
 - Sign-in, CAPTCHA, account limits, payment, consent, and confirmation remain user actions.
@@ -151,7 +151,7 @@ Tokenless stores a global browser visibility fallback and profile-scoped visibil
 
 The persistent config stores the concrete `browser` selected by setup together with `browserExecutablePath`. For system browsers, the path is a verified cache: resolution tries it first, requires a runnable executable with a readable Chromium version, falls back to standard installation discovery on failure, and refreshes the cache after a successful fallback. The cache is used only when the requested profile binding matches the configured browser. Managed Chromium and Cloak ignore arbitrary path overrides and resolve their catalog-pinned executable under the versioned `$TOKENLESS_HOME/browser/runtimes` tree.
 
-The persistent config canonicalizes `browserConnectionMode` to `cdp`. Tokenless launches the exact profile-bound Chromium executable with a profile-scoped loopback DevTools endpoint, detaches from it when the daemon stops, and reconnects from a later daemon. A launch-signature change—such as visibility, runtime, or proxy—still closes and relaunches the browser because Chromium cannot apply those process-level settings in place. The legacy `playwright` value remains accepted only for config migration.
+CDP is the only managed browser-control boundary and is not a user-selectable configuration mode. Tokenless detaches from the resident Chromium process when the daemon stops and a later daemon reconnects through Playwright `connectOverCDP`. A launch-signature change—such as visibility, runtime, or proxy—still closes and relaunches the browser because Chromium cannot apply those process-level settings in place.
 
 - `auto` starts headless. If the provider page becomes blocked by user-resolvable sign-in, CAPTCHA, MFA, consent, or confirmation, the runner switches the same managed profile into headed mode and marks the job `waiting_for_user`.
 - Terminal errors do not trigger a visible window.

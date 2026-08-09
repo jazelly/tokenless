@@ -11,7 +11,7 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export const liveProviderCapabilityMatrixPath = path.join(root, 'test/live-provider-capability-matrix.json')
 
-const schema = 'tokenless.live-provider-capability-matrix.v1'
+const schema = 'tokenless.live-provider-capability-matrix.v2'
 const gates = new Set(['non_submission', 'mutation', 'project'])
 const knownIssueSkipReasons = new Set(['claude_recurring_cloudflare_human_check'])
 const knownIssueSkipBlockerCodes = new Set([
@@ -22,7 +22,6 @@ const accountConditions = new Set([
   'signed_in_selected_setup_profile',
   'guest_or_signed_in_selected_setup_profile',
 ])
-const connectionModes = new Set(['playwright', 'cdp'])
 const closures = new Set([
   'cli',
   'visible_dom',
@@ -70,13 +69,12 @@ export function validateLiveProviderCapabilityMatrix(matrix) {
   assert.equal(isRecord(matrix), true, 'live capability matrix must be an object')
   assert.deepEqual(
     Object.keys(matrix).sort(),
-    ['cases', 'connectionModes', 'journey', 'knownIssueSkips', 'providers', 'schema'],
+    ['cases', 'journey', 'knownIssueSkips', 'providers', 'schema'],
     'live capability matrix fields must be exact',
   )
   assert.equal(matrix.schema, schema)
-  assert.deepEqual(matrix.connectionModes, [...connectionModes])
   assert.deepEqual(matrix.journey, {
-    scope: 'provider_connection_mode',
+    scope: 'provider_capability',
     pagePolicy: 'one_managed_page',
     caseOrder: 'providers.required',
     identityProof: ['stable_task_id', 'stable_chromium_target_id'],

@@ -38,7 +38,6 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 | --- | --- | --- |
 | [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-selection-and-cloak.md) | Use an exact profile-bound Chromium runtime, prefer the user's installed browser, provide a locked managed fallback, add explicit verified Cloak installation, and classify local Chromium profile versions without reading or copying browser secrets. | P0 |
 | [Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md) | Execute and record the Windows AMD x86-64 setup/runtime matrix, headed/headless provider surfaces, Chrome challenge observations, and isolated Cloak fallback acceptance. | P0 |
-| [Browser Connection Mode Capability Evaluation](P0-browser-connection-mode-capability-evaluation.md) | Compare native Playwright and CDP connections against the same local-browser and real-provider capability matrices without changing the default. | P0 |
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
@@ -56,7 +55,7 @@ Priority describes product importance, not a promise that all work proceeds seri
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): Provider Architecture and Registry was completed and the Daemon Fastify HTTP API direction was cancelled on 2026-07-27.
+- [Archive](archived/README.md): Browser Connection Mode Capability Evaluation and Provider Architecture and Registry were completed; the Daemon Fastify HTTP API direction was cancelled.
 
 ## How the Roadmaps Fit Together
 

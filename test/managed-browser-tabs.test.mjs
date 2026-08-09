@@ -11,251 +11,243 @@ import {
   PersistentContextManager,
 } from '../packages/cli/dist/src/playwright/index.js'
 
-const connectionModes = ['playwright', 'cdp']
+test('CDP production launch allows configured Chromium executables to use native credential storage', async () => {
+  await withManager(async ({ manager, profile }) => {
+    const managed = await manager.ensureContext(profile, 'headless')
+    const page = await managed.acquirePage({ key: 'browser-command-line' })
+    await page.goto('chrome://version')
+    const commandLine = await page.locator('#command_line').textContent()
+    assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
+    assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
+  }, { browserId: 'chromium', launchPolicy: 'standard' })
+})
 
-for (const connectionMode of connectionModes) {
-  test(`${connectionMode} production launch allows configured Chromium executables to use native credential storage`, async () => {
-    await withManager(connectionMode, async ({ manager, profile }) => {
-      const managed = await manager.ensureContext(profile, 'headless')
-      const page = await managed.acquirePage({ key: 'browser-command-line' })
-      await page.goto('chrome://version')
-      const commandLine = await page.locator('#command_line').textContent()
-      assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
-      assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
-    }, { browserId: 'chromium', launchPolicy: 'standard' })
+test('CDP managed browser reuses one persistent browser for one selected profile', async () => {
+  await withManager(async ({ manager, profile }) => {
+    const first = await manager.ensureContext(profile, 'headless')
+    const second = await manager.ensureContext(profile, 'headless')
+
+    assert.equal(second.browserContext, first.browserContext)
+    assert.equal(second.browserContext.browser(), first.browserContext.browser())
+
+    const firstPage = await first.acquirePage({ key: 'provider:chatgpt:task:first' })
+    const secondPage = await second.acquirePage({ key: 'provider:gemini:task:second' })
+    assert.notEqual(secondPage, firstPage)
+    assert.equal(first.browserContext.pages().length, 2)
   })
+})
 
-  test(`${connectionMode} managed browser reuses one persistent browser for one selected profile`, async () => {
-    await withManager(connectionMode, async ({ manager, profile }) => {
-      const first = await manager.ensureContext(profile, 'headless')
-      const second = await manager.ensureContext(profile, 'headless')
+test('CDP profile open reuses an existing headed dashboard context', async () => {
+  await withManager(async ({ manager, profile }) => {
+    const first = await manager.ensureContext(profile, 'headed')
+    const dashboard = await first.acquireReservedPage({ key: 'tokenless:control-plane:profile-open-regression' })
+    await dashboard.setContent('<title>Tokenless dashboard</title>')
 
-      assert.equal(second.browserContext, first.browserContext)
-      assert.equal(second.browserContext.browser(), first.browserContext.browser())
+    const reopened = await manager.ensureContext(profile, 'headed')
 
-      const firstPage = await first.acquirePage({ key: 'provider:chatgpt:task:first' })
-      const secondPage = await second.acquirePage({ key: 'provider:gemini:task:second' })
-      assert.notEqual(secondPage, firstPage)
-      assert.equal(first.browserContext.pages().length, 2)
-    })
+    assert.equal(reopened.browserContext, first.browserContext)
+    assert.equal(reopened.browserContext.browser(), first.browserContext.browser())
+    assert.equal(dashboard.isClosed(), false)
+    assert.equal(await dashboard.title(), 'Tokenless dashboard')
   })
+})
 
-  test(`${connectionMode} profile open reuses an existing headed dashboard context`, async () => {
-    await withManager(connectionMode, async ({ manager, profile }) => {
-      const first = await manager.ensureContext(profile, 'headed')
-      const dashboard = await first.acquireReservedPage({ key: 'tokenless:control-plane:profile-open-regression' })
-      await dashboard.setContent('<title>Tokenless dashboard</title>')
-
-      const reopened = await manager.ensureContext(profile, 'headed')
-
-      assert.equal(reopened.browserContext, first.browserContext)
-      assert.equal(reopened.browserContext.browser(), first.browserContext.browser())
-      assert.equal(dashboard.isClosed(), false)
-      assert.equal(await dashboard.title(), 'Tokenless dashboard')
-    })
-  })
-
-  if (connectionMode === 'playwright') {
-    test('headed managed pages follow the real browser window viewport', async () => {
-      await withManager(connectionMode, async ({ manager, profile }) => {
-        const managed = await manager.ensureContext(profile, 'headed')
-        const page = await managed.acquirePage({ key: 'tokenless:control-plane:responsive-regression' })
-        const session = await managed.browserContext.newCDPSession(page)
-        try {
-          const target = await session.send('Browser.getWindowForTarget')
-          await session.send('Browser.setWindowBounds', {
-            windowId: target.windowId,
-            bounds: { width: 1200, height: 800 },
-          })
-          await page.waitForFunction(() => window.innerWidth > 760)
-          const wideViewport = await page.evaluate(() => window.innerWidth)
-
-          await session.send('Browser.setWindowBounds', {
-            windowId: target.windowId,
-            bounds: { width: 640, height: 500 },
-          })
-          await page.waitForFunction(() => window.innerWidth <= 760)
-          const narrowViewport = await page.evaluate(() => window.innerWidth)
-
-          assert.ok(wideViewport > 760)
-          assert.ok(narrowViewport <= 760)
-        } finally {
-          await session.detach().catch(() => undefined)
-        }
+test('headed managed pages follow the real browser window viewport', async () => {
+  await withManager(async ({ manager, profile }) => {
+    const managed = await manager.ensureContext(profile, 'headed')
+    const page = await managed.acquirePage({ key: 'tokenless:control-plane:responsive-regression' })
+    const session = await managed.browserContext.newCDPSession(page)
+    try {
+      const target = await session.send('Browser.getWindowForTarget')
+      await session.send('Browser.setWindowBounds', {
+        windowId: target.windowId,
+        bounds: { width: 1200, height: 800 },
       })
-    })
-  }
+      await page.waitForFunction(() => window.innerWidth > 760)
+      const wideViewport = await page.evaluate(() => window.innerWidth)
 
-  test(`${connectionMode} managed browser keeps one stable browser instance per active profile`, async () => {
-    await withManager(connectionMode, async ({ manager, profile, otherProfile }) => {
-      const first = await manager.ensureContext(profile, 'headless')
-      const firstBrowser = first.browserContext.browser()
-      const second = await manager.ensureContext(otherProfile, 'headless')
-      const secondBrowser = second.browserContext.browser()
-      const reusedFirst = await manager.ensureContext(profile, 'headless')
+      await session.send('Browser.setWindowBounds', {
+        windowId: target.windowId,
+        bounds: { width: 640, height: 500 },
+      })
+      await page.waitForFunction(() => window.innerWidth <= 760)
+      const narrowViewport = await page.evaluate(() => window.innerWidth)
 
-      assert.deepEqual(manager.activeProfileIds(), [profile.id, otherProfile.id].sort())
-      assert.notEqual(secondBrowser, firstBrowser)
-      assert.equal(reusedFirst.browserContext, first.browserContext)
-      assert.equal(reusedFirst.browserContext.browser(), firstBrowser)
-      assert.equal(firstBrowser?.isConnected(), true)
-      assert.equal(secondBrowser?.isConnected(), true)
+      assert.ok(wideViewport > 760)
+      assert.ok(narrowViewport <= 760)
+    } finally {
+      await session.detach().catch(() => undefined)
+    }
+  })
+})
+
+test('CDP managed browser keeps one stable browser instance per active profile', async () => {
+  await withManager(async ({ manager, profile, otherProfile }) => {
+    const first = await manager.ensureContext(profile, 'headless')
+    const firstBrowser = first.browserContext.browser()
+    const second = await manager.ensureContext(otherProfile, 'headless')
+    const secondBrowser = second.browserContext.browser()
+    const reusedFirst = await manager.ensureContext(profile, 'headless')
+
+    assert.deepEqual(manager.activeProfileIds(), [profile.id, otherProfile.id].sort())
+    assert.notEqual(secondBrowser, firstBrowser)
+    assert.equal(reusedFirst.browserContext, first.browserContext)
+    assert.equal(reusedFirst.browserContext.browser(), firstBrowser)
+    assert.equal(firstBrowser?.isConnected(), true)
+    assert.equal(secondBrowser?.isConnected(), true)
+  })
+})
+
+test('CDP managed browser never evicts an active profile to make room', async () => {
+  await withManager(async ({ manager, profile, otherProfile, overflowProfile }) => {
+    const first = await manager.ensureContext(profile, 'headless')
+    const second = await manager.ensureContext(otherProfile, 'headless')
+    const firstBrowser = first.browserContext.browser()
+    const secondBrowser = second.browserContext.browser()
+
+    await assert.rejects(
+      manager.ensureContext(overflowProfile, 'headless'),
+      (error) => error?.code === 'playwright_context_limit_reached' && error?.retryable === true,
+    )
+
+    assert.deepEqual(manager.activeProfileIds(), [profile.id, otherProfile.id].sort())
+    assert.equal((await manager.ensureContext(profile, 'headless')).browserContext, first.browserContext)
+    assert.equal((await manager.ensureContext(otherProfile, 'headless')).browserContext, second.browserContext)
+    assert.equal(firstBrowser?.isConnected(), true)
+    assert.equal(secondBrowser?.isConnected(), true)
+  })
+})
+
+test('CDP managed browser preserves independent logical tabs in one profile', async () => {
+  await withManager(async ({ manager, profile }) => {
+    await manager.runWithProfile(profile, 'headless', async (context) => {
+      const chatgpt = await context.acquirePage({ key: 'provider:chatgpt:task:chat-a' })
+      await chatgpt.setContent('<title>ChatGPT chat A</title>')
+
+      const claude = await context.acquirePage({ key: 'provider:claude:task:chat-b' })
+      await claude.setContent('<title>Claude chat B</title>')
+
+      assert.notEqual(claude, chatgpt)
+      assert.equal(await chatgpt.title(), 'ChatGPT chat A')
+      assert.equal(await claude.title(), 'Claude chat B')
+      assert.equal(context.browserContext.pages().length, 2)
+
+      const resumedChatgpt = await context.acquirePage({ key: 'provider:chatgpt:task:chat-a' })
+      assert.equal(resumedChatgpt, chatgpt)
+      assert.equal(await resumedChatgpt.title(), 'ChatGPT chat A')
+      assert.equal(context.browserContext.pages().length, 2)
+
+      const forcedReplacement = await context.acquirePage({
+        key: 'provider:grok:task:chat-c',
+        policy: 'replace',
+      })
+      assert.equal(forcedReplacement, claude)
+      assert.equal(context.browserContext.pages().length, 2)
+
+      const restoredClaude = await context.acquirePage({ key: 'provider:claude:task:chat-b' })
+      assert.notEqual(restoredClaude, forcedReplacement)
+      assert.equal(context.browserContext.pages().length, 3)
     })
   })
+})
 
-  test(`${connectionMode} managed browser never evicts an active profile to make room`, async () => {
-    await withManager(connectionMode, async ({ manager, profile, otherProfile, overflowProfile }) => {
-      const first = await manager.ensureContext(profile, 'headless')
-      const second = await manager.ensureContext(otherProfile, 'headless')
-      const firstBrowser = first.browserContext.browser()
-      const secondBrowser = second.browserContext.browser()
+test('CDP headed managed browser operates on background-created automation tabs', async () => {
+  await withCapabilityServer(async (origin) => {
+    await withManager(async ({ manager, profile }) => {
+      const managed = await manager.ensureContext(profile, 'headed')
+      const selectedPage = await managed.acquirePage({ key: 'selected-tab' })
+      await selectedPage.goto(`${origin}/start`)
 
-      await assert.rejects(
-        manager.ensureContext(overflowProfile, 'headless'),
-        (error) => error?.code === 'playwright_context_limit_reached' && error?.retryable === true,
-      )
+      const backgroundPage = await managed.acquirePage({ key: 'background-tab' })
+      assert.notEqual(backgroundPage, selectedPage)
 
-      assert.deepEqual(manager.activeProfileIds(), [profile.id, otherProfile.id].sort())
-      assert.equal((await manager.ensureContext(profile, 'headless')).browserContext, first.browserContext)
-      assert.equal((await manager.ensureContext(otherProfile, 'headless')).browserContext, second.browserContext)
-      assert.equal(firstBrowser?.isConnected(), true)
-      assert.equal(secondBrowser?.isConnected(), true)
+      await backgroundPage.goto(`${origin}/navigated`)
+      assert.equal(await backgroundPage.locator('h1').textContent(), 'Navigated')
+      assert.equal(selectedPage.url(), `${origin}/start`)
     })
   })
+})
 
-  test(`${connectionMode} managed browser preserves independent logical tabs in one profile`, async () => {
-    await withManager(connectionMode, async ({ manager, profile }) => {
+test('CDP managed browser closes capability gaps at a real Chromium boundary', async () => {
+  await withCapabilityServer(async (origin) => {
+    await withManager(async ({ manager, profile, profileDirectory }) => {
+      const upload = path.join(profileDirectory, 'capability-upload.txt')
+      fs.writeFileSync(upload, 'upload-cdp\n', { mode: 0o600 })
+
       await manager.runWithProfile(profile, 'headless', async (context) => {
-        const chatgpt = await context.acquirePage({ key: 'provider:chatgpt:task:chat-a' })
-        await chatgpt.setContent('<title>ChatGPT chat A</title>')
+        await context.browserContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
+        const page = await context.acquirePage({ key: 'capability-matrix' })
+        await page.goto(`${origin}/start`)
 
-        const claude = await context.acquirePage({ key: 'provider:claude:task:chat-b' })
-        await claude.setContent('<title>Claude chat B</title>')
+        await page.getByLabel('Message').fill('filled-cdp')
+        assert.equal(await page.getByLabel('Message').inputValue(), 'filled-cdp')
+        assert.equal(await page.locator('[data-capability="dom-read"]').textContent(), 'DOM ready')
 
-        assert.notEqual(claude, chatgpt)
-        assert.equal(await chatgpt.title(), 'ChatGPT chat A')
-        assert.equal(await claude.title(), 'Claude chat B')
-        assert.equal(context.browserContext.pages().length, 2)
+        await page.getByRole('link', { name: 'Navigate' }).click()
+        await page.waitForURL(`${origin}/navigated`)
+        assert.equal(await page.locator('h1').textContent(), 'Navigated')
+        await page.goto(`${origin}/start`)
 
-        const resumedChatgpt = await context.acquirePage({ key: 'provider:chatgpt:task:chat-a' })
-        assert.equal(resumedChatgpt, chatgpt)
-        assert.equal(await resumedChatgpt.title(), 'ChatGPT chat A')
-        assert.equal(context.browserContext.pages().length, 2)
+        await page.locator('#direct-file').setInputFiles(upload)
+        assert.equal(await page.locator('#direct-file').evaluate((input) => input.files?.[0]?.name), path.basename(upload))
 
-        const forcedReplacement = await context.acquirePage({
-          key: 'provider:grok:task:chat-c',
-          policy: 'replace',
-        })
-        assert.equal(forcedReplacement, claude)
-        assert.equal(context.browserContext.pages().length, 2)
+        const [chooser] = await Promise.all([
+          page.waitForEvent('filechooser'),
+          page.locator('button', { hasText: 'Choose file' }).click(),
+        ])
+        await chooser.setFiles(upload)
+        assert.equal(await page.locator('#chooser-file').evaluate((input) => input.files?.[0]?.name), path.basename(upload))
 
-        const restoredClaude = await context.acquirePage({ key: 'provider:claude:task:chat-b' })
-        assert.notEqual(restoredClaude, forcedReplacement)
-        assert.equal(context.browserContext.pages().length, 3)
+        const [popup] = await Promise.all([
+          page.waitForEvent('popup'),
+          page.getByRole('button', { name: 'Open popup' }).click(),
+        ])
+        await popup.waitForLoadState()
+        assert.equal(await popup.locator('h1').textContent(), 'Popup')
+        await popup.close()
+
+        const [download] = await Promise.all([
+          page.waitForEvent('download'),
+          page.getByRole('link', { name: 'Download' }).click(),
+        ])
+        assert.equal(download.suggestedFilename(), 'tokenless-capability.txt')
+        assert.equal(await download.failure(), null)
+
+        const clipboardValue = 'clipboard-cdp'
+        await page.evaluate(async (value) => await navigator.clipboard.writeText(value), clipboardValue)
+        assert.equal(await page.evaluate(async () => await navigator.clipboard.readText()), clipboardValue)
       })
     })
   })
+})
 
-  test(`${connectionMode} headed managed browser operates on background-created automation tabs`, async () => {
-    await withCapabilityServer(async (origin) => {
-      await withManager(connectionMode, async ({ manager, profile }) => {
-        const managed = await manager.ensureContext(profile, 'headed')
-        const selectedPage = await managed.acquirePage({ key: 'selected-tab' })
-        await selectedPage.goto(`${origin}/start`)
+test('CDP managed browser rebuilds page mapping after context loss and visibility changes', async () => {
+  await withManager(async ({ manager, profile }) => {
+    const initial = await manager.ensureContext(profile, 'headless')
+    const initialPage = await initial.acquirePage({ key: 'provider:chatgpt:task:reconnect' })
+    await initialPage.setContent('<title>CDP before reconnect</title>')
+    await initial.browserContext.close()
 
-        const backgroundPage = await managed.acquirePage({ key: 'background-tab' })
-        assert.notEqual(backgroundPage, selectedPage)
+    const reconnected = await manager.ensureContext(profile, 'headless')
+    const reconstructedPage = await reconnected.acquirePage({ key: 'provider:chatgpt:task:reconnect' })
+    assert.notEqual(reconstructedPage, initialPage)
+    assert.equal(reconstructedPage.isClosed(), false)
 
-        await backgroundPage.goto(`${origin}/navigated`)
-        assert.equal(await backgroundPage.locator('h1').textContent(), 'Navigated')
-        assert.equal(selectedPage.url(), `${origin}/start`)
-      })
-    })
+    const switched = await reconnected.switchVisibility('headed')
+    assert.equal(switched.effectiveBrowserVisibility, 'headed')
+    assert.notEqual(switched.browserContext, reconnected.browserContext)
   })
-
-  test(`${connectionMode} managed browser closes capability gaps at a real Chromium boundary`, async () => {
-    await withCapabilityServer(async (origin) => {
-      await withManager(connectionMode, async ({ manager, profile, profileDirectory }) => {
-        const upload = path.join(profileDirectory, 'capability-upload.txt')
-        fs.writeFileSync(upload, `upload-${connectionMode}\n`, { mode: 0o600 })
-
-        await manager.runWithProfile(profile, 'headless', async (context) => {
-          await context.browserContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
-          const page = await context.acquirePage({ key: 'capability-matrix' })
-          await page.goto(`${origin}/start`)
-
-          await page.getByLabel('Message').fill(`filled-${connectionMode}`)
-          assert.equal(await page.getByLabel('Message').inputValue(), `filled-${connectionMode}`)
-          assert.equal(await page.locator('[data-capability="dom-read"]').textContent(), 'DOM ready')
-
-          await page.getByRole('link', { name: 'Navigate' }).click()
-          await page.waitForURL(`${origin}/navigated`)
-          assert.equal(await page.locator('h1').textContent(), 'Navigated')
-          await page.goto(`${origin}/start`)
-
-          await page.locator('#direct-file').setInputFiles(upload)
-          assert.equal(await page.locator('#direct-file').evaluate((input) => input.files?.[0]?.name), path.basename(upload))
-
-          const [chooser] = await Promise.all([
-            page.waitForEvent('filechooser'),
-            page.locator('button', { hasText: 'Choose file' }).click(),
-          ])
-          await chooser.setFiles(upload)
-          assert.equal(await page.locator('#chooser-file').evaluate((input) => input.files?.[0]?.name), path.basename(upload))
-
-          const [popup] = await Promise.all([
-            page.waitForEvent('popup'),
-            page.getByRole('button', { name: 'Open popup' }).click(),
-          ])
-          await popup.waitForLoadState()
-          assert.equal(await popup.locator('h1').textContent(), 'Popup')
-          await popup.close()
-
-          const [download] = await Promise.all([
-            page.waitForEvent('download'),
-            page.getByRole('link', { name: 'Download' }).click(),
-          ])
-          assert.equal(download.suggestedFilename(), 'tokenless-capability.txt')
-          assert.equal(await download.failure(), null)
-
-          const clipboardValue = `clipboard-${connectionMode}`
-          await page.evaluate(async (value) => await navigator.clipboard.writeText(value), clipboardValue)
-          assert.equal(await page.evaluate(async () => await navigator.clipboard.readText()), clipboardValue)
-        })
-      })
-    })
-  })
-
-  test(`${connectionMode} managed browser rebuilds page mapping after context loss and visibility changes`, async () => {
-    await withManager(connectionMode, async ({ manager, profile }) => {
-      const initial = await manager.ensureContext(profile, 'headless')
-      const initialPage = await initial.acquirePage({ key: 'provider:chatgpt:task:reconnect' })
-      await initialPage.setContent(`<title>${connectionMode} before reconnect</title>`)
-      await initial.browserContext.close()
-
-      const reconnected = await manager.ensureContext(profile, 'headless')
-      const reconstructedPage = await reconnected.acquirePage({ key: 'provider:chatgpt:task:reconnect' })
-      assert.notEqual(reconstructedPage, initialPage)
-      assert.equal(reconstructedPage.isClosed(), false)
-
-      const switched = await reconnected.switchVisibility('headed')
-      assert.equal(switched.effectiveBrowserVisibility, 'headed')
-      assert.notEqual(switched.browserContext, reconnected.browserContext)
-    })
-  })
-}
+})
 
 async function withManager(
-  connectionMode,
   operation,
   { browserId = 'profile', launchPolicy = 'test-profile' } = {},
 ) {
-  const profileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-capabilities-`))
-  const otherProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-other-profile-`))
-  const overflowProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `tokenless-${connectionMode}-overflow-profile-`))
+  const profileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cdp-capabilities-'))
+  const otherProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cdp-other-profile-'))
+  const overflowProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cdp-overflow-profile-'))
   const manager = new PersistentContextManager({
     maxContexts: 2,
-    connectionMode,
     browser: {
       id: browserId,
       executablePath: chromium.executablePath(),

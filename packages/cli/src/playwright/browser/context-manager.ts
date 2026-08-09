@@ -12,7 +12,6 @@ import type { BrowserVisibility, EffectiveBrowserVisibility } from '../../browse
 import type { Browser, BrowserContext, Page } from 'playwright-core'
 import type { ChildProcess } from 'node:child_process'
 import type { BrowserRuntimeBinding } from '../../browser-runtime/types.js'
-import type { BrowserConnectionMode } from '../../browser-connection-mode.js'
 
 export type ManagedBrowserProfile = {
   id: string
@@ -48,11 +47,6 @@ export type ManagedPageRequest = {
   policy?: ManagedPagePolicy | undefined
 }
 
-export type ManagedContextLauncher = (
-  userDataDir: string,
-  options: PersistentChromeLaunchOptions
-) => Promise<BrowserContext>
-
 export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>
 
 export const MAX_ACTIVE_BROWSER_PROFILES = 4
@@ -66,8 +60,6 @@ const BROWSER_RUNTIME_SESSION_PROTOCOL = 'tokenless.browser-runtime-session.v1'
 
 export type PersistentContextManagerOptions = {
   maxContexts?: number
-  launcher?: ManagedContextLauncher
-  connectionMode?: BrowserConnectionMode | undefined
   browser?: ManagedBrowserLaunchTarget
   browserResolver?: ManagedBrowserResolver
 }
@@ -108,8 +100,6 @@ type LaunchedManagedContext = {
 
 export class PersistentContextManager {
   private readonly maxContexts: number
-  private readonly launcher: ManagedContextLauncher
-  private readonly connectionMode: BrowserConnectionMode
   private readonly browser: ManagedBrowserLaunchTarget
   private readonly browserResolver: ManagedBrowserResolver
   private readonly contexts = new Map<string, ActiveContext>()
@@ -119,8 +109,6 @@ export class PersistentContextManager {
 
   constructor(options: PersistentContextManagerOptions = {}) {
     this.maxContexts = options.maxContexts ?? MAX_ACTIVE_BROWSER_PROFILES
-    this.launcher = options.launcher ?? ((userDataDir, launchOptions) => chromium.launchPersistentContext(userDataDir, launchOptions))
-    this.connectionMode = options.connectionMode ?? 'playwright'
     this.browser = normalizeManagedBrowserLaunchTarget(options.browser)
     this.browserResolver = options.browserResolver ?? (async () => this.browser)
     if (!Number.isInteger(this.maxContexts) || this.maxContexts < 1 || this.maxContexts > MAX_ACTIVE_BROWSER_PROFILES) {
@@ -227,7 +215,7 @@ export class PersistentContextManager {
           if (!isMissingFileError(error)) throw error
         })
       }
-      const launched = await this.launchContext(
+      const launched = await launchCdpManagedContext(
         profile.directory,
         managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
         browserTarget,
@@ -383,24 +371,6 @@ export class PersistentContextManager {
     await active.closePromise
   }
 
-  private async launchContext(
-    userDataDir: string,
-    launchOptions: PersistentChromeLaunchOptions,
-    browserTarget: ManagedBrowserLaunchTarget,
-    requestedVisibility: BrowserVisibility,
-  ): Promise<LaunchedManagedContext> {
-    if (this.connectionMode === 'cdp') {
-      return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget, requestedVisibility)
-    }
-    const browserContext = await this.launcher(userDataDir, launchOptions)
-    return {
-      browserContext,
-      effectiveVisibility: resolveEffectiveBrowserVisibility(requestedVisibility),
-      closeBrowser: async () => await browserContext.close(),
-      detachBrowser: async () => await browserContext.close(),
-    }
-  }
-
 }
 
 async function createBackgroundPage(browserContext: BrowserContext): Promise<Page> {
@@ -456,7 +426,7 @@ async function launchCdpManagedContext(
   if (!executablePath) {
     throw tokenlessError(
       'cdp_browser_executable_required',
-      'CDP connection mode requires an explicit Chromium browser executable path.',
+      'Managed browser control requires an explicit Chromium browser executable path.',
     )
   }
   const endpointFile = path.join(userDataDir, 'DevToolsActivePort')

@@ -966,7 +966,6 @@ function publicConfig(config: TokenlessConfig) {
     providerWhitelist: config.providerWhitelist,
     browser: config.browser,
     browserExecutablePathConfigured: config.browserExecutablePath !== null,
-    browserConnectionMode: config.browserConnectionMode,
     browserVisibility: config.browserVisibility,
     daemonUrl: config.daemonUrl,
     language: config.language,

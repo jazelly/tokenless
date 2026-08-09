@@ -13,7 +13,7 @@ const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 
 test('checked-in live provider capability matrix classifies every registered provider and case', () => {
   const matrix = loadLiveProviderCapabilityMatrix()
-  assert.equal(matrix.schema, 'tokenless.live-provider-capability-matrix.v1')
+  assert.equal(matrix.schema, 'tokenless.live-provider-capability-matrix.v2')
   assert.deepEqual(matrix.knownIssueSkips, [{
     provider: 'claude',
     reason: 'claude_recurring_cloudflare_human_check',
@@ -77,13 +77,13 @@ test('built capability routes stay provenance-bound to required live provider ma
 })
 
 test('persistent config defaults, stores, and validates browser runtime fields through the filesystem boundary', async () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-connection-mode-'))
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-runtime-'))
   const runtime = await import('../packages/cli/dist/src/index.js')
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
     assert.deepEqual(defaults.outputSavings, { enabled: true })
     assert.equal(defaults.browser, 'managed-chromium')
-    assert.equal(defaults.browserConnectionMode, 'cdp')
+    assert.equal(Object.hasOwn(defaults, 'browserConnectionMode'), false)
     assert.equal(defaults.browserExecutablePath, null)
     assert.deepEqual(defaults.providerWhitelist, [
       'chatgpt',
@@ -99,20 +99,13 @@ test('persistent config defaults, stores, and validates browser runtime fields t
       'dola',
     ])
     assert.equal(Object.hasOwn(defaults, 'preferredProviders'), false)
-    assert.equal(
-      (await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'cdp' })).browserConnectionMode,
-      'cdp',
-    )
-    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'cdp')
-    assert.equal(
-      (await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'playwright' })).browserConnectionMode,
-      'cdp',
-    )
     assert.deepEqual(
       (await runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })).outputSavings,
       { enabled: false },
     )
     assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).outputSavings, { enabled: false })
+    const savedConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.equal(Object.hasOwn(savedConfig, 'browserConnectionMode'), false)
     const executablePath = path.join(homeDir, 'browsers', 'chrome')
     await runtime.writeTokenlessConfig({ homeDir, browser: 'chrome', browserExecutablePath: executablePath })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, executablePath)
@@ -132,11 +125,16 @@ test('persistent config defaults, stores, and validates browser runtime fields t
       (error) => error?.code === 'tokenless_config_invalid',
     )
     await assert.rejects(
-      runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'webdriver' }),
+      runtime.writeTokenlessConfig({ homeDir, browserExecutablePath: 'relative/browser' }),
       (error) => error?.code === 'tokenless_config_invalid',
     )
+    fs.writeFileSync(
+      path.join(homeDir, 'config.json'),
+      `${JSON.stringify({ ...savedConfig, browserConnectionMode: 'cdp' })}\n`,
+      { mode: 0o600 },
+    )
     await assert.rejects(
-      runtime.writeTokenlessConfig({ homeDir, browserExecutablePath: 'relative/browser' }),
+      runtime.readTokenlessConfig(homeDir),
       (error) => error?.code === 'tokenless_config_invalid',
     )
   } finally {

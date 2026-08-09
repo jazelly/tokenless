@@ -1,11 +1,7 @@
 {
-  "schema": "tokenless.live-provider-capability-matrix.v1",
-  "connectionModes": [
-    "playwright",
-    "cdp"
-  ],
+  "schema": "tokenless.live-provider-capability-matrix.v2",
   "journey": {
-    "scope": "provider_connection_mode",
+    "scope": "provider_capability",
     "pagePolicy": "one_managed_page",
     "caseOrder": "providers.required",
     "identityProof": [

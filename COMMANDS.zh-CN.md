@@ -310,7 +310,6 @@ tokenless config \
   "profilePreferences": {},
   "browser": "chrome",
   "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "browserConnectionMode": "cdp",
   "browserVisibility": "auto",
   "daemonUrl": null,
   "language": "en"
@@ -321,7 +320,7 @@ tokenless config \
 
 面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
 
-`browserConnectionMode` 会统一规范为 `cdp`，让 daemon 能与 managed browser 断开连接，并让之后启动的 daemon 重新接入同一个常驻进程。旧的 `playwright` 值在配置迁移时仍会被接受，但保存和返回时统一为 `cdp`。
+Tokenless 始终通过 CDP 控制 managed Chromium，内部仍使用 Playwright 的 browser、page 和 locator API。常驻浏览器因此可以在一次 daemon 连接结束后继续运行，并由之后的 daemon 重新接入，不再提供可选的 connection mode。
 
 ### `tokenless upgrade`
 
@@ -806,10 +805,9 @@ provider-status
 npm run test:e2e:prepare -- --browser cloak
 # 在每个 provider tab 中手动登录，然后执行 harness 打印的 daemon-stop 命令。
 npm run test:e2e -- --browser cloak
-npm run test:e2e:connection-matrix -- --browser cloak
 ```
 
-已认证 profile 支持 `chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Fresh config 会包含所有已注册且未 disabled 的 provider，包括 Gemini；区域或网络可达性应作为 E2E evidence 报告，而不是从 preparation 中排除 provider 的理由。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。该 daemon 停止后 resident browser 会独立继续运行；launch signature 兼容时，replacement daemon 会重新接入同一个 profile process。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，在 Playwright mode 下执行其中声明的 provider journeys；`connection-matrix` 会用同一个 selected profile 依次运行 Playwright 与 CDP mode。每次调用都会在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。两种 run mode 都会真实修改 provider 侧状态，并可能产生使用费用。
+已认证 profile 支持 `chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Fresh config 会包含所有已注册且未 disabled 的 provider，包括 Gemini；区域或网络可达性应作为 E2E evidence 报告，而不是从 preparation 中排除 provider 的理由。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。该 daemon 停止后 resident browser 会独立继续运行；launch signature 兼容时，replacement daemon 会重新接入同一个 profile process。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，通过 CDP 控制的 browser 执行其中声明的 provider journeys，并在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。Provider run 会真实修改 provider 侧状态，并可能产生使用费用。
 
 Browser runtime 与 provider surface 验收是显式本地 gate，不会在 CI 中运行：
 

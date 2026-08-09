@@ -1,13 +1,12 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-export const LIVE_PROVIDER_E2E_REPORT_SCHEMA = 'tokenless.live-provider-e2e-report.v1'
+export const LIVE_PROVIDER_E2E_REPORT_SCHEMA = 'tokenless.live-provider-e2e-report.v2'
 
 export function createLiveProviderE2eReport({
   runId,
   startedAt,
   gate,
-  connectionMode,
   profileSlug,
   matrix,
   selectedProviders,
@@ -18,7 +17,6 @@ export function createLiveProviderE2eReport({
     startedAt,
     completedAt: null,
     gate,
-    connectionMode,
     profile: profileSlug,
     summary: null,
     providers: selectedProviders.map(({ provider, declaration, caseIds }) => {
@@ -121,7 +119,7 @@ export function finalizeLiveProviderE2eReport(report, completedAt) {
 
 export async function writeLiveProviderE2eReport(report, outputRoot) {
   const directory = path.join(outputRoot, 'live-provider-e2e')
-  const filename = `${report.runId}-${report.connectionMode}-${report.gate}.json`
+  const filename = `${report.runId}-${report.gate}.json`
   const target = path.join(directory, filename)
   const temporary = `${target}.${process.pid}.tmp`
   await fs.mkdir(directory, { recursive: true, mode: 0o700 })

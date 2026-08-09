@@ -56,12 +56,6 @@ export type {
 export type { ManagedProfilePreferences, TokenlessConfig } from './job-store.js'
 export type { OutputSavingsConfig } from './job-store.js'
 export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
-export type { BrowserConnectionMode } from './browser-connection-mode.js'
-
-export {
-  BROWSER_CONNECTION_MODES,
-  normalizeBrowserConnectionMode,
-} from './browser-connection-mode.js'
 
 export {
   BROWSER_VISIBILITIES,

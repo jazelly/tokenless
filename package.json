@@ -31,7 +31,6 @@
     "test:e2e:cloak-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs --selection cloak",
     "test:e2e:cloak-surfaces:headless": "npm run build && node test/run-live-browser-surface-matrix.mjs --selection cloak --visibility headless",
     "test:e2e:chrome-surfaces:headless": "npm run build && node test/run-live-browser-surface-matrix.mjs --selection chrome --visibility headless --fallback cloak",
-    "test:e2e:connection-matrix": "npm run build && node test/run-live-provider-e2e.mjs connection-matrix --gate all",
     "test:e2e:non-submission": "npm run build && node test/run-live-provider-e2e.mjs run --gate non_submission",
     "test:e2e:mutation": "npm run build && node test/run-live-provider-e2e.mjs run --gate mutation",
     "test:e2e:project": "npm run build && node test/run-live-provider-e2e.mjs run --gate project",
