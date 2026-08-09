@@ -124,7 +124,7 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
   })
 })
 
-test('built Harness rejects a static-ineligible route before it stages a bootstrap or creates a turn', async () => {
+test('built Harness rejects unsupported static input and queues Gemini file-upload bootstraps', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
     const fixture = await createHarnessFixture(homeDir)
@@ -156,22 +156,21 @@ test('built Harness rejects a static-ineligible route before it stages a bootstr
       }
       assert.deepEqual(daemon.store.webAiCounts(), { bindings: 0, stagedAttachments: 0, turns: 0 })
 
-      await assert.rejects(
-        startHarnessLocalHttpBootstrap({
-          baseUrl: daemon.origin,
-          token,
-          provider: 'gemini',
-          profileId: profile.id,
-          runId: 'ineligible-bootstrap',
-          stagingRoot: fixture.stagingRoot,
-          skillRoot: fixture.skillRoot,
-          taskPrompt: 'This route must not create a turn.',
-          nonce: 'ineligible-bootstrap-nonce',
-        }),
-        (error) => error?.code === 'harness_provider_capabilities_unsupported',
-      )
-      assert.deepEqual(daemon.store.webAiCounts(), { bindings: 1, stagedAttachments: 0, turns: 0 })
-      await assert.rejects(fs.stat(path.join(fixture.stagingRoot, 'ineligible-bootstrap')))
+      const queued = await startHarnessLocalHttpBootstrap({
+        baseUrl: daemon.origin,
+        token,
+        provider: 'gemini',
+        profileId: profile.id,
+        runId: 'gemini-file-upload-bootstrap',
+        stagingRoot: fixture.stagingRoot,
+        skillRoot: fixture.skillRoot,
+        taskPrompt: 'This experimental route supports file uploads.',
+        nonce: 'gemini-file-upload-bootstrap-nonce',
+      })
+      assert.equal(queued.lifecycle, 'queued')
+      assert.equal(queued.attachmentDelivery.status, 'pending')
+      assert.deepEqual(daemon.store.webAiCounts(), { bindings: 1, stagedAttachments: 1, turns: 1 })
+      assert.equal((await fs.stat(path.join(fixture.stagingRoot, 'gemini-file-upload-bootstrap', 'state.json'))).isFile(), true)
     } finally {
       await daemon.close()
       await fixture.cleanup()

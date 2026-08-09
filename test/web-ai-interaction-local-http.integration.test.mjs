@@ -134,7 +134,7 @@ test('durable failure projections preserve prompt submission certainty', async (
   })
 })
 
-test('unsupported binding stages through local-http but fails closed before job creation', async () => {
+test('Gemini binding accepts file uploads and creates a durable local-HTTP turn', async () => {
   await withHome(async (homeDir) => {
     const daemon = await startControlPlane(homeDir)
     try {
@@ -149,12 +149,23 @@ test('unsupported binding stages through local-http but fails closed before job 
       const wrong = await fetch(`${daemon.origin}/v1/web-ai/bindings`, { method: 'POST', headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' }, body })
       assert.equal(wrong.status, 403)
       const binding = await client.bind('gemini', profile.id)
-      assert.deepEqual(binding.capabilities.supportedCapabilities, ['conversation.chat'])
+      assert.deepEqual(binding.capabilities.supportedCapabilities, ['conversation.chat', 'file.upload'])
       const attachment = await client.stage(binding.providerBindingRef, new TextEncoder().encode('# system prompt\n'))
       const request = requestFor(binding, attachment, '4')
-      await assertLocalHttpError(client.start(binding.providerBindingRef, request), 400, 'invalid_input')
-      assert.deepEqual(daemon.store.webAiCounts(), { bindings: 1, stagedAttachments: 1, turns: 0 })
-      assert.equal(daemon.store.webAiStageStatus(attachment.attachmentRef)?.consumed, false)
+      const turn = await client.start(binding.providerBindingRef, request)
+      assert.equal(turn.lifecycle, 'queued')
+      assert.equal(turn.dispatchCertainty, 'not_dispatched')
+      assert.equal(turn.attachmentDelivery.status, 'pending')
+      assert.deepEqual(daemon.store.webAiCounts(), { bindings: 1, stagedAttachments: 1, turns: 1 })
+      assert.equal(daemon.store.webAiStageStatus(attachment.attachmentRef)?.consumed, true)
+      const mapping = daemon.store.getWebAiTurn(turn.turnRef)
+      assert.ok(mapping)
+      assert.equal(mapping.binding_ref, binding.providerBindingRef)
+      assert.equal(mapping.attachment_ref, attachment.attachmentRef)
+      const job = daemon.store.getJob(mapping.job_id)
+      assert.equal(job.request_json.provider, 'gemini')
+      assert.equal(job.request_json.actions.some((action) => action.action === 'file.upload'), true)
+      assert.deepEqual(await client.read(turn.turnRef), turn)
     } finally {
       await daemon.close()
     }
