@@ -55,6 +55,7 @@ export type ManagedDaemonClient = {
   completeJob(options: ClaimedJobOptions & {
     result?: unknown
     error?: unknown
+    partialResult?: unknown
     outputSavingsWork?: readonly OutputSavingsWorkInput[] | undefined
   }): Promise<DaemonJob>
   upsertProviderProject(options: ClaimedJobOptions & {

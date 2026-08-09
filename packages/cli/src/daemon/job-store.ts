@@ -1465,12 +1465,16 @@ export class JobStore {
     claimToken: string,
     completion:
       | { result_json: unknown; output_savings_work?: readonly OutputSavingsWorkInput[] | undefined }
-      | { error_json: unknown },
+      | { error_json: unknown; partial_result_json?: unknown },
   ) {
     const nowMs = nowUnixMillis()
     const now = nowRfc3339()
     const status: JobStatus = 'result_json' in completion ? 'succeeded' : 'failed'
-    const resultJson = 'result_json' in completion ? stringifyJson(completion.result_json) : null
+    const resultJson = 'result_json' in completion
+      ? stringifyJson(completion.result_json)
+      : ('partial_result_json' in completion && completion.partial_result_json !== undefined
+          ? stringifyJson(completion.partial_result_json)
+          : null)
     const errorJson = 'error_json' in completion ? stringifyJson(completion.error_json) : null
     const job = this.getJobWithoutRecovery(jobId)
     const attempts = providerAttempts(job.provider_attempts_json)

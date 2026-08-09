@@ -67,6 +67,9 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
       if (hasResult === hasError) {
         throw tokenlessError('invalid_daemon_completion', 'Pass exactly one of result or error when completing a daemon job.')
       }
+      if (hasResult && options.partialResult !== undefined) {
+        throw tokenlessError('invalid_daemon_completion', 'A successful daemon completion cannot include a partial result.')
+      }
       return publicJobView(store.completeJob(
         options.jobId,
         options.claimToken,
@@ -75,7 +78,10 @@ export function createInProcessDaemonClient(store: JobStore): ManagedDaemonClien
               result_json: options.result,
               output_savings_work: options.outputSavingsWork,
             }
-          : { error_json: options.error }
+          : {
+              error_json: options.error,
+              ...(options.partialResult === undefined ? {} : { partial_result_json: options.partialResult }),
+            }
       ))
     }),
     upsertProviderProject: (options) => claimRequest(options, () => {

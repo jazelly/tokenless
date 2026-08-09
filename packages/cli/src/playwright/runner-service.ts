@@ -85,6 +85,10 @@ export type ManagedPlaywrightJobResult = {
   responses: readonly VisibleActionResponse[]
 }
 
+type IncompleteManagedPlaywrightJobResult = ManagedPlaywrightJobResult & {
+  incomplete: true
+}
+
 type ManagedPlaywrightExecutionOutcome = {
   result: ManagedPlaywrightJobResult
   outputSavingsWork: readonly OutputSavingsWorkInput[]
@@ -654,11 +658,13 @@ export class ManagedPlaywrightRunnerService {
         }
       }
       const completionError = renewError ?? error
+      const partialResult = partialResultFromExecutionError(error)
       if (renewError) {
         await this.daemonClient.completeJob({
           jobId: job.job_id,
           claimToken: job.claim_token,
           error: serializeRunnerError(completionError),
+          ...(partialResult === undefined ? {} : { partialResult }),
         }).catch(() => undefined)
         terminalCompletion = true
         return { claimed: true, jobId: job.job_id, status: 'failed' }
@@ -670,6 +676,7 @@ export class ManagedPlaywrightRunnerService {
         jobId: job.job_id,
         claimToken: job.claim_token,
         error: serializeRunnerError(completionError),
+        ...(partialResult === undefined ? {} : { partialResult }),
       }).catch(() => undefined)
       terminalCompletion = true
       return { claimed: true, jobId: job.job_id, status: 'failed' }
@@ -746,6 +753,7 @@ export class ManagedPlaywrightRunnerService {
     const resumeVisibility = validateResumeVisibility(job.resume_json)
     const claimBrowserVisibility = requestedVisibilityForClaim(request.browserVisibility, resumeVisibility)
     const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
+    let completedResponses: readonly VisibleActionResponse[] = []
     const automaticAuthObservation = isAutomaticAuthObservation(request, claimBrowserVisibility)
     const operation = async (initialManagedContext: ManagedBrowserContext) => {
       let managedContext = initialManagedContext
@@ -756,6 +764,7 @@ export class ManagedPlaywrightRunnerService {
         const provider = getProviderInstanceById(request.provider)
         if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
         const state = executionStateFromCheckpoint(restoredCheckpoint)
+        completedResponses = state.responses
       if (state.submitted !== null && job.provider_submitted_at === null) {
         await this.daemonClient.recordProviderSubmission({
           jobId: job.job_id,
@@ -942,6 +951,7 @@ export class ManagedPlaywrightRunnerService {
           outputSavingsWorkByRequestId.set(action.requestId, capturedVisibleOutput)
         }
         state.responses.push(response)
+        completedResponses = state.responses
         if (lifecycle.completion === 'records_submission') {
           if (!state.preparation) {
             throw tokenlessError('invalid_playwright_runner_checkpoint', 'Managed Playwright runner did not prepare prompt submission completion.')
@@ -1012,9 +1022,20 @@ export class ManagedPlaywrightRunnerService {
         await temporaryPage?.close()
       }
     }
-    const responses = await (automaticAuthObservation
-      ? this.contextManager.runWithProfileObservation(profile, claimBrowserVisibility, operation)
-      : this.contextManager.runWithProfile(profile, claimBrowserVisibility, operation))
+    let responses: readonly VisibleActionResponse[]
+    try {
+      responses = await (automaticAuthObservation
+        ? this.contextManager.runWithProfileObservation(profile, claimBrowserVisibility, operation)
+        : this.contextManager.runWithProfile(profile, claimBrowserVisibility, operation))
+    } catch (error) {
+      if (isRunnerControlFlow(error) || completedResponses.length === 0) throw error
+      throw new PartialManagedPlaywrightExecutionError(error, {
+        protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+        provider: request.provider,
+        responses: completedResponses,
+        incomplete: true,
+      })
+    }
     return {
       result: {
         protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
@@ -1309,7 +1330,7 @@ async function waitForChromiumTargetPages(
 }
 
 export function serializeRunnerError(error: unknown) {
-  const response = errorResponse(error)
+  const response = errorResponse(error instanceof PartialManagedPlaywrightExecutionError ? error.cause : error)
   return {
     code: response.code,
     message: response.message,
@@ -1342,12 +1363,30 @@ class DeferredProviderCapacity extends Error {
   }
 }
 
-function throwRunnerControlFlow(error: unknown): void {
-  if (
-    error instanceof ParkedPlaywrightJob ||
+class PartialManagedPlaywrightExecutionError extends Error {
+  constructor(
+    cause: unknown,
+    readonly partialResult: IncompleteManagedPlaywrightJobResult,
+  ) {
+    super('Managed Playwright job failed after completing visible actions.', { cause })
+    this.name = 'PartialManagedPlaywrightExecutionError'
+  }
+}
+
+function partialResultFromExecutionError(error: unknown) {
+  return error instanceof PartialManagedPlaywrightExecutionError
+    ? error.partialResult
+    : undefined
+}
+
+function isRunnerControlFlow(error: unknown) {
+  return error instanceof ParkedPlaywrightJob ||
     error instanceof QueuedProviderFallback ||
     error instanceof DeferredProviderCapacity
-  ) {
+}
+
+function throwRunnerControlFlow(error: unknown): void {
+  if (isRunnerControlFlow(error)) {
     throw error
   }
 }

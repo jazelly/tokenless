@@ -1194,6 +1194,49 @@ test('SQLite durably and idempotently attributes measured visible output to its 
   }
 })
 
+test('SQLite retains proven completed action receipts when a provider job fails later', async () => {
+  requireBuiltArtifacts()
+  const homeDir = tempHome('tokenless-failed-action-receipts-')
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  const store = await JobStore.open(homeDir)
+  try {
+    const created = store.createJob({
+      provider: 'zai',
+      action: managedPlaywrightJobAction,
+      request_json: { taskId: 'failed-action-receipts' },
+      profile_id: 'receipt-profile',
+    })
+    const claimed = store.claimJob(created.job_id, created.claim_token)
+    store.markRunning(claimed.job_id, claimed.claim_token)
+    const partialResult = {
+      protocol: 'tokenless.playwright.job.v3',
+      provider: 'zai',
+      incomplete: true,
+      responses: [{
+        protocol: 'tokenless.playwright.visible-action.v3',
+        requestId: 'failed-action-receipts:input',
+        provider: 'zai',
+        action: 'prompt.input',
+        ok: true,
+        result: { inputProof: 'prompt-text-visible' },
+        error: null,
+      }],
+    }
+    const completed = store.completeJob(claimed.job_id, claimed.claim_token, {
+      error_json: { code: 'prompt_submit_not_accepted' },
+      partial_result_json: partialResult,
+    })
+    assert.equal(completed.status, 'failed')
+    assert.deepEqual(completed.result_json, partialResult)
+    assert.equal(completed.result_json.incomplete, true)
+    assert.deepEqual(completed.error_json, { code: 'prompt_submit_not_accepted' })
+    assert.equal(completed.checkpoint_json, null)
+  } finally {
+    store.close()
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('SQLite completes the provider job before durable output savings work is processed', async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-output-savings-handoff-')
