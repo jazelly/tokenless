@@ -1251,7 +1251,7 @@ test('SQLite completes the provider job before durable output savings work is pr
 })
 
 for (const browserConnectionMode of ['playwright', 'cdp']) {
-test(`profiles open without provider uses ${browserConnectionMode} through daemon browser runtime control`, {
+test(`profiles open canonicalizes ${browserConnectionMode} to resident CDP browser control`, {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
@@ -1265,7 +1265,8 @@ test(`profiles open without provider uses ${browserConnectionMode} through daemo
   process.env.TOKENLESS_PROVIDER = 'claude'
   let daemon
   try {
-    await runtime.writeTokenlessConfig({ homeDir, browser: 'profile', browserConnectionMode })
+    const config = await runtime.writeTokenlessConfig({ homeDir, browser: 'profile', browserConnectionMode })
+    assert.equal(config.browserConnectionMode, 'cdp')
     daemon = await startTsDaemon(homeDir)
     await runtime.writeTokenlessConfig({ homeDir, daemonUrl: daemon.url })
 

@@ -121,14 +121,18 @@ test('daemon shutdown detaches and a replacement daemon reconnects to the reside
       daemonUrl: daemon.origin,
       homeDir,
       profileId: profile.id,
-      browserVisibility: 'headed',
+      browserVisibility: 'auto',
     })
     const sessionAfter = await readBrowserRuntimeSession(profile.directory)
     assert.equal(sessionAfter.pid, sessionBefore.pid)
     assert.equal(observer.isConnected(), true)
     assert.equal(page.isClosed(), false)
     assert.equal(await page.title(), 'resident-browser')
+    assert.equal(reopened.effectiveBrowserVisibility, 'headed')
     assert.equal(reopened.pageCount, browserContext.pages().length)
+
+    await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir })
+    await waitFor(() => !observer.isConnected())
   } finally {
     if (!daemon) {
       daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 }).catch(() => undefined)

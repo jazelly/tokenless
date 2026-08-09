@@ -101,6 +101,7 @@ type ActiveContext = {
 
 type LaunchedManagedContext = {
   browserContext: BrowserContext
+  effectiveVisibility: EffectiveBrowserVisibility
   closeBrowser: () => Promise<void>
   detachBrowser: () => Promise<void>
 }
@@ -230,6 +231,7 @@ export class PersistentContextManager {
         profile.directory,
         managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
         browserTarget,
+        requestedVisibility,
       )
       const { browserContext } = launched
       if (this.shuttingDown) {
@@ -239,7 +241,7 @@ export class PersistentContextManager {
       const active: ActiveContext = {
         profile,
         requestedVisibility,
-        effectiveVisibility,
+        effectiveVisibility: launched.effectiveVisibility,
         browserContext,
         pagesByKey: new Map(),
         reservedPagesByKey: new Map(),
@@ -385,13 +387,15 @@ export class PersistentContextManager {
     userDataDir: string,
     launchOptions: PersistentChromeLaunchOptions,
     browserTarget: ManagedBrowserLaunchTarget,
+    requestedVisibility: BrowserVisibility,
   ): Promise<LaunchedManagedContext> {
     if (this.connectionMode === 'cdp') {
-      return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget)
+      return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget, requestedVisibility)
     }
     const browserContext = await this.launcher(userDataDir, launchOptions)
     return {
       browserContext,
+      effectiveVisibility: resolveEffectiveBrowserVisibility(requestedVisibility),
       closeBrowser: async () => await browserContext.close(),
       detachBrowser: async () => await browserContext.close(),
     }
@@ -446,6 +450,7 @@ async function launchCdpManagedContext(
   userDataDir: string,
   launchOptions: PersistentChromeLaunchOptions,
   browserTarget: ManagedBrowserLaunchTarget,
+  requestedVisibility: BrowserVisibility,
 ): Promise<LaunchedManagedContext> {
   const executablePath = browserTarget.executablePath
   if (!executablePath) {
@@ -457,10 +462,20 @@ async function launchCdpManagedContext(
   const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
   const sessionFile = path.join(userDataDir, BROWSER_RUNTIME_SESSION_FILE)
   const launchSignature = cdpLaunchSignature(userDataDir, launchOptions, browserTarget)
+  const compatibleLaunchSignatures = requestedVisibility === 'auto'
+    ? new Set([
+        launchSignature,
+        cdpLaunchSignature(userDataDir, {
+          ...launchOptions,
+          headless: false,
+          viewport: null,
+        }, browserTarget),
+      ])
+    : new Set([launchSignature])
   const existing = await connectExistingCdpManagedContext({
     endpointFile,
     sessionFile,
-    launchSignature,
+    compatibleLaunchSignatures,
   })
   if (existing) return existing
   await fs.unlink(endpointFile).catch((error) => {
@@ -487,11 +502,13 @@ async function launchCdpManagedContext(
       protocol: BROWSER_RUNTIME_SESSION_PROTOCOL,
       launchSignature,
       pid: browserProcess.pid ?? null,
+      effectiveVisibility: launchOptions.headless ? 'headless' : 'headed',
     })
     let closing: Promise<void> | undefined
     let detaching: Promise<void> | undefined
     return {
       browserContext: contexts[0],
+      effectiveVisibility: launchOptions.headless ? 'headless' : 'headed',
       closeBrowser() {
         closing ??= closeCdpManagedBrowser(browser, browserProcess, browserExit)
           .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))
@@ -512,11 +529,11 @@ async function launchCdpManagedContext(
 async function connectExistingCdpManagedContext({
   endpointFile,
   sessionFile,
-  launchSignature,
+  compatibleLaunchSignatures,
 }: {
   endpointFile: string
   sessionFile: string
-  launchSignature: string
+  compatibleLaunchSignatures: ReadonlySet<string>
 }): Promise<LaunchedManagedContext | null> {
   const session = await readBrowserRuntimeSession(sessionFile)
   const endpoint = await readDevToolsEndpoint(endpointFile)
@@ -524,8 +541,8 @@ async function connectExistingCdpManagedContext({
   let browser: Browser | undefined
   try {
     browser = await chromium.connectOverCDP(endpoint)
-    if (session.launchSignature !== launchSignature) {
-      await closeConnectedCdpManagedBrowser(browser)
+    if (!compatibleLaunchSignatures.has(session.launchSignature)) {
+      await closeConnectedCdpManagedBrowser(browser, session.pid)
       await removeBrowserRuntimeSession(sessionFile, endpointFile)
       return null
     }
@@ -539,8 +556,9 @@ async function connectExistingCdpManagedContext({
     let detaching: Promise<void> | undefined
     return {
       browserContext: contexts[0],
+      effectiveVisibility: session.effectiveVisibility,
       closeBrowser() {
-        closing ??= closeConnectedCdpManagedBrowser(connectedBrowser)
+        closing ??= closeConnectedCdpManagedBrowser(connectedBrowser, session.pid)
           .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))
         return closing
       },
@@ -564,13 +582,19 @@ function cdpLaunchSignature(
   return createHash('sha256').update(JSON.stringify({
     executablePath: browserTarget.executablePath ?? null,
     runtimeId: browserTarget.runtimeId ?? null,
+    proxy: launchOptions.proxy ?? null,
     arguments: cdpChromiumArguments(userDataDir, launchOptions, browserTarget),
   })).digest('base64url')
 }
 
 async function writeBrowserRuntimeSession(
   sessionFile: string,
-  session: { protocol: typeof BROWSER_RUNTIME_SESSION_PROTOCOL, launchSignature: string, pid: number | null },
+  session: {
+    protocol: typeof BROWSER_RUNTIME_SESSION_PROTOCOL
+    launchSignature: string
+    pid: number | null
+    effectiveVisibility: EffectiveBrowserVisibility
+  },
 ) {
   const temporary = `${sessionFile}.${process.pid}.tmp`
   await fs.writeFile(temporary, `${JSON.stringify(session, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
@@ -583,9 +607,14 @@ async function readBrowserRuntimeSession(sessionFile: string) {
     if (
       value.protocol !== BROWSER_RUNTIME_SESSION_PROTOCOL ||
       typeof value.launchSignature !== 'string' ||
+      (value.effectiveVisibility !== 'headed' && value.effectiveVisibility !== 'headless') ||
       (value.pid !== null && (!Number.isSafeInteger(value.pid) || Number(value.pid) <= 0))
     ) return null
-    return { launchSignature: value.launchSignature, pid: value.pid as number | null }
+    return {
+      launchSignature: value.launchSignature,
+      pid: value.pid as number | null,
+      effectiveVisibility: value.effectiveVisibility as EffectiveBrowserVisibility,
+    }
   } catch (error) {
     if (isMissingFileError(error) || error instanceof SyntaxError) return null
     throw error
@@ -603,14 +632,39 @@ async function removeBrowserRuntimeSession(sessionFile: string, endpointFile: st
   ])
 }
 
-async function closeConnectedCdpManagedBrowser(browser: Browser) {
-  if (!browser.isConnected()) return
-  try {
-    const session = await browser.newBrowserCDPSession()
-    await session.send('Browser.close')
-  } catch {
-    await browser.close().catch(() => undefined)
+async function closeConnectedCdpManagedBrowser(browser: Browser, pid: number | null) {
+  if (browser.isConnected()) {
+    try {
+      const session = await browser.newBrowserCDPSession()
+      await session.send('Browser.close')
+    } catch {
+      await browser.close().catch(() => undefined)
+    }
   }
+  if (pid === null || await waitForPidExit(pid, 5_000)) return
+  process.kill(pid, 'SIGTERM')
+  if (await waitForPidExit(pid, 2_000)) return
+  process.kill(pid, 'SIGKILL')
+  if (await waitForPidExit(pid, 2_000)) return
+  throw tokenlessError(
+    'playwright_browser_close_failed',
+    'The resident managed browser did not exit after explicit shutdown.',
+    { retryable: true },
+  )
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+      throw error
+    }
+    await delay(50)
+  }
+  return false
 }
 
 function cdpChromiumArguments(
