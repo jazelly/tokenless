@@ -275,7 +275,7 @@ async function visibleAttachmentEvidence(
       '[role="listitem"]',
       '[role="status"]',
       'li',
-      'button',
+      '[data-default-action="true"] button[aria-label]',
     ]
     const elements = selectors.flatMap((selector) => {
       try {
@@ -289,12 +289,7 @@ async function visibleAttachmentEvidence(
       .filter((element) => {
         if (seen.has(element) || !isVisibleElement(element)) return false
         seen.add(element)
-        const accessibleText = [
-          element.textContent ?? '',
-          element.getAttribute('aria-label') ?? '',
-          element.getAttribute('title') ?? '',
-        ].join(' ').replace(/\s+/g, ' ').trim()
-        return !/\bremove\s+(?:this\s+)?file\b/i.test(accessibleText)
+        return true
       })
       .slice(0, 200)
       .map((element) => {
