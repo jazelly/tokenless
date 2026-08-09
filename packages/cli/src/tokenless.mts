@@ -88,7 +88,7 @@ import {
   t,
   tError,
 } from './localization.js'
-import type { CliErrorMessageKey } from './i18n/catalog.js'
+import type { CliErrorMessageKey, LocalizedErrorCode } from './i18n/catalog.js'
 import { paintCliText, resolveCliColorEnabled, type CliColor } from './cli-output.js'
 import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
 import {
@@ -2985,7 +2985,7 @@ async function setupCommand(args: CliArgs) {
         daemonUrl: configuredDaemonUrl,
         daemonStartTimeoutMs: optionalNumber(args.daemonStartTimeoutMs),
         ...(codexIntegration.requested ? { codexHome: codexIntegration.codexHome } : {}),
-        runStep: (_phase, label, task) => presenter.withProgress(label, task),
+        runStep: (_phase, label, task) => presenter.withProgress(t(label), task),
       })
     } catch (error) {
       if (error instanceof Error) {
@@ -4895,7 +4895,7 @@ function assertCommandRoutingArguments(command: string, subcommand: string | und
   if (!contract) {
     const validCommands = validSubcommandsFor(command)
     throw commandUsageError(
-      validCommands.length > 0 ? `${command}_command_invalid` : 'unknown_command',
+      validCommands.length > 0 ? `${command}_command_invalid` as LocalizedErrorCode : 'unknown_command',
       validCommands.length > 0
         ? `${commandDisplayName({ command })} requires one of: ${validCommands.join(', ')}.`
         : `Unknown Tokenless command: ${commandContractKey(context)}.`,
@@ -5296,7 +5296,7 @@ function normalizeDoubaoSkill(value: unknown) {
   throw usageError('invalid_doubao_skill', '--doubao-skill is not recognized.')
 }
 
-function normalizeVisibleModelLabel(value: unknown, flag: string, errorCode = 'invalid_model') {
+function normalizeVisibleModelLabel(value: unknown, flag: string, errorCode: LocalizedErrorCode = 'invalid_model') {
   const normalized = String(value).trim()
   if (normalized.length === 0 || normalized.length > 120 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
     throw usageError(errorCode, `${flag} must be a nonempty visible UI label up to 120 characters without control characters.`)
@@ -5332,7 +5332,7 @@ async function workspaceEnsurePayloadFromArgs(args: CliArgs, modeValue: unknown)
   }
 }
 
-function normalizeWorkspaceText(value: unknown, flag: string, errorCode: string) {
+function normalizeWorkspaceText(value: unknown, flag: string, errorCode: LocalizedErrorCode) {
   const normalized = String(value).trim()
   if (normalized.length === 0 || Buffer.byteLength(normalized, 'utf8') > 32 * 1024 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(normalized)) {
     throw usageError(errorCode, `${flag} must be nonempty text up to 32768 bytes without unsupported control characters.`)
@@ -5715,7 +5715,7 @@ function assertKnownTopLevelCommand(command: string) {
 }
 
 function commandUsageError(
-  code: string,
+  code: LocalizedErrorCode,
   message: string,
   context: CommandContext,
   invalidOptions: string[] = [],
@@ -5909,7 +5909,7 @@ function formatCliError(payload: Record<string, any>, usageDetails: CliUsageDeta
   return lines.join('\n')
 }
 
-function usageError(code: string, message: string): CliError {
+function usageError(code: LocalizedErrorCode, message: string): CliError {
   const error: CliError = new Error(message)
   error.code = code
   error.retryable = false

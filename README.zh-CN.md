@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="#三条命令开始使用">快速开始</a> · <a href="COMMANDS.zh-CN.md">CLI</a> · <a href="docs/capability-matrix.zh-CN.md">Capabilities</a> · <a href="PRIVACY.md">隐私</a>
+  <a href="#三条命令开始使用">快速开始</a> · <a href="COMMANDS.zh-CN.md">CLI</a> · <a href="docs/capability-matrix.zh-CN.md">Capabilities</a> · <a href="PRIVACY.zh-CN.md">隐私</a>
 </p>
 
 <p align="center">

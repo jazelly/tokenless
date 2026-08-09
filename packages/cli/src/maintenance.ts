@@ -2,12 +2,13 @@ import { tokenlessHome } from './job-store.js'
 import { ensureSetupDaemonRunnable } from './runtime.js'
 import { installTokenlessSkills } from './setup-workflow.js'
 import { tokenlessPackageVersion } from './platform-package.js'
+import type { CliMessageKey } from './i18n/catalog.js'
 
 export type TokenlessMaintenancePhase = 'skills' | 'daemon'
 
 export type TokenlessMaintenanceStepRunner = <T>(
   phase: TokenlessMaintenancePhase,
-  label: string,
+  label: CliMessageKey,
   task: () => Promise<T>,
 ) => Promise<T>
 
@@ -30,7 +31,7 @@ export async function reconcileTokenlessMaintenance({
 }: ReconcileTokenlessMaintenanceOptions = {}) {
   const skillInstall = await runStep(
     'skills',
-    'Upserting global Tokenless agent skills',
+    'maintenanceSkills',
     () => installTokenlessSkills({
       ...(skillHome ? { home: skillHome } : {}),
       ...(codexHome ? { codexHome } : {}),
@@ -38,7 +39,7 @@ export async function reconcileTokenlessMaintenance({
   )
   const daemon = await runStep(
     'daemon',
-    'Reconciling current Tokenless daemon',
+    'maintenanceDaemon',
     () => ensureSetupDaemonRunnable({
       homeDir,
       daemonUrl,
@@ -64,7 +65,7 @@ export async function reconcileTokenlessMaintenance({
 
 async function runMaintenanceStep<T>(
   _phase: TokenlessMaintenancePhase,
-  _label: string,
+  _label: CliMessageKey,
   task: () => Promise<T>,
 ) {
   return await task()

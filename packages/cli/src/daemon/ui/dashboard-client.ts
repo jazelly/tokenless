@@ -62,9 +62,15 @@ export class DashboardClient {
     const body = await response.json().catch(() => ({})) as JsonRecord
     if (!response.ok) {
       const code = typeof body?.error?.code === 'string' ? body.error.code : ''
+      const language = this.currentLanguage()
+      const summary = translateError(language, code, body?.error?.message)
+      const diagnostic = typeof body?.error?.message === 'string' ? body.error.message : ''
+      const message = diagnostic && diagnostic !== summary
+        ? `${summary}\n${translate(language, 'diagnostics')}: ${diagnostic}`
+        : summary
       throw new DashboardRequestError(
-        translateError(this.currentLanguage(), code, body?.error?.message),
-        { code, diagnostic: typeof body?.error?.message === 'string' ? body.error.message : '', status: response.status },
+        message,
+        { code, diagnostic, status: response.status },
       )
     }
     if (path === '/snapshot') this.snapshotEtag = response.headers.get('etag') ?? ''
