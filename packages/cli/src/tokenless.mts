@@ -2933,12 +2933,30 @@ async function setupCommand(args: CliArgs) {
       : config.browser === 'brave'
       ? 'brave'
       : 'chrome'
+    const runtimeManager = new BrowserRuntimeManager({ homeDir })
     const selectedRuntime = useCloak
       ? await presenter.withProgress(
           'Preparing CloakBrowser',
-          () => new BrowserRuntimeManager({ homeDir }).ensure('cloak', { allowDownload: true }),
+          () => runtimeManager.ensure('cloak', { allowDownload: true }),
         )
       : null
+    const nativeRuntime = useCloak
+      ? null
+      : await presenter.withProgress(
+          t('cliSetupCheckingNativeBrowser', {
+            browser: nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome',
+          }),
+          async () => {
+            try {
+              return await runtimeManager.ensure(nativeBrowser, { allowDownload: false })
+            } catch {
+              throw usageError(
+                'native_browser_not_installed',
+                `Tokenless could not find your ${nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} installation. Install it yourself, or rerun setup and choose Anti-Detect. Tokenless does not bundle or download Chrome or Brave.`,
+              )
+            }
+          },
+        )
     if (selectedRuntime) {
       presenter.explain({
         title: 'Anti-Detect mode',
@@ -3142,7 +3160,7 @@ async function setupCommand(args: CliArgs) {
             runtimeId: `native:${nativeBrowser}`,
             family: 'native',
             displayName: nativeBrowser === 'brave' ? 'Native Brave Browser' : 'Native Google Chrome',
-            version: null,
+            version: nativeRuntime?.actualVersion ?? null,
             source: 'system',
             capabilityCheck: 'connection',
           },
@@ -3280,7 +3298,8 @@ async function ensureSetupManagedProfile({
   presenter.explain({
     title: nativeBrowser === 'brave' ? 'Native Brave Browser' : 'Native Google Chrome',
     lines: [
-      `Tokenless connects to the ${nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} already running on this computer.`,
+      `Tokenless connects to the ${nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} you installed and already run on this computer.`,
+      'Tokenless does not bundle or download Chrome or Brave. If the selected browser is missing, setup stops; choose Anti-Detect instead if you want Tokenless to prepare CloakBrowser.',
       `Enable remote debugging at ${nativeBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging and approve the connection request.`,
       'The browser manages the underlying CDP endpoint and Tokenless discovers it automatically; no --remote-debugging-port launch flag or fixed-port setting is required.',
       'Native mode is headed-only. Tokenless does not copy your browser profile or own the browser process.',
@@ -3720,7 +3739,7 @@ async function doctorCommand(args: CliArgs) {
   let config: Pick<TokenlessConfig, 'profiles'> & Record<string, any> = { profiles: {}, browser: null, daemonUrl: null }
   let configCheck: Record<string, any>
   try {
-    config = await readTokenlessConfig(homeDir)
+    config = await readTokenlessConfig(homeDir, { persistMigrations: false })
     configCheck = { ok: true, path: `${homeDir}/config.json`, value: config }
   } catch (error) {
     configCheck = {

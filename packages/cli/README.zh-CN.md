@@ -8,6 +8,8 @@
 
 需要 Node.js 22.13+，以及能提供浏览器自主管理 remote debugging endpoint 的当前版 Google Chrome 或 Brave Browser。Apple Silicon macOS 是当前主要 target；Windows x64 仍处于 prerelease。
 
+Chrome 与 Brave 必须由用户自行提供；Tokenless 不会 bundle 或下载它们。如果所选浏览器尚未安装，native setup 会直接停止。请先自行安装，或选择 Anti-Detect。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。
+
 ```bash
 npm install --global tokenless@latest
 tokenless setup

@@ -172,7 +172,7 @@ tokenless setup --install-codex --codex-home <dir> --profile default --defaults 
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
 
-Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，用户再选择已经运行的 Google Chrome 或 Brave Browser。请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging；浏览器会要求用户确认连接，并持有底层 CDP endpoint。Tokenless 会自动发现 endpoint——native mode 没有 `--remote-debugging-port` 启动参数或固定端口设置。Tokenless 只以连接成功作为 capability check，不复制 browser profile，目前只支持 headed。Daemon 关闭时只断开自动化，不会关闭浏览器。
+Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，用户再选择自己已经安装的 Google Chrome 或 Brave Browser；Tokenless 不会 bundle 或下载这两种浏览器。若找不到所选浏览器，setup 会立即停止；用户必须先自行安装，或改选 Anti-Detect。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging；浏览器会要求用户确认连接，并持有底层 CDP endpoint。Tokenless 会自动发现 endpoint——native mode 没有 `--remote-debugging-port` 启动参数或固定端口设置。Tokenless 只以连接成功作为 capability check，不复制 browser profile，目前只支持 headed。Daemon 关闭时只断开自动化，不会关闭浏览器。
 
 交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会使用 `--provider-whitelist`、已有 profile 的 `enabledProviders`，或为新 profile 使用所有受支持 provider。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
 

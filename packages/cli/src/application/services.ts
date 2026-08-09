@@ -241,6 +241,16 @@ export class TokenlessApplicationServices {
     if (requestedBrowser !== 'chrome' && requestedBrowser !== 'brave') {
       throw applicationError('native_chrome_required', 'Tokenless native mode supports a running Google Chrome or Brave Browser.')
     }
+    if (input.browser !== undefined) {
+      try {
+        await this.runtimeManager.ensure(requestedBrowser, { allowDownload: false })
+      } catch {
+        throw applicationError(
+          'native_browser_not_installed',
+          `Tokenless could not find your ${requestedBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} installation. Install it yourself, or use CLI setup to choose Anti-Detect. Tokenless does not bundle or download Chrome or Brave.`,
+        )
+      }
+    }
     if (input.browserExecutablePath !== undefined && input.browserExecutablePath !== null && input.browserExecutablePath !== '') {
       throw applicationError('native_chrome_executable_unsupported', 'Native Chrome discovers the running stable channel and does not accept an executable path.')
     }

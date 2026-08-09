@@ -82,9 +82,12 @@ export function deriveTaskId({
   ].filter(Boolean).join(':')
 }
 
-export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<TokenlessConfig> {
+export async function readTokenlessConfig(
+  homeDir = tokenlessHome(),
+  { persistMigrations = true }: { persistMigrations?: boolean } = {}
+): Promise<TokenlessConfig> {
   const initial = await readTokenlessConfigUnlocked(homeDir)
-  if (!initial.needsWrite) return initial.config
+  if (!initial.needsWrite || !persistMigrations) return initial.config
   return await withConfigWriterLock(homeDir, async () => {
     const latest = await readTokenlessConfigUnlocked(homeDir)
     if (!latest.needsWrite) return latest.config

@@ -56,6 +56,8 @@
 
 需要 Node.js 22.13+，以及能提供浏览器自主管理 remote debugging endpoint 的当前版 Google Chrome 或 Brave Browser；当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。
 
+Chrome 与 Brave 必须由用户自行提供；Tokenless 不会 bundle 或下载它们。如果所选浏览器尚未安装，native setup 会直接停止。请先自行安装，或选择 Anti-Detect。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。
+
 Setup 前，请在日常使用的 Google Chrome 中打开 `chrome://inspect/#remote-debugging`，或在 Brave 中打开 `brave://inspect/#remote-debugging`，启用 remote debugging，并确认浏览器的连接提示。底层 CDP endpoint 由浏览器管理、由 Tokenless 自动发现，因此不需要用 `--remote-debugging-port` 启动浏览器，也不需要配置固定端口。Tokenless 直接以连接是否成功判断能力，不复制 profile，也不启动另一份浏览器。
 
 ```bash
