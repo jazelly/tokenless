@@ -758,21 +758,19 @@ provider-status
 
 ## 手动真实浏览器验收
 
-已认证 provider capability harness 会读取 `TOKENLESS_TEST_CONFIG` 指向的完整 config，并且只使用相邻 production registry 的 default profile。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 config 可以是普通 Tokenless config，但必须位于所有 repository/worktree 之外。启动 browser automation 前，harness 会验证 profile directory、私有权限、lifecycle、executable 和 runtime binding。
+已认证 provider capability harness 会读取 `TOKENLESS_TEST_CONFIG` 指向的完整 config，并且只使用相邻 production registry 的 default profile。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 config 必须位于所有 repository/worktree 之外；启动 browser automation 前，harness 会验证 profile directory、私有权限、lifecycle、executable 和精确的 runtime binding。
 
-先创建 repository-local `.env`，然后准备并手动登录 dedicated config 中的 profiles：
+先创建 repository-local `.env`，然后手动登录该 config 的 default profile：
 
 ```dotenv
 TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-home/config.json
 ```
 
 ```bash
-npm run test:e2e:prepare -- --browser cloak --home /absolute/path/to/tokenless-test-home --profile developer-cloak
-# 在每个 provider tab 中手动登录，然后执行 harness 打印的 daemon-stop 命令。
 npm run test:e2e
 ```
 
-已认证 profile 支持 `chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且创建或复用显式提供的 profile slug。登录页面名单直接来自 `profiles[slug].enabledProviders`；缺失 profile 配置会直接报错。Fresh profile 会包含所有已注册且未 disabled 的 provider，包括 Gemini；区域或网络可达性应作为 E2E evidence 报告，而不是从 preparation 中排除 provider 的理由。Preparation 保留配置顺序，绝不会改写名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。该 daemon 停止后 resident browser 会独立继续运行；launch signature 兼容时，replacement daemon 会重新接入同一个 profile process。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，通过 CDP 控制的 browser 执行其中声明的 provider journeys，并在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。Provider run 会真实修改 provider 侧状态，并可能产生使用费用。
+Default profile 既有的 production runtime binding 会选择 browser；测试命令不接受 browser、home 或 profile override。运行 live suite 前，请通过正常 Tokenless workflow 手动登录。`run` 会使用 live capability matrix，通过 CDP 控制的 browser 执行声明的 provider journey，并在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。Provider run 会真实修改 provider 侧状态，并可能产生使用费用。
 
 Provider surface 验收是显式本地 gate，不会在 CI 中运行：
 

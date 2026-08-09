@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
+import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
 import {
   knownIssueSkipForDurableBlocker,
   loadLiveProviderCapabilityMatrix,
@@ -24,8 +25,9 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const matrix = loadLiveProviderCapabilityMatrix()
 const gate = requiredGate()
-const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
-const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
+const browserTarget = await resolveConfiguredBrowserTarget()
+const homeDir = browserTarget.homeDir
+const profileSlug = browserTarget.profile.slug
 const providerFilter = optionalProviderFilter(process.env.TOKENLESS_LIVE_E2E_PROVIDER)
 const caseFilter = optionalCaseFilter(process.env.TOKENLESS_LIVE_E2E_CASES)
 const suiteRunMarker = `${compactTimestamp(new Date())}_${randomUUID().slice(0, 8)}`

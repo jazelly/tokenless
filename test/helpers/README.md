@@ -6,14 +6,13 @@ Every live provider suite writes a private JSON report under `test-results/live-
 
 ## Real Web UI Provider E2E
 
-The representative Web UI provider test loads the complete dedicated Tokenless config named by `TOKENLESS_TEST_CONFIG` in `.env` and reuses its registry-selected profile. Prepare that profile and authenticate manually before running:
+The representative Web UI provider test loads the complete Tokenless config named by `TOKENLESS_TEST_CONFIG` in `.env` and uses only its registry default profile. Authenticate that profile manually before running:
 
 ```bash
-npm run test:e2e:prepare -- --browser cloak
 npm run test:e2e:web-provider
 ```
 
-The test submits one real ChatGPT job through the dedicated profile, then verifies the completed job in the local Web UI using the same managed browser context. Home, profile, provider, and startup combinations come from `test/fixtures/local/web-ui.json`. That directory is ignored by git; start from `test/fixtures/web-ui.example.json` and point its dedicated home and profile at the target reported by the prepare command. The default suite is `representative-provider`; select another with `--suite`, or another file with `--fixture`.
+The test submits one real ChatGPT job through that profile, then verifies the completed job in the local Web UI through the same managed browser context. `test/fixtures/web-ui.example.json` describes only representative navigation states; home and profile always come from `TOKENLESS_TEST_CONFIG`.
 
 ## Capture Provider DOM With CDP
 

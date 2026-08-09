@@ -24,7 +24,6 @@
     "test:e2e:web": "npm run build && node --test --test-concurrency=1 test/local-web-ui.e2e.mjs",
     "test:e2e:web-provider": "npm run build && node test/run-live-provider-e2e.mjs web-ui",
     "test:e2e": "npm run build && node test/run-live-provider-e2e.mjs run --gate all",
-    "test:e2e:prepare": "npm run build && node test/run-live-provider-e2e.mjs prepare",
     "test:e2e:browser-surfaces": "npm run build && node test/run-live-browser-surface-matrix.mjs",
     "test:e2e:non-submission": "npm run build && node test/run-live-provider-e2e.mjs run --gate non_submission",
     "test:e2e:mutation": "npm run build && node test/run-live-provider-e2e.mjs run --gate mutation",

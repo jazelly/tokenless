@@ -664,7 +664,7 @@ async function startReadyOnlyDaemon({ homeDir, daemonUrl, token, version }) {
   function closeServer() {
     if (closed) return Promise.resolve()
     closed = true
-    return new Promise((resolve) => server.close(() => resolve()))
+    return closeHttpServer(server)
   }
 }
 
@@ -682,9 +682,17 @@ async function startForeignListener(daemonUrl) {
     close() {
       if (closed) return Promise.resolve()
       closed = true
-      return new Promise((resolve) => server.close(() => resolve()))
+      return closeHttpServer(server)
     },
   }
+}
+
+function closeHttpServer(server) {
+  const closing = new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve())
+  })
+  server.closeAllConnections()
+  return closing
 }
 
 function readPersistedRuntimeOrigin(homeDir) {

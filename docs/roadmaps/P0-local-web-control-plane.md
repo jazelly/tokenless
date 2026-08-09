@@ -386,15 +386,16 @@ Follow the repository's real-boundary testing policy:
 
 - test the packaged SPA through the real built daemon and a real local Chromium/Playwright page;
 - exercise configuration and profile mutations against real temporary Tokenless homes and real filesystems;
-- keep test-only profile launches keychain-neutral with `--password-store=basic` and `--use-mock-keychain`;
+- enter browser automation through repository `.env` → `TOKENLESS_TEST_CONFIG` and the adjacent registry's default profile;
+- use that profile's production runtime binding and credential-storage behavior without test-only browser flags;
 - verify the control-plane page cannot be selected by provider page acquisition or replacement;
-- compose real-provider Web UI startup cases from an ignored local fixture that names the dedicated home, profile, provider, context mode, reload mode, and viewport;
+- let the ignored local Web UI fixture select only provider and startup behavior, never a browser, home, profile, runtime, or viewport;
 - verify direct UI entry, automatic session creation, session invalidation, same-origin enforcement, CSRF rejection, Host validation, CSP, and redaction through real HTTP requests and browser behavior;
 - do not use mocks, fake daemons, fake pages, synthetic fetch implementations, or source-string assertions;
 - run provider readiness, sign-in handoff, capability inspection, and provider-side mutations against the real provider website under the explicit local E2E gate; and
-- treat any Tokenless-triggered Keychain prompt as a failed run and stop the responsible browser.
+- leave Keychain approval to the user, detach the CDP client after testing, and preserve the selected profile, pages, resident browser, and runtime.
 
-The first read-only release is accepted when a fresh packaged installation can start the real daemon, open the reserved local console in a keychain-neutral test profile, display real config/profile/job/runtime state, survive provider jobs without losing its tab, and expose no control bearer token or browser secret to page JavaScript.
+The first read-only release is accepted when a fresh packaged installation can start the real daemon, open the reserved local console in the configured default profile, display real config/profile/job/runtime state, survive provider jobs without losing its tab, and expose no control bearer token or browser secret to page JavaScript.
 
 The provider-configuration release is accepted only after the real selected-profile flow proves that enabling, opening, observing, disabling, and re-enabling a provider changes routing membership and visible state without submitting a prompt or inspecting browser secrets.
 

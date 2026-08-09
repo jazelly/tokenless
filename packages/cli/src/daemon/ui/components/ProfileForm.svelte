@@ -34,6 +34,16 @@
       : enabledProviders.filter((entry) => entry !== provider)
   }
 
+  function browserBindingLabel() {
+    const binding = profile?.browserBinding
+    if (binding && typeof binding === 'object' && !Array.isArray(binding)) {
+      const browserId = (binding as JsonRecord).browserId
+      const runtimeId = (binding as JsonRecord).runtimeId
+      if (typeof browserId === 'string' && typeof runtimeId === 'string') return `${browserId} · ${runtimeId}`
+    }
+    return `${snapshot.config.browser} · native:${snapshot.config.browser}`
+  }
+
   async function submit(event: SubmitEvent) {
     event.preventDefault()
     error = ''
@@ -69,7 +79,7 @@
     <input name="roleLabel" bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="profile-role" />
   </label>
 
-  <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native {snapshot.config.browser === 'brave' ? t('braveBrowser') : t('googleChrome')} · headed</strong></div>
+  <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong translate="no" data-testid="profile-form-browser-binding">{browserBindingLabel()}</strong></div>
 
   <fieldset class="fieldset">
     <legend>{t('providerAccess')}</legend>

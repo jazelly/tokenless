@@ -115,6 +115,7 @@ export class TokenlessApplicationServices {
         profile,
         profileData.defaultProfile,
         profileConfig(config, profile.slug),
+        config.browser,
       )),
       providers: providers.map((provider) => ({
         ...provider,
@@ -299,7 +300,8 @@ export class TokenlessApplicationServices {
     })
     try {
       await this.updateProfileConfig(profile, profileConfiguration)
-      return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(await this.migratedConfig(), profile.slug))
+      const config = await this.migratedConfig()
+      return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser)
     } catch (error) {
       await this.profiles.removeProfile(slug, { confirmDelete: true }).catch(() => undefined)
       throw error
@@ -326,7 +328,8 @@ export class TokenlessApplicationServices {
     if (label !== undefined) profile = await this.profiles.updateLabel(slug, label)
     if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
     await this.updateProfileConfig(profile, next)
-    return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(await this.migratedConfig(), profile.slug))
+    const config = await this.migratedConfig()
+    return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser)
   }
 
   async removeProfile(slug: string) {
@@ -598,7 +601,19 @@ function publicProfile(
   profile: ManagedProfileRecord,
   defaultSlug: string | null,
   configured: ManagedProfileConfig,
+  configuredBrowser: string,
 ) {
+  const browserBinding = profile.runtimeBinding
+    ? {
+        browserId: profile.runtimeBinding.browserId,
+        runtimeId: profile.runtimeBinding.runtimeId,
+        family: profile.runtimeBinding.family,
+      }
+    : {
+        browserId: configuredBrowser,
+        runtimeId: `native:${configuredBrowser}`,
+        family: 'system',
+      }
   return {
     slug: profile.slug,
     id: profile.id,
@@ -607,7 +622,8 @@ function publicProfile(
     isDefault: profile.slug === defaultSlug,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
-    browserMode: 'native',
+    browserMode: browserBinding.family === 'system' ? 'native' : 'managed',
+    browserBinding,
     roleLabel: configured.roleLabel,
     enabledProviders: configured.enabledProviders,
     browserVisibility: configured.browserVisibility,

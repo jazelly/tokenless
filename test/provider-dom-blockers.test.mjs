@@ -10,7 +10,7 @@ import {
   createVisibleActionRequest,
   getProviderInstanceById,
 } from '../packages/cli/dist/src/playwright/index.js'
-import { withDedicatedTestPage } from './helpers/live-provider-test-profile.mjs'
+import { withConfiguredBrowserPage } from './helpers/configured-browser-profile.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixturePath = path.join(
@@ -22,7 +22,7 @@ const provenancePath = fixturePath.replace(/\.html$/u, '.provenance.json')
 test('Claude blocker check recognizes the captured Cloudflare security-verification interstitial', {
   timeout: 30000,
 }, async () => {
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     const [fixtureBytes, provenanceText] = await Promise.all([
       fs.readFile(fixturePath),
       fs.readFile(provenancePath, 'utf8'),
@@ -79,5 +79,5 @@ test('Claude blocker check recognizes the captured Cloudflare security-verificat
       url: 'https://claude.ai',
       family: 'cloudflare',
     }])
-  }, { visibility: 'auto', viewport: { width: 1100, height: 850 } })
+  }, { visibility: 'auto' })
 })

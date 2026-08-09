@@ -758,21 +758,19 @@ Commands that may open or operate a provider page are `setup`, `profiles status`
 
 ## Manual Real-Browser Acceptance
 
-The authenticated provider capability harness reads the complete config named by `TOKENLESS_TEST_CONFIG` and uses only the adjacent production registry's default profile. Profile slugs remain developer-owned variables because each developer chooses that default outside the harness. The config may be the ordinary Tokenless config, but it must remain outside every repository/worktree. The harness validates the profile directory, private permissions, lifecycle, executable, and runtime binding before browser automation.
+The authenticated provider capability harness reads the complete config named by `TOKENLESS_TEST_CONFIG` and uses only the adjacent production registry's default profile. Profile slugs remain developer-owned because each developer chooses that default outside the harness. The config must remain outside every repository/worktree; before browser automation, the harness validates the profile directory, private permissions, lifecycle, executable, and exact runtime binding.
 
-Create a repository-local `.env`, then prepare and manually authenticate the profiles in that dedicated config:
+Create a repository-local `.env`, then manually authenticate the config's default profile:
 
 ```dotenv
 TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-home/config.json
 ```
 
 ```bash
-npm run test:e2e:prepare -- --browser cloak --home /absolute/path/to/tokenless-test-home --profile developer-cloak
-# Sign in manually in each provider tab, then run the printed daemon-stop command.
 npm run test:e2e
 ```
 
-Supported authenticated-profile selections are `chrome`, `edge`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. `prepare` installs or resolves the exact browser, keeps its maintenance skill output inside the test-only home, and creates or reuses the explicitly supplied profile slug. Its login-page list is `profiles[slug].enabledProviders`; a missing profile configuration is an error. Fresh profiles include every registered non-disabled provider, including Gemini; regional or network reachability is evidence reported by E2E rather than a reason to remove a provider from preparation. Preparation preserves the configured order and never rewrites the list. It requests every listed provider-entry tab in one concurrent Chromium background-tab batch, then exits without waiting for page load, login, or Playwright target observation. If a proof-verified daemon for the same dedicated home predates the provider-tab endpoint, preparation gracefully replaces it with the current built daemon and retries the handoff once. The resident browser continues independently when that daemon stops, and the replacement daemon reconnects to the same profile process when its launch signature is compatible. The browser may take focus on its initial launch but does not foreground every provider tab in sequence. Preparation does not read the capability matrix, run provider jobs, call `setup` or `profiles status`, automate login, or inspect authentication data. Use `--no-open` for preparation validation without provider navigation or the manual browser handoff. The `run` command uses the live capability matrix to execute declared provider journeys once through the CDP-controlled browser and writes a private JSON report under `test-results/live-provider-e2e/`, grouped first by provider and then by capability. Readiness failures are classified separately from capability assertions; `network_or_navigation` records observable reachability failure without claiming a particular firewall or regional cause. Provider runs perform real mutations and may incur usage cost.
+The default profile's existing production runtime binding selects the browser; test commands do not accept browser, home, or profile overrides. Sign in manually using normal Tokenless workflows before running a live suite. The `run` command uses the live capability matrix through the CDP-controlled browser and writes a private JSON report under `test-results/live-provider-e2e/`, grouped first by provider and then by capability. Readiness failures are classified separately from capability assertions; `network_or_navigation` records observable reachability failure without claiming a particular firewall or regional cause. Provider runs perform real mutations and may incur usage cost.
 
 Provider-surface acceptance is an explicit local gate and does not run in CI:
 

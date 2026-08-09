@@ -11,9 +11,9 @@ import {
   getProviderInstanceById,
 } from '../packages/cli/dist/src/playwright/index.js'
 import {
-  withDedicatedTestBrowser,
-  withDedicatedTestPage,
-} from './helpers/live-provider-test-profile.mjs'
+  withConfiguredBrowser,
+  withConfiguredBrowserPage,
+} from './helpers/configured-browser-profile.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = path.join(root, 'test', 'fixtures', 'provider-dom')
@@ -135,7 +135,7 @@ const adapterSelectorAudit = Object.freeze({
 test('authenticated provider DOM fixtures retain only redacted, provenance-bound visible evidence', {
   timeout: 60000,
 }, async () => {
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     for (const [provider, expected] of Object.entries(providers)) {
       const accountRoot = path.join(fixtureRoot, provider, expected.accountState)
       const retainedScenarios = new Set(
@@ -231,11 +231,9 @@ test('Gemini account status preserves captured authenticated and guest boundarie
       },
     },
   ]
-  await withDedicatedTestBrowser(async ({ context }) => {
+  await withConfiguredBrowser(async ({ context }) => {
     for (const fixtureCase of cases) {
       const page = await context.browserContext.newPage()
-      await page.setViewportSize({ width: 1100, height: 850 })
-      try {
         const fixturePath = path.join(
           fixtureRoot,
           'gemini',
@@ -279,9 +277,6 @@ test('Gemini account status preserves captured authenticated and guest boundarie
           access: response.result?.access,
           visibleProof: response.result?.visibleProof,
         }, fixtureCase.expected)
-      } finally {
-        await page.close()
-      }
     }
   }, { visibility: 'auto' })
 })
@@ -337,7 +332,7 @@ test('DeepSeek fixtures preserve mode-dependent visible control topology', { tim
     'composer-expert': { mode: 'Expert', toggles: ['DeepThink'], fileInput: 0 },
     'composer-vision': { mode: 'Vision', toggles: ['DeepThink'], fileInput: 1 },
   }
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     for (const [scenario, topology] of Object.entries(expected)) {
       const htmlPath = path.join(accountRoot, `${scenario}.html`)
       const provenancePath = path.join(accountRoot, `${scenario}.provenance.json`)
@@ -394,7 +389,7 @@ test('Qwen guest fixtures preserve provenance-bound composer, mode, and complete
   timeout: 60000,
 }, async () => {
   const accountRoot = path.join(fixtureRoot, 'qwen', 'signed-out-guest')
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     const cases = [
       {
         scenario: 'composer-idle',
@@ -465,7 +460,7 @@ test('Dola fixtures preserve the observed capability action bar and completed re
   timeout: 60000,
 }, async () => {
   const accountRoot = path.join(fixtureRoot, 'dola', 'signed-in-unknown')
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     for (const scenario of ['capability-action-bar', 'response-complete']) {
       const [htmlBytes, provenanceText] = await Promise.all([
         fs.readFile(path.join(accountRoot, `${scenario}.html`)),
@@ -515,7 +510,7 @@ test('deep workflow fixtures cover authenticated provider jobs, settings, connec
   const deepEntries = manifest.fixtures.filter((entry) => entry.observedOn === '2026-07-25')
   const counts = Object.fromEntries(Object.keys(deepWorkflowMinimums).map((provider) => [provider, 0]))
   const routeClasses = Object.fromEntries(Object.keys(deepWorkflowMinimums).map((provider) => [provider, new Set()]))
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     for (const entry of deepEntries) {
       const [htmlBytes, provenanceText] = await Promise.all([
         fs.readFile(path.join(fixtureRoot, entry.htmlPath)),
@@ -580,7 +575,7 @@ test('current Grok Free fixture preserves the visible model entitlement boundary
   assertPrivacyBoundary(html)
   assertPrivacyBoundary(provenanceText)
 
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     await setCapturedContent(page, html)
     assert.equal(
       await page.locator('[role="menuitem"][data-radix-collection-item].text-secondary.opacity-75 span.font-semibold').count(),
@@ -612,7 +607,7 @@ test('provider-specific selection semantics and plan uncertainty remain explicit
     fs.readFile(path.join(chatgptRoot, 'thinking-effort-menu-open.html'), 'utf8'),
   ])
 
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     await setCapturedContent(page, geminiHtml)
     assert.equal(
       await page.locator('gem-menu-item[data-active="true"] gem-menu-item-content').innerText(),

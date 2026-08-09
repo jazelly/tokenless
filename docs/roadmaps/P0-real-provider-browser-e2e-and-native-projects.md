@@ -27,11 +27,11 @@ The only runtime skip exception is the checked-in Claude Cloudflare known issue 
 
 Redacted, provenance-bound provider DOM captures remain development aids for selectors, parsers, and already-observed DOM variants. They are not E2E, do not close provider transitions, and do not count toward capability acceptance.
 
-Provider E2E runs manually on this machine through the dedicated live-provider profile harness. Every explicit production browser selection resolves one stable slug such as `live-provider-cloak` under the test-only `<TOKENLESS_HOME>/e2e/live-provider` home. The production profile registry remains authoritative for mapping that slug to its opaque UUID directory, and the harness verifies directory containment, private permissions, ready lifecycle, exact executable, and runtime binding before provider automation. `auto` and cross-runtime profile reuse are forbidden because they cannot preserve one stable browser/profile storage contract across runs.
+**Historical model.** Provider E2E previously ran through a dedicated live-provider profile harness and a separate `prepare` command. That model and its evidence remain historical only; it does not describe the current test entry point.
 
-The harness separates `prepare` from `run`. Preparation installs or resolves the selected browser, creates or reuses only its browser-specific profile, and resolves the configured effective provider whitelist from the profile override or top-level fallback without rewriting either list. It preserves that order, requests every listed provider-home tab through one concurrent Chromium background-target batch, and returns without waiting for page load, login, or Playwright target observation. The detached daemon remains the browser owner while Chromium persists the dedicated profile normally. Preparation does not consult the capability matrix or submit provider jobs. The browser may take focus on its initial launch, but preparation never foregrounds each provider tab sequentially. It does not run setup authentication checks, automate login, or inspect authentication data. The authenticated run then injects the resolved test home and slug into the existing built-CLI provider suite, where the capability matrix defines the journeys under test. It does not create a separate test account or silently select another profile. Provider-side mutations, retained test artifacts, and usage cost are acceptable. Every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
+Browser E2E now loads repository `.env` → `TOKENLESS_TEST_CONFIG`, selects only the adjacent production registry's default profile, and derives its directory, runtime binding, and executable from that production state. Tests never provision or choose a separate E2E home, profile, browser, or runtime; they fail clearly when the selected default profile is not ready, private, or compatible. Operators manually authenticate that existing profile through normal Tokenless workflows before running the applicable suite. Provider-side mutations, retained test artifacts, and usage cost remain acceptable, and every artifact uses a recognizable Tokenless E2E prefix, run ID, and timestamp.
 
-The live E2E suite starts one daemon-owned, headed browser for the explicitly selected profile and reuses that browser across every selected provider case. Playwright owns the browser lifecycle on every platform; each independent observer attaches through the loopback CDP endpoint for one case and then disconnects without closing or relaunching the product browser. The suite has no macOS-specific `open` launcher or foreground-application manipulation. The operating system may activate the browser on its one initial headed launch.
+The live E2E suite enters browser automation only through the selected default profile's production CDP path. Each observer attaches to the profile's resident browser and then detaches without closing pages, contexts, or the browser, changing its window size, or relaunching it. The suite has no separate Playwright browser lifecycle, macOS-specific `open` launcher, or foreground-application manipulation.
 
 ## Current Closure
 
@@ -288,7 +288,7 @@ Exit: retries and later CLI invocations recover the exact Project and conversati
 
 ### Phase 5: Native Project Live Acceptance
 
-For both Claude and Grok, using the explicitly selected dedicated live-provider profile:
+For both Claude and Grok, using the default profile from `TOKENLESS_TEST_CONFIG`:
 
 1. generate a run-scoped unique Project identity;
 2. run `workspace.ensure --workspace-mode native` and require `created`;
@@ -336,7 +336,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 | Risk | Response |
 | --- | --- |
 | Provider UI drift | Fail the required live case, retain bounded diagnostics, capture the new real DOM variant for development, and update the provider-owned adapter |
-| Account or subscription variation | Use the selected dedicated live-provider profile, run applicable declared capabilities, and fail clearly when authentication or account state cannot satisfy a required case |
+| Account or subscription variation | Use the configured default profile, run applicable declared capabilities, and fail clearly when authentication or account state cannot satisfy a required case |
 | CDP endpoint is stale or unavailable | Start the daemon and browser context in inspection mode, validate lifecycle identity, and fail explicitly |
 | Observer changes product behavior | Keep it read-only, prohibit routes and actions, and assert through independent accessible roles and markers |
 | Provider rate limits or usage cost | Fail clearly, investigate, and manually rerun the suite when appropriate; use explicit gates, bounded concurrency, and real artifacts rather than fixtures |

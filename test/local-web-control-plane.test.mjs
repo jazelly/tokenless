@@ -316,9 +316,41 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     const afterProfile = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
     assertUiSchema(validateUiSnapshot, afterProfile)
     assert.deepEqual(afterProfile.profiles[0].enabledProviders, ['chatgpt', 'claude'])
+    assert.deepEqual(afterProfile.profiles[0].browserBinding, {
+      browserId: afterProfile.config.browser,
+      runtimeId: `native:${afterProfile.config.browser}`,
+      family: 'system',
+    })
     assert.equal(Object.hasOwn(afterProfile.profiles[0], 'preferences'), false)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabled, true)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'gemini').profiles[0].enabled, false)
+
+    const cloakProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ slug: 'cloak-bound', label: 'Cloak bound', enabledProviders: ['chatgpt'] }),
+    })
+    assert.equal(cloakProfile.status, 201)
+    await new ManagedProfileRegistry(homeDir).bindRuntime('cloak-bound', {
+      runtimeId: 'cloak:darwin-arm64:145.0.7632.109.2',
+      family: 'cloak',
+      browserId: 'cloak',
+      createdWithVersion: '145.0.7632.109.2',
+      profileFormat: 1,
+    })
+    const boundSnapshot = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
+    assertUiSchema(validateUiSnapshot, boundSnapshot)
+    assert.deepEqual(boundSnapshot.profiles.find((profile) => profile.slug === 'cloak-bound').browserBinding, {
+      browserId: 'cloak',
+      runtimeId: 'cloak:darwin-arm64:145.0.7632.109.2',
+      family: 'cloak',
+    })
+    assert.equal(boundSnapshot.profiles.find((profile) => profile.slug === 'cloak-bound').browserMode, 'managed')
 
     const readinessRefresh = await fetch(`${daemon.origin}/ui-api/v1/profiles/work/providers/actions/readiness`, {
       method: 'POST',

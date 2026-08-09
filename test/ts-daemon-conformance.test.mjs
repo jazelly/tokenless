@@ -811,8 +811,8 @@ test('built Playwright validators enforce the current internal schema IDs', {
     ],
   })
   assert.equal(completeSetRoutes.ok, true)
-  assert.deepEqual(completeSetRoutes.routes.map((route) => route.provider), ['chatgpt'])
-  assert.deepEqual(completeSetRoutes.evaluated[0].missingCapabilities, [playwright.TASK_CAPABILITIES.FILE_UPLOAD])
+  assert.deepEqual(completeSetRoutes.routes.map((route) => route.provider), ['chatgpt', 'gemini'])
+  assert.deepEqual(completeSetRoutes.evaluated[0].missingCapabilities, [])
   const routed = playwright.createManagedPlaywrightJobRequest({
     provider: 'qwen',
     target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },

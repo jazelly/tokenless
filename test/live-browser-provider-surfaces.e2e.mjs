@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url'
 
 import { listProviderDescriptors } from '../packages/cli/dist/src/providers/registry.js'
 import {
-  createLiveProviderTestContextManager,
-  resolveConfiguredDedicatedTestTarget,
-} from './helpers/live-provider-test-profile.mjs'
+  createConfiguredBrowserContextManager,
+  resolveConfiguredBrowserTarget,
+} from './helpers/configured-browser-profile.mjs'
 
 if (process.env.TOKENLESS_LIVE_BROWSER_SURFACE_GATE !== '1') {
   throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_GATE=1 to run the real browser provider-surface acceptance gate.')
@@ -21,11 +21,11 @@ if (!(
 }
 
 const visibility = 'auto'
-const target = await resolveConfiguredDedicatedTestTarget()
-const selection = target.browserSelection
+const target = await resolveConfiguredBrowserTarget()
+const selection = target.runtime.selection
 
 test(`${selection} ${visibility} reaches every provider surface and Google Search without a detected anti-bot challenge`, { timeout: 20 * 60_000 }, async () => {
-  const manager = createLiveProviderTestContextManager(target)
+  const manager = createConfiguredBrowserContextManager(target)
   const evidence = {
     schema: 'tokenless.live-browser-surface-result.v3',
     observedAt: new Date().toISOString(),
@@ -56,7 +56,7 @@ async function runSurfaceAttempt({ manager, target, visibility }) {
   const runtime = target.runtime
   if (runtime.managed) assert.equal(runtime.actualVersion, runtime.expectedVersion)
   const attempt = {
-    selection: target.browserSelection,
+    selection: target.runtime.selection,
     runtimeId: runtime.runtimeId,
     family: runtime.family,
     actualVersion: runtime.actualVersion,

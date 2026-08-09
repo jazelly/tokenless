@@ -10,9 +10,9 @@ import {
   getProviderInstanceById,
 } from '../packages/cli/dist/src/playwright/index.js'
 import {
-  withDedicatedTestBrowser,
-  withDedicatedTestPage,
-} from './helpers/live-provider-test-profile.mjs'
+  withConfiguredBrowser,
+  withConfiguredBrowserPage,
+} from './helpers/configured-browser-profile.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = path.join(root, 'test/fixtures/provider-dom')
@@ -73,12 +73,10 @@ const providers = [
 test('real Chromium inputs and clears drafts on provenance-bound provider DOM captures', {
   timeout: 60000,
 }, async (t) => {
-  await withDedicatedTestBrowser(async ({ context }) => {
+  await withConfiguredBrowser(async ({ context }) => {
     for (const provider of providers) {
       await t.test(provider.id, async () => {
         const page = await context.browserContext.newPage()
-        await page.setViewportSize({ width: 1100, height: 850 })
-        try {
         await openCapturedFixture(page, provider, provider.scenario)
         const providerInstance = getProviderInstanceById(provider.id)
         assert.ok(providerInstance, `provider instance missing: ${provider.id}`)
@@ -111,9 +109,6 @@ test('real Chromium inputs and clears drafts on provenance-bound provider DOM ca
           inputProof: 'empty',
         })
         assert.equal(await visibleComposerText(page, provider.composerSelectors), '')
-        } finally {
-          await page.close()
-        }
       })
     }
   }, { visibility: 'auto' })
@@ -122,7 +117,7 @@ test('real Chromium inputs and clears drafts on provenance-bound provider DOM ca
 test('prompt input reports a visibility timeout when the captured provider page has no composer', {
   timeout: 30000,
 }, async () => {
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     const provider = providers[0]
     assert.ok(provider)
     await openCapturedFixture(page, provider, 'settings-general')
@@ -148,13 +143,13 @@ test('prompt input reports a visibility timeout when the captured provider page 
     })
     assert.ok(elapsedMs >= 14000, `prompt input returned before the visibility timeout: ${elapsedMs}ms`)
     assert.ok(elapsedMs < 20000, `prompt input exceeded the bounded visibility timeout: ${elapsedMs}ms`)
-  }, { visibility: 'auto', viewport: { width: 1100, height: 850 } })
+  }, { visibility: 'auto' })
 })
 
 test('prompt submit reports an actionability timeout when the captured provider page has no enabled submit control', {
   timeout: 30000,
 }, async () => {
-  await withDedicatedTestPage(async ({ page }) => {
+  await withConfiguredBrowserPage(async ({ page }) => {
     const provider = providers[0]
     assert.ok(provider)
     await openCapturedFixture(page, provider, 'settings-general')
@@ -175,12 +170,12 @@ test('prompt submit reports an actionability timeout when the captured provider 
     assert.equal(submit.ok, false)
     assert.deepEqual(submit.error, {
       code: 'prompt_submit_actionability_timeout',
-      message: 'Timed out after 15000ms waiting for an enabled visible prompt submit control.',
+      message: 'Timed out after 15000ms waiting for an actionable visible prompt submit control.',
       retryable: true,
     })
     assert.ok(elapsedMs >= 14000, `prompt submit returned before the actionability timeout: ${elapsedMs}ms`)
     assert.ok(elapsedMs < 20000, `prompt submit exceeded the bounded actionability timeout: ${elapsedMs}ms`)
-  }, { visibility: 'auto', viewport: { width: 1100, height: 850 } })
+  }, { visibility: 'auto' })
 })
 
 async function openCapturedFixture(page, provider, scenario = 'composer-idle') {

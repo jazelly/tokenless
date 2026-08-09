@@ -356,7 +356,10 @@ export class PersistentContextManager {
           ...active.pagesByKey.values(),
           ...active.reservedPagesByKey.values(),
         ])
-        const replaceablePages = pages.filter((candidate) => !new Set(active.reservedPagesByKey.values()).has(candidate))
+        const reservedPages = new Set(active.reservedPagesByKey.values())
+        const replaceablePages = pages.filter((candidate) => (
+          !reservedPages.has(candidate) && (active.ownedPages.has(candidate) || claimedPages.has(candidate))
+        ))
         const page = policy === 'replace'
           ? replaceablePages.at(-1) ?? await createOwnedBackgroundPage(active)
           : pages.find((candidate) => !claimedPages.has(candidate) && candidate.url() === 'about:blank')
@@ -458,6 +461,9 @@ async function createBackgroundPage(browserContext: BrowserContext): Promise<Pag
   if (!browser?.isConnected()) {
     throw tokenlessError('playwright_browser_closed', 'Managed browser is no longer connected.', { retryable: true })
   }
+  const candidatePages = new Set<Page>()
+  const trackCandidate = (page: Page) => candidatePages.add(page)
+  browserContext.on('page', trackCandidate)
   const session = await browser.newBrowserCDPSession()
   let targetId: string | undefined
   try {
@@ -467,27 +473,34 @@ async function createBackgroundPage(browserContext: BrowserContext): Promise<Pag
       focus: false,
     })
     targetId = created.targetId
+  } catch (error) {
+    browserContext.off('page', trackCandidate)
+    throw error
   } finally {
     await session.detach().catch(() => undefined)
   }
-  const deadline = Date.now() + 10_000
-  const inspectedPages = new Set<Page>()
-  while (Date.now() <= deadline) {
-    for (const page of browserContext.pages()) {
-      if (page.isClosed() || inspectedPages.has(page)) continue
-      const pageSession = await browserContext.newCDPSession(page).catch(() => null)
-      if (!pageSession) continue
-      try {
-        const target = await pageSession.send('Target.getTargetInfo')
-        inspectedPages.add(page)
-        if (target.targetInfo.targetId === targetId) return page
-      } catch {
-        if (page.isClosed()) inspectedPages.add(page)
-      } finally {
-        await pageSession.detach().catch(() => undefined)
+  try {
+    const deadline = Date.now() + 10_000
+    const inspectedPages = new Set<Page>()
+    while (Date.now() <= deadline) {
+      for (const page of candidatePages) {
+        if (page.isClosed() || inspectedPages.has(page)) continue
+        const pageSession = await browserContext.newCDPSession(page).catch(() => null)
+        if (!pageSession) continue
+        try {
+          const target = await pageSession.send('Target.getTargetInfo')
+          inspectedPages.add(page)
+          if (target.targetInfo.targetId === targetId) return page
+        } catch {
+          if (page.isClosed()) inspectedPages.add(page)
+        } finally {
+          await pageSession.detach().catch(() => undefined)
+        }
       }
+      await delay(Math.min(25, Math.max(1, deadline - Date.now())))
     }
-    await delay(Math.min(25, Math.max(1, deadline - Date.now())))
+  } finally {
+    browserContext.off('page', trackCandidate)
   }
   throw tokenlessError(
     'playwright_background_page_unavailable',

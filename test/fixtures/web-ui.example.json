@@ -1,16 +1,5 @@
 {
   "schema": "tokenless.live-web-ui-fixtures.v1",
-  "homes": {
-    "dedicated": {
-      "path": "~/.tokenless/e2e/live-provider"
-    }
-  },
-  "profiles": {
-    "cloak": {
-      "home": "dedicated",
-      "slug": "live-provider-cloak"
-    }
-  },
   "providers": {
     "chatgpt": {
       "id": "chatgpt"
@@ -19,42 +8,27 @@
   "startups": {
     "desktop-fresh": {
       "context": "fresh",
-      "reload": false,
-      "viewport": { "width": 1920, "height": 1080 }
+      "reload": false
     },
     "desktop-reload": {
       "context": "shared",
-      "reload": true,
-      "viewport": { "width": 1920, "height": 1080 }
-    },
-    "mobile-fresh": {
-      "context": "fresh",
-      "reload": false,
-      "viewport": { "width": 390, "height": 844 }
+      "reload": true
     }
   },
   "cases": {
-    "cloak-chatgpt-desktop": {
-      "profile": "cloak",
+    "chatgpt-desktop": {
       "provider": "chatgpt",
       "startup": "desktop-fresh"
     },
-    "cloak-chatgpt-reload": {
-      "profile": "cloak",
+    "chatgpt-reload": {
       "provider": "chatgpt",
       "startup": "desktop-reload"
     },
-    "cloak-chatgpt-mobile": {
-      "profile": "cloak",
-      "provider": "chatgpt",
-      "startup": "mobile-fresh"
-    }
   },
   "suites": {
     "representative-provider": [
-      "cloak-chatgpt-desktop",
-      "cloak-chatgpt-reload",
-      "cloak-chatgpt-mobile"
+      "chatgpt-desktop",
+      "chatgpt-reload"
     ]
   }
 }
