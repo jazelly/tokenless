@@ -17,13 +17,11 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
-| `tokenless profiles discover` | Read safe directory/version metadata for known Chromium profiles and classify import compatibility. | None |
-| `tokenless profiles add` | Create a clean managed browser profile or an eligible experimental import. | None |
+| `tokenless profiles add` | Create a logical Tokenless profile for tab and provider preferences. | None |
 | `tokenless profiles list` | List profiles and their last saved provider observations. | None |
 | `tokenless profiles status` | Check one provider live and save the observation to the profile registry. | Yes |
 | `tokenless profiles open` | Open a managed profile headed, optionally navigating to one provider. | Optional |
 | `tokenless profiles set-default` | Select the default managed profile. | None |
-| `tokenless profiles reset` | Re-import an imported profile from its recorded source after consent and compatibility revalidation. | None |
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
@@ -66,7 +64,7 @@ dola
 
 ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, and Dola are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
 
-Runtime browser values are `auto`, `chrome`, `edge`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. For new setup, `auto` resolves to the platform-pinned `managed-chromium`; explicit system-browser values remain available for existing or advanced configurations. `cloak` is explicit opt-in. New Tokenless profiles are clean and runtime-bound. Experimental opaque profile copy is available only when creating a CloakBrowser profile, requires `--consent-local-profile-copy`, and accepts only a version-compatible Google Chrome source.
+Tokenless uses native mode: Playwright attaches to the user's already-running stable Google Chrome. Chrome 144+ is required; enable remote debugging at `chrome://inspect/#remote-debugging` and approve Chrome's connection prompt. Connection success is the capability check. Native mode is headed-only and never copies a browser profile.
 
 ### Short options
 
@@ -74,7 +72,6 @@ Short options are case-sensitive:
 
 - `-P <slug>` is short for `--profile <slug>`.
 - `-p <provider>` is short for `--provider <provider>`.
-- `-f` is short for `--fresh` during setup.
 - `-v` is short for `--verbose`.
 - `-V` is short for `--version`.
 
@@ -94,7 +91,7 @@ These options are available where the command needs the corresponding runtime be
 | `--daemon-url <url>` | Set the preferred loopback daemon URL. If its port is occupied, Tokenless may bind the next free port and records the actual endpoint in SQLite. |
 | `--agent-kind <kind>` | Address a job or replay drain to an explicit agent kind; use with `--agent-session-id`. |
 | `--agent-session-id <id>` | Address a job or replay drain to an explicit agent session; use with `--agent-kind`. |
-| `--browser-visibility <auto\|headed\|headless>` | Choose the browser visibility policy. |
+| `--browser-visibility <headed>` | Native Chrome is headed-only. |
 | `--timeout-ms <ms>` | Override the command or job wait timeout. |
 | `--daemon-start-timeout-ms <ms>` | Override daemon startup waiting. |
 | `--runner-heartbeat-timeout-ms <ms>` | Accepted for compatibility; the embedded Playwright runtime ignores it. |
@@ -157,39 +154,25 @@ Interactive setup:
 tokenless setup
 ```
 
-Create or reuse a clean profile non-interactively:
+Create or reuse a logical profile non-interactively:
 
 ```bash
-tokenless setup --profile default --fresh --json
-tokenless setup --anti-detect --profile cloak-default --fresh --json
-tokenless setup --browser managed-chromium --profile managed-default --fresh --json
-tokenless setup --install-codex --codex-home <dir> --profile default --fresh --json
+tokenless setup --profile default --defaults --json
+tokenless setup --install-codex --codex-home <dir> --profile default --defaults --json
 ```
 
 Main options:
 
-- `--profile <slug>` selects or names the managed profile.
+- `--profile <slug>` selects or names the logical Tokenless profile.
 - `--install-codex` explicitly installs the optional Codex guidance, native hooks, and skills during setup.
 - `--codex-home <dir>` selects a custom Codex state root and requires `--install-codex`.
-- `--anti-detect` explicitly selects the catalog-pinned CloakBrowser runtime and confirms a clean Cloak-bound profile in non-interactive setup. Explicit `--browser cloak` carries the same confirmation; a stored Cloak preference alone fails before download.
 - `--provider-whitelist <list>` selects provider membership for that profile during non-interactive setup.
 - `--no-open` completes setup without opening the dashboard.
-- `--browser <browser>` selects `auto`, one exact system browser, `managed-chromium`, or `cloak`.
-- `--no-browser-download` fails instead of downloading a missing managed runtime.
-- `--repair-browser` explicitly reinstalls a selected `managed-chromium` or `cloak` runtime. It cannot be combined with `--no-browser-download`.
-- `--fresh` or `-f` creates a clean managed profile.
-- `--import-browser-profile <key> --consent-local-profile-copy` experimentally copies one eligible profile into a new managed Chrome for Testing or CloakBrowser profile without parsing authentication values. Add `--import-browser brave` for a Brave source; Chrome is the default source family.
 - `--defaults` selects non-interactive defaults.
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
 
-`auto` resolves to the platform-pinned Tokenless-managed Chrome for Testing. Interactive setup asks whether to use Anti-Detect; declining selects managed Chrome for Testing without adopting the user's installed browser. Both managed targets start clean by default. Setup downloads the checksum-pinned official `145.0.7632.6` artifact on Apple Silicon macOS or `146.0.7680.165` artifact on Windows x64 into `$TOKENLESS_HOME/browser/runtimes` when it is not already cached. The browser binary is not embedded in the npm package. Existing explicit system-browser selections remain supported and verify their cached executable before scanning standard installation paths; an explicit missing system browser fails with the exact config command and dashboard field needed to supply a path. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first runtime targets are Apple Silicon macOS and Windows x64 (Intel and AMD); Windows remains prerelease until its real-hardware gates pass.
-
-`browserExecutablePath` may point outside `TOKENLESS_HOME` only for an explicitly selected system browser. Paths for `managed-chromium` and `cloak` are derived from the catalog-pinned runtime under `$TOKENLESS_HOME/browser/runtimes`; an arbitrary config value cannot replace or bypass that managed runtime.
-
-The Anti-Detect question states that accepting it will download and install the verified, platform-pinned CloakBrowser when needed; there is no later installation confirmation. Setup does not run system-browser executable discovery for target selection. For either managed target, the experimental import step scans only the selected Google Chrome or Brave profile root, reads the directory key and safe `Last Version`, and applies the evidence-bound policy: on Apple Silicon macOS, Chrome major 145 and Brave Chromium major 143/145 may target managed Chrome for Testing 145 or CloakBrowser 145. Edge, Chromium, Chrome for Testing, Arc, other source versions, and every Windows import combination fail before copy. Selecting a profile explicitly authorizes its opaque local copy; `Start clean` remains the default. Copying remains opaque: Tokenless does not parse `Local State`, cookies, browser storage, or authentication values. Non-interactive import requires `--consent-local-profile-copy`, and Brave additionally requires `--import-browser brave`.
-
-Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing runtime family creates a clean profile. Experimental Google Chrome import can populate only a new CloakBrowser-bound profile. The managed profile then preserves its browser-managed session across jobs. A future managed Chrome-for-Testing-to-Cloak migration requires separate platform parity and authentication-state evidence; it is not currently exposed.
+Setup attaches to the stable Chrome instance already running for the user. Chrome 144+ must have remote debugging enabled at `chrome://inspect/#remote-debugging`; Chrome asks the user to approve the connection. Tokenless uses connection success as the capability check, never copies the Chrome profile, and currently supports headed mode only. Daemon shutdown disconnects automation without closing Chrome.
 
 Interactive `setup` lists every supported provider, enables all of them by default, and lets the user remove providers by replying with their displayed numbers; pressing Enter keeps them all. Non-interactive setup uses `--provider-whitelist`, the existing profile scope, or the persisted default whitelist. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
 
@@ -345,30 +328,17 @@ Options: `--home`, `--daemon-url`, `--timeout-ms`, and `--json`.
 
 The command discovers the actual endpoint from SQLite and does not kill an unverified or incompatible process merely because it occupies the preferred port.
 
-## Managed Profiles
+## Tokenless Profiles
 
-A managed profile is one persistent local browser identity. One profile may hold sessions for all enabled providers.
-
-### `tokenless profiles discover`
-
-Reads safe profile directory/version metadata for Chrome, Brave, Edge, Chromium, or Chrome for Testing without copying or modifying browser data. Each profile reports its compatibility against the current platform Cloak pin. Discovery alone does not make a profile importable and does not parse `Local State`.
-
-```bash
-tokenless profiles discover --browser all --json
-tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user-data --json
-```
+A Tokenless profile groups provider tabs and preferences inside the connected Chrome identity. It does not create or copy a separate browser identity.
 
 ### `tokenless profiles add`
 
-Creates a clean managed profile or experimentally copies an eligible macOS Google Chrome/Brave profile into a managed Chrome for Testing 145 or CloakBrowser 145 profile after explicit consent:
+Creates a logical Tokenless profile:
 
 ```bash
 tokenless profiles add -P work --label "Work" --set-default --json
-tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
-tokenless profiles add -P brave-work --browser managed-chromium --import-browser-profile Default --import-browser brave --consent-local-profile-copy --set-default --json
 ```
-
-The copy remains local and opaque. Tokenless copies filesystem entries but does not inspect or report cookies, storage, passwords, tokens, or Keychain data. Arc is unsupported; Windows and every source/target/version combination outside the documented matrix fail closed.
 
 ### `tokenless profiles list`
 
@@ -410,14 +380,6 @@ Makes one registered profile the default.
 
 ```bash
 tokenless profiles set-default -P work --json
-```
-
-### `tokenless profiles reset`
-
-Replaces an imported managed profile with a fresh opaque copy from its recorded local source. Explicit consent is required again.
-
-```bash
-tokenless profiles reset -P work --consent-local-profile-copy --json
 ```
 
 ### `tokenless profiles clear`
@@ -769,12 +731,9 @@ The following aliases are accepted for compatibility. Prefer the canonical form 
 | `tokenless provider-auth-status` | `tokenless provider-status` |
 | `tokenless inspect-provider-controls` | `tokenless provider-controls` |
 | `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
-| `--import-chrome-profile` | `--import-browser-profile` |
-| `--chrome-user-data-dir` | `--browser-user-data-dir` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
 | `--conversation-key` | `--idempotency-key` |
-| `--clean-profile` | `--fresh` |
 
 ## Status and Side-Effect Summary
 

@@ -24,7 +24,7 @@
   <img src="assets/dashboard-hero.png" alt="真实 Tokenless 控制台显示已节省 2,475 个估算输出 token，并有一项 Kimi 任务正在运行" width="1600">
 </p>
 
-<p align="center"><sub>截图来自真实 managed Cloak profile；token 总量与任务状态均为真实本地数据，不是 benchmark。</sub></p>
+<p align="center"><sub>截图来自真实本地浏览器 session；token 总量与任务状态均为真实本地数据，不是 benchmark。</sub></p>
 
 ## 10 家 provider，一个本地接口
 
@@ -54,7 +54,9 @@
 
 ## 三条命令开始使用
 
-需要 Node.js 22.13+；当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。
+需要 Node.js 22.13+ 和 Google Chrome Stable 144 或更新版本；当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。
+
+Setup 前，请在你日常使用的 Chrome 中打开 `chrome://inspect/#remote-debugging`，启用 remote debugging，并确认 Chrome 的连接提示。Tokenless 直接以连接是否成功判断能力，不复制 profile，也不启动另一份浏览器。
 
 ```bash
 npm install --global tokenless@latest
@@ -62,14 +64,16 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-Setup 会创建 managed browser profile、检查已启用的 provider 并打开本地控制台；之后可用 `tokenless dashboard` 再次打开。
+Setup 会创建逻辑 Tokenless profile、连接正在运行的 headed Chrome、检查已启用的 provider 并打开本地控制台；之后可用 `tokenless dashboard` 再次打开。
+
+Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断开自动化连接，不会关闭 Chrome。
 
 ## Agent 可以获得什么
 
 - 通过真实 provider 网站发送 prompt，并读取可见 response 和 citation。
 - 上传文件，并使用已验证的 model、reasoning 和 provider-specific controls。
 - 保留稳定的 provider tab、task continuity 和受支持的 native Project。
-- 将 browser state、credential、job history 和 token 节省估算留在本机。
+- Browser state 和 credential 留在你的 Chrome 中；job history 与 token 节省估算保留在本机。
 
 ## 可选的 Codex 集成
 

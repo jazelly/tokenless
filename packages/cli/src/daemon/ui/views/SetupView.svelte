@@ -1,8 +1,6 @@
 <script lang="ts">
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
-  import BrowserProfileSourcePicker from '../components/BrowserProfileSourcePicker.svelte'
-  import BrowserRuntimePicker from '../components/BrowserRuntimePicker.svelte'
   import type { JsonRecord, Language } from '../types.js'
 
   let {
@@ -10,37 +8,21 @@
     language,
     t,
     busy,
-    browserRuntimeCatalog,
-    oninspectbrowser,
-    oninstallbrowser,
-    onclearbrowserpath,
-    ondiscoverprofiles,
     onsetup,
   }: {
     snapshot: JsonRecord
     language: Language
     t: (key: any) => string
     busy: boolean
-    browserRuntimeCatalog: JsonRecord | null
-    oninspectbrowser: (browser: string, executablePath?: string) => Promise<JsonRecord>
-    oninstallbrowser: (browser: string, repair?: boolean) => Promise<JsonRecord>
-    onclearbrowserpath: (browser: string) => Promise<void>
-    ondiscoverprofiles: (input: JsonRecord) => Promise<JsonRecord>
     onsetup: (config: JsonRecord, profile: JsonRecord) => Promise<void>
   } = $props()
 
   let selectedLanguage = $state<Language>(untrack(() => language))
-  let browser = $state(untrack(() => snapshot.config.browser ?? 'auto'))
-  let browserExecutablePath = $state('')
-  let browserError = $state('')
   let setupError = $state('')
   let errorElement = $state<HTMLDivElement>()
-  let browserVisibility = $state(untrack(() => snapshot.config.browserVisibility ?? 'headed'))
   let slug = $state('default')
   let label = $state(untrack(() => language === 'zh-CN' ? '默认' : 'Default'))
   let roleLabel = $state('')
-  let importSourceId = $state('')
-  let consentLocalProfileCopy = $state(false)
   let enabledProviders = $state<string[]>(untrack(() => Array.isArray(snapshot.config.providerWhitelist)
     ? snapshot.config.providerWhitelist.filter((provider: string) => snapshot.config.updatedAt || provider !== 'gemini')
     : snapshot.providers
@@ -55,40 +37,21 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault()
-    browserError = ''
     setupError = ''
-    if (browserExecutablePath.trim()) {
-      try {
-        const inspection = await oninspectbrowser(browser, browserExecutablePath.trim())
-        if (inspection.ok !== true) {
-          browserError = String(inspection.message || t('browserUnavailable'))
-          await tick()
-          errorElement?.focus()
-          return
-        }
-      } catch (error) {
-        browserError = error instanceof Error ? error.message : t('requestFailed')
-        await tick()
-        errorElement?.focus()
-        return
-      }
-    }
     try {
       await onsetup(
         {
           language: selectedLanguage,
-          browser,
-          browserVisibility,
-          ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
+          browser: 'chrome',
+          browserVisibility: 'headed',
         },
         {
           slug,
           label,
           roleLabel,
           enabledProviders,
-          browserVisibility,
+          browserVisibility: 'headed',
           setDefault: true,
-          ...(['auto', 'managed-chromium', 'cloak'].includes(browser) && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
         },
       )
     } catch (caught) {
@@ -126,28 +89,8 @@
       <div class="setup-row">
         <div class="setup-icon"><Monitor size={19} /></div>
         <div class="setup-fields browser-setup-fields">
-          <BrowserRuntimePicker
-            bind:browser
-            bind:executablePath={browserExecutablePath}
-            catalog={browserRuntimeCatalog}
-            {t}
-            {busy}
-            pathConfigured={snapshot.config.browserExecutablePathConfigured === true}
-            configuredBrowser={snapshot.config.browser}
-            testId="setup"
-            oninspect={oninspectbrowser}
-            oninstall={oninstallbrowser}
-            onclear={onclearbrowserpath}
-          />
-          {#if browserError}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1"><span>{browserError}</span></div>{/if}
-          <label class="field">
-            <span>{t('visibility')}</span>
-            <select name="browserVisibility" bind:value={browserVisibility} data-testid="setup-visibility">
-              <option value="auto">auto</option>
-              <option value="headed">headed</option>
-              <option value="headless">headless</option>
-            </select>
-          </label>
+          <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native Google Chrome</strong></div>
+          <p class="form-note">Chrome 144+ · chrome://inspect/#remote-debugging</p>
         </div>
       </div>
 
@@ -168,17 +111,6 @@
             <span>{t('role')} <small>{t('optional')}</small></span>
             <input name="roleLabel" bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="setup-role" />
           </label>
-          {#if ['auto', 'managed-chromium', 'cloak'].includes(browser)}
-            <BrowserProfileSourcePicker
-              bind:sourceId={importSourceId}
-              bind:consent={consentLocalProfileCopy}
-              {t}
-              {busy}
-              testId="setup"
-              targetBrowser={browser}
-              ondiscover={ondiscoverprofiles}
-            />
-          {/if}
           <fieldset class="fieldset setup-providers">
             <legend>{t('chooseProviders')}</legend>
             <div class="provider-pills">
@@ -204,7 +136,7 @@
 
       <div class="setup-actions">
         <span>localhost</span>
-        <button class="button primary" type="submit" disabled={busy || !enabledProviders.length || (['auto', 'managed-chromium', 'cloak'].includes(browser) && importSourceId !== '' && !consentLocalProfileCopy)} data-testid="finish-setup">
+        <button class="button primary" type="submit" disabled={busy || !enabledProviders.length} data-testid="finish-setup">
           {#if busy}<span class="spinner mini"></span>{/if}{t('finishSetup')} <ChevronRight size={16} />
         </button>
       </div>

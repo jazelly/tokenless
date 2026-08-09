@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Calculator, Clipboard, Moon, PauseCircle, ShieldCheck } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
-  import BrowserRuntimePicker from '../components/BrowserRuntimePicker.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
   import { stateLabel } from '../localization.js'
@@ -12,10 +11,6 @@
     language,
     t,
     busy,
-    browserRuntimeCatalog,
-    oninspectbrowser,
-    oninstallbrowser,
-    onclearbrowserpath,
     onmutate,
     ontoast,
   }: {
@@ -23,18 +18,11 @@
     language: Language
     t: (key: any) => string
     busy: boolean
-    browserRuntimeCatalog: JsonRecord | null
-    oninspectbrowser: (browser: string, executablePath?: string) => Promise<JsonRecord>
-    oninstallbrowser: (browser: string, repair?: boolean) => Promise<JsonRecord>
-    onclearbrowserpath: (browser: string) => Promise<void>
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
     ontoast: (message: string) => void
   } = $props()
 
   let selectedLanguage = $state(untrack(() => snapshot.config.language as Language))
-  let browser = $state(untrack(() => snapshot.config.browser))
-  let browserExecutablePath = $state('')
-  let browserVisibility = $state(untrack(() => snapshot.config.browserVisibility))
   let formError = $state('')
   let errorElement = $state<HTMLDivElement>()
 
@@ -47,18 +35,9 @@
   async function save(event: SubmitEvent) {
     event.preventDefault()
     formError = ''
-    const body: JsonRecord = { language: selectedLanguage, browser, browserVisibility }
-    if (browserExecutablePath.trim()) body.browserExecutablePath = browserExecutablePath.trim()
+    const body: JsonRecord = { language: selectedLanguage, browser: 'chrome', browserVisibility: 'headed' }
     try {
-      if (browserExecutablePath.trim()) {
-        const inspection = await oninspectbrowser(browser, browserExecutablePath.trim())
-        if (inspection.ok !== true) {
-          await showFormError(String(inspection.message || t('browserUnavailable')))
-          return
-        }
-      }
       await onmutate('/config', body, 'PATCH')
-      browserExecutablePath = ''
     } catch (error) {
       await showFormError(error instanceof Error ? error.message : t('requestFailed'))
     }
@@ -163,21 +142,9 @@
     <section class="settings-section system-card">
       <div class="settings-section-title"><h2>{t('runtime')}</h2><ShieldCheck size={17} /></div>
       <div class="form-stack">
-        <BrowserRuntimePicker
-          bind:browser
-          bind:executablePath={browserExecutablePath}
-          catalog={browserRuntimeCatalog}
-          {t}
-          {busy}
-          pathConfigured={snapshot.config.browserExecutablePathConfigured === true}
-          configuredBrowser={snapshot.config.browser}
-          testId="config"
-          allowRepair={true}
-          oninspect={oninspectbrowser}
-          oninstall={oninstallbrowser}
-          onclear={onclearbrowserpath}
-        />
-        <label class="field"><span>{t('defaultVisibility')}</span><select name="browserVisibility" bind:value={browserVisibility} data-testid="config-visibility"><option value="auto">auto</option><option value="headed">headed</option><option value="headless">headless</option></select></label>
+        <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native Google Chrome</strong></div>
+        <div class="field read-only-field"><span>{t('defaultVisibility')}</span><strong>headed</strong></div>
+        <p class="form-note">Chrome 144+ · chrome://inspect/#remote-debugging</p>
       </div>
     </section>
     <div class="system-actions">

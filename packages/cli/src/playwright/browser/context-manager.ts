@@ -72,7 +72,7 @@ export type ManagedBrowserLaunchTarget = {
   e2eInspection?: boolean | undefined
   e2eHostResolverRule?: string | undefined
   runtimeId?: string | undefined
-  launchPolicy?: 'standard' | 'cloak' | 'test-profile' | undefined
+  launchPolicy?: 'standard' | 'cloak' | 'test-profile' | 'native' | undefined
 }
 
 export type ManagedBrowserResolver = (
@@ -86,6 +86,8 @@ type ActiveContext = {
   browserContext: BrowserContext
   pagesByKey: Map<string, Page>
   reservedPagesByKey: Map<string, Page>
+  ownedPages: Set<Page>
+  reuseExistingPages: boolean
   closeBrowser: () => Promise<void>
   detachBrowser: () => Promise<void>
   closePromise?: Promise<void> | undefined
@@ -98,6 +100,7 @@ type LaunchedManagedContext = {
   effectiveVisibility: EffectiveBrowserVisibility
   closeBrowser: () => Promise<void>
   detachBrowser: () => Promise<void>
+  reuseExistingPages: boolean
 }
 
 type ResidentLaunchCandidate = {
@@ -176,8 +179,10 @@ export class PersistentContextManager {
     visibility: BrowserVisibility = 'headed'
   ): Promise<ManagedBrowserContext> {
     const requestedVisibility = validateRequestedVisibility(visibility)
-    const effectiveVisibility = resolveEffectiveBrowserVisibility(requestedVisibility)
     const browserTarget = normalizeManagedBrowserLaunchTarget(await this.browserResolver(profile))
+    const effectiveVisibility = browserTarget.launchPolicy === 'native'
+      ? nativeChromeVisibility(requestedVisibility)
+      : resolveEffectiveBrowserVisibility(requestedVisibility)
     const existing = this.contexts.get(profile.id)
     if (
       existing &&
@@ -226,12 +231,14 @@ export class PersistentContextManager {
           if (!isMissingFileError(error)) throw error
         })
       }
-      const launched = await launchCdpManagedContext(
-        profile.directory,
-        managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
-        browserTarget,
-        requestedVisibility,
-      )
+      const launched = browserTarget.launchPolicy === 'native'
+        ? await connectNativeChromeContext(requestedVisibility)
+        : await launchCdpManagedContext(
+            profile.directory,
+            managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
+            browserTarget,
+            requestedVisibility,
+          )
       const { browserContext } = launched
       if (this.shuttingDown) {
         await launched.closeBrowser().catch(() => undefined)
@@ -244,6 +251,8 @@ export class PersistentContextManager {
         browserContext,
         pagesByKey: new Map(),
         reservedPagesByKey: new Map(),
+        ownedPages: new Set(),
+        reuseExistingPages: launched.reuseExistingPages,
         closeBrowser: launched.closeBrowser,
         detachBrowser: launched.detachBrowser,
         browserTarget,
@@ -309,16 +318,18 @@ export class PersistentContextManager {
         if (existing && !existing.isClosed()) return existing
         if (existing) active.pagesByKey.delete(key)
 
-        const pages = active.browserContext.pages().filter((page) => !page.isClosed())
+        const pages = active.browserContext.pages().filter((page) => (
+          !page.isClosed() && (active.reuseExistingPages || active.ownedPages.has(page))
+        ))
         const claimedPages = new Set([
           ...active.pagesByKey.values(),
           ...active.reservedPagesByKey.values(),
         ])
         const replaceablePages = pages.filter((candidate) => !new Set(active.reservedPagesByKey.values()).has(candidate))
         const page = policy === 'replace'
-          ? replaceablePages.at(-1) ?? await createBackgroundPage(active.browserContext)
+          ? replaceablePages.at(-1) ?? await createOwnedBackgroundPage(active)
           : pages.find((candidate) => !claimedPages.has(candidate) && candidate.url() === 'about:blank')
-            ?? await createBackgroundPage(active.browserContext)
+            ?? await createOwnedBackgroundPage(active)
         if (policy === 'replace') {
           for (const [claimedKey, claimedPage] of active.pagesByKey) {
             if (claimedPage === page) active.pagesByKey.delete(claimedKey)
@@ -343,8 +354,13 @@ export class PersistentContextManager {
           ...active.reservedPagesByKey.values(),
         ])
         const page = active.browserContext.pages()
-          .find((candidate) => !candidate.isClosed() && !claimedPages.has(candidate) && candidate.url() === 'about:blank')
-          ?? await createBackgroundPage(active.browserContext)
+          .find((candidate) => (
+            !candidate.isClosed() &&
+            (active.reuseExistingPages || active.ownedPages.has(candidate)) &&
+            !claimedPages.has(candidate) &&
+            candidate.url() === 'about:blank'
+          ))
+          ?? await createOwnedBackgroundPage(active)
         active.reservedPagesByKey.set(key, page)
         page.once('close', () => {
           if (active.reservedPagesByKey.get(key) === page) active.reservedPagesByKey.delete(key)
@@ -382,6 +398,13 @@ export class PersistentContextManager {
     await active.closePromise
   }
 
+}
+
+async function createOwnedBackgroundPage(active: ActiveContext): Promise<Page> {
+  const page = await createBackgroundPage(active.browserContext)
+  active.ownedPages.add(page)
+  page.once('close', () => active.ownedPages.delete(page))
+  return page
 }
 
 async function createBackgroundPage(browserContext: BrowserContext): Promise<Page> {
@@ -425,6 +448,53 @@ async function createBackgroundPage(browserContext: BrowserContext): Promise<Pag
     'Chromium created a background target but Playwright did not expose its page.',
     { retryable: true, details: { targetId } },
   )
+}
+
+function nativeChromeVisibility(visibility: BrowserVisibility): EffectiveBrowserVisibility {
+  if (visibility === 'headless') {
+    throw tokenlessError(
+      'native_chrome_headless_unsupported',
+      'Native Chrome uses the browser already opened by the user and supports headed mode only.',
+    )
+  }
+  return 'headed'
+}
+
+async function connectNativeChromeContext(
+  visibility: BrowserVisibility,
+): Promise<LaunchedManagedContext> {
+  nativeChromeVisibility(visibility)
+  let browser: Browser
+  try {
+    browser = await chromium.connectOverCDP('chrome')
+  } catch (cause) {
+    throw tokenlessError(
+      'native_chrome_connection_unavailable',
+      'Could not connect to the running Google Chrome. Tokenless native mode requires Chrome 144 or newer. Open chrome://inspect/#remote-debugging, allow remote debugging for this browser instance, and approve the connection request.',
+      { retryable: true, cause },
+    )
+  }
+  const contexts = browser.contexts()
+  if (contexts.length !== 1 || !contexts[0]) {
+    await browser.close().catch(() => undefined)
+    throw tokenlessError(
+      'native_chrome_context_unavailable',
+      'The connected Google Chrome did not expose its default browser context.',
+      { retryable: true },
+    )
+  }
+  let disconnecting: Promise<void> | undefined
+  const disconnect = () => {
+    disconnecting ??= browser.close()
+    return disconnecting
+  }
+  return {
+    browserContext: contexts[0],
+    effectiveVisibility: 'headed',
+    reuseExistingPages: false,
+    closeBrowser: disconnect,
+    detachBrowser: disconnect,
+  }
 }
 
 async function launchCdpManagedContext(
@@ -492,6 +562,7 @@ async function launchCdpManagedContext(
     return {
       browserContext: contexts[0],
       effectiveVisibility: launchOptions.headless ? 'headless' : 'headed',
+      reuseExistingPages: true,
       closeBrowser() {
         closing ??= closeCdpManagedBrowser(browser, browserProcess, browserExit)
           .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))
@@ -554,6 +625,7 @@ async function connectExistingCdpManagedContext({
     return {
       browserContext: contexts[0],
       effectiveVisibility: residentSession.effectiveVisibility,
+      reuseExistingPages: true,
       closeBrowser() {
         closing ??= closeConnectedCdpManagedBrowser(connectedBrowser, residentSession.pid)
           .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))

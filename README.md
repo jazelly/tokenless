@@ -24,7 +24,7 @@
   <img src="assets/dashboard-hero.png" alt="Real Tokenless dashboard showing 2,475 estimated output tokens saved and one running Kimi job" width="1600">
 </p>
 
-<p align="center"><sub>Captured from a real managed Cloak profile; token totals and job states are actual local dashboard data, not a benchmark.</sub></p>
+<p align="center"><sub>Captured from a real local browser session; token totals and job states are actual local dashboard data, not a benchmark.</sub></p>
 
 ## 10 providers. One local interface.
 
@@ -54,7 +54,9 @@ See the [Capability Matrix](docs/capability-matrix.md) for the verified workflow
 
 ## Start in three commands
 
-Requires Node.js 22.13+; Apple Silicon macOS is the current target, and Windows x64 remains prerelease.
+Requires Node.js 22.13+ and stable Google Chrome 144 or newer. Apple Silicon macOS is the current target, and Windows x64 remains prerelease.
+
+Before setup, open `chrome://inspect/#remote-debugging` in your everyday Chrome, enable remote debugging, and approve Chrome's connection prompt. Tokenless tests capability by connecting; it does not copy your profile or launch another browser.
 
 ```bash
 npm install --global tokenless@latest
@@ -62,14 +64,16 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-Setup creates a managed browser profile, checks enabled providers, and opens the local dashboard; reopen it later with `tokenless dashboard`.
+Setup creates a logical Tokenless profile, connects to your running headed Chrome, checks enabled providers, and opens the local dashboard; reopen it later with `tokenless dashboard`.
+
+Native mode is headed-only for now. Stopping or restarting the Tokenless daemon disconnects automation but does not close Chrome.
 
 ## What agents get
 
 - Prompts, visible responses, and citations through real provider websites.
 - File uploads plus verified model, reasoning, and provider-specific controls.
 - Stable provider tabs, task continuity, and supported native Projects.
-- Local browser state, credentials, job history, and token-savings estimates.
+- Browser state and credentials remain in your Chrome; job history and token-savings estimates remain local.
 
 ## Optional Codex integration
 

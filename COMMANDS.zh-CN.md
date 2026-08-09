@@ -17,13 +17,11 @@
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
-| `tokenless profiles discover` | 读取已知 Chromium profile 的安全目录/版本元数据，并分类 import compatibility。 | 否 |
-| `tokenless profiles add` | 创建 clean managed browser profile，或执行符合条件的实验性导入。 | 否 |
+| `tokenless profiles add` | 创建用于 tab 与 provider preferences 的逻辑 Tokenless profile。 | 否 |
 | `tokenless profiles list` | 列出 profiles 及其最后保存的 provider 检查结果。 | 否 |
 | `tokenless profiles status` | 实时检查一家 provider，并把结果保存到 profile registry。 | 是 |
 | `tokenless profiles open` | 以 headed browser 打开 managed profile，可选择是否导航到 provider。 | 可选 |
 | `tokenless profiles set-default` | 设置默认 managed profile。 | 否 |
-| `tokenless profiles reset` | 在再次同意并重新校验兼容性后，从已记录来源重新导入 imported profile。 | 否 |
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
@@ -66,7 +64,7 @@ dola
 
 ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi 和 Dola 目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
 
-Runtime browser 可选值为 `auto`、`chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。新 setup 中，`auto` 会解析为按平台固定版本的 `managed-chromium`；显式 system-browser 值继续用于已有或 advanced 配置。`cloak` 必须显式选择。Tokenless 新建的 profile 为 clean 且绑定 runtime。实验性 opaque profile copy 只在创建 CloakBrowser profile 时提供，需要 `--consent-local-profile-copy`，并且只接受版本兼容的 Google Chrome 来源。
+Tokenless 使用 native mode：Playwright 直接连接用户已经运行的 Google Chrome Stable。需要 Chrome 144+；请在 `chrome://inspect/#remote-debugging` 启用 remote debugging，并确认 Chrome 的连接提示。连接成功就是 capability check。Native mode 目前只支持 headed，且不会复制 browser profile。
 
 ### 短选项
 
@@ -74,7 +72,6 @@ Runtime browser 可选值为 `auto`、`chrome`、`edge`、`chromium`、`chrome-f
 
 - `-P <slug>` 是 `--profile <slug>` 的短形式。
 - `-p <provider>` 是 `--provider <provider>` 的短形式。
-- Setup 中的 `-f` 是 `--fresh` 的短形式。
 - `-v` 是 `--verbose` 的短形式。
 - `-V` 是 `--version` 的短形式。
 
@@ -94,7 +91,7 @@ Runtime browser 可选值为 `auto`、`chrome`、`edge`、`chromium`、`chrome-f
 | `--daemon-url <url>` | 设置首选 loopback daemon URL。若其端口被占用，Tokenless 可顺延到下一个空闲端口，并把实际 endpoint 记录到 SQLite。 |
 | `--agent-kind <kind>` | 将 job 或 replay drain 定向到显式 agent kind；必须与 `--agent-session-id` 同时使用。 |
 | `--agent-session-id <id>` | 将 job 或 replay drain 定向到显式 agent session；必须与 `--agent-kind` 同时使用。 |
-| `--browser-visibility <auto\|headed\|headless>` | 选择浏览器可见性策略。 |
+| `--browser-visibility <headed>` | Native Chrome 目前只支持 headed。 |
 | `--timeout-ms <ms>` | 覆盖命令或 job 的等待时间。 |
 | `--daemon-start-timeout-ms <ms>` | 覆盖 daemon 启动等待时间。 |
 | `--runner-heartbeat-timeout-ms <ms>` | 为兼容保留；embedded Playwright runtime 会忽略它。 |
@@ -157,39 +154,25 @@ tokenless install --browsers chrome,edge --json
 tokenless setup
 ```
 
-非交互创建或复用 clean profile：
+非交互创建或复用逻辑 profile：
 
 ```bash
-tokenless setup --profile default --fresh --json
-tokenless setup --anti-detect --profile cloak-default --fresh --json
-tokenless setup --browser managed-chromium --profile managed-default --fresh --json
-tokenless setup --install-codex --codex-home <dir> --profile default --fresh --json
+tokenless setup --profile default --defaults --json
+tokenless setup --install-codex --codex-home <dir> --profile default --defaults --json
 ```
 
 主要选项：
 
-- `--profile <slug>` 选择或命名 managed profile。
+- `--profile <slug>` 选择或命名逻辑 Tokenless profile。
 - `--install-codex` 在 setup 中显式安装可选的 Codex guidance、native hooks 和 skills。
 - `--codex-home <dir>` 选择自定义 Codex state root，并且必须与 `--install-codex` 同时使用。
-- `--anti-detect` 显式选择 catalog 锁定的 CloakBrowser runtime，并在非交互 setup 中确认使用 clean 且绑定 Cloak 的 profile。显式 `--browser cloak` 具有相同确认语义；仅有已保存的 Cloak preference 会在下载前失败。
 - `--provider-whitelist <list>` 在非交互 setup 中设置该 profile 的 provider membership。
 - `--no-open` 完成 setup，但不打开控制台。
-- `--browser <browser>` 选择 `auto`、一个精确 system browser、`managed-chromium` 或 `cloak`。
-- `--no-browser-download` 在缺少 managed runtime 时直接失败，而不是下载。
-- `--repair-browser` 显式重新安装所选 `managed-chromium` 或 `cloak` runtime；不能与 `--no-browser-download` 同时使用。
-- `--fresh` 或 `-f` 创建 clean managed profile。
-- `--import-browser-profile <key> --consent-local-profile-copy` 以实验性方式把一个符合条件的 profile 复制进新的 managed Chrome for Testing 或 CloakBrowser profile，并且不解析认证值。Brave 来源还需添加 `--import-browser brave`；默认来源 family 是 Chrome。
 - `--defaults` 选择非交互默认值。
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
 
-`auto` 会解析为按平台固定版本的 Tokenless-managed Chrome for Testing。交互式 setup 会询问是否使用 Anti-Detect；拒绝后选择 managed Chrome for Testing，但不会采用用户已安装的浏览器作为 target。两个 managed target 都默认创建 clean profile。若 cache 中尚不存在，setup 会把经过 checksum 固定的官方 artifact 下载到 `$TOKENLESS_HOME/browser/runtimes`：Apple Silicon macOS 使用 `145.0.7632.6`，Windows x64 使用 `146.0.7680.165`。Browser binary 不会内嵌进 npm package。已有的显式 system-browser selection 继续受支持，并会先验证缓存 executable，再扫描标准安装路径；显式选择但找不到的 system browser 会失败，并给出准确的 config 命令和 dashboard 字段。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
-
-只有明确选择的 system browser 才允许 `browserExecutablePath` 指向 `TOKENLESS_HOME` 外部。`managed-chromium` 与 `cloak` 的路径由 catalog 锁定的 runtime 决定，并位于 `$TOKENLESS_HOME/browser/runtimes`；config 中的任意路径不能替换或绕过该 managed runtime。
-
-Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。Setup 不会为了选择 target 而扫描 system-browser executable。对两个 managed target，实验性 import step 只扫描用户选择的 Google Chrome 或 Brave profile root，读取目录 key 和安全的 `Last Version`，并应用 evidence-bound policy：在 Apple Silicon macOS 上，Chrome major 145 和 Brave Chromium major 143/145 可导入 managed Chrome for Testing 145 或 CloakBrowser 145。Edge、Chromium、Chrome for Testing、Arc、其他来源版本和所有 Windows import 组合都会在复制前失败。选择 profile 即授权 opaque 本地复制；`Start clean` 仍是默认值。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 需要 `--consent-local-profile-copy`，Brave 还需要 `--import-browser brave`。
-
-Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 会创建 clean profile。实验性 Google Chrome import 只能填充新的 CloakBrowser-bound profile。之后由 managed profile 自己跨 job 保留 browser-managed session。未来若提供 managed Chrome for Testing 到 Cloak 的迁移，必须另行取得平台 parity 与认证状态证据；当前产品尚未暴露该能力。
+Setup 会连接用户已经运行的 Google Chrome Stable。Chrome 144+ 必须在 `chrome://inspect/#remote-debugging` 启用 remote debugging，并由用户确认 Chrome 的连接提示。Tokenless 直接以连接成功作为 capability check，不复制 Chrome profile，目前只支持 headed。Daemon 关闭时只断开自动化，不会关闭 Chrome。
 
 交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会依次使用 `--provider-whitelist`、已有 profile 范围或持久化的默认 whitelist。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
 
@@ -345,30 +328,17 @@ tokenless daemon stop --json
 
 该命令会从 SQLite 发现实际 endpoint，也不会因为某个未验证或不兼容的进程占用了首选端口，就直接杀掉该进程。
 
-## Managed Profiles
+## Tokenless Profiles
 
-一个 managed profile 代表一个持久化的本地 browser identity。一个 profile 可以同时保存所有 enabled providers 的 sessions。
-
-### `tokenless profiles discover`
-
-只读取 Chrome、Brave、Edge、Chromium 或 Chrome for Testing 的安全 profile 目录/版本元数据，不复制或修改 browser data。每个 profile 都会返回相对当前平台 Cloak pin 的 compatibility。Discovery 本身不代表 profile 可以被导入，也不会解析 `Local State`。
-
-```bash
-tokenless profiles discover --browser all --json
-tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user-data --json
-```
+一个 Tokenless profile 用于组织已连接 Chrome identity 中的 provider tabs 与 preferences；它不会创建或复制单独的 browser identity。
 
 ### `tokenless profiles add`
 
-创建 clean managed profile；或者经明确同意后，以实验性方式把符合条件的 macOS Google Chrome/Brave profile 复制进 managed Chrome for Testing 145 或 CloakBrowser 145 profile：
+创建逻辑 Tokenless profile：
 
 ```bash
 tokenless profiles add -P work --label "Work" --set-default --json
-tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
-tokenless profiles add -P brave-work --browser managed-chromium --import-browser-profile Default --import-browser brave --consent-local-profile-copy --set-default --json
 ```
-
-复制只发生在本机，并保持 opaque。Tokenless 会复制文件系统条目，但不会检查或报告 cookies、storage、密码、tokens 或 Keychain 数据。Arc 不受支持；Windows 和所有不在已记录 matrix 中的 source/target/version 组合都会 fail closed。
 
 ### `tokenless profiles list`
 
@@ -410,14 +380,6 @@ tokenless profiles open -P work -p claude --json
 
 ```bash
 tokenless profiles set-default -P work --json
-```
-
-### `tokenless profiles reset`
-
-使用记录的本机来源重新进行一次 opaque copy，并替换已导入的 managed profile。每次都必须再次明确同意。
-
-```bash
-tokenless profiles reset -P work --consent-local-profile-copy --json
 ```
 
 ### `tokenless profiles clear`
@@ -769,12 +731,9 @@ tokenless prompt \
 | `tokenless provider-auth-status` | `tokenless provider-status` |
 | `tokenless inspect-provider-controls` | `tokenless provider-controls` |
 | `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
-| `--import-chrome-profile` | `--import-browser-profile` |
-| `--chrome-user-data-dir` | `--browser-user-data-dir` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
 | `--conversation-key` | `--idempotency-key` |
-| `--clean-profile` | `--fresh` |
 
 ## 状态与副作用总结
 

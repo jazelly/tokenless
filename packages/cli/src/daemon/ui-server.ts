@@ -95,22 +95,6 @@ export class TokenlessUiServer {
       this.writeJson(response, 200, snapshot, { etag })
       return true
     }
-    if (method === 'GET' && url.pathname === '/ui-api/v1/browser-runtimes') {
-      this.writeJson(response, 200, await this.services.browserRuntimes())
-      return true
-    }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/browser-runtimes/inspect') {
-      this.writeJson(response, 200, await this.services.inspectBrowserRuntime(await readJson(request)))
-      return true
-    }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/browser-runtimes/install') {
-      this.writeJson(response, 200, await this.services.installBrowserRuntime(await readJson(request)))
-      return true
-    }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/browser-profile-sources/discover') {
-      this.writeJson(response, 200, await this.services.discoverBrowserProfileSources(await readJson(request)))
-      return true
-    }
     const jobMatch = /^\/ui-api\/v1\/jobs\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
     if (jobMatch && method === 'GET' && !jobMatch[2]) {
       this.writeJson(response, 200, await this.services.job(decodeURIComponent(jobMatch[1] ?? '')))
@@ -150,7 +134,7 @@ export class TokenlessUiServer {
       this.writeJson(response, 201, await this.services.createProfile(await readJson(request)))
       return true
     }
-    const profileMatch = /^\/ui-api\/v1\/profiles\/([^/]+)(?:\/(open|reimport))?$/.exec(url.pathname)
+    const profileMatch = /^\/ui-api\/v1\/profiles\/([^/]+)(?:\/(open))?$/.exec(url.pathname)
     if (profileMatch && method === 'PATCH' && !profileMatch[2]) {
       this.writeJson(response, 200, await this.services.updateProfile(
         decodeURIComponent(profileMatch[1] ?? ''),
@@ -164,13 +148,6 @@ export class TokenlessUiServer {
     }
     if (profileMatch && method === 'POST' && profileMatch[2] === 'open') {
       this.writeJson(response, 200, await this.services.openProfile(decodeURIComponent(profileMatch[1] ?? '')))
-      return true
-    }
-    if (profileMatch && method === 'POST' && profileMatch[2] === 'reimport') {
-      this.writeJson(response, 200, await this.services.reimportProfile(
-        decodeURIComponent(profileMatch[1] ?? ''),
-        await readJson(request),
-      ))
       return true
     }
     const profileReadinessMatch = /^\/ui-api\/v1\/profiles\/([^/]+)\/providers\/actions\/readiness$/.exec(url.pathname)

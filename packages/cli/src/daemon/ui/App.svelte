@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { Blocks, LayoutDashboard, ListChecks, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
   import { DashboardClient } from './dashboard-client.js'
-  import { translate, translateError } from './localization.js'
+  import { translate } from './localization.js'
   import CapabilitiesView from './views/CapabilitiesView.svelte'
   import JobsView from './views/JobsView.svelte'
   import OverviewView from './views/OverviewView.svelte'
@@ -22,10 +22,8 @@
 
   let language = $state<Language>(initialLanguage)
   let snapshot = $state<JsonRecord | null>(null)
-  let browserRuntimeCatalog = $state<JsonRecord | null>(null)
   let offline = $state(false)
   let busy = $state(false)
-  let runtimeBusy = $state(false)
   let readinessBusy = $state(false)
   let fatal = $state('')
   let toast = $state('')
@@ -33,8 +31,6 @@
   let section = $state<Section>(parseSection(location.hash))
   let toastTimer = 0
   let pollTimer = 0
-  let runtimeCatalogTimer = 0
-  let runtimeCatalogRequest: Promise<void> | null = null
   const client = new DashboardClient(() => language)
 
   const navigation = $derived([
@@ -76,7 +72,6 @@
       skipLink?.removeEventListener('click', skipToContent)
       window.clearTimeout(pollTimer)
       window.clearTimeout(toastTimer)
-      window.clearTimeout(runtimeCatalogTimer)
     }
   })
 
@@ -84,7 +79,6 @@
     try {
       await client.authenticate()
       await refresh()
-      runtimeCatalogTimer = window.setTimeout(() => void refreshBrowserRuntimes(), 700)
       schedulePoll()
     } catch (error) {
       fatal = error instanceof Error ? error.message : t('requestFailed')
@@ -94,7 +88,7 @@
   function schedulePoll() {
     window.clearTimeout(pollTimer)
     pollTimer = window.setTimeout(async () => {
-      if (!document.hidden && !busy && !runtimeBusy) await refresh()
+      if (!document.hidden && !busy) await refresh()
       schedulePoll()
     }, 3000)
   }
@@ -149,7 +143,6 @@
     try {
       const result = await client.mutate(path, body, method)
       await refresh()
-      if (path === '/config') void refreshBrowserRuntimes()
       if (announce) showToast(t('updateSaved'))
       return result
     } catch (error) {
@@ -158,20 +151,6 @@
     } finally {
       busy = false
     }
-  }
-
-  async function refreshBrowserRuntimes() {
-    if (runtimeCatalogRequest) return await runtimeCatalogRequest
-    runtimeCatalogRequest = (async () => {
-      try {
-        browserRuntimeCatalog = await client.get('/browser-runtimes')
-      } catch (error) {
-        if (!browserRuntimeCatalog) showToast(error instanceof Error ? error.message : t('requestFailed'))
-      } finally {
-        runtimeCatalogRequest = null
-      }
-    })()
-    await runtimeCatalogRequest
   }
 
   async function refreshProviderReadiness(profileSlug: string) {
@@ -212,48 +191,6 @@
     throw new Error(t('providerReadinessRefreshTimedOut'))
   }
 
-  async function inspectBrowserRuntime(browser: string, executablePath?: string) {
-    runtimeBusy = true
-    try {
-      const result = await client.mutate('/browser-runtimes/inspect', {
-        browser,
-        ...(executablePath ? { browserExecutablePath: executablePath } : {}),
-      }) ?? {}
-      return result.ok === false && typeof result.code === 'string'
-        ? { ...result, message: translateError(language, result.code, String(result.message || '')) }
-        : result
-    } finally {
-      runtimeBusy = false
-    }
-  }
-
-  async function installBrowserRuntime(browser: string, repair = false) {
-    runtimeBusy = true
-    try {
-      const result = await client.mutate('/browser-runtimes/install', { browser, repair }) ?? {}
-      await refreshBrowserRuntimes()
-      showToast(t(repair ? 'runtimeRepaired' : 'runtimeInstalled'))
-      return result
-    } finally {
-      runtimeBusy = false
-    }
-  }
-
-  async function discoverBrowserProfileSources(input: JsonRecord) {
-    runtimeBusy = true
-    try {
-      return await client.mutate('/browser-profile-sources/discover', input) ?? { sources: [] }
-    } finally {
-      runtimeBusy = false
-    }
-  }
-
-  async function clearBrowserExecutablePath(browser: string) {
-    const inspection = await inspectBrowserRuntime(browser)
-    if (inspection.ok !== true) throw new Error(String(inspection.message || t('browserUnavailable')))
-    await mutate('/config', { browser, browserExecutablePath: null }, 'PATCH')
-  }
-
   async function setup(config: JsonRecord, profile: JsonRecord) {
     await mutate('/config', config, 'PATCH', false)
     await mutate('/profiles', profile, 'POST', false)
@@ -290,12 +227,7 @@
     {snapshot}
     {language}
     {t}
-    busy={busy || runtimeBusy}
-    browserRuntimeCatalog={browserRuntimeCatalog}
-    oninspectbrowser={inspectBrowserRuntime}
-    oninstallbrowser={installBrowserRuntime}
-    onclearbrowserpath={clearBrowserExecutablePath}
-    ondiscoverprofiles={discoverBrowserProfileSources}
+    {busy}
     onsetup={setup}
   />
 {:else}
@@ -336,7 +268,7 @@
       {#if section === 'overview'}
         <OverviewView {snapshot} {selectedProfile} {language} {t} {readinessBusy} onrefreshreadiness={refreshProviderReadiness} />
       {:else if section === 'profiles'}
-        <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} ondiscoverprofiles={discoverBrowserProfileSources} />
+        <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
       {:else if section === 'providers'}
         <ProvidersView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
       {:else if section === 'capabilities'}
@@ -348,11 +280,7 @@
           {snapshot}
           {language}
           {t}
-          busy={busy || runtimeBusy}
-          browserRuntimeCatalog={browserRuntimeCatalog}
-          oninspectbrowser={inspectBrowserRuntime}
-          oninstallbrowser={installBrowserRuntime}
-          onclearbrowserpath={clearBrowserExecutablePath}
+          {busy}
           onmutate={mutate}
           ontoast={showToast}
         />

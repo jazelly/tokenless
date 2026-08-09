@@ -59,8 +59,6 @@ const ZH_TEXT = new Map<string, string>([
   ['Choose a browser', '选择浏览器'],
   ['Choose the browser Tokenless should use.', '选择 Tokenless 要使用的浏览器。'],
   ['Anti-Detect mode', 'Anti-Detect 反爬模式'],
-  ['Managed browser profile import', 'Managed browser profile 导入'],
-  ['Experimental browser profile compatibility', '实验性 browser profile 兼容性'],
   ['Preparing automatic browser selection', '准备自动 browser selection'],
   ['Preparing Tokenless-managed Chrome for Testing', '准备由 Tokenless 管理的 Chrome for Testing'],
   ['Preparing CloakBrowser', '准备 CloakBrowser'],
@@ -71,19 +69,10 @@ const ZH_TEXT = new Map<string, string>([
   ['Invalid Tokenless browser; expected auto, a supported system browser, managed-chromium, or cloak.', '无效的 Tokenless browser；应为 auto、受支持的 system browser、managed-chromium 或 cloak。'],
   ['Invalid Tokenless browser executable path; expected null or an absolute path.', '无效的 Tokenless browser executable path；应为 null 或绝对路径。'],
   ['Browser executable path must be absolute.', 'Browser executable path 必须是绝对路径。'],
-  ['Profiles start clean by default in the platform-pinned Tokenless-managed browser. On Apple Silicon macOS, experimental opaque import supports Google Chrome 145 and Brave Chromium 143 or 145 for managed Chrome for Testing 145 or CloakBrowser 145; it does not guarantee sign-in-state transfer.', 'Profile 默认在按平台固定版本、由 Tokenless 管理的浏览器中从 clean 状态开始。在 Apple Silicon macOS 上，实验性 opaque 导入支持 Google Chrome 145 和 Brave Chromium 143 或 145，目标可为 managed Chrome for Testing 145 或 CloakBrowser 145；不保证登录状态能够迁移。'],
-  ['Experimental profile import requires Tokenless-managed Chrome for Testing or CloakBrowser.', '实验性 profile 导入需要使用 Tokenless-managed Chrome for Testing 或 CloakBrowser。'],
   ['Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser if needed.', '是否使用 Anti-Detect 模式？如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser。'],
-  ['Google Chrome and Brave profile import is experimental. Only verified macOS source versions are eligible, and a profile opening successfully does not guarantee that sign-in state transfers.', 'Google Chrome 和 Brave profile 导入属于实验性功能。只有已经验证的 macOS 来源版本符合条件，而且 profile 能成功打开也不代表登录状态一定能够迁移。'],
-  ['Discovery checks only profile directory names and browser versions; it does not read authentication values.', '发现阶段只检查 profile 目录名和浏览器版本，不读取认证值。'],
-  ['No local Google Chrome or Brave profiles were found.', '未找到本机 Google Chrome 或 Brave profile。'],
-  ['Experimental browser profile import', '实验性 browser profile 导入'],
-  ['Google Chrome major 145 and Brave Chromium major 143 or 145 are eligible on Apple Silicon macOS. Edge, Chromium, Chrome for Testing, Arc, other versions, and Windows sources are not eligible.', 'Apple Silicon macOS 上允许 Google Chrome major 145，以及 Brave Chromium major 143 或 145。Edge、Chromium、Chrome for Testing、Arc、其他版本和 Windows 来源均不可导入。'],
-  ['Selecting an existing profile explicitly authorizes Tokenless to copy that entire profile folder into the managed profile as an opaque local filesystem tree. Tokenless does not inspect cookies, tokens, browser storage, or other authentication values.', '选择现有 profile 即明确授权 Tokenless 将整个 profile 文件夹作为 opaque 本地文件树复制到 managed profile。Tokenless 不会检查 cookies、tokens、browser storage 或其他认证值。'],
   ['Start clean', '从 clean profile 开始'],
   ['Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.', '非交互 CloakBrowser setup 必须通过显式的 --anti-detect 或 --browser cloak 进行确认。'],
   ['--browser-user-data-dir requires one explicit browser instead of all.', '--browser-user-data-dir 必须指定一个具体浏览器，不能使用 all。'],
-  ['--import-browser requires --import-browser-profile.', '--import-browser 必须与 --import-browser-profile 一起使用。'],
   ['Browser profile discovery supports all, Chrome, Brave, Edge, Chromium, or Chrome for Testing.', 'Browser profile discovery 支持 all、Chrome、Brave、Edge、Chromium 或 Chrome for Testing。'],
   ['Checks visible sign-in state without submitting a prompt.', '检查可见的登录状态，不会提交 prompt。'],
   ['Supported providers (all are enabled by default):', '支持的 provider（默认全部启用）：'],
@@ -139,7 +128,6 @@ const ZH_TEXT = new Map<string, string>([
   ['Tokenless Codex guidance and hook handlers were removed without changing other Codex instructions or hooks.', 'Tokenless Codex guidance 和 hook handlers 已移除；其他 Codex instructions 与 hooks 未被修改。'],
   ['--task-id cannot replace the conversation identity supplied by the Tokenless Codex hook.', '--task-id 不能替换 Tokenless Codex hook 提供的 conversation identity。'],
   ['Invalid Tokenless language; expected en or zh-CN.', '无效的 Tokenless language；应为 en 或 zh-CN。'],
-  ['Profile import supports Google Chrome and compatible Brave profiles only.', 'Profile 导入仅支持 Google Chrome 和符合条件的 Brave profile。'],
   ['Proxy configuration requires --profile <slug>.', 'Proxy 配置必须提供 --profile <slug>。'],
   ['--profile can scope only provider membership, browser visibility, and proxy settings.', '--profile 只能限定 provider membership、browser visibility 和 proxy 设置。'],
   ['--clear-proxy cannot be combined with --proxy-server or --proxy-bypass.', '--clear-proxy 不能与 --proxy-server 或 --proxy-bypass 同时使用。'],
@@ -212,10 +200,6 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^Managed profile '(.+)' is bound to (.+), but Tokenless resolved (.+)\.$/, "Managed profile '$1' 绑定到 $2，但 Tokenless 解析出 $3。")
     .replace(/^Managed profile '(.+)' was created with browser (.+); refusing to open it with older browser (.+)\.$/, "Managed profile '$1' 由 browser $2 创建；拒绝使用更旧的 browser $3 打开。")
     .replace(/^Managed profile '(.+)' is already bound to (.+); create a clean profile for (.+)\.$/, "Managed profile '$1' 已绑定到 $2；请为 $3 创建 clean profile。")
-    .replace(/^Browser profile '(.+)' uses Chromium (.+); this platform's supported CloakBrowser requires (.+)\.$/, "Browser profile '$1' 使用 Chromium $2；当前平台支持的 CloakBrowser 要求 $3。")
-    .replace(/^Browser profile '(.+)' uses Chromium (.+); installed CloakBrowser requires (.+)\.$/, "Browser profile '$1' 使用 Chromium $2；已安装的 CloakBrowser 要求 $3。")
-    .replace(/^Browser profile '(.+)' from (.+) uses Chromium (.+) and is not compatible with (.+) (.+) on (.+)\.$/, "Browser profile '$1' 来自 $2，使用 Chromium $3；它与 $6 上的 $4 $5 不兼容。")
-    .replace(/^Profile import supports Google Chrome and compatible Brave profiles only; (.+) is not supported\.$/, 'Profile 导入仅支持 Google Chrome 和符合条件的 Brave profile；不支持 $1。')
     .replace(/^(.+) download checksum mismatch; refusing to extract the artifact\.$/, '$1 下载文件的 checksum 不匹配；已拒绝解包。')
     .replace(/^(.+) reported browser (.+); expected (.+)\.$/, '$1 报告 browser $2；预期为 $3。')
     .replace(/^(.+) cache reported browser (.+); expected (.+)\.$/, '$1 cache 报告 browser $2；预期为 $3。')

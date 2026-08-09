@@ -129,9 +129,8 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.outputSavings !== undefined && !isOutputSavingsConfig(payload.outputSavings)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  const browser = normalizeBrowserId(payload.browser) ?? 'managed-chromium'
-  const browserExecutablePath = normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
-  validateConfigBrowserExecutablePathScope(homeDir, browser, browserExecutablePath, file)
+  const browser = 'chrome'
+  const browserExecutablePath = null
   return {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
@@ -139,7 +138,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     profilePreferences: normalizeProfilePreferences(payload.profilePreferences),
     browser,
     browserExecutablePath,
-    browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
+    browserVisibility: 'headed',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
     outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
@@ -172,7 +171,6 @@ export async function writeTokenlessConfig({
   const canonicalHome = await fs.realpath(homeDir)
   return await withPrivateSqliteWriterLock(path.join(canonicalHome, 'config.writer.sqlite'), async () => {
     const current = await readTokenlessConfig(homeDir)
-    const nextBrowser = browser === undefined ? current.browser : validateConfigBrowser(browser)
     const config: TokenlessConfig = {
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
@@ -182,25 +180,15 @@ export async function writeTokenlessConfig({
       profilePreferences: profilePreferences === undefined
         ? current.profilePreferences
         : validateProfilePreferences(profilePreferences),
-      browser: nextBrowser,
-      browserExecutablePath: browserExecutablePath === undefined
-        ? (nextBrowser === current.browser ? current.browserExecutablePath : null)
-        : validateConfigBrowserExecutablePath(browserExecutablePath),
-      browserVisibility: browserVisibility === undefined
-        ? current.browserVisibility
-        : validateConfigBrowserVisibility(browserVisibility),
+      browser: 'chrome',
+      browserExecutablePath: null,
+      browserVisibility: 'headed',
       daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
       language: language === undefined ? current.language : validateConfigLanguage(language),
       outputSavings: outputSavings === undefined
         ? current.outputSavings
         : validateOutputSavingsConfig(outputSavings),
     }
-    validateConfigBrowserExecutablePathScope(
-      homeDir,
-      config.browser,
-      config.browserExecutablePath,
-      configPath(homeDir),
-    )
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
   })
@@ -212,9 +200,9 @@ function emptyTokenlessConfig(): TokenlessConfig {
     updatedAt: null,
     providerWhitelist: defaultProviderWhitelist(),
     profilePreferences: {},
-    browser: 'managed-chromium',
+    browser: 'chrome',
     browserExecutablePath: null,
-    browserVisibility: 'auto',
+    browserVisibility: 'headed',
     daemonUrl: null,
     language: 'en',
     outputSavings: { enabled: true },
@@ -265,16 +253,12 @@ function normalizeProfilePreferences(value: unknown): Record<string, ManagedProf
   const preferences: Record<string, ManagedProfilePreferences> = {}
   for (const [profileId, candidate] of Object.entries(value)) {
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(profileId) || !isJsonRecord(candidate)) continue
-    const browserVisibility = normalizeBrowserVisibility(candidate.browserVisibility, 'auto')
-    if (!browserVisibility) continue
-    const proxy = normalizeManagedProfileProxy(candidate.proxy)
-    if (candidate.proxy !== undefined && candidate.proxy !== null && proxy === undefined) continue
     preferences[profileId] = {
       profileId,
       roleLabel: normalizeRoleLabel(candidate.roleLabel),
       enabledProviders: normalizeProviderList(candidate.enabledProviders),
-      browserVisibility,
-      proxy: proxy ?? null,
+      browserVisibility: 'headed',
+      proxy: null,
     }
   }
   return preferences

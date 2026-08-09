@@ -43,21 +43,29 @@
 
 ## Testing
 
-- Test externally observable behavior through real boundaries: built CLI, packaged TypeScript daemon, filesystem, local Chromium/Playwright, or provider website.
+- Test externally observable behavior through real boundaries: built CLI, packaged TypeScript daemon, filesystem, local Google Chrome controlled through Playwright, or provider website.
 - Use focused integration or browser E2E for cross-runner/runtime/provider behavior. Prefer browser proof when feasible.
 - Keep default browser E2E to representative core flows. Cover rare crash/restart or failure injection only when required, reproduced, or visibly material; otherwise use focused real-boundary integration.
 - No unit tests, mocks, fakes, stubs, spies, synthetic fetches, fake runtime/browser objects, injected test doubles, or source/doc regex tests.
 
+### Test Browser Policy
+
+- Every repository test that launches a browser must use the locally installed stable Google Chrome executable resolved through Tokenless's production browser discovery path.
+- Never launch Playwright's bundled Chromium (`chromium.executablePath()`), Google Chrome for Testing, `managed-chromium`, Cloak, or a generic Chromium installation as a test browser.
+- Playwright's `chromium` API may control Google Chrome, but every launch must pass the resolved Google Chrome executable explicitly. Use an isolated test-owned profile; never use a person's everyday Chrome profile for automated tests.
+- Tests may validate metadata, discovery, selection, or configuration for other browser families without launching those browsers. Running an acceptance test against any non-Chrome executable requires an explicit user request for that exact runtime.
+- Every browser test must quiesce all test-owned browser processes in teardown, including after failures. Production browser residency does not authorize tests to leave browsers running.
+
 ### Credential and macOS Keychain Safety
 
-- Browser auth stays opaque in the user-controlled managed profile. After explicit user consent, Tokenless may copy a user-selected browser profile only as an opaque local filesystem tree between user-controlled profiles; it must not parse or expose individual authentication values.
-- Tokenless code, tests, and tooling must never directly inspect, export, log, transmit, decrypt, or dump passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets, and must never call `security`, Keychain APIs, or equivalent tools. The selected browser's normal local Keychain use and an explicitly authorized opaque local profile copy are not secret extraction by Tokenless.
-- On macOS, production managed browsers use the browser's normal Keychain access so the matching runtime can decrypt browser-managed state in its profile. Never add `--password-store=basic` or `--use-mock-keychain` to a production managed-profile launch, and explicitly suppress those Playwright defaults.
+- Browser auth stays opaque in the user's running Google Chrome. Tokenless must not copy or import browser profiles.
+- Tokenless code, tests, and tooling must never directly inspect, export, log, transmit, decrypt, or dump passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets, and must never call `security`, Keychain APIs, or equivalent tools. Chrome's normal local Keychain use is not secret extraction by Tokenless.
+- On macOS, production native mode uses the running Chrome's normal Keychain access. Never add `--password-store=basic` or `--use-mock-keychain` to production browser control.
 - Keychain approval remains a user-controlled security decision. Tokenless may explain why the expected browser is asking and the user may approve it, but tests and automation must never click the prompt, enter a password, or weaken the prompt on the user's behalf.
-- Disposable installer smoke profiles and unauthenticated browser-surface test profiles may stay keychain-neutral. Real-provider E2E using a setup-managed authenticated profile must use the production native credential-storage policy and may pause for manual user approval.
+- Disposable installer smoke profiles and unauthenticated browser-surface test profiles may stay keychain-neutral. Real-provider E2E using the explicitly selected authenticated Chrome must use the production native credential-storage policy and may pause for manual user approval.
 - Keychain safety never permits mocked browser boundaries.
 - For browser-launch changes, verify native credential storage on production managed profiles, keychain neutrality on disposable unauthenticated profiles, enabled Chromium sandboxing, process cleanup, and focused real-boundary completion.
-- Regression guard: production managed-profile launches must remain free of `--password-store=basic` and `--use-mock-keychain`; either flag can prevent a copied profile from using browser state encrypted with the source browser's macOS Keychain material.
+- Regression guard: production native Chrome control must remain free of `--password-store=basic` and `--use-mock-keychain`.
 
 ### Provider DOM Fixture Policy
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, ChevronRight, Ellipsis, ExternalLink, Plus, RefreshCw, Settings2, Star, Trash2, UserRound } from '@lucide/svelte'
+  import { Check, ChevronRight, Ellipsis, ExternalLink, Plus, Settings2, Star, Trash2, UserRound } from '@lucide/svelte'
   import { tick } from 'svelte'
   import Modal from '../components/Modal.svelte'
   import ProfileForm from '../components/ProfileForm.svelte'
@@ -14,7 +14,6 @@
     busy,
     onselect,
     onmutate,
-    ondiscoverprofiles,
   }: {
     snapshot: JsonRecord
     selectedProfile: string
@@ -23,15 +22,12 @@
     busy: boolean
     onselect: (slug: string) => void
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
-    ondiscoverprofiles: (input: JsonRecord) => Promise<JsonRecord>
   } = $props()
 
   let editorOpen = $state(false)
   let creating = $state(false)
   let deleteOpen = $state(false)
   let deleteConfirmation = $state('')
-  let reimportOpen = $state(false)
-  let reimportConsent = $state(false)
   let menuOpen = $state(false)
   let menuButton = $state<HTMLButtonElement>()
   let menuElement = $state<HTMLDivElement>()
@@ -62,20 +58,6 @@
       deleteConfirmation = ''
     } catch {
       // The shared mutation boundary already reports the error.
-    }
-  }
-
-  async function reimportProfile() {
-    if (!profile || !reimportConsent) return
-    try {
-      await onmutate(
-        `/profiles/${encodeURIComponent(profile.slug)}/reimport`,
-        { consentLocalProfileCopy: true },
-      )
-      reimportOpen = false
-      reimportConsent = false
-    } catch {
-      // Keep the confirmation open so the user can retry.
     }
   }
 
@@ -214,7 +196,6 @@
             <div bind:this={menuElement} id="profile-actions-menu" class="popover-menu" role="menu" tabindex="-1" onkeydown={menuKeydown} data-testid="profile-menu-popover">
               <button type="button" role="menuitem" onclick={() => openEditor()}><Settings2 size={15} />{t('edit')}</button>
               {#if !profile.isDefault}<button type="button" role="menuitem" onclick={setDefault}><Star size={15} />{t('setDefault')}</button>{/if}
-              {#if profile.import}<button type="button" role="menuitem" onclick={() => { reimportOpen = true; menuOpen = false }} data-testid="profile-reimport-open"><RefreshCw size={15} />{t('reimportProfile')}</button>{/if}
               <button class="danger-text" type="button" role="menuitem" onclick={() => { deleteOpen = true; menuOpen = false }}><Trash2 size={15} />{t('deleteProfile')}</button>
             </div>
           {/if}
@@ -230,9 +211,8 @@
           <div class="settings-list">
             <div class="settings-row"><span>{t('label')}</span><strong>{profile.label}</strong></div>
             <div class="settings-row"><span>{t('role')}</span><strong>{profile.preferences?.roleLabel || '—'}</strong></div>
-            <div class="settings-row"><span>{t('profileBrowser')}</span><strong translate="no">{profile.runtimeBinding?.browserId ?? snapshot.config.browser}</strong></div>
-            {#if profile.import}<div class="settings-row"><span>{t('profileSource')}</span><strong>{profile.import.browser ?? t('importedProfile')}</strong></div>{/if}
-            <div class="settings-row"><span>{t('visibility')}</span><strong>{profile.preferences?.browserVisibility ?? 'auto'}</strong></div>
+            <div class="settings-row"><span>{t('profileBrowser')}</span><strong translate="no">Native Google Chrome</strong></div>
+            <div class="settings-row"><span>{t('visibility')}</span><strong>headed</strong></div>
           </div>
         </section>
 
@@ -260,7 +240,6 @@
         <section class="settings-section">
           <div class="settings-section-title"><h3>{t('connection')}</h3></div>
           <div class="settings-list">
-            <div class="settings-row"><span>{t('proxy')}</span><strong>{profile.preferences?.proxy?.server ?? t('none')}</strong></div>
             <div class="settings-row"><span>{t('status')}</span><strong class="status-value"><span class="status-dot ok"></span>{profile.lifecycle ? stateLabel(language, profile.lifecycle) : t('profileReady')}</strong></div>
           </div>
         </section>
@@ -271,23 +250,7 @@
 
 {#if editorOpen}
   <Modal title={creating ? t('createProfile') : t('edit')} closeLabel={t('close')} onclose={() => editorOpen = false} wide>
-    <ProfileForm snapshot={snapshot} profile={creating ? undefined : profile} {t} {busy} oncancel={() => editorOpen = false} onsubmit={saveProfile} ondiscoverprofiles={ondiscoverprofiles} />
-  </Modal>
-{/if}
-
-{#if reimportOpen}
-  <Modal title={t('reimportProfile')} closeLabel={t('close')} onclose={() => { reimportOpen = false; reimportConsent = false }}>
-    <div class="form-stack">
-      <p class="form-note prominent-note">{t('reimportProfileHelp')}</p>
-      <label class="consent-row">
-        <input name="consentLocalProfileCopy" type="checkbox" bind:checked={reimportConsent} data-testid="profile-reimport-consent" />
-        <span><strong>{t('profileCopyConsent')}</strong><small>{t('profileCopyConsentHelp')}</small></span>
-      </label>
-      <div class="form-actions">
-        <button class="button secondary" type="button" onclick={() => { reimportOpen = false; reimportConsent = false }}>{t('cancel')}</button>
-        <button class="button primary" type="button" disabled={busy || !reimportConsent} onclick={reimportProfile} data-testid="profile-reimport-confirm">{#if busy}<span class="spinner mini"></span>{/if}{t('reimport')}</button>
-      </div>
-    </div>
+    <ProfileForm snapshot={snapshot} profile={creating ? undefined : profile} {t} {busy} oncancel={() => editorOpen = false} onsubmit={saveProfile} />
   </Modal>
 {/if}
 
