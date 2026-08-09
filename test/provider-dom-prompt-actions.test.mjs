@@ -175,7 +175,7 @@ test('prompt submit reports an actionability timeout when the captured provider 
     assert.equal(submit.ok, false)
     assert.deepEqual(submit.error, {
       code: 'prompt_submit_actionability_timeout',
-      message: 'Timed out after 15000ms waiting for an enabled visible prompt submit control.',
+      message: 'Timed out after 15000ms waiting for an actionable visible prompt submit control.',
       retryable: true,
     })
     assert.ok(elapsedMs >= 14000, `prompt submit returned before the actionability timeout: ${elapsedMs}ms`)

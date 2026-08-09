@@ -79,7 +79,7 @@ export async function canonicalizeLiveProviderTestTarget(target) {
     if (error?.code === 'ENOENT') return path.resolve(target.ordinaryHome)
     throw error
   })
-  assertTestOnlyHome(homeDir)
+  assertTestOnlyHome(homeDir, ordinaryHome)
   return Object.freeze({ ...target, homeDir, ordinaryHome })
 }
 
@@ -161,8 +161,10 @@ export async function resolveDedicatedTestConfig({ env = process.env } = {}) {
     throw new Error('TOKENLESS_TEST_CONFIG must point to a Tokenless config.json file.')
   }
   const homeDir = path.dirname(configPath)
-  const ordinaryHome = path.resolve(nonempty(env.TOKENLESS_HOME) ?? path.join(os.homedir(), '.tokenless'))
-  assertTestOnlyHome(homeDir)
+  const ordinaryHome = await canonicalizeHome(
+    nonempty(env.TOKENLESS_HOME) ?? path.join(os.homedir(), '.tokenless'),
+  )
+  assertTestOnlyHome(homeDir, ordinaryHome)
   const config = await readTokenlessConfig(homeDir)
   const registry = new ManagedProfileRegistry(homeDir)
   const defaultProfile = await registry.resolveProfile()
@@ -219,10 +221,20 @@ export async function withDedicatedTestPage(operation, options = {}) {
   }, options)
 }
 
-function assertTestOnlyHome(homeDir) {
+function assertTestOnlyHome(homeDir, ordinaryHome) {
   if (isWithin(repositoryRoot, homeDir)) {
     throw new Error('Live provider E2E home must remain outside the repository and its worktrees.')
   }
+  if (ordinaryHome && (isWithin(homeDir, ordinaryHome) || isWithin(ordinaryHome, homeDir))) {
+    throw new Error('TOKENLESS_TEST_CONFIG must use a dedicated test home that does not overlap TOKENLESS_HOME.')
+  }
+}
+
+async function canonicalizeHome(homeDir) {
+  return await fs.realpath(path.resolve(homeDir)).catch((error) => {
+    if (error?.code === 'ENOENT') return path.resolve(homeDir)
+    throw error
+  })
 }
 
 function isWithin(root, candidate) {
