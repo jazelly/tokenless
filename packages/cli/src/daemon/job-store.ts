@@ -314,7 +314,7 @@ export class JobStore {
     try {
       this.#db = new DatabaseSync(this.databasePath)
       this.#db.exec('PRAGMA foreign_keys = ON;')
-      this.#db.exec('PRAGMA busy_timeout = 5000;')
+      this.#db.exec('PRAGMA busy_timeout = 250;')
     } catch (error) {
       throw sqliteError(error)
     }
@@ -2046,10 +2046,7 @@ export class JobStore {
   }
 
   private initialize() {
-    this.execWithBusyRetry(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA foreign_keys = ON;
-    `)
+    this.exec('PRAGMA foreign_keys = ON;')
     this.createBaseTables()
     this.ensureWebAiTurnColumns()
     this.migrateJobsTable()
@@ -2068,7 +2065,7 @@ export class JobStore {
   }
 
   private createBaseTables() {
-    this.execWithBusyRetry(`
+    this.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY NOT NULL,
         claim_token TEXT NOT NULL,
@@ -2249,7 +2246,7 @@ export class JobStore {
   }
 
   private createIndexes() {
-    this.execWithBusyRetry(`
+    this.exec(`
       CREATE INDEX IF NOT EXISTS jobs_status_created_at_idx
         ON jobs(status, created_at);
       CREATE INDEX IF NOT EXISTS jobs_provider_action_idx
@@ -2294,8 +2291,7 @@ export class JobStore {
   }
 
   private migrateJobsTable() {
-    this.execWithBusyRetry('BEGIN IMMEDIATE')
-    try {
+    {
       for (const [column, definition] of [
         ['checkpoint_json', 'TEXT'],
         ['resume_json', 'TEXT'],
@@ -2334,14 +2330,6 @@ export class JobStore {
             AND replay_reported_job_updated_at = updated_at
         `)
       }
-      this.exec('COMMIT')
-    } catch (error) {
-      try {
-        this.exec('ROLLBACK')
-      } catch {
-        // The transaction may already have been closed by SQLite after an error.
-      }
-      throw error
     }
   }
 
@@ -2416,20 +2404,6 @@ export class JobStore {
     }
   }
 
-  private execWithBusyRetry(sql: string) {
-    let lastError: unknown
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      try {
-        this.#db.exec(sql)
-        return
-      } catch (error) {
-        if (!isSqliteBusy(error)) throw sqliteError(error)
-        lastError = error
-        sleepSync(50)
-      }
-    }
-    throw sqliteError(lastError)
-  }
 
   private run(sql: string, ...params: SQLInputValue[]) {
     try {
@@ -2461,7 +2435,7 @@ export class JobStore {
   }
 
   private transaction<T>(callback: () => T) {
-    this.exec('BEGIN IMMEDIATE')
+    this.exec('BEGIN')
     try {
       const result = callback()
       this.exec('COMMIT')
@@ -3157,16 +3131,6 @@ function jsonRecord(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function isSqliteBusy(error: unknown) {
-  const candidate = error as { code?: unknown; errcode?: unknown; message?: unknown }
-  return candidate.code === 'ERR_SQLITE_ERROR' &&
-    (candidate.errcode === 5 || String(candidate.message ?? '').includes('database is locked'))
-}
-
-function sleepSync(ms: number) {
-  const buffer = new SharedArrayBuffer(4)
-  Atomics.wait(new Int32Array(buffer), 0, 0, ms)
-}
 
 function restrictFilePermissionsSync(filePath: string) {
   if (process.platform === 'win32' || !fsSync.existsSync(filePath)) return

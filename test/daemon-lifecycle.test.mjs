@@ -721,7 +721,6 @@ function seedStartingRuntimeState(homeDir, { generation, ownerToken, ownerPid })
   const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
   try {
     database.exec(`
-      PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS daemon_runtime_state (
         id TEXT PRIMARY KEY NOT NULL CHECK (id = 'daemon'),
         generation INTEGER NOT NULL,

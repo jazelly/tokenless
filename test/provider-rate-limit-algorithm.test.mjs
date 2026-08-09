@@ -31,7 +31,6 @@ test('provider rate-limit policy projects subscription-aware cadence from durabl
     const token = fs.readFileSync(path.join(homeDir, 'daemon.token'), 'utf8').trim()
     await daemonRequest(daemon.url, token, 'POST', '/control/browser-runtime/quiesce')
     database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
-    database.exec('PRAGMA busy_timeout = 5000;')
 
     const burstBase = Date.now() - 5_000
     replacePromptHistory(database, profile.id, Array.from({ length: 7 }, () => burstBase))
@@ -194,8 +193,7 @@ function createReadyManagedProfile(homeDir) {
 }
 
 function replacePromptHistory(database, profileId, timestamps, modelLabel = null) {
-  database.exec('BEGIN IMMEDIATE; DELETE FROM jobs;')
-  try {
+  database.exec('DELETE FROM jobs;')
     const insert = database.prepare(`INSERT INTO jobs (
       job_id, claim_token, execution_backend, profile_id, provider, action, status,
       request_json, provider_attempts_json, provider_submitted_at, created_at, updated_at
@@ -218,11 +216,6 @@ function replacePromptHistory(database, profileId, timestamps, modelLabel = null
         submittedAt,
       )
     }
-    database.exec('COMMIT')
-  } catch (error) {
-    database.exec('ROLLBACK')
-    throw error
-  }
 }
 
 async function capacity(url, token, profileId, provider, accessClass, tierLabel, subscriptionLabel = null) {
