@@ -182,6 +182,7 @@ type TokenlessPromptOptions = {
   userPrompt?: string
   projectRoot?: string
   files?: string[]
+  hasVisibleAttachments?: boolean
   turnContext?: unknown
   maxFileBytes?: number
   maxTotalBytes?: number
@@ -198,6 +199,7 @@ export async function buildTokenlessPrompt({
   userPrompt,
   projectRoot = process.cwd(),
   files = [],
+  hasVisibleAttachments = false,
   turnContext,
   maxFileBytes = DEFAULT_MAX_FILE_BYTES,
   maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
@@ -229,7 +231,11 @@ export async function buildTokenlessPrompt({
     '',
     '## Relevant Files',
     selectedFiles.length === 0
-      ? 'No relevant files were attached.'
+      ? hasVisibleAttachments
+        ? responseLanguage === 'zh-CN'
+          ? '相关文档将另行作为可见附件提供。'
+          : 'Relevant documents will be supplied separately as visible attachments.'
+        : 'No relevant files were attached.'
       : selectedFiles.map(formatFile).join('\n\n'),
   ].join('\n')
 }
