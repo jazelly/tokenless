@@ -8,7 +8,7 @@ V0 defines serialized messages for capability discovery, one new-conversation bo
 
 `capability-document` reports the protocol version, an opaque `ProviderRef`, and supported capabilities. This slice recognizes only `conversation.chat` and `file.upload`; a start request requires both in that exact order, while discovery may report either or both.
 
-`start-turn-request` creates exactly one new conversation. It carries opaque `ProviderRef` and `ProviderBindingRef`, a finalized short message, and exactly one required `system_prompt` `text/markdown` attachment with an opaque `AttachmentRef`, byte length, and lowercase SHA-256 digest. Preselected Skills are deliberately excluded until a per-attachment receipt transport exists.
+`start-turn-request` creates exactly one new conversation. It carries opaque `ProviderRef` and `ProviderBindingRef`, a finalized short message, exactly one leading `system_prompt` attachment, and up to 32 following `skill` attachments. Every Markdown file has an independent opaque `AttachmentRef`, display name, byte length, and lowercase SHA-256 digest; the files share one atomic visible upload action and one aggregate delivery state.
 
 `turn-state` contains opaque provider, binding, conversation, and turn references. Its lifecycle is `queued`, `running`, `waiting_for_user`, `succeeded`, `failed`, or `cancelled`; dispatch certainty is always `not_dispatched`, `dispatched`, or `ambiguous`. A queued turn is always `not_dispatched` with a pending attachment, and dispatched or ambiguous states always have a delivered attachment.
 

@@ -6,4 +6,4 @@ The package root exposes only strict parsers and TypeScript types. Canonical sch
 
 `tokenless-web-ai-interaction-protocol/local-http` is the private authenticated loopback transport binding. Its caller supplies the daemon origin, bearer token, and markdown bytes directly; it never reads token files, browser profiles, or source paths.
 
-V0 supports one new-conversation bootstrap turn with both required capabilities in fixed order and one required System Prompt attachment. References use kind-specific prefixes plus 32 lowercase hexadecimal characters; it does not implement a transport, authentication, provider runtime, Harness loop, Skills, or per-attachment receipts.
+V0 supports one new-conversation bootstrap turn with both required capabilities in fixed order, one required System Prompt attachment, and up to 32 independent Skill attachments. The local transport stages those files into one upload batch while preserving each file's opaque reference, display name, byte length, and digest. The turn exposes one aggregate delivery state for that atomic batch rather than per-file receipts.

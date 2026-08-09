@@ -66,7 +66,8 @@ export type RejectedAttachmentDelivery = AttachmentDeliveryBase & { status: 'rej
 export type AttachmentDelivery = PendingAttachmentDelivery | DeliveredAttachmentDelivery | RejectedAttachmentDelivery
 
 export type BootstrapAttachment = {
-  kind: 'system_prompt'
+  kind: 'system_prompt' | 'skill'
+  name: string
   attachmentRef: AttachmentRef
   mediaType: 'text/markdown'
   byteLength: number
@@ -75,7 +76,7 @@ export type BootstrapAttachment = {
 
 export type BootstrapStartMessage = {
   text: string
-  attachments: readonly [BootstrapAttachment]
+  attachments: readonly [BootstrapAttachment, ...BootstrapAttachment[]]
 }
 
 export type CapabilityDocument = {

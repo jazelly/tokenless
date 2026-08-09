@@ -475,7 +475,13 @@ async function handleWebAiRequest(
     }
     if (method === 'POST' && action === 'attachments') {
       try {
-        writeJson(response, 200, { attachment: await webAi.stage(bindingRef, request, request.headers['content-type'] as string | undefined) })
+        writeJson(response, 200, { attachment: await webAi.stage(
+          bindingRef,
+          request,
+          request.headers['content-type'] as string | undefined,
+          request.headers['x-tokenless-attachment-name'] as string | undefined,
+          request.headers['x-tokenless-bundle-with'] as string | undefined,
+        ) })
       } catch {
         throw invalidInput('web ai attachment could not be staged')
       }

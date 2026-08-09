@@ -543,7 +543,7 @@ export class JobStore {
     turn_ref: string
     binding_ref: string
     conversation_ref: string
-    attachment_ref: string
+    attachment_refs: readonly string[]
     request_ref: string
     request_sha256: string
     job: CreateJobInput
@@ -554,8 +554,9 @@ export class JobStore {
     const requestSha256 = webAiRequestSha256(input.request_sha256)
     const binding = this.getWebAiBinding(input.binding_ref)
     if (!binding) throw invalidInput('web ai provider binding was not found')
-    const attachment = this.getWebAiStagedAttachment(input.attachment_ref)
-    if (!attachment || attachment.binding_ref !== binding.binding_ref) {
+    const attachments = input.attachment_refs.map((attachmentRef) => this.getWebAiStagedAttachment(attachmentRef))
+    const attachment = attachments[0]
+    if (!attachment || attachments.some((candidate) => !candidate || candidate.binding_ref !== binding.binding_ref || candidate.bundle_id !== attachment.bundle_id)) {
       throw invalidInput('web ai staged attachment was not found')
     }
     return this.transaction(() => {
@@ -565,12 +566,14 @@ export class JobStore {
         return existing
       }
       if (this.hasWebAiRequestCancellation(requestRef)) throw new WebAiRequestCancelledError()
-      const unused = this.run(
-        'UPDATE web_ai_v0_staged_attachments SET consumed_turn_ref = ? WHERE attachment_ref = ? AND consumed_turn_ref IS NULL',
-        turnRef,
-        attachment.attachment_ref,
-      )
-      if (unused.changes !== 1) throw invalidInput('web ai staged attachment has already been consumed')
+      for (const candidate of attachments) {
+        const unused = this.run(
+          'UPDATE web_ai_v0_staged_attachments SET consumed_turn_ref = ? WHERE attachment_ref = ? AND consumed_turn_ref IS NULL',
+          turnRef,
+          candidate!.attachment_ref,
+        )
+        if (unused.changes !== 1) throw invalidInput('web ai staged attachment has already been consumed')
+      }
       const job = this.insertJob(input.job)
       this.run(
         `INSERT INTO web_ai_v0_turns (
@@ -2048,10 +2051,45 @@ export class JobStore {
   private initialize() {
     this.exec('PRAGMA foreign_keys = ON;')
     this.createBaseTables()
+    this.ensureWebAiStagedAttachmentMultiplicity()
     this.ensureWebAiTurnColumns()
     this.migrateJobsTable()
     this.createIndexes()
     restrictFilePermissionsSync(this.databasePath)
+  }
+
+  private ensureWebAiStagedAttachmentMultiplicity() {
+    const table = this.get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'web_ai_v0_staged_attachments'")
+    if (!String(table?.sql ?? '').includes('consumed_turn_ref TEXT UNIQUE')) return
+    this.exec('PRAGMA foreign_keys = OFF;')
+    try {
+      this.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE web_ai_v0_staged_attachments_next (
+          attachment_ref TEXT PRIMARY KEY NOT NULL CHECK (length(attachment_ref) BETWEEN 1 AND 128),
+          binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE CASCADE,
+          bundle_id TEXT NOT NULL CHECK (length(bundle_id) BETWEEN 1 AND 64),
+          attachment_id TEXT NOT NULL CHECK (length(attachment_id) BETWEEN 1 AND 64),
+          media_type TEXT NOT NULL CHECK (media_type = 'text/markdown'),
+          byte_length INTEGER NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
+          sha256 TEXT NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+          consumed_turn_ref TEXT,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO web_ai_v0_staged_attachments_next
+          SELECT * FROM web_ai_v0_staged_attachments;
+        DROP TABLE web_ai_v0_staged_attachments;
+        ALTER TABLE web_ai_v0_staged_attachments_next RENAME TO web_ai_v0_staged_attachments;
+        COMMIT;
+      `)
+    } catch (error) {
+      try { this.exec('ROLLBACK;') } catch {}
+      throw error
+    } finally {
+      this.exec('PRAGMA foreign_keys = ON;')
+    }
+    const violation = this.get('PRAGMA foreign_key_check')
+    if (violation) throw sqliteError(new Error('Web AI attachment migration violated a foreign key.'))
   }
 
   private ensureWebAiTurnColumns() {
@@ -2220,7 +2258,7 @@ export class JobStore {
         media_type TEXT NOT NULL CHECK (media_type = 'text/markdown'),
         byte_length INTEGER NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
         sha256 TEXT NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
-        consumed_turn_ref TEXT UNIQUE,
+        consumed_turn_ref TEXT,
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS web_ai_v0_turns (

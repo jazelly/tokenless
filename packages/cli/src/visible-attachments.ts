@@ -230,14 +230,9 @@ export async function stageVisibleAttachmentStream({
   const marker = path.join(bundle, WEB_AI_V0_STAGE_MARKER)
   let destinationHandle: fs.FileHandle | undefined
   let staged = false
+  let markerCreated = false
   try {
-    const markerHandle = await fs.open(marker, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag(), 0o600)
-    try {
-      await markerHandle.writeFile('tokenless-web-ai-interaction-v0\n')
-      await markerHandle.sync()
-    } finally {
-      await markerHandle.close()
-    }
+    markerCreated = await ensureWebAiStageMarker(marker)
     destinationHandle = await fs.open(
       destination,
       fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag(),
@@ -272,10 +267,30 @@ export async function stageVisibleAttachmentStream({
     await destinationHandle?.close().catch(() => undefined)
     if (!staged) {
       await fs.rm(destination, { force: true }).catch(() => undefined)
-      await fs.rm(marker, { force: true }).catch(() => undefined)
+      if (markerCreated) await fs.rm(marker, { force: true }).catch(() => undefined)
       await fs.rmdir(bundle).catch(() => undefined)
       await fs.rmdir(root).catch(() => undefined)
     }
+  }
+}
+
+async function ensureWebAiStageMarker(marker: string) {
+  try {
+    const markerHandle = await fs.open(marker, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollowFlag(), 0o600)
+    try {
+      await markerHandle.writeFile('tokenless-web-ai-interaction-v0\n')
+      await markerHandle.sync()
+    } finally {
+      await markerHandle.close()
+    }
+    return true
+  } catch (error) {
+    if (!isFileSystemError(error, 'EEXIST')) throw error
+    const stat = await fs.lstat(marker)
+    if (!stat.isFile() || stat.isSymbolicLink() || await fs.readFile(marker, 'utf8') !== 'tokenless-web-ai-interaction-v0\n') {
+      throw new Error('Visible attachment bundle has an invalid Web AI stage marker.')
+    }
+    return false
   }
 }
 

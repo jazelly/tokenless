@@ -66,23 +66,29 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
       const compiled = await fs.readFile(state.systemPrompt.sourcePath)
       const mapping = daemon.store.getWebAiTurn(queued.turnRef)
       assert.ok(mapping)
-      const staged = daemon.store.getWebAiStagedAttachment(mapping.attachment_ref)
-      assert.ok(staged)
       const job = daemon.store.getJob(mapping.job_id)
+      const uploadAction = job.request_json.actions.find((action) => action.action === 'file.upload')
+      assert.ok(uploadAction)
+      assert.equal(uploadAction.payload.attachments.length, 2)
+      assert.deepEqual(uploadAction.payload.attachments.map((attachment) => attachment.name), [
+        state.systemPrompt.name,
+        state.bootstrapTurn.candidateDelivery.attachments[0].name,
+      ])
+      assert.equal(new Set(uploadAction.payload.attachments.map((attachment) => attachment.attachmentId)).size, 2)
+      assert.equal(new Set(uploadAction.payload.attachments.map((attachment) => attachment.bundleId)).size, 1)
       const promptAction = job.request_json.actions.find((action) => action.action === 'prompt.input')
       assert.ok(promptAction)
       const bootstrapMessage = JSON.parse(promptAction.payload.text)
       assert.equal(bootstrapMessage.promptManifest.includes(`<system_prompt>${state.systemPrompt.name}</system_prompt>`), true)
       assert.equal(bootstrapMessage.promptManifest.includes(`<skill_registry_sha256>${state.registrySha256}</skill_registry_sha256>`), true)
       assert.equal(bootstrapMessage.promptManifest.includes(`<skill_delivery_sha256>${state.bootstrapTurn.candidateDelivery.sha256}</skill_delivery_sha256>`), true)
-      const stagedBundle = await fs.readFile(path.join(homeDir, 'attachments', staged.bundle_id, `${staged.attachment_id}.bin`), 'utf8')
-      const contextBundle = JSON.parse(stagedBundle.match(/```json\n(.+)\n```/s)[1])
-      const systemPromptDocument = contextBundle.documents.find((document) => document.kind === 'system_prompt')
-      const skillDocument = contextBundle.documents.find((document) => document.skillName === 'legal-writing')
-      assert.notEqual(staged.sha256, state.systemPrompt.sha256)
-      assert.equal(systemPromptDocument.content, compiled.toString('utf8'))
-      assert.equal(skillDocument.content.includes('# Legal Writing'), true)
-      assert.equal(skillDocument.sha256, state.bootstrapTurn.candidateDelivery.attachments[0].sha256)
+      const [systemPromptUpload, skillUpload] = uploadAction.payload.attachments
+      const systemPromptBytes = await fs.readFile(path.join(homeDir, 'attachments', systemPromptUpload.bundleId, `${systemPromptUpload.attachmentId}.bin`))
+      const skillBytes = await fs.readFile(path.join(homeDir, 'attachments', skillUpload.bundleId, `${skillUpload.attachmentId}.bin`), 'utf8')
+      assert.equal(systemPromptBytes.equals(compiled), true)
+      assert.equal(systemPromptUpload.sha256, state.systemPrompt.sha256)
+      assert.equal(skillBytes.includes('# Legal Writing'), true)
+      assert.equal(skillUpload.sha256, state.bootstrapTurn.candidateDelivery.attachments[0].sha256)
 
       const read = await readHarnessLocalHttpTurn({ baseUrl: daemon.origin, token, turnRef: queued.turnRef })
       assert.equal(read.turnRef, queued.turnRef)
@@ -107,7 +113,7 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
       assert.equal(cancelled.attachmentDelivery.status, 'pending')
 
       const publicResult = JSON.stringify({ queued, read, cancelled })
-      for (const privateValue of [homeDir, fixture.stagingRoot, fixture.skillRoot, token, staged.bundle_id, mapping.job_id]) {
+      for (const privateValue of [homeDir, fixture.stagingRoot, fixture.skillRoot, token, systemPromptUpload.bundleId, mapping.job_id]) {
         assert.equal(publicResult.includes(privateValue), false)
       }
       assert.equal(/sourcePath|bundleId|jobId|profileId/.test(publicResult), false)

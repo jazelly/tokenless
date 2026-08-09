@@ -66,10 +66,23 @@ export function createLocalHttpClient(options: LocalHttpClientOptions) {
     async capabilities(providerBindingRef: string): Promise<LocalHttpBinding> {
       return parseBinding(await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/capabilities`))
     },
-    async stage(providerBindingRef: string, bytes: Uint8Array): Promise<LocalHttpAttachment> {
+    async stage(
+      providerBindingRef: string,
+      bytes: Uint8Array,
+      options?: { name?: string | undefined; bundleWith?: string | undefined },
+    ): Promise<LocalHttpAttachment> {
       if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) throw new TypeError('bytes must be a nonempty Uint8Array.')
+      const name = options?.name ?? 'system-prompt.md'
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) throw new TypeError('attachment name is invalid.')
+      const bundleWith = options?.bundleWith === undefined ? undefined : attachmentRefValue(options.bundleWith)
       const value = await call(`/v1/web-ai/bindings/${encodeURIComponent(bindingRef(providerBindingRef, 'providerBindingRef'))}/attachments`, {
-        method: 'POST', body: bytes as unknown as BodyInit, headers: { 'content-type': 'text/markdown' },
+        method: 'POST',
+        body: bytes as unknown as BodyInit,
+        headers: {
+          'content-type': 'text/markdown',
+          'x-tokenless-attachment-name': name,
+          ...(bundleWith === undefined ? {} : { 'x-tokenless-bundle-with': bundleWith }),
+        },
       })
       return parseAttachment(value)
     },
@@ -122,6 +135,11 @@ function turnRefValue(value: string) {
 
 function requestRefValue(value: string) {
   if (typeof value !== 'string' || !/^request:[a-f0-9]{32}$/.test(value)) throw new TypeError('requestRef is invalid.')
+  return value
+}
+
+function attachmentRefValue(value: string) {
+  if (typeof value !== 'string' || !/^attachment:[a-f0-9]{32}$/.test(value)) throw new TypeError('attachmentRef is invalid.')
   return value
 }
 

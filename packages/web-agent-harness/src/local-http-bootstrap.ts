@@ -22,7 +22,6 @@ import {
 } from './skill-harness.js'
 
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
-const MAX_V0_CONTEXT_BUNDLE_BYTES = 1024 * 1024
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAX_PROVIDER_CHROME_BYTES = 256
 const OPEN_MARKER = '<TOKENLESS_HARNESS_RESPONSE>'
@@ -30,7 +29,7 @@ const CLOSE_MARKER = '</TOKENLESS_HARNESS_RESPONSE>'
 
 /**
  * Starts one V0 new-conversation turn with the compiled System Prompt and
- * caller-selected Skill documents in one transport attachment.
+ * caller-selected Skill documents as independent files in one upload action.
  * Queued transport state is not visible-provider attachment acceptance.
  */
 export async function startHarnessLocalHttpBootstrap(
@@ -54,7 +53,6 @@ export async function startHarnessLocalHttpBootstrap(
     taskPrompt: input.taskPrompt,
     nonce: input.nonce,
   })
-  const contextBundle = await renderContextBundle(preparation.attachments)
   const bootstrapText = renderHarnessBootstrapPrompt({
     runId: preparation.runId,
     nonce: preparation.nonce,
@@ -68,17 +66,14 @@ export async function startHarnessLocalHttpBootstrap(
   })
   assertV0BootstrapText(bootstrapText)
 
-  const attachment = await client.stage(binding.providerBindingRef, contextBundle.bytes)
-  if (attachment.byteLength !== contextBundle.bytes.byteLength || attachment.sha256 !== contextBundle.sha256) {
-    throw new HarnessSkillError('harness_context_bundle_stage_mismatch', 'The local daemon staged a Harness context bundle with an unexpected identity.')
-  }
+  const attachments = await stageHarnessAttachments(client, binding.providerBindingRef, preparation.attachments)
 
   const request = await canonicalStartRequest({
     requestRef: `request:${randomBytes(16).toString('hex')}`,
     providerRef: binding.capabilities.providerRef,
     providerBindingRef: binding.providerBindingRef,
     text: bootstrapText,
-    attachment,
+    attachments,
   })
   return client.start(binding.providerBindingRef, request)
 }
@@ -115,7 +110,6 @@ export async function completeHarnessLocalHttpBootstrap(
     stagingRoot: input.stagingRoot,
     nonce: input.nonce,
   })
-  const contextBundle = await renderContextBundle(candidates)
   const validated = await validateHarnessBootstrapCompletionResponse({
     runId: input.runId,
     stagingRoot: input.stagingRoot,
@@ -123,10 +117,10 @@ export async function completeHarnessLocalHttpBootstrap(
     turn: 1,
     nonce: input.nonce,
   })
-  if (turnState.attachmentDelivery.sha256 !== contextBundle.sha256) {
+  if (turnState.attachmentDelivery.sha256 !== candidates[0]!.sha256) {
     throw new HarnessSkillError(
-      'harness_context_bundle_delivery_mismatch',
-      'The delivered attachment does not match the pending Harness context bundle.',
+      'harness_system_prompt_delivery_mismatch',
+      'The delivered attachment batch does not match the pending Harness System Prompt.',
     )
   }
 
@@ -153,43 +147,44 @@ function assertSupportedStaticInput(input: StartHarnessLocalHttpBootstrapInput) 
   }
 }
 
-async function renderContextBundle(attachments: readonly {
+async function stageHarnessAttachments(
+  client: ReturnType<typeof import('tokenless-web-ai-interaction-protocol/local-http')['createLocalHttpClient']>,
+  providerBindingRef: string,
+  attachments: readonly {
   kind: 'system_prompt' | 'skill'
   name: string
   sourcePath: string
   size: number
   sha256: string
   skillName?: string | undefined
-}[]) {
-  const documents = []
+  }[],
+) {
+  const staged = []
+  let bundleWith: string | undefined
   for (const attachment of attachments) {
     const bytes = await readFile(attachment.sourcePath)
     const digest = createHash('sha256').update(bytes).digest('hex')
     if (bytes.byteLength !== attachment.size || digest !== attachment.sha256) {
       throw new HarnessSkillError('harness_context_source_changed', `Harness context source '${attachment.name}' changed after preparation.`)
     }
-    documents.push({
+    const transport = await client.stage(providerBindingRef, bytes, {
+      name: attachment.name,
+      ...(bundleWith === undefined ? {} : { bundleWith }),
+    })
+    if (transport.byteLength !== bytes.byteLength || transport.sha256 !== attachment.sha256) {
+      throw new HarnessSkillError('harness_attachment_stage_mismatch', `The local daemon staged Harness attachment '${attachment.name}' with an unexpected identity.`)
+    }
+    bundleWith ??= transport.attachmentRef
+    staged.push({
       kind: attachment.kind,
       name: attachment.name,
-      ...(attachment.skillName === undefined ? {} : { skillName: attachment.skillName }),
-      sha256: attachment.sha256,
-      content: bytes.toString('utf8'),
+      attachmentRef: transport.attachmentRef,
+      mediaType: transport.mediaType,
+      byteLength: transport.byteLength,
+      sha256: transport.sha256,
     })
   }
-  const bytes = Buffer.from([
-    '# Tokenless Harness Context Bundle',
-    '',
-    'Apply the `system_prompt` document as the Harness contract. Treat each `skill` document as an attached user-selected SKILL.md file.',
-    '',
-    '```json',
-    JSON.stringify({ protocol: 'tokenless.web-agent.context-bundle/v1', documents }),
-    '```',
-    '',
-  ].join('\n'), 'utf8')
-  if (bytes.byteLength > MAX_V0_CONTEXT_BUNDLE_BYTES) {
-    throw new HarnessSkillError('harness_context_bundle_too_large', `Harness context bundle exceeds ${MAX_V0_CONTEXT_BUNDLE_BYTES} bytes.`)
-  }
-  return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
+  return staged as [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>]
 }
 
 function assertRequiredCapabilities(capabilities: readonly string[]) {
@@ -273,13 +268,13 @@ async function canonicalStartRequest({
   providerRef,
   providerBindingRef,
   text,
-  attachment,
+  attachments,
 }: {
   requestRef: string
   providerRef: string
   providerBindingRef: string
   text: string
-  attachment: { attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }
+  attachments: readonly [{ kind: 'system_prompt'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }, ...Array<{ kind: 'skill'; name: string; attachmentRef: string; mediaType: 'text/markdown'; byteLength: number; sha256: string }>]
 }): Promise<StartTurnRequest> {
   const { WEB_AI_INTERACTION_PROTOCOL_V0, parseStartTurnRequest } = await import('tokenless-web-ai-interaction-protocol')
   return parseStartTurnRequest({
@@ -291,13 +286,7 @@ async function canonicalStartRequest({
     conversation: { mode: 'new' },
     bootstrap: {
       text,
-      attachments: [{
-        kind: 'system_prompt',
-        attachmentRef: attachment.attachmentRef,
-        mediaType: attachment.mediaType,
-        byteLength: attachment.byteLength,
-        sha256: attachment.sha256,
-      }],
+      attachments,
     },
   })
 }

@@ -30,7 +30,17 @@ export function parseCapabilityDocument(value: unknown): CapabilityDocument {
 }
 
 export function parseStartTurnRequest(value: unknown): StartTurnRequest {
-  return parse(value, 'start_turn_request', PROTOCOL_SCHEMA_IDS.startTurnRequest) as StartTurnRequest
+  const request = parse(value, 'start_turn_request', PROTOCOL_SCHEMA_IDS.startTurnRequest) as StartTurnRequest
+  const attachments = request.bootstrap.attachments
+  if (attachments[0]?.kind !== 'system_prompt' || attachments.slice(1).some((attachment) => attachment.kind !== 'skill')) {
+    throw new ProtocolValidationError('start_turn_request', 'start_turn_request attachments must begin with one System Prompt followed only by Skills.')
+  }
+  const refs = new Set(attachments.map((attachment) => attachment.attachmentRef))
+  const names = new Set(attachments.map((attachment) => attachment.name))
+  if (refs.size !== attachments.length || names.size !== attachments.length) {
+    throw new ProtocolValidationError('start_turn_request', 'start_turn_request attachment references and names must be unique.')
+  }
+  return request
 }
 
 export function parseTurnState(value: unknown): TurnState {
