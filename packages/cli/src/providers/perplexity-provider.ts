@@ -63,7 +63,9 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
       fileUploadTriggerSelectors: Object.freeze([
         'button[aria-label="Add files or tools"]',
       ]),
-      fileUploadLocalSelectors: Object.freeze([]),
+      fileUploadLocalSelectors: Object.freeze([
+        '[role="menuitem"]:has-text("Upload files or images")',
+      ]),
       modelControlSelectors: Object.freeze([
         'button[aria-label="Model"]',
       ]),
@@ -80,6 +82,7 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
         'iframe[src*="hcaptcha.com" i]',
         'iframe[src*="challenges.cloudflare.com" i]',
         'text=/rate limit|too many requests/i',
+        'text=/upgrade for additional document analysis/i',
         'text=/upgrade required|upgrade your plan/i',
       ]),
       busySelectors: Object.freeze([

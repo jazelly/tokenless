@@ -51,8 +51,8 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 | Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental | — |
-| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental | — |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — |
+| `file.upload` | Supported | Supported | — | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — |
 | `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — |
 | `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — |
 
@@ -60,21 +60,25 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 Route 会按完整 requirement set 评估。例如 image attachment 同时要求 `file.upload` 与 `image.input`；仅有 `file.upload` 这一行并不代表图片上传已经 routeable。
 
-DeepSeek 目前已实现 provider-specific controls，并为以下 candidate mapping 声明了 release gates：
+Gemini `file.upload` 仍未公开。2026-08-09，选定的已登录 profile 显示了 **Upload & tools** 与本地 file input；选择 Markdown 后也创建了可见的 `gem-attachment` chip。但该 chip 只显示 `README`，没有 `.md` 后缀或其他可见 Markdown 类型，因此 count-and-extension acceptance 与完整的真实 `file.upload` E2E lifecycle 尚未闭环。
+
+DeepSeek 的 `conversation.chat` 与 Markdown `file.upload` 已作为 experimental route 对外提供，但仅适用于选定的已登录 profile。2026-08-09，built CLI 与 packaged daemon 通过 headed Cloak `web-ai` 添加了三张 Markdown 卡片、写入并提交附件相关 prompt，再读取可见回复（job `tlp_4cc2da64-7fe7-4582-a0d2-d648531fd930`；端到端 28.3 秒）。本地 output-savings event 以 `o200k_base` 为 1,593 个可见回复字符估算了 305 个输出 token；这只是本地可见输出估算，并非 provider 计费或 input-token telemetry。
+
+DeepSeek 对该 route 之外仍保留 provider-specific controls 与 candidate mappings：
 
 | DeepSeek behavior | Canonical outcome | Public route state |
 | --- | --- | --- |
-| Instant chat 与可见 final response | `conversation.chat` | Gate pending |
+| Instant chat 与可见 final response | `conversation.chat` | Experimental routeable |
 | 同一 conversation 的 follow-up | `conversation.continue` | Gate pending |
-| Instant 或 Vision 文件选择 | `file.upload` | Gate pending |
+| Instant 中的 Markdown 文件选择 | `file.upload` | Experimental routeable |
 | Vision 图片输入 | `image.input` | Gate pending |
 | Instant Search | `search.web` | Gate pending |
 | DeepThink | `reasoning.extended` | Gate pending |
 | 可见 source links | `response.citations` | Gate pending |
 
-Perplexity `conversation.chat` 已作为 experimental route 对外提供。Guest session、prompt draft、submission、completed answer、normalized citations、可见 citation links、conversation mapping 与 durable state 已通过 built CLI、packaged daemon、runtime-bound Cloak profile 和真实 provider network。File acceptance、continuation、model selection、Deep Research、Spaces 与 generated assets 仍不公开。
+Perplexity `conversation.chat` 已作为 experimental route 对外提供。Guest session、prompt draft、submission、completed answer、normalized citations、可见 citation links、conversation mapping 与 durable state 已通过 built CLI、packaged daemon、runtime-bound Cloak profile 和真实 provider network。可见的 **Add files or tools** 菜单与 file chooser 已实现，但 `file.upload` 仍不公开：2026-08-09 在选取第三个文档时，选定的 Free plan 显示 **Upgrade for additional document analysis**，只留下两张可见附件卡片，因而无法完成完整的真实 E2E closure。Continuation、model selection、Deep Research、Spaces 与 generated assets 也仍不公开。
 
-Z.ai `conversation.chat` 已作为 experimental route 对外提供。Guest continuation、prompt draft、submission、completed visible answer、conversation mapping 与 durable state 已通过 built CLI、packaged daemon、runtime-bound Cloak profile 和真实 provider network。当前配置的 entry point 已改为 `https://z.ai/chat`；该官方入口目前会把已准备的 draft 交给 `https://chat.z.ai` chat runtime，因此两个 origins 都继续获准使用。此前 acceptance 覆盖的是通过仅限 E2E 的 process-local resolver mapping 访问 chat runtime；新的 entry-to-runtime journey 仍需作为手动 release rerun。Continuation、files、model 或 effort selection 及 GLM 高级工作流仍不公开。
+Z.ai `conversation.chat` 与 Markdown `file.upload` 已作为 experimental routes 对外提供。2026-08-09，built CLI 与 packaged daemon 通过 headed Cloak `web-ai` 添加了三张物理可见 Markdown 卡片，提交 exact attachment-detector prompt，并读取附件相关回复（job `tlp_0bc5f6de-b04d-4b35-85a0-2bd59e2ed227`；provider 端到端 34.1 秒）。该 job 记录了 531 estimated output tokens 与 2,770 visible characters，且没有 provider blocker。配置的 entry point 为 `https://z.ai/chat`；官方入口会把已准备的 draft 交给获准使用的 `https://chat.z.ai` runtime。Continuation、model 或 effort selection 及 GLM 高级工作流仍不公开。
 
 Doubao `file.upload` 已作为 experimental route 对外提供文件选择能力。可见加号控件、provider 文件 input 与显示已接收文件名的卡片，均已通过 built CLI、packaged daemon、runtime-bound Cloak profile 和真实 provider network。`conversation.chat` 仍注册为需要登录的 experimental route：同一产品链路中的 readiness 与 prompt drafting 已通过，两次直接提交也得到了关联的可见 marker 回复。由于附着 E2E observer 时豆包显示 provider 自有的可见验证 iframe，所需 built-product mutation gate 尚未达到 release closure；challenge detection 会以 `visible_provider_blocker` fail closed。
 
@@ -84,13 +88,13 @@ Doubao `file.upload` 已作为 experimental route 对外提供文件选择能力
 
 Kimi `conversation.chat`、text-file `file.upload`、`search.web` 与基于搜索的 `response.citations` 已作为 experimental routes 对外提供，但只适用于选定的已登录 profile。Built CLI、packaged daemon、runtime-bound Cloak profile 与真实 provider network 已闭环 readiness、prompt drafting、精确模型与思考强度选择及恢复、文件接收、附件感知回答、Web search Auto/Off 精确选择、normalized 且可见的引用、第二个 CLI 进程在同一 conversation URL 上续聊，以及持久 task mapping。Plugin 与 Skill 的检查和精确可见选择也通过了 non-submission gate，但完整提交 outcome 当前受 Kimi 可见容量队列阻塞，因此未公开为 routes。Projects、Deep Research、agent workflows 与 artifact lifecycles 已有实现和 release gates，但真实 provider gates 尚未闭环，所以仍不公开。
 
-Dola 已注册为需要登录的 experimental provider。用户选定的 managed profile 已可见确认 chat composer、Fast/Pro model menu、文件选择器、conversation URL，以及 Create Image、Writing、Create Video、Translate 和 Homework 入口。在 built CLI 与 packaged daemon 闭环 readiness、drafting、model 恢复、可见文件接收、关联 response 与同 conversation 续聊前，不公开任何 Dola route；generation 与 specialist 入口也必须分别证明 terminal outcome 后才能成为 capability。
+Dola 已注册为需要登录的 experimental provider。用户选定的 managed profile 已可见确认 chat composer、Fast/Pro model menu、文件选择器、conversation URL，以及 Create Image、Writing、Create Video、Translate 和 Homework 入口。2026-08-09，built CLI job `tlp_abc1d6ad-8b47-4ef9-80bc-ef8f50886fcd` 在文件选择后 18.1 秒失败，因为没有出现要求的三张附件卡片 evidence。后续直接可见检查确认：一次选择两份或三份 Markdown 文档时只产生一张物理文档卡片，随后再选一份文档也不会增加第二张卡片；整个过程没有提交 prompt。因此 Dola `conversation.chat` 与 `file.upload` 仍不公开；generation 与 specialist 入口也必须分别证明 terminal outcome 后才能成为 capability。
 
 | Dola 控件或界面 | Canonical outcome candidates | 当前证据与 route 状态 |
 | --- | --- | --- |
 | Chat 与同 conversation 续聊 | `conversation.chat`, `conversation.continue` | 选定 profile 中已完成两轮关联对话；built-product gates 待完成 |
 | Fast / Pro | `conversation.chat`；provider control `model.choice` | 两个选项均已 live-observed；exact selection 与 restoration gate 待完成 |
-| 添加文件 | `file.upload` | 已 live-observed native file chooser；可接收格式与 visible acceptance gate 待完成 |
+| 添加文件 | `file.upload` | 已实现相对 upload control 与 Markdown card detection；选定 profile 在多文档和顺序选择中都只显示一张物理卡片，因此 route 仍不公开 |
 | Create Image / AI Creation | `image.generation` | 已 live-observed 入口及带 model、ratio、style、template 的 Seedream 图片界面；completed image 与 bounded artifact reference 待完成 |
 | Writing | `document.generation` 或 `conversation.chat` | 已 live-observed `write_assistant` 入口；尚未证明输出形态，因此不声明 document 或 downloadable file |
 | Create Video | `video.generation` | 已 live-observed `video_generation` 入口；progress、terminal video 与 bounded artifact reference 待完成 |

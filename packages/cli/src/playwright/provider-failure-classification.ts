@@ -28,6 +28,7 @@ const SAFE_PRE_SUBMIT_PROVIDER_CODES = new Set([
   'provider_surface_not_ready',
   'visible_action_unavailable',
   'file_upload_unavailable',
+  'file_upload_not_visibly_accepted',
   'prompt_input_visibility_timeout',
   'prompt_input_failed',
   'workspace_native_stably_unavailable',

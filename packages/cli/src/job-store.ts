@@ -114,7 +114,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.browserExecutablePath !== undefined && !isConfigBrowserExecutablePath(payload.browserExecutablePath)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (Object.hasOwn(payload, 'browserConnectionMode')) {
+  if (Object.hasOwn(payload, 'browserConnectionMode') && payload.browserConnectionMode !== 'playwright') {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
   if (payload.browserVisibility !== undefined && !normalizeBrowserVisibility(payload.browserVisibility)) {

@@ -1,8 +1,9 @@
 import { chromium } from 'playwright-core'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import {
   normalizeBrowserVisibility,
   resolveEffectiveBrowserVisibility,
@@ -57,6 +58,7 @@ const PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS = [
 ] as const
 const BROWSER_RUNTIME_SESSION_FILE = 'tokenless-browser-runtime.json'
 const BROWSER_RUNTIME_SESSION_PROTOCOL = 'tokenless.browser-runtime-session.v1'
+const execFileAsync = promisify(execFile)
 
 export type PersistentContextManagerOptions = {
   maxContexts?: number
@@ -96,6 +98,15 @@ type LaunchedManagedContext = {
   effectiveVisibility: EffectiveBrowserVisibility
   closeBrowser: () => Promise<void>
   detachBrowser: () => Promise<void>
+}
+
+type ResidentLaunchCandidate = {
+  launchSignature: string
+  effectiveVisibility: EffectiveBrowserVisibility
+  executablePath: string
+  arguments: readonly string[]
+  hasProxy: boolean
+  testProfile: boolean
 }
 
 export class PersistentContextManager {
@@ -431,21 +442,23 @@ async function launchCdpManagedContext(
   }
   const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
   const sessionFile = path.join(userDataDir, BROWSER_RUNTIME_SESSION_FILE)
-  const launchSignature = cdpLaunchSignature(userDataDir, launchOptions, browserTarget)
-  const compatibleLaunchSignatures = requestedVisibility === 'auto'
-    ? new Set([
-        launchSignature,
-        cdpLaunchSignature(userDataDir, {
-          ...launchOptions,
-          headless: false,
-          viewport: null,
-        }, browserTarget),
-      ])
-    : new Set([launchSignature])
+  const residentLaunchCandidates = [residentLaunchCandidate(userDataDir, launchOptions, browserTarget)]
+  if (requestedVisibility === 'auto') {
+    residentLaunchCandidates.push(residentLaunchCandidate(userDataDir, {
+      ...launchOptions,
+      headless: false,
+      viewport: null,
+    }, browserTarget))
+  }
+  const [launch] = residentLaunchCandidates
+  if (!launch) throw new Error('Managed browser launch candidates must not be empty.')
+  const launchSignature = launch.launchSignature
+  const compatibleLaunchSignatures = new Set(residentLaunchCandidates.map((candidate) => candidate.launchSignature))
   const existing = await connectExistingCdpManagedContext({
     endpointFile,
     sessionFile,
     compatibleLaunchSignatures,
+    residentLaunchCandidates,
   })
   if (existing) return existing
   await fs.unlink(endpointFile).catch((error) => {
@@ -500,18 +513,20 @@ async function connectExistingCdpManagedContext({
   endpointFile,
   sessionFile,
   compatibleLaunchSignatures,
+  residentLaunchCandidates,
 }: {
   endpointFile: string
   sessionFile: string
   compatibleLaunchSignatures: ReadonlySet<string>
+  residentLaunchCandidates: readonly ResidentLaunchCandidate[]
 }): Promise<LaunchedManagedContext | null> {
   const session = await readBrowserRuntimeSession(sessionFile)
   const endpoint = await readDevToolsEndpoint(endpointFile)
-  if (!session || !endpoint) return null
+  if (!endpoint) return null
   let browser: Browser | undefined
   try {
     browser = await chromium.connectOverCDP(endpoint)
-    if (!compatibleLaunchSignatures.has(session.launchSignature)) {
+    if (session && !compatibleLaunchSignatures.has(session.launchSignature)) {
       await closeConnectedCdpManagedBrowser(browser, session.pid)
       await removeBrowserRuntimeSession(sessionFile, endpointFile)
       return null
@@ -521,14 +536,26 @@ async function connectExistingCdpManagedContext({
       await browser.close().catch(() => undefined)
       return null
     }
+    const residentSession = session ?? await verifiedLegacyResidentSession(browser, residentLaunchCandidates)
+    if (!residentSession) {
+      await browser.close().catch(() => undefined)
+      throw tokenlessError(
+        'playwright_legacy_resident_browser_unverified',
+        'The resident managed browser could not be verified against the requested profile and launch configuration. Close the browser before retrying.',
+      )
+    }
+    if (!session) await writeBrowserRuntimeSession(sessionFile, {
+      protocol: BROWSER_RUNTIME_SESSION_PROTOCOL,
+      ...residentSession,
+    })
     const connectedBrowser = browser
     let closing: Promise<void> | undefined
     let detaching: Promise<void> | undefined
     return {
       browserContext: contexts[0],
-      effectiveVisibility: session.effectiveVisibility,
+      effectiveVisibility: residentSession.effectiveVisibility,
       closeBrowser() {
-        closing ??= closeConnectedCdpManagedBrowser(connectedBrowser, session.pid)
+        closing ??= closeConnectedCdpManagedBrowser(connectedBrowser, residentSession.pid)
           .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))
         return closing
       },
@@ -537,10 +564,105 @@ async function connectExistingCdpManagedContext({
         return detaching
       },
     }
-  } catch {
+  } catch (error) {
     await browser?.close().catch(() => undefined)
+    if ((error as { code?: unknown }).code === 'playwright_legacy_resident_browser_unverified') throw error
     await removeBrowserRuntimeSession(sessionFile, endpointFile)
     return null
+  }
+}
+
+function residentLaunchCandidate(
+  userDataDir: string,
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+): ResidentLaunchCandidate {
+  const executablePath = browserTarget.executablePath
+  if (!executablePath) throw new Error('CDP managed browser requires an executable path.')
+  const arguments_ = cdpChromiumArguments(userDataDir, launchOptions, browserTarget)
+  return {
+    launchSignature: cdpLaunchSignature(userDataDir, launchOptions, browserTarget),
+    effectiveVisibility: launchOptions.headless ? 'headless' : 'headed',
+    executablePath,
+    arguments: arguments_,
+    hasProxy: launchOptions.proxy !== undefined,
+    testProfile: browserTarget.launchPolicy === 'test-profile',
+  }
+}
+
+async function verifiedLegacyResidentSession(
+  browser: Browser,
+  candidates: readonly ResidentLaunchCandidate[],
+) {
+  const pid = await cdpBrowserProcessId(browser)
+  if (pid === null) return null
+  const command = await browserProcessCommand(pid)
+  if (!command) return null
+  const candidate = candidates.find((current) => residentCommandMatches(command, current))
+  if (!candidate) return null
+  return {
+    launchSignature: candidate.launchSignature,
+    pid,
+    effectiveVisibility: candidate.effectiveVisibility,
+  }
+}
+
+async function browserProcessCommand(pid: number) {
+  if (process.platform !== 'darwin') return null
+  try {
+    const { stdout } = await execFileAsync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'command='])
+    const command = String(stdout).trim()
+    return command || null
+  } catch {
+    return null
+  }
+}
+
+function residentCommandMatches(command: string, candidate: ResidentLaunchCandidate) {
+  if (candidate.hasProxy) return false
+  if (!(command === candidate.executablePath || command.startsWith(`${candidate.executablePath} `))) return false
+  const actualArguments = command.slice(candidate.executablePath.length).trim().split(/\s+/u).filter(Boolean)
+  const expectedPositionals = candidate.arguments.filter((argument) => !argument.startsWith('--'))
+  const actualPositionals = actualArguments.filter((argument) => !argument.startsWith('--'))
+  if (actualPositionals.length !== expectedPositionals.length || actualPositionals.some((argument, index) => argument !== expectedPositionals[index])) {
+    return false
+  }
+  const expectedFlags = new Set(candidate.arguments.filter((argument) => argument.startsWith('--')))
+  const actualFlags = command.match(/(?:^|\s)(--[^\s]+)/gu)?.map((argument) => argument.trim()) ?? []
+  if (actualFlags.some((argument) => {
+    if (argument === '--no-sandbox' || isProxyArgument(argument)) return true
+    if (!candidate.testProfile && PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS.includes(argument as never)) return true
+    return !expectedFlags.has(argument)
+  })) return false
+  const actualHeadless = commandHasArgument(command, '--headless=new')
+  if ((candidate.effectiveVisibility === 'headless') !== actualHeadless) return false
+  return candidate.arguments.every((argument) => commandHasArgument(command, argument))
+}
+
+function isProxyArgument(argument: string) {
+  return argument === '--no-proxy-server' || argument.startsWith('--proxy-')
+}
+
+function commandHasArgument(command: string, argument: string) {
+  const escaped = argument.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  return new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, 'u').test(command)
+}
+
+async function cdpBrowserProcessId(browser: Browser) {
+  let session: Awaited<ReturnType<Browser['newBrowserCDPSession']>> | undefined
+  try {
+    session = await browser.newBrowserCDPSession()
+    const result = await session.send('SystemInfo.getProcessInfo') as {
+      processInfo?: Array<{ type?: unknown, id?: unknown }>
+    }
+    const browserProcess = result.processInfo?.find((candidate) => candidate.type === 'browser')
+    return browserProcess && Number.isSafeInteger(browserProcess.id) && Number(browserProcess.id) > 0
+      ? Number(browserProcess.id)
+      : null
+  } catch {
+    return null
+  } finally {
+    await session?.detach().catch(() => undefined)
   }
 }
 
@@ -572,22 +694,34 @@ async function writeBrowserRuntimeSession(
 }
 
 async function readBrowserRuntimeSession(sessionFile: string) {
+  let raw: string
   try {
-    const value = JSON.parse(await fs.readFile(sessionFile, 'utf8')) as Record<string, unknown>
-    if (
-      value.protocol !== BROWSER_RUNTIME_SESSION_PROTOCOL ||
-      typeof value.launchSignature !== 'string' ||
-      (value.effectiveVisibility !== 'headed' && value.effectiveVisibility !== 'headless') ||
-      (value.pid !== null && (!Number.isSafeInteger(value.pid) || Number(value.pid) <= 0))
-    ) return null
-    return {
-      launchSignature: value.launchSignature,
-      pid: value.pid as number | null,
-      effectiveVisibility: value.effectiveVisibility as EffectiveBrowserVisibility,
-    }
+    raw = await fs.readFile(sessionFile, 'utf8')
   } catch (error) {
-    if (isMissingFileError(error) || error instanceof SyntaxError) return null
+    if (isMissingFileError(error)) return null
     throw error
+  }
+  let value: Record<string, unknown>
+  try {
+    value = JSON.parse(raw) as Record<string, unknown>
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw tokenlessError('playwright_browser_runtime_session_invalid', 'Managed browser runtime session metadata is invalid.')
+    }
+    throw error
+  }
+  if (
+    value.protocol !== BROWSER_RUNTIME_SESSION_PROTOCOL ||
+    typeof value.launchSignature !== 'string' ||
+    (value.effectiveVisibility !== 'headed' && value.effectiveVisibility !== 'headless') ||
+    (value.pid !== null && (!Number.isSafeInteger(value.pid) || Number(value.pid) <= 0))
+  ) {
+    throw tokenlessError('playwright_browser_runtime_session_invalid', 'Managed browser runtime session metadata is invalid.')
+  }
+  return {
+    launchSignature: value.launchSignature,
+    pid: value.pid as number | null,
+    effectiveVisibility: value.effectiveVisibility as EffectiveBrowserVisibility,
   }
 }
 

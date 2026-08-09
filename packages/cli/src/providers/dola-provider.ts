@@ -41,16 +41,16 @@ export class DolaProvider extends BaseProvider<'dola'> {
         'textarea.semi-input-textarea[placeholder="Message..."]',
       ]),
       submitSelectors: Object.freeze([
-        'button[class*="send-msg-btn"]',
+        '.send-btn-wrapper > button:not([disabled])',
       ]),
       answerSelectors: Object.freeze([
         '[data-render-engine="node"]:not(.justify-end) [data-streaming].md-box-root',
       ]),
       fileInputSelectors: Object.freeze([
-        'input[type="file"]',
+        'input[type="file"][multiple][accept*=".md"]',
       ]),
       fileUploadTriggerSelectors: Object.freeze([
-        'div.max-w-full.min-w-0.flex-1.relative.flex.items-center.h-36 > div:first-child > button[data-dbx-name="button"]',
+        'div.max-w-full.min-w-0.flex-1.relative.flex.items-center.h-36 > div:first-child button[data-dbx-name="button"]',
       ]),
       fileUploadLocalSelectors: Object.freeze([]),
       modelControlSelectors: Object.freeze([

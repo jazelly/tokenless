@@ -46,8 +46,12 @@ export class ZaiProvider extends BaseProvider<'zai'> {
       answerSelectors: Object.freeze([
         '.chat-assistant.markdown-prose',
       ]),
-      fileInputSelectors: Object.freeze([]),
-      fileUploadTriggerSelectors: Object.freeze([]),
+      fileInputSelectors: Object.freeze([
+        'input[type="file"][accept*=".md"]',
+      ]),
+      fileUploadTriggerSelectors: Object.freeze([
+        '[aria-label="Up to 10 files, Max 50 MB per file"]',
+      ]),
       fileUploadLocalSelectors: Object.freeze([]),
       modelControlSelectors: Object.freeze([]),
       effortControlSelectors: Object.freeze([]),

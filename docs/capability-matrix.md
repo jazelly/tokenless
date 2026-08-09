@@ -51,8 +51,8 @@ This table summarizes checked-in routes. The CLI output is the authoritative cur
 
 | Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | — | Experimental | Experimental | Experimental | Experimental | — |
-| `file.upload` | Supported | Supported | — | Supported | — | — | — | — | Experimental | Experimental | — |
+| `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — |
+| `file.upload` | Supported | Supported | — | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — |
 | `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — |
 | `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — |
 
@@ -60,21 +60,25 @@ This table summarizes checked-in routes. The CLI output is the authoritative cur
 
 Routes are evaluated as a complete requirement set. For example, an image attachment requires both `file.upload` and `image.input`; the `file.upload` row alone does not make image upload routeable.
 
-DeepSeek currently has implemented provider-specific controls and declared release gates for the following candidate mappings:
+Gemini `file.upload` remains unadvertised. On 2026-08-09, the authenticated selected profile exposed **Upload & tools** and its local file input, and selecting Markdown created a visible `gem-attachment` chip. The chip displayed only `README`, without the `.md` suffix or another visible Markdown type, so count-and-extension acceptance and the full real `file.upload` E2E lifecycle remain unclosed.
+
+DeepSeek `conversation.chat` and Markdown `file.upload` are experimental and routeable from a signed-in selected profile. On 2026-08-09, the built CLI and packaged daemon used headed Cloak `web-ai` to add three Markdown cards, draft and submit the attachment-grounded prompt, and read its visible response (job `tlp_4cc2da64-7fe7-4582-a0d2-d648531fd930`; 28.3 seconds end-to-end). The local output-savings event recorded 305 estimated output tokens for 1,593 visible response characters with `o200k_base`; it is a local visible-output estimate, not provider billing or input-token telemetry.
+
+DeepSeek retains provider-specific controls and candidate mappings outside that route:
 
 | DeepSeek behavior | Canonical outcome | Public route state |
 | --- | --- | --- |
-| Instant chat and visible final response | `conversation.chat` | Gate pending |
+| Instant chat and visible final response | `conversation.chat` | Experimental routeable |
 | Same-conversation follow-up | `conversation.continue` | Gate pending |
-| File selection in Instant or Vision | `file.upload` | Gate pending |
+| Markdown file selection in Instant | `file.upload` | Experimental routeable |
 | Vision image input | `image.input` | Gate pending |
 | Search in Instant | `search.web` | Gate pending |
 | DeepThink | `reasoning.extended` | Gate pending |
 | Visible source links | `response.citations` | Gate pending |
 
-Perplexity `conversation.chat` is experimental and routeable. Its guest session, prompt draft, submission, completed answer, normalized citations, visible citation links, conversation mapping, and durable state passed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network. File acceptance, continuation, model selection, Deep Research, Spaces, and generated assets remain unadvertised.
+Perplexity `conversation.chat` is experimental and routeable. Its guest session, prompt draft, submission, completed answer, normalized citations, visible citation links, conversation mapping, and durable state passed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network. Its visible **Add files or tools** menu and file chooser are implemented but `file.upload` remains unadvertised: on 2026-08-09, the selected Free plan displayed **Upgrade for additional document analysis** while selecting a third document, leaving only two visible attachment cards and preventing a complete real E2E closure. Continuation, model selection, Deep Research, Spaces, and generated assets also remain unadvertised.
 
-Z.ai `conversation.chat` is experimental and routeable. Its guest continuation, prompt draft, submission, completed visible answer, conversation mapping, and durable state passed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network. The configured entry point is now `https://z.ai/chat`; the official entry currently hands a prepared draft to the `https://chat.z.ai` chat runtime, so both origins remain approved. The prior acceptance covered the chat runtime through an E2E-only process-local resolver mapping; the new entry-to-runtime journey remains a manual release rerun. Continuation, files, model or effort selection, and advanced GLM workflows remain unadvertised.
+Z.ai `conversation.chat` and Markdown `file.upload` are experimental and routeable. On 2026-08-09, the built CLI and packaged daemon used headed Cloak `web-ai` to add three physical visible Markdown chips, submit the exact attachment-detector prompt, and read the attachment-grounded response (job `tlp_0bc5f6de-b04d-4b35-85a0-2bd59e2ed227`; 34.1 seconds provider end-to-end). The job recorded 531 estimated output tokens and 2,770 visible characters with no provider blocker. The configured entry point is `https://z.ai/chat`; the official entry hands the prepared draft to the approved `https://chat.z.ai` runtime. Continuation, model or effort selection, and advanced GLM workflows remain unadvertised.
 
 Doubao `file.upload` is experimental and routeable for file selection. Its visible plus control, provider file input, and accepted filename card passed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network. `conversation.chat` remains registered as an experimental signed-in route: readiness and prompt drafting passed in the same product path, and two direct submissions completed with correlated visible marker responses. The required built-product mutation gate is not release-closed because Doubao presented its visible provider-owned verification iframe when the E2E observer was attached. Challenge detection fails closed as `visible_provider_blocker`.
 
@@ -84,13 +88,13 @@ Doubao `auth.status` also reads the visible account control and opens only its a
 
 Kimi `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` are experimental and routeable only from a signed-in selected profile. The built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network closed readiness, prompt drafting, exact model and thinking-effort selection with restoration, file acceptance, an attachment-grounded response, exact Web search Auto/Off selection, normalized and visible citations, a second-process continuation on the same conversation URL, and durable task mapping. Plugin and Skill inspection and exact visible selection also passed the non-submission gate, but their complete submitted outcomes are currently blocked by Kimi's visible capacity queue and remain unadvertised. Projects, Deep Research, agent workflows, and artifact lifecycles have implementations and release gates but remain unadvertised because their real provider gates have not closed.
 
-Dola is registered as an experimental signed-in provider. The user-selected managed profile visibly confirmed the chat composer, Fast/Pro model menu, file picker, conversation URLs, and Create Image, Writing, Create Video, Translate, and Homework entry points. No Dola route is advertised until the built CLI and packaged daemon close readiness, drafting, model restoration, visible file acceptance, correlated responses, and same-conversation continuation; the generation and specialist entry points remain candidates until their terminal outcomes are independently proven.
+Dola is registered as an experimental signed-in provider. The user-selected managed profile visibly confirmed the chat composer, Fast/Pro model menu, file picker, conversation URLs, and Create Image, Writing, Create Video, Translate, and Homework entry points. On 2026-08-09, built CLI job `tlp_abc1d6ad-8b47-4ef9-80bc-ef8f50886fcd` failed after file selection in 18.1 seconds because the requested three-card acceptance proof was absent. Direct visible follow-up showed that selecting two or three Markdown documents together produced only one physical document card, and selecting another document afterward did not add a second card. No prompt was submitted. Dola `conversation.chat` and `file.upload` therefore remain unadvertised; the generation and specialist entry points also remain candidates until their terminal outcomes are independently proven.
 
 | Dola control or surface | Canonical outcome candidates | Current evidence and route state |
 | --- | --- | --- |
 | Chat and same-conversation follow-up | `conversation.chat`, `conversation.continue` | Two correlated turns completed in the selected profile; built-product gates pending |
 | Fast / Pro | `conversation.chat`; provider control `model.choice` | Both choices are live-observed; exact selection and restoration gate pending |
-| Add file | `file.upload` | Native file chooser is live-observed; accepted formats and visible acceptance gate pending |
+| Add file | `file.upload` | Relative upload control and Markdown card detection are implemented; the selected profile exposed only one physical card for multi-document and sequential selection, so the route remains unadvertised |
 | Create Image / AI Creation | `image.generation` | Entry and Seedream image surface with model, ratio, style, and template controls are live-observed; completed image and bounded artifact reference pending |
 | Writing | `document.generation` or `conversation.chat` | `write_assistant` entry is live-observed; output form is not yet proven, so no document or downloadable-file claim |
 | Create Video | `video.generation` | `video_generation` entry is live-observed; progress, terminal video, and bounded artifact reference pending |

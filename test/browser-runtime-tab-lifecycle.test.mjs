@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -147,6 +148,267 @@ test('daemon shutdown detaches and a replacement daemon reconnects to the reside
   }
 })
 
+test('replacement daemon reconnects to a legacy resident browser without runtime session metadata', { timeout: 60_000 }, async () => {
+  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-legacy-daemon-browser-handoff-')))
+  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  let daemon
+  let observer
+  try {
+    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
+    const registry = new ManagedProfileRegistry(homeDir)
+    const profile = await registry.addProfile({ slug: 'legacy-daemon-browser-handoff', lifecycle: 'ready', setDefault: true })
+    await writeTokenlessConfig({ homeDir, browser: 'profile' })
+    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
+    await openBrowserRuntimeProfile({
+      daemonUrl: daemon.origin,
+      homeDir,
+      profileId: profile.id,
+      browserVisibility: 'headed',
+    })
+    observer = await connectToManagedBrowser(profile.directory)
+    const browserContext = observer.contexts()[0]
+    assert.ok(browserContext)
+    const page = browserContext.pages()[0]
+    assert.ok(page)
+    await page.goto('data:text/html,<title>legacy-resident-browser</title>')
+    const endpointPath = path.join(profile.directory, 'DevToolsActivePort')
+    const sessionPath = path.join(profile.directory, 'tokenless-browser-runtime.json')
+    const endpointBefore = await fs.readFile(endpointPath, 'utf8')
+    const sessionBefore = await readBrowserRuntimeSession(profile.directory)
+
+    await fs.unlink(sessionPath)
+    await daemon.close()
+    daemon = undefined
+    assert.equal(observer.isConnected(), true)
+    assert.equal(await page.title(), 'legacy-resident-browser')
+
+    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
+    const reopened = await openBrowserRuntimeProfile({
+      daemonUrl: daemon.origin,
+      homeDir,
+      profileId: profile.id,
+      browserVisibility: 'headed',
+    })
+    const migratedSession = await readBrowserRuntimeSession(profile.directory)
+    assert.equal(await fs.readFile(endpointPath, 'utf8'), endpointBefore)
+    assert.equal(migratedSession.pid, sessionBefore.pid)
+    assert.equal(observer.isConnected(), true)
+    assert.equal(page.isClosed(), false)
+    assert.equal(await page.title(), 'legacy-resident-browser')
+    assert.equal(reopened.effectiveBrowserVisibility, 'headed')
+
+    await daemon.close()
+    daemon = undefined
+    await fs.unlink(sessionPath)
+    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
+    await assert.rejects(
+      openBrowserRuntimeProfile({
+        daemonUrl: daemon.origin,
+        homeDir,
+        profileId: profile.id,
+        browserVisibility: 'headless',
+      }),
+      (error) => error?.code === 'playwright_legacy_resident_browser_unverified',
+    )
+    assert.equal(await fs.readFile(endpointPath, 'utf8'), endpointBefore)
+    await assert.rejects(fs.access(sessionPath), { code: 'ENOENT' })
+    assert.equal(observer.isConnected(), true)
+    assert.equal(await page.title(), 'legacy-resident-browser')
+
+    await fs.writeFile(sessionPath, `${JSON.stringify(migratedSession, null, 2)}\n`, { mode: 0o600 })
+    await openBrowserRuntimeProfile({
+      daemonUrl: daemon.origin,
+      homeDir,
+      profileId: profile.id,
+      browserVisibility: 'headed',
+    })
+    await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir })
+    await waitFor(() => !observer.isConnected())
+  } finally {
+    if (!daemon) {
+      daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 }).catch(() => undefined)
+    }
+    if (daemon) {
+      await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir }).catch(() => undefined)
+      await daemon.close().catch(() => undefined)
+    }
+    await observer?.close().catch(() => undefined)
+    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
+    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
+    await fs.rm(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('invalid resident browser session metadata fails without overwriting the endpoint', { timeout: 60_000 }, async () => {
+  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-invalid-daemon-browser-session-')))
+  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  let daemon
+  let observer
+  try {
+    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
+    const registry = new ManagedProfileRegistry(homeDir)
+    const profile = await registry.addProfile({ slug: 'invalid-daemon-browser-session', lifecycle: 'ready', setDefault: true })
+    await writeTokenlessConfig({ homeDir, browser: 'profile' })
+    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
+    await openBrowserRuntimeProfile({
+      daemonUrl: daemon.origin,
+      homeDir,
+      profileId: profile.id,
+      browserVisibility: 'headed',
+    })
+    observer = await connectToManagedBrowser(profile.directory)
+    const endpointPath = path.join(profile.directory, 'DevToolsActivePort')
+    const sessionPath = path.join(profile.directory, 'tokenless-browser-runtime.json')
+    const endpointBefore = await fs.readFile(endpointPath, 'utf8')
+    const sessionBefore = await readBrowserRuntimeSession(profile.directory)
+
+    await daemon.close()
+    daemon = undefined
+    const invalidSession = '{not-json}\n'
+    await fs.writeFile(sessionPath, invalidSession, { mode: 0o600 })
+    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
+    await assert.rejects(
+      openBrowserRuntimeProfile({
+        daemonUrl: daemon.origin,
+        homeDir,
+        profileId: profile.id,
+        browserVisibility: 'headed',
+      }),
+      (error) => error?.code === 'playwright_browser_runtime_session_invalid',
+    )
+    assert.equal(await fs.readFile(sessionPath, 'utf8'), invalidSession)
+    assert.equal(await fs.readFile(endpointPath, 'utf8'), endpointBefore)
+    assert.equal(observer.isConnected(), true)
+
+    await fs.writeFile(sessionPath, `${JSON.stringify(sessionBefore, null, 2)}\n`, { mode: 0o600 })
+    await openBrowserRuntimeProfile({
+      daemonUrl: daemon.origin,
+      homeDir,
+      profileId: profile.id,
+      browserVisibility: 'headed',
+    })
+    await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir })
+    await waitFor(() => !observer.isConnected())
+  } finally {
+    if (!daemon) {
+      daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 }).catch(() => undefined)
+    }
+    if (daemon) {
+      await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir }).catch(() => undefined)
+      await daemon.close().catch(() => undefined)
+    }
+    await observer?.close().catch(() => undefined)
+    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
+    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
+    await fs.rm(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('legacy resident browser with an unexpected launch flag is rejected without replacement', { timeout: 60_000 }, async () => {
+  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-unexpected-flag-browser-')))
+  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  let daemon
+  let observer
+  let manualBrowser
+  try {
+    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
+    const registry = new ManagedProfileRegistry(homeDir)
+    const profile = await registry.addProfile({ slug: 'unexpected-flag-browser', lifecycle: 'ready', setDefault: true })
+    await writeTokenlessConfig({ homeDir, browser: 'profile' })
+    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
+    await openBrowserRuntimeProfile({
+      daemonUrl: daemon.origin,
+      homeDir,
+      profileId: profile.id,
+      browserVisibility: 'headed',
+    })
+    observer = await connectToManagedBrowser(profile.directory)
+    const commandSession = await observer.newBrowserCDPSession()
+    let originalArguments
+    try {
+      const commandLine = await commandSession.send('Browser.getBrowserCommandLine')
+      originalArguments = commandLine.arguments.slice(1)
+    } finally {
+      await commandSession.detach().catch(() => undefined)
+    }
+
+    await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir })
+    await waitFor(() => !observer.isConnected())
+    await observer.close().catch(() => undefined)
+    observer = undefined
+
+    manualBrowser = spawn(chromium.executablePath(), [...originalArguments, '--disable-gpu'], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    await waitForChildSpawn(manualBrowser)
+    manualBrowser.unref()
+    observer = await connectToManagedBrowser(profile.directory)
+    const endpointPath = path.join(profile.directory, 'DevToolsActivePort')
+    const sessionPath = path.join(profile.directory, 'tokenless-browser-runtime.json')
+    const endpointBefore = await fs.readFile(endpointPath, 'utf8')
+
+    await assert.rejects(
+      openBrowserRuntimeProfile({
+        daemonUrl: daemon.origin,
+        homeDir,
+        profileId: profile.id,
+        browserVisibility: 'headed',
+      }),
+      (error) => error?.code === 'playwright_legacy_resident_browser_unverified',
+    )
+    assert.equal(await fs.readFile(endpointPath, 'utf8'), endpointBefore)
+    await assert.rejects(fs.access(sessionPath), { code: 'ENOENT' })
+    assert.equal(observer.isConnected(), true)
+
+    await closeObservedBrowser(observer)
+    await waitFor(() => manualBrowser.exitCode !== null || manualBrowser.signalCode !== null)
+    manualBrowser = undefined
+    await fs.unlink(endpointPath).catch((error) => {
+      if (!error || typeof error !== 'object' || error.code !== 'ENOENT') throw error
+    })
+
+    manualBrowser = spawn(chromium.executablePath(), [...originalArguments, 'about:blank#unexpected'], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    await waitForChildSpawn(manualBrowser)
+    manualBrowser.unref()
+    observer = await connectToManagedBrowser(profile.directory)
+    const positionalEndpointBefore = await fs.readFile(endpointPath, 'utf8')
+
+    await assert.rejects(
+      openBrowserRuntimeProfile({
+        daemonUrl: daemon.origin,
+        homeDir,
+        profileId: profile.id,
+        browserVisibility: 'headed',
+      }),
+      (error) => error?.code === 'playwright_legacy_resident_browser_unverified',
+    )
+    assert.equal(await fs.readFile(endpointPath, 'utf8'), positionalEndpointBefore)
+    await assert.rejects(fs.access(sessionPath), { code: 'ENOENT' })
+    assert.equal(observer.isConnected(), true)
+
+    await closeObservedBrowser(observer)
+    await waitFor(() => manualBrowser.exitCode !== null || manualBrowser.signalCode !== null)
+    manualBrowser = undefined
+  } finally {
+    await observer?.close().catch(() => undefined)
+    if (manualBrowser && manualBrowser.exitCode === null && manualBrowser.signalCode === null) {
+      manualBrowser.kill('SIGTERM')
+      await waitFor(() => manualBrowser.exitCode !== null || manualBrowser.signalCode !== null).catch(() => undefined)
+    }
+    if (daemon) {
+      await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir }).catch(() => undefined)
+      await daemon.close().catch(() => undefined)
+    }
+    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
+    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
+    await fs.rm(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('packaged daemon completes headed provider tabs and keeps the dashboard context live through readiness refresh', { timeout: 60_000 }, async () => {
   const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-tab-lifecycle-')))
   const previousEnvironment = new Map([
@@ -229,7 +491,36 @@ test('packaged daemon completes headed provider tabs and keeps the dashboard con
     assert.equal(reopenedDashboard.opened?.pageCount, 2)
 
     await dashboardPage.getByTestId('overview-view').waitFor()
-    await dashboardPage.getByTestId('overview-readiness-refresh').click()
+    const readinessRefresh = dashboardPage.getByTestId('overview-readiness-refresh')
+    await readinessRefresh.waitFor({ state: 'visible' })
+    assert.equal(await readinessRefresh.isEnabled(), true)
+    const boundsBefore = await readinessRefresh.boundingBox()
+    assert.ok(boundsBefore)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const boundsAfter = await readinessRefresh.boundingBox()
+    assert.ok(boundsAfter)
+    assert.ok(Math.abs(boundsAfter.x - boundsBefore.x) < 0.5)
+    assert.ok(Math.abs(boundsAfter.y - boundsBefore.y) < 0.5)
+    assert.ok(Math.abs(boundsAfter.width - boundsBefore.width) < 0.5)
+    assert.ok(Math.abs(boundsAfter.height - boundsBefore.height) < 0.5)
+    const pointerTarget = await readinessRefresh.evaluate((element) => {
+      const bounds = element.getBoundingClientRect()
+      const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+      return {
+        centerVisible: bounds.left >= 0 && bounds.top >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight,
+        hitInsideButton: hit !== null && element.contains(hit),
+        animationRunning: element.getAnimations({ subtree: true }).some((animation) => animation.playState === 'running'),
+      }
+    })
+    assert.deepEqual(pointerTarget, {
+      centerVisible: true,
+      hitInsideButton: true,
+      animationRunning: false,
+    })
+    await dashboardPage.mouse.click(
+      boundsAfter.x + boundsAfter.width / 2,
+      boundsAfter.y + boundsAfter.height / 2,
+    )
     const readinessSummary = await waitForValue(async () => {
       const jobs = await listDaemonJobs({
         daemonUrl: daemon.origin,
@@ -302,8 +593,26 @@ async function connectToManagedBrowser(profileDirectory) {
 async function readBrowserRuntimeSession(profileDirectory) {
   const session = JSON.parse(await fs.readFile(path.join(profileDirectory, 'tokenless-browser-runtime.json'), 'utf8'))
   assert.equal(session.protocol, 'tokenless.browser-runtime-session.v1')
-  assert.equal(Number.isSafeInteger(session.pid), true)
+  assert.equal(session.pid === null || Number.isSafeInteger(session.pid), true)
   return session
+}
+
+async function closeObservedBrowser(browser) {
+  const session = await browser.newBrowserCDPSession()
+  try {
+    await session.send('Browser.close')
+  } finally {
+    await session.detach().catch(() => undefined)
+  }
+  await waitFor(() => !browser.isConnected())
+}
+
+async function waitForChildSpawn(child) {
+  if (child.pid) return
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve)
+    child.once('error', reject)
+  })
 }
 
 async function waitFor(predicate, timeoutMs = 15_000) {
