@@ -24,6 +24,7 @@
 
   let selectedLanguage = $state(untrack(() => snapshot.config.language as Language))
   let selectedBrowser = $state<'chrome' | 'brave'>(untrack(() => snapshot.config.browser === 'brave' ? 'brave' : 'chrome'))
+  let browserExecutablePath = $state('')
   let formError = $state('')
   let errorElement = $state<HTMLDivElement>()
 
@@ -36,7 +37,12 @@
   async function save(event: SubmitEvent) {
     event.preventDefault()
     formError = ''
-    const body: JsonRecord = { language: selectedLanguage, browser: selectedBrowser, browserVisibility: 'headed' }
+    const body: JsonRecord = {
+      language: selectedLanguage,
+      browser: selectedBrowser,
+      ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
+      browserVisibility: 'headed',
+    }
     try {
       await onmutate('/config', body, 'PATCH')
     } catch (error) {
@@ -140,6 +146,7 @@
       <div class="settings-section-title"><h2>{t('runtime')}</h2><ShieldCheck size={17} /></div>
       <div class="form-stack">
         <label class="field"><span>{t('profileBrowser')}</span><select name="browser" bind:value={selectedBrowser} data-testid="config-browser"><option value="chrome">{t('googleChrome')}</option><option value="brave">{t('braveBrowser')}</option></select></label>
+        <label class="field"><span>{t('browserExecutablePath')} <small>{t('optional')}</small></span><input name="browserExecutablePath" bind:value={browserExecutablePath} placeholder={t('browserExecutablePathPlaceholder')} autocomplete="off" spellcheck="false" data-testid="config-browser-executable-path" /><small>{snapshot.config.browserExecutablePathConfigured ? t('browserExecutablePathConfigured') : t('browserExecutablePathHelp')}</small></label>
         <div class="field read-only-field"><span>{t('defaultVisibility')}</span><strong>headed</strong></div>
         <p class="form-note">{selectedBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
       </div>

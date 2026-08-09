@@ -20,9 +20,6 @@ export class GrokProvider extends BaseProvider<'grok'> {
         legacyRequests: true,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.grok,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['grok.com', 'x.ai']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

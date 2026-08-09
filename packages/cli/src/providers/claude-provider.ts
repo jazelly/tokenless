@@ -20,9 +20,6 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
         legacyRequests: true,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.claude,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['claude.ai', 'anthropic.com']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

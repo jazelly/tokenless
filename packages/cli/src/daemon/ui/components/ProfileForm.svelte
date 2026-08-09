@@ -20,7 +20,6 @@
   } = $props()
 
   let slug = $state(untrack(() => profile?.slug ?? ''))
-  let label = $state(untrack(() => profile?.label ?? ''))
   let roleLabel = $state(untrack(() => profile?.roleLabel ?? ''))
   let enabledProviders = $state<string[]>(untrack(() => Array.isArray(profile?.enabledProviders)
     ? [...profile.enabledProviders]
@@ -50,7 +49,6 @@
     try {
       await onsubmit({
         ...(!profile ? { slug } : {}),
-        label,
         roleLabel,
         browserVisibility: 'headed',
         enabledProviders,
@@ -70,10 +68,6 @@
       <input name="slug" bind:value={slug} required pattern={'[a-z0-9](?:[a-z0-9]|-){0,63}'} autocomplete="off" data-testid="profile-slug" />
     </label>
   {/if}
-  <label class="field">
-    <span>{t('label')} <small>{t('required')}</small></span>
-    <input name="label" bind:value={label} required maxlength="80" autocomplete="off" data-testid="profile-label" />
-  </label>
   <label class="field">
     <span>{t('role')} <small>{t('optional')}</small></span>
     <input name="roleLabel" bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="profile-role" />

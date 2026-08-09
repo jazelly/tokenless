@@ -539,8 +539,6 @@ test('doctor validates an existing managed profile registry without mutating hom
       personal: {
         slug: 'personal',
         id: profileId,
-        label: 'Personal',
-        labelOrigin: 'user',
         directory: path.join(profilesDir, profileId),
         lifecycle: 'ready',
         createdAt: now,

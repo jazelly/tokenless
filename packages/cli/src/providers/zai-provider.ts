@@ -19,9 +19,6 @@ export class ZaiProvider extends BaseProvider<'zai'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.zai,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['z.ai']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

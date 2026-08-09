@@ -6,9 +6,9 @@
 
 ## 安装
 
-需要 Node.js 22.13+，以及能提供浏览器自主管理 remote debugging endpoint 的当前版 Google Chrome 或 Brave Browser。Apple Silicon macOS 是当前主要 target；Windows x64 仍处于 prerelease。
+Browser 功能需要 Node.js 22.13+，以及能提供浏览器自主管理 remote debugging endpoint 的当前版 Google Chrome 或 Brave Browser。Apple Silicon macOS 是当前主要 target；Windows x64 仍处于 prerelease。
 
-Chrome 与 Brave 必须由用户自行提供；Tokenless 不会 bundle 或下载它们。如果所选浏览器尚未安装，native setup 会直接停止。请先自行安装，或选择 Anti-Detect。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。
+Chrome 与 Brave 必须由用户自行提供；Tokenless 不会 bundle 或下载它们。Setup 找不到所选浏览器时仍会保存配置、跳过 provider 检查，并在结束时提示如何添加 executable path。首次 browser action 会验证该 path，或再次尝试标准 discovery。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。
 
 ```bash
 npm install --global tokenless@latest
@@ -16,9 +16,9 @@ tokenless setup
 tokenless doctor --json
 ```
 
-在 setup 前，请在日常使用的 Google Chrome 中打开 `chrome://inspect/#remote-debugging`，或在 Brave 中打开 `brave://inspect/#remote-debugging`，启用 remote debugging，并在浏览器出现提示时确认连接。浏览器管理 CDP endpoint，Tokenless 会自动发现；不要使用 `--remote-debugging-port` 或配置固定端口。
+在使用 browser 功能前，请在日常使用的 Google Chrome 中打开 `chrome://inspect/#remote-debugging`，或在 Brave 中打开 `brave://inspect/#remote-debugging`，启用 remote debugging，并在浏览器出现提示时确认连接。
 
-Setup 会先询问是否使用 Anti-Detect mode，再让 native-mode 用户选择 Chrome 或 Brave。随后它会创建或选择逻辑 Tokenless profile、连接正在运行的 headed 浏览器、准备 daemon，并对每个已启用 provider 检查一次可见登录状态。Tokenless 不会复制 browser profile，也不会自动登录。
+Setup 会先询问是否使用 Anti-Detect mode，再让 native-mode 用户选择 Chrome 或 Brave。Browser discovery 失败时 setup 仍会完成并提示添加 executable path；在 browser access 可用前不会运行 provider 检查。
 
 如需非交互式 setup：
 

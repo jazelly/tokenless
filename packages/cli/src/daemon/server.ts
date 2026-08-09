@@ -771,18 +771,16 @@ async function closeServer(
   outputSavingsProcessor: OutputSavingsProcessor,
   beforeClose: (() => Promise<void>) | undefined
 ) {
-  const httpClose = new Promise<void>((resolve, reject) => {
+  const results = await Promise.allSettled([
+    outputSavingsProcessor.stop(),
+  ])
+  results.push(...await Promise.allSettled([beforeClose?.() ?? Promise.resolve()]))
+  results.push(...await Promise.allSettled([new Promise<void>((resolve, reject) => {
     server.close((error) => {
       if (error) reject(error)
       else resolve()
     })
-  }).catch(() => undefined)
-  const runtimeClose = beforeClose?.() ?? Promise.resolve()
-  const results = await Promise.allSettled([
-    httpClose,
-    runtimeClose,
-    outputSavingsProcessor.stop(),
-  ])
+  })]))
   store.close()
   const failed = results.find((result) => result.status === 'rejected')
   if (failed?.status === 'rejected') throw failed.reason

@@ -55,7 +55,7 @@ The current implementation has useful foundations but no browser-facing product 
 - the daemon binds only to loopback and exposes authenticated job and browser-runtime routes;
 - the daemon owns durable SQLite job state and an embedded Playwright runtime;
 - configuration is stored in `config.json` and currently includes provider scope, browser, visibility, daemon URL, and language;
-- managed profiles have stable IDs, labels, lifecycle state, default selection, legacy provenance where applicable, and cached provider observations;
+- managed profiles use stable slugs and IDs, lifecycle state, default selection, legacy provenance where applicable, and cached provider observations;
 - provider descriptors and canonical capability routes are typed and centrally registered;
 - jobs expose durable queued, claimed, running, waiting-for-user, and terminal states;
 - `profiles open` can start a headed managed profile without navigating to a provider; and
@@ -139,7 +139,7 @@ It shows:
 The profiles area manages isolated browser identities:
 
 - create a clean profile;
-- label its purpose or role;
+- set its optional role label;
 - set the default profile;
 - choose its enabled providers;
 - choose browser visibility;
@@ -306,7 +306,7 @@ The browser-facing API should initially expose:
 
 - one aggregate overview snapshot;
 - config read and update;
-- profile list, clean or explicit-consent opaque-copy create, re-import, label, default, and remove;
+- profile list, clean or explicit-consent opaque-copy create, re-import, default selection, and remove;
 - per-profile provider membership and cached observations;
 - explicit provider open, readiness check, and controls inspection;
 - capability catalog and route availability;
@@ -361,7 +361,7 @@ Visual design requires a separate design target and review before frontend imple
 
 ### Phase 3: Profile and Browser Administration
 
-- Add clean profile creation, explicit-consent opaque local Chromium profile copy and re-import, label/role editing, default selection, and removal without parsing authentication state.
+- Add clean profile creation, explicit-consent opaque local Chromium profile copy and re-import, role editing, default selection, and removal without parsing authentication state.
 - Add browser selection, visibility, runtime open, quiesce, and restart-required flows.
 - Add optional user-managed proxy server and bypass configuration with validation and safe redaction.
 - Prevent mutations while unsafe profile ownership or active jobs make them ambiguous.

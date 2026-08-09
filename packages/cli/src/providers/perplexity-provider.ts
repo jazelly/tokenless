@@ -21,9 +21,6 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.perplexity,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['perplexity.ai']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

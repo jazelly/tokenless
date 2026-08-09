@@ -424,7 +424,6 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       : await new BrowserRuntimeManager({ homeDir }).ensure(requestedBrowser, { allowDownload: false })
     const record = await registry.addProfile({
       slug,
-      ...(args.label === undefined ? {} : { label: String(args.label) }),
       setDefault: args.setDefault === true,
       lifecycle: 'ready',
       ...(runtime === null ? {} : { runtimeBinding: browserRuntimeBinding(runtime) }),
@@ -469,7 +468,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     for (const profile of targets) {
       const removed = await registry.removeProfile(profile.slug, { confirmDelete: true })
       await deleteTokenlessProfileConfig({ homeDir, slug: profile.slug })
-      cleared.push({ slug: removed.slug, id: removed.id, label: removed.label })
+      cleared.push({ slug: removed.slug, id: removed.id })
     }
     printPayload({
       ok: true,
@@ -486,7 +485,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   if (subcommand === 'list') {
     const config = await readTokenlessConfig(homeDir)
     const defaultSlug = await defaultProfileSlug(registry)
-    const profiles = (await managedProfilesWithDisplayLabels(await registry.listProfiles()))
+    const profiles = (await registry.listProfiles())
       .map((profile) => ({
         ...publicManagedProfile(profile, defaultSlug),
         ...requiredProfileConfig(config, profile.slug),
@@ -653,7 +652,7 @@ async function dashboardCommand(args: CliArgs) {
     ok: true,
     command: 'dashboard',
     daemon: { url: daemon.url, started: daemon.started, pid: daemon.pid },
-    profile: { slug: profile.slug, id: profile.id, label: profile.label },
+    profile: { slug: profile.slug, id: profile.id },
     dashboard: {
       url: dashboard.url,
       opened: dashboard.opened !== null,
@@ -1094,15 +1093,10 @@ async function defaultProfileSlug(registry: ManagedProfileRegistry) {
   return (await registry.read()).defaultProfile
 }
 
-async function managedProfilesWithDisplayLabels(profiles: readonly ManagedProfileRecord[]) {
-  return profiles
-}
-
 function publicManagedProfile(profile: ManagedProfileRecord, defaultSlug: string | null) {
   return {
     slug: profile.slug,
     id: profile.id,
-    label: profile.label,
     lifecycle: profile.lifecycle,
     isDefault: profile.slug === defaultSlug,
     createdAt: profile.createdAt,
@@ -2917,6 +2911,12 @@ async function setupCommand(args: CliArgs) {
         ? await prompt.confirm(t('cliSetupAntiDetectPrompt'), false)
         : false
     )
+    if (useCloak && args.browserExecutablePath !== undefined) {
+      throw usageError(
+        'browser_executable_path_requires_system_browser',
+        '--browser-executable-path applies only to native Chrome or Brave setup.',
+      )
+    }
     const nativeBrowser = useCloak
       ? 'chrome'
       : explicitBrowser === 'chrome' || explicitBrowser === 'brave'
@@ -2940,6 +2940,7 @@ async function setupCommand(args: CliArgs) {
           () => runtimeManager.ensure('cloak', { allowDownload: true }),
         )
       : null
+    let nativeBrowserWarning: { code: string; message: string; nextStep: string } | null = null
     const nativeRuntime = useCloak
       ? null
       : await presenter.withProgress(
@@ -2948,15 +2949,29 @@ async function setupCommand(args: CliArgs) {
           }),
           async () => {
             try {
-              return await runtimeManager.ensure(nativeBrowser, { allowDownload: false })
+              return await runtimeManager.ensure(nativeBrowser, {
+                allowDownload: false,
+                browserExecutablePath: args.browserExecutablePath === undefined
+                  ? browserExecutablePathForSelection(config, nativeBrowser)
+                  : String(args.browserExecutablePath),
+              })
             } catch {
-              throw usageError(
-                'native_browser_not_installed',
-                `Tokenless could not find your ${nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} installation. Install it yourself, or rerun setup and choose Anti-Detect. Tokenless does not bundle or download Chrome or Brave.`,
-              )
+              const browserName = nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'
+              nativeBrowserWarning = {
+                code: 'browser_executable_not_found',
+                message: t('cliSetupNativeBrowserMissing', { browser: browserName }),
+                nextStep: t('cliSetupNativeBrowserPathNextStep', { browser: nativeBrowser }),
+              }
+              presenter.note(nativeBrowserWarning.message)
+              return null
             }
           },
         )
+    const setupBrowserWarning = nativeBrowserWarning as {
+      code: string
+      message: string
+      nextStep: string
+    } | null
     if (selectedRuntime) {
       presenter.explain({
         title: 'Anti-Detect mode',
@@ -2970,7 +2985,7 @@ async function setupCommand(args: CliArgs) {
     }
     if (
       config.browser !== nativeBrowser ||
-      config.browserExecutablePath !== null ||
+      config.browserExecutablePath !== (nativeRuntime?.executablePath ?? null) ||
       config.browserVisibility !== 'headed'
     ) {
       await quiesceBrowserRuntimeForProfileMutation({
@@ -2981,7 +2996,7 @@ async function setupCommand(args: CliArgs) {
       config = await writeTokenlessConfig({
         homeDir,
         browser: nativeBrowser,
-        browserExecutablePath: null,
+        browserExecutablePath: nativeRuntime?.executablePath ?? null,
         browserVisibility: 'headed',
       })
     }
@@ -3009,7 +3024,7 @@ async function setupCommand(args: CliArgs) {
       await writeTokenlessConfig({
         homeDir,
         browser: nativeBrowser,
-        browserExecutablePath: null,
+        browserExecutablePath: nativeRuntime?.executablePath ?? null,
         browserVisibility: 'headed',
         daemonUrl: configuredDaemonUrl,
         language: config.language,
@@ -3044,53 +3059,70 @@ async function setupCommand(args: CliArgs) {
     let runner: Record<string, any> | null = null
     const reviewSessionId = randomUUID()
 
-    presenter.explain({
-      title: t('cliSetupProviderSignIn'),
-      lines: SETUP_READINESS_DISCLOSURE,
-    })
-    for (const provider of providers) {
-      let result: Awaited<ReturnType<typeof runSetupAuthCheck>>
-      try {
-        result = await presenter.withProgress(
-          t('setupCheckingProvider', { provider }),
-          () => runSetupAuthCheck({ args, homeDir, profile, provider, reviewSessionId, quietStatus: setupTerminal.canPresent }),
-        )
-      } catch (error) {
-        recordSetupReadinessFailure({
+    const browserReady = selectedRuntime !== null || nativeRuntime !== null
+    if (browserReady) {
+      presenter.explain({
+        title: t('cliSetupProviderSignIn'),
+        lines: SETUP_READINESS_DISCLOSURE,
+      })
+      for (const provider of providers) {
+        let result: Awaited<ReturnType<typeof runSetupAuthCheck>>
+        try {
+          result = await presenter.withProgress(
+            t('setupCheckingProvider', { provider }),
+            () => runSetupAuthCheck({ args, homeDir, profile, provider, reviewSessionId, quietStatus: setupTerminal.canPresent }),
+          )
+        } catch (error) {
+          recordSetupReadinessFailure({
+            provider,
+            failure: setupReadinessCaughtFailure(error),
+            readiness,
+            presenter,
+          })
+          continue
+        }
+        runner = result.runner
+        await recordSetupSweepResult({
+          registry,
+          profile,
           provider,
-          failure: setupReadinessCaughtFailure(error),
+          result,
           readiness,
           presenter,
         })
-        continue
       }
-      runner = result.runner
-      await recordSetupSweepResult({
-        registry,
-        profile,
-        provider,
-        result,
-        readiness,
-        presenter,
-      })
     }
 
-    const reviewTabs = await ensureSetupProviderReviewTabs({
-      homeDir,
-      profile,
-      providers,
-      daemonUrl: localRuntime.url,
-      presenter,
-    })
+    const reviewTabs = browserReady
+      ? await ensureSetupProviderReviewTabs({
+          homeDir,
+          profile,
+          providers,
+          daemonUrl: localRuntime.url,
+          presenter,
+        })
+      : {
+          opened: [] as ProviderId[],
+          failures: [],
+          keptOpen: false,
+          pageCount: 0,
+          keepOpenError: null,
+        }
 
     const updatedProfile = await registry.resolveProfile(profile.slug)
     const providerSummary = setupProviderSummary(readiness)
-    const status = reviewTabs.failures.length > 0 || reviewTabs.keepOpenError ? 'failed' : providerSummary.status
+    const status = setupBrowserWarning
+      ? 'action_required'
+      : reviewTabs.failures.length > 0 || reviewTabs.keepOpenError
+      ? 'failed'
+      : providerSummary.status
     const failed = status === 'failed'
     const firstFailure = firstSetupFailure(readiness)
     if (failed) process.exitCode = 1
     presenter.summary(
-      reviewTabs.keepOpenError
+      setupBrowserWarning
+        ? `${setupBrowserWarning.message} ${setupBrowserWarning.nextStep}`
+        : reviewTabs.keepOpenError
         ? `Setup could not keep provider review tabs open in profile ${updatedProfile.slug}.`
         : reviewTabs.failures.length > 0
         ? `Setup could not open ${reviewTabs.failures.length} provider review tab(s) in profile ${updatedProfile.slug}.`
@@ -3138,6 +3170,7 @@ async function setupCommand(args: CliArgs) {
       skills,
       codexIntegration: codexIntegrationStatus,
       nextStep,
+      ...(setupBrowserWarning === null ? {} : { warning: setupBrowserWarning }),
       browser: selectedRuntime
         ? {
             id: selectedRuntime.browserId,
@@ -3190,7 +3223,9 @@ async function setupCommand(args: CliArgs) {
         },
       },
       dashboard,
-      compactOutput: failed
+      compactOutput: setupBrowserWarning
+        ? `${setupBrowserWarning.message} ${setupBrowserWarning.nextStep} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)} ${codexIntegrationMessage}`
+        : failed
         ? `${setupFailedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)} ${codexIntegrationMessage}`
         : `${setupReportedCompactOutput({ providers, profile: updatedProfile, readiness, providerSummary })} ${setupCliVersionCompact(cliVersion)} ${setupDaemonCompact(localRuntime)} ${codexIntegrationMessage}`,
     }, args)
@@ -3299,14 +3334,14 @@ async function ensureSetupManagedProfile({
     title: nativeBrowser === 'brave' ? 'Native Brave Browser' : 'Native Google Chrome',
     lines: [
       `Tokenless connects to the ${nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} you installed and already run on this computer.`,
-      'Tokenless does not bundle or download Chrome or Brave. If the selected browser is missing, setup stops; choose Anti-Detect instead if you want Tokenless to prepare CloakBrowser.',
+      'Tokenless does not bundle or download Chrome or Brave. If discovery fails, setup still finishes and tells you how to add an executable path before browser use.',
       `Enable remote debugging at ${nativeBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging and approve the connection request.`,
       'The browser manages the underlying CDP endpoint and Tokenless discovers it automatically; no --remote-debugging-port launch flag or fixed-port setting is required.',
       'Native mode is headed-only. Tokenless does not copy your browser profile or own the browser process.',
     ],
   })
   const registry = new ManagedProfileRegistry(homeDir)
-  const existing = await managedProfilesWithDisplayLabels(await registry.listProfiles())
+  const existing = await registry.listProfiles()
   const configuredDefaultProfile = (await registry.read()).defaultProfile
   let slug = args.profile === undefined ? undefined : String(args.profile)
   let selected: ManagedProfileRecord | null = null
@@ -3315,7 +3350,7 @@ async function ensureSetupManagedProfile({
   } else if (prompt && existing.length > 0) {
     const choices = [
       ...existing.map((profile) => ({
-        label: `${profile.label} (${profile.slug})`,
+        label: profile.slug,
         value: profile.slug,
       })),
       { label: 'Create a new Tokenless profile', value: '__new__' },
@@ -3353,8 +3388,6 @@ async function ensureSetupManagedProfile({
     `Creating Tokenless profile ${slug}`,
     () => registry.addProfile({
       slug,
-      label: args.label === undefined ? slug : String(args.label),
-      labelOrigin: args.label === undefined ? 'slug' : 'user',
       setDefault: true,
       lifecycle: 'ready',
     }),
@@ -3382,7 +3415,7 @@ async function ensureSetupRuntimeBoundProfile({
     ],
   })
   const registry = new ManagedProfileRegistry(homeDir)
-  const existing = await managedProfilesWithDisplayLabels(await registry.listProfiles())
+  const existing = await registry.listProfiles()
   const compatible = existing.filter((profile) => profileRuntimeMatches(profile, runtime))
   const configuredDefaultProfile = (await registry.read()).defaultProfile
   let slug = args.profile === undefined ? undefined : String(args.profile)
@@ -3396,7 +3429,7 @@ async function ensureSetupRuntimeBoundProfile({
   }
   if (!slug && prompt && existing.length > 0) {
     const choices = [
-      ...compatible.map((profile) => ({ label: `${profile.label} (${profile.slug})`, value: profile.slug })),
+      ...compatible.map((profile) => ({ label: profile.slug, value: profile.slug })),
       { label: 'Create a new managed profile', value: '__new__' },
     ]
     const chosen = await prompt.select(
@@ -3437,8 +3470,6 @@ async function ensureSetupRuntimeBoundProfile({
     `Creating clean managed profile ${slug}`,
     () => registry.addProfile({
       slug,
-      label: args.label === undefined ? slug : String(args.label),
-      labelOrigin: args.label === undefined ? 'slug' : 'user',
       setDefault: true,
       lifecycle: 'ready',
       runtimeBinding: browserRuntimeBinding(runtime),
@@ -3985,6 +4016,8 @@ async function configCommand(args: CliArgs) {
   if (args.profile !== undefined) {
     if (
       args.browser !== undefined ||
+      args.browserExecutablePath !== undefined ||
+      args.clearBrowserExecutablePath === true ||
       args.daemonUrl !== undefined ||
       args.language !== undefined
     ) {
@@ -4024,6 +4057,8 @@ async function configCommand(args: CliArgs) {
   if (
     args.providerWhitelist !== undefined ||
     args.browser !== undefined ||
+    args.browserExecutablePath !== undefined ||
+    args.clearBrowserExecutablePath === true ||
     args.browserVisibility !== undefined ||
     args.daemonUrl !== undefined ||
     args.language !== undefined
@@ -4033,6 +4068,12 @@ async function configCommand(args: CliArgs) {
     if (requestedBrowser !== 'chrome' && requestedBrowser !== 'brave') {
       throw usageError('native_chrome_required', 'Tokenless native mode supports a running Google Chrome or Brave Browser.')
     }
+    if (args.browserExecutablePath !== undefined && args.clearBrowserExecutablePath === true) {
+      throw usageError(
+        'browser_executable_path_conflict',
+        '--browser-executable-path cannot be combined with --clear-browser-executable-path.',
+      )
+    }
     if (args.providerWhitelist !== undefined) {
       throw usageError('profile_config_scope_required', '--provider-whitelist requires --profile <slug>.')
     }
@@ -4040,10 +4081,22 @@ async function configCommand(args: CliArgs) {
     if (browserVisibility !== undefined && browserVisibility !== 'headed') {
       throw usageError('native_chrome_headless_unsupported', 'Native Chrome supports headed mode only.')
     }
+    let browserExecutablePath: string | null | undefined
+    if (args.clearBrowserExecutablePath === true) {
+      browserExecutablePath = null
+    } else if (args.browserExecutablePath !== undefined) {
+      const runtime = await new BrowserRuntimeManager({ homeDir }).ensure(requestedBrowser, {
+        allowDownload: false,
+        browserExecutablePath: String(args.browserExecutablePath),
+      })
+      browserExecutablePath = runtime.executablePath
+    } else if (args.browser !== undefined && requestedBrowser !== current.browser) {
+      browserExecutablePath = null
+    }
     const config = await writeTokenlessConfig({
       homeDir,
       browser: requestedBrowser,
-      browserExecutablePath: null,
+      browserExecutablePath,
       browserVisibility: 'headed',
       daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
       language: args.language,
@@ -4591,14 +4644,14 @@ function createCommandContracts(): CommandContract[] {
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
+    { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--browser-executable-path <absolute-path>] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'browserExecutablePath', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
-    { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser chrome] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserVisibility', 'daemonUrl'] },
+    { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser <chrome|brave>] [--browser-executable-path <absolute-path>|--clear-browser-executable-path] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserExecutablePath', 'clearBrowserExecutablePath', 'browserVisibility', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
-    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'label', 'providerWhitelist', 'setDefault'] },
+    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
     { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
@@ -4650,7 +4703,6 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '-p': 'provider',
     '--profile': 'profile',
     '-P': 'profile',
-    '--label': 'label',
     '--preferred-providers': 'providerWhitelist',
     '--provider-whitelist': 'providerWhitelist',
     '--action': 'action',
@@ -5682,7 +5734,7 @@ function usage(args: CliArgs) {
       title: t('helpProfile'),
       description: t('helpAdvancedProfileDescription'),
       commands: [
-        'tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--label <name>] [--set-default] --json',
+        'tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--set-default] --json',
         'tokenless profiles clear (--profile <slug>|--all)',
         'tokenless profiles set-default --profile <slug> --json',
         'tokenless profiles remove --profile <slug> --confirm-delete --json',
@@ -5857,7 +5909,6 @@ function optionUsageLabel(option: string) {
     installCodex: '--install-codex',
     json: '--json',
     jobId: '--job-id <job-id>',
-    label: '--label <name>',
     language: '--language <en|zh-CN>',
     limit: '--limit <n>',
     longRunning: '--long-running',

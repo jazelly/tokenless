@@ -242,24 +242,33 @@ export class TokenlessApplicationServices {
     if (requestedBrowser !== 'chrome' && requestedBrowser !== 'brave') {
       throw applicationError('native_chrome_required', 'Tokenless native mode supports a running Google Chrome or Brave Browser.')
     }
-    if (input.browser !== undefined) {
+    let requestedBrowserExecutablePath = requestedBrowser === current.browser
+      ? current.browserExecutablePath
+      : null
+    if (input.browserExecutablePath === null || input.browserExecutablePath === '') {
+      requestedBrowserExecutablePath = null
+    } else if (input.browserExecutablePath !== undefined) {
       try {
-        await this.runtimeManager.ensure(requestedBrowser, { allowDownload: false })
+        const runtime = await this.runtimeManager.ensure(requestedBrowser, {
+          allowDownload: false,
+          browserExecutablePath: String(input.browserExecutablePath),
+        })
+        requestedBrowserExecutablePath = runtime.executablePath
       } catch {
         throw applicationError(
-          'native_browser_not_installed',
-          `Tokenless could not find your ${requestedBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} installation. Install it yourself, or use CLI setup to choose Anti-Detect. Tokenless does not bundle or download Chrome or Brave.`,
+          'browser_executable_not_found',
+          `Tokenless could not validate the ${requestedBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} executable path. Choose the correct browser and provide its absolute executable path.`,
         )
       }
-    }
-    if (input.browserExecutablePath !== undefined && input.browserExecutablePath !== null && input.browserExecutablePath !== '') {
-      throw applicationError('native_chrome_executable_unsupported', 'Native Chrome discovers the running stable channel and does not accept an executable path.')
     }
     const language = input.language === undefined ? current.language : input.language
     if (language !== 'en' && language !== 'zh-CN') {
       throw applicationError('invalid_language', 'Language must be en or zh-CN.')
     }
-    if (requestedBrowser !== current.browser) {
+    if (
+      requestedBrowser !== current.browser ||
+      requestedBrowserExecutablePath !== current.browserExecutablePath
+    ) {
       if (this.runtimeController?.status().activeJobCount) {
         throw applicationError('browser_mutation_unsafe', 'The native browser cannot be changed while browser jobs are active.')
       }
@@ -268,7 +277,7 @@ export class TokenlessApplicationServices {
     const saved = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
       browser: requestedBrowser,
-      browserExecutablePath: null,
+      browserExecutablePath: requestedBrowserExecutablePath,
       browserVisibility: 'headed',
       language,
     })
@@ -276,9 +285,8 @@ export class TokenlessApplicationServices {
   }
 
   async createProfile(input: Record<string, unknown>) {
-    requireKnownFields(input, ['slug', 'label', 'roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
+    requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
     const slug = requiredSlug(input.slug)
-    const label = optionalLabel(input.label)
     const browserVisibility = input.browserVisibility === undefined
       ? 'headed'
       : requiredVisibility(input.browserVisibility)
@@ -293,8 +301,6 @@ export class TokenlessApplicationServices {
     }
     const profile = await this.profiles.addProfile({
       slug,
-      label: label ?? slug,
-      labelOrigin: label === undefined ? 'slug' : 'user',
       lifecycle: 'ready',
       setDefault: input.setDefault === true,
     })
@@ -309,9 +315,8 @@ export class TokenlessApplicationServices {
   }
 
   async updateProfile(slug: string, input: Record<string, unknown>) {
-    requireKnownFields(input, ['label', 'roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
+    requireKnownFields(input, ['roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
     let profile = await this.profiles.resolveProfile(slug)
-    const label = input.label === undefined ? undefined : requiredLabel(input.label)
     const current = profileConfig(await this.migratedConfig(), profile.slug)
     const browserVisibility = input.browserVisibility === undefined
       ? current.browserVisibility
@@ -325,7 +330,6 @@ export class TokenlessApplicationServices {
       browserVisibility: 'headed' as const,
       proxy: null,
     }
-    if (label !== undefined) profile = await this.profiles.updateLabel(slug, label)
     if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
     await this.updateProfileConfig(profile, next)
     const config = await this.migratedConfig()
@@ -617,7 +621,6 @@ function publicProfile(
   return {
     slug: profile.slug,
     id: profile.id,
-    label: profile.label,
     lifecycle: profile.lifecycle,
     isDefault: profile.slug === defaultSlug,
     createdAt: profile.createdAt,
@@ -833,18 +836,6 @@ function requiredSlug(value: unknown) {
     throw applicationError('invalid_profile_slug', 'Profile slug must use lowercase letters, numbers, and hyphens.')
   }
   return value
-}
-
-function optionalLabel(value: unknown) {
-  if (value === undefined || value === null || value === '') return undefined
-  return requiredLabel(value)
-}
-
-function requiredLabel(value: unknown) {
-  if (typeof value !== 'string' || !value.trim() || value.trim().length > 80) {
-    throw applicationError('invalid_profile_label', 'Profile label must be between 1 and 80 characters.')
-  }
-  return value.trim().replace(/\s+/g, ' ')
 }
 
 function optionalRoleLabel(value: unknown) {

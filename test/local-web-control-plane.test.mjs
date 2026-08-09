@@ -235,7 +235,6 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       },
       body: JSON.stringify({
         slug: 'work',
-        label: 'Work',
         enabledProviders: ['chatgpt'],
         setDefault: true,
       }),
@@ -243,7 +242,14 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(createWorkProfile.status, 201)
     const createdProfileBody = await createWorkProfile.json()
     assert.deepEqual(createdProfileBody.enabledProviders, ['chatgpt'])
+    assert.equal(Object.hasOwn(createdProfileBody, 'label'), false)
     assert.equal(Object.hasOwn(createdProfileBody, 'preferences'), false)
+    const storedRegistry = JSON.parse(fs.readFileSync(path.join(homeDir, 'browser', 'profiles.json'), 'utf8'))
+    assert.equal(Object.hasOwn(storedRegistry.profiles.work, 'label'), false)
+    storedRegistry.profiles.work.label = 'Legacy Work'
+    storedRegistry.profiles.work.labelOrigin = 'user'
+    fs.writeFileSync(path.join(homeDir, 'browser', 'profiles.json'), `${JSON.stringify(storedRegistry, null, 2)}\n`)
+    assert.equal(Object.hasOwn(await registry.resolveProfile('work'), 'label'), false)
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work.enabledProviders, ['chatgpt'])
     const workProfile = await registry.resolveProfile('work')
     const profileConsole = await fetch(`${daemon.origin}/ui/?profile=${encodeURIComponent(workProfile.id)}`, { headers: { cookie } })
@@ -273,6 +279,24 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(configBody.profile.slug, 'work')
     assert.deepEqual(configBody.profile.enabledProviders, ['chatgpt', 'claude'])
     assert.equal(configBody.profile.browserVisibility, 'headed')
+
+    const profileListCommand = await execFileAsync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'list',
+      '--home', homeDir,
+      '--json',
+    ])
+    const profileListBody = JSON.parse(profileListCommand.stdout)
+    assert.equal(Object.hasOwn(profileListBody.profiles[0], 'label'), false)
+    await assert.rejects(execFileAsync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'list',
+      '--home', homeDir,
+      '--label', 'Work',
+      '--json',
+    ]))
 
     const dashboardCommand = await execFileAsync(process.execPath, [
       cliEntry,
@@ -306,6 +330,7 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     })
     assert.equal(profileMutation.status, 200)
     const profileBody = await profileMutation.json()
+    assert.equal(Object.hasOwn(profileBody, 'label'), false)
     assert.equal(profileBody.roleLabel, 'Research')
     assert.deepEqual(profileBody.enabledProviders, ['chatgpt', 'claude'])
     assert.equal(profileBody.proxy, null)
@@ -333,9 +358,12 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
         'x-tokenless-csrf': sessionBody.csrf,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ slug: 'cloak-bound', label: 'Cloak bound', enabledProviders: ['chatgpt'] }),
+      body: JSON.stringify({ slug: 'cloak-bound', enabledProviders: ['chatgpt'] }),
     })
     assert.equal(cloakProfile.status, 201)
+    const rewrittenRegistry = JSON.parse(fs.readFileSync(path.join(homeDir, 'browser', 'profiles.json'), 'utf8'))
+    assert.equal(Object.hasOwn(rewrittenRegistry.profiles.work, 'label'), false)
+    assert.equal(Object.hasOwn(rewrittenRegistry.profiles.work, 'labelOrigin'), false)
     await new ManagedProfileRegistry(homeDir).bindRuntime('cloak-bound', {
       runtimeId: 'cloak:darwin-arm64:145.0.7632.109.2',
       family: 'cloak',

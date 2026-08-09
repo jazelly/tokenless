@@ -213,6 +213,7 @@ async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDe
       await waitForPageTimeout(page, 500)
       unavailable = await firstUnavailableLocator(page, provider.fileUploadLocalSelectors)
       if (unavailable) {
+        await dismissUploadMenu(page, trigger)
         return {
           availability: 'unavailable' as const,
           visibleProof: 'visible-upload-control-disabled-or-sign-in',
@@ -221,6 +222,7 @@ async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDe
       }
       const openedLocalUpload = await firstEnabledLocator(page, provider.fileUploadLocalSelectors)
       if (openedLocalUpload) {
+        await dismissUploadMenu(page, trigger)
         return {
           availability: 'available' as const,
           visibleProof: 'visible-local-upload-control-enabled',
@@ -228,6 +230,7 @@ async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDe
         }
       }
     }
+    if (menuLike) await dismissUploadMenu(page, trigger)
     return {
       availability: 'unknown' as const,
       visibleProof: 'visible-upload-trigger-without-file-acceptance-control',
@@ -246,6 +249,16 @@ async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDe
     availability: 'unknown' as const,
     visibleProof: 'no-visible-upload-control',
     reason: 'visible_upload_control_not_observed',
+  }
+}
+
+async function dismissUploadMenu(page: Page, trigger: Locator) {
+  await trigger.press('Escape').catch(() => undefined)
+  await page.keyboard.press('Escape').catch(() => undefined)
+  await waitForPageTimeout(page, 100)
+  if (await trigger.getAttribute('aria-expanded').catch(() => null) === 'true') {
+    await trigger.click({ timeout: 5000, force: true }).catch(() => undefined)
+    await waitForPageTimeout(page, 100)
   }
 }
 

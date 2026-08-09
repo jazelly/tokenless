@@ -270,11 +270,6 @@ function validateProviderDescriptor(descriptor: ProviderDescriptor<ProviderId>) 
       throw new Error(`Provider ${descriptor.id} trusted sign-in path prefix is invalid.`)
     }
   }
-  for (const domain of descriptor.profileImport.cookieDomains) {
-    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)) {
-      throw new Error(`Provider ${descriptor.id} profile cookie domain is invalid.`)
-    }
-  }
 }
 
 function parseDescriptorUrl(value: string, options: { allowPath?: boolean } = {}) {

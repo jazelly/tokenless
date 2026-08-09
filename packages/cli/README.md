@@ -6,9 +6,9 @@
 
 ## Install
 
-Requires Node.js 22.13+ and a current Google Chrome or Brave Browser release that exposes its browser-managed remote debugging endpoint. Apple Silicon macOS is the current target; Windows x64 remains prerelease.
+Browser features require Node.js 22.13+ and a current Google Chrome or Brave Browser release that exposes its browser-managed remote debugging endpoint. Apple Silicon macOS is the current target; Windows x64 remains prerelease.
 
-Chrome and Brave are user-supplied browsers: Tokenless does not bundle or download either one. Native setup stops if the selected browser is not installed; install it yourself or choose Anti-Detect. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares.
+Chrome and Brave are user-supplied browsers: Tokenless does not bundle or download either one. If setup cannot find the selected browser, it still saves configuration, skips provider checks, and ends with instructions for adding an executable path. The first browser action validates that path or retries standard discovery. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares.
 
 ```bash
 npm install --global tokenless@latest
@@ -16,7 +16,7 @@ tokenless setup
 tokenless doctor --json
 ```
 
-Before setup, open `chrome://inspect/#remote-debugging` in the Google Chrome instance you already use or `brave://inspect/#remote-debugging` in Brave, enable remote debugging, and approve the browser's connection prompt. The browser manages the underlying CDP endpoint and Tokenless discovers it automatically; do not launch it with `--remote-debugging-port` or configure a fixed port. Setup asks about Anti-Detect mode, then lets native-mode users choose Chrome or Brave. It creates or selects a logical Tokenless profile, connects to that running browser, prepares the daemon, checks each enabled provider once, and leaves headed review tabs open. Connection success is the capability check; Tokenless does not import or copy a browser profile and does not download or launch another browser.
+Before browser use, open `chrome://inspect/#remote-debugging` in the Google Chrome instance you already use or `brave://inspect/#remote-debugging` in Brave, enable remote debugging, and approve the browser's connection prompt. Setup asks about Anti-Detect mode, then lets native-mode users choose Chrome or Brave. If browser discovery fails, setup still completes and tells the user how to add an executable path; provider checks wait until browser access is available.
 
 For a clean non-interactive profile:
 

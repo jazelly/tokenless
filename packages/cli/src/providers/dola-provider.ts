@@ -19,9 +19,6 @@ export class DolaProvider extends BaseProvider<'dola'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.dola,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['dola.com']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

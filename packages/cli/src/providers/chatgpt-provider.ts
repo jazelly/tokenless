@@ -19,9 +19,6 @@ export class ChatGptProvider extends BaseProvider<'chatgpt'> {
         legacyRequests: true,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.chatgpt,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['chatgpt.com', 'openai.com']),
-      }),
       controls: Object.freeze({
         chatSurface: true,
       }),

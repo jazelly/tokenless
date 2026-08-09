@@ -35,7 +35,7 @@
   <div class="metric-grid">
     <article class="metric-card"><span class="metric-icon"><Bot size={18} /></span><div><small>{t('daemon')}</small><strong translate="no">{snapshot.daemon.version}</strong><p>{formatNumber(Math.floor(snapshot.daemon.uptimeMs / 60000), language)} {t('uptimeUnit')}</p></div></article>
     <article class="metric-card"><span class="metric-icon"><Monitor size={18} /></span><div><small>{t('runtime')}</small><strong>{stateLabel(language, snapshot.runtime.status)}</strong><p>{formatNumber(snapshot.runtime.activeJobCount, language)} {t('activeUnit')}</p></div></article>
-    <article class="metric-card"><span class="metric-icon"><UserRound size={18} /></span><div><small>{t('profiles')}</small><strong>{formatNumber(snapshot.profiles.length, language)}</strong><p>{profile?.label ?? t('noProfiles')}</p></div></article>
+    <article class="metric-card"><span class="metric-icon"><UserRound size={18} /></span><div><small>{t('profiles')}</small><strong>{formatNumber(snapshot.profiles.length, language)}</strong><p>{profile?.slug ?? t('noProfiles')}</p></div></article>
     <article class="metric-card"><span class="metric-icon"><Clock3 size={18} /></span><div><small>{t('waitingJobs')}</small><strong>{formatNumber(waiting.length, language)}</strong><p>{formatNumber(running.length, language)} {t('activeUnit')}</p></div></article>
   </div>
 
@@ -72,7 +72,7 @@
   <div class="overview-grid">
     <section class="content-panel">
       <header class="panel-title">
-        <div><h2>{t('providerReadiness')}</h2><p>{profile?.label}</p></div>
+        <div><h2>{t('providerReadiness')}</h2><p>{profile?.slug}</p></div>
         <div class="panel-title-actions">
           <span class="badge neutral" data-testid="overview-readiness-summary">{formatNumber(authenticatedProviders.length, language)}/{formatNumber(enabledProviders.length, language)} {t('signedIn')}</span>
           <button

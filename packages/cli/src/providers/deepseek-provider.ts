@@ -28,9 +28,6 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.deepseek,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['deepseek.com']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

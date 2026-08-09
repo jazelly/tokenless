@@ -153,15 +153,15 @@
           >
             <span class="avatar"><UserRound size={17} /></span>
             <span class="profile-list-copy">
-              <strong>{entry.label}</strong>
-              <small>{entry.roleLabel || entry.slug}</small>
+              <strong>{entry.slug}</strong>
+              <small>{entry.roleLabel || '—'}</small>
             </span>
             {#if entry.isDefault}<Star class="default-star" size={13} fill="currentColor" />{:else}<ChevronRight size={15} />{/if}
           </button>
           <button
             class="profile-list-open icon-button"
             type="button"
-            aria-label={`${t('openBrowser')}: ${entry.label}`}
+            aria-label={`${t('openBrowser')}: ${entry.slug}`}
             title={t('openBrowser')}
             disabled={busy}
             onclick={(event) => openListProfile(event, entry.slug)}
@@ -182,10 +182,9 @@
           <span class="avatar large"><UserRound size={23} /></span>
           <div>
             <div class="title-line">
-              <h2>{profile.label}</h2>
+              <h2>{profile.slug}</h2>
               {#if profile.isDefault}<span class="badge neutral">{t('default')}</span>{/if}
             </div>
-            <p translate="no">{profile.slug}</p>
           </div>
         </div>
         <div bind:this={actionContainer} class="inspector-actions">
@@ -209,7 +208,7 @@
             <button class="text-button" type="button" onclick={() => openEditor()}>{t('edit')}</button>
           </div>
           <div class="settings-list">
-            <div class="settings-row"><span>{t('label')}</span><strong>{profile.label}</strong></div>
+            <div class="settings-row"><span>{t('slug')}</span><strong translate="no">{profile.slug}</strong></div>
             <div class="settings-row"><span>{t('role')}</span><strong>{profile.roleLabel || '—'}</strong></div>
             <div class="settings-row"><span>{t('profileBrowser')}</span><strong translate="no" data-testid="profile-browser-binding">{profile.browserBinding.browserId} · {profile.browserBinding.runtimeId}</strong></div>
             <div class="settings-row"><span>{t('visibility')}</span><strong>headed</strong></div>

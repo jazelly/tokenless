@@ -19,9 +19,6 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
         legacyRequests: true,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.gemini,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze([]),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

@@ -258,7 +258,7 @@
       <div><img src="/ui/mark.png" alt="" width="24" height="24" /><strong translate="no">Tokenless</strong></div>
       <label class="mobile-profile-select">
         <span class="sr-only">{t('selectProfile')}</span>
-        <select name="activeProfile" value={selectedProfile} onchange={(event) => selectProfile(event.currentTarget.value)}>{#each snapshot.profiles as profile}<option value={profile.slug}>{profile.label}</option>{/each}</select>
+        <select name="activeProfile" value={selectedProfile} onchange={(event) => selectProfile(event.currentTarget.value)}>{#each snapshot.profiles as profile}<option value={profile.slug}>{profile.slug}</option>{/each}</select>
       </label>
     </header>
 

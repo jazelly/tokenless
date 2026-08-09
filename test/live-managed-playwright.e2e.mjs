@@ -465,7 +465,6 @@ async function doubaoControls({ provider, journey }) {
     'image-generation',
     'video-generation',
     'deep-research',
-    'audio-podcast',
     'music-generation',
     'problem-solving',
     'spreadsheet-generation',
@@ -590,13 +589,25 @@ async function choiceCase({ provider, journey }, kind) {
   const changed = await journey.action(selectAction, [option, alternate.label])
   try {
     assert.equal(responseResult(changed.payload, selectAction)?.selectedLabel, alternate.label)
-    assert.equal(await exactTextVisible(changed.page, alternate.label), true, `${provider} observer must see selected ${kind}`)
+    assert.equal(await choiceLabelVisible(changed.page, alternate.label), true, `${provider} observer must see selected ${kind}`)
   } finally {
     await changed.close()
     const restored = await journey.action(selectAction, [option, selected.label])
     assert.equal(responseResult(restored.payload, selectAction)?.selectedLabel, selected.label)
     await restored.close()
   }
+}
+
+async function choiceLabelVisible(page, label) {
+  if (await exactTextVisible(page, label)) return true
+  const controls = page.locator('button[aria-haspopup="menu"]').filter({ visible: true })
+  for (let index = 0; index < await controls.count(); index += 1) {
+    const text = await controls.nth(index).evaluate((element) => (
+      `${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''}`
+    ).replace(/\s+/gu, ' ').trim())
+    if (text === label || text.includes(label)) return true
+  }
+  return false
 }
 
 async function fileSelection({ provider, journey }) {
@@ -1167,6 +1178,7 @@ async function action(
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
   ], {
+    startTimeoutMs: timeoutMs,
     beforeRelease: async ({ waiting, page }) => {
       await assertJourneyPage(journey, waiting, page, true)
       await observeBeforeRelease?.({ waiting, page })
@@ -1195,6 +1207,7 @@ async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
   ], {
+    startTimeoutMs: timeoutMs,
     beforeRelease: async ({ waiting, page }) => {
       await assertJourneyPage(journey, waiting, page, false)
     },

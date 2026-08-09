@@ -40,9 +40,6 @@ export type ProviderDescriptor<TId extends string = string> = Readonly<{
     legacyRequests: boolean
   }>
   navigation: ProviderNavigationDefinition
-  profileImport: Readonly<{
-    cookieDomains: readonly string[]
-  }>
   controls: Readonly<{
     chatSurface: boolean
   }>

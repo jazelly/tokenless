@@ -98,6 +98,13 @@ test('persistent config preserves native Chrome or Brave and removes managed bro
     assert.equal(Object.hasOwn(savedConfig, 'browserConnectionMode'), false)
     await runtime.writeTokenlessConfig({ homeDir, browser: 'brave' })
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browser, 'brave')
+    const nativeExecutablePath = path.join(homeDir, 'user-provided', 'brave')
+    await runtime.writeTokenlessConfig({
+      homeDir,
+      browser: 'brave',
+      browserExecutablePath: nativeExecutablePath,
+    })
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, nativeExecutablePath)
     const legacyExecutablePath = path.join(homeDir, 'browser', 'runtimes', 'managed-chromium', 'browser')
     await runtime.writeTokenlessConfig({
       homeDir,

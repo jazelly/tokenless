@@ -62,17 +62,6 @@
         }
       }
     },
-    "/browser-profile-sources/discover": {
-      "post": {
-        "operationId": "discoverUiBrowserProfileSources",
-        "security": [{ "uiSession": [], "csrf": [] }],
-        "requestBody": { "$ref": "#/components/requestBodies/BrowserProfileDiscovery" },
-        "responses": {
-          "200": { "$ref": "#/components/responses/BrowserProfileSources" },
-          "400": { "$ref": "#/components/responses/Error" }
-        }
-      }
-    },
     "/config": {
       "patch": {
         "operationId": "updateUiConfig",
@@ -159,15 +148,6 @@
         "responses": { "200": { "$ref": "#/components/responses/RuntimeOpen" }, "400": { "$ref": "#/components/responses/Error" } }
       }
     },
-    "/profiles/{profileId}/reimport": {
-      "post": {
-        "operationId": "reimportUiProfile",
-        "security": [{ "uiSession": [], "csrf": [] }],
-        "parameters": [{ "$ref": "#/components/parameters/ProfileId" }],
-        "requestBody": { "$ref": "#/components/requestBodies/ProfileReimport" },
-        "responses": { "200": { "$ref": "#/components/responses/Profile" }, "400": { "$ref": "#/components/responses/Error" } }
-      }
-    },
     "/profiles/{profileId}/providers/actions/readiness": {
       "post": {
         "operationId": "refreshUiProviderReadiness",
@@ -248,10 +228,8 @@
       "ConfigUpdate": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfigUpdate" } } } },
       "BrowserRuntimeInspect": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntimeInspect" } } } },
       "BrowserRuntimeInstall": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntimeInstall" } } } },
-      "BrowserProfileDiscovery": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserProfileDiscovery" } } } },
       "ProfileCreate": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileCreate" } } } },
       "ProfileUpdate": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileUpdate" } } } },
-      "ProfileReimport": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileReimport" } } } },
       "ProviderSelection": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderSelection" } } } }
     },
     "responses": {
@@ -262,7 +240,6 @@
       "BrowserRuntimeCatalog": { "description": "Discovered and installable browser runtime choices.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntimeCatalog" } } } },
       "BrowserRuntime": { "description": "Validated browser runtime metadata without a private executable path.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntime" } } } },
       "BrowserRuntimeInspection": { "description": "Non-mutating browser validation result.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserRuntimeInspection" } } } },
-      "BrowserProfileSources": { "description": "Redacted browser profile sources selected by an opaque server-side identifier.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BrowserProfileSources" } } } },
       "Profile": { "description": "Purpose-built managed profile view.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Profile" } } } },
       "ProfileRemoval": { "description": "Profile removal acknowledgement.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileRemoval" } } } },
       "JobSummary": { "description": "Redacted durable job summary.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobSummary" } } } },
@@ -348,36 +325,6 @@
           "repair": { "type": "boolean" }
         },
         "required": ["browser"],
-        "additionalProperties": false
-      },
-      "BrowserProfileDiscovery": {
-        "type": "object",
-        "properties": {
-          "browser": { "type": "string", "enum": ["chrome", "edge", "chromium", "chrome-for-testing"] },
-          "userDataDir": { "type": "string", "minLength": 1, "maxLength": 1024 }
-        },
-        "additionalProperties": false
-      },
-      "BrowserProfileSource": {
-        "type": "object",
-        "properties": {
-          "id": { "type": "string", "format": "uuid" },
-          "browser": { "type": "string", "enum": ["chrome", "edge", "chromium", "chrome-for-testing"] },
-          "browserLabel": { "type": "string" },
-          "directoryKey": { "type": "string" },
-          "name": { "type": "string" },
-          "browserVersion": { "type": ["string", "null"] },
-          "compatible": { "type": "boolean" }
-        },
-        "required": ["id", "browser", "browserLabel", "directoryKey", "name", "browserVersion", "compatible"],
-        "additionalProperties": false
-      },
-      "BrowserProfileSources": {
-        "type": "object",
-        "properties": {
-          "sources": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/BrowserProfileSource" } }
-        },
-        "required": ["sources"],
         "additionalProperties": false
       },
       "Proxy": {
@@ -533,7 +480,6 @@
         "properties": {
           "slug": { "$ref": "#/components/schemas/ProfileId" },
           "id": { "type": "string", "format": "uuid" },
-          "label": { "type": "string", "minLength": 1, "maxLength": 80 },
           "lifecycle": { "type": "string" },
           "isDefault": { "type": "boolean" },
           "createdAt": { "type": "string", "format": "date-time" },
@@ -555,16 +501,7 @@
           "proxy": { "$ref": "#/components/schemas/Proxy" },
           "observations": { "type": "array", "items": { "type": "object" } }
         },
-        "required": ["slug", "id", "label", "lifecycle", "isDefault", "createdAt", "updatedAt", "browserMode", "browserBinding", "roleLabel", "enabledProviders", "browserVisibility", "proxy", "observations"],
-        "additionalProperties": false
-      },
-      "ProfileImport": {
-        "type": "object",
-        "properties": {
-          "browser": { "type": ["string", "null"] },
-          "importedAt": { "type": "string", "format": "date-time" }
-        },
-        "required": ["browser", "importedAt"],
+        "required": ["slug", "id", "lifecycle", "isDefault", "createdAt", "updatedAt", "browserMode", "browserBinding", "roleLabel", "enabledProviders", "browserVisibility", "proxy", "observations"],
         "additionalProperties": false
       },
       "JobSummary": {
@@ -722,14 +659,11 @@
         "type": "object",
         "properties": {
           "slug": { "$ref": "#/components/schemas/ProfileId" },
-          "label": { "type": "string", "minLength": 1, "maxLength": 80 },
           "roleLabel": { "type": "string", "maxLength": 80 },
           "enabledProviders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProviderId" } },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "proxy": { "$ref": "#/components/schemas/Proxy" },
-          "setDefault": { "type": "boolean" },
-          "importSourceId": { "type": "string", "format": "uuid" },
-          "consentLocalProfileCopy": { "type": "boolean" }
+          "setDefault": { "type": "boolean" }
         },
         "required": ["slug"],
         "additionalProperties": false
@@ -737,21 +671,12 @@
       "ProfileUpdate": {
         "type": "object",
         "properties": {
-          "label": { "type": "string", "minLength": 1, "maxLength": 80 },
           "roleLabel": { "type": "string", "maxLength": 80 },
           "enabledProviders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProviderId" } },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "proxy": { "$ref": "#/components/schemas/Proxy" },
           "setDefault": { "type": "boolean" }
         },
-        "additionalProperties": false
-      },
-      "ProfileReimport": {
-        "type": "object",
-        "properties": {
-          "consentLocalProfileCopy": { "const": true }
-        },
-        "required": ["consentLocalProfileCopy"],
         "additionalProperties": false
       },
       "ProviderSelection": {

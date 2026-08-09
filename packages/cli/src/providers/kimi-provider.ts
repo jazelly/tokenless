@@ -26,9 +26,6 @@ export class KimiProvider extends BaseProvider<'kimi'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.kimi,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['kimi.com']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

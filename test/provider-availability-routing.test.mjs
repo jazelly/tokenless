@@ -388,8 +388,6 @@ function seedManagedProfile(homeDir, lastObservedAuth) {
       default: {
         slug: 'default',
         id,
-        label: 'default',
-        labelOrigin: 'slug',
         directory,
         lifecycle: 'ready',
         createdAt: new Date().toISOString(),

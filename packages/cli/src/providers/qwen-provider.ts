@@ -27,9 +27,6 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.qwen,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['qwen.ai']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

@@ -34,7 +34,7 @@
 <section class="page" data-testid="capabilities-view">
   <PageHeader title={t('capabilities')} description={t('capabilitiesLede')}>
     {#snippet actions()}
-      <label class="inline-select"><span class="sr-only">{t('selectProfile')}</span><select name="capabilityProfile" value={profile?.slug} onchange={(event) => onselect(event.currentTarget.value)}>{#each snapshot.profiles as entry}<option value={entry.slug}>{entry.label}</option>{/each}</select></label>
+      <label class="inline-select"><span class="sr-only">{t('selectProfile')}</span><select name="capabilityProfile" value={profile?.slug} onchange={(event) => onselect(event.currentTarget.value)}>{#each snapshot.profiles as entry}<option value={entry.slug}>{entry.slug}</option>{/each}</select></label>
     {/snippet}
   </PageHeader>
 

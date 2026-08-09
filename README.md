@@ -54,9 +54,9 @@ See the [Capability Matrix](docs/capability-matrix.md) for the verified workflow
 
 ## Start in three commands
 
-Requires Node.js 22.13+ and a current Google Chrome or Brave Browser release that exposes its browser-managed remote debugging endpoint. Apple Silicon macOS is the current target, and Windows x64 remains prerelease.
+Browser features require Node.js 22.13+ and a current Google Chrome or Brave Browser release that exposes its browser-managed remote debugging endpoint. Apple Silicon macOS is the current target, and Windows x64 remains prerelease.
 
-Chrome and Brave are user-supplied browsers: Tokenless does not bundle or download either one. Native setup stops if the selected browser is not installed; install it yourself or choose Anti-Detect. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares.
+Chrome and Brave are user-supplied browsers: Tokenless does not bundle or download either one. If setup cannot find the selected browser, it still saves configuration, skips provider checks, and ends with instructions for adding an executable path. The first browser action validates that path or retries standard discovery. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares.
 
 Before setup, open `chrome://inspect/#remote-debugging` in your everyday Google Chrome or `brave://inspect/#remote-debugging` in Brave, enable remote debugging, and approve the browser's connection prompt. The browser manages the underlying CDP endpoint and Tokenless discovers it automatically, so you do not launch it with `--remote-debugging-port` or configure a fixed port. Tokenless tests capability by connecting; it does not copy your profile or launch another browser.
 

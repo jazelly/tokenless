@@ -12,9 +12,7 @@ import type {
 } from '../../providers/registry.js'
 import type { BrowserRuntimeBinding } from '../../browser-runtime/types.js'
 
-export type ProfileLifecycleState = 'created' | 'importing' | 'ready' | 'removed' | 'failed'
-export type ManagedProfileLabelOrigin = 'slug' | 'user'
-
+export type ProfileLifecycleState = 'created' | 'ready' | 'removed' | 'failed'
 export type ProviderStatus = {
   provider: ProviderId
   auth: 'authenticated' | 'unauthenticated' | 'unknown'
@@ -30,8 +28,6 @@ export type ProviderStatus = {
 export type ManagedProfileRecord = {
   slug: string
   id: string
-  label: string
-  labelOrigin: ManagedProfileLabelOrigin
   directory: string
   lifecycle: ProfileLifecycleState
   createdAt: string
@@ -48,8 +44,6 @@ export type ManagedProfileRegistryData = {
 
 export type AddProfileOptions = {
   slug: string
-  label?: string
-  labelOrigin?: ManagedProfileLabelOrigin
   setDefault?: boolean
   lifecycle?: ProfileLifecycleState
   runtimeBinding?: BrowserRuntimeBinding
@@ -88,12 +82,9 @@ export class ManagedProfileRegistry {
       const id = randomUUID()
       const directory = this.profileDirectory(id)
       const lifecycle = options.lifecycle ?? 'created'
-      const labelOrigin = options.labelOrigin ?? (options.label === undefined ? 'slug' : 'user')
       const record: ManagedProfileRecord = {
         slug,
         id,
-        label: normalizeLabel(options.label, slug),
-        labelOrigin,
         directory,
         lifecycle,
         createdAt: now,
@@ -138,26 +129,6 @@ export class ManagedProfileRegistry {
       data.defaultProfile = normalized
       await this.writeUnlocked(data)
       return record
-    })
-  }
-
-  async updateLabel(slug: string, label: string): Promise<ManagedProfileRecord> {
-    return await this.withWriteLock(async () => {
-      const normalized = normalizeSlug(slug)
-      const data = await this.readUnlocked()
-      const record = data.profiles[normalized]
-      if (!record || record.lifecycle === 'removed') {
-        throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
-      }
-      const updated: ManagedProfileRecord = {
-        ...record,
-        label: normalizeLabel(label, record.slug),
-        labelOrigin: 'user',
-        updatedAt: new Date().toISOString(),
-      }
-      data.profiles[normalized] = updated
-      await this.writeUnlocked(data)
-      return updated
     })
   }
 
@@ -344,12 +315,9 @@ function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegi
     if (record.directory !== directory || !isPathInside(profilesRoot, directory)) {
       throw tokenlessError('invalid_profile_registry', 'Managed profile directory is malformed.')
     }
-    const label = typeof record.label === 'string' ? record.label.slice(0, 120) : normalizedSlug
     profiles[normalizedSlug] = {
       slug: normalizedSlug,
       id: record.id,
-      label,
-      labelOrigin: parseLabelOrigin(record.labelOrigin, label, normalizedSlug),
       directory,
       lifecycle: parseLifecycle(record.lifecycle),
       createdAt: parseIso(record.createdAt),
@@ -405,11 +373,6 @@ function sameRuntimeBinding(left: BrowserRuntimeBinding, right: BrowserRuntimeBi
     left.browserId === right.browserId &&
     left.createdWithVersion === right.createdWithVersion &&
     left.profileFormat === right.profileFormat
-}
-
-function parseLabelOrigin(value: unknown, label: string, slug: string): ManagedProfileLabelOrigin {
-  if (value === 'slug' || value === 'user') return value
-  return label === slug ? 'slug' : 'user'
 }
 
 function parseProviderStatuses(value: unknown): Partial<Record<ProviderId, ProviderStatus>> {
@@ -491,15 +454,6 @@ function normalizeProviderAccountValue(value: string) {
   return value.replace(/\s+/g, ' ').trim().slice(0, 120) || null
 }
 
-function normalizeLabel(label: string | undefined, fallback: string) {
-  if (label === undefined) return fallback
-  const normalized = label.trim().replace(/\s+/g, ' ')
-  if (normalized.length < 1 || Buffer.byteLength(normalized, 'utf8') > 120 || /[\u0000-\u001f\u007f]/.test(normalized)) {
-    throw tokenlessError('invalid_profile_label', 'Managed profile label is invalid.')
-  }
-  return normalized
-}
-
 function emptyRegistry(): ManagedProfileRegistryData {
   return {
     version: 1,
@@ -509,7 +463,7 @@ function emptyRegistry(): ManagedProfileRegistryData {
 }
 
 function parseLifecycle(value: unknown): ProfileLifecycleState {
-  if (value === 'created' || value === 'importing' || value === 'ready' || value === 'removed' || value === 'failed') return value
+  if (value === 'created' || value === 'ready' || value === 'removed' || value === 'failed') return value
   throw tokenlessError('invalid_profile_registry', 'Managed profile lifecycle is malformed.')
 }
 

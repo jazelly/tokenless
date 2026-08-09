@@ -166,8 +166,13 @@ export class BrowserRuntimeController {
       daemonClient: createInProcessDaemonClient(this.store),
       browserResolver: async (profile) => {
         if (!profile.runtimeBinding) {
+          const runtime = await runtimeManager.ensure(nativeBrowser, {
+            allowDownload: false,
+            browserExecutablePath: config.browserExecutablePath,
+          })
           return {
             id: nativeBrowser,
+            executablePath: runtime.executablePath,
             runtimeId: `native:${nativeBrowser}`,
             launchPolicy: 'native',
           }

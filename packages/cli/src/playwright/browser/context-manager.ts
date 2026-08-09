@@ -19,7 +19,7 @@ export type ManagedBrowserProfile = {
   id: string
   slug?: string | undefined
   directory: string
-  lifecycle?: 'created' | 'importing' | 'ready' | 'removed' | 'failed'
+  lifecycle?: 'created' | 'ready' | 'removed' | 'failed'
   runtimeBinding?: BrowserRuntimeBinding | undefined
   proxy?: { server: string, bypass: readonly string[] } | null | undefined
   lastObservedAuth?: Partial<Record<string, {

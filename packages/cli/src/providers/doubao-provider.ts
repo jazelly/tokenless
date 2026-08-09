@@ -26,9 +26,6 @@ export class DoubaoProvider extends BaseProvider<'doubao'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.doubao,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['doubao.com']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),

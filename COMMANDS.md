@@ -146,7 +146,7 @@ This command does not update the global npm CLI, configure a managed profile, or
 
 ### `tokenless setup`
 
-Runs the complete onboarding flow: discovers system and cached runtimes, resolves or installs the exact selected browser, creates or selects a runtime-compatible managed profile, saves the verified selection, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and performs one live sign-in check for every enabled provider. With `--install-codex`, setup explicitly installs Tokenless guidance and hooks after preferences are saved and before skill maintenance; setup without the flag never installs them, including non-interactive runs. Manual trust in Codex `/hooks` remains required. Skill maintenance keeps `~/.agents/skills` canonical and refreshes direct copies for already-present common agent roots, including `~/.codex/skills` and `~/.claude/skills`; it also repairs the legacy `~/.agent/skills` location. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
+Runs the complete onboarding flow: asks about Anti-Detect, selects a user-supplied Chrome or Brave for native mode or prepares CloakBrowser, creates or selects a logical Tokenless profile, saves configuration, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and checks enabled providers when browser access is available. With `--install-codex`, setup explicitly installs Tokenless guidance and hooks after preferences are saved and before skill maintenance; setup without the flag never installs them, including non-interactive runs. Manual trust in Codex `/hooks` remains required. Skill maintenance keeps `~/.agents/skills` canonical and refreshes direct copies for already-present common agent roots, including `~/.codex/skills` and `~/.claude/skills`; it also repairs the legacy `~/.agent/skills` location. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
 
 Interactive setup:
 
@@ -169,12 +169,12 @@ Main options:
 - `--provider-whitelist <list>` selects provider membership for that profile during non-interactive setup.
 - `--no-open` completes setup without opening the dashboard.
 - `--defaults` selects non-interactive defaults.
-- `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
+- `--browser-executable-path <absolute-path>` supplies a user-installed Chrome or Brave executable when automatic discovery cannot find it.
 
-Setup first asks whether to use Anti-Detect mode. If declined, the user chooses Google Chrome or Brave Browser that they already installed; Tokenless does not bundle or download either browser. Setup stops immediately when the selected browser is missing, so the user must install it or choose Anti-Detect. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`; the browser asks the user to approve the connection and owns the underlying CDP endpoint. Tokenless discovers it automatically—there is no `--remote-debugging-port` launch flag or fixed-port setting in native mode. Tokenless uses connection success as the only capability check, never copies the browser profile, and currently supports headed mode only. Daemon shutdown disconnects automation without closing the browser.
+Setup first asks whether to use Anti-Detect mode. If declined, the user chooses user-supplied Google Chrome or Brave Browser; Tokenless does not bundle or download either browser. Setup then tries the configured executable path and standard installation locations. If neither resolves, setup still saves configuration and finishes with an `action_required` warning, skips provider browser checks, and tells the user how to add an absolute executable path. Before the first browser action, Tokenless validates that path or retries standard discovery; the action fails clearly if neither works. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging` before browser use.
 
-Interactive `setup` lists every supported provider, enables all of them by default, and lets the user remove providers by replying with their displayed numbers; pressing Enter keeps them all. Non-interactive setup uses `--provider-whitelist`, the existing profile's `enabledProviders`, or all supported providers for a new profile. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
+Interactive `setup` lists every supported provider, enables all of them by default, and lets the user remove providers by replying with their displayed numbers; pressing Enter keeps them all. Non-interactive setup uses `--provider-whitelist`, the existing profile's `enabledProviders`, or all supported providers for a new profile. When a browser resolves, setup checks provider state and leaves headed review tabs open. When it does not, setup skips those browser checks and opens the dashboard so the user can add the executable path.
 
 Every new profile starts with all non-disabled providers, including Gemini. Its membership can be changed with `--profile <slug> --provider-whitelist <list>` or through the dashboard.
 
@@ -271,6 +271,8 @@ Configurable values:
 - `--profile <slug> --provider-whitelist <list>`
 - `--profile <slug> --browser-visibility headed`
 - `--browser chrome`
+- `--browser-executable-path <absolute-path>`
+- `--clear-browser-executable-path`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
@@ -339,7 +341,7 @@ A Tokenless profile groups provider tabs and configuration inside the connected 
 Creates a logical Tokenless profile:
 
 ```bash
-tokenless profiles add -P work --label "Work" --set-default --json
+tokenless profiles add -P work --set-default --json
 ```
 
 ### `tokenless profiles list`

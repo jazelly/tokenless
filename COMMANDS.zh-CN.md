@@ -146,7 +146,7 @@ tokenless install --browsers chrome,edge --json
 
 ### `tokenless setup`
 
-执行完整 onboarding：发现 system 与 cached runtimes，解析或安装精确的所选 browser，创建或选择 runtime-compatible managed profile，保存已验证的 selection，upsert 全局 Tokenless agent skills，将 daemon 对齐已安装 CLI 版本，并对所有 enabled providers 各执行一次实时登录检查。使用 `--install-codex` 时，setup 会在保存 preferences 之后、skill maintenance 之前显式安装 Tokenless guidance 与 hooks；不带该 flag 时不会安装，非交互运行也不会静默安装。Codex `/hooks` 中的手工信任仍然是必需步骤。Skill maintenance 以 `~/.agents/skills` 为 canonical，并刷新已经存在的常见 agent root（包括 `~/.codex/skills` 和 `~/.claude/skills`）中的 direct copy；同时修复 legacy 的 `~/.agent/skills`。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
+执行完整 onboarding：先询问是否使用 Anti-Detect；native mode 选择用户自行提供的 Chrome 或 Brave，否则准备 CloakBrowser；然后创建或选择逻辑 Tokenless profile、保存配置、upsert 全局 Tokenless agent skills、将 daemon 对齐已安装 CLI 版本，并在 browser access 可用时检查 enabled providers。使用 `--install-codex` 时，setup 会在保存 preferences 之后、skill maintenance 之前显式安装 Tokenless guidance 与 hooks；不带该 flag 时不会安装，非交互运行也不会静默安装。Codex `/hooks` 中的手工信任仍然是必需步骤。Skill maintenance 以 `~/.agents/skills` 为 canonical，并刷新已经存在的常见 agent root（包括 `~/.codex/skills` 和 `~/.claude/skills`）中的 direct copy；同时修复 legacy 的 `~/.agent/skills`。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
 
 交互式 setup：
 
@@ -169,12 +169,12 @@ tokenless setup --install-codex --codex-home <dir> --profile default --defaults 
 - `--provider-whitelist <list>` 在非交互 setup 中设置该 profile 的 provider membership。
 - `--no-open` 完成 setup，但不打开控制台。
 - `--defaults` 选择非交互默认值。
-- `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
+- `--browser-executable-path <absolute-path>` 可在自动 discovery 失败时提供用户自行安装的 Chrome 或 Brave executable。
 
-Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，用户再选择自己已经安装的 Google Chrome 或 Brave Browser；Tokenless 不会 bundle 或下载这两种浏览器。若找不到所选浏览器，setup 会立即停止；用户必须先自行安装，或改选 Anti-Detect。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging；浏览器会要求用户确认连接，并持有底层 CDP endpoint。Tokenless 会自动发现 endpoint——native mode 没有 `--remote-debugging-port` 启动参数或固定端口设置。Tokenless 只以连接成功作为 capability check，不复制 browser profile，目前只支持 headed。Daemon 关闭时只断开自动化，不会关闭浏览器。
+Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，用户再选择由自己提供的 Google Chrome 或 Brave Browser；Tokenless 不会 bundle 或下载这两种浏览器。Setup 随后检查已配置 executable path 和标准安装位置；两者都找不到时，仍会保存配置并以 `action_required` warning 完成，同时跳过 provider browser 检查，并提示用户添加绝对 executable path。首次 browser action 前，Tokenless 会验证已配置 path 或再次尝试标准 discovery；两者仍失败时，该 action 才会明确失败。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。使用浏览器前请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging。
 
-交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会使用 `--provider-whitelist`、已有 profile 的 `enabledProviders`，或为新 profile 使用所有受支持 provider。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
+交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会使用 `--provider-whitelist`、已有 profile 的 `enabledProviders`，或为新 profile 使用所有受支持 provider。浏览器可解析时，setup 会检查 provider 状态并保留 headed review tabs；找不到浏览器时则跳过这些 browser 检查并打开 dashboard，供用户添加 executable path。
 
 每个新 profile 默认包含所有非 `disabled` provider，包括 Gemini。可通过 `--profile <slug> --provider-whitelist <list>` 或控制台修改其 membership。
 
@@ -271,6 +271,8 @@ tokenless config \
 - `--profile <slug> --provider-whitelist <list>`
 - `--profile <slug> --browser-visibility headed`
 - `--browser chrome`
+- `--browser-executable-path <absolute-path>`
+- `--clear-browser-executable-path`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
@@ -339,7 +341,7 @@ tokenless daemon stop --json
 创建逻辑 Tokenless profile：
 
 ```bash
-tokenless profiles add -P work --label "Work" --set-default --json
+tokenless profiles add -P work --set-default --json
 ```
 
 ### `tokenless profiles list`

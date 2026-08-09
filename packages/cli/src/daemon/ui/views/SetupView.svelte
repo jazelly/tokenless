@@ -22,9 +22,9 @@
   let setupError = $state('')
   let errorElement = $state<HTMLDivElement>()
   let slug = $state('default')
-  let label = $state(untrack(() => t('default')))
   let roleLabel = $state('')
   let selectedBrowser = $state<'chrome' | 'brave'>(untrack(() => snapshot.config?.browser === 'brave' ? 'brave' : 'chrome'))
+  let browserExecutablePath = $state('')
   let enabledProviders = $state<string[]>(untrack(() => snapshot.providers
     .filter((provider: JsonRecord) => provider.stage !== 'disabled' && provider.id !== 'gemini')
     .map((provider: JsonRecord) => provider.id)))
@@ -43,11 +43,11 @@
         {
           language: selectedLanguage,
           browser: selectedBrowser,
+          ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
           browserVisibility: 'headed',
         },
         {
           slug,
-          label,
           roleLabel,
           enabledProviders,
           browserVisibility: 'headed',
@@ -90,6 +90,7 @@
         <div class="setup-icon"><Monitor size={19} /></div>
         <div class="setup-fields browser-setup-fields">
           <label class="field"><span>{t('profileBrowser')}</span><select name="browser" bind:value={selectedBrowser} data-testid="setup-browser"><option value="chrome">{t('googleChrome')}</option><option value="brave">{t('braveBrowser')}</option></select></label>
+          <label class="field"><span>{t('browserExecutablePath')} <small>{t('optional')}</small></span><input name="browserExecutablePath" bind:value={browserExecutablePath} placeholder={t('browserExecutablePathPlaceholder')} autocomplete="off" spellcheck="false" data-testid="setup-browser-executable-path" /></label>
           <p class="form-note">{selectedBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
         </div>
       </div>
@@ -101,10 +102,6 @@
             <label class="field">
               <span>{t('slug')}</span>
               <input name="slug" bind:value={slug} required pattern={'[a-z0-9](?:[a-z0-9]|-){0,63}'} autocomplete="off" spellcheck="false" data-testid="setup-slug" />
-            </label>
-            <label class="field">
-              <span>{t('label')}</span>
-              <input name="label" bind:value={label} required maxlength="80" autocomplete="off" data-testid="setup-label" />
             </label>
           </div>
           <label class="field">

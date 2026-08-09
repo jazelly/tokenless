@@ -487,13 +487,13 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "model-choice",
-        "effort-choice",
         "file-selection",
         "conversation-workflow",
         "native-project"
       ],
       "unavailable": {
+        "model-choice": "selected_free_plan_only_fast_enabled_2026_08_10",
+        "effort-choice": "no_independent_effort_control_observed_2026_08_10",
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",

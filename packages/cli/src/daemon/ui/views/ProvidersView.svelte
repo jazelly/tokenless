@@ -56,7 +56,7 @@
       <label class="inline-select">
         <span class="sr-only">{t('selectProfile')}</span>
         <select name="providerProfile" value={profile?.slug} onchange={(event) => onselect(event.currentTarget.value)} data-testid="provider-profile">
-          {#each snapshot.profiles as entry}<option value={entry.slug}>{entry.label}</option>{/each}
+          {#each snapshot.profiles as entry}<option value={entry.slug}>{entry.slug}</option>{/each}
         </select>
       </label>
     {/snippet}

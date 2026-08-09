@@ -1426,8 +1426,6 @@ function createReadyManagedProfile(homeDir, options = {}) {
       default: {
         slug: 'default',
         id: profileId,
-        label: 'Default',
-        labelOrigin: 'slug',
         directory: profileDir,
         lifecycle: 'ready',
         createdAt: now,

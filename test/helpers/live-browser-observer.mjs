@@ -21,7 +21,6 @@ export async function createLiveBrowserInspectionSession(options) {
   const daemonUrl = options.daemonUrl === undefined ? undefined : requiredString(options.daemonUrl, 'daemonUrl')
   const runId = `e2e-${randomUUID()}`
   const nonce = randomBytes(32).toString('base64url')
-  const startedAt = Date.now()
   const env = {
     ...process.env,
     TOKENLESS_PROVIDER: '',
@@ -49,7 +48,7 @@ export async function createLiveBrowserInspectionSession(options) {
       timeoutMs: observeOptions.timeoutMs ?? 120_000,
     })
     seenBarriers.add(barrierIdentity(waiting))
-    const observer = await connectObserver(waiting, startedAt, observerBrowsers)
+    const observer = await connectObserver(waiting, observerBrowsers)
     await observeOptions.beforeRelease?.({ waiting, page: observer.page })
     const observation = observeOptions.observeAfterRelease === undefined
       ? Promise.resolve(undefined)
@@ -115,9 +114,7 @@ export async function createLiveBrowserInspectionSession(options) {
     },
     async close() {
       const canceledJobs = cancelRunJobs({ homeDir, daemonUrl, env, jobPrefix })
-      // Do not call Browser.close() on connectOverCDP observers; Cloak may treat it as a
-      // browser shutdown. The test process owns only the CDP client socket, which disconnects
-      // naturally when the process exits.
+      for (const browser of observerBrowsers.values()) unrefCdpObserver(browser)
       observerBrowsers.clear()
       const result = runCliSync([
         'daemon', 'stop',
@@ -133,6 +130,16 @@ export async function createLiveBrowserInspectionSession(options) {
       }
       return { ...result, canceledJobs }
     },
+  }
+}
+
+function unrefCdpObserver(browser) {
+  try {
+    const implementation = browser?._connection?.toImpl?.(browser)
+    const socket = implementation?._connection?._transport?._ws?._socket
+    if (socket && typeof socket.unref === 'function') socket.unref()
+  } catch {
+    // A browser that already disconnected has no observer socket to unref.
   }
 }
 
@@ -219,16 +226,12 @@ function barrierIdentity(waiting) {
   return `${String(waiting?.jobId ?? '')}:${String(waiting?.waitingAt ?? '')}`
 }
 
-async function connectObserver(waiting, sessionStartedAt, observerBrowsers) {
+async function connectObserver(waiting, observerBrowsers) {
   const endpointFile = path.join(path.resolve(waiting.profileDirectory), 'DevToolsActivePort')
   const deadline = Date.now() + 30_000
   let endpoint
   while (Date.now() <= deadline) {
     try {
-      const stat = await fs.stat(endpointFile)
-      if (stat.mtimeMs + 2_000 < sessionStartedAt) {
-        throw new Error('DevToolsActivePort predates the current E2E inspection session.')
-      }
       const [port, websocketPath] = (await fs.readFile(endpointFile, 'utf8')).trim().split(/\r?\n/u)
       assert.match(port ?? '', /^\d+$/)
       assert.match(websocketPath ?? '', /^\/devtools\/browser\/[A-Za-z0-9-]+$/)

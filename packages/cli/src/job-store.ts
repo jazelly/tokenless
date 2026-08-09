@@ -148,7 +148,10 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   }
   const normalizedBrowser = normalizeBrowserId(payload.browser)
   const browser = normalizedBrowser === 'brave' ? 'brave' : 'chrome'
-  const browserExecutablePath = null
+  const browserExecutablePath = normalizedBrowser === 'chrome' || normalizedBrowser === 'brave'
+    ? normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
+    : null
+  validateConfigBrowserExecutablePathScope(homeDir, browser, browserExecutablePath, file)
   const config: TokenlessConfig = {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
@@ -184,15 +187,31 @@ export async function writeTokenlessConfig({
 } = {}) {
   return await withConfigWriterLock(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
-    const requestedBrowser = browser === undefined ? current.browser : validateConfigBrowser(browser)
+    const requestedBrowserSelection = browser === undefined ? current.browser : validateConfigBrowser(browser)
+    const requestedBrowser = requestedBrowserSelection === 'brave' ? 'brave' : 'chrome'
+    const requestedBrowserExecutablePath = browserExecutablePath === undefined
+      ? requestedBrowser === current.browser && (
+          requestedBrowserSelection === 'chrome' || requestedBrowserSelection === 'brave'
+        )
+        ? current.browserExecutablePath
+        : null
+      : requestedBrowserSelection === 'chrome' || requestedBrowserSelection === 'brave'
+        ? validateConfigBrowserExecutablePath(browserExecutablePath)
+        : null
+    validateConfigBrowserExecutablePathScope(
+      homeDir,
+      requestedBrowser,
+      requestedBrowserExecutablePath,
+      configPath(homeDir),
+    )
     const config: TokenlessConfig = {
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
       profiles: await configuredProfiles(homeDir, {
         profiles: profiles === undefined ? current.profiles : validateProfiles(profiles),
       }),
-      browser: requestedBrowser === 'brave' ? 'brave' : 'chrome',
-      browserExecutablePath: null,
+      browser: requestedBrowser,
+      browserExecutablePath: requestedBrowserExecutablePath,
       browserVisibility: 'headed',
       daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
       language: language === undefined ? current.language : validateConfigLanguage(language),
