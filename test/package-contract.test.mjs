@@ -117,15 +117,17 @@ test('persistent config canonicalizes browser settings to headed native Chrome',
     assert.equal(migrated.browser, 'chrome')
     assert.equal(migrated.browserExecutablePath, null)
     assert.equal(migrated.browserVisibility, 'headed')
-    fs.writeFileSync(
-      path.join(homeDir, 'config.json'),
-      `${JSON.stringify({ ...savedConfig, browserConnectionMode: 'cdp' })}\n`,
-      { mode: 0o600 },
-    )
-    await assert.rejects(
-      runtime.readTokenlessConfig(homeDir),
-      (error) => error?.code === 'tokenless_config_invalid',
-    )
+    for (const browserConnectionMode of ['playwright', 'cdp']) {
+      fs.writeFileSync(
+        path.join(homeDir, 'config.json'),
+        `${JSON.stringify({ ...savedConfig, browserConnectionMode })}\n`,
+        { mode: 0o600 },
+      )
+      await assert.rejects(
+        runtime.readTokenlessConfig(homeDir),
+        (error) => error?.code === 'tokenless_config_invalid',
+      )
+    }
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
