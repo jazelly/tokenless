@@ -389,23 +389,25 @@
         "required": ["server", "bypass"],
         "additionalProperties": false
       },
-      "ProfilePreferences": {
+      "ProfileConfig": {
         "type": "object",
         "properties": {
-          "profileId": { "$ref": "#/components/schemas/ProfileId" },
           "roleLabel": { "type": "string", "maxLength": 80 },
           "enabledProviders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProviderId" } },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
           "proxy": { "$ref": "#/components/schemas/Proxy" }
         },
-        "required": ["profileId", "roleLabel", "enabledProviders", "browserVisibility", "proxy"],
+        "required": ["roleLabel", "enabledProviders", "browserVisibility", "proxy"],
         "additionalProperties": false
       },
       "UiConfig": {
         "type": "object",
         "properties": {
           "updatedAt": { "type": ["string", "null"], "format": "date-time" },
-          "providerWhitelist": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+          "profiles": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/components/schemas/ProfileConfig" }
+          },
           "browser": { "type": "string" },
           "browserExecutablePathConfigured": { "type": "boolean" },
           "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
@@ -418,7 +420,7 @@
             "additionalProperties": false
           }
         },
-        "required": ["updatedAt", "providerWhitelist", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings"],
+        "required": ["updatedAt", "profiles", "browser", "browserExecutablePathConfigured", "browserVisibility", "daemonUrl", "language", "outputSavings"],
         "additionalProperties": false
       },
       "ConfirmedDeletion": {
@@ -536,12 +538,14 @@
           "isDefault": { "type": "boolean" },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" },
-          "runtimeBinding": { "type": ["object", "null"] },
-          "import": { "anyOf": [{ "$ref": "#/components/schemas/ProfileImport" }, { "type": "null" }] },
-          "preferences": { "$ref": "#/components/schemas/ProfilePreferences" },
+          "browserMode": { "const": "native" },
+          "roleLabel": { "type": "string", "maxLength": 80 },
+          "enabledProviders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/ProviderId" } },
+          "browserVisibility": { "$ref": "#/components/schemas/BrowserVisibility" },
+          "proxy": { "$ref": "#/components/schemas/Proxy" },
           "observations": { "type": "array", "items": { "type": "object" } }
         },
-        "required": ["slug", "id", "label", "lifecycle", "isDefault", "createdAt", "updatedAt", "runtimeBinding", "import", "preferences", "observations"],
+        "required": ["slug", "id", "label", "lifecycle", "isDefault", "createdAt", "updatedAt", "browserMode", "roleLabel", "enabledProviders", "browserVisibility", "proxy", "observations"],
         "additionalProperties": false
       },
       "ProfileImport": {

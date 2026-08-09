@@ -93,7 +93,7 @@ Setup 默认不会安装该集成；`--codex-home <dir>` 只能与 `--install-co
 
 - [CLI 命令](COMMANDS.zh-CN.md)
 - [Capability Matrix](docs/capability-matrix.zh-CN.md)
-- [隐私边界](PRIVACY.md)
+- [隐私边界](PRIVACY.zh-CN.md)
 - [架构](docs/architecture.md)
 - [文档索引](docs/README.zh-CN.md)
 

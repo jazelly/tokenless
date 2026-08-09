@@ -43,6 +43,7 @@ import {
   createDaemonJob,
   daemonUrl,
   deriveTaskId,
+  deleteTokenlessProfileConfig,
   drainDaemonReplay,
   ensureDaemonReady,
   getDaemonJob,
@@ -70,9 +71,11 @@ import {
   stageVisibleAttachments,
   stopDaemon,
   tokenlessHome,
+  upsertTokenlessProfileConfig,
   waitDaemonJobResult,
   writeTokenlessConfig,
 } from './index.js'
+import type { TokenlessConfig } from './job-store.js'
 import {
   OUTPUT_SAVINGS_ESTIMATOR,
   OutputSavingsRuntimeManager,
@@ -80,9 +83,12 @@ import {
 import {
   activeTokenlessLanguage,
   detectSystemLanguage,
-  localizeText,
+  localizedError,
   setActiveLanguage,
+  t,
+  tError,
 } from './localization.js'
+import type { CliErrorMessageKey } from './i18n/catalog.js'
 import { paintCliText, resolveCliColorEnabled, type CliColor } from './cli-output.js'
 import { DAEMON_CONTROL_API_REVISION, DAEMON_TASK_STATE_SCHEMA_ID } from './schema-ids.js'
 import {
@@ -133,6 +139,8 @@ type CommandContract = CommandContext & {
 }
 type StatusEvent = Record<string, any>
 type CliError = Error & {
+  messageKey?: CliErrorMessageKey
+  messageParams?: Record<string, string | number>
   code?: string
   retryable?: boolean
   status?: string | number
@@ -352,12 +360,12 @@ try {
     await installCommand(args)
   } else if (command === 'upgrade') {
     const humanOutput = args.json !== true
-    if (humanOutput && !args.quiet) console.error(localizeText('Tokenless upgrade'))
+    if (humanOutput && !args.quiet) console.error(t('cliUpgradeTitle'))
     const result = await runUpgradeCommand(args, humanOutput && args.verbose
       ? { onProgress: (event) => console.error(formatUpgradeProgressLine(event, args)) }
       : undefined)
     if (humanOutput) {
-      console.log(formatHumanLine(localizeText(formatUpgradeSummary(result)), result.ok === true, args))
+    console.log(formatHumanLine(formatUpgradeSummary(result), result.ok === true, args))
       if (args.verbose) printVerbosePayload(result, args)
     }
     else printPayload(result, args)
@@ -374,11 +382,15 @@ try {
   }
 } catch (error) {
   const cliError = error as Partial<CliError>
+  const errorCode = cliError.code || 'tokenless_cli_error'
+  const localizedMessage = cliError.messageKey
+    ? tError(cliError.messageKey, cliError.messageParams)
+    : localizedError(errorCode, cliError.message || t('cliFailed'))
   const payload: Record<string, any> = {
     ok: false,
     error: {
-      code: cliError.code || 'tokenless_cli_error',
-      message: localizeText(cliError.message || 'Tokenless CLI failed.'),
+      code: errorCode,
+      message: localizedMessage,
       retryable: Boolean(cliError.retryable),
     },
   }
@@ -390,7 +402,7 @@ try {
   if (cliError.usage) payload.error.usage = cliError.usage
   if (cliError.context) payload.error.context = cliError.context
   if (args.json) console.log(JSON.stringify(payload, null, 2))
-  else console.error(formatCliError(payload, cliError.usage, args))
+  else console.error(formatCliError(payload, cliError.usage, args, cliError))
   process.exit(cliError.exitCode ?? 1)
 }
 
@@ -417,6 +429,16 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
       lifecycle: 'ready',
       ...(runtime === null ? {} : { runtimeBinding: browserRuntimeBinding(runtime) }),
     })
+    const current = await readTokenlessConfig(homeDir)
+    const configured = current.profiles[record.slug]
+    if (!configured) throw usageError('profile_not_configured', `Managed profile '${record.slug}' has no configuration.`)
+    if (args.providerWhitelist !== undefined) {
+      await upsertTokenlessProfileConfig({
+        homeDir,
+        slug: record.slug,
+        profile: { ...configured, enabledProviders: parseProviderList(args.providerWhitelist) },
+      })
+    }
     printPayload({
       ok: true,
       profile: publicManagedProfile(record, await defaultProfileSlug(registry)),
@@ -446,6 +468,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     const cleared = []
     for (const profile of targets) {
       const removed = await registry.removeProfile(profile.slug, { confirmDelete: true })
+      await deleteTokenlessProfileConfig({ homeDir, slug: profile.slug })
       cleared.push({ slug: removed.slug, id: removed.id, label: removed.label })
     }
     printPayload({
@@ -461,9 +484,13 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
   }
 
   if (subcommand === 'list') {
+    const config = await readTokenlessConfig(homeDir)
     const defaultSlug = await defaultProfileSlug(registry)
     const profiles = (await managedProfilesWithDisplayLabels(await registry.listProfiles()))
-      .map((profile) => publicManagedProfile(profile, defaultSlug))
+      .map((profile) => ({
+        ...publicManagedProfile(profile, defaultSlug),
+        ...requiredProfileConfig(config, profile.slug),
+      }))
     printPayload({ ok: true, profiles }, args)
     return
   }
@@ -482,6 +509,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     await registry.resolveProfile(slug)
     const runner = await quiesceBrowserRuntimeForProfileMutation({ homeDir })
     const record = await registry.removeProfile(slug, { confirmDelete: true })
+    await deleteTokenlessProfileConfig({ homeDir, slug })
     printPayload({
       ok: true,
       profile: publicManagedProfile(record, null),
@@ -994,11 +1022,11 @@ async function setupCliVersionCheck(): Promise<SetupCliVersionCheck> {
 
 function noteSetupCliVersion(check: SetupCliVersionCheck, presenter: SetupPresenter) {
   if (check.status === 'check_unavailable') {
-    presenter.note(`Could not check npm latest tokenless version: ${check.error?.code ?? 'npm_registry_unavailable'}.`)
+    presenter.note(t('setupNpmUnavailable', { code: check.error?.code ?? 'npm_registry_unavailable' }))
   } else if (check.updateAvailable) {
-    presenter.note(`tokenless ${check.latestVersion} is available on npm; local CLI is ${check.currentVersion}.`)
+    presenter.note(t('setupNpmAvailable', { latest: check.latestVersion ?? 'latest', current: check.currentVersion }))
   } else {
-    presenter.success(`tokenless ${check.currentVersion} is up to date with npm.`)
+    presenter.success(t('setupNpmCurrent', { current: check.currentVersion }))
   }
 }
 
@@ -1106,6 +1134,10 @@ function resolveDaemonJobCapabilityRoutes({
   explicitProvider?: ProviderId | undefined
   requirements: readonly TaskCapabilityId[]
 }): readonly TaskCapabilityRoute[] {
+  const enabledProviders = requiredProfileConfig(config, profile.slug).enabledProviders
+  if (explicitProvider && !enabledProviders.includes(explicitProvider)) {
+    throw usageError('provider_not_enabled', `Provider '${explicitProvider}' is not enabled for profile '${profile.slug}'.`)
+  }
   const providers = explicitProvider
     ? [{
         provider: explicitProvider,
@@ -1118,7 +1150,7 @@ function resolveDaemonJobCapabilityRoutes({
         tier: profile.lastObservedAuth?.[explicitProvider]?.account?.tier ?? null,
       }]
     : providerObservationContext(implicitProviderCandidates(
-        config.profilePreferences[profile.slug]?.enabledProviders ?? config.providerWhitelist,
+        enabledProviders,
       ), profile)
   const decision = resolveTaskCapabilityRoutes({
     requirements,
@@ -1158,8 +1190,17 @@ function resolveDaemonJobCapabilityRoutes({
   throw error
 }
 
-function implicitProviderCandidates(providerWhitelist: readonly string[]): ProviderId[] {
-  return providerWhitelist.map(normalizeProvider)
+function implicitProviderCandidates(enabledProviders: readonly string[]): ProviderId[] {
+  return enabledProviders.map(normalizeProvider)
+}
+
+function requiredProfileConfig(
+  config: Pick<Awaited<ReturnType<typeof readTokenlessConfig>>, 'profiles'>,
+  slug: string,
+) {
+  const configured = config.profiles[slug]
+  if (!configured) throw usageError('profile_not_configured', `Managed profile '${slug}' has no configuration.`)
+  return configured
 }
 
 function providerObservationContext(
@@ -1870,6 +1911,9 @@ async function executeManagedPlaywrightJob({
   const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
   const statusReporter = createCliStatusReporter(args)
   const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(args.profile)
+  if (!requiredProfileConfig(config, profile.slug).enabledProviders.includes(normalizeProvider(provider))) {
+    throw usageError('provider_not_enabled', `Provider '${provider}' is not enabled for profile '${profile.slug}'.`)
+  }
   const effectiveTaskId = taskId === undefined ? request.taskId : taskId
   const alignedRequest = request.taskId === effectiveTaskId
     ? request
@@ -2265,7 +2309,7 @@ async function stateCommand(args: CliArgs) {
     : await registry.resolveProfile(args.profile)
   const providerValue = explicitProviderValue || (args.jobId
     ? undefined
-    : config.profilePreferences[profile.slug]?.enabledProviders[0] || config.providerWhitelist[0] || defaultVisibleProviderId())
+    : requiredProfileConfig(config, profile.slug).enabledProviders[0] || defaultVisibleProviderId())
   const provider = providerValue ? normalizeProvider(providerValue) : undefined
   const listedDaemonJobs = daemonJobs ?? await listDaemonJobs({
         daemonUrl: actualDaemonUrl,
@@ -2542,8 +2586,8 @@ async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
     printPayload({
       ok: true,
       status,
-      nextStep: localizeText('Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.'),
-      compactOutput: localizeText('Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.'),
+      nextStep: t('cliAgentsInstallNextStep'),
+      compactOutput: t('cliAgentsInstalled'),
     }, args)
     return
   }
@@ -2552,7 +2596,7 @@ async function agentsCommand(subcommand: string | undefined, args: CliArgs) {
     printPayload({
       ok: true,
       status,
-      compactOutput: localizeText('Tokenless Codex guidance and hook handlers were removed without changing other Codex instructions or hooks.'),
+      compactOutput: t('cliAgentsRemoved'),
     }, args)
     return
   }
@@ -2789,8 +2833,8 @@ async function setupCodexIntegration({
 }) {
   const input = codexIntegrationInput(args, homeDir)
   if (args.installCodex !== true) {
-    const message = localizeText('Codex integration was not installed; add --install-codex to opt in.')
-    const nextStep = localizeText('To install the optional Codex integration, rerun setup with --install-codex.')
+    const message = t('cliAgentsNotInstalled')
+    const nextStep = t('cliAgentsInstallHint')
     presenter.note(message)
     return {
       requested: false,
@@ -2804,7 +2848,7 @@ async function setupCodexIntegration({
 
   const harness = await loadWebAgentHarness()
   const status = await presenter.withProgress(
-    'Installing Tokenless Codex integration',
+    t('cliSetupInstallingCodex'),
     () => harness.installCodexIntegration(input),
   )
   const guidance = objectRecord(status.guidance)
@@ -2815,8 +2859,8 @@ async function setupCodexIntegration({
     error.context = { status }
     throw error
   }
-  const message = localizeText('Tokenless is installed for normal Codex sessions. Restart Codex and trust the Tokenless hooks in /hooks.')
-  const nextStep = localizeText('Restart Codex, open /hooks, and trust the Tokenless hook definition before expecting automatic chat and turn binding.')
+  const message = t('cliAgentsInstalled')
+  const nextStep = t('cliAgentsInstallNextStep')
   presenter.note(nextStep)
   return {
     requested: true,
@@ -2853,9 +2897,9 @@ async function setupCommand(args: CliArgs) {
     ? createSetupPrompt(cliColorEnabled(args, process.stdout))
     : null
   try {
-    presenter.welcome()
-    presenter.success('Reading config')
-    const cliVersion = await presenter.withProgress('Checking npm version', setupCliVersionCheck)
+    presenter.welcome(t('cliSetupTitle'))
+    presenter.success(t('cliSetupReadingConfig'))
+    const cliVersion = await presenter.withProgress(t('cliSetupCheckingNpm'), setupCliVersionCheck)
     noteSetupCliVersion(cliVersion, presenter)
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
     const explicitBrowser = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
@@ -2911,25 +2955,23 @@ async function setupCommand(args: CliArgs) {
       prompt,
       presenter,
     })
-    await presenter.withProgress('Saving preferences', async () => {
+    await presenter.withProgress(t('setupSavingConfiguration'), async () => {
       const current = await readTokenlessConfig(homeDir)
-      const profilePreferences = {
-        ...current.profilePreferences,
-        [profile.slug]: {
-          profileId: profile.slug,
-          roleLabel: current.profilePreferences[profile.slug]?.roleLabel ?? '',
+      await upsertTokenlessProfileConfig({
+        homeDir,
+        slug: profile.slug,
+        profile: {
+          ...requiredProfileConfig(current, profile.slug),
           enabledProviders: providers,
           browserVisibility: 'headed',
           proxy: null,
         },
-      }
+      })
       await writeTokenlessConfig({
         homeDir,
         browser: 'chrome',
         browserExecutablePath: null,
         browserVisibility: 'headed',
-        providerWhitelist: [...new Set(Object.values(profilePreferences).flatMap((preferences) => preferences.enabledProviders))],
-        profilePreferences,
         daemonUrl: configuredDaemonUrl,
         language: config.language,
       })
@@ -2964,14 +3006,14 @@ async function setupCommand(args: CliArgs) {
     const reviewSessionId = randomUUID()
 
     presenter.explain({
-      title: 'Provider sign-in',
+      title: t('cliSetupProviderSignIn'),
       lines: SETUP_READINESS_DISCLOSURE,
     })
     for (const provider of providers) {
       let result: Awaited<ReturnType<typeof runSetupAuthCheck>>
       try {
         result = await presenter.withProgress(
-          `Checking ${provider} sign-in`,
+          t('setupCheckingProvider', { provider }),
           () => runSetupAuthCheck({ args, homeDir, profile, provider, reviewSessionId, quietStatus: setupTerminal.canPresent }),
         )
       } catch (error) {
@@ -3169,8 +3211,8 @@ async function recordSetupSweepResult({
     jobId: result.job.job_id,
     ...(blocker ? { blocker } : {}),
   }
-  if (auth === 'authenticated') presenter.success(`${provider} is authenticated (${authObservation.access}).`)
-  else presenter.note(`${provider} sign-in status: ${auth}; access: ${authObservation.access}.`)
+  if (auth === 'authenticated') presenter.success(t('setupProviderAuthenticated', { provider, access: authObservation.access }))
+  else presenter.note(t('setupProviderStatus', { provider, auth, access: authObservation.access }))
 }
 
 function recordSetupReadinessFailure({
@@ -3193,7 +3235,7 @@ function recordSetupReadinessFailure({
     jobId: failure.jobId,
     error: setupReadinessErrorPayload(failure),
   }
-  presenter.note(`${provider} readiness failed: ${failure.code}.`)
+  presenter.note(t('setupProviderFailed', { provider, code: failure.code }))
 }
 
 async function ensureSetupManagedProfile({
@@ -3395,12 +3437,12 @@ function createSetupPrompt(colorEnabled = false) {
   return {
     async text(message: string, defaultValue?: string) {
       const suffix = defaultValue ? ` [${defaultValue}]` : ''
-      const value = (await terminal.question(`${localizeText(message)}${suffix}: `)).trim()
+      const value = (await terminal.question(`${message}${suffix}: `)).trim()
       return value || defaultValue || ''
     },
     async confirm(message: string, defaultValue: boolean) {
       const hint = defaultValue ? 'Y/n' : 'y/N'
-      const value = (await terminal.question(`${localizeText(message)} [${hint}]: `)).trim().toLowerCase()
+      const value = (await terminal.question(`${message} [${hint}]: `)).trim().toLowerCase()
       if (!value) return defaultValue
       return value === 'y' || value === 'yes' || value === '是' || value === '对'
     },
@@ -3409,9 +3451,9 @@ function createSetupPrompt(colorEnabled = false) {
       choices: readonly { label: string; value: T }[],
       defaultIndex = 0
     ): Promise<T> {
-      console.error(paintCliText(localizeText(message), 'cyan', colorEnabled))
-      choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${localizeText(choice.label)}`))
-      const answer = (await terminal.question(paintCliText(localizeText(`Chose [${defaultIndex + 1}]: `), 'cyan', colorEnabled))).trim()
+      console.error(paintCliText(message, 'cyan', colorEnabled))
+      choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${choice.label}`))
+      const answer = (await terminal.question(paintCliText(t('cliSetupChoice', { index: defaultIndex + 1 }), 'cyan', colorEnabled))).trim()
       const index = answer ? Number(answer) - 1 : defaultIndex
       if (!Number.isInteger(index) || !choices[index]) {
         throw usageError('setup_selection_invalid', 'Setup selection must be one of the displayed numbers.')
@@ -3422,10 +3464,10 @@ function createSetupPrompt(colorEnabled = false) {
       message: string,
       choices: readonly { label: string; value: T }[],
     ): Promise<T[]> {
-      console.error(paintCliText(localizeText(message), 'cyan', colorEnabled))
-      choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${localizeText(choice.label)}`))
+      console.error(paintCliText(message, 'cyan', colorEnabled))
+      choices.forEach((choice, index) => console.error(`  ${paintCliText(`${index + 1}.`, 'yellow', colorEnabled)} ${choice.label}`))
       const answer = (await terminal.question(
-        paintCliText(localizeText('Reply with the provider numbers to remove, separated by commas. Press Enter to keep all: '), 'cyan', colorEnabled),
+        paintCliText(t('cliSetupChooseProviderRemoval'), 'cyan', colorEnabled),
       )).trim()
       if (!answer) return choices.map((choice) => choice.value)
 
@@ -3497,9 +3539,9 @@ async function setupConfiguredProviderScope({
     const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(
       args.profile === undefined ? undefined : String(args.profile),
     )
-    return config.profilePreferences[profile.slug]?.enabledProviders ?? config.providerWhitelist
+    return requiredProfileConfig(config, profile.slug).enabledProviders
   } catch {
-    return config.providerWhitelist
+    return setupVisibleProviders()
   }
 }
 
@@ -3652,7 +3694,7 @@ async function provisionRuntime(args: CliArgs) {
 
 async function doctorCommand(args: CliArgs) {
   const homeDir = tokenlessHome(args.home)
-  let config: Record<string, any> = { providerWhitelist: [], browser: null, daemonUrl: null }
+  let config: Pick<TokenlessConfig, 'profiles'> & Record<string, any> = { profiles: {}, browser: null, daemonUrl: null }
   let configCheck: Record<string, any>
   try {
     config = await readTokenlessConfig(homeDir)
@@ -3818,7 +3860,7 @@ async function doctorCommand(args: CliArgs) {
         }),
       }
       profileRuntime = managedProfile.runtime
-      const providers = config.profilePreferences[profile.slug]?.enabledProviders ?? config.providerWhitelist
+      const providers = requiredProfileConfig(config, profile.slug).enabledProviders
       const observations = providerObservationContext(providers.map(normalizeProvider), profile)
       const statuses = Object.fromEntries(observations.map((observation) => [observation.provider, {
         ok: observation.observed,
@@ -3908,22 +3950,17 @@ async function configCommand(args: CliArgs) {
     }
     const profile = await new ManagedProfileRegistry(homeDir).resolveProfile(String(args.profile))
     const current = await readTokenlessConfig(homeDir)
-    const existing = current.profilePreferences[profile.slug] ?? {
-      profileId: profile.slug,
-      roleLabel: '',
-      enabledProviders: current.providerWhitelist,
-      browserVisibility: current.browserVisibility,
-      proxy: null,
-    }
+    const existing = requiredProfileConfig(current, profile.slug)
     const browserVisibility = args.browserVisibility === undefined
       ? 'headed'
       : requiredBrowserVisibility(args.browserVisibility)
     if (browserVisibility !== 'headed') {
       throw usageError('native_chrome_headless_unsupported', 'Native Chrome supports headed mode only.')
     }
-    const profilePreferences = {
-      ...current.profilePreferences,
-      [profile.slug]: {
+    const config = await upsertTokenlessProfileConfig({
+      homeDir,
+      slug: profile.slug,
+      profile: {
         ...existing,
         enabledProviders: args.providerWhitelist === undefined
           ? existing.enabledProviders
@@ -3931,17 +3968,14 @@ async function configCommand(args: CliArgs) {
         browserVisibility: 'headed',
         proxy: null,
       },
-    }
-    const config = await writeTokenlessConfig({
-      homeDir,
-      profilePreferences,
-      providerWhitelist: [...new Set(Object.values(profilePreferences).flatMap((preferences) => preferences.enabledProviders))],
     })
     printPayload({
       ok: true,
       configPath: `${homeDir}/config.json`,
-      profile: profile.slug,
-      preferences: config.profilePreferences[profile.slug],
+      profile: {
+        slug: profile.slug,
+        ...config.profiles[profile.slug],
+      },
     }, args)
     return
   }
@@ -3956,22 +3990,15 @@ async function configCommand(args: CliArgs) {
     if (args.browser !== undefined && normalizeCliBrowser(args.browser) !== 'chrome') {
       throw usageError('native_chrome_required', 'Tokenless supports the running stable Google Chrome in native mode only.')
     }
-    const providerWhitelist = args.providerWhitelist === undefined ? undefined : parseProviderList(args.providerWhitelist)
+    if (args.providerWhitelist !== undefined) {
+      throw usageError('profile_config_scope_required', '--provider-whitelist requires --profile <slug>.')
+    }
     const browserVisibility = args.browserVisibility === undefined ? undefined : requiredBrowserVisibility(args.browserVisibility)
     if (browserVisibility !== undefined && browserVisibility !== 'headed') {
       throw usageError('native_chrome_headless_unsupported', 'Native Chrome supports headed mode only.')
     }
-    const profilePreferences = providerWhitelist === undefined && browserVisibility === undefined
-      ? undefined
-      : Object.fromEntries(Object.entries(current.profilePreferences).map(([profileId, preferences]) => [profileId, {
-          ...preferences,
-          enabledProviders: providerWhitelist ?? preferences.enabledProviders,
-          browserVisibility: 'headed',
-        }]))
     const config = await writeTokenlessConfig({
       homeDir,
-      providerWhitelist,
-      profilePreferences,
       browser: 'chrome',
       browserExecutablePath: null,
       browserVisibility: 'headed',
@@ -4308,13 +4335,11 @@ function waitingForUserPayload({
     browser,
     userAction: {
       ...(waitResult?.userAction ?? {}),
-      message: localizeText(windowOpen
-        ? 'Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.'
-        : 'Your help is needed, but no browser window is open. Resume this same job in headed mode; do not create a replacement job.'),
+      message: t(windowOpen ? 'cliWaitingForUser' : 'cliWaitingNoWindow'),
       resumeCommand,
       queryGuidance: windowOpen
-        ? localizeText('After completing sign-in or verification, query this same job or task; Tokenless will continue from its saved checkpoint.')
-        : localizeText('Your help is needed, but no browser window is open. Resume this same job in headed mode; do not create a replacement job.'),
+        ? t('cliWaitingCheckpoint')
+        : t('cliWaitingNoWindow'),
     },
     result: publicDaemonResult(waitResult),
     statusLog,
@@ -4527,7 +4552,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
-    { command: 'config', usage: ['tokenless config [--profile <slug>] [--provider-whitelist <list>] [--browser-visibility headed] [--language <en|zh-CN>] [--browser chrome] [--daemon-url <url>] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserVisibility', 'daemonUrl'] },
+    { command: 'config', usage: ['tokenless config [--language <en|zh-CN>] [--browser chrome] [--daemon-url <url>] --json', 'tokenless config --profile <slug> [--provider-whitelist <list>] [--browser-visibility headed] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserVisibility', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
     { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'label', 'providerWhitelist', 'setDefault'] },
@@ -5390,7 +5415,7 @@ function formatStatusEvent(event: StatusEvent, args: CliArgs) {
       event.jobId ? `job=${String(event.jobId).slice(0, 8)}` : '',
       event.elapsedMs !== undefined ? `elapsed=${formatElapsed(event.elapsedMs)}` : '',
     ].filter(Boolean).join(' ')
-    return `${prefix} ${eventName} ${context} ${localizeText('Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.')}`
+    return `${prefix} ${eventName} ${context} ${t('cliWaitingForUser')}`
   }
   const parts = [prefix, eventName]
   for (const [key, value] of [
@@ -5424,7 +5449,7 @@ function printPayload(payload: Record<string, any>, args: CliArgs) {
   if (args.json) console.log(JSON.stringify(payload, null, 2))
   else {
     const summary = payload.compactOutput
-      ? localizeText(String(payload.compactOutput))
+      ? String(payload.compactOutput)
       : formatCompactPayload(payload)
     console.log(formatHumanLine(summary, payload.ok !== false, args, payload.status))
     if (args.verbose) printVerbosePayload(payload, args)
@@ -5436,9 +5461,9 @@ function formatCompactPayload(payload: Record<string, any>) {
     const userAction = objectRecord(payload.userAction)
     const message = typeof userAction.message === 'string'
       ? userAction.message
-      : localizeText('Your help is needed: complete provider sign-in or verification in the visible browser. Tokenless will preserve this job and continue afterward.')
+      : t('cliWaitingForUser')
     const resumeCommand = typeof userAction.resumeCommand === 'string'
-      ? ` ${localizeText('Resume:')} ${userAction.resumeCommand}`
+      ? ` ${t('cliResume')} ${userAction.resumeCommand}`
       : ''
     return `${message}${resumeCommand}`
   }
@@ -5499,18 +5524,18 @@ function formatHumanLine(message: string, ok: boolean, args: CliArgs, status?: u
   const waiting = status === 'waiting_for_user'
   const label = waiting ? 'Waiting for user' : ok ? 'Completed' : 'Failed'
   const color: CliColor = waiting ? 'yellow' : ok ? 'green' : 'red'
-  return `${paintCliText(localizeText(label), color, cliColorEnabled(args, process.stdout))}: ${message}`
+  return `${paintCliText(t(waiting ? 'cliWaitingLabel' : ok ? 'cliCompleted' : 'cliFailedLabel'), color, cliColorEnabled(args, process.stdout))}: ${message}`
 }
 
 function printVerbosePayload(payload: Record<string, any>, args: CliArgs) {
   const details = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'compactOutput'))
-  console.error(paintCliText(localizeText('Details:'), 'dim', cliColorEnabled(args, process.stderr)))
+  console.error(paintCliText(t('cliDetails'), 'dim', cliColorEnabled(args, process.stderr)))
   console.error(JSON.stringify(details, null, 2))
 }
 
 function formatUpgradeProgressLine(event: UpgradeProgressEvent, args: CliArgs) {
   const color: CliColor = event.status === 'failed' ? 'red' : event.status === 'succeeded' ? 'green' : 'cyan'
-  return paintCliText(localizeText(formatUpgradeProgress(event)), color, cliColorEnabled(args, process.stderr))
+  return paintCliText(formatUpgradeProgress(event), color, cliColorEnabled(args, process.stderr))
 }
 
 function cliColorEnabled(args: CliArgs, stream: { isTTY?: boolean; hasColors?: (...args: any[]) => boolean }) {
@@ -5528,7 +5553,7 @@ function attachStatusLog(error: CliError, statusReporter: StatusReporter) {
 }
 
 type UsageSection = {
-  title: 'Run' | 'Setup' | 'Profile' | 'Provider' | 'Other'
+  title: string
   description: string
   commands: string[]
 }
@@ -5537,8 +5562,8 @@ function usage(args: CliArgs) {
   const colorEnabled = cliColorEnabled(args, process.stderr)
   const canonicalSections: UsageSection[] = [
     {
-      title: 'Run',
-      description: 'Send work through a visible AI provider.',
+      title: t('helpRun'),
+      description: t('helpRunDescription'),
       commands: [
         'tokenless capabilities list --json',
         `tokenless run --provider ${VISIBLE_PROVIDER_USAGE} --prompt <text> --json`,
@@ -5546,8 +5571,8 @@ function usage(args: CliArgs) {
       ],
     },
     {
-      title: 'Setup',
-      description: 'Get Tokenless ready for first use.',
+      title: t('helpSetup'),
+      description: t('helpSetupDescription'),
       commands: [
         'tokenless setup',
         'tokenless dashboard',
@@ -5556,8 +5581,8 @@ function usage(args: CliArgs) {
       ],
     },
     {
-      title: 'Profile',
-      description: 'Manage browser profiles and their sign-in sessions.',
+      title: t('helpProfile'),
+      description: t('helpProfileDescription'),
       commands: [
         'tokenless profiles list --json',
         'tokenless profiles status [--profile <slug>] [--provider <provider>] --json',
@@ -5565,8 +5590,8 @@ function usage(args: CliArgs) {
       ],
     },
     {
-      title: 'Provider',
-      description: 'Manage AI providers and their visible controls.',
+      title: t('helpProvider'),
+      description: t('helpProviderDescription'),
       commands: [
         `tokenless provider-status --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --json`,
         `tokenless limits inspect --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --json`,
@@ -5575,8 +5600,8 @@ function usage(args: CliArgs) {
       ],
     },
     {
-      title: 'Other',
-      description: 'Use miscellaneous maintenance and help commands.',
+      title: t('helpOther'),
+      description: t('helpOtherDescription'),
       commands: [
         'tokenless daemon stop [--json]',
         'tokenless doctor --json',
@@ -5588,8 +5613,8 @@ function usage(args: CliArgs) {
   ]
   const advancedSections: UsageSection[] = [
     {
-      title: 'Run',
-      description: 'Customize, inspect, resume, or cancel jobs.',
+      title: t('helpRun'),
+      description: t('helpAdvancedRunDescription'),
       commands: [
         'tokenless run --profile <slug> --provider chatgpt --project-name <agent-project> --workspace-mode <auto|native|conversation> --chat-name <agent-chat> --project-root <path> --prompt-file <file> --json',
         `tokenless run --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --model <exact-visible-model> --prompt <text> --json`,
@@ -5602,8 +5627,8 @@ function usage(args: CliArgs) {
       ],
     },
     {
-      title: 'Setup',
-      description: 'Connect native Chrome or explicitly prepare CloakBrowser and configure Tokenless profiles.',
+      title: t('helpSetup'),
+      description: t('helpAdvancedSetupDescription'),
       commands: [
         'tokenless setup --profile <slug> --defaults --json',
         'tokenless setup --browser cloak --profile <slug> --defaults --json',
@@ -5611,8 +5636,8 @@ function usage(args: CliArgs) {
       ],
     },
     {
-      title: 'Profile',
-      description: 'Manage logical Tokenless profiles.',
+      title: t('helpProfile'),
+      description: t('helpAdvancedProfileDescription'),
       commands: [
         'tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--label <name>] [--set-default] --json',
         'tokenless profiles clear (--profile <slug>|--all)',
@@ -5621,8 +5646,8 @@ function usage(args: CliArgs) {
       ],
     },
     {
-      title: 'Provider',
-      description: 'Use low-level actions and provider-specific controls.',
+      title: t('helpProvider'),
+      description: t('helpAdvancedProviderDescription'),
       commands: [
         `tokenless provider-action --profile <slug> --provider ${VISIBLE_PROVIDER_USAGE} --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> [action options] --json`,
         'tokenless chatgpt-controls --json',
@@ -5631,10 +5656,11 @@ function usage(args: CliArgs) {
       ],
     },
     {
-      title: 'Other',
-      description: 'Inspect or update persistent Tokenless configuration.',
+      title: t('helpOther'),
+      description: t('helpAdvancedOtherDescription'),
       commands: [
-        `tokenless config --language <en|zh-CN> --provider-whitelist ${supportedVisibleProviderIds().join(',')} --browser chrome --browser-visibility headed --json`,
+        'tokenless config --language <en|zh-CN> --browser chrome --json',
+        `tokenless config --profile <slug> --provider-whitelist ${supportedVisibleProviderIds().join(',')} --browser-visibility headed --json`,
         'tokenless dashboard [--profile <slug>] [--no-open] --json',
         'tokenless agents status codex --json',
         'tokenless agents inspect codex --chat-id <codex-thread-id> --json',
@@ -5649,29 +5675,29 @@ function usage(args: CliArgs) {
   ]
 
   console.error([
-    formatUsageGroup('Usage', 'Canonical commands for everyday workflows.', canonicalSections, colorEnabled),
+    formatUsageGroup(t('helpUsage'), t('helpCanonical'), canonicalSections, colorEnabled),
     '',
-    formatUsageGroup('Advanced Usage', 'Less common commands for detailed control and maintenance.', advancedSections, colorEnabled),
+    formatUsageGroup(t('helpAdvancedUsageTitle'), t('helpAdvanced'), advancedSections, colorEnabled),
     '',
-    paintCliText(localizeText('Short options:'), 'bright', colorEnabled),
-    `  -P, --profile <slug>        ${localizeText('Select a managed browser profile.')}`,
-    `  -p, --provider <provider>   ${localizeText('Select an AI provider.')}`,
-    `  -v, --verbose               ${localizeText('Show live status and diagnostic details.')}`,
+    paintCliText(t('helpShortOptions'), 'bright', colorEnabled),
+    `  -P, --profile <slug>        ${t('helpProfileOption')}`,
+    `  -p, --provider <provider>   ${t('helpProviderOption')}`,
+    `  -v, --verbose               ${t('helpVerboseOption')}`,
     '',
-    paintCliText(localizeText('Command reference:'), 'bright', colorEnabled),
+    paintCliText(t('helpReference'), 'bright', colorEnabled),
     `  https://github.com/jazelly/tokenless/blob/main/${activeTokenlessLanguage() === 'zh-CN' ? 'COMMANDS.zh-CN.md' : 'COMMANDS.md'}`,
   ].join('\n'))
 }
 
 function formatUsageGroup(title: string, description: string, sections: UsageSection[], colorEnabled: boolean) {
-  const localizedTitle = localizeText(title)
+  const localizedTitle = title
   return [
-    paintCliText(`${localizedTitle}${localizedTitle === title ? ':' : '：'}`, 'bright', colorEnabled),
-    `  ${localizeText(description)}`,
+    paintCliText(`${localizedTitle}${t('helpPunctuation')}`, 'bright', colorEnabled),
+    `  ${description}`,
     ...sections.flatMap((section) => [
       '',
-      `  ${paintCliText(`${localizeText(section.title)}${localizeText(section.title) === section.title ? ':' : '：'}`, 'cyan', colorEnabled)}`,
-      `    ${localizeText(section.description)}`,
+      `  ${paintCliText(`${section.title}${t('helpPunctuation')}`, 'cyan', colorEnabled)}`,
+      `    ${section.description}`,
       ...section.commands.map((command) => `    ${command}`),
     ]),
   ].join('\n')
@@ -5696,6 +5722,14 @@ function commandUsageError(
   validCommands?: string[] | undefined,
 ): CliError {
   const error = usageError(code, message)
+  if (code === 'invalid_option') {
+    error.messageKey = 'invalidOption'
+    error.messageParams = {
+      command: commandDisplayName(context),
+      options: invalidOptions.join(', '),
+      plural: invalidOptions.length === 1 ? '' : 's',
+    }
+  }
   error.usage = usageDetailsForContext(context, invalidOptions, validCommands)
   error.exitCode = code === 'daemon_only' ? 1 : 2
   return error
@@ -5825,39 +5859,42 @@ function printCommandHelp(context: CommandContext, args: CliArgs) {
   const colorEnabled = cliColorEnabled(args, process.stderr)
   const optionLines = details.validOptions.filter((option) => !details.commonOptions.includes(option))
   const lines = [
-    paintCliText(localizeText('Usage:'), 'bright', colorEnabled),
+    paintCliText(t('cliUsage'), 'bright', colorEnabled),
     ...details.usage.map((entry) => `  ${entry}`),
     '',
-    paintCliText(localizeText('Common options:'), 'bright', colorEnabled),
+    paintCliText(t('cliCommonOptions'), 'bright', colorEnabled),
     ...details.commonOptions.map((entry) => `  ${entry}`),
   ]
   if (optionLines.length > 0) {
-    lines.push('', paintCliText(localizeText('Options:'), 'bright', colorEnabled), ...optionLines.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(t('cliOptions'), 'bright', colorEnabled), ...optionLines.map((entry) => `  ${entry}`))
   }
   if (details.validCommands && details.validCommands.length > 0) {
-    lines.push('', paintCliText(localizeText('Valid commands:'), 'bright', colorEnabled), ...details.validCommands.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(t('cliValidCommands'), 'bright', colorEnabled), ...details.validCommands.map((entry) => `  ${entry}`))
   }
   console.error(lines.join('\n'))
 }
 
-function formatCliError(payload: Record<string, any>, usageDetails: CliUsageDetails | undefined, args: CliArgs) {
+function formatCliError(payload: Record<string, any>, usageDetails: CliUsageDetails | undefined, args: CliArgs, cliError: Partial<CliError> = {}) {
   const error = objectRecord(payload.error)
   const colorEnabled = cliColorEnabled(args, process.stderr)
-  const lines = [`${paintCliText(localizeText('error:'), 'red', colorEnabled)} ${String(error.code || 'tokenless_cli_error')}: ${localizeText(String(error.message || 'Tokenless CLI failed.'))}`]
+  const localizedMessage = cliError.messageKey
+    ? tError(cliError.messageKey, cliError.messageParams)
+    : localizedError(String(error.code || ''), String(error.message || t('cliFailed')))
+  const lines = [`${paintCliText(t('cliError'), 'red', colorEnabled)} ${String(error.code || 'tokenless_cli_error')}: ${localizedMessage}`]
   if (!usageDetails) {
     if (args.verbose) {
-      lines.push('', paintCliText(localizeText('Details:'), 'dim', colorEnabled), JSON.stringify(payload, null, 2))
+      lines.push('', paintCliText(t('cliDetails'), 'dim', colorEnabled), JSON.stringify(payload, null, 2))
     }
     return lines.join('\n')
   }
-  lines.push('', paintCliText(localizeText('Usage:'), 'bright', colorEnabled), ...usageDetails.usage.map((entry) => `  ${entry}`), '', paintCliText(localizeText('Common options:'), 'bright', colorEnabled))
+  lines.push('', paintCliText(t('cliUsage'), 'bright', colorEnabled), ...usageDetails.usage.map((entry) => `  ${entry}`), '', paintCliText(t('cliCommonOptions'), 'bright', colorEnabled))
   if (usageDetails.commonOptions.length > 0) {
     lines.push(...usageDetails.commonOptions.map((entry) => `  ${entry}`))
   } else {
-    lines.push(`  ${localizeText('(none)')}`)
+    lines.push(`  ${t('cliNone')}`)
   }
   if (usageDetails.validCommands && usageDetails.validCommands.length > 0) {
-    lines.push('', paintCliText(localizeText('Valid commands:'), 'bright', colorEnabled), ...usageDetails.validCommands.map((entry) => `  ${entry}`))
+    lines.push('', paintCliText(t('cliValidCommands'), 'bright', colorEnabled), ...usageDetails.validCommands.map((entry) => `  ${entry}`))
   }
   if (args.verbose) {
     const detailPayload = {
@@ -5867,13 +5904,13 @@ function formatCliError(payload: Record<string, any>, usageDetails: CliUsageDeta
         usage: undefined,
       },
     }
-    lines.push('', paintCliText(localizeText('Details:'), 'dim', colorEnabled), JSON.stringify(detailPayload, null, 2))
+    lines.push('', paintCliText(t('cliDetails'), 'dim', colorEnabled), JSON.stringify(detailPayload, null, 2))
   }
   return lines.join('\n')
 }
 
 function usageError(code: string, message: string): CliError {
-  const error: CliError = new Error(localizeText(message))
+  const error: CliError = new Error(message)
   error.code = code
   error.retryable = false
   return error
@@ -5886,13 +5923,13 @@ async function initializeCliLanguage(argv: string[]) {
     : undefined
   const homeDir = tokenlessHome(explicitHome)
   try {
-    if (argv[0] === 'setup' && !await hasConfiguredTokenlessLanguage(homeDir)) {
+    if (!await hasConfiguredTokenlessLanguage(homeDir)) {
       setActiveLanguage(detectSystemLanguage())
       return
     }
     setActiveLanguage((await readTokenlessConfig(homeDir)).language)
   } catch {
-    setActiveLanguage('en')
+    setActiveLanguage(detectSystemLanguage())
   }
 }
 

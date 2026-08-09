@@ -100,7 +100,7 @@ Its implementation owns:
 - the canonical catalog;
 - provider strategy mappings;
 - provider stage and support evidence;
-- configured provider preferences;
+- configured profile provider membership;
 - cached profile access observations;
 - fresh read-only capability inspection when needed; and
 - deterministic failure explanations.
@@ -111,21 +111,21 @@ The router returns one `CapabilityRoute` containing the selected provider, profi
 
 1. Validate the requested capability set and infer structurally required capabilities. Attachments imply `file.upload`; native workspace intent implies `workspace.native`.
 2. If the caller supplied an explicit provider constraint, evaluate only that provider and fail rather than silently switching.
-3. Otherwise, use profile membership or `providerWhitelist` as the complete provider filter; the persisted default contains every non-disabled provider, including Gemini.
+3. Otherwise, use `profiles[slug].enabledProviders` as the complete provider filter; a missing profile entry fails instead of falling back globally.
 4. Remove providers without implemented and real-E2E-closed mappings for every required capability.
 5. Evaluate current profile access, visible availability, blockers, subscription-aware capacity, and plan limits through read-only inspection and the scheduler capacity policy.
 6. Select an eligible provider through the general capacity, fairness, and route-selection algorithm.
 7. If no single provider satisfies the complete request, fail with every evaluated provider and structured reasons.
 
-V1 never splits one successful execution across multiple providers and never submits trial prompts while routing. Runtime fallback replays the authorized request from the beginning only before submission and only when completed mutations are reconstructable; it does not treat provider-local partial work as portable completion. `providerWhitelist` defines candidate membership and supplies the final deterministic tie-breaker after capability compatibility, runtime eligibility, rate-limit capacity, evidence maturity, fairness, and profile health. Fallback never escapes the configured provider set.
+V1 never splits one successful execution across multiple providers and never submits trial prompts while routing. Runtime fallback replays the authorized request from the beginning only before submission and only when completed mutations are reconstructable; it does not treat provider-local partial work as portable completion. `profiles[slug].enabledProviders` defines candidate membership and supplies the final deterministic tie-breaker after capability compatibility, runtime eligibility, rate-limit capacity, evidence maturity, fairness, and profile health. Fallback never escapes the configured provider set.
 
-`providerWhitelist` defines membership rather than preference. Its order affects only otherwise equivalent routes; the public routing contract must keep that precedence explicit.
+`profiles[slug].enabledProviders` defines membership. Its order affects only otherwise equivalent routes; the public routing contract must keep that precedence explicit.
 
 For example, if `research.deep` is currently closed only for Qwen:
 
-- whitelist `[chatgpt, qwen]` routes to Qwen;
-- whitelist `[chatgpt, claude]` fails without escaping the configured scope;
-- the default whitelist routes to Qwen if the selected profile can use the proven strategy; and
+- profile membership `[chatgpt, qwen]` routes to Qwen;
+- profile membership `[chatgpt, claude]` fails without escaping the configured scope;
+- the selected profile routes to Qwen if its membership includes Qwen and it can use the proven strategy; and
 - an explicit `provider=chatgpt` constraint fails rather than switching to Qwen.
 
 Provider-specific tuning remains secondary. A canonical capability uses a documented default provider strategy. Add cross-provider parameters only when their semantics can be defined honestly. Advanced low-level CLI controls may remain for diagnostics and explicit human use, but agents should not need them for the primary flow.

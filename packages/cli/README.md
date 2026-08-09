@@ -2,7 +2,7 @@
 
 `tokenless` gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome. Provider credentials and browser state stay in Chrome on the user's machine.
 
-[Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
+[中文](README.zh-CN.md) · [Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
 
 ## Install
 
@@ -22,7 +22,7 @@ For a clean non-interactive profile:
 tokenless setup --defaults --json
 ```
 
-Setup creates or reuses the named logical profile and uses its persisted `providerWhitelist`. Interactive setup lets you remove providers by number. Setup reports visible sign-in state without automating sign-in.
+Setup creates or reuses the named logical profile and uses its persisted `profiles[slug].enabledProviders`. Interactive setup lets you remove providers by number. Setup reports visible sign-in state without automating sign-in.
 
 ## Optional Codex Integration
 
@@ -138,7 +138,7 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-Tokenless profiles organize provider tabs and preferences; they do not create separate Chrome identities. Tokenless does not inspect or expose individual cookies, tokens, browser storage, Keychain data, or authentication values.
+Tokenless profiles organize provider tabs and configuration; they do not create separate Chrome identities. Tokenless does not inspect or expose individual cookies, tokens, browser storage, Keychain data, or authentication values.
 
 ## Browser and Local Runtime
 

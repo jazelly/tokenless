@@ -3,7 +3,7 @@
   import { tick, untrack } from 'svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
-  import { stateLabel } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let {
@@ -16,7 +16,7 @@
   }: {
     snapshot: JsonRecord
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
     ontoast: (message: string) => void
@@ -104,15 +104,11 @@
     if (item.id === 'profiles') {
       if (snapshot.profiles.length === 0) return t('noManagedProfiles')
       const count = formatNumber(snapshot.profiles.length, language)
-      return language === 'zh-CN'
-        ? `已注册 ${count} 个 managed profile。`
-        : `${count} managed profile${snapshot.profiles.length === 1 ? '' : 's'} registered.`
+      return `${count} ${t('profilesRegistered')}`
     }
     if (item.id === 'scheduler') {
       const count = formatNumber(snapshot.runtime.activeJobCount, language)
-      return language === 'zh-CN'
-        ? `${count} 个浏览器任务正在运行。`
-        : `${count} active browser job${snapshot.runtime.activeJobCount === 1 ? '' : 's'}.`
+      return `${count} ${t('activeBrowserJobs')}`
     }
     if (item.id === 'output-savings') {
       if (!snapshot.outputSavings.enabled) return t('savingsDisabled')

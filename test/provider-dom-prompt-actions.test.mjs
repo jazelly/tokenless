@@ -116,7 +116,7 @@ test('real Chromium inputs and clears drafts on provenance-bound provider DOM ca
         }
       })
     }
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 })
 
 test('prompt input reports a visibility timeout when the captured provider page has no composer', {
@@ -148,7 +148,7 @@ test('prompt input reports a visibility timeout when the captured provider page 
     })
     assert.ok(elapsedMs >= 14000, `prompt input returned before the visibility timeout: ${elapsedMs}ms`)
     assert.ok(elapsedMs < 20000, `prompt input exceeded the bounded visibility timeout: ${elapsedMs}ms`)
-  }, { visibility: 'headless', viewport: { width: 1100, height: 850 } })
+  }, { visibility: 'auto', viewport: { width: 1100, height: 850 } })
 })
 
 test('prompt submit reports an actionability timeout when the captured provider page has no enabled submit control', {
@@ -180,7 +180,7 @@ test('prompt submit reports an actionability timeout when the captured provider 
     })
     assert.ok(elapsedMs >= 14000, `prompt submit returned before the actionability timeout: ${elapsedMs}ms`)
     assert.ok(elapsedMs < 20000, `prompt submit exceeded the bounded actionability timeout: ${elapsedMs}ms`)
-  }, { visibility: 'headless', viewport: { width: 1100, height: 850 } })
+  }, { visibility: 'auto', viewport: { width: 1100, height: 850 } })
 })
 
 async function openCapturedFixture(page, provider, scenario = 'composer-idle') {

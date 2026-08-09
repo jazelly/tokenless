@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Check, ChevronRight, Globe2, Monitor, UserRound } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
+  import type { MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let {
@@ -12,7 +13,7 @@
   }: {
     snapshot: JsonRecord
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
     onsetup: (config: JsonRecord, profile: JsonRecord) => Promise<void>
   } = $props()
@@ -21,13 +22,11 @@
   let setupError = $state('')
   let errorElement = $state<HTMLDivElement>()
   let slug = $state('default')
-  let label = $state(untrack(() => language === 'zh-CN' ? '默认' : 'Default'))
+  let label = $state(untrack(() => t('default')))
   let roleLabel = $state('')
-  let enabledProviders = $state<string[]>(untrack(() => Array.isArray(snapshot.config.providerWhitelist)
-    ? snapshot.config.providerWhitelist.filter((provider: string) => snapshot.config.updatedAt || provider !== 'gemini')
-    : snapshot.providers
-      .filter((provider: JsonRecord) => provider.stage !== 'disabled' && provider.id !== 'gemini')
-      .map((provider: JsonRecord) => provider.id)))
+  let enabledProviders = $state<string[]>(untrack(() => snapshot.providers
+    .filter((provider: JsonRecord) => provider.stage !== 'disabled' && provider.id !== 'gemini')
+    .map((provider: JsonRecord) => provider.id)))
 
   function toggleProvider(provider: string, checked: boolean) {
     enabledProviders = checked

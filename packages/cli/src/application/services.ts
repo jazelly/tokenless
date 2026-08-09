@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  deleteTokenlessProfileConfig,
   readTokenlessConfig,
+  upsertTokenlessProfileConfig,
   writeTokenlessConfig,
-  type ManagedProfilePreferences,
+  type ManagedProfileConfig,
   type TokenlessConfig,
 } from '../job-store.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
@@ -112,14 +114,14 @@ export class TokenlessApplicationServices {
       profiles: profiles.map((profile) => publicProfile(
         profile,
         profileData.defaultProfile,
-        profilePreferences(config, profile),
+        profileConfig(config, profile.slug),
       )),
       providers: providers.map((provider) => ({
         ...provider,
         profiles: profiles.map((profile) => providerProfileState(
           provider.id,
           profile,
-          profilePreferences(config, profile),
+          profileConfig(config, profile.slug),
           capabilityRoutes,
           jobs,
         )),
@@ -256,16 +258,15 @@ export class TokenlessApplicationServices {
   async createProfile(input: Record<string, unknown>) {
     requireKnownFields(input, ['slug', 'label', 'roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
     const slug = requiredSlug(input.slug)
-    const config = await this.migratedConfig()
     const label = optionalLabel(input.label)
     const browserVisibility = input.browserVisibility === undefined
       ? 'headed'
       : requiredVisibility(input.browserVisibility)
     requireNativeChromeVisibility(browserVisibility)
-    const preferences = {
+    const profileConfiguration = {
       roleLabel: optionalRoleLabel(input.roleLabel) ?? '',
       enabledProviders: input.enabledProviders === undefined
-        ? config.providerWhitelist
+        ? configurableProviderIds()
         : providerList(input.enabledProviders),
       browserVisibility: 'headed' as const,
       proxy: null,
@@ -278,8 +279,8 @@ export class TokenlessApplicationServices {
       setDefault: input.setDefault === true,
     })
     try {
-      await this.updateProfilePreferences(profile, preferences)
-      return publicProfile(profile, (await this.profiles.read()).defaultProfile, profilePreferences(await this.migratedConfig(), profile))
+      await this.updateProfileConfig(profile, profileConfiguration)
+      return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(await this.migratedConfig(), profile.slug))
     } catch (error) {
       await this.profiles.removeProfile(slug, { confirmDelete: true }).catch(() => undefined)
       throw error
@@ -290,7 +291,7 @@ export class TokenlessApplicationServices {
     requireKnownFields(input, ['label', 'roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
     let profile = await this.profiles.resolveProfile(slug)
     const label = input.label === undefined ? undefined : requiredLabel(input.label)
-    const current = profilePreferences(await this.migratedConfig(), profile)
+    const current = profileConfig(await this.migratedConfig(), profile.slug)
     const browserVisibility = input.browserVisibility === undefined
       ? current.browserVisibility
       : requiredVisibility(input.browserVisibility)
@@ -305,8 +306,8 @@ export class TokenlessApplicationServices {
     }
     if (label !== undefined) profile = await this.profiles.updateLabel(slug, label)
     if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
-    await this.updateProfilePreferences(profile, next)
-    return publicProfile(profile, (await this.profiles.read()).defaultProfile, profilePreferences(await this.migratedConfig(), profile))
+    await this.updateProfileConfig(profile, next)
+    return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(await this.migratedConfig(), profile.slug))
   }
 
   async removeProfile(slug: string) {
@@ -316,10 +317,7 @@ export class TokenlessApplicationServices {
     }
     await this.runtimeController?.quiesce()
     const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
-    const config = await this.migratedConfig()
-    const profilePreferences = { ...config.profilePreferences }
-    delete profilePreferences[slug]
-    await writeTokenlessConfig({ homeDir: this.store.homeDir, profilePreferences })
+    await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
     return { slug: profile.slug, removed: true }
   }
 
@@ -329,8 +327,8 @@ export class TokenlessApplicationServices {
     if (!provider || provider.descriptor.stage === 'disabled') {
       throw applicationError('provider_not_supported', 'Provider is not supported.')
     }
-    const preferences = profilePreferences(await this.migratedConfig(), profile)
-    if (!preferences.enabledProviders.includes(provider.id)) {
+    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before opening it.')
     }
     const job = this.createProviderActionJob(profile, provider.id, action)
@@ -340,8 +338,8 @@ export class TokenlessApplicationServices {
 
   async refreshProviderReadiness(slug: string) {
     const profile = await this.profiles.resolveProfile(slug)
-    const preferences = profilePreferences(await this.migratedConfig(), profile)
-    const enabled = new Set(preferences.enabledProviders)
+    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    const enabled = new Set(configured.enabledProviders)
     const jobs = listProviderInstances()
       .filter((provider) => provider.descriptor.stage !== 'disabled' && enabled.has(provider.id))
       .map((provider) => this.createProviderActionJob(profile, provider.id, 'readiness'))
@@ -399,8 +397,8 @@ export class TokenlessApplicationServices {
     if (!provider || provider.descriptor.stage === 'disabled') {
       throw applicationError('provider_not_supported', 'Provider is not supported.')
     }
-    const preferences = profilePreferences(await this.migratedConfig(), profile)
-    if (!preferences.enabledProviders.includes(provider.id)) {
+    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before changing controls.')
     }
     const request = createManagedPlaywrightJobRequest({
@@ -446,51 +444,17 @@ export class TokenlessApplicationServices {
   }
 
   private async migratedConfig() {
-    let config = await readTokenlessConfig(this.store.homeDir)
-    const profiles = await this.profiles.listProfiles()
-    const enabledProviders = config.providerWhitelist
-    const profilePreferences = { ...config.profilePreferences }
-    let changed = config.browser !== 'chrome' || config.browserExecutablePath !== null || config.browserVisibility !== 'headed'
-    for (const profile of profiles) {
-      const current = profilePreferences[profile.slug]
-      const next = current
-        ? { ...current, browserVisibility: 'headed' as const, proxy: null }
-        : {
-            profileId: profile.slug,
-            roleLabel: '',
-            enabledProviders,
-            browserVisibility: 'headed' as const,
-            proxy: null,
-          }
-      if (JSON.stringify(current) !== JSON.stringify(next)) changed = true
-      profilePreferences[profile.slug] = next
-    }
-    if (!changed) return config
-    config = await writeTokenlessConfig({
-      homeDir: this.store.homeDir,
-      browser: 'chrome',
-      browserExecutablePath: null,
-      browserVisibility: 'headed',
-      profilePreferences,
-    })
-    return config
+    return await readTokenlessConfig(this.store.homeDir)
   }
 
-  private async updateProfilePreferences(
+  private async updateProfileConfig(
     profile: ManagedProfileRecord,
-    next: Omit<ManagedProfilePreferences, 'profileId'>,
+    next: ManagedProfileConfig,
   ) {
-    const config = await this.migratedConfig()
-    const profilePreferences = {
-      ...config.profilePreferences,
-      [profile.slug]: { profileId: profile.slug, ...next },
-    }
-    const providerWhitelist = [...new Set(Object.values(profilePreferences)
-      .flatMap((preferences) => preferences.enabledProviders))]
-    await writeTokenlessConfig({
+    await upsertTokenlessProfileConfig({
       homeDir: this.store.homeDir,
-      profilePreferences,
-      providerWhitelist,
+      slug: profile.slug,
+      profile: next,
     })
   }
 
@@ -595,7 +559,7 @@ export class TokenlessApplicationServices {
 function publicConfig(config: TokenlessConfig) {
   return {
     updatedAt: config.updatedAt,
-    providerWhitelist: config.providerWhitelist,
+    profiles: config.profiles,
     browser: config.browser,
     browserExecutablePathConfigured: config.browserExecutablePath !== null,
     browserVisibility: config.browserVisibility,
@@ -608,7 +572,7 @@ function publicConfig(config: TokenlessConfig) {
 function publicProfile(
   profile: ManagedProfileRecord,
   defaultSlug: string | null,
-  preferences: ManagedProfilePreferences,
+  configured: ManagedProfileConfig,
 ) {
   return {
     slug: profile.slug,
@@ -619,7 +583,10 @@ function publicProfile(
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
     browserMode: 'native',
-    preferences,
+    roleLabel: configured.roleLabel,
+    enabledProviders: configured.enabledProviders,
+    browserVisibility: configured.browserVisibility,
+    proxy: configured.proxy,
     observations: Object.values(profile.lastObservedAuth).map((status) => status ? {
       provider: status.provider,
       auth: status.auth,
@@ -633,21 +600,21 @@ function publicProfile(
 function providerProfileState(
   provider: ProviderId,
   profile: ManagedProfileRecord,
-  preferences: ManagedProfilePreferences,
+  configured: ManagedProfileConfig,
   routes: ReturnType<typeof listProviderTaskCapabilityRoutes>,
   jobs: Job[],
 ) {
   const observation = profile.lastObservedAuth[provider]
   return {
     profileId: profile.slug,
-    enabled: preferences.enabledProviders.includes(provider),
+    enabled: configured.enabledProviders.includes(provider),
     observation: observation ? {
       auth: observation.auth,
       access: observation.access,
       checkedAt: observation.checkedAt,
       account: observation.auth === 'authenticated' ? observation.account ?? null : null,
     } : null,
-    runtimeEligibility: preferences.enabledProviders.includes(provider) && usableAccess(observation?.access)
+    runtimeEligibility: configured.enabledProviders.includes(provider) && usableAccess(observation?.access)
       ? 'eligible'
       : 'ineligible',
     capabilities: routes.filter((route) => route.provider === provider).map((route) => ({
@@ -777,14 +744,17 @@ function redactPrivatePaths(value: string) {
     .replace(/(^|[\s("'=])[A-Za-z]:\\[^\s"'<>]*/g, '$1[redacted path]')
 }
 
-function profilePreferences(config: TokenlessConfig, profile: ManagedProfileRecord): ManagedProfilePreferences {
-  return config.profilePreferences[profile.slug] ?? {
-    profileId: profile.slug,
-    roleLabel: '',
-    enabledProviders: config.providerWhitelist,
-    browserVisibility: config.browserVisibility,
-    proxy: null,
-  }
+function profileConfig(config: TokenlessConfig, slug: string): ManagedProfileConfig {
+  const configured = config.profiles[slug]
+  if (!configured) throw applicationError('profile_not_configured', `Managed profile '${slug}' has no configuration.`)
+  return configured
+}
+
+function configurableProviderIds(): ProviderId[] {
+  return listProviderDescriptors()
+    .filter((provider) => provider.stage !== 'disabled')
+    .sort((left, right) => left.setupOrder - right.setupOrder)
+    .map((provider) => provider.id)
 }
 
 function supportedProviderIds() {
@@ -873,6 +843,11 @@ function record(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function applicationError(code: string, message: string) {
-  return Object.assign(new Error(message), { code, status: 400 })
+function applicationError(code: string, message: string, params: Record<string, string | number> = {}) {
+  return Object.assign(new Error(message), {
+    code,
+    messageKey: `error.${code}`,
+    params,
+    status: 400,
+  })
 }

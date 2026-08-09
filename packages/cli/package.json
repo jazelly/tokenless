@@ -19,6 +19,7 @@
     "dist/schemas",
     "dist/web-agent-harness",
     "README.md",
+    "README.zh-CN.md",
     "package.json"
   ],
   "bin": {

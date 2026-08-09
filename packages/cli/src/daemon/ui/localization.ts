@@ -1,7 +1,9 @@
-import type { JsonRecord, Language } from './types.js'
+import { ERROR_SUMMARIES_ZH } from '../../i18n/catalog.js'
 
-const messages = {
-  en: {
+type JsonRecord = Record<string, any>
+type Language = 'en' | 'zh-CN'
+
+const enMessages = {
     overview: 'Overview', profiles: 'Profiles', providers: 'Providers', capabilities: 'Capabilities', jobs: 'Jobs', system: 'System',
     localConsole: 'Local console', operationalSummary: 'Operational summary', overviewLede: 'The exact daemon, browser, provider, and job state on this machine.',
     daemon: 'Daemon', browser: 'Browser runtime', activeProfiles: 'Active profiles', waitingJobs: 'Waiting jobs', healthy: 'Healthy',
@@ -30,7 +32,7 @@ const messages = {
     status: 'Status', version: 'Version', runtime: 'Runtime', ready: 'Ready', stopped: 'Stopped', selected: 'Selected', signedIn: 'signed in',
     refresh: 'Refresh', search: 'Search', queued: 'Queued', succeeded: 'Succeeded', failed: 'Failed', waiting: 'Waiting',
     noResults: 'No matching results', copy: 'Copy', copied: 'Copied.', copyFailed: 'Could not copy diagnostics.', account: 'Account', model: 'Model', effort: 'Effort',
-    useBrowser: 'Use browser', chooseProviders: 'Choose providers', setupProfileHelp: 'A profile groups Tokenless-owned provider tabs and preferences.',
+    useBrowser: 'Use browser', chooseProviders: 'Choose providers', setupProfileHelp: 'A profile groups Tokenless-owned provider tabs and configuration.',
     automatic: 'Automatic', available: 'Available', notFound: 'Not found', downloadRequired: 'Download required', scanningBrowsers: 'Scanning installed browsers…',
     managedByTokenless: 'Managed by Tokenless', systemBrowser: 'System browser', runtimeDownloadHelp: 'Download and verify this runtime before using it.', automaticBrowserHelp: 'Automatic selection resolves to the platform-pinned managed Chrome for Testing.', browserNotDetectedHelp: 'Choose another browser or add its executable path.',
     installRuntime: 'Install', repairRuntime: 'Repair runtime', addExecutablePath: 'Add executable path', replaceExecutablePath: 'Replace executable path', hideExecutablePath: 'Hide custom path', verifiedPathCached: 'Verified path cached', validate: 'Validate', clearExecutablePath: 'Use automatic discovery', browserValidated: 'Executable verified', runtimeInstalled: 'Browser runtime installed.', runtimeRepaired: 'Browser runtime repaired.',
@@ -43,8 +45,9 @@ const messages = {
     savingsSummaryUnavailable: 'Token summary statistics are unavailable.', turnOnToReview: 'Turn it on to review how many output tokens Tokenless has saved.', savingsUnavailableTooltip: 'Token summary statistics are unavailable. Turn it on to review output tokens saved.', tokenizerPreparesOnFirstResponse: 'The tokenizer will be prepared when Tokenless measures the first visible response.', manageOutputSavings: 'Manage in System',
     confirmClearSavings: 'Clear all saved output savings measurements? This cannot be undone.', confirmUninstallTokenizer: 'Disable output savings and remove the local tokenizer runtime?', tokensSavedShort: 'tokens saved',
     offlineShort: 'Offline', menu: 'Menu', mainContent: 'Main content', profileList: 'Profile list', navigation: 'Navigation',
-  },
-  'zh-CN': {
+} as const
+
+const zhMessages: Record<keyof typeof enMessages, string> = {
     overview: '概览', profiles: 'Profile', providers: 'Provider', capabilities: '能力', jobs: '任务', system: '系统',
     localConsole: '本地控制台', operationalSummary: '运行概览', overviewLede: '查看这台机器上 daemon、浏览器、provider 和任务的真实状态。',
     daemon: 'Daemon', browser: '浏览器运行时', activeProfiles: '活跃 profile', waitingJobs: '等待任务', healthy: '健康',
@@ -73,7 +76,7 @@ const messages = {
     status: '状态', version: '版本', runtime: '运行时', ready: '就绪', stopped: '已停止', selected: '已选择', signedIn: '已登录',
     refresh: '刷新', search: '搜索', queued: '排队中', succeeded: '已完成', failed: '失败', waiting: '等待中',
     noResults: '没有匹配结果', copy: '复制', copied: '已复制。', copyFailed: '无法复制诊断信息。', account: '账号', model: '模型', effort: '推理强度',
-    useBrowser: '使用浏览器', chooseProviders: '选择 provider', setupProfileHelp: 'Profile 用于组织 Tokenless 创建的 provider tab 与 preferences。',
+    useBrowser: '使用浏览器', chooseProviders: '选择 provider', setupProfileHelp: 'Profile 用于组织 Tokenless 创建的 provider tab 与配置。',
     automatic: '自动选择', available: '可用', notFound: '未找到', downloadRequired: '需要下载', scanningBrowsers: '正在扫描已安装的浏览器…',
     managedByTokenless: '由 Tokenless 管理', systemBrowser: '系统浏览器', runtimeDownloadHelp: '使用前需要下载并验证这个 runtime。', automaticBrowserHelp: '自动选择会解析为按平台固定版本的 managed Chrome for Testing。', browserNotDetectedHelp: '请选择其他浏览器，或添加它的 executable path。',
     installRuntime: '安装', repairRuntime: '修复 runtime', addExecutablePath: '添加 executable path', replaceExecutablePath: '替换 executable path', hideExecutablePath: '收起自定义路径', verifiedPathCached: '已缓存验证路径', validate: '验证', clearExecutablePath: '恢复自动发现', browserValidated: 'Executable 验证通过', runtimeInstalled: '浏览器 runtime 已安装。', runtimeRepaired: '浏览器 runtime 已修复。',
@@ -86,8 +89,9 @@ const messages = {
     savingsSummaryUnavailable: 'Token 汇总统计不可用。', turnOnToReview: '开启后即可查看 Tokenless 已节省多少 output token。', savingsUnavailableTooltip: 'Token 汇总统计不可用；开启后即可查看已节省的 output token。', tokenizerPreparesOnFirstResponse: 'Tokenless 首次计量可见响应时会准备 tokenizer。', manageOutputSavings: '在系统中管理',
     confirmClearSavings: '清空全部输出节省计量记录？此操作无法撤销。', confirmUninstallTokenizer: '停用输出节省并移除本地 tokenizer 运行时？', tokensSavedShort: 'token 已节省',
     offlineShort: '离线', menu: '菜单', mainContent: '主要内容', profileList: 'Profile 列表', navigation: '导航',
-  },
-} as const
+}
+
+const messages = { en: enMessages, 'zh-CN': zhMessages } as const
 
 export type MessageKey = keyof typeof messages.en
 
@@ -177,6 +181,9 @@ const stateZh: Record<string, string> = {
 }
 
 const uiErrorZh: Record<string, string> = {
+  ...ERROR_SUMMARIES_ZH,
+  ui_request_failed: '控制台请求失败。',
+  ui_route_not_found: '找不到请求的控制台接口。',
   ui_session_required: '请重新打开本地控制台以建立新会话。',
   ui_origin_rejected: '请求来源不受允许。',
   ui_csrf_rejected: '请求安全令牌无效。',
@@ -195,6 +202,8 @@ const uiErrorZh: Record<string, string> = {
   browser_runtime_install_requires_managed_browser: '只有 managed-chromium 和 cloak 可以由 Tokenless 安装。',
   browser_runtime_repair_unsafe: '仍有浏览器任务运行，暂时不能修复 runtime。',
   invalid_browser_visibility: '浏览器可见性无效。',
+  native_chrome_required: 'Tokenless 原生模式仅支持正在运行的稳定版 Google Chrome。',
+  native_chrome_executable_unsupported: '原生 Chrome 会自动发现正在运行的稳定版，不接受 executable path。',
   invalid_language: '语言必须是 en 或 zh-CN。',
   browser_mutation_unsafe: '仍有浏览器任务运行，暂时不能更改浏览器选择。',
   browser_runtime_unavailable: '浏览器运行时不可用。',
@@ -210,6 +219,8 @@ const uiErrorZh: Record<string, string> = {
   provider_selection_invalid: '选择类型必须是 model 或 effort。',
   invalid_proxy: 'Proxy 必须使用不含嵌入凭据的 HTTP、HTTPS 或 SOCKS5 地址。',
   invalid_fields: '请求包含不受支持的字段。',
+  output_savings_uninstall_confirmation_required: '移除输出节省运行时前需要明确确认。',
+  output_savings_clear_confirmation_required: '清除输出节省历史前需要明确确认。',
 }
 
 export function translate(language: Language, key: MessageKey) {

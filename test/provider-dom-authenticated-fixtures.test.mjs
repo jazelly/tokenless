@@ -133,7 +133,7 @@ const adapterSelectorAudit = Object.freeze({
 })
 
 test('authenticated provider DOM fixtures retain only redacted, provenance-bound visible evidence', {
-  timeout: 30000,
+  timeout: 60000,
 }, async () => {
   await withDedicatedTestPage(async ({ page }) => {
     for (const [provider, expected] of Object.entries(providers)) {
@@ -178,7 +178,7 @@ test('authenticated provider DOM fixtures retain only redacted, provenance-bound
         assert.doesNotMatch(html, /<script\b/i)
         assert.doesNotMatch(html, /<style\b/i)
 
-        await page.setContent(html)
+        await setCapturedContent(page, html)
         for (const evidence of provenance.evidenceSelectors) {
           assert.equal(
             await page.locator(evidence.selector).count(),
@@ -203,11 +203,11 @@ test('authenticated provider DOM fixtures retain only redacted, provenance-bound
         await assertSanitizedLinks(page, `${provider}/${scenario}`)
       }
     }
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 })
 
 test('Gemini account status preserves captured authenticated and guest boundaries', {
-  timeout: 30000,
+  timeout: 60000,
 }, async () => {
   const provider = getProviderInstanceById('gemini')
   assert.ok(provider, 'Gemini provider instance is required')
@@ -283,7 +283,7 @@ test('Gemini account status preserves captured authenticated and guest boundarie
         await page.close()
       }
     }
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 })
 
 test('provider DOM manifest inventories every fixture with its sanitized page URL', async () => {
@@ -330,7 +330,7 @@ test('provider DOM manifest inventories every fixture with its sanitized page UR
   assert.deepEqual([...listed].sort(), [...actual].sort())
 })
 
-test('DeepSeek fixtures preserve mode-dependent visible control topology', { timeout: 30000 }, async () => {
+test('DeepSeek fixtures preserve mode-dependent visible control topology', { timeout: 60000 }, async () => {
   const accountRoot = path.join(fixtureRoot, 'deepseek', 'signed-in-unknown')
   const expected = {
     'composer-instant': { mode: 'Instant', toggles: ['DeepThink', 'Search'], fileInput: 1 },
@@ -350,7 +350,7 @@ test('DeepSeek fixtures preserve mode-dependent visible control topology', { tim
       assert.equal(provenance.source, 'authenticated-user-visible-chrome-session')
       assert.equal(provenance.containsSyntheticBehavior, false)
       assert.equal(provenance.contentSha256, sha256(htmlBytes))
-      await page.setContent(htmlBytes.toString('utf8'))
+      await setCapturedContent(page, htmlBytes.toString('utf8'))
       assert.equal(await page.locator('textarea[name="search"][placeholder="Message DeepSeek"]').count(), 1)
       assert.equal(await page.getByRole('radio', { name: topology.mode, exact: true }).getAttribute('aria-checked'), 'true')
       assert.deepEqual(
@@ -381,17 +381,17 @@ test('DeepSeek fixtures preserve mode-dependent visible control topology', { tim
       ])
       const provenance = JSON.parse(provenanceText)
       assert.equal(provenance.contentSha256, sha256(htmlBytes))
-      await page.setContent(htmlBytes.toString('utf8'))
+      await setCapturedContent(page, htmlBytes.toString('utf8'))
       for (const evidence of provenance.evidenceSelectors) {
         assert.equal(await page.locator(evidence.selector).count(), evidence.expectedCount)
       }
       assert.equal(await page.locator('.ds-message > .ds-markdown.ds-assistant-message-main-content').count(), 1)
     }
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 })
 
 test('Qwen guest fixtures preserve provenance-bound composer, mode, and completed-response evidence', {
-  timeout: 30000,
+  timeout: 60000,
 }, async () => {
   const accountRoot = path.join(fixtureRoot, 'qwen', 'signed-out-guest')
   await withDedicatedTestPage(async ({ page }) => {
@@ -441,7 +441,7 @@ test('Qwen guest fixtures preserve provenance-bound composer, mode, and complete
       assertPrivacyBoundary(provenanceText)
       assert.doesNotMatch(html, /<script\b|<style\b/i)
 
-      await page.setContent(html)
+      await setCapturedContent(page, html)
       for (const evidence of provenance.evidenceSelectors) {
         assert.equal(
           await page.locator(evidence.selector).count(),
@@ -458,11 +458,11 @@ test('Qwen guest fixtures preserve provenance-bound composer, mode, and complete
       }
       await assertSanitizedLinks(page, `qwen/${scenario}`)
     }
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 })
 
 test('Dola fixtures preserve the observed capability action bar and completed response boundary', {
-  timeout: 30000,
+  timeout: 60000,
 }, async () => {
   const accountRoot = path.join(fixtureRoot, 'dola', 'signed-in-unknown')
   await withDedicatedTestPage(async ({ page }) => {
@@ -482,7 +482,7 @@ test('Dola fixtures preserve the observed capability action bar and completed re
       assertPrivacyBoundary(html)
       assertPrivacyBoundary(provenanceText)
 
-      await page.setContent(html)
+      await setCapturedContent(page, html)
       for (const evidence of provenance.evidenceSelectors) {
         assert.equal(
           await page.locator(evidence.selector).count(),
@@ -499,17 +499,17 @@ test('Dola fixtures preserve the observed capability action bar and completed re
       }
     }
 
-    await page.setContent(await fs.readFile(path.join(accountRoot, 'capability-action-bar.html'), 'utf8'))
+    await setCapturedContent(page, await fs.readFile(path.join(accountRoot, 'capability-action-bar.html'), 'utf8'))
     assert.deepEqual(
       await page.locator('main button[type="submit"]:not([data-dbx-name])').allTextContents(),
       ['Create Image', 'Writing', 'Create Video', 'Translate', 'Homework'],
     )
     assert.equal(await page.locator('a[href="/chat/create-image"]').count(), 1)
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 })
 
 test('deep workflow fixtures cover authenticated provider jobs, settings, connectors, uploads, and media', {
-  timeout: 30000,
+  timeout: 60000,
 }, async () => {
   const manifest = JSON.parse(await fs.readFile(path.join(fixtureRoot, 'manifest.json'), 'utf8'))
   const deepEntries = manifest.fixtures.filter((entry) => entry.observedOn === '2026-07-25')
@@ -539,7 +539,7 @@ test('deep workflow fixtures cover authenticated provider jobs, settings, connec
       assertPrivacyBoundary(provenanceText)
       assert.doesNotMatch(html, /<script\b|<style\b/i)
 
-      await page.setContent(html)
+      await setCapturedContent(page, html)
       for (const evidence of provenance.evidenceSelectors) {
         assert.equal(
           await page.locator(evidence.selector).count(),
@@ -556,7 +556,7 @@ test('deep workflow fixtures cover authenticated provider jobs, settings, connec
       }
       await assertSanitizedLinks(page, `${entry.provider}/${entry.scenario}`)
     }
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 
   for (const [provider, minimum] of Object.entries(deepWorkflowMinimums)) {
     assert.equal(counts[provider] >= minimum, true, `${provider} deep fixture count`)
@@ -581,7 +581,7 @@ test('current Grok Free fixture preserves the visible model entitlement boundary
   assertPrivacyBoundary(provenanceText)
 
   await withDedicatedTestPage(async ({ page }) => {
-    await page.setContent(html)
+    await setCapturedContent(page, html)
     assert.equal(
       await page.locator('[role="menuitem"][data-radix-collection-item].text-secondary.opacity-75 span.font-semibold').count(),
       3
@@ -595,7 +595,7 @@ test('current Grok Free fixture preserves the visible model entitlement boundary
       0
     )
     assert.equal(await page.getByRole('button', { name: 'Upgrade' }).count(), 1)
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 })
 
 test('provider-specific selection semantics and plan uncertainty remain explicit', async () => {
@@ -613,7 +613,7 @@ test('provider-specific selection semantics and plan uncertainty remain explicit
   ])
 
   await withDedicatedTestPage(async ({ page }) => {
-    await page.setContent(geminiHtml)
+    await setCapturedContent(page, geminiHtml)
     assert.equal(
       await page.locator('gem-menu-item[data-active="true"] gem-menu-item-content').innerText(),
       '3.1 Flash-Lite'
@@ -623,22 +623,22 @@ test('provider-specific selection semantics and plan uncertainty remain explicit
       '3.1 ProSelected'
     )
 
-    await page.setContent(grokModelHtml)
+    await setCapturedContent(page, grokModelHtml)
     assert.deepEqual(
       await page.locator('[role="menuitem"][data-radix-collection-item][aria-disabled="false"] .font-semibold').allTextContents(),
       ['Fast', 'Auto', 'Expert', 'Heavy']
     )
     assert.equal(await page.getByRole('button', { name: 'Upgrade' }).count(), 1)
 
-    await page.setContent(claudeModelHtml)
+    await setCapturedContent(page, claudeModelHtml)
     assert.equal(
       await page.getByRole('menuitemradio').filter({ hasText: 'Fable 5' }).filter({ hasText: 'Upgrade' }).count(),
       1
     )
 
-    await page.setContent(chatgptEffortHtml)
+    await setCapturedContent(page, chatgptEffortHtml)
     assert.equal(await page.getByRole('menuitemradio').count(), 3)
-  }, { visibility: 'headless' })
+  }, { visibility: 'auto' })
 
   assert.equal(grokEffort.effortMode, 'coupled-to-model')
 
@@ -653,6 +653,15 @@ async function readProvenance(accountRoot, scenario) {
     path.join(accountRoot, `${scenario}.provenance.json`),
     'utf8'
   ))
+}
+
+async function setCapturedContent(page, html) {
+  await page.goto('about:blank')
+  await page.evaluate((content) => {
+    document.open()
+    document.write(content)
+    document.close()
+  }, html)
 }
 
 function sha256(bytes) {

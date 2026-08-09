@@ -3,14 +3,14 @@
   import Modal from '../components/Modal.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
-  import { capabilityFamilyLabel, capabilityText, stateLabel } from '../localization.js'
+  import { capabilityFamilyLabel, capabilityText, stateLabel, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, onselect }: {
     snapshot: JsonRecord
     selectedProfile: string
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     onselect: (slug: string) => void
   } = $props()
 

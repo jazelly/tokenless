@@ -53,7 +53,7 @@ export type {
   WaitDaemonJobResultOptions,
 } from './daemon-client.js'
 
-export type { ManagedProfilePreferences, TokenlessConfig } from './job-store.js'
+export type { ManagedProfileConfig, TokenlessConfig } from './job-store.js'
 export type { OutputSavingsConfig } from './job-store.js'
 export type { BrowserVisibility, EffectiveBrowserVisibility } from './browser-visibility.js'
 
@@ -65,12 +65,14 @@ export {
 
 export {
   configPath,
+  deleteTokenlessProfileConfig,
   deriveTaskId,
   normalizeBrowserId,
   normalizeManagedProfileProxy,
   readTokenlessConfig,
   TOKENLESS_CONFIG_SCHEMA_ID,
   tokenlessHome,
+  upsertTokenlessProfileConfig,
   writeTokenlessConfig,
   hasConfiguredTokenlessLanguage,
 } from './job-store.js'

@@ -206,7 +206,7 @@ export class ManagedPlaywrightRunnerService {
           ])
           return profiles.map((profile) => ({
             ...profile,
-            proxy: config.profilePreferences[profile.slug]?.proxy ?? null,
+            proxy: config.profiles[profile.slug]?.proxy ?? null,
           }))
         },
       }

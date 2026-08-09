@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
+  import type { MessageKey } from '../localization.js'
   import type { JsonRecord } from '../types.js'
 
   let {
@@ -12,7 +13,7 @@
   }: {
     snapshot: JsonRecord
     profile?: JsonRecord
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
     oncancel: () => void
     onsubmit: (value: JsonRecord) => Promise<void>
@@ -20,12 +21,10 @@
 
   let slug = $state(untrack(() => profile?.slug ?? ''))
   let label = $state(untrack(() => profile?.label ?? ''))
-  let roleLabel = $state(untrack(() => profile?.preferences?.roleLabel ?? ''))
-  let enabledProviders = $state<string[]>(untrack(() => profile?.preferences?.enabledProviders
-    ? [...profile.preferences.enabledProviders]
-    : Array.isArray(snapshot.config.providerWhitelist)
-      ? [...snapshot.config.providerWhitelist]
-      : snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled').map((provider: JsonRecord) => provider.id)))
+  let roleLabel = $state(untrack(() => profile?.roleLabel ?? ''))
+  let enabledProviders = $state<string[]>(untrack(() => Array.isArray(profile?.enabledProviders)
+    ? [...profile.enabledProviders]
+    : snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled').map((provider: JsonRecord) => provider.id)))
   let error = $state('')
   let errorElement = $state<HTMLDivElement>()
 

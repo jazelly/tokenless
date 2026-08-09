@@ -17,7 +17,7 @@
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
-| `tokenless profiles add` | 创建用于 tab 与 provider preferences 的逻辑 Tokenless profile。 | 否 |
+| `tokenless profiles add` | 创建用于 tab 与 provider configuration 的逻辑 Tokenless profile。 | 否 |
 | `tokenless profiles list` | 列出 profiles 及其最后保存的 provider 检查结果。 | 否 |
 | `tokenless profiles status` | 实时检查一家 provider，并把结果保存到 profile registry。 | 是 |
 | `tokenless profiles open` | 以 headed browser 打开 managed profile，可选择是否导航到 provider。 | 可选 |
@@ -174,9 +174,9 @@ tokenless setup --install-codex --codex-home <dir> --profile default --defaults 
 
 Setup 会连接用户已经运行的 Google Chrome Stable。Chrome 144+ 必须在 `chrome://inspect/#remote-debugging` 启用 remote debugging，并由用户确认 Chrome 的连接提示。底层 CDP endpoint 由 Chrome 持有、由 Tokenless 自动发现——native mode 没有 `--remote-debugging-port` 启动参数或固定端口设置。Tokenless 直接以连接成功作为 capability check，不复制 Chrome profile，目前只支持 headed。Daemon 关闭时只断开自动化，不会关闭 Chrome。
 
-交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会依次使用 `--provider-whitelist`、已有 profile 范围或持久化的默认 whitelist。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
+交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会使用 `--provider-whitelist`、已有 profile 的 `enabledProviders`，或为新 profile 使用所有受支持 provider。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
 
-默认 `providerWhitelist` 包含所有非 `disabled` provider，包括 Gemini。交互式 setup 可以通过回复编号移除 provider，也可以通过 `--provider-whitelist` 或控制台修改名单。
+每个新 profile 默认包含所有非 `disabled` provider，包括 Gemini。可通过 `--profile <slug> --provider-whitelist <list>` 或控制台修改其 membership。
 
 ### `tokenless agents <install|status|inspect|uninstall> codex`
 
@@ -245,34 +245,38 @@ tokenless doctor --json
 tokenless config --json
 ```
 
-传入选项时，更新一个或多个持久化值：
+不带 `--profile` 时更新全局配置：
 
 ```bash
 tokenless config \
   --language zh-CN \
-  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
-  --browser-executable-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --browser-visibility auto \
+  --daemon-url http://127.0.0.1:7331 \
+  --json
+```
+
+带 `--profile` 时更新该 profile 的 provider membership 与 visibility：
+
+```bash
+tokenless config \
+  --profile work \
+  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
+  --browser-visibility headed \
   --json
 ```
 
 可配置内容：
 
 - `--language <en|zh-CN>`
-- `--provider-whitelist <list>`
-- `--browser <browser>`
-- `--browser-executable-path <绝对路径>`，用于明确选择的 system browser
-- `--clear-browser-executable-path`，让下次解析重新执行 discovery
-- `--browser-visibility <auto|headed|headless>`
-- `--proxy-server <http|https|socks5-url>`，可搭配 `--proxy-bypass <逗号分隔列表>`
-- `--clear-proxy`
+- `--profile <slug> --provider-whitelist <list>`
+- `--profile <slug> --browser-visibility headed`
+- `--browser chrome`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
-增加 `--profile <slug>` 后，`--provider-whitelist`、`--browser-visibility` 和不带凭据的 proxy 设置会只作用于一个 managed profile。Proxy 选项必须搭配 `--profile`；`--clear-proxy` 会移除该 profile 的 endpoint。全局 `providerWhitelist` 会继续作为旧 caller 的兼容 union；路由会读取当前 profile 的 membership。
+Provider membership 只属于 `profiles` 中选定的 entry。路由必须读到该 entry，绝不会 fallback 到全局 provider list。
 
-持久化 JSON key 现在是 `providerWhitelist`。Tokenless 仍会读取旧 `preferredProviders` key，并在下一次配置更新时将其改写为 `providerWhitelist`。迁移期间，未写入文档的旧 `--preferred-providers` flag 仍作为 alias 接受。
+Tokenless 会把具体的旧 per-profile side table 与 `browser/profiles.json` 合并并迁移一次。旧表中缺失的 registered profile 会把旧 root provider list 物化为自己的 `enabledProviders`；canonical config 不再保留任一旧 key。未写入文档的旧 `--preferred-providers` flag 仍作为 CLI alias 接受。
 
 完整 config shape 如下：
 
@@ -280,22 +284,20 @@ tokenless config \
 {
   "protocol": "tokenless.config.v1",
   "updatedAt": "2026-08-02T02:09:40.254Z",
-  "providerWhitelist": [
-    "chatgpt",
-    "claude",
-    "grok",
-    "qwen",
-    "deepseek",
-    "perplexity",
-    "zai",
-    "doubao"
-  ],
-  "profilePreferences": {},
+  "profiles": {
+    "default": {
+      "roleLabel": "Personal",
+      "enabledProviders": ["chatgpt", "claude"],
+      "browserVisibility": "headed",
+      "proxy": null
+    }
+  },
   "browser": "chrome",
-  "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "browserVisibility": "auto",
+  "browserExecutablePath": null,
+  "browserVisibility": "headed",
   "daemonUrl": null,
-  "language": "en"
+  "language": "en",
+  "outputSavings": { "enabled": true }
 }
 ```
 
@@ -330,7 +332,7 @@ tokenless daemon stop --json
 
 ## Tokenless Profiles
 
-一个 Tokenless profile 用于组织已连接 Chrome identity 中的 provider tabs 与 preferences；它不会创建或复制单独的 browser identity。
+一个 Tokenless profile 用于组织已连接 Chrome identity 中的 provider tabs 与 configuration；它不会创建或复制单独的 browser identity。
 
 ### `tokenless profiles add`
 
@@ -756,17 +758,21 @@ provider-status
 
 ## 手动真实浏览器验收
 
-已认证 provider capability harness 会为每个显式选择的 production browser 保留一个独立的持久化 profile。默认 test-only home 是 `<TOKENLESS_HOME>/e2e/live-provider`；也可显式使用 `TOKENLESS_LIVE_PROVIDER_TEST_HOME` 或 `--home`。Test home 必须不同于普通 Tokenless home，并且位于所有 repository/worktree 之外。例如，browser selection `cloak` 会解析为稳定 slug `live-provider-cloak`；production registry `<test-home>/browser/profiles.json` 再把该 slug 映射到 opaque 目录 `<test-home>/browser/profiles/<uuid>`。在启动任何 provider automation 前，harness 会验证该目录、私有权限、lifecycle、executable 和 runtime binding。它拒绝 `auto`，让每条 evidence record 都明确命名 production runtime；不同 browser runtime 也绝不会共用一个 profile。
+已认证 provider capability harness 会读取 `TOKENLESS_TEST_CONFIG` 指向的完整 config，并从相邻 production registry 选择 default 或显式请求的 ready profile。Profile slug 是每位开发者自己的变量，不再是 harness 约定。Test home 必须不同于普通 Tokenless home，并且位于所有 repository/worktree 之外。启动 browser automation 前，harness 会验证 profile directory、私有权限、lifecycle、executable 和 runtime binding；不同 browser runtime 绝不会共用一个 profile。
 
-先准备并手动登录一个 browser-specific profile，然后再运行 provider gates：
+先创建 repository-local `.env`，然后准备并手动登录 dedicated config 中的 profiles：
 
-```bash
-npm run test:e2e:prepare -- --browser cloak
-# 在每个 provider tab 中手动登录，然后执行 harness 打印的 daemon-stop 命令。
-npm run test:e2e -- --browser cloak
+```dotenv
+TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-test-home/config.json
 ```
 
-已认证 profile 支持 `chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Fresh config 会包含所有已注册且未 disabled 的 provider，包括 Gemini；区域或网络可达性应作为 E2E evidence 报告，而不是从 preparation 中排除 provider 的理由。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。该 daemon 停止后 resident browser 会独立继续运行；launch signature 兼容时，replacement daemon 会重新接入同一个 profile process。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，通过 CDP 控制的 browser 执行其中声明的 provider journeys，并在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。Provider run 会真实修改 provider 侧状态，并可能产生使用费用。
+```bash
+npm run test:e2e:prepare -- --browser cloak --home /absolute/path/to/tokenless-test-home --profile developer-cloak
+# 在每个 provider tab 中手动登录，然后执行 harness 打印的 daemon-stop 命令。
+npm run test:e2e
+```
+
+已认证 profile 支持 `chrome`、`edge`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且创建或复用显式提供的 profile slug。登录页面名单直接来自 `profiles[slug].enabledProviders`；缺失 profile 配置会直接报错。Fresh profile 会包含所有已注册且未 disabled 的 provider，包括 Gemini；区域或网络可达性应作为 E2E evidence 报告，而不是从 preparation 中排除 provider 的理由。Preparation 保留配置顺序，绝不会改写名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。该 daemon 停止后 resident browser 会独立继续运行；launch signature 兼容时，replacement daemon 会重新接入同一个 profile process。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，通过 CDP 控制的 browser 执行其中声明的 provider journeys，并在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。Provider run 会真实修改 provider 侧状态，并可能产生使用费用。
 
 Browser runtime 与 provider surface 验收是显式本地 gate，不会在 CI 中运行：
 

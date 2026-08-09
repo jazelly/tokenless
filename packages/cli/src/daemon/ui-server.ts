@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { hasConfiguredTokenlessLanguage, readTokenlessConfig } from '../job-store.js'
+import { t } from '../localization.js'
 import { TokenlessApplicationServices } from '../application/services.js'
 import { DaemonError, daemonErrorCodeRetryable, daemonErrorStatus } from './errors.js'
 import { UiSessionManager } from './ui-session.js'
@@ -50,9 +51,9 @@ export class TokenlessUiServer {
       const template = await fs.readFile(path.join(UI_ROOT, 'index.html'), 'utf8')
       const body = template
         .replaceAll('__TOKENLESS_LANG__', language)
-        .replaceAll('__TOKENLESS_TITLE__', language === 'zh-CN' ? 'Tokenless 本地控制台' : 'Tokenless local console')
-        .replaceAll('__TOKENLESS_SKIP__', language === 'zh-CN' ? '跳到主要内容' : 'Skip to content')
-        .replaceAll('__TOKENLESS_LANGUAGE_LABEL__', language === 'zh-CN' ? '语言' : 'Language')
+        .replaceAll('__TOKENLESS_TITLE__', t('dashboardTitle', {}, language))
+        .replaceAll('__TOKENLESS_SKIP__', t('dashboardSkip', {}, language))
+        .replaceAll('__TOKENLESS_LANGUAGE_LABEL__', t('dashboardLanguage', {}, language))
         .replaceAll('__TOKENLESS_EN_SELECTED__', language === 'en' ? 'selected' : '')
         .replaceAll('__TOKENLESS_ZH_SELECTED__', language === 'zh-CN' ? 'selected' : '')
       this.writeAsset(response, 200, body, 'text/html; charset=utf-8')

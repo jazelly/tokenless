@@ -3,7 +3,7 @@
   import { tick } from 'svelte'
   import Modal from '../components/Modal.svelte'
   import ProfileForm from '../components/ProfileForm.svelte'
-  import { stateLabel } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let {
@@ -18,7 +18,7 @@
     snapshot: JsonRecord
     selectedProfile: string
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
     onselect: (slug: string) => void
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
@@ -154,7 +154,7 @@
             <span class="avatar"><UserRound size={17} /></span>
             <span class="profile-list-copy">
               <strong>{entry.label}</strong>
-              <small>{entry.preferences?.roleLabel || entry.slug}</small>
+              <small>{entry.roleLabel || entry.slug}</small>
             </span>
             {#if entry.isDefault}<Star class="default-star" size={13} fill="currentColor" />{:else}<ChevronRight size={15} />{/if}
           </button>
@@ -210,7 +210,7 @@
           </div>
           <div class="settings-list">
             <div class="settings-row"><span>{t('label')}</span><strong>{profile.label}</strong></div>
-            <div class="settings-row"><span>{t('role')}</span><strong>{profile.preferences?.roleLabel || '—'}</strong></div>
+            <div class="settings-row"><span>{t('role')}</span><strong>{profile.roleLabel || '—'}</strong></div>
             <div class="settings-row"><span>{t('profileBrowser')}</span><strong translate="no">Native Google Chrome</strong></div>
             <div class="settings-row"><span>{t('visibility')}</span><strong>headed</strong></div>
           </div>

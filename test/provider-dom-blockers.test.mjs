@@ -79,5 +79,5 @@ test('Claude blocker check recognizes the captured Cloudflare security-verificat
       url: 'https://claude.ai',
       family: 'cloudflare',
     }])
-  }, { visibility: 'headless', viewport: { width: 1100, height: 850 } })
+  }, { visibility: 'auto', viewport: { width: 1100, height: 850 } })
 })

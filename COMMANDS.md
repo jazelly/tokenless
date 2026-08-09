@@ -17,7 +17,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
-| `tokenless profiles add` | Create a logical Tokenless profile for tab and provider preferences. | None |
+| `tokenless profiles add` | Create a logical Tokenless profile for tabs and provider configuration. | None |
 | `tokenless profiles list` | List profiles and their last saved provider observations. | None |
 | `tokenless profiles status` | Check one provider live and save the observation to the profile registry. | Yes |
 | `tokenless profiles open` | Open a managed profile headed, optionally navigating to one provider. | Optional |
@@ -174,9 +174,9 @@ Main options:
 
 Setup attaches to the stable Chrome instance already running for the user. Chrome 144+ must have remote debugging enabled at `chrome://inspect/#remote-debugging`; Chrome asks the user to approve the connection. Chrome owns the underlying CDP endpoint and Tokenless discovers it automatically—there is no `--remote-debugging-port` launch flag or fixed-port setting in native mode. Tokenless uses connection success as the capability check, never copies the Chrome profile, and currently supports headed mode only. Daemon shutdown disconnects automation without closing Chrome.
 
-Interactive `setup` lists every supported provider, enables all of them by default, and lets the user remove providers by replying with their displayed numbers; pressing Enter keeps them all. Non-interactive setup uses `--provider-whitelist`, the existing profile scope, or the persisted default whitelist. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
+Interactive `setup` lists every supported provider, enables all of them by default, and lets the user remove providers by replying with their displayed numbers; pressing Enter keeps them all. Non-interactive setup uses `--provider-whitelist`, the existing profile's `enabledProviders`, or all supported providers for a new profile. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
 
-The default `providerWhitelist` contains every non-disabled provider, including Gemini. Interactive setup lets the user remove providers by number; the list can also be changed with `--provider-whitelist` or through the dashboard.
+Every new profile starts with all non-disabled providers, including Gemini. Its membership can be changed with `--profile <slug> --provider-whitelist <list>` or through the dashboard.
 
 ### `tokenless agents <install|status|inspect|uninstall> codex`
 
@@ -245,34 +245,38 @@ Reads persistent configuration when called without configuration options:
 tokenless config --json
 ```
 
-Updates one or more persistent values when options are supplied:
+Updates global values without `--profile`:
 
 ```bash
 tokenless config \
   --language zh-CN \
-  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
-  --browser-executable-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --browser-visibility auto \
+  --daemon-url http://127.0.0.1:7331 \
+  --json
+```
+
+Updates provider membership and visibility for one profile with `--profile`:
+
+```bash
+tokenless config \
+  --profile work \
+  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
+  --browser-visibility headed \
   --json
 ```
 
 Configurable values:
 
 - `--language <en|zh-CN>`
-- `--provider-whitelist <list>`
-- `--browser <browser>`
-- `--browser-executable-path <absolute-path>` for an explicit system browser
-- `--clear-browser-executable-path` to force discovery on the next resolution
-- `--browser-visibility <auto|headed|headless>`
-- `--proxy-server <http|https|socks5-url>` with optional `--proxy-bypass <comma-separated-list>`
-- `--clear-proxy`
+- `--profile <slug> --provider-whitelist <list>`
+- `--profile <slug> --browser-visibility headed`
+- `--browser chrome`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
-Add `--profile <slug>` to scope `--provider-whitelist`, `--browser-visibility`, and credential-free proxy settings to one managed profile. Proxy options require `--profile`; `--clear-proxy` removes that profile's endpoint. Global `providerWhitelist` remains a compatibility union for older callers, while routing reads the selected profile's membership.
+Provider membership belongs only to the selected entry in `profiles`. Routing requires that entry and never falls back to a global provider list.
 
-The persisted JSON key is `providerWhitelist`. Tokenless still reads the legacy `preferredProviders` key and rewrites it as `providerWhitelist` on the next config update. The undocumented legacy `--preferred-providers` flag remains accepted as an alias during migration.
+Tokenless migrates the concrete legacy per-profile side table once by combining it with `browser/profiles.json`. A registered profile missing from the old table receives the old root provider list as its explicit `enabledProviders`; canonical config never retains either legacy key. The undocumented legacy `--preferred-providers` flag remains accepted as a CLI alias.
 
 The config shape is:
 
@@ -280,22 +284,20 @@ The config shape is:
 {
   "protocol": "tokenless.config.v1",
   "updatedAt": "2026-08-02T02:09:40.254Z",
-  "providerWhitelist": [
-    "chatgpt",
-    "claude",
-    "grok",
-    "qwen",
-    "deepseek",
-    "perplexity",
-    "zai",
-    "doubao"
-  ],
-  "profilePreferences": {},
+  "profiles": {
+    "default": {
+      "roleLabel": "Personal",
+      "enabledProviders": ["chatgpt", "claude"],
+      "browserVisibility": "headed",
+      "proxy": null
+    }
+  },
   "browser": "chrome",
-  "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "browserVisibility": "auto",
+  "browserExecutablePath": null,
+  "browserVisibility": "headed",
   "daemonUrl": null,
-  "language": "en"
+  "language": "en",
+  "outputSavings": { "enabled": true }
 }
 ```
 
@@ -330,7 +332,7 @@ The command discovers the actual endpoint from SQLite and does not kill an unver
 
 ## Tokenless Profiles
 
-A Tokenless profile groups provider tabs and preferences inside the connected Chrome identity. It does not create or copy a separate browser identity.
+A Tokenless profile groups provider tabs and configuration inside the connected Chrome identity. It does not create or copy a separate browser identity.
 
 ### `tokenless profiles add`
 
@@ -756,17 +758,21 @@ Commands that may open or operate a provider page are `setup`, `profiles status`
 
 ## Manual Real-Browser Acceptance
 
-The authenticated provider capability harness keeps a separate persistent profile for every explicitly selected production browser. It derives a test-only home at `<TOKENLESS_HOME>/e2e/live-provider` by default, or uses `TOKENLESS_LIVE_PROVIDER_TEST_HOME` or `--home` when explicitly supplied. The test home must differ from the ordinary Tokenless home and remain outside every repository/worktree. Browser selection `cloak`, for example, resolves stable slug `live-provider-cloak`; the production registry at `<test-home>/browser/profiles.json` maps that slug to the opaque directory `<test-home>/browser/profiles/<uuid>`. The harness validates that directory, its private permissions, lifecycle, executable, and runtime binding before any provider automation. It rejects `auto` so every evidence record names an explicit production runtime, and it never reuses one profile across browser runtimes.
+The authenticated provider capability harness reads the complete config named by `TOKENLESS_TEST_CONFIG` and selects its default or requested ready profile from the adjacent production registry. Profile slugs are developer-owned variables rather than harness conventions. The test home must differ from the ordinary Tokenless home and remain outside every repository/worktree. The harness validates the profile directory, private permissions, lifecycle, executable, and runtime binding before browser automation, and never reuses one profile across browser runtimes.
 
-Prepare and manually authenticate one browser-specific profile before running its provider gates:
+Create a repository-local `.env`, then prepare and manually authenticate the profiles in that dedicated config:
 
-```bash
-npm run test:e2e:prepare -- --browser cloak
-# Sign in manually in each provider tab, then run the printed daemon-stop command.
-npm run test:e2e -- --browser cloak
+```dotenv
+TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-test-home/config.json
 ```
 
-Supported authenticated-profile selections are `chrome`, `edge`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. `prepare` installs or resolves the exact browser, keeps its maintenance skill output inside the test-only home, and creates or reuses only its deterministic profile slug. Its login-page list is the profile's effective provider whitelist: `profilePreferences[slug].enabledProviders` when present, otherwise the top-level `providerWhitelist`. Fresh configs include every registered non-disabled provider, including Gemini; regional or network reachability is evidence reported by E2E rather than a reason to remove a provider from preparation. Preparation preserves the configured order and never rewrites either list. It requests every listed provider-entry tab in one concurrent Chromium background-tab batch, then exits without waiting for page load, login, or Playwright target observation. If a proof-verified daemon for the same dedicated home predates the provider-tab endpoint, preparation gracefully replaces it with the current built daemon and retries the handoff once. The resident browser continues independently when that daemon stops, and the replacement daemon reconnects to the same profile process when its launch signature is compatible. The browser may take focus on its initial launch but does not foreground every provider tab in sequence. Preparation does not read the capability matrix, run provider jobs, call `setup` or `profiles status`, automate login, or inspect authentication data. Use `--no-open` for preparation validation without provider navigation or the manual browser handoff. The `run` command uses the live capability matrix to execute declared provider journeys once through the CDP-controlled browser and writes a private JSON report under `test-results/live-provider-e2e/`, grouped first by provider and then by capability. Readiness failures are classified separately from capability assertions; `network_or_navigation` records observable reachability failure without claiming a particular firewall or regional cause. Provider runs perform real mutations and may incur usage cost.
+```bash
+npm run test:e2e:prepare -- --browser cloak --home /absolute/path/to/tokenless-test-home --profile developer-cloak
+# Sign in manually in each provider tab, then run the printed daemon-stop command.
+npm run test:e2e
+```
+
+Supported authenticated-profile selections are `chrome`, `edge`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. `prepare` installs or resolves the exact browser, keeps its maintenance skill output inside the test-only home, and creates or reuses the explicitly supplied profile slug. Its login-page list is `profiles[slug].enabledProviders`; a missing profile configuration is an error. Fresh profiles include every registered non-disabled provider, including Gemini; regional or network reachability is evidence reported by E2E rather than a reason to remove a provider from preparation. Preparation preserves the configured order and never rewrites the list. It requests every listed provider-entry tab in one concurrent Chromium background-tab batch, then exits without waiting for page load, login, or Playwright target observation. If a proof-verified daemon for the same dedicated home predates the provider-tab endpoint, preparation gracefully replaces it with the current built daemon and retries the handoff once. The resident browser continues independently when that daemon stops, and the replacement daemon reconnects to the same profile process when its launch signature is compatible. The browser may take focus on its initial launch but does not foreground every provider tab in sequence. Preparation does not read the capability matrix, run provider jobs, call `setup` or `profiles status`, automate login, or inspect authentication data. Use `--no-open` for preparation validation without provider navigation or the manual browser handoff. The `run` command uses the live capability matrix to execute declared provider journeys once through the CDP-controlled browser and writes a private JSON report under `test-results/live-provider-e2e/`, grouped first by provider and then by capability. Readiness failures are classified separately from capability assertions; `network_or_navigation` records observable reachability failure without claiming a particular firewall or regional cause. Provider runs perform real mutations and may incur usage cost.
 
 Browser-runtime and provider-surface acceptance tests are explicit local gates and do not run in CI:
 

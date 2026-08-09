@@ -62,7 +62,7 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
     await withDedicatedTestPage(async ({ page }) => {
       await page.goto('data:text/html,<title>cached-browser-path</title>')
       assert.equal(await page.title(), 'cached-browser-path')
-    }, { visibility: 'headless' })
+    }, { visibility: 'auto' })
 
     const automatic = await runCli([
       'install', '--browser', 'auto', '--home', homeDir, '--json',

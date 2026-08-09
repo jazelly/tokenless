@@ -4,7 +4,7 @@ Status: implemented; real-provider release evidence pending | Priority: P0
 
 Depends on: authenticated loopback daemon, managed profile lifecycle, provider registry and capability catalog, embedded browser-runtime supervision, durable jobs, and browser page ownership
 
-Implementation note (2026-08-04): phases 0–4 and the currently stable phase-5 surfaces are implemented in the bundled CLI package. This includes profile-scoped preferences and migration, shared application services, direct loopback UI entry with automatic browser sessions, the `/ui-api/v1` contract, reserved control-plane page ownership, first-run Web setup/dashboard handoff, all six administration areas, clean and explicit-consent imported profile flows, provider/browser/job mutations, capability-first routing views, freshly observed model/effort controls, revision/ETag polling that preserves unsaved edits, English and Simplified Chinese localization, URL-persisted profile and job filters, and redacted diagnostics. The browser application is a modular Svelte 5 application under `packages/cli/src/daemon/ui`, built by its own Vite boundary into deterministic self-hosted assets while remaining part of the CLI release artifact. Its separate Playwright Web E2E covers setup, installed-runtime discovery, executable-path validation, explicit opaque local profile copy and re-import, responsive display at desktop/mobile viewports, accessible navigation and dialogs, configuration and profile persistence, durable work display, polling-safe drafts, and reserved control-plane page ownership. One explicitly gated signed-in provider suite reuses one real completed ChatGPT job across fixture-composed desktop-fresh, desktop-reload, and mobile-fresh startup cases without rerunning the full provider matrix. Browser profile source handles are random, short-lived, and resolved only inside the daemon; the browser never receives source filesystem paths or authentication values. Scheduler projections and project/context-mirror views remain conditional on the separate roadmaps that own those contracts. The roadmap stays active until the required authenticated real-provider release matrix is run.
+Implementation note (2026-08-04): phases 0–4 and the currently stable phase-5 surfaces are implemented in the bundled CLI package. This includes complete profile configuration and migration, shared application services, direct loopback UI entry with automatic browser sessions, the `/ui-api/v1` contract, reserved control-plane page ownership, first-run Web setup/dashboard handoff, all six administration areas, clean and explicit-consent imported profile flows, provider/browser/job mutations, capability-first routing views, freshly observed model/effort controls, revision/ETag polling that preserves unsaved edits, English and Simplified Chinese localization, URL-persisted profile and job filters, and redacted diagnostics. The browser application is a modular Svelte 5 application under `packages/cli/src/daemon/ui`, built by its own Vite boundary into deterministic self-hosted assets while remaining part of the CLI release artifact. Its separate Playwright Web E2E covers setup, installed-runtime discovery, executable-path validation, explicit opaque local profile copy and re-import, responsive display at desktop/mobile viewports, accessible navigation and dialogs, configuration and profile persistence, durable work display, polling-safe drafts, and reserved control-plane page ownership. One explicitly gated signed-in provider suite reuses one real completed ChatGPT job across fixture-composed desktop-fresh, desktop-reload, and mobile-fresh startup cases without rerunning the full provider matrix. Browser profile source handles are random, short-lived, and resolved only inside the daemon; the browser never receives source filesystem paths or authentication values. Scheduler projections and project/context-mirror views remain conditional on the separate roadmaps that own those contracts. The roadmap stays active until the required authenticated real-provider release matrix is run.
 
 ## Outcome
 
@@ -91,12 +91,11 @@ Disabling a provider removes it from implicit routing and setup sweeps. It does 
 Provider configuration should move toward a per-profile routing scope:
 
 ```ts
-type ManagedProfilePreferences = {
-  profileId: string
+type ManagedProfileConfig = {
   roleLabel: string
   enabledProviders: ProviderId[]
-  browserVisibility: "auto" | "headed" | "headless"
-  proxy: { server: string; bypass: string[] } | null
+  browserVisibility: "headed"
+  proxy: null
 }
 ```
 
@@ -339,7 +338,7 @@ Visual design requires a separate design target and review before frontend imple
 ### Phase 0: Shared Services and Contracts
 
 - Extract config, profile, provider-readiness, job, and diagnostic operations from CLI handlers into typed services.
-- Define per-profile provider preferences and a migration from global `preferredProviders` without changing routing silently.
+- Define complete per-profile configuration and migrate the old global provider list without changing routing silently.
 - Define browser-facing schemas and redaction policy.
 - Add direct UI session contracts.
 - Add reserved control-plane page ownership to the managed browser context.

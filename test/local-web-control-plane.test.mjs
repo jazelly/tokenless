@@ -225,7 +225,27 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(invalidProfile.status, 400)
     assert.deepEqual(await registry.listProfiles(), [])
 
-    const workProfile = await registry.addProfile({ slug: 'work', label: 'Work', lifecycle: 'ready', setDefault: true })
+    const createWorkProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles`, {
+      method: 'POST',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        slug: 'work',
+        label: 'Work',
+        enabledProviders: ['chatgpt'],
+        setDefault: true,
+      }),
+    })
+    assert.equal(createWorkProfile.status, 201)
+    const createdProfileBody = await createWorkProfile.json()
+    assert.deepEqual(createdProfileBody.enabledProviders, ['chatgpt'])
+    assert.equal(Object.hasOwn(createdProfileBody, 'preferences'), false)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work.enabledProviders, ['chatgpt'])
+    const workProfile = await registry.resolveProfile('work')
     const profileConsole = await fetch(`${daemon.origin}/ui/?profile=${encodeURIComponent(workProfile.id)}`, { headers: { cookie } })
     assert.equal(profileConsole.status, 200)
     const mappedJob = daemon.store.createJob({
@@ -247,15 +267,12 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
       '--profile', 'work',
       '--provider-whitelist', 'chatgpt,claude',
       '--browser-visibility', 'headed',
-      '--proxy-server', 'socks5://127.0.0.1:1080',
-      '--proxy-bypass', 'localhost,127.0.0.1',
       '--json',
     ])
     const configBody = JSON.parse(configCommand.stdout)
-    assert.deepEqual(configBody.preferences.enabledProviders, ['chatgpt', 'claude'])
-    assert.equal(configBody.preferences.browserVisibility, 'headed')
-    assert.equal(configBody.preferences.proxy.server, 'socks5://127.0.0.1:1080')
-    assert.deepEqual(configBody.preferences.proxy.bypass, ['localhost', '127.0.0.1'])
+    assert.equal(configBody.profile.slug, 'work')
+    assert.deepEqual(configBody.profile.enabledProviders, ['chatgpt', 'claude'])
+    assert.equal(configBody.profile.browserVisibility, 'headed')
 
     const dashboardCommand = await execFileAsync(process.execPath, [
       cliEntry,
@@ -285,19 +302,21 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
         roleLabel: 'Research',
         enabledProviders: ['chatgpt', 'claude'],
         browserVisibility: 'headed',
-        proxy: { server: 'socks5://127.0.0.1:1080', bypass: ['localhost'] },
       }),
     })
     assert.equal(profileMutation.status, 200)
     const profileBody = await profileMutation.json()
-    assert.equal(profileBody.preferences.roleLabel, 'Research')
-    assert.deepEqual(profileBody.preferences.enabledProviders, ['chatgpt', 'claude'])
-    assert.equal(profileBody.preferences.proxy.server, 'socks5://127.0.0.1:1080')
+    assert.equal(profileBody.roleLabel, 'Research')
+    assert.deepEqual(profileBody.enabledProviders, ['chatgpt', 'claude'])
+    assert.equal(profileBody.proxy, null)
+    assert.equal(Object.hasOwn(profileBody, 'preferences'), false)
     assert.equal(Object.hasOwn(profileBody, 'directory'), false)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles.work.enabledProviders, ['chatgpt', 'claude'])
 
     const afterProfile = await fetch(`${daemon.origin}/ui-api/v1/snapshot`, { headers: { cookie } }).then((response) => response.json())
     assertUiSchema(validateUiSnapshot, afterProfile)
-    assert.deepEqual(afterProfile.profiles[0].preferences.enabledProviders, ['chatgpt', 'claude'])
+    assert.deepEqual(afterProfile.profiles[0].enabledProviders, ['chatgpt', 'claude'])
+    assert.equal(Object.hasOwn(afterProfile.profiles[0], 'preferences'), false)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'chatgpt').profiles[0].enabled, true)
     assert.equal(afterProfile.providers.find((provider) => provider.id === 'gemini').profiles[0].enabled, false)
 
@@ -320,6 +339,17 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     await Promise.all(readinessBody.jobs.map((job) => (
       daemon.store.cancelJob(job.jobId, { source: 'test-cleanup' }).catch(() => undefined)
     )))
+
+    const deleteProfile = await fetch(`${daemon.origin}/ui-api/v1/profiles/work`, {
+      method: 'DELETE',
+      headers: {
+        cookie,
+        origin: daemon.origin,
+        'x-tokenless-csrf': sessionBody.csrf,
+      },
+    })
+    assert.equal(deleteProfile.status, 200)
+    assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')).profiles, 'work'), false)
 
     assert.equal(await requestWithHost(daemon.port, localhostHost), 200)
     assert.equal(await requestWithHost(daemon.port, 'evil.invalid'), 403)

@@ -1,14 +1,14 @@
 <script lang="ts">
   import { ExternalLink, RefreshCw, ScanSearch } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
-  import { stateLabel } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, busy, onselect, onmutate }: {
     snapshot: JsonRecord
     selectedProfile: string
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
     onselect: (slug: string) => void
     onmutate: (path: string, body?: unknown, method?: string, announce?: boolean) => Promise<unknown>
@@ -22,7 +22,7 @@
 
   async function toggle(provider: JsonRecord, input: HTMLInputElement) {
     const enabled = input.checked
-    const next = new Set<string>(profile.preferences.enabledProviders)
+    const next = new Set<string>(profile.enabledProviders)
     if (enabled) next.add(provider.id)
     else next.delete(provider.id)
     try {

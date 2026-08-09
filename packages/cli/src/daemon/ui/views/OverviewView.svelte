@@ -2,14 +2,14 @@
   import { ArrowUpRight, Bot, Calculator, Clock3, Monitor, RefreshCw, UserRound } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber } from '../formatting.js'
-  import { stateLabel } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, readinessBusy, onrefreshreadiness }: {
     snapshot: JsonRecord
     selectedProfile: string
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     readinessBusy: boolean
     onrefreshreadiness: (profileSlug: string) => Promise<void>
   } = $props()

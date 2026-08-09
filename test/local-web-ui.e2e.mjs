@@ -5,7 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { startDaemon } from '../packages/cli/dist/src/daemon/lifecycle.js'
-import { readTokenlessConfig, writeTokenlessConfig } from '../packages/cli/dist/src/job-store.js'
+import { writeTokenlessConfig } from '../packages/cli/dist/src/job-store.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
 import {
   createLiveProviderTestContextManager,
@@ -17,12 +17,10 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
     const [browserTarget, importTarget] = await validateDedicatedTestProfiles({ count: 2 })
     const consoleOrigin = daemon.origin.replace('127.0.0.1', 'localhost')
     const customExecutablePath = browserTarget.runtime.executablePath
-    const initialConfig = await readTokenlessConfig(homeDir)
     await writeTokenlessConfig({
       homeDir,
       browser: 'chrome-for-testing',
       browserExecutablePath: customExecutablePath,
-      providerWhitelist: initialConfig.providerWhitelist.filter((provider) => provider !== 'gemini'),
     })
     const importSourceDir = importTarget.profile.directory
     const manager = createLiveProviderTestContextManager(browserTarget)

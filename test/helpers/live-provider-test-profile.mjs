@@ -37,10 +37,10 @@ export function resolveLiveProviderTestTarget({
   profile,
   env = process.env,
 } = {}) {
-  const requestedBrowser = nonempty(browser) ?? nonempty(env.TOKENLESS_TEST_BROWSER)
+  const requestedBrowser = nonempty(browser)
   if (!requestedBrowser) {
     throw new Error(
-      `Dedicated browser tests require TOKENLESS_TEST_BROWSER in .env or --browser <${LIVE_PROVIDER_TEST_BROWSERS.join('|')}>.`,
+      `Profile preparation requires --browser <${LIVE_PROVIDER_TEST_BROWSERS.join('|')}>.`,
     )
   }
 
@@ -51,13 +51,13 @@ export function resolveLiveProviderTestTarget({
     )
   }
 
-  const requestedHome = nonempty(home) ?? nonempty(env.TOKENLESS_TEST_HOME)
+  const requestedHome = nonempty(home)
   if (!requestedHome) {
-    throw new Error('Dedicated browser tests require TOKENLESS_TEST_HOME in .env or --home.')
+    throw new Error('Profile preparation requires --home.')
   }
-  const profileSlug = nonempty(profile) ?? nonempty(env.TOKENLESS_TEST_PROFILE)
+  const profileSlug = nonempty(profile)
   if (!profileSlug) {
-    throw new Error('Dedicated browser tests require TOKENLESS_TEST_PROFILE in .env or --profile.')
+    throw new Error('Profile preparation requires --profile.')
   }
   const baseHome = path.resolve(nonempty(env.TOKENLESS_HOME) ?? path.join(os.homedir(), '.tokenless'))
   const homeDir = path.resolve(requestedHome)
@@ -158,10 +158,14 @@ export async function validateDedicatedTestProfiles({ count = 1, env = process.e
   const configured = await resolveDedicatedTestConfig({ env })
   const registry = new ManagedProfileRegistry(configured.homeDir)
   const profiles = await registry.listProfiles()
+  const defaultBrowser = configured.defaultProfile.runtimeBinding?.browserId ?? configured.config.browser
   const ordered = [
     ...profiles.filter((profile) => profile.id === configured.defaultProfile.id),
     ...profiles.filter((profile) => profile.id !== configured.defaultProfile.id),
-  ].filter((profile) => profile.lifecycle === 'ready')
+  ].filter((profile) => (
+    profile.lifecycle === 'ready' &&
+    (profile.runtimeBinding?.browserId ?? configured.config.browser) === defaultBrowser
+  ))
   if (ordered.length < count) {
     throw new Error(
       `Dedicated Tokenless test config ${configured.configPath} requires ${count} prepared ready profile(s).`,
@@ -200,7 +204,7 @@ export async function resolveConfiguredDedicatedTestTarget({ browser, profile, e
   const registry = new ManagedProfileRegistry(configured.homeDir)
   const candidates = profile
     ? [await registry.resolveProfile(profile)]
-    : await registry.listProfiles()
+    : (await registry.listProfiles()).filter((candidate) => candidate.lifecycle === 'ready')
   const preferred = profile
     ? candidates[0]
     : candidates.find((candidate) => candidate.id === configured.defaultProfile.id)
@@ -239,7 +243,7 @@ export async function withDedicatedTestBrowser(operation, options = {}) {
   const target = await resolveConfiguredDedicatedTestTarget(options)
   const manager = createLiveProviderTestContextManager(target)
   try {
-    return await manager.runWithProfile(target.profile, options.visibility ?? 'headless', async (context) => (
+    return await manager.runWithProfile(target.profile, options.visibility ?? 'auto', async (context) => (
       await operation({ context, target })
     ))
   } finally {

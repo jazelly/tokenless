@@ -206,7 +206,7 @@ Setup performs browser work before daemon readiness:
 7. when no candidate is eligible, use a clean managed profile;
 8. resolve or install the selected runtime, verify it, and immediately persist the concrete browser and executable path;
 9. provision or select a compatible managed profile, recheck Cloak/profile version compatibility at the copy boundary, and perform an explicitly authorized opaque copy when selected;
-10. persist profile preferences and the provider whitelist;
+10. persist the complete profile configuration, including its enabled providers;
 11. start the daemon, verify runtime/profile readiness, and leave one headed review tab open for every enabled provider.
 
 The Anti-Detect question carries the installation disclosure; there is no later installation confirmation. The profile-source step separately carries the experimental status, exact Chrome/Brave eligibility, Arc exclusion, version/platform variability, and sign-in non-guarantee disclosures. English and Simplified Chinese flows carry equivalent meaning. In non-interactive setup, explicit `--anti-detect` or `--browser cloak` authorizes installation, while an inherited Cloak preference without either flag fails before download with `setup_cloak_confirmation_required`. Non-interactive profile import additionally requires `--import-browser <chrome|brave>` when the source is not Chrome and always requires `--consent-local-profile-copy` because no visible profile-source selection occurred.

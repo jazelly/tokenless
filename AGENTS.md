@@ -50,12 +50,12 @@
 
 ### Test Browser Policy
 
-- Every repository test that launches a browser must use the locally installed stable Google Chrome executable resolved through Tokenless's production browser discovery path.
-- Never launch Playwright's bundled Chromium (`chromium.executablePath()`), Google Chrome for Testing, `managed-chromium`, Cloak, or a generic Chromium installation as a test browser.
-- Playwright's `chromium` API may control Google Chrome, but browser tests must use the persistent dedicated profile resolved by `test/helpers/live-provider-test-profile.mjs`; never use a person's everyday Chrome profile for automated tests.
+- Every repository browser test must load `TOKENLESS_TEST_CONFIG` from the repository-local `.env`. It points to one complete dedicated Tokenless `config.json`; its adjacent production profile registry is the only source of test profile names, directories, and runtime bindings.
+- Different developers may use different profile slugs. Tests must select the default or additional ready profiles from that registry and must never hard-code, derive, or separately configure profile names.
+- Never launch Playwright's bundled Chromium (`chromium.executablePath()`) or resolve a test browser outside the dedicated Tokenless config. Browser selection and executable resolution come from each selected profile's production runtime binding.
+- Playwright browser tests must use the persistent dedicated profiles resolved by `test/helpers/live-provider-test-profile.mjs`; never use a person's everyday browser profile for automated tests.
 - Browser tests must not create disposable user-data directories or delete a browser profile or its test home during teardown. Reuse the prepared dedicated profile across runs; profile deletion requires an explicit user request naming that profile.
 - Browser tests must enter browser automation through the dedicated-profile helper and Tokenless's production CDP path. Direct `chromium.launch()`, `chromium.launchPersistentContext()`, and ad hoc browser process launches are forbidden in test files.
-- Tests may validate metadata, discovery, selection, or configuration for other browser families without launching those browsers. Running an acceptance test against any non-Chrome executable requires an explicit user request for that exact runtime.
 - Every browser test must quiesce all test-owned browser processes in teardown, including after failures. Production browser residency does not authorize tests to leave browsers running.
 
 ### Credential and macOS Keychain Safety

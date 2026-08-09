@@ -99,10 +99,10 @@ async function prepareTarget(target, options) {
   }
 
   const config = await readTokenlessConfig(target.homeDir)
-  const providers = config.profilePreferences[target.profileSlug]?.enabledProviders ?? config.providerWhitelist
+  const providers = config.profiles[target.profileSlug]?.enabledProviders ?? []
   if (providers.length === 0) {
     throw new Error(
-      `Dedicated live provider profile '${target.profileSlug}' has an empty effective providerWhitelist.`,
+      `Dedicated live provider profile '${target.profileSlug}' has no enabled providers.`,
     )
   }
 
@@ -183,7 +183,6 @@ async function runProviderSuite(target, options) {
     ...process.env,
     TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME: target.homeDir,
     TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE: target.profileSlug,
-    TOKENLESS_LIVE_PROVIDER_TEST_BROWSER: target.browserSelection,
     TOKENLESS_LIVE_E2E_GATE: options.gate,
   }
   if (options.command === 'web-ui') {

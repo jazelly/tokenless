@@ -85,19 +85,9 @@ test('persistent config canonicalizes browser settings to headed native Chrome',
     assert.equal(defaults.browser, 'chrome')
     assert.equal(Object.hasOwn(defaults, 'browserConnectionMode'), false)
     assert.equal(defaults.browserExecutablePath, null)
-    assert.deepEqual(defaults.providerWhitelist, [
-      'chatgpt',
-      'claude',
-      'gemini',
-      'grok',
-      'qwen',
-      'deepseek',
-      'perplexity',
-      'zai',
-      'doubao',
-      'kimi',
-      'dola',
-    ])
+    assert.deepEqual(defaults.profiles, {})
+    assert.equal(Object.hasOwn(defaults, 'providerWhitelist'), false)
+    assert.equal(Object.hasOwn(defaults, 'profilePreferences'), false)
     assert.equal(Object.hasOwn(defaults, 'preferredProviders'), false)
     assert.deepEqual(
       (await runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })).outputSavings,
@@ -123,10 +113,12 @@ test('persistent config canonicalizes browser settings to headed native Chrome',
         `${JSON.stringify({ ...savedConfig, browserConnectionMode })}\n`,
         { mode: 0o600 },
       )
-      await assert.rejects(
-        runtime.readTokenlessConfig(homeDir),
-        (error) => error?.code === 'tokenless_config_invalid',
-      )
+      const connectionMigrated = await runtime.readTokenlessConfig(homeDir)
+      assert.equal(connectionMigrated.browser, 'chrome')
+      assert.equal(Object.hasOwn(
+        JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')),
+        'browserConnectionMode',
+      ), false)
     }
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
@@ -149,7 +141,40 @@ test('new profiles are logical native Chrome profiles and do not provision a bro
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.equal(JSON.parse(result.stdout).profile.browserMode, 'native')
     assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), true)
+    const config = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.deepEqual(Object.keys(config.profiles), ['default'])
+    assert.ok(config.profiles.default.enabledProviders.includes('chatgpt'))
+    assert.equal(Object.hasOwn(config, 'profilePreferences'), false)
     assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'runtimes')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('concurrent single-profile config updates preserve both memberships', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-concurrency-')))
+  const runtime = await import('../packages/cli/dist/src/index.js')
+  const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
+  try {
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'alpha', lifecycle: 'ready', setDefault: true })
+    await registry.addProfile({ slug: 'beta', lifecycle: 'ready' })
+    const stale = await runtime.readTokenlessConfig(homeDir)
+    await Promise.all([
+      runtime.upsertTokenlessProfileConfig({
+        homeDir,
+        slug: 'alpha',
+        profile: { ...stale.profiles.alpha, enabledProviders: ['chatgpt'] },
+      }),
+      runtime.upsertTokenlessProfileConfig({
+        homeDir,
+        slug: 'beta',
+        profile: { ...stale.profiles.beta, enabledProviders: ['claude'] },
+      }),
+    ])
+    const persisted = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.deepEqual(persisted.profiles.alpha.enabledProviders, ['chatgpt'])
+    assert.deepEqual(persisted.profiles.beta.enabledProviders, ['claude'])
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -165,21 +190,42 @@ test('managed Chrome for Testing catalog follows the platform Cloak major', asyn
   assert.equal(path.basename(windows.executableRelativePath), 'chrome.exe')
 })
 
-test('persistent config migrates the legacy preferredProviders key to providerWhitelist', async () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-provider-whitelist-migration-'))
+test('persistent config migrates every registered legacy profile into config.profiles', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-migration-')))
   const configPath = path.join(homeDir, 'config.json')
   const runtime = await import('../packages/cli/dist/src/index.js')
+  const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
   try {
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'default', lifecycle: 'ready', setDefault: true })
+    await registry.addProfile({ slug: 'work', lifecycle: 'ready' })
     fs.writeFileSync(configPath, `${JSON.stringify({
       protocol: 'tokenless.config.v1',
-      preferredProviders: ['gemini', 'chatgpt'],
+      providerWhitelist: ['gemini', 'claude'],
+      profilePreferences: {
+        default: {
+          profileId: 'default',
+          roleLabel: 'Personal',
+          enabledProviders: ['chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+      browser: 'cloak',
+      browserConnectionMode: 'playwright',
+      browserVisibility: 'auto',
     }, null, 2)}\n`, { mode: 0o600 })
-    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).providerWhitelist, ['gemini', 'chatgpt'])
-
-    await runtime.writeTokenlessConfig({ homeDir, language: 'zh-CN' })
+    const migrated = await runtime.readTokenlessConfig(homeDir)
+    assert.deepEqual(migrated.profiles.default.enabledProviders, ['chatgpt'])
+    assert.equal(migrated.profiles.default.roleLabel, 'Personal')
+    assert.deepEqual(migrated.profiles.work.enabledProviders, ['gemini', 'claude'])
     const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'))
-    assert.deepEqual(persisted.providerWhitelist, ['gemini', 'chatgpt'])
+    assert.deepEqual(Object.keys(persisted.profiles), ['default', 'work'])
+    assert.equal(Object.hasOwn(persisted.profiles.default, 'profileId'), false)
+    assert.equal(Object.hasOwn(persisted, 'profilePreferences'), false)
+    assert.equal(Object.hasOwn(persisted, 'providerWhitelist'), false)
     assert.equal(Object.hasOwn(persisted, 'preferredProviders'), false)
+    assert.equal(Object.hasOwn(persisted, 'browserConnectionMode'), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }

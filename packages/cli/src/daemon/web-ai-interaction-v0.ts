@@ -246,11 +246,11 @@ export class WebAiInteractionV0Adapter {
     }
     const [profiles, config] = await Promise.all([this.profiles.listProfiles(), readTokenlessConfig(this.store.homeDir)])
     const profile = profiles.find((candidate) => candidate.id === profileId && candidate.lifecycle === 'ready')
-    if (!profile || !config.providerWhitelist.includes(provider)) {
+    const configured = profile ? config.profiles[profile.slug] : undefined
+    if (!profile || !configured) {
       throw invalidInput('web ai provider/profile is not configured')
     }
-    const enabled = config.profilePreferences[profile.slug]?.enabledProviders
-    if (enabled && enabled.length > 0 && !enabled.includes(provider)) {
+    if (!configured.enabledProviders.includes(provider)) {
       throw invalidInput('web ai provider is not enabled for the managed profile')
     }
   }

@@ -6,7 +6,7 @@ Every live provider suite writes a private JSON report under `test-results/live-
 
 ## Real Web UI Provider E2E
 
-The representative Web UI provider test reuses the dedicated live-provider harness and its Cloak-bound `live-provider-cloak` profile. Prepare that profile and authenticate manually before running:
+The representative Web UI provider test loads the complete dedicated Tokenless config named by `TOKENLESS_TEST_CONFIG` in `.env` and reuses its registry-selected profile. Prepare that profile and authenticate manually before running:
 
 ```bash
 npm run test:e2e:prepare -- --browser cloak
