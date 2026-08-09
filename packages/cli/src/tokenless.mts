@@ -3153,6 +3153,7 @@ async function ensureSetupManagedProfile({
     lines: [
       'Tokenless connects to the stable Google Chrome already running on this computer.',
       'Chrome 144 or newer is required. Enable remote debugging at chrome://inspect/#remote-debugging and approve the connection request.',
+      'Chrome manages the underlying CDP endpoint and Tokenless discovers it automatically; no --remote-debugging-port launch flag or fixed-port setting is required.',
       'Native mode is headed-only. Tokenless does not copy your browser profile or own the Chrome process.',
     ],
   })

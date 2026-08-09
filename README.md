@@ -56,7 +56,7 @@ See the [Capability Matrix](docs/capability-matrix.md) for the verified workflow
 
 Requires Node.js 22.13+ and stable Google Chrome 144 or newer. Apple Silicon macOS is the current target, and Windows x64 remains prerelease.
 
-Before setup, open `chrome://inspect/#remote-debugging` in your everyday Chrome, enable remote debugging, and approve Chrome's connection prompt. Tokenless tests capability by connecting; it does not copy your profile or launch another browser.
+Before setup, open `chrome://inspect/#remote-debugging` in your everyday Chrome, enable remote debugging, and approve Chrome's connection prompt. Chrome manages the underlying CDP endpoint and Tokenless discovers it automatically, so you do not launch Chrome with `--remote-debugging-port` or configure a fixed port. Tokenless tests capability by connecting; it does not copy your profile or launch another browser.
 
 ```bash
 npm install --global tokenless@latest

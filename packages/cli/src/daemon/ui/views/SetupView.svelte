@@ -90,7 +90,7 @@
         <div class="setup-icon"><Monitor size={19} /></div>
         <div class="setup-fields browser-setup-fields">
           <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native Google Chrome</strong></div>
-          <p class="form-note">Chrome 144+ · chrome://inspect/#remote-debugging</p>
+          <p class="form-note">Chrome 144+ · chrome://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
         </div>
       </div>
 

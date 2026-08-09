@@ -470,7 +470,7 @@ async function connectNativeChromeContext(
   } catch (cause) {
     throw tokenlessError(
       'native_chrome_connection_unavailable',
-      'Could not connect to the running Google Chrome. Tokenless native mode requires Chrome 144 or newer. Open chrome://inspect/#remote-debugging, allow remote debugging for this browser instance, and approve the connection request.',
+      'Could not connect to the running Google Chrome. Tokenless native mode requires Chrome 144 or newer. Open chrome://inspect/#remote-debugging, allow remote debugging for this browser instance, and approve the connection request. Chrome manages the CDP endpoint; do not configure a fixed remote debugging port.',
       { retryable: true, cause },
     )
   }

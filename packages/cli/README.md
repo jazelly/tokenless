@@ -14,7 +14,7 @@ tokenless setup
 tokenless doctor --json
 ```
 
-Before setup, open `chrome://inspect/#remote-debugging` in the Chrome instance you already use, enable remote debugging, and approve Chrome's connection prompt. Setup creates or selects a logical Tokenless profile, connects to that running browser, prepares the daemon, checks each enabled provider once, and leaves headed review tabs open. Connection success is the capability check; Tokenless does not import or copy a browser profile and does not download or launch another browser.
+Before setup, open `chrome://inspect/#remote-debugging` in the Chrome instance you already use, enable remote debugging, and approve Chrome's connection prompt. Chrome manages the underlying CDP endpoint and Tokenless discovers it automatically; do not launch Chrome with `--remote-debugging-port` or configure a fixed port. Setup creates or selects a logical Tokenless profile, connects to that running browser, prepares the daemon, checks each enabled provider once, and leaves headed review tabs open. Connection success is the capability check; Tokenless does not import or copy a browser profile and does not download or launch another browser.
 
 For a clean non-interactive profile:
 

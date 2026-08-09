@@ -56,7 +56,7 @@
 
 需要 Node.js 22.13+ 和 Google Chrome Stable 144 或更新版本；当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。
 
-Setup 前，请在你日常使用的 Chrome 中打开 `chrome://inspect/#remote-debugging`，启用 remote debugging，并确认 Chrome 的连接提示。Tokenless 直接以连接是否成功判断能力，不复制 profile，也不启动另一份浏览器。
+Setup 前，请在你日常使用的 Chrome 中打开 `chrome://inspect/#remote-debugging`，启用 remote debugging，并确认 Chrome 的连接提示。底层 CDP endpoint 由 Chrome 管理、由 Tokenless 自动发现，因此不需要用 `--remote-debugging-port` 启动 Chrome，也不需要配置固定端口。Tokenless 直接以连接是否成功判断能力，不复制 profile，也不启动另一份浏览器。
 
 ```bash
 npm install --global tokenless@latest

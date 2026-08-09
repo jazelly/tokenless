@@ -144,7 +144,7 @@
       <div class="form-stack">
         <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native Google Chrome</strong></div>
         <div class="field read-only-field"><span>{t('defaultVisibility')}</span><strong>headed</strong></div>
-        <p class="form-note">Chrome 144+ · chrome://inspect/#remote-debugging</p>
+        <p class="form-note">Chrome 144+ · chrome://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
       </div>
     </section>
     <div class="system-actions">
