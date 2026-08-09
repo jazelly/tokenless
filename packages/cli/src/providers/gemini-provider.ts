@@ -60,6 +60,7 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
         'input[type="file"]',
       ]),
       fileUploadTriggerSelectors: Object.freeze([
+        'button[aria-label="Upload & tools"]',
         'button[aria-label="Upload and tools"]',
       ]),
       fileUploadLocalSelectors: Object.freeze([

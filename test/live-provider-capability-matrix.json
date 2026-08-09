@@ -458,6 +458,7 @@
       "required": [
         "session-readiness",
         "prompt-draft",
+        "file-selection",
         "workspace-response-citations"
       ],
       "unavailable": {
@@ -466,8 +467,7 @@
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
-        "file-selection": "authenticated_selected_profile_visible_gem_attachment_chip_omits_markdown_suffix_or_type_2026_08_09",
-        "conversation-workflow": "no_upload_or_continuation_closure_in_selected_guest_profile",
+        "conversation-workflow": "no_continuation_closure_in_selected_profile",
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
@@ -524,7 +524,7 @@
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
         "model-choice": "no_real_selection_closure",
-        "file-selection": "no_real_visible_attachment_closure",
+        "file-selection": "three_markdown_cards_accepted_but_submit_click_had_no_visible_transition_2026_08_09",
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-citations": "covered_by_qwen_mode_workspace",
         "workspace-response-baseline": "covered_by_qwen_mode_workspace",

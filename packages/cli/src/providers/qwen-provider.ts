@@ -56,9 +56,15 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         '.qwen-chat-message-assistant .chat-response-message .qwen-markdown',
         '.qwen-chat-message-assistant .qwen-markdown',
       ]),
-      fileInputSelectors: Object.freeze([]),
-      fileUploadTriggerSelectors: Object.freeze([]),
-      fileUploadLocalSelectors: Object.freeze([]),
+      fileInputSelectors: Object.freeze([
+        '#filesUpload[type="file"]',
+      ]),
+      fileUploadTriggerSelectors: Object.freeze([
+        '[role="button"][aria-label="Select Mode"]',
+      ]),
+      fileUploadLocalSelectors: Object.freeze([
+        '[role="menuitem"].mode-select-common-item:has-text("Upload attachment")',
+      ]),
       modelControlSelectors: Object.freeze([]),
       effortControlSelectors: Object.freeze([
         '.qwen-select-thinking',

@@ -420,6 +420,7 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('claude', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
   route('claude', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow', 'native-project']),
   route('gemini', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['workspace-response-citations']),
+  route('gemini', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('grok', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
   route('grok', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow', 'native-project']),
   route('qwen', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['qwen-mode-workspace']),

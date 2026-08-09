@@ -24,7 +24,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   )
   assert.deepEqual(
     byId.get('file.upload').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'grok', 'deepseek', 'zai', 'doubao', 'kimi'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'zai', 'doubao', 'kimi'],
   )
   assert.deepEqual(byId.get('search.web').routes.map((route) => route.provider), ['kimi'])
   assert.deepEqual(byId.get('response.citations').routes.map((route) => route.provider), ['kimi'])
@@ -97,7 +97,7 @@ test('implicit run routing chooses the first usable cached provider in setup ord
   }
 })
 
-test('attachment inference routes around a usable provider without file acceptance closure', async () => {
+test('explicit attachment run uses a provider with file acceptance closure', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-file-route-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const attachment = path.join(homeDir, 'evidence.txt')
@@ -116,6 +116,8 @@ test('attachment inference routes around a usable provider without file acceptan
       homeDir,
       '--daemon-url',
       daemonUrl,
+      '--provider',
+      'gemini',
       '--prompt',
       'Tokenless capability file routing test',
       '--attach-file',
@@ -126,7 +128,7 @@ test('attachment inference routes around a usable provider without file acceptan
     daemonStarted = result.status === 0
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
-    assert.equal(payload.provider, 'grok')
+    assert.equal(payload.provider, 'gemini')
     assert.deepEqual(payload.capabilityRoute.requirements, ['conversation.chat', 'file.upload'])
     assert.deepEqual(
       payload.capabilityRoute.strategies,
@@ -160,9 +162,9 @@ test('explicit provider fails before daemon submission when required capability 
   fs.writeFileSync(attachment, 'Tokenless explicit route evidence.\n')
   try {
     seedManagedProfile(homeDir, {
-      gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
+      perplexity: observedProvider('perplexity', 'unauthenticated', 'guest'),
     })
-    writeConfig(homeDir, ['gemini'], daemonUrl)
+    writeConfig(homeDir, ['perplexity'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -171,7 +173,7 @@ test('explicit provider fails before daemon submission when required capability 
       '--daemon-url',
       daemonUrl,
       '--provider',
-      'gemini',
+      'perplexity',
       '--capability',
       'file.upload',
       '--attach-file',

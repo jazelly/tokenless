@@ -598,22 +598,53 @@ async function choiceCase({ provider, journey }, kind) {
 }
 
 async function fileSelection({ provider, journey }) {
-  const name = `${markerFor(provider, 'ATTACHMENT')}.txt`
+  const extension = provider === 'gemini' ? '.md' : '.txt'
+  const name = `${markerFor(provider, 'ATTACHMENT')}${extension}`
   const file = path.join(root, 'test-results', 'live-provider-inputs', name)
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
   await fs.writeFile(file, `${name}\n`, { mode: 0o600 })
   const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
+  let geminiAttachmentCardsBefore = null
   try {
     if (deepSeekState) {
       const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
       assert.equal(responseResult(instant.payload, 'deepseek.mode.select')?.selectedMode, 'Instant')
       await instant.close()
     }
-    const uploaded = await journey.action('file.upload', ['--attach-file', file], 180_000)
+    const uploaded = await journey.action(
+      'file.upload',
+      ['--attach-file', file],
+      180_000,
+      provider === 'gemini'
+        ? async ({ page }) => {
+          const deadline = Date.now() + 180_000
+          while (Date.now() <= deadline) {
+            const after = await visibleGeminiAttachmentCardCount(page)
+            if (after > geminiAttachmentCardsBefore) return after
+            await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+          return await visibleGeminiAttachmentCardCount(page)
+        }
+        : undefined,
+      provider === 'gemini'
+        ? async ({ page }) => {
+          geminiAttachmentCardsBefore = await visibleGeminiAttachmentCardCount(page)
+        }
+        : undefined,
+    )
     const result = responseResult(uploaded.payload, 'file.upload')
     assert.ok(result?.attachments?.some((attachment) => attachment.name === name))
-    const visibleName = provider === 'kimi' ? path.parse(name).name : name
-    assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
+    if (provider === 'gemini') {
+      assert.ok(Number.isInteger(geminiAttachmentCardsBefore), 'Gemini observer must record its initial physical card count')
+      assert.equal(
+        uploaded.observerResult,
+        geminiAttachmentCardsBefore + 1,
+        'Gemini observer must see one newly visible physical attachment card',
+      )
+    } else {
+      const visibleName = provider === 'kimi' ? path.parse(name).name : name
+      assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
+    }
     await uploaded.close()
     const cleared = await journey.action('prompt.clear')
     await cleared.close()
@@ -1107,8 +1138,8 @@ function createProviderJourney(session, provider) {
     authenticated: false,
     skipReason: null,
   }
-  journey.action = (visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) => (
-    action(journey, visibleAction, args, timeoutMs, observeAfterRelease)
+  journey.action = (visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease, observeBeforeRelease) => (
+    action(journey, visibleAction, args, timeoutMs, observeAfterRelease, observeBeforeRelease)
   )
   journey.run = (args, timeoutMs = 300_000, observeAfterRelease) => (
     cliRun(journey, args, timeoutMs, observeAfterRelease)
@@ -1116,7 +1147,14 @@ function createProviderJourney(session, provider) {
   return journey
 }
 
-async function action(journey, visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) {
+async function action(
+  journey,
+  visibleAction,
+  args = [],
+  timeoutMs = 120_000,
+  observeAfterRelease,
+  observeBeforeRelease,
+) {
   assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
   const operation = await journey.session.startCli([
     'provider-action',
@@ -1129,6 +1167,7 @@ async function action(journey, visibleAction, args = [], timeoutMs = 120_000, ob
   ], {
     beforeRelease: async ({ waiting, page }) => {
       await assertJourneyPage(journey, waiting, page, true)
+      await observeBeforeRelease?.({ waiting, page })
     },
     observeAfterRelease,
   })
@@ -1397,6 +1436,10 @@ async function visibleLocatorCount(locator) {
     if (await locator.nth(index).isVisible({ timeout: 100 }).catch(() => false)) visible += 1
   }
   return visible
+}
+
+async function visibleGeminiAttachmentCardCount(page) {
+  return await visibleLocatorCount(page.locator('.gem-attachment'))
 }
 
 async function freePort() {

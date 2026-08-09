@@ -102,6 +102,9 @@ async function uploadFiles(
       { retryable: true },
     )
   }
+  if (provider.id === 'gemini') {
+    await dismissGeminiFileDisclaimer(page)
+  }
   return {
     acceptance: 'accepted' as const,
     visibleProof: acceptedProof,
@@ -116,6 +119,15 @@ async function uploadFiles(
       visible: true as const,
     })),
   }
+}
+
+async function dismissGeminiFileDisclaimer(page: Page) {
+  const cancel = await waitForEnabledLocator(
+    page,
+    ['[role="dialog"] button[aria-label^="Cancel (Closes dialog box and does not enable MMGen)"]'],
+    2_000,
+  )
+  if (cancel) await cancel.click({ timeout: 5_000 })
 }
 
 async function resolveAttachmentPayload(attachmentRoot: string | undefined, attachment: AttachmentInput) {
@@ -282,6 +294,30 @@ async function visibleAttachmentEvidence(
             extensions,
           }]
         }))
+    }
+    if (providerId === 'qwen') {
+      return Array.from(document.querySelectorAll('.fileitem-btn'))
+        .flatMap((card, index) => {
+          if (!isVisibleElement(card)) return []
+          const visibleExtension = (card.querySelector('.fileitem-file-name-ext')?.textContent ?? '')
+            .trim()
+            .toLowerCase()
+          const extensions = expectedExtensions.filter((extension) => extension === visibleExtension)
+          if (expectedExtensions.length > 0 && extensions.length === 0) return []
+          return [{
+            id: `qwen-card|${index}`,
+            extensions,
+          }]
+        })
+    }
+    if (providerId === 'gemini') {
+      return Array.from(document.querySelectorAll('.gem-attachment'))
+        .flatMap((card, index) => isVisibleElement(card)
+          ? [{
+            id: `gemini-card|${index}`,
+            extensions: expectedExtensions,
+          }]
+          : [])
     }
     const selectors = [
       '[data-testid*="attachment" i]',

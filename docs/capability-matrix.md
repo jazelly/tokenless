@@ -52,7 +52,7 @@ This table summarizes checked-in routes. The CLI output is the authoritative cur
 | Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — |
-| `file.upload` | Supported | Supported | — | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — |
+| `file.upload` | Supported | Supported | Experimental | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — |
 | `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — |
 | `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — |
 
@@ -60,7 +60,11 @@ This table summarizes checked-in routes. The CLI output is the authoritative cur
 
 Routes are evaluated as a complete requirement set. For example, an image attachment requires both `file.upload` and `image.input`; the `file.upload` row alone does not make image upload routeable.
 
-Gemini `file.upload` remains unadvertised. On 2026-08-09, the authenticated selected profile exposed **Upload & tools** and its local file input, and selecting Markdown created a visible `gem-attachment` chip. The chip displayed only `README`, without the `.md` suffix or another visible Markdown type, so count-and-extension acceptance and the full real `file.upload` E2E lifecycle remain unclosed.
+Gemini Markdown `file.upload` is experimental and routeable from an authenticated selected profile. Gemini removes filename suffixes from card text and accessibility metadata, so its provider-specific acceptance proof requires three newly visible physical `gem-attachment` cards while retaining the validated caller-selected extensions; the generic detector and other providers still require visible extension evidence. The upload path selects **Upload & tools** then **Upload files**, and dismisses the optional MMGen disclaimer with **Cancel** rather than accepting it for the user.
+
+On 2026-08-09, the built CLI and packaged daemon used headed Cloak `web-ai` to upload three Markdown documents and read an attachment-grounded visible response (job `tlp_0b9dde88-e2c2-46e5-8231-81b4f74403e1`; 27.3 seconds provider end-to-end). The Tokenless-rendered request submitted to Gemini contained the frozen 521-character Matrix V2 user prompt verbatim; the complete rendered request was 853 characters and was not identical to that user prompt. The local output-savings event recorded 295 estimated output tokens for 1,607 visible response characters with `o200k_base`; it is a local visible-output estimate, not provider billing or input-token telemetry.
+
+Qwen's visible **Select Mode** → **Upload attachment** chooser and physical Markdown card detection are implemented, but `file.upload` remains unadvertised. On 2026-08-09, a detached build of the task-scoped provider changes reached three visible `.fileitem-btn` cards whose extensions were all `.md`, and the 853-character rendered request contained the frozen 521-character Matrix V2 user prompt verbatim (job `tlp_14ec13d8-aba7-42c6-b328-f9095360d03a`; 14.6 seconds). The send click returned without a visible transition: the draft and all three cards remained, no answer or busy state appeared, and durable state kept `provider_submitted_at` unset. Because submission was ambiguous, the journey was not retried, no response or savings event exists, and the route remains unadvertised.
 
 DeepSeek `conversation.chat` and Markdown `file.upload` are experimental and routeable from a signed-in selected profile. On 2026-08-09, the built CLI and packaged daemon used headed Cloak `web-ai` to add three Markdown cards, draft and submit the attachment-grounded prompt, and read its visible response (job `tlp_4cc2da64-7fe7-4582-a0d2-d648531fd930`; 28.3 seconds end-to-end). The local output-savings event recorded 305 estimated output tokens for 1,593 visible response characters with `o200k_base`; it is a local visible-output estimate, not provider billing or input-token telemetry.
 

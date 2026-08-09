@@ -52,7 +52,7 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 | Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — |
-| `file.upload` | Supported | Supported | — | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — |
+| `file.upload` | Supported | Supported | Experimental | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — |
 | `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — |
 | `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — |
 
@@ -60,7 +60,11 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 
 Route 会按完整 requirement set 评估。例如 image attachment 同时要求 `file.upload` 与 `image.input`；仅有 `file.upload` 这一行并不代表图片上传已经 routeable。
 
-Gemini `file.upload` 仍未公开。2026-08-09，选定的已登录 profile 显示了 **Upload & tools** 与本地 file input；选择 Markdown 后也创建了可见的 `gem-attachment` chip。但该 chip 只显示 `README`，没有 `.md` 后缀或其他可见 Markdown 类型，因此 count-and-extension acceptance 与完整的真实 `file.upload` E2E lifecycle 尚未闭环。
+Gemini Markdown `file.upload` 已作为 experimental route 对外提供，但仅适用于选定的已登录 profile。Gemini 会从卡片文本与 accessibility metadata 中移除文件名后缀，因此其 provider-specific acceptance proof 要求三张新增且物理可见的 `gem-attachment` 卡片，同时保留 caller 已验证的选定文件扩展名；generic detector 与其他 provider 仍要求可见扩展名 evidence。上传路径依次选择 **Upload & tools** 与 **Upload files**，并通过 **Cancel** 关闭可选 MMGen disclaimer，不代替用户接受该声明。
+
+2026-08-09，built CLI 与 packaged daemon 通过 headed Cloak `web-ai` 上传了三份 Markdown 文档，并读取附件相关的可见回复（job `tlp_0b9dde88-e2c2-46e5-8231-81b4f74403e1`；provider 端到端 27.3 秒）。提交给 Gemini 的 Tokenless-rendered request 原样包含冻结的 521 字符 Matrix V2 user prompt；完整 rendered request 为 853 字符，并不等同于该 user prompt。本地 output-savings event 以 `o200k_base` 为 1,607 个可见回复字符估算了 295 个输出 token；这只是本地可见输出估算，并非 provider 计费或 input-token telemetry。
+
+Qwen 的可见 **Select Mode** → **Upload attachment** chooser 与物理 Markdown 卡片检测已实现，但 `file.upload` 仍未公开。2026-08-09，仅包含本任务 provider 变更的 detached build 到达了三张可见 `.fileitem-btn` 卡片，其扩展名均为 `.md`；853 字符的 rendered request 原样包含冻结的 521 字符 Matrix V2 user prompt（job `tlp_14ec13d8-aba7-42c6-b328-f9095360d03a`；14.6 秒）。点击发送后没有出现可见转换：draft 与三张卡片仍在，没有 answer 或 busy state，durable state 中的 `provider_submitted_at` 仍未设置。由于 submission 存在歧义，该 journey 没有重试，也没有 response 或 savings event，因此 route 仍未公开。
 
 DeepSeek 的 `conversation.chat` 与 Markdown `file.upload` 已作为 experimental route 对外提供，但仅适用于选定的已登录 profile。2026-08-09，built CLI 与 packaged daemon 通过 headed Cloak `web-ai` 添加了三张 Markdown 卡片、写入并提交附件相关 prompt，再读取可见回复（job `tlp_4cc2da64-7fe7-4582-a0d2-d648531fd930`；端到端 28.3 秒）。本地 output-savings event 以 `o200k_base` 为 1,593 个可见回复字符估算了 305 个输出 token；这只是本地可见输出估算，并非 provider 计费或 input-token telemetry。
 
