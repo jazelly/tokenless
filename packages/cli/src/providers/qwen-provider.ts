@@ -14,7 +14,6 @@ import type { ProviderExecutionContext } from './execution-context.js'
 import type { ProviderDomDefinition } from './provider-definition.js'
 import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
-const QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS = 15_000
 const QWEN_APP_HYDRATION_AGE_MS = 3_000
 
 export class QwenProvider extends BaseProvider<'qwen'> {
@@ -83,6 +82,11 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         'button.stop-button',
         '.qwen-chat-message-awaiting-response',
       ]),
+      interactionTimings: Object.freeze({
+        attachmentReadyTimeoutMs: 120_000,
+        promptControlTimeoutMs: 30_000,
+        submissionAcceptanceTimeoutMs: 30_000,
+      }),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
       capabilities: providerCapabilities({ qwenMode: true }),
     })
@@ -93,11 +97,14 @@ export class QwenProvider extends BaseProvider<'qwen'> {
     })
   }
 
-  protected override async inputPrompt(page: Page, text: string, _context: ProviderExecutionContext) {
-    const deadline = Date.now() + QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS
+  protected override async inputPrompt(page: Page, text: string, context: ProviderExecutionContext) {
+    const timeoutMs = this.definition.interactionTimings.promptControlTimeoutMs
+    const deadline = Date.now() + timeoutMs
+    assertNotAborted(context.signal)
     await waitForQwenAppHydration(page, deadline)
     let composerObserved = false
     do {
+      assertNotAborted(context.signal)
       const composer = await waitForVisibleLocator(
         page,
         this.definition.composerSelectors,
@@ -119,7 +126,7 @@ export class QwenProvider extends BaseProvider<'qwen'> {
     if (!composerObserved) {
       throw tokenlessError(
         'prompt_input_visibility_timeout',
-        `Timed out after ${QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS}ms waiting for a visible prompt input.`,
+        `Timed out after ${timeoutMs}ms waiting for a visible prompt input.`,
         { retryable: true },
       )
     }
@@ -129,6 +136,10 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       { retryable: true },
     )
   }
+}
+
+function assertNotAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw signal.reason ?? new Error('Visible provider action was aborted.')
 }
 
 async function waitForQwenAppHydration(page: Page, deadline: number) {

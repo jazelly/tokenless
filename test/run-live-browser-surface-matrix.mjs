@@ -4,9 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const surfaceTest = path.join(root, 'test/live-browser-provider-surfaces.e2e.mjs')
-const supportedSelections = Object.freeze(['chrome', 'managed-chromium', 'cloak'])
-const supportedVisibilities = Object.freeze(['headed', 'headless'])
-const options = resolveOptions(process.argv.slice(2))
+if (process.argv.length > 2) failUsage()
 let activeChild = null
 let interruptedSignal = null
 
@@ -21,11 +19,8 @@ process.once('SIGTERM', onSigterm)
 
 let failed = false
 try {
-  for (const visibility of options.visibilities) {
-    const result = await runSelection(options.selection, visibility)
-    if (result.code !== 0) failed = true
-    if (interruptedSignal) break
-  }
+  const result = await runSurfaceTest()
+  if (result.code !== 0) failed = true
 } finally {
   process.removeListener('SIGINT', onSigint)
   process.removeListener('SIGTERM', onSigterm)
@@ -34,7 +29,7 @@ try {
 if (interruptedSignal) process.exitCode = interruptedSignal === 'SIGINT' ? 130 : 143
 else if (failed) process.exitCode = 1
 
-function runSelection(selection, visibility) {
+function runSurfaceTest() {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
       '--test',
@@ -45,8 +40,6 @@ function runSelection(selection, visibility) {
       env: {
         ...process.env,
         TOKENLESS_LIVE_BROWSER_SURFACE_GATE: '1',
-        TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION: selection,
-        TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY: visibility,
       },
       stdio: 'inherit',
     })
@@ -59,35 +52,7 @@ function runSelection(selection, visibility) {
   })
 }
 
-function resolveOptions(arguments_) {
-  let selection = 'chrome'
-  let visibility = 'headed'
-  for (let index = 0; index < arguments_.length; index += 2) {
-    const flag = arguments_[index]
-    const value = arguments_[index + 1]
-    if (!value) failUsage(`${flag ?? 'argument'} requires a value`)
-    if (flag === '--selection') selection = value
-    else if (flag === '--visibility') visibility = value
-    else failUsage(`Unsupported argument: ${flag}`)
-  }
-  if (!supportedSelections.includes(selection)) {
-    failUsage(`Unsupported browser selection: ${selection}`)
-  }
-  if (!supportedVisibilities.includes(visibility)) {
-    failUsage(`Unsupported browser visibility: ${visibility}`)
-  }
-  return Object.freeze({
-    selection,
-    visibilities: Object.freeze([visibility]),
-  })
-}
-
-function failUsage(message) {
-  console.error(message)
-  console.error(
-    `Usage: node test/run-live-browser-surface-matrix.mjs ` +
-    `[--selection ${supportedSelections.join('|')}] ` +
-    `[--visibility ${supportedVisibilities.join('|')}]`,
-  )
+function failUsage() {
+  console.error('Usage: node test/run-live-browser-surface-matrix.mjs')
   process.exit(2)
 }

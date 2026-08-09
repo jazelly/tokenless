@@ -20,15 +20,9 @@ if (!(
   throw new Error(`The browser surface gate does not support ${process.platform}-${process.arch}.`)
 }
 
-const selection = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION
-if (!['chrome', 'managed-chromium', 'cloak'].includes(selection)) {
-  throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION to chrome, managed-chromium, or cloak.')
-}
-const visibility = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY
-if (!['headed', 'headless'].includes(visibility)) {
-  throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY to headed or headless.')
-}
-const target = await resolveConfiguredDedicatedTestTarget({ browser: selection })
+const visibility = 'auto'
+const target = await resolveConfiguredDedicatedTestTarget()
+const selection = target.browserSelection
 
 test(`${selection} ${visibility} reaches every provider surface and Google Search without a detected anti-bot challenge`, { timeout: 20 * 60_000 }, async () => {
   const manager = createLiveProviderTestContextManager(target)

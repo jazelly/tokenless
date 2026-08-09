@@ -83,6 +83,18 @@ export type ProviderChoiceAvailabilityPolicy = {
   readonly mutedOpacityClassToken: string | null
 }
 
+export type ProviderInteractionTimingPolicy = Readonly<{
+  attachmentReadyTimeoutMs: number
+  promptControlTimeoutMs: number
+  submissionAcceptanceTimeoutMs: number
+}>
+
+export const DEFAULT_PROVIDER_INTERACTION_TIMINGS: ProviderInteractionTimingPolicy = Object.freeze({
+  attachmentReadyTimeoutMs: 15_000,
+  promptControlTimeoutMs: 15_000,
+  submissionAcceptanceTimeoutMs: 10_000,
+})
+
 export type ProviderCapabilityStrategy = {
   readonly capability: ProviderCapabilityId
   readonly availability: ProviderCapabilityAvailability
@@ -122,6 +134,7 @@ export type ProviderDomDefinition<TId extends ProviderId = ProviderId> = Provide
   readonly loginIndicators: readonly string[]
   readonly blockerSelectors: readonly string[]
   readonly busySelectors: readonly string[]
+  readonly interactionTimings: ProviderInteractionTimingPolicy
   readonly choiceAvailability: ProviderChoiceAvailabilityPolicy
   readonly capabilities: Readonly<Record<ProviderCapabilityId, ProviderCapabilityStrategy>>
 }
@@ -496,8 +509,9 @@ export function defineDescriptor<TId extends ProviderId>(descriptor: ProviderDes
 }
 
 export function defineProvider<TId extends ProviderId>(
-  provider: Omit<ProviderDomDefinition<TId>, keyof ProviderDescriptor<TId> | 'navigationPolicy' | 'homeUrl'> & {
+  provider: Omit<ProviderDomDefinition<TId>, keyof ProviderDescriptor<TId> | 'navigationPolicy' | 'homeUrl' | 'interactionTimings'> & {
     descriptor: ProviderDescriptor<TId>
+    interactionTimings?: Partial<ProviderInteractionTimingPolicy>
   }
 ): ProviderDomDefinition<TId> {
   const navigationPolicy = new ProviderNavigationPolicy(provider.descriptor.id, provider.descriptor.navigation)
@@ -507,5 +521,9 @@ export function defineProvider<TId extends ProviderId>(
     descriptor: provider.descriptor,
     navigationPolicy,
     homeUrl: provider.descriptor.navigation.homeUrl,
+    interactionTimings: Object.freeze({
+      ...DEFAULT_PROVIDER_INTERACTION_TIMINGS,
+      ...provider.interactionTimings,
+    }),
   })
 }

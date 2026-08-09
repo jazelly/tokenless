@@ -50,13 +50,14 @@
 
 ### Test Browser Policy
 
-- Every repository browser test must load `TOKENLESS_TEST_CONFIG` from the repository-local `.env`. It points to one complete dedicated Tokenless `config.json`; its adjacent production profile registry is the only source of test profile names, directories, and runtime bindings.
-- Different developers may use different profile slugs. Tests must select the default or additional ready profiles from that registry and must never hard-code, derive, or separately configure profile names.
+- Every repository browser test must load `TOKENLESS_TEST_CONFIG` from the repository-local `.env`. It points to one complete Tokenless `config.json`; its adjacent production profile registry is the only source of the test profile name, directory, and runtime binding.
+- Different developers may use different profile slugs. The registry's default profile is the one dedicated test profile; tests must never select additional profiles or hard-code, derive, or separately configure its name.
 - Never launch Playwright's bundled Chromium (`chromium.executablePath()`) or resolve a test browser outside the dedicated Tokenless config. Browser selection and executable resolution come from each selected profile's production runtime binding.
-- Playwright browser tests must use the persistent dedicated profiles resolved by `test/helpers/live-provider-test-profile.mjs`; never use a person's everyday browser profile for automated tests.
+- Playwright browser tests must use the one persistent dedicated profile resolved by `test/helpers/live-provider-test-profile.mjs`; never use another profile from the same config.
 - Browser tests must not create disposable user-data directories or delete a browser profile or its test home during teardown. Reuse the prepared dedicated profile across runs; profile deletion requires an explicit user request naming that profile.
 - Browser tests must enter browser automation through the dedicated-profile helper and Tokenless's production CDP path. Direct `chromium.launch()`, `chromium.launchPersistentContext()`, and ad hoc browser process launches are forbidden in test files.
-- Every browser test must quiesce all test-owned browser processes in teardown, including after failures. Production browser residency does not authorize tests to leave browsers running.
+- Browser tests must never test profile deletion, browser crash/kill, explicit browser/context close, forced relaunch, runtime replacement/repair, visibility-switch relaunch, or corruption of `DevToolsActivePort`, PID, CDP endpoint, or runtime-session metadata.
+- Browser tests may create and delete provider-side conversations or other ordinary functional artifacts. Teardown must close only test-owned pages when appropriate and detach the CDP client; it must leave the profile, resident browser, runtime, and browser metadata intact.
 
 ### Credential and macOS Keychain Safety
 
@@ -66,7 +67,7 @@
 - Keychain approval remains a user-controlled security decision. Tokenless may explain why the expected browser is asking and the user may approve it, but tests and automation must never click the prompt, enter a password, or weaken the prompt on the user's behalf.
 - Installer smoke checks may stay keychain-neutral because they do not become reusable test profiles. Browser-surface and real-provider E2E use the persistent dedicated profile and the production credential-storage policy; they may pause for manual user approval.
 - Keychain safety never permits mocked browser boundaries.
-- For browser-launch changes, verify native credential storage on persistent dedicated profiles, keychain neutrality only for installer smoke checks, enabled Chromium sandboxing, process cleanup, profile preservation, and focused real-boundary completion.
+- For browser-launch changes, verify native credential storage on persistent dedicated profiles, keychain neutrality only for installer smoke checks, enabled Chromium sandboxing, CDP detach, profile preservation, resident-browser preservation, and focused real-boundary completion.
 - Regression guard: production native Chrome control must remain free of `--password-store=basic` and `--use-mock-keychain`.
 
 ### Provider DOM Fixture Policy

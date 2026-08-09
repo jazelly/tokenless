@@ -231,8 +231,8 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
     }
   }
 
-  protected inputPrompt(page: Page, text: string, _context: ProviderExecutionContext): Promise<VisibleActionResult> {
-    return inputDomPrompt(this.definition, page, text)
+  protected inputPrompt(page: Page, text: string, context: ProviderExecutionContext): Promise<VisibleActionResult> {
+    return inputDomPrompt(this.definition, page, text, context.signal)
   }
 
   protected async clearPrompt(page: Page, context: ProviderExecutionContext): Promise<VisibleActionResult> {
@@ -243,8 +243,8 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
     }
   }
 
-  protected submitPrompt(page: Page, _context: ProviderExecutionContext): Promise<VisibleActionResult> {
-    return submitDomPrompt(this.definition, page)
+  protected submitPrompt(page: Page, context: ProviderExecutionContext): Promise<VisibleActionResult> {
+    return submitDomPrompt(this.definition, page, context.signal)
   }
 
   protected prepareResponseCursor(page: Page): Promise<ProviderActionPreparation<typeof VISIBLE_ACTIONS.RESPONSE_READ>> {

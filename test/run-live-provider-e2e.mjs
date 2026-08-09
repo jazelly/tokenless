@@ -41,10 +41,7 @@ try {
         home: options.home,
         profile: options.profile,
       })
-    : await resolveConfiguredDedicatedTestTarget({
-        browser: options.browser,
-        profile: options.profile,
-      })
+    : await resolveConfiguredDedicatedTestTarget()
   if (options.command === 'prepare') {
     await prepareTarget(target, options)
   } else {

@@ -45,26 +45,6 @@ try {
 }
 
 function resolveDefinition(name, arguments_) {
-  if (name === 'browser-runtime') {
-    let expectedAuto = process.env.TOKENLESS_LIVE_BROWSER_RUNTIME_EXPECT_AUTO ?? 'managed-chromium'
-    if (arguments_.length > 0) {
-      if (arguments_.length !== 2 || arguments_[0] !== '--expected-auto') {
-        failUsage('browser-runtime accepts only --expected-auto managed-chromium')
-      }
-      expectedAuto = arguments_[1]
-    }
-    if (expectedAuto !== 'managed-chromium') {
-      failUsage('browser-runtime expected auto family must be managed-chromium')
-    }
-    return {
-      testPath: 'test/live-browser-runtime.e2e.mjs',
-      environment: {
-        TOKENLESS_LIVE_BROWSER_RUNTIME_GATE: '1',
-        TOKENLESS_LIVE_BROWSER_RUNTIME_EXPECT_AUTO: expectedAuto,
-      },
-    }
-  }
-
   if (name === 'managed-playwright') {
     if (arguments_.length !== 1) {
       failUsage('managed-playwright requires exactly one gate argument')
@@ -96,13 +76,12 @@ function resolveDefinition(name, arguments_) {
     }
   }
 
-  failUsage('suite must be browser-runtime, managed-playwright, provider-fallback, or web-ui-provider')
+  failUsage('suite must be managed-playwright, provider-fallback, or web-ui-provider')
 }
 
 function failUsage(message) {
   console.error(message)
-  console.error('Usage: node test/run-gated-e2e.mjs browser-runtime [--expected-auto managed-chromium]')
-  console.error('   or: node test/run-gated-e2e.mjs managed-playwright <all|non_submission|mutation|project>')
+  console.error('Usage: node test/run-gated-e2e.mjs managed-playwright <all|non_submission|mutation|project>')
   console.error('   or: node test/run-gated-e2e.mjs provider-fallback')
   console.error('   or: node test/run-gated-e2e.mjs web-ui-provider')
   process.exit(2)

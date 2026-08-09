@@ -758,12 +758,12 @@ Commands that may open or operate a provider page are `setup`, `profiles status`
 
 ## Manual Real-Browser Acceptance
 
-The authenticated provider capability harness reads the complete config named by `TOKENLESS_TEST_CONFIG` and selects its default or requested ready profile from the adjacent production registry. Profile slugs are developer-owned variables rather than harness conventions. The test home must differ from the ordinary Tokenless home and remain outside every repository/worktree. The harness validates the profile directory, private permissions, lifecycle, executable, and runtime binding before browser automation, and never reuses one profile across browser runtimes.
+The authenticated provider capability harness reads the complete config named by `TOKENLESS_TEST_CONFIG` and uses only the adjacent production registry's default profile. Profile slugs remain developer-owned variables because each developer chooses that default outside the harness. The config may be the ordinary Tokenless config, but it must remain outside every repository/worktree. The harness validates the profile directory, private permissions, lifecycle, executable, and runtime binding before browser automation.
 
 Create a repository-local `.env`, then prepare and manually authenticate the profiles in that dedicated config:
 
 ```dotenv
-TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-test-home/config.json
+TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-home/config.json
 ```
 
 ```bash
@@ -774,16 +774,10 @@ npm run test:e2e
 
 Supported authenticated-profile selections are `chrome`, `edge`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. `prepare` installs or resolves the exact browser, keeps its maintenance skill output inside the test-only home, and creates or reuses the explicitly supplied profile slug. Its login-page list is `profiles[slug].enabledProviders`; a missing profile configuration is an error. Fresh profiles include every registered non-disabled provider, including Gemini; regional or network reachability is evidence reported by E2E rather than a reason to remove a provider from preparation. Preparation preserves the configured order and never rewrites the list. It requests every listed provider-entry tab in one concurrent Chromium background-tab batch, then exits without waiting for page load, login, or Playwright target observation. If a proof-verified daemon for the same dedicated home predates the provider-tab endpoint, preparation gracefully replaces it with the current built daemon and retries the handoff once. The resident browser continues independently when that daemon stops, and the replacement daemon reconnects to the same profile process when its launch signature is compatible. The browser may take focus on its initial launch but does not foreground every provider tab in sequence. Preparation does not read the capability matrix, run provider jobs, call `setup` or `profiles status`, automate login, or inspect authentication data. Use `--no-open` for preparation validation without provider navigation or the manual browser handoff. The `run` command uses the live capability matrix to execute declared provider journeys once through the CDP-controlled browser and writes a private JSON report under `test-results/live-provider-e2e/`, grouped first by provider and then by capability. Readiness failures are classified separately from capability assertions; `network_or_navigation` records observable reachability failure without claiming a particular firewall or regional cause. Provider runs perform real mutations and may incur usage cost.
 
-Browser-runtime and provider-surface acceptance tests are explicit local gates and do not run in CI:
+Provider-surface acceptance is an explicit local gate and does not run in CI:
 
 ```bash
-npm run test:e2e:browser-runtime
 npm run test:e2e:browser-surfaces
-npm run test:e2e:system-surfaces
-npm run test:e2e:managed-surfaces
-npm run test:e2e:cloak-surfaces
 ```
 
-Run `npm run test:e2e:browser-runtime` to require `auto` to install or reuse the platform-pinned managed Chrome for Testing runtime. The optional explicit form `npm run test:e2e:browser-runtime -- --expected-auto managed-chromium` asserts the same invariant. Run the gate on each targeted Windows x64 CPU class; npm forwards the argument identically from `cmd.exe`, PowerShell, and POSIX shells.
-
-The browser surface gate reuses the prepared persistent profile for its explicitly selected browser and controls it through Tokenless's production CDP path. It never creates or deletes a browser profile. Run `test:e2e:prepare` for that browser first. Each case visits every registered provider plus Google Search over the real network, fails on a detected anti-bot challenge, and reports only public location, title, response status, and structured challenge outcomes. It does not submit prompts, read browser storage, capture screenshots, or replace the authenticated built-CLI provider release gate.
+The browser surface gate reuses the config's default persistent profile with its existing visibility and controls it through Tokenless's production CDP path. It never creates, closes, switches, or deletes a browser profile or resident browser. Each run visits every registered provider plus Google Search over the real network, fails on a detected anti-bot challenge, and reports only public location, title, response status, and structured challenge outcomes. It does not submit prompts, read browser storage, capture screenshots, or replace the authenticated built-CLI provider release gate.

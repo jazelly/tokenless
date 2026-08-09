@@ -1,21 +1,32 @@
 import { VISIBLE_ACTIONS } from '../contracts.js'
 import { tokenlessError } from '../../playwright/errors.js'
-import { countVisibleLocators, firstVisibleLocator, waitForEnabledLocator, waitForVisibleLocator } from '../dom-locators.js'
+import {
+  countVisibleLocators,
+  firstEnabledLocator,
+  firstVisibleLocator,
+  waitForNextDomObservation,
+  waitForVisibleLocator,
+} from '../dom-locators.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderDomDefinition } from '../provider-definition.js'
-
-const PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS = 15_000
-const PROMPT_SUBMISSION_ACCEPTANCE_TIMEOUT_MS = 10_000
 
 export type PromptAction =
   | typeof VISIBLE_ACTIONS.PROMPT_INPUT
   | typeof VISIBLE_ACTIONS.PROMPT_CLEAR
   | typeof VISIBLE_ACTIONS.PROMPT_SUBMIT
 
-export async function inputDomPrompt(provider: ProviderDomDefinition, page: Page, text: string) {
-  const deadline = Date.now() + PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS
+export async function inputDomPrompt(
+  provider: ProviderDomDefinition,
+  page: Page,
+  text: string,
+  signal?: AbortSignal,
+) {
+  const timeoutMs = provider.interactionTimings.promptControlTimeoutMs
+  const deadline = Date.now() + timeoutMs
   let composerObserved = false
+  let attempt = 0
   do {
+    assertNotAborted(signal)
     const composer = await waitForVisibleLocator(
       page,
       provider.composerSelectors,
@@ -30,14 +41,15 @@ export async function inputDomPrompt(provider: ProviderDomDefinition, page: Page
       }
     }
     if (Date.now() < deadline) {
-      await page.waitForTimeout(Math.min(100, Math.max(1, deadline - Date.now())))
+      await waitForNextDomObservation(page, deadline, attempt, signal)
+      attempt += 1
     }
   } while (Date.now() < deadline)
 
   if (!composerObserved) {
     throw tokenlessError(
       'prompt_input_visibility_timeout',
-      `Timed out after ${PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS}ms waiting for a visible prompt input.`,
+      `Timed out after ${timeoutMs}ms waiting for a visible prompt input.`,
       { retryable: true },
     )
   }
@@ -51,12 +63,14 @@ export async function inputDomPrompt(provider: ProviderDomDefinition, page: Page
 export async function submitDomPrompt(
   provider: ProviderDomDefinition,
   page: Page,
+  signal?: AbortSignal,
 ) {
-  const button = await waitForEnabledLocator(page, provider.submitSelectors, PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS)
+  const controlTimeoutMs = provider.interactionTimings.promptControlTimeoutMs
+  const button = await waitForActionableSubmitControl(provider, page, signal)
   if (!button) {
     throw tokenlessError(
       'prompt_submit_actionability_timeout',
-      `Timed out after ${PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS}ms waiting for an enabled visible prompt submit control.`,
+      `Timed out after ${controlTimeoutMs}ms waiting for an actionable visible prompt submit control.`,
       { retryable: true },
     )
   }
@@ -70,11 +84,14 @@ export async function submitDomPrompt(
     throw tokenlessError(
       'prompt_submit_failed',
       'The visible prompt submit control could not be clicked.',
-      { retryable: true, cause: error },
+      { retryable: false, cause: error },
     )
   }
-  const deadline = Date.now() + PROMPT_SUBMISSION_ACCEPTANCE_TIMEOUT_MS
+  const acceptanceTimeoutMs = provider.interactionTimings.submissionAcceptanceTimeoutMs
+  const deadline = Date.now() + acceptanceTimeoutMs
+  let attempt = 0
   do {
+    assertNotAborted(signal)
     if (await submissionTransitionIsVisible(provider, page, button, baseline)) {
       return {
         visible: true as const,
@@ -82,14 +99,43 @@ export async function submitDomPrompt(
       }
     }
     if (Date.now() < deadline) {
-      await page.waitForTimeout(Math.min(100, Math.max(1, deadline - Date.now())))
+      await waitForNextDomObservation(page, deadline, attempt, signal)
+      attempt += 1
     }
   } while (Date.now() < deadline)
   throw tokenlessError(
     'prompt_submit_not_accepted',
-    `No visible provider submission transition followed the click within ${PROMPT_SUBMISSION_ACCEPTANCE_TIMEOUT_MS}ms.`,
-    { retryable: true },
+    `No visible provider submission transition followed the click within ${acceptanceTimeoutMs}ms.`,
+    { retryable: false },
   )
+}
+
+async function waitForActionableSubmitControl(
+  provider: ProviderDomDefinition,
+  page: Page,
+  signal: AbortSignal | undefined,
+) {
+  const deadline = Date.now() + provider.interactionTimings.promptControlTimeoutMs
+  let attempt = 0
+  while (Date.now() <= deadline) {
+    assertNotAborted(signal)
+    const button = await firstEnabledLocator(page, provider.submitSelectors)
+    if (button) {
+      const trialTimeoutMs = Math.min(2_000, Math.max(1, deadline - Date.now()))
+      const actionable = await button.click({ trial: true, timeout: trialTimeoutMs })
+        .then(() => true)
+        .catch(() => false)
+      if (actionable) return button
+    }
+    if (Date.now() >= deadline) break
+    await waitForNextDomObservation(page, deadline, attempt, signal)
+    attempt += 1
+  }
+  return null
+}
+
+function assertNotAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw signal.reason ?? new Error('Visible provider action was aborted.')
 }
 
 async function submissionTransitionIsVisible(

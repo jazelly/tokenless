@@ -115,7 +115,9 @@ export async function createLiveBrowserInspectionSession(options) {
     },
     async close() {
       const canceledJobs = cancelRunJobs({ homeDir, daemonUrl, env, jobPrefix })
-      await Promise.allSettled([...new Set(observerBrowsers.values())].map((browser) => browser.close()))
+      // Do not call Browser.close() on connectOverCDP observers; Cloak may treat it as a
+      // browser shutdown. The test process owns only the CDP client socket, which disconnects
+      // naturally when the process exits.
       observerBrowsers.clear()
       const result = runCliSync([
         'daemon', 'stop',

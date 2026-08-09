@@ -6,6 +6,7 @@ import {
   firstEnabledLocator,
   firstFileInputLocator,
   firstUnavailableLocator,
+  waitForNextDomObservation,
 } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import { TokenlessPlaywrightError, tokenlessError } from '../../playwright/errors.js'
@@ -24,6 +25,8 @@ type AttachmentAction = typeof VISIBLE_ACTIONS.FILE_UPLOAD
 type VisibleAttachmentEvidence = {
   id: string
   extensions: readonly string[]
+  ready?: boolean
+  failed?: boolean
 }
 
 export class DomAttachmentCapability implements ProviderActionCapability<AttachmentAction> {
@@ -98,7 +101,7 @@ async function uploadFiles(
   if (!acceptedProof) {
     throw providerCapabilityFailure(
       'file_upload_not_visibly_accepted',
-      'The provider did not visibly accept the selected attachment after file selection.',
+      `The provider did not visibly accept and finish processing the selected attachments within ${provider.interactionTimings.attachmentReadyTimeoutMs}ms.`,
       { retryable: true },
     )
   }
@@ -304,9 +307,14 @@ async function visibleAttachmentEvidence(
             .toLowerCase()
           const extensions = expectedExtensions.filter((extension) => extension === visibleExtension)
           if (expectedExtensions.length > 0 && extensions.length === 0) return []
+          const statusText = (card.textContent ?? '').replace(/\s+/g, ' ').toLowerCase()
+          const failed = /(?:failed|error|unsupported)/.test(statusText)
+          const pending = /(?:parsing|processing|uploading)\s*(?:\.{3})?/.test(statusText)
           return [{
             id: `qwen-card|${index}`,
             extensions,
+            ready: !pending && !failed,
+            failed,
           }]
         })
     }
@@ -408,7 +416,9 @@ async function visibleAttachmentEvidence(
       entry !== null &&
       typeof entry.id === 'string' &&
       Array.isArray(entry.extensions) &&
-      entry.extensions.every((extension: unknown) => typeof extension === 'string')
+      entry.extensions.every((extension: unknown) => typeof extension === 'string') &&
+      (entry.ready === undefined || typeof entry.ready === 'boolean') &&
+      (entry.failed === undefined || typeof entry.failed === 'boolean')
     ))
     : []
 }
@@ -431,6 +441,14 @@ async function visibleAttachmentProof(
     return false
   })
   if (newEvidence.length < attachments.length) return null
+  if (newEvidence.some((entry) => entry.failed)) {
+    throw providerCapabilityFailure(
+      'file_upload_processing_failed',
+      'The provider visibly reported that an attachment could not be processed.',
+      { retryable: true },
+    )
+  }
+  if (newEvidence.some((entry) => entry.ready === false)) return null
 
   const requiredExtensions = new Map<string, number>()
   for (const attachment of attachments) {
@@ -455,11 +473,15 @@ async function waitForVisibleAttachmentProof(
   evidenceBeforeUpload: readonly VisibleAttachmentEvidence[],
   signal: AbortSignal | undefined,
 ) {
-  for (let attempt = 0; attempt <= 75; attempt += 1) {
+  const deadline = Date.now() + provider.interactionTimings.attachmentReadyTimeoutMs
+  let attempt = 0
+  while (Date.now() <= deadline) {
     assertNotAborted(signal)
     const proof = await visibleAttachmentProof(page, provider, attachments, evidenceBeforeUpload)
     if (proof) return proof
-    if (attempt < 75) await waitForPageTimeout(page, 200)
+    if (Date.now() >= deadline) break
+    await waitForNextDomObservation(page, deadline, attempt, signal)
+    attempt += 1
   }
   return null
 }

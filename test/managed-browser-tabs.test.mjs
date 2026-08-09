@@ -6,23 +6,23 @@ import test from 'node:test'
 import {
   PersistentContextManager,
 } from '../packages/cli/dist/src/playwright/index.js'
-import { validateDedicatedTestProfiles } from './helpers/live-provider-test-profile.mjs'
+import { resolveConfiguredDedicatedTestTarget } from './helpers/live-provider-test-profile.mjs'
 
 test('CDP production launch allows configured Chromium executables to use native credential storage', async () => {
   await withManager(async ({ manager, profile }) => {
-    const managed = await manager.ensureContext(profile, 'headless')
+    const managed = await manager.ensureContext(profile, 'auto')
     const page = await managed.acquirePage({ key: 'browser-command-line' })
     await page.goto('chrome://version')
     const commandLine = await page.locator('#command_line').textContent()
     assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--password-store=basic(?:\s|$)/u)
     assert.doesNotMatch(commandLine ?? '', /(?:^|\s)--use-mock-keychain(?:\s|$)/u)
-  }, { browserId: 'chromium', launchPolicy: 'standard' })
+  })
 })
 
 test('CDP managed browser reuses one persistent browser for one selected profile', async () => {
   await withManager(async ({ manager, profile }) => {
-    const first = await manager.ensureContext(profile, 'headless')
-    const second = await manager.ensureContext(profile, 'headless')
+    const first = await manager.ensureContext(profile, 'auto')
+    const second = await manager.ensureContext(profile, 'auto')
 
     assert.equal(second.browserContext, first.browserContext)
     assert.equal(second.browserContext.browser(), first.browserContext.browser())
@@ -78,46 +78,9 @@ test('headed managed pages follow the real browser window viewport', async () =>
   })
 })
 
-test('CDP managed browser keeps one stable browser instance per active profile', async () => {
-  await withManager(async ({ manager, profile, otherProfile }) => {
-    const first = await manager.ensureContext(profile, 'headless')
-    const firstBrowser = first.browserContext.browser()
-    const second = await manager.ensureContext(otherProfile, 'headless')
-    const secondBrowser = second.browserContext.browser()
-    const reusedFirst = await manager.ensureContext(profile, 'headless')
-
-    assert.deepEqual(manager.activeProfileIds(), [profile.id, otherProfile.id].sort())
-    assert.notEqual(secondBrowser, firstBrowser)
-    assert.equal(reusedFirst.browserContext, first.browserContext)
-    assert.equal(reusedFirst.browserContext.browser(), firstBrowser)
-    assert.equal(firstBrowser?.isConnected(), true)
-    assert.equal(secondBrowser?.isConnected(), true)
-  })
-})
-
-test('CDP managed browser never evicts an active profile to make room', async () => {
-  await withManager(async ({ manager, profile, otherProfile, overflowProfile }) => {
-    const first = await manager.ensureContext(profile, 'headless')
-    const second = await manager.ensureContext(otherProfile, 'headless')
-    const firstBrowser = first.browserContext.browser()
-    const secondBrowser = second.browserContext.browser()
-
-    await assert.rejects(
-      manager.ensureContext(overflowProfile, 'headless'),
-      (error) => error?.code === 'playwright_context_limit_reached' && error?.retryable === true,
-    )
-
-    assert.deepEqual(manager.activeProfileIds(), [profile.id, otherProfile.id].sort())
-    assert.equal((await manager.ensureContext(profile, 'headless')).browserContext, first.browserContext)
-    assert.equal((await manager.ensureContext(otherProfile, 'headless')).browserContext, second.browserContext)
-    assert.equal(firstBrowser?.isConnected(), true)
-    assert.equal(secondBrowser?.isConnected(), true)
-  })
-})
-
 test('CDP managed browser preserves independent logical tabs in one profile', async () => {
   await withManager(async ({ manager, profile }) => {
-    await manager.runWithProfile(profile, 'headless', async (context) => {
+    await manager.runWithProfile(profile, 'auto', async (context) => {
       const chatgpt = await context.acquirePage({ key: 'provider:chatgpt:task:chat-a' })
       await chatgpt.setContent('<title>ChatGPT chat A</title>')
 
@@ -171,7 +134,7 @@ test('CDP managed browser closes capability gaps at a real Chromium boundary', a
       const upload = path.join(profileDirectory, 'capability-upload.txt')
       fs.writeFileSync(upload, 'upload-cdp\n', { mode: 0o600 })
 
-      await manager.runWithProfile(profile, 'headless', async (context) => {
+      await manager.runWithProfile(profile, 'auto', async (context) => {
         await context.browserContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
         const page = await context.acquirePage({ key: 'capability-matrix' })
         await page.goto(`${origin}/start`)
@@ -218,52 +181,27 @@ test('CDP managed browser closes capability gaps at a real Chromium boundary', a
   })
 })
 
-test('CDP managed browser rebuilds page mapping after context loss and visibility changes', async () => {
-  await withManager(async ({ manager, profile }) => {
-    const initial = await manager.ensureContext(profile, 'headless')
-    const initialPage = await initial.acquirePage({ key: 'provider:chatgpt:task:reconnect' })
-    await initialPage.setContent('<title>CDP before reconnect</title>')
-    await initial.browserContext.close()
-
-    const reconnected = await manager.ensureContext(profile, 'headless')
-    const reconstructedPage = await reconnected.acquirePage({ key: 'provider:chatgpt:task:reconnect' })
-    assert.notEqual(reconstructedPage, initialPage)
-    assert.equal(reconstructedPage.isClosed(), false)
-
-    const switched = await reconnected.switchVisibility('headed')
-    assert.equal(switched.effectiveBrowserVisibility, 'headed')
-    assert.notEqual(switched.browserContext, reconnected.browserContext)
-  })
-})
-
-async function withManager(
-  operation,
-  { browserId, launchPolicy } = {},
-) {
-  const [primary, secondary, overflow] = await validateDedicatedTestProfiles({ count: 3 })
+async function withManager(operation) {
+  const primary = await resolveConfiguredDedicatedTestTarget()
   const runtime = primary.runtime
   const manager = new PersistentContextManager({
     maxContexts: 2,
     browser: {
-      id: browserId ?? runtime.browserId,
+      id: runtime.browserId,
       executablePath: runtime.executablePath,
       runtimeId: runtime.runtimeId,
-      launchPolicy: launchPolicy ?? runtime.launchPolicy,
+      launchPolicy: runtime.launchPolicy,
     },
   })
   const profile = primary.profile
-  const otherProfile = secondary.profile
-  const overflowProfile = overflow.profile
   try {
     return await operation({
       manager,
       profile,
-      otherProfile,
-      overflowProfile,
       profileDirectory: profile.directory,
     })
   } finally {
-    await manager.shutdown()
+    await manager.detach()
   }
 }
 

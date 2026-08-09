@@ -61,9 +61,6 @@ export function resolveLiveProviderTestTarget({
   }
   const baseHome = path.resolve(nonempty(env.TOKENLESS_HOME) ?? path.join(os.homedir(), '.tokenless'))
   const homeDir = path.resolve(requestedHome)
-  if (homeDir === baseHome) {
-    throw new Error('Live provider E2E home must not be the ordinary Tokenless home.')
-  }
   if (isWithin(repositoryRoot, homeDir)) {
     throw new Error('Live provider E2E home must remain outside the repository and its worktrees.')
   }
@@ -82,7 +79,7 @@ export async function canonicalizeLiveProviderTestTarget(target) {
     if (error?.code === 'ENOENT') return path.resolve(target.ordinaryHome)
     throw error
   })
-  assertTestOnlyHome(homeDir, ordinaryHome)
+  assertTestOnlyHome(homeDir)
   return Object.freeze({ ...target, homeDir, ordinaryHome })
 }
 
@@ -120,7 +117,7 @@ export async function validateLiveProviderTestTarget(target) {
     relativeDirectory.startsWith(`..${path.sep}`)
   ) {
     throw new Error(
-      `Dedicated live provider profile '${profile.slug}' resolves outside its test-only profile root.`,
+      `Dedicated live provider profile '${profile.slug}' resolves outside its configured profile root.`,
     )
   }
 
@@ -154,33 +151,6 @@ export async function validateLiveProviderTestTarget(target) {
   })
 }
 
-export async function validateDedicatedTestProfiles({ count = 1, env = process.env } = {}) {
-  const configured = await resolveDedicatedTestConfig({ env })
-  const registry = new ManagedProfileRegistry(configured.homeDir)
-  const profiles = await registry.listProfiles()
-  const defaultBrowser = configured.defaultProfile.runtimeBinding?.browserId ?? configured.config.browser
-  const ordered = [
-    ...profiles.filter((profile) => profile.id === configured.defaultProfile.id),
-    ...profiles.filter((profile) => profile.id !== configured.defaultProfile.id),
-  ].filter((profile) => (
-    profile.lifecycle === 'ready' &&
-    (profile.runtimeBinding?.browserId ?? configured.config.browser) === defaultBrowser
-  ))
-  if (ordered.length < count) {
-    throw new Error(
-      `Dedicated Tokenless test config ${configured.configPath} requires ${count} prepared ready profile(s).`,
-    )
-  }
-  return await Promise.all(ordered.slice(0, count).map(async (profile) => (
-    await validateLiveProviderTestTarget(resolveLiveProviderTestTarget({
-      browser: profile.runtimeBinding?.browserId ?? configured.config.browser,
-      home: configured.homeDir,
-      profile: profile.slug,
-      env,
-    }))
-  )))
-}
-
 export async function resolveDedicatedTestConfig({ env = process.env } = {}) {
   const configuredPath = nonempty(env.TOKENLESS_TEST_CONFIG)
   if (!configuredPath) {
@@ -192,36 +162,22 @@ export async function resolveDedicatedTestConfig({ env = process.env } = {}) {
   }
   const homeDir = path.dirname(configPath)
   const ordinaryHome = path.resolve(nonempty(env.TOKENLESS_HOME) ?? path.join(os.homedir(), '.tokenless'))
-  assertTestOnlyHome(homeDir, ordinaryHome)
+  assertTestOnlyHome(homeDir)
   const config = await readTokenlessConfig(homeDir)
   const registry = new ManagedProfileRegistry(homeDir)
   const defaultProfile = await registry.resolveProfile()
   return Object.freeze({ configPath, homeDir, ordinaryHome, config, defaultProfile })
 }
 
-export async function resolveConfiguredDedicatedTestTarget({ browser, profile, env = process.env } = {}) {
+export async function resolveConfiguredDedicatedTestTarget({ env = process.env } = {}) {
   const configured = await resolveDedicatedTestConfig({ env })
-  const registry = new ManagedProfileRegistry(configured.homeDir)
-  const candidates = profile
-    ? [await registry.resolveProfile(profile)]
-    : (await registry.listProfiles()).filter((candidate) => candidate.lifecycle === 'ready')
-  const preferred = profile
-    ? candidates[0]
-    : candidates.find((candidate) => candidate.id === configured.defaultProfile.id)
-  const ordered = [preferred, ...candidates.filter((candidate) => candidate.id !== preferred?.id)].filter(Boolean)
-  for (const candidate of ordered) {
-    const selection = candidate.runtimeBinding?.browserId ?? configured.config.browser
-    if (browser && normalizeBrowserSelection(browser) !== selection) continue
-    return await validateLiveProviderTestTarget(resolveLiveProviderTestTarget({
-      browser: selection,
-      home: configured.homeDir,
-      profile: candidate.slug,
-      env,
-    }))
-  }
-  throw new Error(
-    `Dedicated Tokenless test config ${configured.configPath} has no ready profile for ${browser ?? 'the requested runtime'}.`,
-  )
+  const profile = configured.defaultProfile
+  return await validateLiveProviderTestTarget(resolveLiveProviderTestTarget({
+    browser: profile.runtimeBinding?.browserId ?? configured.config.browser,
+    home: configured.homeDir,
+    profile: profile.slug,
+    env,
+  }))
 }
 
 export function createLiveProviderTestContextManager(target) {
@@ -263,10 +219,7 @@ export async function withDedicatedTestPage(operation, options = {}) {
   }, options)
 }
 
-function assertTestOnlyHome(homeDir, ordinaryHome) {
-  if (homeDir === ordinaryHome) {
-    throw new Error('Live provider E2E home must not be the ordinary Tokenless home.')
-  }
+function assertTestOnlyHome(homeDir) {
   if (isWithin(repositoryRoot, homeDir)) {
     throw new Error('Live provider E2E home must remain outside the repository and its worktrees.')
   }
