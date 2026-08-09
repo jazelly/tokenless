@@ -7,6 +7,7 @@ import {
   type ManagedProviderTabsOpenResult,
 } from '../playwright/runner-service.js'
 import { isClaimRecoveryError, tokenlessError } from '../playwright/errors.js'
+import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
 import type { JobStore } from './job-store.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 
@@ -156,14 +157,29 @@ export class BrowserRuntimeController {
   }
 
   private async createRunner(): Promise<RunnerInstance> {
+    const runtimeManager = new BrowserRuntimeManager({ homeDir: this.store.homeDir })
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
       daemonClient: createInProcessDaemonClient(this.store),
-      browserResolver: async () => ({
-        id: 'chrome',
-        runtimeId: 'native:chrome',
-        launchPolicy: 'native',
-      }),
+      browserResolver: async (profile) => {
+        if (!profile.runtimeBinding) {
+          return {
+            id: 'chrome',
+            runtimeId: 'native:chrome',
+            launchPolicy: 'native',
+          }
+        }
+        const runtime = await runtimeManager.resolveForProfile({
+          slug: profile.id,
+          runtimeBinding: profile.runtimeBinding,
+        })
+        return {
+          id: runtime.browserId,
+          executablePath: runtime.executablePath,
+          runtimeId: runtime.runtimeId,
+          launchPolicy: runtime.launchPolicy,
+        }
+      },
       recoverAbortedClaim: (job) => this.store.recoverActiveClaim(job.job_id, job.claim_token),
     })
     const abortController = new AbortController()

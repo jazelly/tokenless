@@ -10,6 +10,7 @@ const distRoot = path.join(packageRoot, 'dist')
 
 fs.rmSync(distRoot, { recursive: true, force: true })
 
+run('tsc', ['-p', path.join(packageRoot, '..', 'web-ai-interaction-protocol', 'tsconfig.json')])
 run('tsc', ['-p', path.join(packageRoot, '..', 'web-agent-harness', 'tsconfig.json')])
 run('tsc', ['-p', 'tsconfig.json'])
 run('vite', ['build', '--config', 'vite.ui.config.ts', '--logLevel', 'error'])

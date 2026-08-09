@@ -400,11 +400,22 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
 
   if (subcommand === 'add') {
     const slug = requiredAdminValue(args.profile, '--profile')
+    const requestedBrowser = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
+    if (requestedBrowser !== null && requestedBrowser !== 'managed-chromium' && requestedBrowser !== 'cloak') {
+      throw usageError(
+        'profile_managed_browser_required',
+        'Profiles add supports --browser managed-chromium or --browser cloak; omit --browser for native Chrome.',
+      )
+    }
+    const runtime = requestedBrowser === null
+      ? null
+      : await new BrowserRuntimeManager({ homeDir }).ensure(requestedBrowser, { allowDownload: false })
     const record = await registry.addProfile({
       slug,
       ...(args.label === undefined ? {} : { label: String(args.label) }),
       setDefault: args.setDefault === true,
       lifecycle: 'ready',
+      ...(runtime === null ? {} : { runtimeBinding: browserRuntimeBinding(runtime) }),
     })
     printPayload({
       ok: true,
@@ -2847,6 +2858,34 @@ async function setupCommand(args: CliArgs) {
     const cliVersion = await presenter.withProgress('Checking npm version', setupCliVersionCheck)
     noteSetupCliVersion(cliVersion, presenter)
     const configuredDaemonUrl = daemonUrl(args.daemonUrl ?? config.daemonUrl ?? undefined)
+    const explicitBrowser = args.browser === undefined ? null : normalizeCliBrowser(args.browser)
+    if (args.antiDetect === true && explicitBrowser !== null && explicitBrowser !== 'cloak') {
+      throw usageError('setup_anti_detect_browser_conflict', '--anti-detect can only be combined with --browser cloak.')
+    }
+    if (explicitBrowser !== null && explicitBrowser !== 'chrome' && explicitBrowser !== 'cloak') {
+      throw usageError(
+        'setup_browser_unsupported',
+        'Setup supports native Chrome by default or explicit --browser cloak.',
+      )
+    }
+    const useCloak = args.antiDetect === true || explicitBrowser === 'cloak'
+    const selectedRuntime = useCloak
+      ? await presenter.withProgress(
+          'Preparing CloakBrowser',
+          () => new BrowserRuntimeManager({ homeDir }).ensure('cloak', { allowDownload: true }),
+        )
+      : null
+    if (selectedRuntime) {
+      presenter.explain({
+        title: 'Anti-Detect mode',
+        lines: [
+          'CloakBrowser project: https://github.com/CloakHQ/CloakBrowser',
+          `Supported CloakBrowser on this platform: artifact ${selectedRuntime.artifactVersion} (Chromium ${selectedRuntime.actualVersion}).`,
+          'Tokenless downloads the verified, platform-pinned CloakBrowser from its official release and does not redistribute it.',
+          'CloakBrowser profiles must already be bound to the exact runtime; Tokenless does not copy or rebind native Chrome profiles.',
+        ],
+      })
+    }
     if (
       config.browser !== 'chrome' ||
       config.browserExecutablePath !== null ||
@@ -2865,7 +2904,13 @@ async function setupCommand(args: CliArgs) {
       })
     }
     const providers = await selectSetupProviders({ args, config, homeDir, prompt, presenter })
-    const profile = await ensureSetupManagedProfile({ args, homeDir, prompt, presenter })
+    const profile = await ensureSetupManagedProfile({
+      args,
+      homeDir,
+      runtime: selectedRuntime,
+      prompt,
+      presenter,
+    })
     await presenter.withProgress('Saving preferences', async () => {
       const current = await readTokenlessConfig(homeDir)
       const profilePreferences = {
@@ -3012,18 +3057,32 @@ async function setupCommand(args: CliArgs) {
       skills,
       codexIntegration: codexIntegrationStatus,
       nextStep,
-      browser: {
-        id: 'chrome',
-        mode: 'native',
-        antiDetect: false,
-        minimumVersion: 144,
-        runtimeId: 'native:chrome',
-        family: 'native',
-        displayName: 'Native Google Chrome',
-        version: null,
-        source: 'system',
-        capabilityCheck: 'connection',
-      },
+      browser: selectedRuntime
+        ? {
+            id: selectedRuntime.browserId,
+            mode: 'managed',
+            antiDetect: true,
+            minimumVersion: null,
+            runtimeId: selectedRuntime.runtimeId,
+            family: selectedRuntime.family,
+            displayName: selectedRuntime.displayName,
+            version: selectedRuntime.actualVersion,
+            artifactVersion: selectedRuntime.artifactVersion,
+            source: selectedRuntime.source,
+            capabilityCheck: 'launch',
+          }
+        : {
+            id: 'chrome',
+            mode: 'native',
+            antiDetect: false,
+            minimumVersion: 144,
+            runtimeId: 'native:chrome',
+            family: 'native',
+            displayName: 'Native Google Chrome',
+            version: null,
+            source: 'system',
+            capabilityCheck: 'connection',
+          },
       providers,
       readiness,
       reviewTabs,
@@ -3140,14 +3199,19 @@ function recordSetupReadinessFailure({
 async function ensureSetupManagedProfile({
   args,
   homeDir,
+  runtime,
   prompt,
   presenter,
 }: {
   args: CliArgs
   homeDir: string
+  runtime: ResolvedBrowserRuntime | null
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
 }) {
+  if (runtime) {
+    return await ensureSetupRuntimeBoundProfile({ args, homeDir, runtime, prompt, presenter })
+  }
   presenter.explain({
     title: 'Native Chrome',
     lines: [
@@ -3211,6 +3275,119 @@ async function ensureSetupManagedProfile({
       lifecycle: 'ready',
     }),
   )
+}
+
+async function ensureSetupRuntimeBoundProfile({
+  args,
+  homeDir,
+  runtime,
+  prompt,
+  presenter,
+}: {
+  args: CliArgs
+  homeDir: string
+  runtime: ResolvedBrowserRuntime
+  prompt: ReturnType<typeof createSetupPrompt> | null
+  presenter: SetupPresenter
+}) {
+  presenter.explain({
+    title: 'Managed browser profile',
+    lines: [
+      `This profile will be bound to ${runtime.runtimeId}.`,
+      'Existing native or differently bound profiles cannot be reused, copied, or rebound.',
+    ],
+  })
+  const registry = new ManagedProfileRegistry(homeDir)
+  const existing = await managedProfilesWithDisplayLabels(await registry.listProfiles())
+  const compatible = existing.filter((profile) => profileRuntimeMatches(profile, runtime))
+  const configuredDefaultProfile = (await registry.read()).defaultProfile
+  let slug = args.profile === undefined ? undefined : String(args.profile)
+  let selected = slug ? existing.find((profile) => profile.slug === slug) ?? null : null
+
+  if (selected && !profileRuntimeMatches(selected, runtime)) {
+    throw usageError(
+      'setup_profile_runtime_mismatch',
+      `Managed profile '${selected.slug}' cannot use ${runtime.runtimeId}; create a clean profile for that browser runtime.`,
+    )
+  }
+  if (!slug && prompt && existing.length > 0) {
+    const choices = [
+      ...compatible.map((profile) => ({ label: `${profile.label} (${profile.slug})`, value: profile.slug })),
+      { label: 'Create a new managed profile', value: '__new__' },
+    ]
+    const chosen = await prompt.select(
+      'Choose a managed profile',
+      choices,
+      Math.max(0, choices.findIndex((choice) => choice.value === configuredDefaultProfile)),
+    )
+    if (chosen !== '__new__') {
+      slug = chosen
+      selected = compatible.find((profile) => profile.slug === chosen) ?? null
+    }
+  } else if (!slug && existing.length > 0) {
+    const defaultProfile = configuredDefaultProfile === null
+      ? null
+      : existing.find((profile) => profile.slug === configuredDefaultProfile) ?? null
+    if (defaultProfile && profileRuntimeMatches(defaultProfile, runtime)) {
+      slug = defaultProfile.slug
+      selected = defaultProfile
+    }
+  }
+
+  if (selected) {
+    if (selected.lifecycle !== 'ready') {
+      throw usageError(
+        'setup_profile_not_ready',
+        `Managed profile '${selected.slug}' is ${selected.lifecycle}; choose another ready profile or create a clean profile.`,
+      )
+    }
+    if (args.setDefault === true || prompt) {
+      await presenter.withProgress(`Setting managed profile ${selected.slug} as default`, () => registry.setDefault(selected.slug))
+    }
+    return selected
+  }
+
+  if (!slug && prompt) slug = await prompt.text('Profile name', existing.length === 0 ? 'default' : `${runtime.browserId}-default`)
+  slug ??= existing.length === 0 ? 'default' : availableRuntimeProfileSlug(runtime.browserId, existing)
+  return await presenter.withProgress(
+    `Creating clean managed profile ${slug}`,
+    () => registry.addProfile({
+      slug,
+      label: args.label === undefined ? slug : String(args.label),
+      labelOrigin: args.label === undefined ? 'slug' : 'user',
+      setDefault: true,
+      lifecycle: 'ready',
+      runtimeBinding: browserRuntimeBinding(runtime),
+    }),
+  )
+}
+
+function profileRuntimeMatches(profile: ManagedProfileRecord, runtime: ResolvedBrowserRuntime) {
+  const binding = profile.runtimeBinding
+  return binding?.runtimeId === runtime.runtimeId &&
+    binding.family === runtime.family &&
+    binding.browserId === runtime.browserId
+}
+
+function availableRuntimeProfileSlug(browserId: string, existing: readonly ManagedProfileRecord[]) {
+  const base = `${browserId}-default`
+  const used = new Set(existing.map((profile) => profile.slug))
+  if (!used.has(base)) return base
+  for (let index = 2; index < 10_000; index += 1) {
+    const candidate = `${base}-${index}`
+    if (!used.has(candidate)) return candidate
+  }
+  throw usageError('setup_profile_name_unavailable', `Cannot allocate a managed profile name for ${browserId}.`)
+}
+
+function browserRuntimeBinding(runtime: ResolvedBrowserRuntime) {
+  return {
+    runtimeId: runtime.runtimeId,
+    family: runtime.family,
+    browserId: runtime.browserId,
+    createdWithVersion: runtime.actualVersion,
+    profileFormat: 1 as const,
+  }
 }
 
 function createSetupPrompt(colorEnabled = false) {
@@ -4346,14 +4523,14 @@ function createCommandContracts(): CommandContract[] {
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
+    { command: 'setup', usage: ['tokenless setup [--browser cloak|--anti-detect] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },
     { command: 'config', usage: ['tokenless config [--profile <slug>] [--provider-whitelist <list>] [--browser-visibility headed] [--language <en|zh-CN>] [--browser chrome] [--daemon-url <url>] --json'], options: ['home', 'json', 'profile', 'language', 'providerWhitelist', 'browser', 'browserVisibility', 'daemonUrl'] },
     { command: 'dashboard', usage: ['tokenless dashboard [--profile <slug>] [--no-open] [--json]'], options: ['home', 'json', 'profile', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'prompt', usage: ['tokenless --prompt <text> [--context <text>] [--file <path>]'], options: ['json', 'prompt', 'promptFile', 'context', 'contextFile', 'turnContextFile', 'projectRoot', 'files', 'output'] },
-    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'label', 'providerWhitelist', 'setDefault'] },
+    { command: 'profiles', subcommand: 'add', usage: ['tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--label <name>] [--set-default] --json'], options: ['home', 'json', 'profile', 'browser', 'label', 'providerWhitelist', 'setDefault'] },
     { command: 'profiles', subcommand: 'clear', usage: ['tokenless profiles clear (--profile <slug>|--all)'], options: ['home', 'profile', 'allProfiles'] },
     { command: 'profiles', subcommand: 'list', usage: ['tokenless profiles list --json'], options: ['home', 'json'] },
     { command: 'profiles', subcommand: 'status', usage: ['tokenless profiles status [--profile <slug>] [--provider <provider>] --json'], options: ['home', 'json', 'quiet', 'profile', 'provider', 'browserVisibility', 'daemonStartTimeoutMs', 'daemonUrl', 'runnerHeartbeatTimeoutMs', 'targetUrl', 'taskId', 'timeoutMs', 'cancelTimeoutMs'] },
@@ -5426,9 +5603,10 @@ function usage(args: CliArgs) {
     },
     {
       title: 'Setup',
-      description: 'Connect native Chrome and configure Tokenless profiles.',
+      description: 'Connect native Chrome or explicitly prepare CloakBrowser and configure Tokenless profiles.',
       commands: [
         'tokenless setup --profile <slug> --defaults --json',
+        'tokenless setup --browser cloak --profile <slug> --defaults --json',
         'tokenless setup --install-codex --profile <slug> --defaults --json',
       ],
     },
@@ -5436,7 +5614,7 @@ function usage(args: CliArgs) {
       title: 'Profile',
       description: 'Manage logical Tokenless profiles.',
       commands: [
-        'tokenless profiles add --profile <slug> [--label <name>] [--set-default] --json',
+        'tokenless profiles add --profile <slug> [--browser <managed-chromium|cloak>] [--label <name>] [--set-default] --json',
         'tokenless profiles clear (--profile <slug>|--all)',
         'tokenless profiles set-default --profile <slug> --json',
         'tokenless profiles remove --profile <slug> --confirm-delete --json',

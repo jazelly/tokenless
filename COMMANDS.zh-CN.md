@@ -780,4 +780,4 @@ npm run test:e2e:cloak-surfaces
 
 运行 `npm run test:e2e:browser-runtime`，要求 `auto` 安装或复用按平台固定版本的 managed Chrome for Testing。显式形式 `npm run test:e2e:browser-runtime -- --expected-auto managed-chromium` 会断言同一个 invariant。每一种目标 Windows x64 CPU 类型都要运行该 gate；npm 从 `cmd.exe`、PowerShell 和 POSIX shell 转发参数时行为一致。
 
-Browser surface gate 会用同一套真实 headed、keychain-neutral test profile 分别测试 system auto-selection、managed Chrome for Testing 和 Cloak。每个 case 都会先通过真实网络访问全部已注册 providers 和 Google Search，再汇总所有失败；检测到 anti-bot challenge 时会失败，并且只报告公开 location、title、response status 与结构化 challenge 结果。它不会登录、提交 prompt、读取 browser storage、截屏，也不能替代使用已认证 profile 的 built-CLI provider release gate。三个 selection-specific 命令分别只运行 system、managed 或 Cloak case。
+Browser surface gate 会复用已为显式选择的 browser 准备好的 persistent profile，并通过 Tokenless production CDP path 控制它。它绝不会创建或删除 browser profile；请先为该 browser 运行 `test:e2e:prepare`。每个 case 都会通过真实网络访问全部已注册 providers 和 Google Search，检测到 anti-bot challenge 时失败，并且只报告公开 location、title、response status 与结构化 challenge 结果。它不会提交 prompt、读取 browser storage、截屏，也不能替代使用已认证 profile 的 built-CLI provider release gate。

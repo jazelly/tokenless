@@ -70,6 +70,13 @@ const ZH_TEXT = new Map<string, string>([
   ['Invalid Tokenless browser executable path; expected null or an absolute path.', '无效的 Tokenless browser executable path；应为 null 或绝对路径。'],
   ['Browser executable path must be absolute.', 'Browser executable path 必须是绝对路径。'],
   ['Use Anti-Detect mode? Tokenless will download and install the verified, platform-pinned CloakBrowser if needed.', '是否使用 Anti-Detect 模式？如有需要，Tokenless 将下载并安装经过验证、按平台固定版本的 CloakBrowser。'],
+  ['Tokenless downloads the verified, platform-pinned CloakBrowser from its official release and does not redistribute it.', 'Tokenless 从官方 release 下载经过验证、按平台固定版本的 CloakBrowser，且不会再分发它。'],
+  ['CloakBrowser profiles must already be bound to the exact runtime; Tokenless does not copy or rebind native Chrome profiles.', 'CloakBrowser profile 必须已绑定到精确 runtime；Tokenless 不会复制或重新绑定 native Chrome profile。'],
+  ['Existing native or differently bound profiles cannot be reused, copied, or rebound.', '不能复用、复制或重新绑定现有 native profile 或绑定到其他 runtime 的 profile。'],
+  ['--anti-detect can only be combined with --browser cloak.', '--anti-detect 只能与 --browser cloak 组合使用。'],
+  ['Setup supports native Chrome by default or explicit --browser cloak.', 'Setup 默认支持 native Chrome，也支持显式指定 --browser cloak。'],
+  ['Profiles add supports --browser managed-chromium or --browser cloak; omit --browser for native Chrome.', 'Profiles add 支持 --browser managed-chromium 或 --browser cloak；省略 --browser 时使用 native Chrome。'],
+  ['Connect native Chrome or explicitly prepare CloakBrowser and configure Tokenless profiles.', '连接 native Chrome，或显式准备 CloakBrowser，并配置 Tokenless profile。'],
   ['Start clean', '从 clean profile 开始'],
   ['Non-interactive CloakBrowser setup requires explicit --anti-detect or --browser cloak confirmation.', '非交互 CloakBrowser setup 必须通过显式的 --anti-detect 或 --browser cloak 进行确认。'],
   ['--browser-user-data-dir requires one explicit browser instead of all.', '--browser-user-data-dir 必须指定一个具体浏览器，不能使用 all。'],
@@ -195,7 +202,11 @@ export function localizeText(value: string, language = activeLanguage): string {
     .replace(/^(.+) (\S+) is not installed\. Run tokenless setup with browser downloads enabled\.$/, '$1 $2 尚未安装。请启用 browser download 后重新运行 tokenless setup。')
     .replace(/^Browser executable for '(.+)' was not found\. Set it with tokenless config --browser (.+) --browser-executable-path "\/absolute\/path\/to\/browser" --json, or open tokenless dashboard and update System > Browser executable path\.$/, "找不到 '$1' 的浏览器 executable。请运行 tokenless config --browser $2 --browser-executable-path \"/浏览器的绝对路径\" --json，或打开 tokenless dashboard，在 System > Browser executable path 中设置。")
     .replace(/^Managed profile '(.+)' cannot use (.+); create a clean profile for that browser runtime\.$/, "Managed profile '$1' 不能使用 $2；请为该 browser runtime 创建 clean profile。")
-    .replace(/^Unsupported Tokenless browser platform: (.+)\. Supported platforms are darwin-arm64 and win32-x64\.$/, 'Tokenless 不支持 browser platform：$1。支持 darwin-arm64 和 win32-x64。')
+    .replace(/^Managed profile '(.+)' is (.+); choose another ready profile or create a clean profile\.$/, "Managed profile '$1' 当前状态为 $2；请选择另一个 ready profile 或创建 clean profile。")
+    .replace(/^This profile will be bound to (.+)\.$/, '此 profile 将绑定到 $1。')
+    .replace(/^Cannot allocate a managed profile name for (.+)\.$/, '无法为 $1 分配 managed profile 名称。')
+    .replace(/^Unsupported Tokenless browser platform: (.+)\. Supported platforms are darwin-arm64, darwin-x64, linux-arm64, linux-x64, and win32-x64\.$/, 'Tokenless 不支持 browser platform：$1。支持 darwin-arm64、darwin-x64、linux-arm64、linux-x64 和 win32-x64。')
+    .replace(/^Tokenless has no managed browser catalog entry for (.+) on (.+)\.$/, 'Tokenless 没有适用于 $2 的 $1 managed browser catalog entry。')
     .replace(/^Managed profile '(.+)' predates browser runtime binding\. Rerun tokenless setup and explicitly select a compatible browser\.$/, "Managed profile '$1' 尚未记录 browser runtime binding。请重新运行 tokenless setup 并显式选择兼容的 browser。")
     .replace(/^Managed profile '(.+)' is bound to (.+), but Tokenless resolved (.+)\.$/, "Managed profile '$1' 绑定到 $2，但 Tokenless 解析出 $3。")
     .replace(/^Managed profile '(.+)' was created with browser (.+); refusing to open it with older browser (.+)\.$/, "Managed profile '$1' 由 browser $2 创建；拒绝使用更旧的 browser $3 打开。")

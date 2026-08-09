@@ -1,6 +1,6 @@
 # Browser Runtime Selection and Cloak Integration
 
-Status: in progress | Priority: P0 | Last reviewed: 2026-08-06
+Status: in progress | Priority: P0 | Last reviewed: 2026-08-09
 
 Depends on: Tokenless setup, managed profile lifecycle, the Playwright runner, the packaged daemon, browser E2E infrastructure, and real-provider acceptance gates
 
@@ -8,7 +8,7 @@ Supports: [Real Provider Browser E2E and Native Projects](P0-real-provider-brows
 
 ## Outcome
 
-Tokenless selects and launches one exact Chromium-family runtime for every managed profile while continuing to use Playwright as the browser-control layer. New normal setup always installs or reuses the platform-pinned Tokenless-managed Chrome for Testing runtime: major 145 on Apple Silicon macOS and major 146 on Windows x64. It does not adopt the user's installed browser. CloakBrowser is an explicit opt-in choice that setup downloads from Cloak's official release source, verifies, caches, and launches through the same runtime interface.
+Tokenless selects and launches one exact Chromium-family runtime for every managed profile while continuing to use Playwright as the browser-control layer. New normal setup installs or reuses platform-pinned Tokenless-managed Chrome for Testing on Apple Silicon macOS and Windows x64. CloakBrowser is an explicit opt-in choice with official checksum-pinned catalog entries for macOS arm64/x64, Linux arm64/x64, and Windows x64; the added catalog paths remain subject to real-host acceptance.
 
 The implementation must improve browser realism without silently changing a profile's browser family, corrupting a profile through a browser downgrade, weakening Chromium sandboxing, accessing browser secrets, or redistributing a Cloak binary in a Tokenless package or release artifact.
 
@@ -26,7 +26,7 @@ The plan is saved in the root of `docs/roadmaps/`, which is the repository's aut
 | Safe Chromium profile inventory | 5 / 5 | Diagnostic discovery enumerates known Chromium-family profile directories without browser state; experimental setup import admits only the macOS Chrome/Brave source majors listed in the shipping matrix, presents bilingual limitations, and keeps Arc and every unverified combination ineligible. |
 | Exact Playwright launch | 4 / 4 | The resolved executable and launch policy reach Playwright/CDP; sandboxing, production native credential storage, disposable-profile keychain neutrality, and cleanup are preserved. |
 | Inspection, recovery, and documentation | 5 / 5 | Doctor, cache reuse/repair, bilingual docs, licensing, and cross-platform release-gate launchers exist. |
-| Real-boundary acceptance | 13 / 21 | macOS managed-only `auto`, positive runtime paths, focused major-145 importability parity, source-family format observations, setup admission boundaries, and the locally executable fail-closed paths are proven. Eight platform-, source-version-, or authentication-dependent release gates remain open; implementation completion is not release completion. |
+| Real-boundary acceptance | Existing macOS gates retained; new host gates open | macOS Apple Silicon evidence remains valid. Intel macOS and both Linux architectures have catalog/runtime implementation only until their real-host gates run; implementation completion is not release completion. |
 
 The unchecked acceptance items are authoritative: Brave 144 format behavior, authenticated Brave sign-in portability, Windows Brave parity, Windows x64 Intel, Windows x64 AMD, Windows Chrome 150 profile-inventory classification, Windows 146 managed-to-Cloak importability parity, and authenticated provider closure across the selected runtimes. Arc import is a deliberate product exclusion rather than an open support gate. Public-surface results remain observational even though the latest strict Cloak run completed successfully; they do not replace authenticated provider acceptance.
 
@@ -36,14 +36,17 @@ Detailed Windows AMD64 execution, source-browser version cases, headed/headless 
 
 ### Target platforms
 
-The first release target set is intentionally narrow:
+Normal managed Chrome for Testing setup remains narrow, while explicit Cloak setup follows the official no-license-key artifact set:
 
 | Platform | Architecture | Legacy/advanced explicit system browsers | Normal setup runtime | Cloak |
 | --- | --- | --- | --- | --- |
 | macOS | Apple Silicon (`darwin-arm64`) | Chrome, Edge, Chromium | Chrome for Testing 145 | Cloak 145 |
+| macOS | Intel (`darwin-x64`) | Chrome, Edge, Chromium | Not cataloged | Cloak 145 |
+| Linux | ARM 64-bit (`linux-arm64`) | Explicit custom executable path only | Not cataloged | Cloak 146 (`.3`) |
+| Linux | Intel/AMD 64-bit (`linux-x64`) | Explicit custom executable path only | Not cataloged | Cloak 146 (`.5`) |
 | Windows | Intel/AMD 64-bit (`win32-x64`) | Chrome, Edge, Chromium | Chrome for Testing 146 | Cloak 146 |
 
-Intel macOS, Windows ARM, and Linux are out of scope for the first supported release. Unsupported platforms fail clearly before download or profile mutation.
+Windows ARM and every other unlisted OS/architecture remain unsupported. On Intel macOS and Linux, `cloak` is the supported managed-runtime selection; `auto` and `managed-chromium` still fail because Tokenless has no verified Chrome for Testing artifact for those platforms.
 
 ### Locked runtime catalog
 
@@ -52,6 +55,9 @@ The catalog is owned by production code and records exact version, official sour
 | Runtime | Platform | Locked version | Distribution decision |
 | --- | --- | --- | --- |
 | Cloak | `darwin-arm64` | `145.0.7632.109.2` | Download from the official Cloak GitHub release during explicit setup selection; do not bundle or redistribute. |
+| Cloak | `darwin-x64` | `145.0.7632.109.2` | Download from the official Cloak GitHub release during explicit setup selection; do not bundle or redistribute. |
+| Cloak | `linux-arm64` | `146.0.7680.177.3` | Download from the official Cloak GitHub release during explicit setup selection; do not bundle or redistribute. |
+| Cloak | `linux-x64` | `146.0.7680.177.5` | Download from the official Cloak GitHub release during explicit setup selection; do not bundle or redistribute. |
 | Cloak | `win32-x64` | `146.0.7680.177.5` | Download from the official Cloak GitHub release during explicit setup selection; do not bundle or redistribute. |
 | Managed Chrome for Testing | `darwin-arm64` | Chromium `145.0.7632.6` | Download the official checksum-pinned artifact during normal setup when it is not already cached; do not embed it in the npm package. |
 | Managed Chrome for Testing | `win32-x64` | Chromium `146.0.7680.165` | Download the official checksum-pinned artifact during normal setup when it is not already cached; do not embed it in the npm package. |
@@ -65,6 +71,9 @@ Tokenless v1 supports only the no-license-key Cloak artifacts pinned in the prod
 | Platform | Supported Cloak artifact | Cloak browser version used for profile classification | Current Tokenless decision |
 | --- | --- | --- | --- |
 | `darwin-arm64` | `145.0.7632.109.2` | `145.0.7632.109` | Supported and locked. |
+| `darwin-x64` | `145.0.7632.109.2` | `145.0.7632.109` | Cataloged and locked; real-host acceptance pending. |
+| `linux-arm64` | `146.0.7680.177.3` | `146.0.7680.177` | Cataloged and locked; real-host acceptance pending. |
+| `linux-x64` | `146.0.7680.177.5` | `146.0.7680.177` | Cataloged and locked; real-host acceptance pending. |
 | `win32-x64` | `146.0.7680.177.5` | `146.0.7680.177` | Supported and locked. |
 
 The fifth component is Cloak's artifact revision; source classification uses the Chromium major recorded by the owning browser's safe `Last Version` metadata. Admission is an evidence-bound product policy, not a Chromium compatibility guarantee. The first shipping matrix is intentionally narrow:
@@ -83,7 +92,7 @@ Edge, Chromium, Chrome for Testing, Arc, and every other source browser remain i
 
 Tokenless exposes these durable browser preferences:
 
-- `auto`: resolve to the platform-pinned managed Chrome for Testing runtime. New setup never adopts an installed system browser.
+- `auto`: resolve to the platform-pinned managed Chrome for Testing runtime where Tokenless catalogs one. New setup never adopts an installed system browser; Intel macOS and Linux must select `cloak` explicitly.
 - `chrome`, `edge`, `chromium`, or `chrome-for-testing`: legacy/advanced explicit selections that require that exact system browser. A missing explicit selection fails; it never silently falls back.
 - `managed-chromium`: require the catalog-pinned Tokenless-managed Chrome for Testing runtime.
 - `cloak`: explicitly opt in to the catalog-pinned Cloak runtime for the current platform.
@@ -471,18 +480,22 @@ Windows AMD64 execution for the following gates is specified and recorded in the
 - [ ] Windows x64: an unauthenticated managed Chrome for Testing `146.0.7680.165` profile passes the same importability criteria in both managed Chrome for Testing 146 and Cloak 146.
 - [ ] Windows x64: Brave 143 and Brave 145 isolated profiles are tested against both managed Chrome for Testing 146 and Cloak 146 before any Windows Brave source is admitted.
 - [ ] Windows x64 with a real Chrome 150 profile: setup lists only safe directory/version metadata, classifies it as non-aligned with Cloak 146, offers a clean Cloak profile instead of import, and leaves the source profile unchanged.
+- [ ] macOS Intel: the built CLI installs, verifies, smoke-launches, binds, and reuses Cloak `145.0.7632.109.2` on a real x64 host.
+- [ ] Linux x64: the built CLI installs, verifies, smoke-launches, binds, and reuses Cloak `146.0.7680.177.5` on a real host, including WSL x64 as a named environment.
+- [ ] Linux arm64: the built CLI installs, verifies, smoke-launches, binds, and reuses Cloak `146.0.7680.177.3` on a real host.
 - [x] Offline-style rerun with downloads disabled reused the previously verified managed Chrome for Testing runtime and performed no download.
 - [x] Corrupted managed-cache checksum or browser-version metadata fails closed without changing config or the profile registry.
 - [x] Built-CLI profile open preserves the exact `profile_runtime_mismatch` and `profile_browser_downgrade_blocked` errors and fails without changing config, registry, or profile-directory contents.
 - [x] Post-download checksum mismatch, an archive containing unsafe paths, and an artifact whose executable reports the wrong version fail in the shared production verifier before cache commit or config/profile mutation.
-- [x] A real unsupported `darwin-x64` process failed before download, config, profile, or cache mutation.
 - [x] Test-only installer and surface gates remained keychain-neutral, production Cloak launched without a Keychain prompt, sandboxing stayed enabled, and spawned processes were cleaned up.
 - [ ] Built-CLI real-provider gates run against ChatGPT, Claude, Gemini, Qwen, DeepSeek, Grok, Grok Cloud, and Google surfaces using system, managed, and Cloak runtimes where the selected profile is authenticated.
 - [x] macOS CAPTCHA/challenge outcomes are recorded for system Chrome, managed Chrome for Testing, and Cloak; the evidence is explicitly observational and does not claim guaranteed CAPTCHA bypass.
 - [x] macOS Apple Silicon: Cloak `145.0.7632.109` headless reached every enabled public provider surface and normal Google Search through a disposable keychain-neutral profile with no detected challenge or HTTP rejection.
 - [x] macOS Apple Silicon: system Chrome `151.0.7922.75` headless produced real provider-side HTTP/Cloudflare failures, after which an isolated Cloak 145 headless fallback attempt cleared every provider failure without profile reuse, fixture routing, interception, retry, or skip. Google remains a recorded anti-bot control rather than a provider-fallback acceptance target.
 
-### Evidence recorded through 2026-08-06
+### Evidence recorded through 2026-08-09
+
+- Official CloakBrowser GitHub release metadata and `SHA256SUMS` establish the five pinned no-license-key artifacts. The upstream wrapper's platform map and executable resolver independently establish `Chromium.app/Contents/MacOS/Chromium` on macOS, `chrome` on Linux, and `chrome.exe` on Windows. This is catalog/layout evidence only; Intel macOS and Linux real-host launch/provider gates remain open.
 
 - The browser surface matrix used system Chrome `150.0.7871.187`, managed Chrome for Testing `145.0.7632.6`, and Cloak `145.0.7632.109.2` with Playwright, real headed browser processes, keychain-neutral isolated test profiles, the real provider network, and no observer process.
 - In each Cloak run, ChatGPT, Claude, Gemini, Grok Cloud, Qwen, and DeepSeek completed navigation with real HTTP responses and no detected reCAPTCHA, Cloudflare, hCaptcha, or verification-title challenge.
@@ -501,7 +514,7 @@ Windows AMD64 execution for the following gates is specified and recorded in the
 - The cross-platform Node launcher then reran the complete built-CLI browser-runtime gate successfully in 69 seconds. The checked-in npm release-gate commands no longer depend on POSIX-only `VAR=value command` syntax; live Windows execution remains required before declaring Windows support.
 - The same launcher attempted a fresh Cloak-only surface gate. The suite failed without retry at Qwen navigation because the machine's active DNS resolver returned Qwen's CNAME but no final address (`ERR_NAME_NOT_RESOLVED`). Qwen's official page and public DNS still identified `https://chat.qwen.ai/` and resolved its current addresses, so the endpoint was not changed and no test-only DNS override was introduced. This run is recorded as failed external-prerequisite evidence, not as provider or CAPTCHA acceptance.
 - A gate audit found that provider challenge outcomes were recorded but not asserted. The surface gate now fails when any enabled provider renders a detected reCAPTCHA, Cloudflare, hCaptcha, or verification-title challenge; navigation success alone can no longer produce a false pass.
-- A checksum-verified official Node.js `v22.13.1` `darwin-x64` binary ran under Rosetta as a real unsupported process and invoked the built CLI with `install --browser cloak`. The CLI returned exit code 1 with exact code `browser_runtime_platform_unsupported`; the dedicated Tokenless home remained empty, proving that config, profile, browser cache, and download state were not created. The temporary Node and home directories were removed after inspection.
+- Historical evidence before the Intel macOS catalog entry landed: a checksum-verified official Node.js `v22.13.1` `darwin-x64` binary ran under Rosetta and the built CLI rejected `install --browser cloak` before mutation. That unsupported-platform result is superseded and does not count as positive Intel macOS acceptance.
 - After the system resolver recovered, the stricter Cloak-only surface gate passed with Cloak browser `145.0.7632.109`: ChatGPT, Claude, Gemini, Grok Cloud, Qwen, and DeepSeek all completed real navigation with no detected challenge, and Google rendered search results with no reCAPTCHA signal.
 - A fresh full matrix then visited every enabled provider and Google before evaluating each runtime. System Chrome `150.0.7871.187` failed on the Claude Cloudflare interstitial and Google `/sorry`; managed Chrome for Testing `145.0.7632.6` recorded a Gemini navigation abort and Google `/sorry`; Cloak passed every surface again. The gate was corrected so an early provider failure can no longer prevent later providers or Google from being exercised, and a failed navigation that remains on the prior origin no longer misattributes the prior page's challenge to the next provider.
 - The managed-artifact security integration called the same production verifier used immediately after a real download and before cache commit. With real tar.gz bytes, the real filesystem, the system `tar` executable, and a real version subprocess, it received exact `browser_runtime_checksum_mismatch`, `browser_runtime_archive_unsafe`, and `browser_runtime_version_mismatch` errors. The checksum case created no payload, the unsafe entry escaped nowhere, and config/profile sentinel files remained byte-for-byte unchanged in all three cases. The complete built-CLI browser-runtime gate passed again in 75 seconds after this refactor, proving the official managed Chrome and Cloak positive install paths still work. A later targeted managed-browser surface rerun also visited every provider successfully and isolated its current blockers to the Claude Cloudflare interstitial and Google `/sorry`.

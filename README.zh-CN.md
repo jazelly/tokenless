@@ -68,6 +68,8 @@ Setup 会创建逻辑 Tokenless profile、连接正在运行的 headed Chrome、
 
 Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断开自动化连接，不会关闭 Chrome。
 
+显式启用 Anti-Detect setup 时，也可以在 macOS arm64/x64、Linux arm64/x64 或 Windows x64 上从 CloakBrowser 官方 GitHub release 安装经过 checksum 固定的版本。这些 catalog 路径不代表已在每类真实 host 上完成 provider 验收；Tokenless 不会捆绑或再分发 CloakBrowser。
+
 ## Agent 可以获得什么
 
 - 通过真实 provider 网站发送 prompt，并读取可见 response 和 citation。

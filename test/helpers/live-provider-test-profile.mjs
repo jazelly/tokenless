@@ -9,6 +9,7 @@ import {
   readTokenlessConfig,
 } from '../../packages/cli/dist/src/index.js'
 import { ManagedProfileRegistry } from '../../packages/cli/dist/src/playwright/index.js'
+import { PersistentContextManager } from '../../packages/cli/dist/src/playwright/index.js'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -136,6 +137,21 @@ export async function validateLiveProviderTestTarget(target) {
     profile,
     runtime,
     relativeDirectory,
+  })
+}
+
+export function createLiveProviderTestContextManager(target) {
+  if (!target?.profile || !target?.runtime) {
+    throw new Error('A validated dedicated live provider profile is required before browser automation.')
+  }
+  return new PersistentContextManager({
+    maxContexts: 1,
+    browser: {
+      id: target.runtime.browserId,
+      executablePath: target.runtime.executablePath,
+      runtimeId: target.runtime.runtimeId,
+      launchPolicy: target.runtime.launchPolicy,
+    },
   })
 }
 

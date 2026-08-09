@@ -55,6 +55,42 @@ const MANAGED_BROWSER_CATALOG = Object.freeze({
     archiveFormat: 'tar.gz',
     executableRelativePath: 'Chromium.app/Contents/MacOS/Chromium',
   },
+  'cloak:darwin-x64': {
+    family: 'cloak',
+    browserId: 'cloak',
+    displayName: 'CloakBrowser',
+    platform: 'darwin-x64',
+    artifactVersion: '145.0.7632.109.2',
+    browserVersion: '145.0.7632.109',
+    downloadUrl: 'https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v145.0.7632.109.2/cloakbrowser-darwin-x64.tar.gz',
+    sha256: 'a0a061b1945db55b3bbe95986a82b67803311c0fedabb3946e7ab0172273daac',
+    archiveFormat: 'tar.gz',
+    executableRelativePath: 'Chromium.app/Contents/MacOS/Chromium',
+  },
+  'cloak:linux-arm64': {
+    family: 'cloak',
+    browserId: 'cloak',
+    displayName: 'CloakBrowser',
+    platform: 'linux-arm64',
+    artifactVersion: '146.0.7680.177.3',
+    browserVersion: '146.0.7680.177',
+    downloadUrl: 'https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v146.0.7680.177.3/cloakbrowser-linux-arm64.tar.gz',
+    sha256: '8b71ce53b4fd131327331a31fba3835d71882d19bfaabde78dd0f5390bd16f45',
+    archiveFormat: 'tar.gz',
+    executableRelativePath: 'chrome',
+  },
+  'cloak:linux-x64': {
+    family: 'cloak',
+    browserId: 'cloak',
+    displayName: 'CloakBrowser',
+    platform: 'linux-x64',
+    artifactVersion: '146.0.7680.177.5',
+    browserVersion: '146.0.7680.177',
+    downloadUrl: 'https://github.com/CloakHQ/CloakBrowser/releases/download/chromium-v146.0.7680.177.5/cloakbrowser-linux-x64.tar.gz',
+    sha256: '4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e',
+    archiveFormat: 'tar.gz',
+    executableRelativePath: 'chrome',
+  },
   'cloak:win32-x64': {
     family: 'cloak',
     browserId: 'cloak',
@@ -80,8 +116,14 @@ export function managedBrowserCatalogEntry(
 
 export function currentBrowserRuntimePlatform(): BrowserRuntimePlatform {
   const key = `${process.platform}-${process.arch}`
-  if (key === 'darwin-arm64' || key === 'win32-x64') return key
-  throw new Error(`Unsupported Tokenless browser platform: ${key}. Supported platforms are darwin-arm64 and win32-x64.`)
+  if (
+    key === 'darwin-arm64' ||
+    key === 'darwin-x64' ||
+    key === 'linux-arm64' ||
+    key === 'linux-x64' ||
+    key === 'win32-x64'
+  ) return key
+  throw new Error(`Unsupported Tokenless browser platform: ${key}. Supported platforms are darwin-arm64, darwin-x64, linux-arm64, linux-x64, and win32-x64.`)
 }
 
 export function allManagedBrowserCatalogEntries(): readonly ManagedBrowserCatalogEntry[] {

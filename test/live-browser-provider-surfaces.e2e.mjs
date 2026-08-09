@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright-core'
 
-import { BrowserRuntimeManager } from '../packages/cli/dist/src/browser-runtime/manager.js'
 import { listProviderDescriptors } from '../packages/cli/dist/src/providers/registry.js'
+import {
+  createLiveProviderTestContextManager,
+  resolveLiveProviderTestTarget,
+  validateLiveProviderTestTarget,
+} from './helpers/live-provider-test-profile.mjs'
 
 if (process.env.TOKENLESS_LIVE_BROWSER_SURFACE_GATE !== '1') {
   throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_GATE=1 to run the real browser provider-surface acceptance gate.')
@@ -20,101 +22,48 @@ if (!(
 }
 
 const selection = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION
-if (!['auto', 'chrome', 'managed-chromium', 'cloak'].includes(selection)) {
-  throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION to auto, chrome, managed-chromium, or cloak.')
+if (!['chrome', 'managed-chromium', 'cloak'].includes(selection)) {
+  throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_SELECTION to chrome, managed-chromium, or cloak.')
 }
 const visibility = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY
 if (!['headed', 'headless'].includes(visibility)) {
   throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY to headed or headless.')
 }
-const fallbackSelection = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_FALLBACK_SELECTION?.trim() || null
-if (fallbackSelection !== null && !['auto', 'chrome', 'managed-chromium', 'cloak'].includes(fallbackSelection)) {
-  throw new Error('TOKENLESS_LIVE_BROWSER_SURFACE_FALLBACK_SELECTION must be auto, chrome, managed-chromium, or cloak.')
-}
-if (fallbackSelection === selection) {
-  throw new Error('Browser surface fallback selection must differ from the primary selection.')
-}
+const target = await validateLiveProviderTestTarget(resolveLiveProviderTestTarget({ browser: selection }))
 
-test(`${selection} ${visibility} reaches every provider surface and Google Search${fallbackSelection ? ` with ${fallbackSelection} fallback` : ' without a detected anti-bot challenge'}`, { timeout: 20 * 60_000 }, async () => {
-  const temporaryRoot = await fs.realpath(os.tmpdir())
-  const suppliedHome = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_HOME
-  const homeDir = suppliedHome
-    ? path.resolve(suppliedHome)
-    : await fs.mkdtemp(path.join(temporaryRoot, 'tokenless-browser-surface-home-'))
-  const ownsHome = !suppliedHome
+test(`${selection} ${visibility} reaches every provider surface and Google Search without a detected anti-bot challenge`, { timeout: 20 * 60_000 }, async () => {
+  const manager = createLiveProviderTestContextManager(target)
   const evidence = {
-    schema: 'tokenless.live-browser-surface-fallback-result.v2',
+    schema: 'tokenless.live-browser-surface-result.v3',
     observedAt: new Date().toISOString(),
     platform: `${process.platform}-${process.arch}`,
     visibility,
+    profileSlug: target.profile.slug,
     primary: null,
     primaryProviderFailures: [],
     primaryControlFailures: [],
-    fallback: null,
-    fallbackProviderFailures: [],
-    fallbackControlFailures: [],
   }
   try {
-    evidence.primary = await runSurfaceAttempt({
-      selection,
-      visibility,
-      homeDir,
-      temporaryRoot,
-    })
+    evidence.primary = await runSurfaceAttempt({ manager, target, visibility })
     evidence.primaryProviderFailures = providerSurfaceFailures(evidence.primary)
     evidence.primaryControlFailures = googleControlFailures(evidence.primary)
-    if (evidence.primaryProviderFailures.length > 0 && fallbackSelection !== null) {
-      evidence.fallback = await runSurfaceAttempt({
-        selection: fallbackSelection,
-        visibility,
-        homeDir,
-        temporaryRoot,
-      })
-      evidence.fallbackProviderFailures = providerSurfaceFailures(evidence.fallback)
-      evidence.fallbackControlFailures = googleControlFailures(evidence.fallback)
-    }
     const reportPath = await writeEvidence(evidence)
     console.log(`Browser surface evidence: ${reportPath}`)
     console.log(JSON.stringify(evidence, null, 2))
-    if (fallbackSelection === null) {
-      assert.deepEqual([
-        ...evidence.primaryProviderFailures,
-        ...evidence.primaryControlFailures,
-      ], [])
-      return
-    }
-    assert.ok(
-      evidence.primaryProviderFailures.length > 0,
-      'Explicit browser fallback gate did not observe a primary provider failure.',
-    )
-    assert.ok(evidence.fallback, 'Fallback browser attempt was not recorded.')
-    assert.deepEqual(evidence.fallbackProviderFailures, [])
+    assert.deepEqual([
+      ...evidence.primaryProviderFailures,
+      ...evidence.primaryControlFailures,
+    ], [])
   } finally {
-    if (ownsHome) await fs.rm(homeDir, { recursive: true, force: true })
+    await manager.detach()
   }
 })
 
-async function runSurfaceAttempt({ selection, visibility, homeDir, temporaryRoot }) {
-  const profileDir = await fs.mkdtemp(path.join(temporaryRoot, `tokenless-browser-surface-${selection}-profile-`))
-  const runtime = await new BrowserRuntimeManager({ homeDir }).ensure(selection, { allowDownload: true })
+async function runSurfaceAttempt({ manager, target, visibility }) {
+  const runtime = target.runtime
   if (runtime.managed) assert.equal(runtime.actualVersion, runtime.expectedVersion)
-  const context = await chromium.launchPersistentContext(profileDir, {
-    executablePath: runtime.executablePath,
-    headless: visibility === 'headless',
-    chromiumSandbox: true,
-    args: [
-      '--password-store=basic',
-      '--use-mock-keychain',
-      '--disable-sync',
-      '--no-first-run',
-      '--no-default-browser-check',
-    ],
-    ...(runtime.launchPolicy === 'cloak'
-      ? { ignoreDefaultArgs: ['--enable-automation', '--enable-unsafe-swiftshader'] }
-      : {}),
-  })
   const attempt = {
-    selection,
+    selection: target.browserSelection,
     runtimeId: runtime.runtimeId,
     family: runtime.family,
     actualVersion: runtime.actualVersion,
@@ -122,8 +71,8 @@ async function runSurfaceAttempt({ selection, visibility, homeDir, temporaryRoot
     providers: [],
     google: null,
   }
-  try {
-    const page = context.pages()[0] ?? await context.newPage()
+  return await manager.runWithProfile(target.profile, visibility, async (context) => {
+    const page = await context.acquirePage({ key: 'tokenless:test:browser-surfaces', policy: 'preserve' })
     for (const descriptor of listProviderDescriptors().filter((candidate) => candidate.stage !== 'disabled')) {
       const result = await visitSurface(page, descriptor.navigation.homeUrl)
       attempt.providers.push({
@@ -135,18 +84,14 @@ async function runSurfaceAttempt({ selection, visibility, homeDir, temporaryRoot
     googleTarget.searchParams.set('q', 'OpenAI API documentation')
     attempt.google = await visitGoogle(page, googleTarget.toString())
     return attempt
-  } finally {
-    await context.close().catch(() => undefined)
-    await fs.rm(profileDir, { recursive: true, force: true })
-  }
+  })
 }
 
 async function writeEvidence(evidence) {
   const reportDirectory = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'test-results', 'live-browser-surfaces')
   await fs.mkdir(reportDirectory, { recursive: true, mode: 0o700 })
   const timestamp = evidence.observedAt.replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
-  const suffix = fallbackSelection === null ? '' : `-fallback-${fallbackSelection}`
-  const reportPath = path.join(reportDirectory, `${timestamp}-${selection}-${visibility}${suffix}.json`)
+  const reportPath = path.join(reportDirectory, `${timestamp}-${selection}-${visibility}.json`)
   await fs.writeFile(reportPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 })
   return reportPath
 }

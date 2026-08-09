@@ -18,7 +18,12 @@ export type BrowserSelection = (typeof BROWSER_SELECTIONS)[number]
 export type ManagedBrowserFamily = 'managed-chromium' | 'cloak'
 export type BrowserRuntimeFamily = 'system' | ManagedBrowserFamily | 'test'
 export type BrowserLaunchPolicy = 'standard' | 'cloak' | 'test-profile'
-export type BrowserRuntimePlatform = 'darwin-arm64' | 'win32-x64'
+export type BrowserRuntimePlatform =
+  | 'darwin-arm64'
+  | 'darwin-x64'
+  | 'linux-arm64'
+  | 'linux-x64'
+  | 'win32-x64'
 
 export type BrowserRuntimeBinding = {
   runtimeId: string

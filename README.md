@@ -68,6 +68,8 @@ Setup creates a logical Tokenless profile, connects to your running headed Chrom
 
 Native mode is headed-only for now. Stopping or restarting the Tokenless daemon disconnects automation but does not close Chrome.
 
+Explicit Anti-Detect setup can instead install a checksum-pinned CloakBrowser from its official GitHub release on macOS arm64/x64, Linux arm64/x64, or Windows x64. These catalog paths do not imply real-provider acceptance on every host; Tokenless does not bundle or redistribute CloakBrowser.
+
 ## What agents get
 
 - Prompts, visible responses, and citations through real provider websites.

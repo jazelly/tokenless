@@ -10,6 +10,7 @@ import { chromium } from 'playwright-core'
 import { tokenlessError } from '../playwright/errors.js'
 import { withPrivateSqliteWriterLock } from '../playwright/profiles/sqlite-lock.js'
 import {
+  allManagedBrowserCatalogEntries,
   currentBrowserRuntimePlatform,
   managedBrowserCatalogEntry,
   type ManagedBrowserCatalogEntry,
@@ -85,9 +86,11 @@ export class BrowserRuntimeManager {
       await this.resolveSystemBrowser(browserId, platform).catch(() => null)
     )))).filter((candidate): candidate is ResolvedBrowserRuntime => candidate !== null)
 
-    const managed = (await Promise.all((['managed-chromium', 'cloak'] as const).map(async (family) => (
-      await this.resolveCachedManagedRuntime(managedBrowserCatalogEntry(family, platform)).catch(() => null)
-    )))).filter((candidate): candidate is ResolvedBrowserRuntime => candidate !== null)
+    const managed = (await Promise.all(allManagedBrowserCatalogEntries()
+      .filter((entry) => entry.platform === platform)
+      .map(async (entry) => (
+        await this.resolveCachedManagedRuntime(entry).catch(() => null)
+      )))).filter((candidate): candidate is ResolvedBrowserRuntime => candidate !== null)
 
     return [...system, ...managed].map(runtimeCandidate)
   }
@@ -181,7 +184,15 @@ export class BrowserRuntimeManager {
     platform: BrowserRuntimePlatform,
     options: EnsureBrowserRuntimeOptions,
   ) {
-    const entry = managedBrowserCatalogEntry(family, platform)
+    let entry: ManagedBrowserCatalogEntry
+    try {
+      entry = managedBrowserCatalogEntry(family, platform)
+    } catch {
+      throw tokenlessError(
+        'browser_runtime_catalog_entry_missing',
+        `Tokenless has no managed browser catalog entry for ${family} on ${platform}.`,
+      )
+    }
     const cached = options.repair === true
       ? null
       : await this.resolveCachedManagedRuntime(entry).catch((error) => {
@@ -555,7 +566,7 @@ async function systemBrowserExecutable(
   browserId: SystemBrowserId,
   platform: BrowserRuntimePlatform,
 ) {
-  if (platform === 'darwin-arm64') {
+  if (platform === 'darwin-arm64' || platform === 'darwin-x64') {
     const applicationNames: Record<SystemBrowserId, string> = {
       chrome: 'Google Chrome.app',
       edge: 'Microsoft Edge.app',
