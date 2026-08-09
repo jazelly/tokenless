@@ -1,5 +1,6 @@
 import { VISIBLE_ACTIONS, validateProviderActionPreparation } from '../contracts.js'
 import { countVisibleLocators, latestLocator } from '../dom-locators.js'
+import { tokenlessError } from '../../playwright/errors.js'
 import { createHash } from 'node:crypto'
 import type { Page } from 'playwright-core'
 import type { ProviderDomDefinition } from '../provider-definition.js'
@@ -94,12 +95,11 @@ export async function readDomResponse(
   const answer = await latestLocator(page, provider.answerSelectors)
   const observations = responseDecisionObservations(page, provider)
   if (!answer) {
-    return {
-      text: '',
-      citations: [],
-      visibleProof: 'no-visible-answer',
-      decisionDiagnostics: { selected: null, ...await observations },
-    }
+    throw tokenlessError(
+      'response_not_visible',
+      'No provider answer is visibly available to read.',
+      { retryable: true, details: { visibleProof: 'no-visible-answer', ...await observations } },
+    )
   }
   const response = await answer.evaluate((element) => {
     const text = element instanceof HTMLElement ? element.innerText : ''

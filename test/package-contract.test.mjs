@@ -107,19 +107,6 @@ test('persistent config canonicalizes browser settings to headed native Chrome',
     assert.equal(migrated.browser, 'chrome')
     assert.equal(migrated.browserExecutablePath, null)
     assert.equal(migrated.browserVisibility, 'headed')
-    for (const browserConnectionMode of ['playwright', 'cdp']) {
-      fs.writeFileSync(
-        path.join(homeDir, 'config.json'),
-        `${JSON.stringify({ ...savedConfig, browserConnectionMode })}\n`,
-        { mode: 0o600 },
-      )
-      const connectionMigrated = await runtime.readTokenlessConfig(homeDir)
-      assert.equal(connectionMigrated.browser, 'chrome')
-      assert.equal(Object.hasOwn(
-        JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8')),
-        'browserConnectionMode',
-      ), false)
-    }
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -212,7 +199,6 @@ test('persistent config migrates every registered legacy profile into config.pro
         },
       },
       browser: 'cloak',
-      browserConnectionMode: 'playwright',
       browserVisibility: 'auto',
     }, null, 2)}\n`, { mode: 0o600 })
     const migrated = await runtime.readTokenlessConfig(homeDir)
@@ -225,7 +211,6 @@ test('persistent config migrates every registered legacy profile into config.pro
     assert.equal(Object.hasOwn(persisted, 'profilePreferences'), false)
     assert.equal(Object.hasOwn(persisted, 'providerWhitelist'), false)
     assert.equal(Object.hasOwn(persisted, 'preferredProviders'), false)
-    assert.equal(Object.hasOwn(persisted, 'browserConnectionMode'), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }

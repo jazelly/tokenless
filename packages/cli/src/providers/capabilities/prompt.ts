@@ -144,9 +144,11 @@ async function submissionTransitionIsVisible(
   clickedButton: Locator,
   baseline: { answerCount: number, url: string },
 ) {
-  if (page.url() !== baseline.url) return true
-  if (await countVisibleLocators(page, provider.answerSelectors) > baseline.answerCount) return true
-  if (await countVisibleLocators(page, provider.busySelectors) > 0) return true
+  const conversationChanged = page.url() !== baseline.url
+  const answerStarted = await countVisibleLocators(page, provider.answerSelectors) > baseline.answerCount
+  const providerBusy = await countVisibleLocators(page, provider.busySelectors) > 0
+  if (conversationChanged || answerStarted || providerBusy) return true
+  if (provider.id === 'qwen') return false
   if (!await clickedButton.isVisible({ timeout: 50 }).catch(() => false)) return true
   if (!await clickedButton.isEnabled({ timeout: 50 }).catch(() => false)) return true
   const composer = await firstVisibleLocator(page, provider.composerSelectors, 50)

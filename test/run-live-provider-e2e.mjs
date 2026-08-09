@@ -299,6 +299,9 @@ function parseArguments(arguments_) {
   if ((parsed.fixture || parsed.suite) && command !== 'web-ui') {
     failUsage('--fixture and --suite are valid only for web-ui.')
   }
+  if (command !== 'prepare' && (parsed.browser || parsed.home || parsed.profile)) {
+    failUsage('--browser, --home, and --profile are valid only for prepare; tests use TOKENLESS_TEST_CONFIG.')
+  }
   if (parsed.noOpen && command !== 'prepare') failUsage('--no-open is valid only for prepare.')
   return parsed
 }

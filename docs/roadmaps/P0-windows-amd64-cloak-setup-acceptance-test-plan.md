@@ -1,4 +1,4 @@
-# Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan
+# Windows AMD64 Browser Runtime and Surface Acceptance Test Plan
 
 Status: ready for execution | Priority: P0 | Last reviewed: 2026-08-06
 
@@ -10,12 +10,11 @@ Tracks: [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-sel
 
 Prove the complete Windows AMD x86-64 browser path using the built Tokenless CLI, packaged daemon, real browser executables, real filesystems, real browser processes, and the real provider network.
 
-Acceptance covers four distinct claims:
+Acceptance covers three distinct claims:
 
-1. managed Chrome for Testing and Cloak install, verify, bind, launch, inspect, and clean up correctly;
-2. Cloak reaches the public provider surface matrix in both headed and headless modes;
-3. system Chrome and managed Chrome for Testing expose real challenge or HTTP-failure behavior without hiding, skipping, or retrying it; and
-4. when a real provider failure occurs in Chrome, an isolated Cloak attempt clears every failed provider surface.
+1. managed Chrome for Testing and Cloak artifacts install, verify, and bind correctly without launching a second test profile;
+2. the config's default persistent profile reconnects through CDP without replacing its browser; and
+3. that profile reaches the public provider surface matrix without hiding, skipping, or retrying failures.
 
 This plan does not automate browser login, claim guaranteed CAPTCHA bypass, or treat a public landing-page check as authenticated provider capability proof. Authenticated prompt, response, upload, citation, continuation, and Project gates remain separate manual release prerequisites.
 
@@ -46,18 +45,17 @@ Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsBuildNumb
 
 ## Safety and Isolation Rules
 
-- Use a blank, non-authenticated source browser profile for setup/importability checks. Never downgrade a real signed-in profile.
-- Use a unique, initially absent Tokenless home for every setup case and a fresh disposable browser profile for every surface attempt.
-- A primary Chrome attempt and its Cloak fallback must never share a user-data directory.
+- Load `TOKENLESS_TEST_CONFIG` and use only its registry default profile for every browser test. The developer prepares and authenticates that persistent profile before the run.
+- Setup/importability cases that require a different profile are metadata-only; they must not launch a browser.
 - Never inspect, export, copy, log, or compare cookies, tokens, passwords, browser storage, account details, or source profile contents.
 - Record only safe browser identity/version metadata, result codes, managed-runtime metadata, requested surface URLs, final URLs, HTTP outcomes, detected challenge categories, and process outcomes.
 - Never use fixtures, route interception, simulated responses, synthetic fetches, test accounts, automated login, or automated challenge interaction.
 - An invoked suite runs every required case exactly once. It must not skip a provider, retry internally, or rerun until a desired challenge appears.
-- Keep Chromium sandboxing enabled and prove that every Tokenless-owned browser and daemon process is cleaned up.
+- Keep Chromium sandboxing enabled. Teardown closes only test-owned pages and detaches CDP; the profile and resident browser remain intact.
 
 ## Setup and Source-Version Matrix
 
-Each case uses a blank source browser profile and a fresh Tokenless home. The 145 and 150 cases are deliberate negative alignment tests against Windows Cloak Chromium `146.0.7680.177`.
+These are metadata and artifact-verification cases only. The 145 and 150 cases are deliberate negative alignment checks against Windows Cloak Chromium `146.0.7680.177`; they must not launch, delete, replace, or mutate a browser profile.
 
 | Case | Source browser | Product version | Expected setup classification |
 | --- | --- | --- | --- |
@@ -82,7 +80,7 @@ node $TokenlessCli setup --home $CaseHome --fresh
 node $TokenlessCli doctor --home $CaseHome --json
 ```
 
-Change `$CaseHome` for every case and never reuse it. Release acceptance must exercise the applicable standard root; a custom root is diagnostic only.
+Keep these setup checks separate from browser automation. Release browser acceptance always uses the profile selected by `TOKENLESS_TEST_CONFIG`.
 
 Every setup case must prove:
 
@@ -93,68 +91,37 @@ Every setup case must prove:
 - no source-profile mutation or accidental opening with another runtime;
 - a cache-miss download, verified-cache reuse with `--no-browser-download`, and missing-cache failure with `browser_runtime_download_required`;
 - fail-closed behavior for checksum, archive-path, executable-version, profile-runtime, and downgrade mismatches; and
-- enabled sandboxing and complete process cleanup.
+- enabled sandboxing without launching or altering a profile.
 
-## Runtime and Public-Surface Matrix
+## Runtime and Public-Surface Gate
 
-Run every row on the AMD host. “Strict” means the browser itself must clear all enabled provider surfaces. “Fallback” means the primary failure is preserved as evidence and a separate Cloak profile must clear every provider that failed in the primary attempt.
+Run one row on the AMD host: the registry default profile selected by `TOKENLESS_TEST_CONFIG`, using its bound executable and configured visibility. Runtime, profile, and visibility are observations, not test parameters.
 
-| Browser selection | Locked/recorded version | Headed | Headless | Acceptance role |
-| --- | --- | --- | --- | --- |
-| `cloak` | Cloak `146.0.7680.177.5` / Chromium `146.0.7680.177` | Required | Required | Strict public-surface gate |
-| `chrome` | Installed system Chrome, exact version recorded | Required | Required | Primary challenge observation plus explicit Cloak fallback |
-| `managed-chromium` | Chrome for Testing `146.0.7680.165` | Required | Required | Primary challenge observation plus explicit Cloak fallback |
+| Source | Requirement |
+| --- | --- |
+| Config | Repository `.env` → `TOKENLESS_TEST_CONFIG` |
+| Profile | Adjacent registry's default ready profile only |
+| Browser | Existing profile runtime binding |
+| Visibility | Existing profile/config value through `auto` |
+| Connection | Production `connectOverCDP` path |
 
 The surface matrix must visit every provider enabled by `test/live-provider-capability-matrix.json` plus normal Google Search. A provider attempt fails on navigation failure, HTTP status `400` or greater, or a detected provider challenge such as Cloudflare, reCAPTCHA, hCaptcha, or a verification/interstitial page.
 
 Google is a separate anti-bot control. Record Google `/sorry` or another challenge, but do not use it alone to prove or fail provider fallback because an IP-associated Google challenge can persist across browser changes.
 
-### Strict Cloak gates
-
-Both Cloak modes must:
-
-- resolve and launch the exact catalog-pinned Windows executable;
-- visit every enabled provider and Google without skip or internal retry;
-- finish with zero provider failures and zero Google control failures;
-- write evidence before assertions are evaluated; and
-- close the browser and remove the disposable profile.
-
-### Chrome fallback gates
-
-For both system Chrome and managed Chrome for Testing, in both visibility modes:
-
-1. visit the complete matrix and retain every primary outcome;
-2. require at least one real provider failure to exercise fallback acceptance;
-3. start Cloak only after the primary attempt completes;
-4. use a new disposable Cloak profile rather than the primary user-data directory;
-5. revisit every provider that failed in the primary attempt; and
-6. fail unless Cloak clears every one of those provider failures.
-
-If a Chrome row happens to have no provider failure, record it as a successful Chrome observation but leave that row's fallback criterion unproven. Do not manufacture a challenge or rerun until one appears. A release needs at least one naturally observed, passing system-Chrome-to-Cloak fallback row and one managed-Chrome-to-Cloak fallback row on the AMD host.
+The gate visits every enabled provider and Google without skip or internal retry, writes evidence before assertions, then detaches CDP. It must not launch an alternate browser, switch visibility, close the browser/context, crash a process, create a disposable profile, or delete any profile state.
 
 ## Commands
 
-Run the core runtime gate first, then each surface row. These commands use the built cross-platform Node launchers and set their gate variables inside Node rather than relying on POSIX shell syntax.
+The one surface command reads the developer's configured profile; it has no browser or visibility matrix flags.
 
 ```powershell
-npm run test:e2e:browser-runtime
-
-npm run test:e2e:cloak-surfaces
-npm run test:e2e:cloak-surfaces:headless
-
-npm run test:e2e:system-surfaces
-node test/run-live-browser-surface-matrix.mjs --selection chrome --visibility headed --fallback cloak
-npm run test:e2e:chrome-surfaces:headless
-
-node test/run-live-browser-surface-matrix.mjs --selection managed-chromium --visibility headed --fallback cloak
-node test/run-live-browser-surface-matrix.mjs --selection managed-chromium --visibility headless --fallback cloak
+npm run test:e2e:browser-surfaces
 ```
-
-`test:e2e:system-surfaces` is the strict observational system-Chrome row. It may fail when Chrome encounters a real challenge; that failure is evidence, not a reason to weaken the assertion. The following explicit fallback command is the acceptance path for that condition.
 
 ## Authenticated Provider Matrix
 
-After explicit user login in a setup-managed profile, run the existing manual real-provider capability gates against system Chrome, managed Chrome for Testing, and Cloak in both headed and headless modes where the provider supports the mode. The selected profile must be explicit; Tokenless must never create an account, automate login, silently switch profiles, or weaken Windows credential protection.
+After explicit user login in the configured default profile, run the existing manual real-provider capability gates against that same resident browser. Tokenless must never create an account, automate login, silently switch profiles or visibility, or weaken Windows credential protection.
 
 For every enabled provider, prove the applicable semantic operations through the built CLI and packaged daemon: authentication status, model/effort selection, prompt submission, durable response, upload, citation, continuation, and native Project create/reuse/instructions/chat. An unmet prerequisite fails clearly. No fixture or public-surface result can close this section.
 
@@ -164,15 +131,14 @@ Keep the machine-local JSON emitted under `test-results/live-browser-surfaces/` 
 
 - Windows edition/build, processor manufacturer/model, `process.platform`, and `process.arch`;
 - Tokenless commit SHA and exact Node/npm versions;
-- browser selection, requested visibility, resolved executable source, artifact/product version, and reported browser version;
-- unique primary and fallback run IDs and confirmation that their disposable profiles differed;
+- selected default profile slug, existing visibility, resolved executable source, artifact/product version, and reported browser version;
 - every provider's requested URL, final origin, HTTP outcome, and challenge category;
 - Google control outcome separately from provider fallback;
-- fallback trigger, failed-provider set, fallback result for each member, and final assertion result;
-- sandbox, browser/daemon cleanup, and temporary-profile cleanup outcomes; and
+- final assertion result;
+- sandbox, CDP detach, resident-browser preservation, and profile-preservation outcomes; and
 - pass, fail, or blocked with a concise reason and no credential or browser-storage material.
 
-The current evidence schema is `tokenless.live-browser-surface-fallback-result.v2`. Evidence must be written before the gate throws so a genuine Chrome failure remains inspectable.
+The current evidence schema is `tokenless.live-browser-surface-result.v3`. Evidence must be written before the gate throws so a genuine provider failure remains inspectable.
 
 ## Execution Checklist
 
