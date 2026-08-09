@@ -2,7 +2,7 @@
 
 Status: proposed | Priority: P0
 
-Depends on: completed [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md), existing managed Playwright, provider action protocol, fixture provenance, and profile lifecycle
+Depends on: completed [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md), existing managed Playwright, provider action protocol, real-provider E2E, and profile lifecycle
 
 ## Outcome
 
@@ -17,18 +17,18 @@ As of 2026-08-09:
 - a fresh real managed guest profile completed prompt input, visible submission, and correlated response reading through the built CLI and TypeScript daemon;
 - the canonical Qwen Studio entry is `https://chat.qwen.ai/`; a real built-CLI run navigated the same visible page to the shared `/c/guest` route and returned an exact correlated marker;
 - navigation or reopen of the shared guest route does not restore the prior visible response, so cross-process continuation remains unavailable;
-- Qwen provenance-bound DOM captures cover the earlier regional surface and the current Qwen Studio completed-response state; and
+- Qwen's real-site live journeys cover the current Qwen Studio composer, mode, and completed-response states; and
 - Qwen's provider-specific mode menu is exposed as `qwen.mode`, including runtime enabled/disabled discovery and exact Deep Research Normal/Advanced selection;
 - the visible Auto/Thinking/Fast selector is exposed through the provider-neutral `effort.choice` capability; and
 - the versioned canonical task-capability catalog and evidence-backed provider routing matrix are implemented in the CLI, with `conversation.chat`, `file.upload`, and `workspace.native` as the first routeable outcomes; and
 - unproven Qwen model, file-upload, native workspace, and generated-media lifecycles remain `unknown` or `unavailable` rather than being inferred from visible controls.
-- DeepSeek is registered as an `experimental`, sign-in-required provider with canonical navigation, signed-out session detection, visible chat contracts, capture tooling, and an explicit live acceptance classification;
+- DeepSeek is registered as an `experimental`, sign-in-required provider with canonical navigation, signed-out session detection, visible chat contracts, and an explicit live acceptance classification;
 - a real signed-out browser observation confirmed that `https://chat.deepseek.com/` redirects to `/sign_in` and exposes email/password, Google, and Apple login choices; and
-- a real signed-in Chrome session captured provenance-bound Instant, Expert, and Vision fixtures and proved that DeepThink is present in all three modes, Search only in Instant, file input in Instant and Vision, and no file input in Expert;
+- a real signed-in Chrome session proved that DeepThink is present in all three modes, Search only in Instant, file input in Instant and Vision, and no file input in Expert;
 - exact `deepseek.mode`, `deepseek.deepthink`, and `deepseek.search` inspect/select actions are implemented, including restoration-oriented live acceptance coverage and mode-aware capability results;
-- the authenticated Chrome session completed exact-marker baseline and continuation turns, a DeepThink response with a distinct reasoning container and correlated final answer, and a Search response with visible public source links; reduced response fixtures retain those selector boundaries without private conversation identifiers;
+- the authenticated Chrome session completed exact-marker baseline and continuation turns, a DeepThink response with a distinct reasoning container and correlated final answer, and a Search response with visible public source links;
 - the observed file input explicitly accepts representative text, document, and image formats in Instant and Vision, while the declared real-provider gate keeps visible file/image acceptance separate from control presence;
-- the shared blocker observer and DeepSeek provider selectors detect a visible hCaptcha, surface `visible_hcaptcha`, and require user support without attempting challenge interaction; the signed-out login/hCaptcha fixture remains an explicit evidence gap because the temporary signed-out session was closed before a redacted capture and the authenticated Chrome profile must not be logged out to recreate it;
+- the shared blocker observer and DeepSeek provider selectors detect a visible hCaptcha, surface `visible_hcaptcha`, and require user support without attempting challenge interaction; the authenticated Chrome profile must not be logged out to recreate a signed-out state;
 - generic model selection is no longer advertised for DeepSeek, and the submit selector excludes DeepSeek's visible disabled class; and
 - DeepSeek remains non-routeable until a selected signed-in managed profile independently closes the declared built-CLI and packaged-daemon baseline, continuation, Search/DeepThink, and file/image gates.
 - Perplexity is registered as an experimental guest provider, with readiness, prompt drafting, real submission, completed response, visible normalized citations, conversation mapping, and durable state closed through the built CLI, packaged daemon, runtime-bound Cloak profile, and real provider network;
@@ -36,7 +36,7 @@ As of 2026-08-09:
 - Doubao is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak non-submission gate closes readiness, prompt drafting, visible file acceptance, exact Fast/Expert/Work Task mode selection, nine coding-relevant Web skill selections, unavailable-state reporting, and restoration. Text-file `file.upload` is experimental and routeable. The same anti-detect configuration completed two direct correlated marker responses, while the built-product chat mutation release gate remains blocked by a visible provider verification iframe and fails closed as `visible_provider_blocker`; and
 - Kimi is registered as an experimental sign-in-required provider. Its built-CLI managed-Cloak gates close readiness, prompt drafting, Instant/K3/K3 Swarm model selection, Standard/High effort selection, text-file acceptance, attachment-grounded output, exact Web search selection with visible citations, exact Plugin/Skill control selection, second-process same-conversation continuation, restoration, and durable mapping. `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` are experimental and routeable; Plugin/Skill submitted outcomes are capacity-blocked, while Projects, research, agent, and artifact lifecycles remain gate-pending and unadvertised; and
 - Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
-- Dola is registered as an experimental signed-in provider from the user-selected `web-ai` managed profile. The visible session confirmed the chat composer, file picker, Fast/Pro menu, numeric conversation URLs, and image, writing, video, translation, and homework entry points. The adapter, sanitized-capture probes, and readiness/draft/model/file/two-turn release gates are implemented; no route is advertised until the built-product gates close.
+- Dola is registered as an experimental signed-in provider from the user-selected `web-ai` managed profile. The visible session confirmed the chat composer, file picker, Fast/Pro menu, numeric conversation URLs, and image, writing, video, translation, and homework entry points. The adapter and readiness/draft/model/file/two-turn real-provider release gates are implemented; no route is advertised until the built-product gates close.
 
 | Qwen capability | Current state | Evidence boundary |
 | --- | --- | --- |
@@ -55,7 +55,7 @@ As of 2026-08-09:
 | DeepSeek capability | Current state | Evidence boundary |
 | --- | --- | --- |
 | Signed-in composer | Live observed, implementation available | User-controlled authenticated Chrome session; managed-profile E2E still required |
-| Mode selection | Implemented for Instant, Expert, and Vision | Real visible radio controls plus provenance-bound reduced fixtures |
+| Mode selection | Implemented for Instant, Expert, and Vision | Real visible radio controls on the provider website; managed E2E closure remains required |
 | DeepThink | Implemented as a provider-specific toggle | Real visible toggle in all three modes and correlated reasoning/final response observed; canonical `reasoning.extended` remains unrouteable pending managed E2E closure |
 | Search | Implemented as a provider-specific toggle in Instant | Grounded response with visible public links observed; canonical `search.web` and citations remain unrouteable pending managed E2E closure |
 | File and image input | Visible in Instant and Vision; absent in Expert | Real input accept list includes text, document, and image formats; visible selection and semantic response gates remain pending |
@@ -169,7 +169,7 @@ File upload, native Project creation, generated-media lifecycles, deep research 
 
 - Record canonical origins, route classes, account states, model or mode surfaces, composer behavior, result structure, attachment controls, and workspace-like concepts.
 - Review product and automation constraints before implementation.
-- Capture only sanitized, provenance-bound DOM evidence from a dedicated visible session.
+- Inspect candidate states only on the real provider website through the configured persistent profile; do not store DOM captures or replicas.
 - Publish a scorecard and select one provider for the first implementation slice.
 
 Exit: the candidate has an approved origin model, an evidence plan, and no unresolved boundary that would require credentials, private APIs, or invented fixtures.
@@ -177,7 +177,7 @@ Exit: the candidate has an approved origin model, an evidence plan, and no unres
 ### Phase 1: Shared Registry Extraction — completed 2026-07-27
 
 - Follow the object model, capability composition, registry seam, TypeScript daemon negotiation, and phased migration defined in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md).
-- Replace duplicated provider allowlists with one typed provider registry consumed by config, runtime validation, profile handling, navigation, capture tooling, and tests.
+- Replace duplicated provider allowlists with one typed provider registry consumed by config, runtime validation, profile handling, navigation, and tests.
 - Represent every provider as a concrete `BaseProvider` subclass.
 - Keep provider-specific selectors and behavior inside provider-owned subclasses and optional capability implementations.
 - Make unsupported capabilities explicit data rather than scattered conditionals.
@@ -216,9 +216,9 @@ Exit: support is an ongoing evidence process rather than a one-time adapter merg
 
 - Provider identity is normalized through a single registry.
 - Every supported origin, navigation target, and returned conversation URL is validated.
-- Each advertised action has a captured visible success postcondition from a real provider session.
+- Each advertised action has a visible success postcondition proven by a real-provider built-product journey.
 - Unsupported or ambiguous controls fail closed with actionable machine-readable reasons.
-- No test introduces fake provider pages, synthetic network responses, or invented DOM fixtures.
+- No test introduces provider DOM fixtures, local provider replicas, route interception, or simulated provider responses.
 - Documentation distinguishes provider support from model availability and from advanced capability support.
 - Existing providers continue to pass the same baseline contract after each expansion.
 
@@ -226,7 +226,7 @@ Exit: support is an ongoing evidence process rather than a one-time adapter merg
 
 | Risk | Response |
 | --- | --- |
-| Fast UI and product drift | Provenance-bound fixtures, live smoke coverage, isolated adapters, and rapid capability disablement |
+| Fast UI and product drift | Required live cases, bounded diagnostics, isolated adapters, and rapid capability disablement |
 | Region, account, or plan variation | Account-state capability matrix and `unknown` when evidence is incomplete |
 | Model names change faster than adapters | Discover visible labels at runtime and avoid hard-coding marketing names as capability guarantees |
 | Candidate lacks a safe automation surface | Park the candidate and preserve the scorecard; do not bypass the visible boundary |

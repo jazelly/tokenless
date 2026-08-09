@@ -29,6 +29,14 @@ export async function createLiveBrowserInspectionSession(options) {
     TOKENLESS_E2E_NONCE: nonce,
     TOKENLESS_E2E_OBSERVER_TIMEOUT_MS: String(options.observerTimeoutMs ?? 30_000),
   }
+  for (const name of [
+    'CODEX_THREAD_ID',
+    'TOKENLESS_AGENT_KIND',
+    'TOKENLESS_AGENT_SESSION_ID',
+    'TOKENLESS_AGENT_SESSION_TREE_ID',
+    'TOKENLESS_AGENT_TOOL_CALL_ID',
+    'TOKENLESS_AGENT_TURN_ID',
+  ]) delete env[name]
   const barrierRoot = path.join(homeDir, 'e2e', 'browser-inspection', runId)
   const runKey = createHash('sha256').update(runId).digest('base64url').slice(0, 16)
   const jobPrefix = `tlp_e2e_${runKey}_`

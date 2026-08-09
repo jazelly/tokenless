@@ -545,8 +545,7 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "file-selection",
-        "conversation-workflow"
+        "file-selection"
       ],
       "unavailable": {
         "model-choice": "no_real_selection_closure",
@@ -554,8 +553,9 @@
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "no_real_image_input_closure",
-        "workspace-response-citations": "covered_by_conversation_workflow",
-        "workspace-response-baseline": "covered_by_conversation_workflow",
+        "conversation-workflow": "no_real_visible_citation_closure_2026_08_10",
+        "workspace-response-citations": "no_real_visible_citation_closure_2026_08_10",
+        "workspace-response-baseline": "no_real_visible_citation_closure_2026_08_10",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_observed",

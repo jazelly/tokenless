@@ -16,9 +16,9 @@ assert.equal(gate, 'representative-provider', 'TOKENLESS_LIVE_WEB_UI_GATE must b
 const target = await resolveConfiguredBrowserTarget()
 const { homeDir } = target
 const profile = target.profile.slug
-const fixtureFile = path.join(path.resolve('test', 'fixtures'), 'web-ui.example.json')
-const fixtureCases = loadFixtureCases(fixtureFile, 'representative-provider')
-const provider = fixtureCases[0].provider.id
+const matrixFile = path.resolve('test', 'live-web-ui-matrix.json')
+const matrixCases = loadMatrixCases(matrixFile, 'representative-provider')
+const provider = matrixCases[0].provider.id
 
 let inspection
 let runningJob
@@ -62,12 +62,12 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
   let page = runningJob.page.context().pages()[0]
   let authenticatedDashboardUrl
   const consoleFailures = []
-  for (const fixtureCase of fixtureCases) {
-      if (fixtureCase.startup.context === 'fresh' || !page || page.isClosed()) {
+  for (const matrixCase of matrixCases) {
+      if (matrixCase.startup.context === 'fresh' || !page || page.isClosed()) {
         page = await runningJob.page.context().newPage()
         observePage(page, consoleFailures)
       }
-      if (fixtureCase.startup.reload && new URL(page.url()).protocol.startsWith('http')) {
+      if (matrixCase.startup.reload && new URL(page.url()).protocol.startsWith('http')) {
         await page.reload({ waitUntil: 'networkidle' })
       } else {
         await page.goto(authenticatedDashboardUrl ?? dashboard.dashboard.url, { waitUntil: 'networkidle' })
@@ -77,12 +77,12 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
       await page.getByTestId('job-search').fill(taskId)
       const row = page.getByTestId(`job-${run.payload.jobId}`)
       await row.waitFor()
-      assert.match(await row.textContent(), /Succeeded|已完成/, fixtureCase.id)
+      assert.match(await row.textContent(), /Succeeded|已完成/, matrixCase.id)
       await row.click()
       const detail = page.getByTestId('job-detail')
       await detail.waitFor()
-      assert.match(await detail.textContent(), new RegExp(marker), fixtureCase.id)
-      assert.equal(await hasDocumentOverflow(page), false, fixtureCase.id)
+      assert.match(await detail.textContent(), new RegExp(marker), matrixCase.id)
+      assert.equal(await hasDocumentOverflow(page), false, matrixCase.id)
   }
   assert.deepEqual(consoleFailures, [])
 
@@ -107,20 +107,20 @@ function observePage(page, failures) {
   })
 }
 
-function loadFixtureCases(filename, suiteName) {
-  const fixture = JSON.parse(fs.readFileSync(filename, 'utf8'))
-  assert.equal(fixture.schema, 'tokenless.live-web-ui-fixtures.v1', 'unsupported Web UI fixture schema')
-  const caseIds = fixture.suites?.[suiteName]
-  assert.equal(Array.isArray(caseIds) && caseIds.length > 0, true, `Web UI fixture suite '${suiteName}' is empty or missing`)
+function loadMatrixCases(filename, suiteName) {
+  const matrix = JSON.parse(fs.readFileSync(filename, 'utf8'))
+  assert.equal(matrix.schema, 'tokenless.live-web-ui-matrix.v1', 'unsupported Web UI matrix schema')
+  const caseIds = matrix.suites?.[suiteName]
+  assert.equal(Array.isArray(caseIds) && caseIds.length > 0, true, `Web UI matrix suite '${suiteName}' is empty or missing`)
   return caseIds.map((id) => {
-    const entry = fixture.cases?.[id]
-    assert.equal(Boolean(entry), true, `Web UI fixture case '${id}' is missing`)
-    const providerEntry = fixture.providers?.[entry.provider]
-    const startup = fixture.startups?.[entry.startup]
-    assert.equal(Boolean(providerEntry && startup), true, `Web UI fixture case '${id}' has an invalid reference`)
-    assert.equal(providerEntry.id, 'chatgpt', `Web UI fixture case '${id}' must use the representative ChatGPT provider`)
-    assert.equal(['fresh', 'shared'].includes(startup.context), true, `Web UI fixture case '${id}' has an invalid startup context`)
-    assert.equal(typeof startup.reload, 'boolean', `Web UI fixture case '${id}' must declare reload`)
+    const entry = matrix.cases?.[id]
+    assert.equal(Boolean(entry), true, `Web UI matrix case '${id}' is missing`)
+    const providerEntry = matrix.providers?.[entry.provider]
+    const startup = matrix.startups?.[entry.startup]
+    assert.equal(Boolean(providerEntry && startup), true, `Web UI matrix case '${id}' has an invalid reference`)
+    assert.equal(providerEntry.id, 'chatgpt', `Web UI matrix case '${id}' must use the representative ChatGPT provider`)
+    assert.equal(['fresh', 'shared'].includes(startup.context), true, `Web UI matrix case '${id}' has an invalid startup context`)
+    assert.equal(typeof startup.reload, 'boolean', `Web UI matrix case '${id}' must declare reload`)
     return { id, provider: providerEntry, startup }
   })
 }

@@ -184,8 +184,7 @@ async function inspectModes(page: Page, signal: AbortSignal | undefined): Promis
   if (!trigger) return { supported: false, reason: 'selector_not_available' }
   const active = modeFromLabel(normalizeText(await trigger.innerText()))
   if (!active) return { supported: false, reason: 'selector_not_available' }
-  await trigger.click({ timeout: CONTROL_TIMEOUT_MS })
-  await page.locator(MODE_ITEM_SELECTOR).filter({ visible: true }).first().waitFor({ state: 'visible', timeout: CONTROL_TIMEOUT_MS })
+  await openModeMenu(page, trigger)
   const observed = await collectStableModeItems(page, signal)
   await page.keyboard.press('Escape').catch(() => undefined)
   await page.waitForTimeout(300)
@@ -225,11 +224,7 @@ async function selectMode(
   }
   const trigger = await waitForModeTrigger(page)
   if (!trigger) return { supported: false, reason: 'selector_not_available' }
-  await trigger.click({ timeout: CONTROL_TIMEOUT_MS })
-  await page.locator(MODE_ITEM_SELECTOR).filter({ visible: true }).first().waitFor({
-    state: 'visible',
-    timeout: CONTROL_TIMEOUT_MS,
-  })
+  await openModeMenu(page, trigger)
   await page.waitForTimeout(500)
   const item = exactModeItem(page, definition.nativeLabel)
   await item.waitFor({ state: 'visible', timeout: CONTROL_TIMEOUT_MS }).catch(() => undefined)
@@ -238,6 +233,17 @@ async function selectMode(
   const selected = await waitForActiveMode(page, mode, signal)
   if (!selected) return { supported: false, reason: 'selector_not_available' }
   return { supported: true, selectedMode: mode, nativeLabel: definition.nativeLabel, visibleProof: 'doubao-mode-trigger-visible' }
+}
+
+async function openModeMenu(page: Page, trigger: Locator) {
+  if (await trigger.getAttribute('aria-expanded') !== 'true') {
+    await trigger.focus()
+    await trigger.press('Enter', { timeout: CONTROL_TIMEOUT_MS })
+  }
+  await page.locator(MODE_ITEM_SELECTOR).filter({ visible: true }).first().waitFor({
+    state: 'visible',
+    timeout: CONTROL_TIMEOUT_MS,
+  })
 }
 
 async function inspectSkills(page: Page, signal: AbortSignal | undefined): Promise<DoubaoSkillInspectResult> {

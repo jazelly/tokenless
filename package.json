@@ -19,7 +19,6 @@
     "sync:skill": "npm run build:scripts && node dist/scripts/sync-tokenless-skill.mjs",
     "test": "npm run build && node dist/scripts/test-all.mjs",
     "test:file": "npm run build && node --test --test-concurrency=1",
-    "fixtures:build": "node test/helpers/build-provider-workflow-fixtures.mjs",
     "test:ts-daemon-conformance": "npm run build && node --test --test-concurrency=1 test/ts-daemon-conformance.test.mjs",
     "test:e2e:web": "npm run build && node --test --test-concurrency=1 test/local-web-ui.e2e.mjs",
     "test:e2e:web-provider": "npm run build && node test/run-live-provider-e2e.mjs web-ui",

@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import http from 'node:http'
-import path from 'node:path'
 import test from 'node:test'
 
 import {
@@ -78,75 +75,6 @@ test('CDP managed browser preserves independent logical tabs in one profile', as
   })
 })
 
-test('CDP headed managed browser operates on background-created automation tabs', async () => {
-  await withCapabilityServer(async (origin) => {
-    await withManager(async ({ manager, profile }) => {
-      const managed = await manager.ensureContext(profile, 'headed')
-      const selectedPage = await managed.acquirePage({ key: 'selected-tab' })
-      await selectedPage.goto(`${origin}/start`)
-
-      const backgroundPage = await managed.acquirePage({ key: 'background-tab' })
-      assert.notEqual(backgroundPage, selectedPage)
-
-      await backgroundPage.goto(`${origin}/navigated`)
-      assert.equal(await backgroundPage.locator('h1').textContent(), 'Navigated')
-      assert.equal(selectedPage.url(), `${origin}/start`)
-    })
-  })
-})
-
-test('CDP managed browser closes capability gaps at a real Chromium boundary', async () => {
-  await withCapabilityServer(async (origin) => {
-    await withManager(async ({ manager, profile, profileDirectory }) => {
-      const upload = path.join(profileDirectory, 'capability-upload.txt')
-      fs.writeFileSync(upload, 'upload-cdp\n', { mode: 0o600 })
-
-      await manager.runWithProfile(profile, 'auto', async (context) => {
-        await context.browserContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin })
-        const page = await context.acquirePage({ key: 'capability-matrix' })
-        await page.goto(`${origin}/start`)
-
-        await page.getByLabel('Message').fill('filled-cdp')
-        assert.equal(await page.getByLabel('Message').inputValue(), 'filled-cdp')
-        assert.equal(await page.locator('[data-capability="dom-read"]').textContent(), 'DOM ready')
-
-        await page.getByRole('link', { name: 'Navigate' }).click()
-        await page.waitForURL(`${origin}/navigated`)
-        assert.equal(await page.locator('h1').textContent(), 'Navigated')
-        await page.goto(`${origin}/start`)
-
-        await page.locator('#direct-file').setInputFiles(upload)
-        assert.equal(await page.locator('#direct-file').evaluate((input) => input.files?.[0]?.name), path.basename(upload))
-
-        const [chooser] = await Promise.all([
-          page.waitForEvent('filechooser'),
-          page.locator('button', { hasText: 'Choose file' }).click(),
-        ])
-        await chooser.setFiles(upload)
-        assert.equal(await page.locator('#chooser-file').evaluate((input) => input.files?.[0]?.name), path.basename(upload))
-
-        const [popup] = await Promise.all([
-          page.waitForEvent('popup'),
-          page.getByRole('button', { name: 'Open popup' }).click(),
-        ])
-        await popup.waitForLoadState()
-        assert.equal(await popup.locator('h1').textContent(), 'Popup')
-
-        const [download] = await Promise.all([
-          page.waitForEvent('download'),
-          page.getByRole('link', { name: 'Download' }).click(),
-        ])
-        assert.equal(download.suggestedFilename(), 'tokenless-capability.txt')
-        assert.equal(await download.failure(), null)
-
-        const clipboardValue = 'clipboard-cdp'
-        await page.evaluate(async (value) => await navigator.clipboard.writeText(value), clipboardValue)
-        assert.equal(await page.evaluate(async () => await navigator.clipboard.readText()), clipboardValue)
-      })
-    })
-  })
-})
-
 async function withManager(operation) {
   const primary = await resolveConfiguredBrowserTarget()
   const runtime = primary.runtime
@@ -164,56 +92,8 @@ async function withManager(operation) {
     return await operation({
       manager,
       profile,
-      profileDirectory: profile.directory,
     })
   } finally {
     await manager.detach()
-  }
-}
-
-async function withCapabilityServer(operation) {
-  const server = http.createServer((request, response) => {
-    if (request.url === '/download') {
-      response.writeHead(200, {
-        'content-disposition': 'attachment; filename="tokenless-capability.txt"',
-        'content-type': 'text/plain; charset=utf-8',
-      })
-      response.end('download-ready\n')
-      return
-    }
-    response.setHeader('content-type', 'text/html; charset=utf-8')
-    if (request.url === '/popup') {
-      response.end('<!doctype html><h1>Popup</h1>')
-      return
-    }
-    if (request.url === '/navigated') {
-      response.end('<!doctype html><h1>Navigated</h1>')
-      return
-    }
-    response.end(`<!doctype html>
-      <label>Message <textarea></textarea></label>
-      <p data-capability="dom-read">DOM ready</p>
-      <a href="/navigated">Navigate</a>
-      <input id="direct-file" type="file">
-      <input id="chooser-file" type="file" hidden>
-      <button type="button" onclick="document.querySelector('#chooser-file').click()">Choose file</button>
-      <button type="button" onclick="window.open('/popup', '_blank')">Open popup</button>
-      <a href="/download" download>Download</a>
-    `)
-  })
-  await new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
-  const address = server.address()
-  assert.ok(address && typeof address === 'object')
-  try {
-    return await operation(`http://127.0.0.1:${address.port}`)
-  } finally {
-    const closing = new Promise((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve())
-    })
-    server.closeAllConnections()
-    await closing
   }
 }

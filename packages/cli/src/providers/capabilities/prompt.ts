@@ -21,6 +21,7 @@ export async function inputDomPrompt(
   text: string,
   signal?: AbortSignal,
 ) {
+  await dismissZaiAnnouncement(page, provider)
   const timeoutMs = provider.interactionTimings.promptControlTimeoutMs
   const deadline = Date.now() + timeoutMs
   let composerObserved = false
@@ -65,6 +66,17 @@ export async function inputDomPrompt(
     'The visible prompt input remained empty after input.',
     { retryable: true },
   )
+}
+
+async function dismissZaiAnnouncement(page: Page, provider: ProviderDomDefinition) {
+  if (provider.id !== 'zai') return
+  const announcement = page.locator('[role="dialog"]')
+    .filter({ visible: true })
+    .filter({ hasText: 'Now Available' })
+    .last()
+  if (await announcement.count() === 0) return
+  await page.keyboard.press('Escape').catch(() => undefined)
+  await announcement.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => undefined)
 }
 
 export async function submitDomPrompt(
@@ -208,7 +220,8 @@ async function writePrompt(page: Page, composer: Locator, text: string) {
     if (!await composer.isVisible({ timeout: 250 })) return false
     await composer.click({ timeout: 1000 })
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
-    await page.keyboard.type(text)
+    if (text.length === 0) await page.keyboard.press('Backspace')
+    else await page.keyboard.type(text)
     return await composerHasExpectedText(composer, text)
   } catch {
     return await composerHasExpectedText(composer, text)

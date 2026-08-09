@@ -166,7 +166,7 @@ Each provider/capability cell progresses independently:
 4. `e2e_closed` — the built CLI and packaged daemon prove the final outcome against the real provider.
 5. `routeable` — the public router may advertise and select the provider route.
 
-A menu item, selector, fixture, or successful manual prompt is not sufficient to claim `e2e_closed`. Fixtures support focused selector, parser, and sanitizer maintenance; real-provider E2E is the acceptance boundary.
+A menu item, selector, local replica, or successful manual prompt is not sufficient to claim `e2e_closed`. Provider behavior is developed and verified only on the real provider website; real-provider E2E is the acceptance boundary.
 
 ## Adding a New Capability
 
@@ -176,9 +176,9 @@ Add a canonical capability when the product needs a new provider-neutral outcome
 2. **Check for composition first.** Prefer an existing capability or a combination of existing capabilities when it expresses the result without losing meaning.
 3. **Add the catalog definition.** Update `packages/cli/src/providers/task-capabilities.ts` and keep the identifier independent of provider names.
 4. **Implement provider strategies.** Keep selectors and provider-specific controls inside provider adapters and typed capability classes.
-5. **Capture real fixtures.** Save redacted, provenance-bound reductions for every materially distinct selector or parser state. Never invent or splice DOM.
+5. **Implement against the real site.** Observe and exercise every materially distinct selector, parser state, blocker, and transition in the configured persistent browser profile. Do not capture or substitute provider DOM fixtures.
 6. **Declare live acceptance.** Add the real case to `test/live-provider-capability-matrix.json` and implement its journey in `test/live-managed-playwright.e2e.mjs`.
-7. **Close the real boundary.** Run the built CLI, packaged daemon, managed browser, and provider network without fixtures, interception, or simulated responses.
+7. **Close the real boundary.** Run the built CLI, packaged daemon, managed browser, and provider network without local replicas, interception, or simulated responses.
 8. **Add the route last.** Advertise the mapping only after the required lifecycle and evidence close.
 9. **Update public documentation.** Keep this document, both READMEs, command documentation, and the release changeset aligned.
 
@@ -216,7 +216,7 @@ Persisted jobs record their normalized capability route and evidence identifiers
 | Provider implementations | `packages/cli/src/providers/` |
 | Real-provider required cases | `test/live-provider-capability-matrix.json` |
 | Real-provider journeys | `test/live-managed-playwright.e2e.mjs` |
-| Fixture rules and inventory | `test/fixtures/provider-dom/README.md` and `manifest.json` |
+| Provider website test boundary | `AGENTS.md` and `test/live-provider-capability-matrix.json` |
 | Product reconnaissance | `docs/provider-capability-census.md` |
 | CLI behavior | `COMMANDS.md` |
 

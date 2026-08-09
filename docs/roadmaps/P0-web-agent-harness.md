@@ -833,7 +833,7 @@ The initial acceptance flow must prove:
 - final text, artifacts, citations, conversation identity, calls, approvals, and execution outcomes are durably correlated; and
 - the profile test target retains keychain-neutral flags, production Chromium sandboxing remains enabled, processes are cleaned up, and no Keychain prompt appears.
 
-No provider fixtures, route interception, simulated responses, invented DOM, fake runtime, synthetic fetch, or source-regex test can close Harness support claims. Redacted real DOM fixtures may still support focused selector or parser maintenance under the repository fixture policy, but they are not agent-loop acceptance evidence.
+No provider fixtures, route interception, simulated responses, invented DOM, fake runtime, synthetic fetch, or source-regex test may be used for Harness provider development or support claims. Provider selectors, parsers, transitions, and outcomes are developed and verified only on the real provider website.
 
 Real E2E does not automate login, CAPTCHA, MFA, consent, or Keychain approval and does not collect screenshots, full DOM, storage, credentials, or unrelated account content.
 

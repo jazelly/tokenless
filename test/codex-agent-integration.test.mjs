@@ -14,7 +14,7 @@ test('setup exposes an explicit Codex opt-in without accepting a custom Codex ho
     const help = runCli(['setup', '--help'])
     assert.equal(help.status, 0, help.stderr || help.stdout)
     assert.equal(help.stdout, '')
-    assert.match(help.stderr, /tokenless setup \[--browser <chrome\|brave\|cloak>\|--anti-detect\] \[--install-codex \[--codex-home <dir>\]\]/)
+    assert.match(help.stderr, /tokenless setup \[--browser <chrome\|brave\|cloak>\|--anti-detect\] \[--browser-executable-path <absolute-path>\] \[--install-codex \[--codex-home <dir>\]\]/)
     assert.match(help.stderr, /^  --install-codex$/m)
     assert.match(help.stderr, /^  --codex-home <dir>$/m)
 

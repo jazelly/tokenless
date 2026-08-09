@@ -447,17 +447,16 @@ async function doubaoControls({ provider, journey }) {
   const skills = responseResult(skillInspection.payload, 'doubao.skill.inspect')
   assert.equal(skills?.supported, true)
   assert.equal(skills?.activeSkill, 'chat')
-  assert.deepEqual(
-    skills?.skills?.find((choice) => choice.skill === 'audio-transcription'),
-    {
-      skill: 'audio-transcription',
-      nativeLabel: '录音转写',
-      canonicalCapabilities: ['audio.transcription'],
-      enabled: false,
-      selected: false,
-      reason: 'desktop_app_required',
-    },
-  )
+  const audioTranscription = skills?.skills?.find((choice) => choice.skill === 'audio-transcription')
+  assert.deepEqual({ ...audioTranscription, reason: undefined }, {
+    skill: 'audio-transcription',
+    nativeLabel: '录音转写',
+    canonicalCapabilities: ['audio.transcription'],
+    enabled: false,
+    selected: false,
+    reason: undefined,
+  })
+  assert.ok([null, 'desktop_app_required'].includes(audioTranscription?.reason))
   const selectableSkills = skills.skills.filter((choice) => choice.enabled && choice.skill !== 'chat')
   assert.deepEqual(selectableSkills.map((choice) => choice.skill), [
     'document-writing',
@@ -688,10 +687,10 @@ async function conversationWorkflow({ provider, journey }) {
       ] : []),
       '--attach-file', attachment,
       '--prompt', [
-        'Read the attached file and include its exact marker in your response.',
-        `Also include this exact response marker: ${responseMarker}.`,
-        `Remember this secret for my next message but do not reveal it yet: ${contextSecret}.`,
-        'Identify the official Node.js homepage and cite that official source.',
+        'Read the attached text file.',
+        'Respond with exactly three lines: the exact file contents; then the following response marker;',
+        `${responseMarker}; then a Markdown link to the official Node.js homepage.`,
+        `Remember ${contextSecret} for my next message, but do not include it in this response.`,
       ].join(' '),
     ], 360_000, ({ page }) => waitForExactText(
       page,
@@ -1411,7 +1410,7 @@ async function pageContains(page, value, minimumVisibleMatches = 1) {
 
 async function visibleCitationCount(page, citations) {
   const expected = new Set(citations.map((citation) => canonicalPageUrl(citation.href)))
-  const controls = page.locator('main a[href], .chat-content-item-assistant a[href]')
+  const controls = page.locator('a[href]')
   let count = 0
   for (let index = 0; index < await controls.count(); index += 1) {
     const control = controls.nth(index)

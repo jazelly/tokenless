@@ -25,7 +25,7 @@ All browser E2E and visible-provider capability acceptance tests use real provid
 
 The only runtime skip exception is the checked-in Claude Cloudflare known issue declared in `test/live-provider-capability-matrix.json`. It may apply only to provider `claude`, only when the durable job payload is `waiting_for_user`, and only when the structured blocker code is `visible_cloudflare_turnstile` or `visible_cloudflare_interstitial`. Sign-in-required states, authentication unavailability, timeouts, selector or UI drift, other challenge families, other blocker codes, and every other provider remain hard failures.
 
-Redacted, provenance-bound provider DOM captures remain development aids for selectors, parsers, and already-observed DOM variants. They are not E2E, do not close provider transitions, and do not count toward capability acceptance.
+The repository no longer stores or tests against provider DOM captures. Selector, parser, blocker, and transition development uses the real provider website through the configured persistent browser profile.
 
 **Historical model.** Provider E2E previously ran through a dedicated live-provider profile harness and a separate `prepare` command. That model and its evidence remain historical only; it does not describe the current test entry point.
 
@@ -69,9 +69,9 @@ Qwen closure now starts from its canonical `https://chat.qwen.ai/` chat surface.
 
 The subsequent non-submission gate encountered intermittent system DNS failure for `chat.qwen.ai` after the same hostname had resolved for the successful mutation gate. Navigation reports this explicitly as retryable `provider_dns_unavailable`. For operational handling, the durable error details classify the Qwen-specific signal as `suspected_rate_limit` while keeping `rateLimitConfirmed: false`: provider-edge throttling is plausible, but a Chromium name-resolution failure alone is not rate-limit proof. A same-machine probe on 2026-07-31 subsequently resolved the hostname and received HTTP 200, so no HTTP rate-limit evidence was present at that time. No test-only DNS override is used or counted as acceptance evidence.
 
-On 2026-07-30, Qwen-specific mode work added `qwen.mode.inspect/select`, runtime enabled/disabled mode discovery, exact Deep Research Normal/Advanced selection, Auto/Thinking/Fast effort controls, and a required real mutation case that selects Deep Research Advanced before prompt submission and response reading. A built-CLI action produced the visible `qwen-mode-and-variant-visible` postcondition for Deep Research Advanced. A separate development capture recorded the selected Deep Research Advanced state through a read-only CDP observer and added the redacted reduction to the fixture manifest; its one-off public-DNS host resolution is recorded in provenance and the fixture does not count as acceptance. After system DNS recovered, built-CLI plus read-only-CDP runs proved Auto/Thinking/Fast inspection, exact Thinking selection, visible selection, durable success, and Auto restoration. A real Deep Research Advanced run then proved exact mode and variant selection through the observer while the product submitted the unique prompt, read a correlated visible clarification response, and persisted durable SQLite success. The checked-in case was strengthened to require the observer to see the unique submitted prompt as well. A subsequent fresh run failed clearly with `provider_plan_limited` before that stronger assertion could be rerun; it was not retried inside the suite or converted into fixture evidence. The implementation therefore closes the product mode-selection and first-response behavior but still requires the next manual gate run for full matrix acceptance. It does not claim Qwen's complete multi-turn final-report lifecycle.
+On 2026-07-30, Qwen-specific mode work added `qwen.mode.inspect/select`, runtime enabled/disabled mode discovery, exact Deep Research Normal/Advanced selection, Auto/Thinking/Fast effort controls, and a required real mutation case that selects Deep Research Advanced before prompt submission and response reading. Built-CLI plus read-only-CDP runs against the real Qwen website proved Auto/Thinking/Fast inspection, exact Thinking selection, visible selection, durable success, and Auto restoration. A real Deep Research Advanced run then proved exact mode and variant selection through the observer while the product submitted the unique prompt, read a correlated visible clarification response, and persisted durable SQLite success. The checked-in case was strengthened to require the observer to see the unique submitted prompt as well. A subsequent fresh run failed clearly with `provider_plan_limited` before that stronger assertion could be rerun; it was not retried inside the suite or replaced with static evidence. The implementation therefore closes the product mode-selection and first-response behavior but still requires the next manual gate run for full matrix acceptance. It does not claim Qwen's complete multi-turn final-report lifecycle.
 
-The roadmap remains in progress. Before release, the operator must restore the required selected-profile authentication for ChatGPT, Claude, and Grok, ensure stable system DNS resolution for `chat.qwen.ai`, manually rerun every applicable gate, and obtain a complete pass. Claude and Grok native Project implementation also remains provisional until real authenticated sessions supply the required DOM development captures and close creation, exact reuse, instructions, Project chat, and continuation.
+The roadmap remains in progress. Before release, the operator must restore the required selected-profile authentication for ChatGPT, Claude, and Grok, ensure stable system DNS resolution for `chat.qwen.ai`, manually rerun every applicable gate, and obtain a complete pass. Claude and Grok native Project implementation also remains provisional until real authenticated sessions close creation, exact reuse, instructions, Project chat, and continuation on the live sites.
 
 ## Actor and Oracle Boundary
 
@@ -197,9 +197,9 @@ Exit: every currently advertised visible capability has real-provider acceptance
 
 ## Milestone 2: Claude and Grok Native Projects
 
-### Phase 1: Development Evidence
+### Phase 1: Live Development Evidence
 
-Capture complete, redacted, provenance-bound Claude and Grok DOM states for:
+Observe and exercise these Claude and Grok states on the real websites through the configured persistent profile:
 
 - Project list empty and populated;
 - create form;
@@ -210,9 +210,9 @@ Capture complete, redacted, provenance-bound Claude and Grok DOM states for:
 - existing Project conversation; and
 - ambiguous or unavailable states observed during real testing.
 
-These captures guide provider-owned selectors and parsers. They never replace the real Project E2E closure.
+Use bounded live observer assertions to guide provider-owned selectors and parsers without storing DOM snapshots or replicas.
 
-Exit: implementation is grounded in genuine observed provider states without claiming that static captures prove a transition.
+Exit: implementation and tests prove the required states and transitions on the real provider websites.
 
 ### Phase 2: Native Workspace Semantics
 
@@ -316,7 +316,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 
 ## Acceptance Criteria
 
-- No fixture-based test is named or counted as browser E2E.
+- The repository contains no provider DOM fixtures, provider replicas, or tests that intercept provider routes.
 - Every advertised visible capability has a required real-provider matrix entry.
 - Every required real-provider case proves CLI, visible DOM, and durable state for the same task and marker.
 - An invoked E2E suite has no skipped cases and no internal retry, except for the checked-in Claude Cloudflare durable blocker known issue.
@@ -335,7 +335,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 
 | Risk | Response |
 | --- | --- |
-| Provider UI drift | Fail the required live case, retain bounded diagnostics, capture the new real DOM variant for development, and update the provider-owned adapter |
+| Provider UI drift | Fail the required live case, inspect the changed real site through bounded diagnostics, and update the provider-owned adapter and live case |
 | Account or subscription variation | Use the configured default profile, run applicable declared capabilities, and fail clearly when authentication or account state cannot satisfy a required case |
 | CDP endpoint is stale or unavailable | Start the daemon and browser context in inspection mode, validate lifecycle identity, and fail explicitly |
 | Observer changes product behavior | Keep it read-only, prohibit routes and actions, and assert through independent accessible roles and markers |
@@ -346,7 +346,7 @@ Exit: Claude and Grok native Project support is proven through a fresh real crea
 
 ## Non-Goals
 
-- Fixture-based provider E2E
+- Provider DOM fixtures, replicas, captures, or intercepted provider routes
 - Provider network interception or simulated provider responses
 - Private provider APIs
 - CAPTCHA or authentication bypass

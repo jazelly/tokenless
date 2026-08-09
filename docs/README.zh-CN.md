@@ -18,7 +18,7 @@
 ## Provider 与 Capability 开发
 
 - 从 [Capability Matrix 扩展流程](capability-matrix.zh-CN.md#新增-capability) 开始。
-- 遵守 [Provider DOM Fixture Policy](../test/fixtures/provider-dom/README.md)。
+- Provider 行为只能通过配置好的浏览器 profile 在真实 provider 网站上开发与验证。
 - 在 [`live-provider-capability-matrix.json`](../test/live-provider-capability-matrix.json) 声明必需的真实 provider cases。
 - 在 [`live-managed-playwright.e2e.mjs`](../test/live-managed-playwright.e2e.mjs) 实现真实 journeys。
 - Provider-specific behavior 应保留在 [`packages/cli/src/providers/`](../packages/cli/src/providers/) 中。

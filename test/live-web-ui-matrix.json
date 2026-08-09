@@ -1,5 +1,5 @@
 {
-  "schema": "tokenless.live-web-ui-fixtures.v1",
+  "schema": "tokenless.live-web-ui-matrix.v1",
   "providers": {
     "chatgpt": {
       "id": "chatgpt"
@@ -23,7 +23,7 @@
     "chatgpt-reload": {
       "provider": "chatgpt",
       "startup": "desktop-reload"
-    },
+    }
   },
   "suites": {
     "representative-provider": [

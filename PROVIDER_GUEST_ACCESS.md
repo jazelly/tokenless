@@ -33,6 +33,6 @@ Account labels classify a visible session as `signed_in_free`, `signed_in_paid`,
 5. Before a gated action, an unknown page surface waits for a stable account, guest composer, sign-in surface, challenge, or terminal blocker. An unsupported-guest provider that remains unknown conservatively hands off; a supported-guest provider with no usable surface fails with a retryable technical error.
 6. Challenge, plan, quota, and rate-limit blockers remain separate from authentication routing.
 
-## Capture evidence
+## Live evidence
 
-Signed-out DOM captures are stored as redacted, provenance-bound candidates under `test-results/provider-guest-captures/`. The fresh-profile real CLI matrix is stored under `test-results/live-provider-guest-access/`, and current provider capability status is summarized in `test/live-provider-capability-matrix.json`. These artifacts are not promoted into the authenticated provider fixture inventory because the current fixture policy requires authenticated visible-session provenance.
+The fresh-profile real CLI matrix is stored under `test-results/live-provider-guest-access/`, and current provider capability status is summarized in `test/live-provider-capability-matrix.json`. Provider behavior is verified only on the real website; DOM captures and fixture promotion are not part of development or testing.

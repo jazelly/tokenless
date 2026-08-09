@@ -70,13 +70,12 @@
 - For browser-launch changes, verify native credential storage on the configured persistent profile, keychain neutrality only for installer smoke checks, enabled Chromium sandboxing, CDP detach, profile preservation, resident-browser preservation, and focused real-boundary completion.
 - Regression guard: production native Chrome control must remain free of `--password-store=basic` and `--use-mock-keychain`.
 
-### Provider DOM Fixture Policy
+### Provider Website Boundary
 
-- Fixtures must be redacted, provenance-bound reductions captured from real visible provider sessions.
-- Use them only for focused selector, parser, sanitizer, and observed-DOM checks.
-- Never use fixture routes, network interception, or simulated responses in built CLI/daemon E2E; never call fixture evidence E2E/live or use it for support, capability, acceptance, or release claims.
-- Never invent DOM or infer transitions from separate before/after fixtures.
-- Capture each materially distinct capability-relevant real state; redact it, record provenance, add it to the manifest, and preserve variants affecting behavior.
+- Do not create, capture, store, generate, promote, or test against provider DOM fixtures, reduced DOM snapshots, provider replicas, locally hosted provider pages, route interception, or simulated provider responses.
+- Develop and verify provider selectors, parsers, blockers, controls, transitions, and outcomes only against the real provider website in the configured persistent browser profile.
+- A provider behavior change requires a focused real-provider integration or browser E2E case through the built CLI and packaged daemon. If the real site cannot currently prove the behavior, fail or leave the capability unadvertised; do not substitute fixture evidence.
+- Local daemon, API, filesystem, installer, and control-plane tests may use their real local boundaries, but they must not impersonate a provider website or claim provider behavior.
 
 ### Real Provider Browser E2E
 

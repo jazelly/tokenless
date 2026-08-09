@@ -65,7 +65,7 @@ Omit `--browser-visibility` in ordinary jobs so the configured default applies. 
 
 Repeat `--attach-file <path>` only for files the user intends to share. Tokenless stages regular files privately, verifies integrity, uploads through the visible page control, and keeps raw local paths out of daemon job results.
 
-File results distinguish `selected` from `accepted`. Treat only `accepted` as provider-visible attachment proof; `selected` means the local chooser or hidden file input received the file but the current fixture contract did not prove a visible provider acknowledgement.
+File results distinguish `selected` from `accepted`. Treat only `accepted` as provider-visible attachment proof; `selected` means the local chooser or hidden file input received the file but the real provider website did not show the required visible acknowledgement.
 
 `--project-name` remains task metadata unless the user explicitly requests Workspace behavior. For the experimental provider-neutral Workspace flow, pass one of:
 
@@ -75,7 +75,7 @@ tokenless run --project-name "<name>" --workspace-mode native ...
 tokenless run --project-name "<name>" --workspace-mode conversation ...
 ```
 
-`auto` may report a conversation fallback, `native` fails when fixture-proven native creation is unavailable, and `conversation` requests the conversation strategy. Never describe a conversation fallback as a native provider Project. Inspect the current full capability map with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
+`auto` may report a conversation fallback, `native` fails when real-provider E2E has not proven native creation, and `conversation` requests the conversation strategy. Never describe a conversation fallback as a native provider Project. Inspect the current full capability map with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
 
 Use `provider-controls` to discover exact visible labels before requesting a model or effort setting:
 

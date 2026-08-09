@@ -166,7 +166,7 @@ Provider route 会另外声明 strategy、evidence identifiers，以及 `experim
 4. `e2e_closed` — built CLI 与 packaged daemon 在真实 provider 上证明 final outcome。
 5. `routeable` — 公共 router 可以展示并选择该 provider route。
 
-菜单项、selector、fixture 或成功的手工 prompt 都不足以声明 `e2e_closed`。Fixture 用于 focused selector、parser、sanitizer maintenance；真实 provider E2E 才是 acceptance boundary。
+菜单项、selector、本地 replica 或成功的手工 prompt 都不足以声明 `e2e_closed`。Provider 行为只能在真实 provider 网站上开发与验证；真实 provider E2E 才是 acceptance boundary。
 
 ## 新增 Capability
 
@@ -176,9 +176,9 @@ Provider route 会另外声明 strategy、evidence identifiers，以及 `experim
 2. **先检查 composition。** 如果现有 capability 或其组合能够完整表达结果，应优先复用。
 3. **新增 catalog definition。** 更新 `packages/cli/src/providers/task-capabilities.ts`，identifier 不得包含 provider 名称。
 4. **实现 provider strategies。** Selector 与 provider-specific control 保留在 provider adapter 和 typed capability class 中。
-5. **采集真实 fixture。** 为每个 materially distinct selector/parser state 保存脱敏且 provenance-bound 的 reduction；不得发明或拼接 DOM。
+5. **基于真实网站实现。** 在配置好的持久浏览器 profile 中观察并操作每个 materially distinct selector、parser state、blocker 与 transition；不得捕获或替代为 provider DOM fixture。
 6. **声明 live acceptance。** 在 `test/live-provider-capability-matrix.json` 增加真实 case，并在 `test/live-managed-playwright.e2e.mjs` 实现 journey。
-7. **闭环真实 boundary。** 使用 built CLI、packaged daemon、managed browser 与真实 provider network；不得使用 fixture、interception 或 simulated response。
+7. **闭环真实 boundary。** 使用 built CLI、packaged daemon、managed browser 与真实 provider network；不得使用本地 replica、interception 或 simulated response。
 8. **最后添加 route。** 只有所需 lifecycle 与 evidence 闭环后才发布 mapping。
 9. **更新公共文档。** 同步本文档、两份 README、command documentation 和 release changeset。
 
@@ -216,7 +216,7 @@ Provider-only concept 保留为 `deepseek.mode`、`kimi.skill`、`dola.translate
 | Provider implementations | `packages/cli/src/providers/` |
 | 真实 provider required cases | `test/live-provider-capability-matrix.json` |
 | 真实 provider journeys | `test/live-managed-playwright.e2e.mjs` |
-| Fixture rules 与 inventory | `test/fixtures/provider-dom/README.md`、`manifest.json` |
+| Provider website 测试边界 | `AGENTS.md`、`test/live-provider-capability-matrix.json` |
 | Product reconnaissance | `docs/provider-capability-census.md` |
 | CLI behavior | `COMMANDS.md` |
 
