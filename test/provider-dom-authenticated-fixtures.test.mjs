@@ -286,6 +286,70 @@ test('Gemini account status preserves captured authenticated and guest boundarie
   }, { visibility: 'auto' })
 })
 
+test('Gemini response reading excludes captured source badges and restores their styles', {
+  timeout: 60000,
+}, async () => {
+  const provider = getProviderInstanceById('gemini')
+  assert.ok(provider, 'Gemini provider instance is required')
+  const fixtureRootPath = path.join(fixtureRoot, 'gemini', 'signed-in-unknown')
+  const fixturePath = path.join(fixtureRootPath, 'response-complete-source-badges.html')
+  const provenancePath = path.join(fixtureRootPath, 'response-complete-source-badges.provenance.json')
+  const [fixtureBytes, provenanceText] = await Promise.all([
+    fs.readFile(fixturePath),
+    fs.readFile(provenancePath, 'utf8'),
+  ])
+  const fixture = fixtureBytes.toString('utf8')
+  const provenance = JSON.parse(provenanceText)
+
+  assert.equal(provenance.contentSha256, sha256(fixtureBytes))
+  assert.equal(provenance.containsSyntheticBehavior, false)
+  assertPrivacyBoundary(fixture)
+  assertPrivacyBoundary(provenanceText)
+
+  await withDedicatedTestBrowser(async ({ context }) => {
+    const page = await context.browserContext.newPage()
+    try {
+      await page.route('https://gemini.google.com/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: fixture,
+      }))
+      await page.goto(provenance.sanitizedUrl, { waitUntil: 'domcontentloaded' })
+
+      const badges = page.locator('message-content sources-carousel-inline')
+      const stylesBefore = await badges.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('style')))
+      assert.equal(await badges.count(), 5)
+      assert.deepEqual(stylesBefore, [null, null, null, null, null])
+
+      const response = await provider.executeAction(
+        page,
+        createVisibleActionRequest({
+          requestId: 'gemini-response-source-badges',
+          provider: 'gemini',
+          action: VISIBLE_ACTIONS.RESPONSE_READ,
+          payload: {},
+        }),
+        {
+          profileId: 'gemini-response-source-badges-fixture-profile',
+          operationId: 'gemini-response-source-badges',
+        },
+      )
+
+      assert.equal(response.ok, true, JSON.stringify(response, null, 2))
+      assert.equal(response.result?.visibleProof, 'visible-answer-read')
+      assert.doesNotMatch(response.result?.text ?? '', /(?:^|\s)MD(?:\s*\+\s*\d+)?(?=\s|$)/u)
+      assert.match(response.result?.text ?? '', /\[redacted section heading\]/u)
+      assert.match(response.result?.text ?? '', /\[redacted list label\]/u)
+      assert.deepEqual(
+        await badges.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('style'))),
+        stylesBefore,
+      )
+    } finally {
+      await page.close()
+    }
+  }, { visibility: 'auto' })
+})
+
 test('provider DOM manifest inventories every fixture with its sanitized page URL', async () => {
   const manifest = JSON.parse(await fs.readFile(path.join(fixtureRoot, 'manifest.json'), 'utf8'))
   assert.equal(manifest.schema, 'tokenless.provider-dom-manifest.v2')

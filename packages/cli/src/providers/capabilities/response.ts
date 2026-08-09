@@ -101,8 +101,32 @@ export async function readDomResponse(
       { retryable: true, details: { visibleProof: 'no-visible-answer', ...await observations } },
     )
   }
-  const response = await answer.evaluate((element) => {
-    const text = element instanceof HTMLElement ? element.innerText : ''
+  const response = await answer.evaluate((element, answerTextExcludeSelectors) => {
+    const visibleTextExcluding = (root: HTMLElement, excludeSelectors: readonly string[]) => {
+      if (excludeSelectors.length === 0) return root.innerText
+      const excluded = [...new Set(excludeSelectors.flatMap((selector) => (
+        [...root.querySelectorAll(selector)].filter((node): node is HTMLElement => node instanceof HTMLElement)
+      )))]
+      const styles = excluded.map((node) => node.getAttribute('style'))
+      try {
+        excluded.forEach((node) => node.style.setProperty('display', 'none', 'important'))
+        return root.innerText
+      } finally {
+        excluded.forEach((node, index) => {
+          const style = styles[index] ?? null
+          if (style === null) {
+            node.style.removeProperty('display')
+            const styleAttribute = node.getAttributeNode('style')
+            if (styleAttribute) node.removeAttributeNode(styleAttribute)
+          } else {
+            node.setAttribute('style', style)
+          }
+        })
+      }
+    }
+    const text = element instanceof HTMLElement
+      ? visibleTextExcluding(element, answerTextExcludeSelectors)
+      : ''
     try {
       const tags = new Set<ResponseDecisionElement['tag']>(['article', 'blockquote', 'button', 'code', 'div', 'element', 'li', 'main', 'ol', 'p', 'pre', 'section', 'span', 'ul'])
       const roles = new Set<NonNullable<ResponseDecisionElement['role']>>(['button', 'textbox', 'menuitem', 'option', 'combobox', 'listbox'])
@@ -135,7 +159,7 @@ export async function readDomResponse(
     } catch {
       return { text, selected: null }
     }
-  }, undefined, { timeout: 5000 })
+  }, provider.answerTextExcludeSelectors ?? [], { timeout: 5000 })
   const completeText = normalizeVisibleText(response.text)
   captureVisibleOutput?.(completeText)
   const text = boundVisibleText(completeText)

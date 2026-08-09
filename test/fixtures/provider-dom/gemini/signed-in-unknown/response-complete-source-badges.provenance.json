@@ -1,0 +1,56 @@
+{
+  "schema": "tokenless.provider-dom-provenance.v1",
+  "provider": "gemini",
+  "accountState": "signed-in-unknown",
+  "observedPlan": { "status": "unknown", "label": null },
+  "scenario": "response-complete-source-badges",
+  "routeClass": "conversation",
+  "operationPhase": "response-complete",
+  "capabilityOutcome": "available",
+  "observedOn": "2026-08-10",
+  "sanitizedUrl": "https://gemini.google.com/app/[redacted]",
+  "source": "authenticated-user-visible-chrome-session",
+  "artifactKind": "redacted-reduced-dom",
+  "containsProviderJavaScript": false,
+  "containsSyntheticBehavior": false,
+  "contentSha256": "40105e9326a245b4e597c1900f9ab0c9b7587c29ed93de0b57561211722f8545",
+  "evidenceSelectors": [
+    {
+      "capability": "response.read",
+      "selector": "response-container message-content > .markdown.markdown-main-panel.md-content",
+      "expectedCount": 1
+    },
+    {
+      "capability": "response.source-badge",
+      "selector": "message-content sources-carousel-inline > source-inline-chip",
+      "expectedCount": 5
+    },
+    {
+      "capability": "response.source-badge-count",
+      "selector": "message-content sources-carousel-inline .source-count",
+      "expectedCount": 2
+    }
+  ],
+  "absenceSelectors": [
+    {
+      "purpose": "response.not-streaming",
+      "selector": "button[aria-label=\"Stop response\"]",
+      "expectedCount": 0
+    }
+  ],
+  "redactions": [
+    "account identity",
+    "conversation history",
+    "prompt content",
+    "response content",
+    "uploaded file names",
+    "private route identifiers",
+    "scripts",
+    "styles"
+  ],
+  "notes": [
+    "Five source badges were reduced together from one visibly completed response; no transition was inferred from separate captures.",
+    "Badge visual wrapper elements were omitted because the response sanitizer targets the retained sources-carousel-inline root.",
+    "This fixture is selector and response-sanitizer regression evidence only, not live provider acceptance evidence."
+  ]
+}

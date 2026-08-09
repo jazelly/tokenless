@@ -125,6 +125,7 @@ export type ProviderDomDefinition<TId extends ProviderId = ProviderId> = Provide
   readonly composerSelectors: readonly string[]
   readonly submitSelectors: readonly string[]
   readonly answerSelectors: readonly string[]
+  readonly answerTextExcludeSelectors?: readonly string[]
   readonly fileInputSelectors: readonly string[]
   readonly fileUploadTriggerSelectors: readonly string[]
   readonly fileUploadLocalSelectors: readonly string[]

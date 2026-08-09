@@ -485,6 +485,18 @@
     {
       "provider": "gemini",
       "accountState": "signed-in-unknown",
+      "scenario": "response-complete-source-badges",
+      "routeClass": "conversation",
+      "operationPhase": "response-complete",
+      "capabilityOutcome": "available",
+      "sanitizedUrl": "https://gemini.google.com/app/[redacted]",
+      "observedOn": "2026-08-10",
+      "htmlPath": "gemini/signed-in-unknown/response-complete-source-badges.html",
+      "provenancePath": "gemini/signed-in-unknown/response-complete-source-badges.provenance.json"
+    },
+    {
+      "provider": "gemini",
+      "accountState": "signed-in-unknown",
       "scenario": "search-chats",
       "routeClass": "chat-search",
       "operationPhase": "observed",

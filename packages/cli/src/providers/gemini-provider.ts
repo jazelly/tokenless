@@ -55,6 +55,9 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
         'response-container message-content',
         'message-content',
       ]),
+      answerTextExcludeSelectors: Object.freeze([
+        'sources-carousel-inline',
+      ]),
       fileInputSelectors: Object.freeze([
         'input[type="file"][name="Filedata"]',
         'input[type="file"]',
