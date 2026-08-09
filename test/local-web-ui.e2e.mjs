@@ -4,17 +4,19 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { chromium } from 'playwright-core'
-
 import { startDaemon } from '../packages/cli/dist/src/daemon/lifecycle.js'
 import { readTokenlessConfig, writeTokenlessConfig } from '../packages/cli/dist/src/job-store.js'
-import { PersistentContextManager } from '../packages/cli/dist/src/playwright/browser/context-manager.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+import {
+  createLiveProviderTestContextManager,
+  validateDedicatedTestProfiles,
+} from './helpers/live-provider-test-profile.mjs'
 
 test('Svelte Web UI completes setup, persists configuration, renders durable work, and remains responsive', async () => {
   await withDaemon(async ({ daemon, homeDir }) => {
+    const [browserTarget, importTarget] = await validateDedicatedTestProfiles({ count: 2 })
     const consoleOrigin = daemon.origin.replace('127.0.0.1', 'localhost')
-    const customExecutablePath = chromium.executablePath()
+    const customExecutablePath = browserTarget.runtime.executablePath
     const initialConfig = await readTokenlessConfig(homeDir)
     await writeTokenlessConfig({
       homeDir,
@@ -22,21 +24,13 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       browserExecutablePath: customExecutablePath,
       providerWhitelist: initialConfig.providerWhitelist.filter((provider) => provider !== 'gemini'),
     })
-    const browserProfileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-browser-'))
-    const importSourceDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-import-source-')))
-    const manager = new PersistentContextManager({
-      browser: {
-        id: 'profile',
-        executablePath: chromium.executablePath(),
-      },
-    })
-    const browserProfile = { id: 'web-ui-browser', directory: browserProfileDir, lifecycle: 'ready' }
+    const importSourceDir = importTarget.profile.directory
+    const manager = createLiveProviderTestContextManager(browserTarget)
+    const browserProfile = browserTarget.profile
     const consoleFailures = []
     const snapshotStatuses = []
 
     try {
-      await createClosedChromiumProfile(importSourceDir)
-      fs.writeFileSync(path.join(importSourceDir, 'Last Version'), '145.0.7632.160')
       const context = await manager.ensureContext(browserProfile, 'headless')
       const page = await context.acquireReservedPage({ key: 'tokenless:control-plane:web-e2e' })
       await page.setViewportSize({ width: 1920, height: 1080 })
@@ -316,28 +310,10 @@ test('Svelte Web UI completes setup, persists configuration, renders durable wor
       assert.equal(new URL(page.url()).pathname, '/ui/')
       assert.deepEqual(consoleFailures, [])
     } finally {
-      await manager.shutdown()
-      fs.rmSync(browserProfileDir, { recursive: true, force: true })
-      fs.rmSync(importSourceDir, { recursive: true, force: true })
+      await manager.detach()
     }
   })
 })
-
-async function createClosedChromiumProfile(directory) {
-  const manager = new PersistentContextManager({
-    browser: {
-      id: 'profile',
-      executablePath: chromium.executablePath(),
-    },
-  })
-  try {
-    const context = await manager.ensureContext({ id: 'profile-source', directory, lifecycle: 'ready' }, 'headless')
-    const page = await context.acquireReservedPage({ key: 'tokenless:control-plane:web-e2e-profile-source' })
-    await page.goto('data:text/html,<title>Tokenless import source</title>')
-  } finally {
-    await manager.shutdown()
-  }
-}
 
 async function withDaemon(operation) {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-web-ui-e2e-')))

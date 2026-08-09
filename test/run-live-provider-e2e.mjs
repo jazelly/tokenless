@@ -12,6 +12,7 @@ import {
 import {
   LIVE_PROVIDER_TEST_BROWSERS,
   canonicalizeLiveProviderTestTarget,
+  resolveConfiguredDedicatedTestTarget,
   resolveLiveProviderTestTarget,
   validateLiveProviderTestTarget,
 } from './helpers/live-provider-test-profile.mjs'
@@ -34,7 +35,16 @@ process.once('SIGINT', onSigint)
 process.once('SIGTERM', onSigterm)
 
 try {
-  const target = resolveLiveProviderTestTarget({ browser: options.browser, home: options.home })
+  const target = options.command === 'prepare'
+    ? resolveLiveProviderTestTarget({
+        browser: options.browser,
+        home: options.home,
+        profile: options.profile,
+      })
+    : await resolveConfiguredDedicatedTestTarget({
+        browser: options.browser,
+        profile: options.profile,
+      })
   if (options.command === 'prepare') {
     await prepareTarget(target, options)
   } else {
@@ -264,6 +274,7 @@ function parseArguments(arguments_) {
     command,
     browser: null,
     home: null,
+    profile: null,
     gate: 'all',
     fixture: null,
     suite: null,
@@ -279,6 +290,7 @@ function parseArguments(arguments_) {
     if (!value || value.startsWith('--')) failUsage(`${argument} requires a value.`)
     if (argument === '--browser') parsed.browser = value
     else if (argument === '--home') parsed.home = value
+    else if (argument === '--profile') parsed.profile = value
     else if (argument === '--gate') parsed.gate = value
     else if (argument === '--fixture') parsed.fixture = value
     else if (argument === '--suite') parsed.suite = value
@@ -299,8 +311,8 @@ function failUsage(message) {
   if (message) console.error(message)
   console.error(
     `Usage: node test/run-live-provider-e2e.mjs <prepare|run|web-ui|status> ` +
-    `--browser <${LIVE_PROVIDER_TEST_BROWSERS.join('|')}> ` +
-    '[--home <test-home>] [--gate <all|non_submission|mutation|project>] ' +
+    `[--browser <${LIVE_PROVIDER_TEST_BROWSERS.join('|')}>] ` +
+    '[--home <test-home>] [--profile <profile-slug>] [--gate <all|non_submission|mutation|project>] ' +
     '[--fixture <web-ui-fixture>] [--suite <web-ui-suite>] [--no-open]',
   )
   process.exit(2)

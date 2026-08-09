@@ -4,13 +4,16 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright'
 
 import {
   VISIBLE_ACTIONS,
   createVisibleActionRequest,
   getProviderInstanceById,
 } from '../packages/cli/dist/src/playwright/index.js'
+import {
+  withDedicatedTestBrowser,
+  withDedicatedTestPage,
+} from './helpers/live-provider-test-profile.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = path.join(root, 'test', 'fixtures', 'provider-dom')
@@ -132,9 +135,7 @@ const adapterSelectorAudit = Object.freeze({
 test('authenticated provider DOM fixtures retain only redacted, provenance-bound visible evidence', {
   timeout: 30000,
 }, async () => {
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     for (const [provider, expected] of Object.entries(providers)) {
       const accountRoot = path.join(fixtureRoot, provider, expected.accountState)
       const retainedScenarios = new Set(
@@ -202,9 +203,7 @@ test('authenticated provider DOM fixtures retain only redacted, provenance-bound
         await assertSanitizedLinks(page, `${provider}/${scenario}`)
       }
     }
-  } finally {
-    await browser.close()
-  }
+  }, { visibility: 'headless' })
 })
 
 test('Gemini account status preserves captured authenticated and guest boundaries', {
@@ -232,11 +231,10 @@ test('Gemini account status preserves captured authenticated and guest boundarie
       },
     },
   ]
-  const browser = await chromium.launch({ headless: true })
-  try {
+  await withDedicatedTestBrowser(async ({ context }) => {
     for (const fixtureCase of cases) {
-      const context = await browser.newContext({ viewport: { width: 1100, height: 850 } })
-      const page = await context.newPage()
+      const page = await context.browserContext.newPage()
+      await page.setViewportSize({ width: 1100, height: 850 })
       try {
         const fixturePath = path.join(
           fixtureRoot,
@@ -282,12 +280,10 @@ test('Gemini account status preserves captured authenticated and guest boundarie
           visibleProof: response.result?.visibleProof,
         }, fixtureCase.expected)
       } finally {
-        await context.close()
+        await page.close()
       }
     }
-  } finally {
-    await browser.close()
-  }
+  }, { visibility: 'headless' })
 })
 
 test('provider DOM manifest inventories every fixture with its sanitized page URL', async () => {
@@ -341,9 +337,7 @@ test('DeepSeek fixtures preserve mode-dependent visible control topology', { tim
     'composer-expert': { mode: 'Expert', toggles: ['DeepThink'], fileInput: 0 },
     'composer-vision': { mode: 'Vision', toggles: ['DeepThink'], fileInput: 1 },
   }
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     for (const [scenario, topology] of Object.entries(expected)) {
       const htmlPath = path.join(accountRoot, `${scenario}.html`)
       const provenancePath = path.join(accountRoot, `${scenario}.provenance.json`)
@@ -393,18 +387,14 @@ test('DeepSeek fixtures preserve mode-dependent visible control topology', { tim
       }
       assert.equal(await page.locator('.ds-message > .ds-markdown.ds-assistant-message-main-content').count(), 1)
     }
-  } finally {
-    await browser.close()
-  }
+  }, { visibility: 'headless' })
 })
 
 test('Qwen guest fixtures preserve provenance-bound composer, mode, and completed-response evidence', {
   timeout: 30000,
 }, async () => {
   const accountRoot = path.join(fixtureRoot, 'qwen', 'signed-out-guest')
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     const cases = [
       {
         scenario: 'composer-idle',
@@ -468,18 +458,14 @@ test('Qwen guest fixtures preserve provenance-bound composer, mode, and complete
       }
       await assertSanitizedLinks(page, `qwen/${scenario}`)
     }
-  } finally {
-    await browser.close()
-  }
+  }, { visibility: 'headless' })
 })
 
 test('Dola fixtures preserve the observed capability action bar and completed response boundary', {
   timeout: 30000,
 }, async () => {
   const accountRoot = path.join(fixtureRoot, 'dola', 'signed-in-unknown')
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     for (const scenario of ['capability-action-bar', 'response-complete']) {
       const [htmlBytes, provenanceText] = await Promise.all([
         fs.readFile(path.join(accountRoot, `${scenario}.html`)),
@@ -519,9 +505,7 @@ test('Dola fixtures preserve the observed capability action bar and completed re
       ['Create Image', 'Writing', 'Create Video', 'Translate', 'Homework'],
     )
     assert.equal(await page.locator('a[href="/chat/create-image"]').count(), 1)
-  } finally {
-    await browser.close()
-  }
+  }, { visibility: 'headless' })
 })
 
 test('deep workflow fixtures cover authenticated provider jobs, settings, connectors, uploads, and media', {
@@ -531,10 +515,7 @@ test('deep workflow fixtures cover authenticated provider jobs, settings, connec
   const deepEntries = manifest.fixtures.filter((entry) => entry.observedOn === '2026-07-25')
   const counts = Object.fromEntries(Object.keys(deepWorkflowMinimums).map((provider) => [provider, 0]))
   const routeClasses = Object.fromEntries(Object.keys(deepWorkflowMinimums).map((provider) => [provider, new Set()]))
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
-
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     for (const entry of deepEntries) {
       const [htmlBytes, provenanceText] = await Promise.all([
         fs.readFile(path.join(fixtureRoot, entry.htmlPath)),
@@ -575,9 +556,7 @@ test('deep workflow fixtures cover authenticated provider jobs, settings, connec
       }
       await assertSanitizedLinks(page, `${entry.provider}/${entry.scenario}`)
     }
-  } finally {
-    await browser.close()
-  }
+  }, { visibility: 'headless' })
 
   for (const [provider, minimum] of Object.entries(deepWorkflowMinimums)) {
     assert.equal(counts[provider] >= minimum, true, `${provider} deep fixture count`)
@@ -601,9 +580,7 @@ test('current Grok Free fixture preserves the visible model entitlement boundary
   assertPrivacyBoundary(html)
   assertPrivacyBoundary(provenanceText)
 
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     await page.setContent(html)
     assert.equal(
       await page.locator('[role="menuitem"][data-radix-collection-item].text-secondary.opacity-75 span.font-semibold').count(),
@@ -618,9 +595,7 @@ test('current Grok Free fixture preserves the visible model entitlement boundary
       0
     )
     assert.equal(await page.getByRole('button', { name: 'Upgrade' }).count(), 1)
-  } finally {
-    await browser.close()
-  }
+  }, { visibility: 'headless' })
 })
 
 test('provider-specific selection semantics and plan uncertainty remain explicit', async () => {
@@ -637,9 +612,7 @@ test('provider-specific selection semantics and plan uncertainty remain explicit
     fs.readFile(path.join(chatgptRoot, 'thinking-effort-menu-open.html'), 'utf8'),
   ])
 
-  const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     await page.setContent(geminiHtml)
     assert.equal(
       await page.locator('gem-menu-item[data-active="true"] gem-menu-item-content').innerText(),
@@ -665,9 +638,7 @@ test('provider-specific selection semantics and plan uncertainty remain explicit
 
     await page.setContent(chatgptEffortHtml)
     assert.equal(await page.getByRole('menuitemradio').count(), 3)
-  } finally {
-    await browser.close()
-  }
+  }, { visibility: 'headless' })
 
   assert.equal(grokEffort.effortMode, 'coupled-to-model')
 

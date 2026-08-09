@@ -7,8 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { listProviderDescriptors } from '../packages/cli/dist/src/providers/registry.js'
 import {
   createLiveProviderTestContextManager,
-  resolveLiveProviderTestTarget,
-  validateLiveProviderTestTarget,
+  resolveConfiguredDedicatedTestTarget,
 } from './helpers/live-provider-test-profile.mjs'
 
 if (process.env.TOKENLESS_LIVE_BROWSER_SURFACE_GATE !== '1') {
@@ -29,7 +28,7 @@ const visibility = process.env.TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY
 if (!['headed', 'headless'].includes(visibility)) {
   throw new Error('Set TOKENLESS_LIVE_BROWSER_SURFACE_VISIBILITY to headed or headless.')
 }
-const target = await validateLiveProviderTestTarget(resolveLiveProviderTestTarget({ browser: selection }))
+const target = await resolveConfiguredDedicatedTestTarget({ browser: selection })
 
 test(`${selection} ${visibility} reaches every provider surface and Google Search without a detected anti-bot challenge`, { timeout: 20 * 60_000 }, async () => {
   const manager = createLiveProviderTestContextManager(target)

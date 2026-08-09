@@ -5,10 +5,12 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright-core'
-
 import { BrowserRuntimeManager } from '../packages/cli/dist/src/browser-runtime/manager.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+import {
+  resolveConfiguredDedicatedTestTarget,
+  withDedicatedTestPage,
+} from './helpers/live-provider-test-profile.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
@@ -40,7 +42,8 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
   try {
     await fs.mkdir(skillHome, { recursive: true, mode: 0o700 })
 
-    const customExecutablePath = chromium.executablePath()
+    const dedicatedTarget = await resolveConfiguredDedicatedTestTarget()
+    const customExecutablePath = dedicatedTarget.runtime.executablePath
     await fs.access(customExecutablePath)
     const configured = await runCli([
       'config',
@@ -56,22 +59,10 @@ test('built CLI installs, binds, inspects, repairs, and reuses exact browser run
       { allowDownload: false, browserExecutablePath: configured.config.browserExecutablePath },
     )
     assert.equal(configuredRuntime.executablePath, customExecutablePath)
-    const cachedPathContext = await chromium.launchPersistentContext(
-      path.join(homeDir, 'cached-path-smoke-profile'),
-      {
-        executablePath: configuredRuntime.executablePath,
-        headless: true,
-        chromiumSandbox: true,
-        args: ['--password-store=basic', '--use-mock-keychain'],
-      },
-    )
-    try {
-      const page = cachedPathContext.pages()[0] ?? await cachedPathContext.newPage()
+    await withDedicatedTestPage(async ({ page }) => {
       await page.goto('data:text/html,<title>cached-browser-path</title>')
       assert.equal(await page.title(), 'cached-browser-path')
-    } finally {
-      await cachedPathContext.close()
-    }
+    }, { visibility: 'headless' })
 
     const automatic = await runCli([
       'install', '--browser', 'auto', '--home', homeDir, '--json',

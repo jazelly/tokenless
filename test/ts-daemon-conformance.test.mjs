@@ -1254,17 +1254,16 @@ test('profiles open uses resident CDP browser control', {
   timeout: 60_000,
 }, async () => {
   requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-profile-open-providerless-')
-  const profile = createReadyManagedProfile(homeDir)
+  const { resolveConfiguredDedicatedTestTarget } = await import('./helpers/live-provider-test-profile.mjs')
+  const target = await resolveConfiguredDedicatedTestTarget()
+  const { homeDir, profile } = target
   const runtime = await importCli()
-  const { chromium } = await import('playwright-core')
-  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  const originalConfig = fs.readFileSync(path.join(homeDir, 'config.json'))
   const previousProvider = process.env.TOKENLESS_PROVIDER
-  process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
   process.env.TOKENLESS_PROVIDER = 'claude'
   let daemon
   try {
-    const config = await runtime.writeTokenlessConfig({ homeDir, browser: 'profile' })
+    const config = await runtime.readTokenlessConfig(homeDir)
     assert.equal(Object.hasOwn(config, 'browserConnectionMode'), false)
     daemon = await startTsDaemon(homeDir)
     await runtime.writeTokenlessConfig({ homeDir, daemonUrl: daemon.url })
@@ -1282,7 +1281,7 @@ test('profiles open uses resident CDP browser control', {
     assert.equal(payload.command, 'profiles.open')
     assert.equal(payload.transport, 'daemon')
     assert.equal(payload.backend, 'playwright')
-    assert.equal(payload.profile.slug, 'default')
+    assert.equal(payload.profile.slug, profile.slug)
     assert.equal(payload.profile.id, profile.id)
     assert.equal(Object.hasOwn(payload, 'provider'), false)
     assert.equal(Object.hasOwn(payload, 'jobId'), false)
@@ -1297,13 +1296,11 @@ test('profiles open uses resident CDP browser control', {
     const jobs = await daemonRequest(daemon.url, token, 'GET', `/jobs?profile_id=${encodeURIComponent(profile.id)}`)
     assert.deepEqual(jobs, [])
   } finally {
-    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
-    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
     if (previousProvider === undefined) delete process.env.TOKENLESS_PROVIDER
     else process.env.TOKENLESS_PROVIDER = previousProvider
     await shutdownDaemon(daemon).catch(() => undefined)
     await terminateChildrenForHome(homeDir)
-    fs.rmSync(homeDir, { recursive: true, force: true })
+    fs.writeFileSync(path.join(homeDir, 'config.json'), originalConfig, { mode: 0o600 })
   }
 })
 

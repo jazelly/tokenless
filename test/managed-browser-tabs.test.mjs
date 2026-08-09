@@ -1,15 +1,12 @@
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
 import http from 'node:http'
-import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-
-import { chromium } from 'playwright-core'
 
 import {
   PersistentContextManager,
 } from '../packages/cli/dist/src/playwright/index.js'
+import { validateDedicatedTestProfiles } from './helpers/live-provider-test-profile.mjs'
 
 test('CDP production launch allows configured Chromium executables to use native credential storage', async () => {
   await withManager(async ({ manager, profile }) => {
@@ -241,29 +238,32 @@ test('CDP managed browser rebuilds page mapping after context loss and visibilit
 
 async function withManager(
   operation,
-  { browserId = 'profile', launchPolicy = 'test-profile' } = {},
+  { browserId, launchPolicy } = {},
 ) {
-  const profileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cdp-capabilities-'))
-  const otherProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cdp-other-profile-'))
-  const overflowProfileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-cdp-overflow-profile-'))
+  const [primary, secondary, overflow] = await validateDedicatedTestProfiles({ count: 3 })
+  const runtime = primary.runtime
   const manager = new PersistentContextManager({
     maxContexts: 2,
     browser: {
-      id: browserId,
-      executablePath: chromium.executablePath(),
-      launchPolicy,
+      id: browserId ?? runtime.browserId,
+      executablePath: runtime.executablePath,
+      runtimeId: runtime.runtimeId,
+      launchPolicy: launchPolicy ?? runtime.launchPolicy,
     },
   })
-  const profile = { id: 'default', directory: profileDirectory, lifecycle: 'ready' }
-  const otherProfile = { id: 'secondary', directory: otherProfileDirectory, lifecycle: 'ready' }
-  const overflowProfile = { id: 'overflow', directory: overflowProfileDirectory, lifecycle: 'ready' }
+  const profile = primary.profile
+  const otherProfile = secondary.profile
+  const overflowProfile = overflow.profile
   try {
-    return await operation({ manager, profile, otherProfile, overflowProfile, profileDirectory })
+    return await operation({
+      manager,
+      profile,
+      otherProfile,
+      overflowProfile,
+      profileDirectory: profile.directory,
+    })
   } finally {
     await manager.shutdown()
-    fs.rmSync(profileDirectory, { recursive: true, force: true })
-    fs.rmSync(otherProfileDirectory, { recursive: true, force: true })
-    fs.rmSync(overflowProfileDirectory, { recursive: true, force: true })
   }
 }
 

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
-import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
@@ -16,33 +15,14 @@ import {
   openTokenlessDashboard,
   quiesceBrowserRuntime,
 } from '../packages/cli/dist/src/daemon-client.js'
-import { writeTokenlessConfig } from '../packages/cli/dist/src/job-store.js'
-import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
+import { resolveConfiguredDedicatedTestTarget } from './helpers/live-provider-test-profile.mjs'
 
 test('packaged daemon keeps the implicit headless readiness browser resident after the batch', { timeout: 75_000 }, async () => {
-  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-headless-readiness-')))
-  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  const target = await resolveConfiguredDedicatedTestTarget()
+  const { homeDir, profile } = target
   let daemon
   let observer
   try {
-    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
-    const registry = new ManagedProfileRegistry(homeDir)
-    const profile = await registry.addProfile({ slug: 'headless-readiness', lifecycle: 'ready', setDefault: true })
-    await writeTokenlessConfig({
-      homeDir,
-      browser: 'profile',
-      browserVisibility: 'auto',
-      providerWhitelist: ['chatgpt'],
-      profilePreferences: {
-        [profile.slug]: {
-          profileId: profile.slug,
-          roleLabel: '',
-          enabledProviders: ['chatgpt'],
-          browserVisibility: 'auto',
-          proxy: null,
-        },
-      },
-    })
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
 
     const readinessBatches = await Promise.all([
@@ -79,22 +59,15 @@ test('packaged daemon keeps the implicit headless readiness browser resident aft
       await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir }).catch(() => undefined)
     }
     await daemon?.close()
-    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
-    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
-    await fs.rm(homeDir, { recursive: true, force: true })
   }
 })
 
 test('daemon shutdown detaches and a replacement daemon reconnects to the resident browser', { timeout: 60_000 }, async () => {
-  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-daemon-browser-handoff-')))
-  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  const target = await resolveConfiguredDedicatedTestTarget()
+  const { homeDir, profile } = target
   let daemon
   let observer
   try {
-    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
-    const registry = new ManagedProfileRegistry(homeDir)
-    const profile = await registry.addProfile({ slug: 'daemon-browser-handoff', lifecycle: 'ready', setDefault: true })
-    await writeTokenlessConfig({ homeDir, browser: 'profile' })
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
     await openBrowserRuntimeProfile({
       daemonUrl: daemon.origin,
@@ -142,22 +115,15 @@ test('daemon shutdown detaches and a replacement daemon reconnects to the reside
       await daemon.close().catch(() => undefined)
     }
     await observer?.close().catch(() => undefined)
-    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
-    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
-    await fs.rm(homeDir, { recursive: true, force: true })
   }
 })
 
 test('replacement daemon reconnects to a legacy resident browser without runtime session metadata', { timeout: 60_000 }, async () => {
-  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-legacy-daemon-browser-handoff-')))
-  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  const target = await resolveConfiguredDedicatedTestTarget()
+  const { homeDir, profile } = target
   let daemon
   let observer
   try {
-    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
-    const registry = new ManagedProfileRegistry(homeDir)
-    const profile = await registry.addProfile({ slug: 'legacy-daemon-browser-handoff', lifecycle: 'ready', setDefault: true })
-    await writeTokenlessConfig({ homeDir, browser: 'profile' })
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
     await openBrowserRuntimeProfile({
       daemonUrl: daemon.origin,
@@ -233,22 +199,15 @@ test('replacement daemon reconnects to a legacy resident browser without runtime
       await daemon.close().catch(() => undefined)
     }
     await observer?.close().catch(() => undefined)
-    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
-    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
-    await fs.rm(homeDir, { recursive: true, force: true })
   }
 })
 
 test('invalid resident browser session metadata fails without overwriting the endpoint', { timeout: 60_000 }, async () => {
-  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-invalid-daemon-browser-session-')))
-  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  const target = await resolveConfiguredDedicatedTestTarget()
+  const { homeDir, profile } = target
   let daemon
   let observer
   try {
-    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
-    const registry = new ManagedProfileRegistry(homeDir)
-    const profile = await registry.addProfile({ slug: 'invalid-daemon-browser-session', lifecycle: 'ready', setDefault: true })
-    await writeTokenlessConfig({ homeDir, browser: 'profile' })
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
     await openBrowserRuntimeProfile({
       daemonUrl: daemon.origin,
@@ -298,23 +257,16 @@ test('invalid resident browser session metadata fails without overwriting the en
       await daemon.close().catch(() => undefined)
     }
     await observer?.close().catch(() => undefined)
-    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
-    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
-    await fs.rm(homeDir, { recursive: true, force: true })
   }
 })
 
 test('legacy resident browser with an unexpected launch flag is rejected without replacement', { timeout: 60_000 }, async () => {
-  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-unexpected-flag-browser-')))
-  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  const target = await resolveConfiguredDedicatedTestTarget()
+  const { homeDir, profile } = target
   let daemon
   let observer
   let manualBrowser
   try {
-    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
-    const registry = new ManagedProfileRegistry(homeDir)
-    const profile = await registry.addProfile({ slug: 'unexpected-flag-browser', lifecycle: 'ready', setDefault: true })
-    await writeTokenlessConfig({ homeDir, browser: 'profile' })
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
     await openBrowserRuntimeProfile({
       daemonUrl: daemon.origin,
@@ -337,7 +289,7 @@ test('legacy resident browser with an unexpected launch flag is rejected without
     await observer.close().catch(() => undefined)
     observer = undefined
 
-    manualBrowser = spawn(chromium.executablePath(), [...originalArguments, '--disable-gpu'], {
+    manualBrowser = spawn(target.runtime.executablePath, [...originalArguments, '--disable-gpu'], {
       detached: true,
       stdio: 'ignore',
     })
@@ -368,7 +320,7 @@ test('legacy resident browser with an unexpected launch flag is rejected without
       if (!error || typeof error !== 'object' || error.code !== 'ENOENT') throw error
     })
 
-    manualBrowser = spawn(chromium.executablePath(), [...originalArguments, 'about:blank#unexpected'], {
+    manualBrowser = spawn(target.runtime.executablePath, [...originalArguments, 'about:blank#unexpected'], {
       detached: true,
       stdio: 'ignore',
     })
@@ -403,37 +355,14 @@ test('legacy resident browser with an unexpected launch flag is rejected without
       await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir }).catch(() => undefined)
       await daemon.close().catch(() => undefined)
     }
-    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
-    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
-    await fs.rm(homeDir, { recursive: true, force: true })
   }
 })
 
 test('packaged daemon completes headed provider tabs and keeps the dashboard context live through readiness refresh', { timeout: 60_000 }, async () => {
-  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-tab-lifecycle-')))
-  const previousEnvironment = new Map([
-    ['TOKENLESS_BROWSER_EXECUTABLE', process.env.TOKENLESS_BROWSER_EXECUTABLE],
-  ])
+  const target = await resolveConfiguredDedicatedTestTarget()
+  const { homeDir, profile } = target
   let daemon
   try {
-    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
-    const registry = new ManagedProfileRegistry(homeDir)
-    const profile = await registry.addProfile({ slug: 'tab-lifecycle', lifecycle: 'ready', setDefault: true })
-    await writeTokenlessConfig({
-      homeDir,
-      browser: 'profile',
-      browserVisibility: 'auto',
-      providerWhitelist: ['chatgpt'],
-      profilePreferences: {
-        [profile.slug]: {
-          profileId: profile.slug,
-          roleLabel: '',
-          enabledProviders: ['chatgpt'],
-          browserVisibility: 'auto',
-          proxy: null,
-        },
-      },
-    })
     daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
     const profileOpened = await openBrowserRuntimeProfile({
       daemonUrl: daemon.origin,
@@ -546,11 +475,6 @@ test('packaged daemon completes headed provider tabs and keeps the dashboard con
       await quiesceBrowserRuntime({ daemonUrl: daemon.origin, homeDir }).catch(() => undefined)
     }
     await daemon?.close()
-    for (const [key, value] of previousEnvironment) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
-    await fs.rm(homeDir, { recursive: true, force: true })
   }
 })
 

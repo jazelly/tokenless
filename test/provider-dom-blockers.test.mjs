@@ -4,13 +4,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright'
 
 import {
   VISIBLE_ACTIONS,
   createVisibleActionRequest,
   getProviderInstanceById,
 } from '../packages/cli/dist/src/playwright/index.js'
+import { withDedicatedTestPage } from './helpers/live-provider-test-profile.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixturePath = path.join(
@@ -22,10 +22,7 @@ const provenancePath = fixturePath.replace(/\.html$/u, '.provenance.json')
 test('Claude blocker check recognizes the captured Cloudflare security-verification interstitial', {
   timeout: 30000,
 }, async () => {
-  const browser = await chromium.launch({ headless: true })
-  const context = await browser.newContext({ viewport: { width: 1100, height: 850 } })
-  const page = await context.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     const [fixtureBytes, provenanceText] = await Promise.all([
       fs.readFile(fixturePath),
       fs.readFile(provenancePath, 'utf8'),
@@ -82,8 +79,5 @@ test('Claude blocker check recognizes the captured Cloudflare security-verificat
       url: 'https://claude.ai',
       family: 'cloudflare',
     }])
-  } finally {
-    await context.close()
-    await browser.close()
-  }
+  }, { visibility: 'headless', viewport: { width: 1100, height: 850 } })
 })

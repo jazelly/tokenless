@@ -3,13 +3,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright'
 
 import {
   VISIBLE_ACTIONS,
   createVisibleActionRequest,
   getProviderInstanceById,
 } from '../packages/cli/dist/src/playwright/index.js'
+import {
+  withDedicatedTestBrowser,
+  withDedicatedTestPage,
+} from './helpers/live-provider-test-profile.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const fixtureRoot = path.join(root, 'test/fixtures/provider-dom')
@@ -70,14 +73,12 @@ const providers = [
 test('real Chromium inputs and clears drafts on provenance-bound provider DOM captures', {
   timeout: 60000,
 }, async (t) => {
-  const browser = await chromium.launch({ headless: true })
-  t.after(() => browser.close())
-
-  for (const provider of providers) {
-    await t.test(provider.id, async () => {
-      const context = await browser.newContext({ viewport: { width: 1100, height: 850 } })
-      const page = await context.newPage()
-      try {
+  await withDedicatedTestBrowser(async ({ context }) => {
+    for (const provider of providers) {
+      await t.test(provider.id, async () => {
+        const page = await context.browserContext.newPage()
+        await page.setViewportSize({ width: 1100, height: 850 })
+        try {
         await openCapturedFixture(page, provider, provider.scenario)
         const providerInstance = getProviderInstanceById(provider.id)
         assert.ok(providerInstance, `provider instance missing: ${provider.id}`)
@@ -110,20 +111,18 @@ test('real Chromium inputs and clears drafts on provenance-bound provider DOM ca
           inputProof: 'empty',
         })
         assert.equal(await visibleComposerText(page, provider.composerSelectors), '')
-      } finally {
-        await context.close()
-      }
-    })
-  }
+        } finally {
+          await page.close()
+        }
+      })
+    }
+  }, { visibility: 'headless' })
 })
 
 test('prompt input reports a visibility timeout when the captured provider page has no composer', {
   timeout: 30000,
 }, async () => {
-  const browser = await chromium.launch({ headless: true })
-  const context = await browser.newContext({ viewport: { width: 1100, height: 850 } })
-  const page = await context.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     const provider = providers[0]
     assert.ok(provider)
     await openCapturedFixture(page, provider, 'settings-general')
@@ -149,19 +148,13 @@ test('prompt input reports a visibility timeout when the captured provider page 
     })
     assert.ok(elapsedMs >= 14000, `prompt input returned before the visibility timeout: ${elapsedMs}ms`)
     assert.ok(elapsedMs < 20000, `prompt input exceeded the bounded visibility timeout: ${elapsedMs}ms`)
-  } finally {
-    await context.close()
-    await browser.close()
-  }
+  }, { visibility: 'headless', viewport: { width: 1100, height: 850 } })
 })
 
 test('prompt submit reports an actionability timeout when the captured provider page has no enabled submit control', {
   timeout: 30000,
 }, async () => {
-  const browser = await chromium.launch({ headless: true })
-  const context = await browser.newContext({ viewport: { width: 1100, height: 850 } })
-  const page = await context.newPage()
-  try {
+  await withDedicatedTestPage(async ({ page }) => {
     const provider = providers[0]
     assert.ok(provider)
     await openCapturedFixture(page, provider, 'settings-general')
@@ -187,10 +180,7 @@ test('prompt submit reports an actionability timeout when the captured provider 
     })
     assert.ok(elapsedMs >= 14000, `prompt submit returned before the actionability timeout: ${elapsedMs}ms`)
     assert.ok(elapsedMs < 20000, `prompt submit exceeded the bounded actionability timeout: ${elapsedMs}ms`)
-  } finally {
-    await context.close()
-    await browser.close()
-  }
+  }, { visibility: 'headless', viewport: { width: 1100, height: 850 } })
 })
 
 async function openCapturedFixture(page, provider, scenario = 'composer-idle') {
