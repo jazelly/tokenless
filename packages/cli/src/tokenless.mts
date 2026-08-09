@@ -239,10 +239,8 @@ type SetupImportSelection = {
   directoryKey: string
 }
 
-const DEFAULT_RUN_TIMEOUT_MS = 180_000
 const CLOAK_BROWSER_PROJECT_URL = 'https://github.com/CloakHQ/CloakBrowser'
 const LONG_RUNNING_READ_TIMEOUT_MS = 2_100_000
-const LONG_RUNNING_JOB_TIMEOUT_MS = 2_160_000
 const PROVIDER_OBSERVATION_FRESHNESS_MS = 5 * 60 * 1000
 const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'capability.inspect',
@@ -2004,7 +2002,7 @@ async function executeDaemonJob({
       statusEventAction: MANAGED_PLAYWRIGHT_JOB_ACTION,
       noWait: args.noWait === true,
       timeoutMs: args.timeoutMs === undefined
-        ? (action === 'snapshot_dom' ? 60_000 : (longRunning ? LONG_RUNNING_JOB_TIMEOUT_MS : DEFAULT_RUN_TIMEOUT_MS))
+        ? (action === 'snapshot_dom' ? 60_000 : undefined)
         : Number(args.timeoutMs),
     })
     const { job, waitResult: result, statusLog } = submitted
@@ -2252,7 +2250,7 @@ async function executeManagedPlaywrightJob({
         homeDir,
         daemonUrl: actualDaemonUrl,
         jobId: job.job_id,
-        timeoutMs: timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+        timeoutMs,
         cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
         statusReporter,
         ...agentRecipientFromArgs(args),
@@ -2723,7 +2721,7 @@ async function resumeCommand(args: CliArgs) {
     homeDir,
     daemonUrl: actualDaemonUrl,
     jobId: resumed.job_id,
-    timeoutMs: args.timeoutMs === undefined ? DEFAULT_RUN_TIMEOUT_MS : Number(args.timeoutMs),
+    timeoutMs: args.timeoutMs === undefined ? undefined : Number(args.timeoutMs),
     cancelTimeoutMs: optionalNumber(args.cancelTimeoutMs),
     statusReporter,
     ...agentRecipientFromArgs(args),

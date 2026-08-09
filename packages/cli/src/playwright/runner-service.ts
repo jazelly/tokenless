@@ -33,7 +33,7 @@ import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersi
 import { ManagedProfileRegistry } from './profiles/registry.js'
 import { checkpointIndicatesExternalMutation } from './submission-certainty.js'
 import { readTokenlessConfig } from '../job-store.js'
-import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById, listTaskCapabilityDefinitions } from '../providers/registry.js'
+import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
@@ -64,7 +64,6 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   pollIdleMs?: number | undefined
   renewIntervalMs?: number | undefined
   cancelPollMs?: number | undefined
-  responseWaitTimeoutMs?: number | undefined
   responseWaitPollMs?: number | undefined
   userHandoverTimeoutMs?: number | undefined
   userHandoverPollMs?: number | undefined
@@ -169,8 +168,6 @@ type RunnerProvider = NonNullable<ReturnType<typeof getProviderInstanceById>>
 const DEFAULT_RENEW_INTERVAL_MS = 10_000
 const DEFAULT_CANCEL_POLL_MS = 500
 const DEFAULT_POLL_IDLE_MS = 1_000
-const DEFAULT_RESPONSE_WAIT_TIMEOUT_MS = 120_000
-const LONG_RUNNING_RESPONSE_WAIT_TIMEOUT_MS = 2_160_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
@@ -183,7 +180,6 @@ export class ManagedPlaywrightRunnerService {
   private readonly pollIdleMs: number
   private readonly renewIntervalMs: number
   private readonly cancelPollMs: number
-  private readonly responseWaitTimeoutMs: number
   private readonly responseWaitPollMs: number
   private readonly userHandoverTimeoutMs: number
   private readonly userHandoverPollMs: number
@@ -229,7 +225,6 @@ export class ManagedPlaywrightRunnerService {
     this.pollIdleMs = normalizedPositiveInteger(options.pollIdleMs, DEFAULT_POLL_IDLE_MS)
     this.renewIntervalMs = normalizedPositiveInteger(options.renewIntervalMs, DEFAULT_RENEW_INTERVAL_MS)
     this.cancelPollMs = normalizedPositiveInteger(options.cancelPollMs, DEFAULT_CANCEL_POLL_MS)
-    this.responseWaitTimeoutMs = normalizedPositiveInteger(options.responseWaitTimeoutMs, DEFAULT_RESPONSE_WAIT_TIMEOUT_MS)
     this.responseWaitPollMs = normalizedPositiveInteger(options.responseWaitPollMs, DEFAULT_RESPONSE_WAIT_POLL_MS)
     this.userHandoverTimeoutMs = normalizedPositiveInteger(options.userHandoverTimeoutMs, DEFAULT_USER_HANDOVER_TIMEOUT_MS)
     this.userHandoverPollMs = normalizedPositiveInteger(options.userHandoverPollMs, DEFAULT_USER_HANDOVER_POLL_MS)
@@ -860,7 +855,6 @@ export class ManagedPlaywrightRunnerService {
               provider,
               action,
               preparation: state.preparation,
-              timeoutMs: responseWaitTimeoutForRoute(request.capabilityRoute, this.responseWaitTimeoutMs),
               pollMs: this.responseWaitPollMs,
               signal,
               isCanceled,
@@ -1232,7 +1226,6 @@ export class ManagedPlaywrightRunnerService {
       provider: RunnerProvider
       action: VisibleActionRequest
       preparation: ProviderActionPreparation
-      timeoutMs: number
       pollMs: number
       signal: AbortSignal
       isCanceled: () => boolean
@@ -1240,16 +1233,13 @@ export class ManagedPlaywrightRunnerService {
       clearBlocker: () => Promise<number>
     }
   ) {
-    let deadline = Date.now() + options.timeoutMs
-    while (Date.now() <= deadline) {
+    while (true) {
       throwIfStopped(options.signal, options.isCanceled, options.renewalError)
-      const waitedMs = await options.clearBlocker()
-      deadline += waitedMs
+      await options.clearBlocker()
       const page = getPage()
       if ((await options.provider.observeAction(page, options.action, options.preparation)).state === 'ready') return
-      await delay(Math.min(options.pollMs, Math.max(1, deadline - Date.now())), options.signal)
+      await delay(options.pollMs, options.signal)
     }
-    throw tokenlessError('playwright_response_timeout', 'Timed out waiting for a new visible provider response.', { retryable: true })
   }
 }
 
@@ -1533,14 +1523,6 @@ function liveInspectionTarget(capability: TaskCapabilityId): {
     return { providerCapability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE, scope: 'overall' }
   }
   return null
-}
-
-function responseWaitTimeoutForRoute(route: TaskCapabilityRoute | null | undefined, fallback: number) {
-  if (!route) return fallback
-  const definitions = new Map(listTaskCapabilityDefinitions().map((definition) => [definition.id, definition]))
-  return route.requirements.some((capability) => definitions.get(capability)?.lifecycle === 'long_running')
-    ? Math.max(fallback, LONG_RUNNING_RESPONSE_WAIT_TIMEOUT_MS)
-    : fallback
 }
 
 function validateResumeVisibility(value: unknown): Extract<BrowserVisibility, 'headed'> | null {

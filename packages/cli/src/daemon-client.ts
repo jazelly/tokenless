@@ -638,7 +638,7 @@ export async function waitDaemonJobResult({
   requestTimeoutMs,
   signal,
   jobId,
-  timeoutMs = 180000,
+  timeoutMs,
   pollMs = 250,
   heartbeatMs = 30000,
   onStatus,
@@ -649,7 +649,7 @@ export async function waitDaemonJobResult({
   const startedAt = Date.now()
   let lastStatus: string | undefined
   let lastHeartbeatAt = startedAt
-  while (Date.now() - startedAt < timeoutMs) {
+  while (timeoutMs === undefined || Date.now() - startedAt < timeoutMs) {
     const job = await getDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, jobId, requestTimeoutMs, signal })
     const elapsedMs = Date.now() - startedAt
     if (job.status !== lastStatus) {
