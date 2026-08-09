@@ -17,6 +17,69 @@ import {
 import { writeTokenlessConfig } from '../packages/cli/dist/src/job-store.js'
 import { ManagedProfileRegistry } from '../packages/cli/dist/src/playwright/profiles/registry.js'
 
+test('packaged daemon runs implicit readiness headlessly and closes its temporary context after the batch', { timeout: 75_000 }, async () => {
+  const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-headless-readiness-')))
+  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
+  let daemon
+  let observer
+  try {
+    process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
+    const registry = new ManagedProfileRegistry(homeDir)
+    const profile = await registry.addProfile({ slug: 'headless-readiness', lifecycle: 'ready', setDefault: true })
+    await writeTokenlessConfig({
+      homeDir,
+      browser: 'profile',
+      browserVisibility: 'auto',
+      browserConnectionMode: 'cdp',
+      providerWhitelist: ['chatgpt'],
+      profilePreferences: {
+        [profile.slug]: {
+          profileId: profile.slug,
+          roleLabel: '',
+          enabledProviders: ['chatgpt'],
+          browserVisibility: 'auto',
+          proxy: null,
+        },
+      },
+    })
+    daemon = await startDaemon({ homeDir, host: '127.0.0.1', port: 0 })
+
+    const readinessBatches = await Promise.all([
+      requestProviderReadiness(daemon.origin, profile.slug),
+      requestProviderReadiness(daemon.origin, profile.slug),
+    ])
+    const jobIds = readinessBatches.flatMap((readiness) => readiness.jobs.map((job) => job.jobId))
+    assert.equal(jobIds.length, 2)
+    for (const jobId of jobIds) {
+      const readinessJob = await getDaemonJob({ daemonUrl: daemon.origin, homeDir, jobId })
+      assert.equal(readinessJob.request_json.browserVisibility, 'auto')
+      assert.equal(readinessJob.request_json.userHandoff, false)
+    }
+
+    observer = await connectToManagedBrowser(profile.directory)
+    const session = await observer.newBrowserCDPSession()
+    try {
+      const commandLine = await session.send('Browser.getBrowserCommandLine')
+      assert.equal(commandLine.arguments.includes('--headless=new'), true)
+      assert.equal(commandLine.arguments.includes('--no-sandbox'), false)
+    } finally {
+      await session.detach().catch(() => undefined)
+    }
+    await Promise.all(jobIds.map((jobId) => waitFor(async () => {
+      const job = await getDaemonJob({ daemonUrl: daemon.origin, homeDir, jobId })
+      return job.status === 'succeeded' || job.status === 'failed' || job.status === 'waiting_for_user'
+    })))
+    assert.equal(observer.isConnected(), true)
+    await waitFor(() => !observer.isConnected(), 40_000)
+  } finally {
+    await observer?.close().catch(() => undefined)
+    await daemon?.close()
+    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
+    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
+    await fs.rm(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('packaged daemon completes headed provider tabs and keeps the dashboard context live through readiness refresh', { timeout: 60_000 }, async () => {
   const homeDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'tokenless-tab-lifecycle-')))
   const previousEnvironment = new Map([
@@ -114,10 +177,11 @@ test('packaged daemon completes headed provider tabs and keeps the dashboard con
       return browserContext.pages().length > 2 ? 'reused' : null
     })
     assert.equal(readinessContext, 'reused')
-    assert.equal(readinessJob.request_json.browserVisibility, 'headed')
+    assert.equal(readinessJob.request_json.browserVisibility, 'auto')
     assert.equal(observer.isConnected(), true)
     assert.equal(chatgpt.isClosed(), false)
     assert.equal(dashboardPage.isClosed(), false)
+    assert.equal(await dashboardPage.evaluate(() => document.visibilityState), 'visible')
   } finally {
     await daemon?.close()
     for (const [key, value] of previousEnvironment) {
@@ -127,6 +191,26 @@ test('packaged daemon completes headed provider tabs and keeps the dashboard con
     await fs.rm(homeDir, { recursive: true, force: true })
   }
 })
+
+async function requestProviderReadiness(origin, profileSlug) {
+  const sessionResponse = await fetch(`${origin}/ui-api/v1/session`)
+  assert.equal(sessionResponse.status, 200)
+  const cookie = sessionResponse.headers.get('set-cookie')?.split(';')[0]
+  assert.match(cookie ?? '', /^tokenless_ui_session=/)
+  const session = await sessionResponse.json()
+  const response = await fetch(`${origin}/ui-api/v1/profiles/${encodeURIComponent(profileSlug)}/providers/actions/readiness`, {
+    method: 'POST',
+    headers: {
+      cookie,
+      origin,
+      'x-tokenless-csrf': session.csrf,
+      'content-type': 'application/json',
+    },
+    body: '{}',
+  })
+  assert.equal(response.status, 202)
+  return await response.json()
+}
 
 async function connectToManagedBrowser(profileDirectory) {
   const endpoint = await waitForValue(async () => {

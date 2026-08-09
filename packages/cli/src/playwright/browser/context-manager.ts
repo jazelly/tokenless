@@ -40,6 +40,11 @@ export type ManagedBrowserContext = {
   close(): Promise<void>
 }
 
+export type ManagedContextAcquisition = {
+  created: boolean
+  inheritedScheduledClose: boolean
+}
+
 export type ManagedPagePolicy = 'preserve' | 'replace'
 
 export type ManagedPageRequest = {
@@ -148,17 +153,17 @@ export class PersistentContextManager {
 
   async runWithProfile<T>(
     profile: ManagedBrowserProfile,
-    operation: (context: ManagedBrowserContext) => Promise<T>
+    operation: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>
   ): Promise<T>
   async runWithProfile<T>(
     profile: ManagedBrowserProfile,
     visibility: BrowserVisibility,
-    operation: (context: ManagedBrowserContext) => Promise<T>
+    operation: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>
   ): Promise<T>
   async runWithProfile<T>(
     profile: ManagedBrowserProfile,
-    visibilityOrOperation: BrowserVisibility | ((context: ManagedBrowserContext) => Promise<T>),
-    maybeOperation?: (context: ManagedBrowserContext) => Promise<T>
+    visibilityOrOperation: BrowserVisibility | ((context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>),
+    maybeOperation?: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>
   ): Promise<T> {
     if (this.shuttingDown) {
       throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
@@ -166,11 +171,16 @@ export class PersistentContextManager {
     const { visibility, operation } = normalizeRunWithProfileArgs(visibilityOrOperation, maybeOperation)
     const previous = this.lanes.get(profile.id) ?? Promise.resolve()
     const current = previous.catch(() => undefined).then(async () => {
+      const activeBeforeAcquire = this.contexts.get(profile.id)
+      const scheduledCloseBrowserContext = this.scheduledCloses.get(profile.id)?.browserContext
       this.cancelScheduledClose(profile.id)
       this.incrementActiveOperation(profile.id)
       try {
         const context = await this.ensureContext(profile, visibility)
-        return await operation(context)
+        return await operation(context, {
+          created: activeBeforeAcquire?.browserContext !== context.browserContext,
+          inheritedScheduledClose: scheduledCloseBrowserContext === context.browserContext,
+        })
       } catch (error) {
         if (isBrowserClosedError(error)) {
           await this.closeProfile(profile.id).catch(() => undefined)
@@ -204,7 +214,7 @@ export class PersistentContextManager {
       existing &&
       !existing.closing &&
       isManagedBrowserConnected(existing) &&
-      existing.effectiveVisibility === effectiveVisibility &&
+      visibilityMatches(existing, requestedVisibility, effectiveVisibility) &&
       sameBrowserRuntime(existing.browserTarget, browserTarget) &&
       sameBrowserProxy(existing.profile.proxy, profile.proxy)
     ) {
@@ -222,7 +232,7 @@ export class PersistentContextManager {
         current &&
         !current.closing &&
         isManagedBrowserConnected(current) &&
-        current.effectiveVisibility === effectiveVisibility &&
+        visibilityMatches(current, requestedVisibility, effectiveVisibility) &&
         sameBrowserRuntime(current.browserTarget, browserTarget) &&
         sameBrowserProxy(current.profile.proxy, profile.proxy)
       ) {
@@ -756,6 +766,14 @@ function isManagedBrowserConnected(active: ActiveContext) {
   return active.browserContext.browser()?.isConnected() === true
 }
 
+function visibilityMatches(
+  active: ActiveContext,
+  requestedVisibility: BrowserVisibility,
+  effectiveVisibility: EffectiveBrowserVisibility,
+) {
+  return requestedVisibility === 'auto' || active.effectiveVisibility === effectiveVisibility
+}
+
 function normalizeManagedBrowserLaunchTarget(
   browser: ManagedBrowserLaunchTarget | undefined
 ): ManagedBrowserLaunchTarget {
@@ -802,11 +820,11 @@ function sameBrowserRuntime(left: ManagedBrowserLaunchTarget, right: ManagedBrow
 }
 
 function normalizeRunWithProfileArgs<T>(
-  visibilityOrOperation: BrowserVisibility | ((context: ManagedBrowserContext) => Promise<T>),
-  maybeOperation: ((context: ManagedBrowserContext) => Promise<T>) | undefined
+  visibilityOrOperation: BrowserVisibility | ((context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>),
+  maybeOperation: ((context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>) | undefined
 ): {
   visibility: BrowserVisibility
-  operation: (context: ManagedBrowserContext) => Promise<T>
+  operation: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>
 } {
   if (typeof visibilityOrOperation === 'function') {
     return { visibility: 'headed', operation: visibilityOrOperation }

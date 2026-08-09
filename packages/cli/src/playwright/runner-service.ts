@@ -37,6 +37,7 @@ import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } fro
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
+  ManagedContextAcquisition,
   PersistentContextManager as PersistentContextManagerType,
 } from './browser/context-manager.js'
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
@@ -515,6 +516,8 @@ export class ManagedPlaywrightRunnerService {
     let attachmentRoot: string | undefined
     let providerAttachmentRoot: string | undefined
     let autoEscalatedBrowserContext: BrowserContext | undefined
+    let implicitObservationBrowserContext: BrowserContext | undefined
+    let parkedImplicitObservation = false
     let terminalCompletion = false
     const renewTimer = setInterval(() => {
       void this.daemonClient.renewJobClaim({
@@ -596,6 +599,15 @@ export class ManagedPlaywrightRunnerService {
         () => renewError,
         (managedContext) => {
           autoEscalatedBrowserContext = managedContext.browserContext
+        },
+        (managedContext, acquisition) => {
+          if (
+            (acquisition.created || acquisition.inheritedScheduledClose) &&
+            isAutomaticAuthObservation(request, request.browserVisibility) &&
+            managedContext.effectiveBrowserVisibility === 'headless'
+          ) {
+            implicitObservationBrowserContext = managedContext.browserContext
+          }
         }
       )
       if (canceled || signal.aborted) {
@@ -611,6 +623,7 @@ export class ManagedPlaywrightRunnerService {
       return { claimed: true, jobId: job.job_id, status: 'succeeded' }
     } catch (error) {
       if (error instanceof ParkedPlaywrightJob) {
+        parkedImplicitObservation = implicitObservationBrowserContext !== undefined
         attachmentRoot = undefined
         return { claimed: true, jobId: job.job_id, status: 'waiting_for_user' }
       }
@@ -659,6 +672,12 @@ export class ManagedPlaywrightRunnerService {
         this.contextManager.scheduleCloseProfile(profile.id, {
           delayMs: this.autoEscalatedCloseDelayMs,
           browserContext: autoEscalatedBrowserContext,
+        })
+      }
+      if ((terminalCompletion || canceled || parkedImplicitObservation) && implicitObservationBrowserContext) {
+        this.contextManager.scheduleCloseProfile(profile.id, {
+          delayMs: this.autoEscalatedCloseDelayMs,
+          browserContext: implicitObservationBrowserContext,
         })
       }
       if (recoverClaim) {
@@ -720,14 +739,16 @@ export class ManagedPlaywrightRunnerService {
     signal: AbortSignal,
     isCanceled: () => boolean,
     renewalError: () => unknown,
-    onAutoEscalated: (context: ManagedBrowserContext) => void
+    onAutoEscalated: (context: ManagedBrowserContext) => void,
+    onContextAcquired: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => void,
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     const outputSavingsEnabled = await this.outputSavingsEnabled()
     const outputSavingsWorkByRequestId = new Map<string, string>()
     const resumeVisibility = validateResumeVisibility(job.resume_json)
     const claimBrowserVisibility = requestedVisibilityForClaim(request.browserVisibility, resumeVisibility)
     const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
-    const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (initialManagedContext) => {
+    const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (initialManagedContext, acquisition) => {
+      onContextAcquired(initialManagedContext, acquisition)
       let managedContext = initialManagedContext
       const pageKey = managedPageKey(job, request)
       let page = await managedContext.acquirePage({ key: pageKey, policy: request.pagePolicy ?? 'preserve' })
@@ -1060,7 +1081,7 @@ export class ManagedPlaywrightRunnerService {
           ...blockerPayload(options.job, initial.blockers, {
             requestedVisibility: options.claimBrowserVisibility,
             effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-            windowOpen: options.claimBrowserVisibility !== 'headless',
+            windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
           }),
           failure,
         },
@@ -1078,7 +1099,7 @@ export class ManagedPlaywrightRunnerService {
           ...blockerPayload(options.job, initial.blockers, {
             requestedVisibility: options.claimBrowserVisibility,
             effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-            windowOpen: options.claimBrowserVisibility !== 'headless',
+            windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
           }),
           failure,
           retryAfterSeconds: initialCapacityDelay,
@@ -1106,7 +1127,11 @@ export class ManagedPlaywrightRunnerService {
       claimToken: options.job.claim_token,
       checkpoint,
     })
-    if (options.claimBrowserVisibility === 'headless' || this.e2eInspection) {
+    if (
+      options.claimBrowserVisibility === 'headless' ||
+      this.e2eInspection ||
+      isAutomaticAuthObservation(options.request, options.claimBrowserVisibility)
+    ) {
       await this.daemonClient.parkJob({
         jobId: options.job.job_id,
         claimToken: options.job.claim_token,
@@ -1114,7 +1139,7 @@ export class ManagedPlaywrightRunnerService {
           ...blockerPayload(options.job, initial.blockers, {
             requestedVisibility: options.claimBrowserVisibility,
             effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-            windowOpen: options.claimBrowserVisibility !== 'headless',
+            windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
           }),
           failure,
           fallbackStopped: providerFallbackStopReason(options.request, options.state, failure),
@@ -1538,6 +1563,15 @@ function requestedVisibilityForClaim(
   resumeVisibility: Extract<BrowserVisibility, 'headed'> | null
 ): BrowserVisibility {
   return resumeVisibility === 'headed' ? 'headed' : requestVisibility
+}
+
+function isAutomaticAuthObservation(
+  request: ManagedPlaywrightJobRequest,
+  claimBrowserVisibility: BrowserVisibility,
+) {
+  return claimBrowserVisibility === 'auto' && request.actions.every((action) => (
+    action.action === VISIBLE_ACTIONS.AUTH_STATUS
+  ))
 }
 
 function validateRunnerCheckpoint(

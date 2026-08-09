@@ -748,7 +748,7 @@ export class TokenlessApplicationServices {
       : [{ action: visibleAction, payload: {} }]
     const request = createManagedPlaywrightJobRequest({
       provider,
-      browserVisibility: 'headed',
+      browserVisibility: action === 'readiness' ? 'auto' : 'headed',
       userHandoff: action === 'open',
       taskId: `ui:${action}:${randomUUID()}`,
       actions,

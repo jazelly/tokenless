@@ -225,9 +225,9 @@ Machine-oriented `setup --json`, non-interactive environments, and explicit no-o
 
 1. The user enables a provider for one managed profile.
 2. The setting is saved immediately as user intent.
-3. The UI offers a live readiness check and explains that it will visibly open the provider without submitting content.
+3. The UI offers an implicit live readiness check that uses a temporary headless browser when the profile is idle or reuses an existing headed context without replacing it, closing its tabs, or foregrounding the check.
 4. If the page is ready, Tokenless records the access and account observation.
-5. If user action is required, the same profile and page remain open and the UI shows the exact handoff.
+5. If user action is required, the UI records the exact handoff without opening a visible browser; the user explicitly opens the provider before acting.
 6. After the user finishes, they explicitly recheck; Tokenless does not poll credentials or scrape hidden browser state.
 7. Technical failure remains distinct from sign-in-required and does not silently disable the provider.
 
