@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-07
+Status: active product direction | Last reviewed: 2026-08-09
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -36,8 +36,6 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
-| [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-selection-and-cloak.md) | Use an exact profile-bound Chromium runtime, prefer the user's installed browser, provide a locked managed fallback, add explicit verified Cloak installation, and classify local Chromium profile versions without reading or copying browser secrets. | P0 |
-| [Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md) | Execute and record the Windows AMD x86-64 setup/runtime matrix, headed/headless provider surfaces, Chrome challenge observations, and isolated Cloak fallback acceptance. | P0 |
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
@@ -55,7 +53,7 @@ Priority describes product importance, not a promise that all work proceeds seri
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): Browser Connection Mode Capability Evaluation and Provider Architecture and Registry were completed; the Daemon Fastify HTTP API direction was cancelled.
+- [Archive](archived/README.md): the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; Browser Connection Mode Capability Evaluation and Provider Architecture and Registry were completed; the Daemon Fastify HTTP API direction was cancelled.
 
 ## How the Roadmaps Fit Together
 
@@ -72,7 +70,7 @@ flowchart LR
   Protocol["Web AI Interaction Protocol<br/>provider turns + state + evidence"]
   Tools["Tool runtime<br/>batched filesystem + MCP execution"]
   Graph["Project knowledge graph<br/>rules + architecture + symbols"]
-  Browser["Browser runtime manager<br/>system + managed + Cloak"]
+  Browser["Browser connection<br/>native Chrome or Brave + explicit Cloak"]
   Provider["Provider adapters<br/>visible capabilities"]
   Workspace["Provider workspace mirror<br/>Project or conversation"]
   Task["Web-agent task<br/>exact session and project context"]
@@ -103,7 +101,7 @@ flowchart LR
 The shared contracts should be built before provider-specific shortcuts:
 
 1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md) roadmap.
-2. Establish exact, profile-bound browser runtime selection and verified system, managed, and Cloak launch paths.
+2. Connect the user-selected native Chrome or Brave browser through its browser-managed CDP endpoint; keep Cloak as an explicit Anti-Detect path.
 3. Establish the real-provider browser E2E evidence plane and close Claude and Grok native Project identity before depending on those capabilities for broader context delivery.
 4. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
 5. Add the authenticated local web control plane over shared application services without exposing the daemon bearer token to browser JavaScript.

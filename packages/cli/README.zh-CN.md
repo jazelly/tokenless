@@ -1,12 +1,12 @@
 # Tokenless CLI
 
-`tokenless` 让 agent 通过本机 CLI 使用你正在运行的 Google Chrome 中可见的 AI 网站。Provider 凭据和浏览器状态始终保留在本机 Chrome 中。
+`tokenless` 让 agent 通过本机 CLI 使用你正在运行的 Google Chrome 或 Brave Browser 中可见的 AI 网站。Provider 凭据和浏览器状态始终保留在本机所选浏览器中。
 
 [English](README.md) · [命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [隐私](https://github.com/jazelly/tokenless/blob/main/PRIVACY.zh-CN.md)
 
 ## 安装
 
-需要 Node.js 22.13+ 和稳定版 Google Chrome 144+。Apple Silicon macOS 是当前主要 target；Windows x64 仍处于 prerelease。
+需要 Node.js 22.13+，以及能提供浏览器自主管理 remote debugging endpoint 的当前版 Google Chrome 或 Brave Browser。Apple Silicon macOS 是当前主要 target；Windows x64 仍处于 prerelease。
 
 ```bash
 npm install --global tokenless@latest
@@ -14,9 +14,9 @@ tokenless setup
 tokenless doctor --json
 ```
 
-在 setup 前，请在已使用的 Chrome 中打开 `chrome://inspect/#remote-debugging`、启用 remote debugging，并在 Chrome 出现提示时确认连接。Chrome 管理 CDP endpoint，Tokenless 会自动发现；不要使用 `--remote-debugging-port` 或配置固定端口。
+在 setup 前，请在日常使用的 Google Chrome 中打开 `chrome://inspect/#remote-debugging`，或在 Brave 中打开 `brave://inspect/#remote-debugging`，启用 remote debugging，并在浏览器出现提示时确认连接。浏览器管理 CDP endpoint，Tokenless 会自动发现；不要使用 `--remote-debugging-port` 或配置固定端口。
 
-Setup 会创建或选择逻辑 Tokenless profile、连接正在运行的 headed Chrome、准备 daemon，并对每个已启用 provider 检查一次可见登录状态。Tokenless 不会复制 browser profile，也不会自动登录。
+Setup 会先询问是否使用 Anti-Detect mode，再让 native-mode 用户选择 Chrome 或 Brave。随后它会创建或选择逻辑 Tokenless profile、连接正在运行的 headed 浏览器、准备 daemon，并对每个已启用 provider 检查一次可见登录状态。Tokenless 不会复制 browser profile，也不会自动登录。
 
 如需非交互式 setup：
 
@@ -111,12 +111,12 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-Tokenless profile 只组织 provider tab 与配置，不创建独立 Chrome identity。Tokenless 不检查或暴露 cookie、token、browser storage、Keychain data 或 authentication value。
+Tokenless profile 只组织 provider tab 与配置，不创建独立 browser identity。Tokenless 不检查或暴露 cookie、token、browser storage、Keychain data 或 authentication value。
 
 ## Browser 与本地 Runtime
 
-Native mode 只支持 headed，因为它控制用户已打开的 Chrome。停止或重启 daemon 只会断开 Playwright，不会关闭 Chrome。
+Native mode 只支持 headed，因为它控制用户已打开的 Chrome 或 Brave。停止或重启 daemon 只会断开 Playwright，不会关闭所选浏览器。
 
-每个请求都使用经过认证的 loopback daemon 和 Tokenless-owned tab。凭据对 agent 保持 opaque；登录、CAPTCHA、同意、付款、plan 和确认步骤始终由用户控制。
+每个请求都使用经过认证的 loopback daemon 和所选浏览器中的 Tokenless-owned tab。凭据对 agent 保持 opaque；登录、CAPTCHA、同意、付款、plan 和确认步骤始终由用户控制。
 
 所有命令和 option 见[命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md)；完整 capability 语义见 [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md)。

@@ -181,13 +181,14 @@ export async function writeTokenlessConfig({
 } = {}) {
   return await withConfigWriterLock(homeDir, async () => {
     const current = (await readTokenlessConfigUnlocked(homeDir)).config
+    const requestedBrowser = browser === undefined ? current.browser : validateConfigBrowser(browser)
     const config: TokenlessConfig = {
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
       profiles: await configuredProfiles(homeDir, {
         profiles: profiles === undefined ? current.profiles : validateProfiles(profiles),
       }),
-      browser: 'chrome',
+      browser: requestedBrowser === 'brave' ? 'brave' : 'chrome',
       browserExecutablePath: null,
       browserVisibility: 'headed',
       daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),

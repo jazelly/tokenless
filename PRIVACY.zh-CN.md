@@ -7,7 +7,7 @@ Tokenless 在本机运行。它通过受管理的 Playwright 浏览器 profile �
 ## 数据处理
 
 - 受管理的浏览器 profile、provider 登录状态、配置、job 状态、日志和快照都保留在用户设备上。
-- 在你明确同意后，setup 可以把所选 ChatGPT、Claude、Grok 或实验性 Qwen 的登录记录和有限 Chromium 兼容性状态复制到独立的 Tokenless profile；不会导入 Gemini 或共享 Google 登录数据，也不会导入密码、完整历史、书签、付款数据、同步数据、无关站点存储或缓存。
+- Setup 不会复制或导入 browser profile。在 native mode 中，浏览器状态和凭据始终保留在用户选择并正在运行的 Google Chrome 或 Brave Browser 中。
 - 身份验证值对 agent 保持不透明。Tokenless 不会打印、记录、导出或发送它们到 Tokenless 服务。
 - `auto`、`headed` 与 `headless` 仅改变本地受管理浏览器的呈现方式；它们不会关闭 Chromium sandbox，且仍使用同一套本地 daemon 与 profile 流程。
 - Prompt、所选文件和可见页面操作只会发送给你选择的 provider；其隐私、保留与订阅条款同样适用。
@@ -18,7 +18,7 @@ Tokenless 在本机运行。它通过受管理的 Playwright 浏览器 profile �
 
 ## 用户控制
 
-导入 profile 需要明确同意，且不会修改源浏览器 profile。可使用 `tokenless profiles list` 检查受管理 profile，使用 `tokenless profiles clear --profile <slug>` 移除单个 profile，或使用 `tokenless profiles clear --all` 移除全部 profile。删除 `~/.tokenless` 会移除本地运行时状态。
+可使用 `tokenless profiles list` 检查逻辑 Tokenless profile，使用 `tokenless profiles clear --profile <slug>` 移除单个 profile，或使用 `tokenless profiles clear --all` 移除全部 profile。这些命令不会移除或修改所选 Chrome 或 Brave browser profile。删除 `~/.tokenless` 会移除本地 Tokenless runtime 状态。
 
 ## 联系方式
 

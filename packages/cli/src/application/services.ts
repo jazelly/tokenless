@@ -248,6 +248,12 @@ export class TokenlessApplicationServices {
     if (language !== 'en' && language !== 'zh-CN') {
       throw applicationError('invalid_language', 'Language must be en or zh-CN.')
     }
+    if (requestedBrowser !== current.browser) {
+      if (this.runtimeController?.status().activeJobCount) {
+        throw applicationError('browser_mutation_unsafe', 'The native browser cannot be changed while browser jobs are active.')
+      }
+      await this.runtimeController?.quiesce()
+    }
     const saved = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
       browser: requestedBrowser,

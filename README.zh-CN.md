@@ -54,9 +54,9 @@
 
 ## 三条命令开始使用
 
-需要 Node.js 22.13+ 和 Google Chrome Stable 144 或更新版本；当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。
+需要 Node.js 22.13+，以及能提供浏览器自主管理 remote debugging endpoint 的当前版 Google Chrome 或 Brave Browser；当前目标平台是 Apple Silicon macOS，Windows x64 仍处于 prerelease 阶段。
 
-Setup 前，请在你日常使用的 Chrome 中打开 `chrome://inspect/#remote-debugging`，启用 remote debugging，并确认 Chrome 的连接提示。底层 CDP endpoint 由 Chrome 管理、由 Tokenless 自动发现，因此不需要用 `--remote-debugging-port` 启动 Chrome，也不需要配置固定端口。Tokenless 直接以连接是否成功判断能力，不复制 profile，也不启动另一份浏览器。
+Setup 前，请在日常使用的 Google Chrome 中打开 `chrome://inspect/#remote-debugging`，或在 Brave 中打开 `brave://inspect/#remote-debugging`，启用 remote debugging，并确认浏览器的连接提示。底层 CDP endpoint 由浏览器管理、由 Tokenless 自动发现，因此不需要用 `--remote-debugging-port` 启动浏览器，也不需要配置固定端口。Tokenless 直接以连接是否成功判断能力，不复制 profile，也不启动另一份浏览器。
 
 ```bash
 npm install --global tokenless@latest
@@ -64,9 +64,9 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-Setup 会创建逻辑 Tokenless profile、连接正在运行的 headed Chrome、检查已启用的 provider 并打开本地控制台；之后可用 `tokenless dashboard` 再次打开。
+Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，再选择 Google Chrome 或 Brave；Tokenless 随后创建逻辑 profile、连接正在运行的 headed 浏览器、检查已启用的 provider 并打开本地控制台。之后可用 `tokenless dashboard` 再次打开。
 
-Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断开自动化连接，不会关闭 Chrome。
+Native mode 目前只支持 headed。停止或重启 Tokenless daemon 只会断开自动化连接，不会关闭所选浏览器。
 
 显式启用 Anti-Detect setup 时，也可以在 macOS arm64/x64、Linux arm64/x64 或 Windows x64 上从 CloakBrowser 官方 GitHub release 安装经过 checksum 固定的版本。这些 catalog 路径不代表已在每类真实 host 上完成 provider 验收；Tokenless 不会捆绑或再分发 CloakBrowser。
 

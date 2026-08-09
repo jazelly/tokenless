@@ -69,7 +69,7 @@
     <input name="roleLabel" bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="profile-role" />
   </label>
 
-  <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native Google Chrome · headed</strong></div>
+  <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native {snapshot.config.browser === 'brave' ? t('braveBrowser') : t('googleChrome')} · headed</strong></div>
 
   <fieldset class="fieldset">
     <legend>{t('providerAccess')}</legend>

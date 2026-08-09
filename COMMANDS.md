@@ -64,7 +64,7 @@ dola
 
 ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, and Dola are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
 
-Tokenless uses native mode: Playwright attaches to the user's already-running stable Google Chrome. Chrome 144+ is required; enable remote debugging at `chrome://inspect/#remote-debugging` and approve Chrome's connection prompt. Chrome manages the underlying CDP endpoint and Tokenless discovers it automatically, so native mode does not require `--remote-debugging-port` or a configured fixed port. Connection success is the capability check. Native mode is headed-only and never copies a browser profile.
+Tokenless uses native mode: Playwright attaches to the user's already-running Google Chrome or Brave Browser. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging` and approve the browser's connection prompt. The browser manages the underlying CDP endpoint and Tokenless discovers it automatically, so native mode does not require `--remote-debugging-port` or a configured fixed port. Connection success is the capability check; there is no profile version compatibility matrix. Native mode is headed-only and never copies a browser profile.
 
 ### Short options
 
@@ -172,7 +172,7 @@ Main options:
 - `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
 
-Setup attaches to the stable Chrome instance already running for the user. Chrome 144+ must have remote debugging enabled at `chrome://inspect/#remote-debugging`; Chrome asks the user to approve the connection. Chrome owns the underlying CDP endpoint and Tokenless discovers it automatically—there is no `--remote-debugging-port` launch flag or fixed-port setting in native mode. Tokenless uses connection success as the capability check, never copies the Chrome profile, and currently supports headed mode only. Daemon shutdown disconnects automation without closing Chrome.
+Setup first asks whether to use Anti-Detect mode. If declined, the user chooses the already-running Google Chrome or Brave Browser. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging`; the browser asks the user to approve the connection and owns the underlying CDP endpoint. Tokenless discovers it automatically—there is no `--remote-debugging-port` launch flag or fixed-port setting in native mode. Tokenless uses connection success as the only capability check, never copies the browser profile, and currently supports headed mode only. Daemon shutdown disconnects automation without closing the browser.
 
 Interactive `setup` lists every supported provider, enables all of them by default, and lets the user remove providers by replying with their displayed numbers; pressing Enter keeps them all. Non-interactive setup uses `--provider-whitelist`, the existing profile's `enabledProviders`, or all supported providers for a new profile. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
 
@@ -332,7 +332,7 @@ The command discovers the actual endpoint from SQLite and does not kill an unver
 
 ## Tokenless Profiles
 
-A Tokenless profile groups provider tabs and configuration inside the connected Chrome identity. It does not create or copy a separate browser identity.
+A Tokenless profile groups provider tabs and configuration inside the connected Chrome or Brave identity. It does not create or copy a separate browser identity.
 
 ### `tokenless profiles add`
 

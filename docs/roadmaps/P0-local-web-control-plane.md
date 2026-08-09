@@ -147,7 +147,7 @@ The profiles area manages isolated browser identities:
 - open the profile without provider navigation;
 - remove a profile through an explicit destructive confirmation.
 
-The UI starts clean by default. After the user explicitly selects a discovered local Chromium profile and consents, it can copy that one profile as an opaque filesystem tree into a new managed profile, or re-import the same recorded source. Discovery returns only bounded display metadata and a short-lived opaque source handle; source paths and individual authentication values never enter browser JavaScript. Users may instead sign in through the visible clean managed profile, whose runtime binding and browser-owned session persist across jobs.
+The UI lets the user select native Google Chrome or Brave Browser and stores only that browser choice. Tokenless connects to the already-running browser through its browser-managed CDP endpoint, manages only Tokenless-owned tabs, and never copies or imports the browser profile. Browser state and authentication remain inside the selected browser.
 
 ### Providers
 

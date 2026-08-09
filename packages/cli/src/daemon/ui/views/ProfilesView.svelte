@@ -211,7 +211,7 @@
           <div class="settings-list">
             <div class="settings-row"><span>{t('label')}</span><strong>{profile.label}</strong></div>
             <div class="settings-row"><span>{t('role')}</span><strong>{profile.roleLabel || '—'}</strong></div>
-            <div class="settings-row"><span>{t('profileBrowser')}</span><strong translate="no">Native Google Chrome</strong></div>
+            <div class="settings-row"><span>{t('profileBrowser')}</span><strong translate="no">Native {snapshot.config.browser === 'brave' ? t('braveBrowser') : t('googleChrome')}</strong></div>
             <div class="settings-row"><span>{t('visibility')}</span><strong>headed</strong></div>
           </div>
         </section>

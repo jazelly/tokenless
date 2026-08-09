@@ -1,10 +1,12 @@
 # Browser Runtime Selection and Cloak Integration
 
-Status: in progress | Priority: P0 | Last reviewed: 2026-08-09
+Status: superseded | Priority: P0 | Last reviewed: 2026-08-09
+
+Disposition: Superseded on 2026-08-09 by native Google Chrome and Brave CDP connection in setup. The profile import compatibility matrix and its remaining acceptance gates are no longer product commitments; this document is retained only as decision history.
 
 Depends on: Tokenless setup, managed profile lifecycle, the Playwright runner, the packaged daemon, browser E2E infrastructure, and real-provider acceptance gates
 
-Supports: [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md), [Provider Expansion and Parity](P0-provider-expansion.md), and [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md)
+Historically supported: [Real Provider Browser E2E and Native Projects](../P0-real-provider-browser-e2e-and-native-projects.md), [Provider Expansion and Parity](../P0-provider-expansion.md), and [Concurrency and Session Scheduling](../P0-concurrency-and-session-scheduling.md)
 
 ## Outcome
 
@@ -14,7 +16,7 @@ The implementation must improve browser realism without silently changing a prof
 
 ## Review Snapshot
 
-Plan identity: `P0-browser-runtime-selection-and-cloak.md` | Lifecycle: active | Delivery status: in progress | Audited: 2026-08-06
+Plan identity: `P0-browser-runtime-selection-and-cloak.md` | Lifecycle: archived | Delivery status: superseded | Audited: 2026-08-09
 
 The plan is saved in the root of `docs/roadmaps/`, which is the repository's authoritative active-roadmap location, and is linked from `docs/roadmaps/README.md` under the name **Browser Runtime Selection and Cloak Integration**.
 
@@ -30,7 +32,7 @@ The plan is saved in the root of `docs/roadmaps/`, which is the repository's aut
 
 The unchecked acceptance items are authoritative: Brave 144 format behavior, authenticated Brave sign-in portability, Windows Brave parity, Windows x64 Intel, Windows x64 AMD, Windows Chrome 150 profile-inventory classification, Windows 146 managed-to-Cloak importability parity, and authenticated provider closure across the selected runtimes. Arc import is a deliberate product exclusion rather than an open support gate. Public-surface results remain observational even though the latest strict Cloak run completed successfully; they do not replace authenticated provider acceptance.
 
-Detailed Windows AMD64 execution, source-browser version cases, headed/headless surface coverage, Chrome challenge observation, isolated Cloak fallback, evidence requirements, and completion state are tracked in the active [Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). This parent roadmap remains the product-support authority; the test plan is its AMD-hardware evidence ledger. Intel-hardware acceptance remains a separate unchecked gate in this parent roadmap.
+Historical Windows AMD64 execution details are retained in the archived [Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). Neither document is a current product-support authority.
 
 ## Product Decisions
 
@@ -462,7 +464,7 @@ This ledger is updated as implementation and evidence land. A checked code item 
 
 ### Milestone 6: Real-boundary acceptance
 
-Windows AMD64 execution for the following gates is specified and recorded in the active [Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). The Intel setup/runtime gate remains tracked only in this parent roadmap.
+Windows AMD64 execution for the following historical gates was specified in the archived [Windows AMD64 Browser Runtime, Surface, and Fallback Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md). These gates are no longer tracked.
 
 - [x] macOS Apple Silicon: the revised built-CLI browser-runtime gate proved `auto` installs or reuses and launches managed Chrome for Testing 145 even when supported system browsers are present.
 - [x] macOS Apple Silicon: the direct manager and built-CLI gates completed download, checksum, extraction, version, sandboxed smoke launch, atomic cache commit, profile binding, and doctor inspection for managed Chrome for Testing `145.0.7632.6`.

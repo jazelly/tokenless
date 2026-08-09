@@ -1,8 +1,10 @@
 # Windows AMD64 Browser Runtime and Surface Acceptance Test Plan
 
-Status: ready for execution | Priority: P0 | Last reviewed: 2026-08-06
+Status: retired | Priority: P0 | Last reviewed: 2026-08-09
 
-Type: active real-boundary test plan
+Disposition: Retired on 2026-08-09 because Tokenless no longer uses a source-profile compatibility matrix. Native Chrome and Brave support is determined by a successful browser-managed CDP connection; this plan is retained only as decision history.
+
+Type: archived real-boundary test plan
 
 Tracks: [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-selection-and-cloak.md)
 

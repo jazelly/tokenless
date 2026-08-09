@@ -76,7 +76,7 @@ test('built capability routes stay provenance-bound to required live provider ma
   }
 })
 
-test('persistent config canonicalizes browser settings to headed native Chrome', async () => {
+test('persistent config preserves native Chrome or Brave and removes managed browser settings', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-runtime-'))
   const runtime = await import('../packages/cli/dist/src/index.js')
   try {
@@ -96,6 +96,8 @@ test('persistent config canonicalizes browser settings to headed native Chrome',
     assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).outputSavings, { enabled: false })
     const savedConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
     assert.equal(Object.hasOwn(savedConfig, 'browserConnectionMode'), false)
+    await runtime.writeTokenlessConfig({ homeDir, browser: 'brave' })
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browser, 'brave')
     const legacyExecutablePath = path.join(homeDir, 'browser', 'runtimes', 'managed-chromium', 'browser')
     await runtime.writeTokenlessConfig({
       homeDir,

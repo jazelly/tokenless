@@ -416,7 +416,7 @@ async function profilesCommand(subcommand: string | undefined, args: CliArgs) {
     if (requestedBrowser !== null && requestedBrowser !== 'managed-chromium' && requestedBrowser !== 'cloak') {
       throw usageError(
         'profile_managed_browser_required',
-        'Profiles add supports --browser managed-chromium or --browser cloak; omit --browser for native Chrome.',
+        'Profiles add supports --browser managed-chromium or --browser cloak; omit --browser for the configured native Chrome or Brave browser.',
       )
     }
     const runtime = requestedBrowser === null
@@ -4010,8 +4010,9 @@ async function configCommand(args: CliArgs) {
     args.language !== undefined
   ) {
     const current = await readTokenlessConfig(homeDir)
-    if (args.browser !== undefined && normalizeCliBrowser(args.browser) !== 'chrome') {
-      throw usageError('native_chrome_required', 'Tokenless supports the running stable Google Chrome in native mode only.')
+    const requestedBrowser = args.browser === undefined ? current.browser : normalizeCliBrowser(args.browser)
+    if (requestedBrowser !== 'chrome' && requestedBrowser !== 'brave') {
+      throw usageError('native_chrome_required', 'Tokenless native mode supports a running Google Chrome or Brave Browser.')
     }
     if (args.providerWhitelist !== undefined) {
       throw usageError('profile_config_scope_required', '--provider-whitelist requires --profile <slug>.')
@@ -4022,7 +4023,7 @@ async function configCommand(args: CliArgs) {
     }
     const config = await writeTokenlessConfig({
       homeDir,
-      browser: 'chrome',
+      browser: requestedBrowser,
       browserExecutablePath: null,
       browserVisibility: 'headed',
       daemonUrl: args.daemonUrl === undefined ? undefined : daemonUrl(args.daemonUrl),
@@ -4571,7 +4572,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'resume', usage: ['tokenless resume --job-id <job-id> --browser-visibility headed --json'], options: ['home', 'json', 'quiet', 'jobId', 'browserVisibility', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
     { command: 'cancel', usage: ['tokenless cancel --job-id <job-id> --json'], options: ['home', 'json', 'jobId', 'daemonUrl', 'daemonStartTimeoutMs', 'cancelTimeoutMs', 'agentKind', 'agentSessionId'] },
-    { command: 'setup', usage: ['tokenless setup [--browser cloak|--anti-detect] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
+    { command: 'setup', usage: ['tokenless setup [--browser <chrome|brave|cloak>|--anti-detect] [--install-codex [--codex-home <dir>]] [--profile <slug>] [--provider-whitelist <list>] [--no-open] [--defaults] --json'], options: ['home', 'json', 'quiet', 'browser', 'antiDetect', 'profile', 'providerWhitelist', 'noOpen', 'daemonUrl', 'daemonStartTimeoutMs', 'runnerHeartbeatTimeoutMs', 'cancelTimeoutMs', 'timeoutMs', 'targetUrl', 'label', 'setDefault', 'setupDefaults', 'installCodex', 'codexHome'] },
     { command: 'install', usage: ['tokenless install [--browser <browser>|--browsers <list>] [--repair-browser] --json'], options: ['home', 'json', 'browser', 'browsers', 'repairBrowser', 'daemonUrl', 'daemonStartTimeoutMs'] },
     { command: 'upgrade', usage: ['tokenless upgrade [--json] [--home <dir>] [--daemon-url <url>] [--browser <browser>|--browsers <list>]'], options: ['json', 'home', 'daemonUrl', 'browser', 'browsers', 'daemonStartTimeoutMs'] },
     { command: 'doctor', usage: ['tokenless doctor --json'], options: ['home', 'json', 'browser', 'daemonUrl'] },

@@ -54,9 +54,9 @@ See the [Capability Matrix](docs/capability-matrix.md) for the verified workflow
 
 ## Start in three commands
 
-Requires Node.js 22.13+ and stable Google Chrome 144 or newer. Apple Silicon macOS is the current target, and Windows x64 remains prerelease.
+Requires Node.js 22.13+ and a current Google Chrome or Brave Browser release that exposes its browser-managed remote debugging endpoint. Apple Silicon macOS is the current target, and Windows x64 remains prerelease.
 
-Before setup, open `chrome://inspect/#remote-debugging` in your everyday Chrome, enable remote debugging, and approve Chrome's connection prompt. Chrome manages the underlying CDP endpoint and Tokenless discovers it automatically, so you do not launch Chrome with `--remote-debugging-port` or configure a fixed port. Tokenless tests capability by connecting; it does not copy your profile or launch another browser.
+Before setup, open `chrome://inspect/#remote-debugging` in your everyday Google Chrome or `brave://inspect/#remote-debugging` in Brave, enable remote debugging, and approve the browser's connection prompt. The browser manages the underlying CDP endpoint and Tokenless discovers it automatically, so you do not launch it with `--remote-debugging-port` or configure a fixed port. Tokenless tests capability by connecting; it does not copy your profile or launch another browser.
 
 ```bash
 npm install --global tokenless@latest
@@ -64,9 +64,9 @@ tokenless setup
 tokenless run --provider chatgpt --prompt "Review this proposal."
 ```
 
-Setup creates a logical Tokenless profile, connects to your running headed Chrome, checks enabled providers, and opens the local dashboard; reopen it later with `tokenless dashboard`.
+Setup asks about Anti-Detect mode first. If you decline, choose Google Chrome or Brave; Tokenless then creates a logical profile, connects to that running headed browser, checks enabled providers, and opens the local dashboard. Reopen it later with `tokenless dashboard`.
 
-Native mode is headed-only for now. Stopping or restarting the Tokenless daemon disconnects automation but does not close Chrome.
+Native mode is headed-only for now. Stopping or restarting the Tokenless daemon disconnects automation but does not close the selected browser.
 
 Explicit Anti-Detect setup can instead install a checksum-pinned CloakBrowser from its official GitHub release on macOS arm64/x64, Linux arm64/x64, or Windows x64. These catalog paths do not imply real-provider acceptance on every host; Tokenless does not bundle or redistribute CloakBrowser.
 

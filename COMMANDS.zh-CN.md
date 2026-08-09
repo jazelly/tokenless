@@ -64,7 +64,7 @@ dola
 
 ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi 和 Dola 目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
 
-Tokenless 使用 native mode：Playwright 直接连接用户已经运行的 Google Chrome Stable。需要 Chrome 144+；请在 `chrome://inspect/#remote-debugging` 启用 remote debugging，并确认 Chrome 的连接提示。底层 CDP endpoint 由 Chrome 管理、由 Tokenless 自动发现，因此 native mode 不需要 `--remote-debugging-port` 或固定端口设置。连接成功就是 capability check。Native mode 目前只支持 headed，且不会复制 browser profile。
+Tokenless 使用 native mode：Playwright 直接连接用户已经运行的 Google Chrome 或 Brave Browser。请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging，并确认浏览器的连接提示。底层 CDP endpoint 由浏览器管理、由 Tokenless 自动发现，因此 native mode 不需要 `--remote-debugging-port` 或固定端口设置。连接成功就是 capability check，不再维护 profile 版本兼容矩阵。Native mode 目前只支持 headed，且不会复制 browser profile。
 
 ### 短选项
 
@@ -172,7 +172,7 @@ tokenless setup --install-codex --codex-home <dir> --profile default --defaults 
 - `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
 
-Setup 会连接用户已经运行的 Google Chrome Stable。Chrome 144+ 必须在 `chrome://inspect/#remote-debugging` 启用 remote debugging，并由用户确认 Chrome 的连接提示。底层 CDP endpoint 由 Chrome 持有、由 Tokenless 自动发现——native mode 没有 `--remote-debugging-port` 启动参数或固定端口设置。Tokenless 直接以连接成功作为 capability check，不复制 Chrome profile，目前只支持 headed。Daemon 关闭时只断开自动化，不会关闭 Chrome。
+Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，用户再选择已经运行的 Google Chrome 或 Brave Browser。请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging；浏览器会要求用户确认连接，并持有底层 CDP endpoint。Tokenless 会自动发现 endpoint——native mode 没有 `--remote-debugging-port` 启动参数或固定端口设置。Tokenless 只以连接成功作为 capability check，不复制 browser profile，目前只支持 headed。Daemon 关闭时只断开自动化，不会关闭浏览器。
 
 交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会使用 `--provider-whitelist`、已有 profile 的 `enabledProviders`，或为新 profile 使用所有受支持 provider。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
 
@@ -332,7 +332,7 @@ tokenless daemon stop --json
 
 ## Tokenless Profiles
 
-一个 Tokenless profile 用于组织已连接 Chrome identity 中的 provider tabs 与 configuration；它不会创建或复制单独的 browser identity。
+一个 Tokenless profile 用于组织已连接 Chrome 或 Brave identity 中的 provider tabs 与 configuration；它不会创建或复制单独的 browser identity。
 
 ### `tokenless profiles add`
 

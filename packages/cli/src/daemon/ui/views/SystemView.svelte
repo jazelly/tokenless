@@ -23,6 +23,7 @@
   } = $props()
 
   let selectedLanguage = $state(untrack(() => snapshot.config.language as Language))
+  let selectedBrowser = $state<'chrome' | 'brave'>(untrack(() => snapshot.config.browser === 'brave' ? 'brave' : 'chrome'))
   let formError = $state('')
   let errorElement = $state<HTMLDivElement>()
 
@@ -35,7 +36,7 @@
   async function save(event: SubmitEvent) {
     event.preventDefault()
     formError = ''
-    const body: JsonRecord = { language: selectedLanguage, browser: 'chrome', browserVisibility: 'headed' }
+    const body: JsonRecord = { language: selectedLanguage, browser: selectedBrowser, browserVisibility: 'headed' }
     try {
       await onmutate('/config', body, 'PATCH')
     } catch (error) {
@@ -138,9 +139,9 @@
     <section class="settings-section system-card">
       <div class="settings-section-title"><h2>{t('runtime')}</h2><ShieldCheck size={17} /></div>
       <div class="form-stack">
-        <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native Google Chrome</strong></div>
+        <label class="field"><span>{t('profileBrowser')}</span><select name="browser" bind:value={selectedBrowser} data-testid="config-browser"><option value="chrome">{t('googleChrome')}</option><option value="brave">{t('braveBrowser')}</option></select></label>
         <div class="field read-only-field"><span>{t('defaultVisibility')}</span><strong>headed</strong></div>
-        <p class="form-note">Chrome 144+ · chrome://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
+        <p class="form-note">{selectedBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
       </div>
     </section>
     <div class="system-actions">

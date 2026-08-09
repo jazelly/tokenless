@@ -1,12 +1,12 @@
 # Tokenless CLI
 
-`tokenless` gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome. Provider credentials and browser state stay in Chrome on the user's machine.
+`tokenless` gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome or Brave Browser. Provider credentials and browser state stay in the selected browser on the user's machine.
 
 [中文](README.zh-CN.md) · [Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
 
 ## Install
 
-Requires Node.js 22.13+ and stable Google Chrome 144 or newer. Apple Silicon macOS is the current target; Windows x64 remains prerelease.
+Requires Node.js 22.13+ and a current Google Chrome or Brave Browser release that exposes its browser-managed remote debugging endpoint. Apple Silicon macOS is the current target; Windows x64 remains prerelease.
 
 ```bash
 npm install --global tokenless@latest
@@ -14,7 +14,7 @@ tokenless setup
 tokenless doctor --json
 ```
 
-Before setup, open `chrome://inspect/#remote-debugging` in the Chrome instance you already use, enable remote debugging, and approve Chrome's connection prompt. Chrome manages the underlying CDP endpoint and Tokenless discovers it automatically; do not launch Chrome with `--remote-debugging-port` or configure a fixed port. Setup creates or selects a logical Tokenless profile, connects to that running browser, prepares the daemon, checks each enabled provider once, and leaves headed review tabs open. Connection success is the capability check; Tokenless does not import or copy a browser profile and does not download or launch another browser.
+Before setup, open `chrome://inspect/#remote-debugging` in the Google Chrome instance you already use or `brave://inspect/#remote-debugging` in Brave, enable remote debugging, and approve the browser's connection prompt. The browser manages the underlying CDP endpoint and Tokenless discovers it automatically; do not launch it with `--remote-debugging-port` or configure a fixed port. Setup asks about Anti-Detect mode, then lets native-mode users choose Chrome or Brave. It creates or selects a logical Tokenless profile, connects to that running browser, prepares the daemon, checks each enabled provider once, and leaves headed review tabs open. Connection success is the capability check; Tokenless does not import or copy a browser profile and does not download or launch another browser.
 
 For a clean non-interactive profile:
 
@@ -138,12 +138,12 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-Tokenless profiles organize provider tabs and configuration; they do not create separate Chrome identities. Tokenless does not inspect or expose individual cookies, tokens, browser storage, Keychain data, or authentication values.
+Tokenless profiles organize provider tabs and configuration; they do not create separate browser identities. Tokenless does not inspect or expose individual cookies, tokens, browser storage, Keychain data, or authentication values.
 
 ## Browser and Local Runtime
 
-Native mode is headed-only because it controls the Chrome instance the user already opened. Stopping or restarting the daemon disconnects Playwright without closing Chrome.
+Native mode is headed-only because it controls the Chrome or Brave instance the user already opened. Stopping or restarting the daemon disconnects Playwright without closing the browser.
 
-Every request uses the authenticated loopback daemon and Tokenless-owned tabs in the user's running Chrome. Credentials remain opaque to agents. Sign-in, CAPTCHA, consent, payment, plan, and confirmation steps remain under user control.
+Every request uses the authenticated loopback daemon and Tokenless-owned tabs in the user's selected browser. Credentials remain opaque to agents. Sign-in, CAPTCHA, consent, payment, plan, and confirmation steps remain under user control.
 
 See the [command reference](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) for all commands and options, and [Architecture](https://github.com/jazelly/tokenless/blob/main/docs/architecture.md) for runtime details.

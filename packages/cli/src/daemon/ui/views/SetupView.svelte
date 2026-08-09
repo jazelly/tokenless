@@ -24,6 +24,7 @@
   let slug = $state('default')
   let label = $state(untrack(() => t('default')))
   let roleLabel = $state('')
+  let selectedBrowser = $state<'chrome' | 'brave'>(untrack(() => snapshot.config?.browser === 'brave' ? 'brave' : 'chrome'))
   let enabledProviders = $state<string[]>(untrack(() => snapshot.providers
     .filter((provider: JsonRecord) => provider.stage !== 'disabled' && provider.id !== 'gemini')
     .map((provider: JsonRecord) => provider.id)))
@@ -41,7 +42,7 @@
       await onsetup(
         {
           language: selectedLanguage,
-          browser: 'chrome',
+          browser: selectedBrowser,
           browserVisibility: 'headed',
         },
         {
@@ -88,8 +89,8 @@
       <div class="setup-row">
         <div class="setup-icon"><Monitor size={19} /></div>
         <div class="setup-fields browser-setup-fields">
-          <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong>Native Google Chrome</strong></div>
-          <p class="form-note">Chrome 144+ · chrome://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
+          <label class="field"><span>{t('profileBrowser')}</span><select name="browser" bind:value={selectedBrowser} data-testid="setup-browser"><option value="chrome">{t('googleChrome')}</option><option value="brave">{t('braveBrowser')}</option></select></label>
+          <p class="form-note">{selectedBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
         </div>
       </div>
 

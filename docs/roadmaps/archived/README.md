@@ -24,6 +24,8 @@ Archived roadmap filenames retain the `P0-` through `P3-` product-priority prefi
 
 | Roadmap | Disposition |
 | --- | --- |
+| [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-selection-and-cloak.md) | Superseded 2026-08-09 by setup-time native Chrome/Brave selection and browser-managed CDP connection; the source-profile compatibility matrix is retired. |
+| [Windows AMD64 Browser Runtime and Surface Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md) | Retired 2026-08-09 with the source-profile compatibility matrix it was designed to validate. |
 | [Browser Connection Mode Capability Evaluation](P0-browser-connection-mode-capability-evaluation.md) | Completed 2026-08-09 after native Playwright and CDP evidence supported consolidating browser control on CDP. |
 | [Daemon Fastify HTTP API](P1-daemon-fastify-http-api.md) | Cancelled 2026-07-27 after the daemon v1 clean break kept the smaller built-in HTTP server and moved worker coordination in-process. |
 | [Provider Architecture and Registry](P0-provider-architecture-and-registry.md) | Completed 2026-07-27 after the OOP provider seam, single registry, daemon negotiation, compatibility cleanup, and first new-provider proof were accepted. |
