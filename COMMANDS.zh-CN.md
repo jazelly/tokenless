@@ -227,13 +227,13 @@ tokenless state --profile work --json
 
 ### `tokenless doctor`
 
-只读检查 Node.js、已安装 skills、打包 runtime、daemon identity/version、embedded Playwright runtime、browser preference、解析出的 runtime family 与精确 executable version、checksum 状态、默认 profile/runtime compatibility、配置，以及缓存的 provider readiness。
+只读检查 Node.js、已安装 skills、打包 runtime、daemon identity/version、embedded Playwright runtime、browser preference、解析出的 runtime family 与精确 executable version、checksum 状态、配置完整性、默认 profile/runtime 健康状态，以及缓存的 provider readiness。`checks.config` 表示 `config.json` 能否解析；`checks.configuration` 表示已保存的 browser selection、executable path、daemon URL 和默认 profile 是否已完整到可使用 browser 功能。即使标准 browser discovery 成功，已失效的自定义 browser path 仍会被判定为不健康。
 
 ```bash
 tokenless doctor --json
 ```
 
-`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。`checks.managedProfile.ok` 表示 registry/profile 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析且兼容的 browser binding。Provider readiness 来自 profile 中最后保存的检查结果。`checks.providerReadiness.ok` 表示 configured providers 是否已有 recorded observations；`usableProviders` 列出缓存中可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
+`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。每个 `checks.configuration.issues` 都包含 code、本地化 message 和 next action。`checks.managedProfile.ok` 表示 registry/profile 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析的 browser binding。Provider readiness 来自 profile 中最后保存的检查结果。`checks.providerReadiness.ok` 表示 configured providers 是否已有 recorded observations；`usableProviders` 列出缓存中可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
 
 主要选项：`--browser`、`--daemon-url`、`--home` 和 `--json`。
 

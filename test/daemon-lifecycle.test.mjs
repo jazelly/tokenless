@@ -412,6 +412,43 @@ test('doctor is read-only for an uninitialized Tokenless home', () => {
   }
 })
 
+test('doctor reports a saved but unusable browser executable path as incomplete configuration', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-browser-path-')))
+  const configuredPath = path.join(homeDir, 'missing-google-chrome')
+  fs.writeFileSync(path.join(homeDir, 'config.json'), `${JSON.stringify({
+    protocol: 'tokenless.config.v1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    profiles: {},
+    browser: 'chrome',
+    browserExecutablePath: configuredPath,
+    browserVisibility: 'headed',
+    daemonUrl: null,
+    language: 'en',
+    outputSavings: { enabled: true },
+  }, null, 2)}\n`, { mode: 0o600 })
+  const before = snapshotTree(homeDir)
+  try {
+    const result = runCli(['doctor', '--home', homeDir, '--daemon-url', 'http://127.0.0.1:9', '--json'])
+    assert.equal(result.status, 1)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.checks.config.ok, true)
+    assert.equal(payload.checks.configuration.ok, false)
+    assert.equal(payload.checks.configuration.complete, false)
+    assert.deepEqual(payload.checks.configuration.browser, {
+      selection: 'chrome',
+      executablePathConfigured: true,
+      executablePathValid: false,
+      resolved: payload.checks.browser.ok,
+    })
+    const issue = payload.checks.configuration.issues.find((candidate) => candidate.code === 'browser_executable_path_unusable')
+    assert.equal(issue.message.includes(configuredPath), true)
+    assert.match(issue.nextAction, /--browser-executable-path/)
+    assert.deepEqual(snapshotTree(homeDir), before)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 test('daemon stop is idempotent when no daemon is listening', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-daemon-stop-not-running-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`

@@ -227,13 +227,13 @@ tokenless state --profile work --json
 
 ### `tokenless doctor`
 
-Performs a read-only health report over Node.js, installed skills, packaged runtime, daemon identity and version, embedded Playwright runtime, browser preference, resolved runtime family and exact executable version, checksum state, default profile/runtime compatibility, configuration, and cached provider readiness.
+Performs a read-only health report over Node.js, installed skills, packaged runtime, daemon identity and version, embedded Playwright runtime, browser preference, resolved runtime family and exact executable version, checksum state, configuration completeness, default profile/runtime health, and cached provider readiness. `checks.config` reports whether `config.json` parses; `checks.configuration` reports whether the saved browser selection and executable path, daemon URL, and default profile are complete enough for browser use. A stale custom browser path remains unhealthy even when standard browser discovery succeeds.
 
 ```bash
 tokenless doctor --json
 ```
 
-`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. `checks.managedProfile.ok` reports registry/profile health, while `checks.profileRuntime.ok` independently reports whether that profile has a compatible resolvable browser binding. Provider readiness comes from the last saved profile observation. `checks.providerReadiness.ok` reports whether configured providers have recorded observations; `usableProviders` lists the cached providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
+`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. Each `checks.configuration.issues` entry includes a code, localized message, and next action. `checks.managedProfile.ok` reports registry/profile health, while `checks.profileRuntime.ok` independently reports whether that profile has a resolvable browser binding. Provider readiness comes from the last saved profile observation. `checks.providerReadiness.ok` reports whether configured providers have recorded observations; `usableProviders` lists the cached providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
 
 Main options: `--browser`, `--daemon-url`, `--home`, and `--json`.
 

@@ -53,6 +53,13 @@ export async function inputDomPrompt(
       { retryable: true },
     )
   }
+  const finalComposer = await firstVisibleLocator(page, provider.composerSelectors)
+  if (finalComposer && await composerHasExpectedText(finalComposer, text)) {
+    return {
+      visible: true as const,
+      inputProof: 'prompt-text-visible',
+    }
+  }
   throw tokenlessError(
     'prompt_input_failed',
     'The visible prompt input remained empty after input.',
@@ -156,15 +163,18 @@ async function submissionTransitionIsVisible(
   return false
 }
 
-async function composerHasExpectedPresence(locator: Locator, expectEmpty: boolean) {
+async function composerHasExpectedText(locator: Locator, expectedText: string) {
   try {
-    return await locator.evaluate((element, shouldBeEmpty) => {
+    return await locator.evaluate((element, expected) => {
       const text = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
         ? element.value
         : (element.textContent ?? '')
-      const hasVisibleText = text.replace(/[\s\u00a0\u200b-\u200d\u2060\ufeff]/gu, '').length > 0
-      return shouldBeEmpty ? !hasVisibleText : hasVisibleText
-    }, expectEmpty)
+      const normalizedText = text.replace(/[\s\u00a0\u200b-\u200d\u2060\ufeff]/gu, '')
+      const normalizedExpected = expected.replace(/[\s\u00a0\u200b-\u200d\u2060\ufeff]/gu, '')
+      return normalizedExpected.length === 0
+        ? normalizedText.length === 0
+        : normalizedText.includes(normalizedExpected)
+    }, expectedText)
   } catch {
     return false
   }
@@ -186,20 +196,21 @@ async function composerIsVisiblyEmpty(locator: Locator) {
 }
 
 async function writePrompt(page: Page, composer: Locator, text: string) {
-  const expectEmpty = text.length === 0
+  if (await composerHasExpectedText(composer, text)) return true
   try {
     await composer.fill(text, { timeout: 2000 })
-    if (await composerHasExpectedPresence(composer, expectEmpty)) return true
+    if (await composerHasExpectedText(composer, text)) return true
   } catch {
     // Hydration can replace a visible fallback composer while it is being filled.
+    if (await composerHasExpectedText(composer, text)) return true
   }
   try {
     if (!await composer.isVisible({ timeout: 250 })) return false
     await composer.click({ timeout: 1000 })
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A')
     await page.keyboard.type(text)
-    return await composerHasExpectedPresence(composer, expectEmpty)
+    return await composerHasExpectedText(composer, text)
   } catch {
-    return false
+    return await composerHasExpectedText(composer, text)
   }
 }

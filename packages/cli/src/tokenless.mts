@@ -3821,6 +3821,12 @@ async function doctorCommand(args: CliArgs) {
         code: browserInspection.code,
         message: browserInspection.message,
       }
+  const configuredBrowserId = normalizeBrowserSelection(config.browser ?? 'auto') ?? String(config.browser ?? 'auto')
+  const configuredBrowserInspection = args.browser === undefined
+    ? browserInspection
+    : await runtimeManager.inspect(configuredBrowserId, {
+        browserExecutablePath: browserExecutablePathForSelection(config, configuredBrowserId),
+      })
   const outputSavingsEnabled = config.outputSavings?.enabled === true
   const outputSavingsRuntime = await new OutputSavingsRuntimeManager(homeDir).inspect()
   const outputSavings = {
@@ -3967,6 +3973,14 @@ async function doctorCommand(args: CliArgs) {
   })
   const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split('.').map(Number)
   const nodeOk = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13)
+  const configuration = await doctorConfigurationHealth({
+    config,
+    configCheck,
+    daemonUrlCheck,
+    browserInspection: configuredBrowserInspection,
+    managedProfile,
+    profileRuntime,
+  })
   const checks = {
     node: { ok: nodeOk, version: process.version, required: '>=22.13.0' },
     tokenlessHome: { ok: true, path: homeDir },
@@ -3976,6 +3990,7 @@ async function doctorCommand(args: CliArgs) {
     runner,
     browser,
     config: configCheck,
+    configuration,
     daemonUrlConfiguration: daemonUrlCheck,
     managedProfile,
     profileRuntime,
@@ -3989,6 +4004,111 @@ async function doctorCommand(args: CliArgs) {
     checks,
   }, args)
   if (!ok) process.exitCode = 1
+}
+
+async function doctorConfigurationHealth({
+  config,
+  configCheck,
+  daemonUrlCheck,
+  browserInspection,
+  managedProfile,
+  profileRuntime,
+}: {
+  config: Pick<TokenlessConfig, 'profiles'> & Record<string, any>
+  configCheck: Record<string, any>
+  daemonUrlCheck: Record<string, any>
+  browserInspection: Awaited<ReturnType<BrowserRuntimeManager['inspect']>>
+  managedProfile: Record<string, any>
+  profileRuntime: Record<string, any>
+}) {
+  const language = config.language === 'zh-CN' ? 'zh-CN' : 'en'
+  const localize = (english: string, chinese: string) => language === 'zh-CN' ? chinese : english
+  const issues: Record<string, any>[] = []
+  if (configCheck.ok !== true) {
+    issues.push({
+      code: 'tokenless_config_invalid',
+      message: configCheck.message,
+      nextAction: localize(
+        'Fix config.json, or rerun tokenless setup to replace it with a valid configuration.',
+        '修复 config.json，或重新运行 tokenless setup 生成有效配置。',
+      ),
+    })
+  }
+  if (daemonUrlCheck.ok !== true) {
+    issues.push({
+      code: 'daemon_url_invalid',
+      message: daemonUrlCheck.message,
+      nextAction: localize(
+        'Set a valid loopback daemon URL with tokenless config --daemon-url <url> --json.',
+        '使用 tokenless config --daemon-url <url> --json 设置有效的 loopback daemon URL。',
+      ),
+    })
+  }
+  const configuredExecutablePath = typeof config.browserExecutablePath === 'string'
+    ? config.browserExecutablePath
+    : null
+  const resolvedExecutablePath = browserInspection.ok
+    ? browserInspection.runtime?.executablePath ?? null
+    : null
+  const configuredPathValid = configuredExecutablePath === null
+    ? null
+    : await sameExistingPath(configuredExecutablePath, resolvedExecutablePath)
+  if (configuredExecutablePath !== null && configuredPathValid !== true) {
+    issues.push({
+      code: 'browser_executable_path_unusable',
+      message: localize(
+        `The configured browser executable path is not usable: ${configuredExecutablePath}`,
+        `已配置的 browser executable path 不可用：${configuredExecutablePath}`,
+      ),
+      nextAction: localize(
+        `Replace it with tokenless config --browser ${config.browser} --browser-executable-path "/absolute/path/to/browser" --json, or clear it with --clear-browser-executable-path.`,
+        `使用 tokenless config --browser ${config.browser} --browser-executable-path "/absolute/path/to/browser" --json 替换该路径，或使用 --clear-browser-executable-path 清除它。`,
+      ),
+    })
+  } else if (!browserInspection.ok) {
+    issues.push({
+      code: browserInspection.code ?? 'browser_executable_not_found',
+      message: browserInspection.message,
+      nextAction: localize(
+        `Install ${config.browser === 'brave' ? 'Brave Browser' : 'Google Chrome'} yourself, or configure its absolute executable path before browser use.`,
+        `请自行安装 ${config.browser === 'brave' ? 'Brave Browser' : 'Google Chrome'}，或在使用 browser 功能前配置它的绝对 executable path。`,
+      ),
+    })
+  }
+  if (managedProfile.ok !== true) {
+    issues.push({
+      code: 'default_profile_incomplete',
+      message: managedProfile.message ?? localize('The default Tokenless profile is incomplete.', '默认 Tokenless profile 尚未完整配置。'),
+      nextAction: localize('Run tokenless setup to create or select a default profile.', '运行 tokenless setup 创建或选择默认 profile。'),
+    })
+  } else if (profileRuntime.ok !== true) {
+    issues.push({
+      code: profileRuntime.code ?? 'profile_runtime_unavailable',
+      message: profileRuntime.message,
+      nextAction: localize('Resolve the selected browser, then rerun tokenless doctor.', '先修复所选 browser，再重新运行 tokenless doctor。'),
+    })
+  }
+  return {
+    ok: issues.length === 0,
+    complete: issues.length === 0,
+    browser: {
+      selection: normalizeBrowserSelection(config.browser),
+      executablePathConfigured: configuredExecutablePath !== null,
+      executablePathValid: configuredPathValid,
+      resolved: browserInspection.ok,
+    },
+    issues,
+  }
+}
+
+async function sameExistingPath(left: string, right: string | null) {
+  if (!right) return false
+  try {
+    const [resolvedLeft, resolvedRight] = await Promise.all([fs.realpath(left), fs.realpath(right)])
+    return resolvedLeft === resolvedRight
+  } catch {
+    return false
+  }
 }
 
 async function readManagedProfileReadOnly(homeDir: string) {
