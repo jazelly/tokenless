@@ -9,6 +9,7 @@ import {
   resolveDomProviderSession,
 } from './capabilities/session.js'
 import { inputDomPrompt, submitDomPrompt } from './capabilities/prompt.js'
+import { waitForEnabledLocator, waitForVisibleLocator } from './dom-locators.js'
 import {
   legacyDomResponsePreparationFromBaseline,
   observeDomResponseCompletion,
@@ -101,6 +102,14 @@ export abstract class BaseProvider<TId extends ProviderId = ProviderId> {
 
   hasVisibleComposer(page: Page) {
     return this.inspectVisibleComposer(page)
+  }
+
+  async waitForUploadCapableComposer(page: Page, timeoutMs: number) {
+    const [composer, uploadTrigger] = await Promise.all([
+      waitForVisibleLocator(page, this.definition.composerSelectors, timeoutMs),
+      waitForEnabledLocator(page, this.definition.fileUploadTriggerSelectors, timeoutMs),
+    ])
+    return composer !== null && uploadTrigger !== null
   }
 
   declaredCapabilityAvailability(capability: ProviderCapabilityId) {

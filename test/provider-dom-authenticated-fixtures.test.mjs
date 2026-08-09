@@ -350,6 +350,24 @@ test('Gemini response reading excludes captured source badges and restores their
   }, { visibility: 'auto' })
 })
 
+test('Gemini upload-capable composer requires both captured composer and upload trigger evidence', async () => {
+  const provider = getProviderInstanceById('gemini')
+  assert.ok(provider, 'Gemini provider instance is required')
+  const accountRoot = path.join(fixtureRoot, 'gemini', 'signed-in-unknown')
+  const [composerOnly, uploadReady] = await Promise.all([
+    fs.readFile(path.join(accountRoot, 'composer-idle.html'), 'utf8'),
+    fs.readFile(path.join(accountRoot, 'file-input-ready.html'), 'utf8'),
+  ])
+
+  await withDedicatedTestPage(async ({ page }) => {
+    await setCapturedContent(page, composerOnly)
+    assert.equal(await provider.waitForUploadCapableComposer(page, 50), false)
+
+    await setCapturedContent(page, uploadReady)
+    assert.equal(await provider.waitForUploadCapableComposer(page, 50), true)
+  }, { visibility: 'auto' })
+})
+
 test('provider DOM manifest inventories every fixture with its sanitized page URL', async () => {
   const manifest = JSON.parse(await fs.readFile(path.join(fixtureRoot, 'manifest.json'), 'utf8'))
   assert.equal(manifest.schema, 'tokenless.provider-dom-manifest.v2')

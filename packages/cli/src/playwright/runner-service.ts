@@ -172,6 +172,8 @@ const DEFAULT_POLL_IDLE_MS = 1_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
+const GEMINI_REUSED_UPLOAD_SURFACE_WAIT_MS = 1_000
+const GEMINI_FRESH_UPLOAD_SURFACE_WAIT_MS = 10_000
 const MAX_READINESS_BATCH_CONCURRENCY = 3
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 export class ManagedPlaywrightRunnerService {
@@ -793,13 +795,25 @@ export class ManagedPlaywrightRunnerService {
       }
       const startUrl = state.submitted?.providerUrl ?? request.target.url
       try {
-        await navigateToTarget(
+        const navigation = await navigateToTarget(
           page,
           provider,
           startUrl,
           signal,
           request.userHandoff,
         )
+        const pendingFileUpload = request.actions
+          .slice(state.actionCursor)
+          .some((action) => action.action === VISIBLE_ACTIONS.FILE_UPLOAD)
+        if (state.submitted === null && pendingFileUpload) {
+          await ensureGeminiUploadCapablePage(
+            page,
+            provider,
+            signal,
+            request.userHandoff,
+            navigation,
+          )
+        }
       } catch (error) {
         const failure = classifyProviderFailure({ error, submitted: state.submitted !== null })
         await failOrFallback(failure)
@@ -1932,9 +1946,11 @@ async function navigateToTarget(
   url: string,
   signal: AbortSignal,
   userHandoff: boolean,
+  forceNavigation = false,
 ) {
   throwIfStopped(signal, () => false)
-  if (!canReuseCurrentProviderPage(page, provider, url)) {
+  const reused = !forceNavigation && canReuseCurrentProviderPage(page, provider, url)
+  if (!reused) {
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded' })
     } catch (error) {
@@ -1962,6 +1978,37 @@ async function navigateToTarget(
     }
   }
   if (userHandoff) await bringToFrontForUserHandoff(page)
+  return reused ? 'reused' as const : 'navigated' as const
+}
+
+async function ensureGeminiUploadCapablePage(
+  page: Page,
+  provider: RunnerProvider,
+  signal: AbortSignal,
+  userHandoff: boolean,
+  navigation: 'reused' | 'navigated',
+) {
+  if (provider.id !== 'gemini') return
+  const initialWaitMs = navigation === 'reused'
+    ? GEMINI_REUSED_UPLOAD_SURFACE_WAIT_MS
+    : GEMINI_FRESH_UPLOAD_SURFACE_WAIT_MS
+  if (await provider.waitForUploadCapableComposer(page, initialWaitMs)) return
+  throwIfStopped(signal, () => false)
+  await navigateToTarget(
+    page,
+    provider,
+    provider.navigation.homeTarget().href,
+    signal,
+    userHandoff,
+    true,
+  )
+  if (await provider.waitForUploadCapableComposer(page, GEMINI_FRESH_UPLOAD_SURFACE_WAIT_MS)) return
+  throwIfStopped(signal, () => false)
+  throw tokenlessError(
+    'file_upload_unavailable',
+    'No Gemini conversation page with an enabled Upload & tools control is available.',
+    { retryable: false },
+  )
 }
 
 function canReuseCurrentProviderPage(page: Page, provider: RunnerProvider, targetUrl: string) {
