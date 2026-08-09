@@ -83,7 +83,7 @@ test('persistent config defaults, stores, and validates browser runtime fields t
     const defaults = await runtime.readTokenlessConfig(homeDir)
     assert.deepEqual(defaults.outputSavings, { enabled: true })
     assert.equal(defaults.browser, 'managed-chromium')
-    assert.equal(defaults.browserConnectionMode, 'playwright')
+    assert.equal(defaults.browserConnectionMode, 'cdp')
     assert.equal(defaults.browserExecutablePath, null)
     assert.deepEqual(defaults.providerWhitelist, [
       'chatgpt',
@@ -104,6 +104,10 @@ test('persistent config defaults, stores, and validates browser runtime fields t
       'cdp',
     )
     assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'cdp')
+    assert.equal(
+      (await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'playwright' })).browserConnectionMode,
+      'cdp',
+    )
     assert.deepEqual(
       (await runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })).outputSavings,
       { enabled: false },

@@ -93,8 +93,8 @@ As of 2026-08-09:
 | Image generation | `image.generation` candidate | Create Image and the Seedream model/ratio/style/template surface are visible; completed image artifact pending |
 | Writing | `document.generation` or chat candidate | `write_assistant` is visible, but no completed document or downloadable file is proven |
 | Video generation | `video.generation` candidate | `video_generation` is visible; progress and terminal artifact pending |
-| Translation | `skill.invoke` and chat candidate | `translate` is visible; exact invocation and correlated translated output pending |
-| Homework | `skill.invoke`, chat, and possible extended-reasoning candidate | `exercise_assistant` is visible; terminal outcome pending |
+| Translation | Chat candidate through provider workflow `dola.translate` | `translate` is visible; correlated translated output pending |
+| Homework | Chat candidate through provider workflow `dola.exercise_assistant` | `exercise_assistant` is visible; terminal outcome pending; no reasoning tier is inferred from the control |
 | Projects and file management | Unavailable | No Project, file library, persistent knowledge, or independent Create File surface was observed |
 
 The maintained [Provider Capability Census](../provider-capability-census.md) records official product surfaces, current Tokenless evidence, candidate providers, and the proposed canonical capability schema.

@@ -233,7 +233,7 @@ tokenless dashboard --profile work --no-open --json
 
 控制台包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
 
-Provider 就绪状态刷新会隐式运行。Profile 空闲时，Tokenless 会启动临时 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
+Provider 就绪状态刷新会隐式运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -310,7 +310,7 @@ tokenless config \
   "profilePreferences": {},
   "browser": "chrome",
   "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "browserConnectionMode": "playwright",
+  "browserConnectionMode": "cdp",
   "browserVisibility": "auto",
   "daemonUrl": null,
   "language": "en"
@@ -321,7 +321,7 @@ tokenless config \
 
 面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
 
-Config 文件还接受实验性的 `browserConnectionMode`，值为 `playwright` 或 `cdp`；省略时默认使用 `playwright`。该设置刻意不提供 CLI flag。仅在 capability evaluation 时编辑这个 JSON 值，之后重启 daemon。CDP 不会改变所选 profile、browser runtime、visibility policy 或 provider mappings。
+`browserConnectionMode` 会统一规范为 `cdp`，让 daemon 能与 managed browser 断开连接，并让之后启动的 daemon 重新接入同一个常驻进程。旧的 `playwright` 值在配置迁移时仍会被接受，但保存和返回时统一为 `cdp`。
 
 ### `tokenless upgrade`
 
@@ -336,7 +336,7 @@ tokenless upgrade --json
 
 ### `tokenless daemon stop`
 
-验证 daemon identity 后，优雅停止兼容的 daemon。
+验证 daemon identity 后，优雅停止兼容的 daemon。Managed browsers 会继续运行；之后启动的 daemon 会通过 profile-scoped CDP endpoint 重新接入。
 
 ```bash
 tokenless daemon stop --json
@@ -530,7 +530,7 @@ Provider 控件：
 - DeepSeek canonical requirements 会在 mutation 前准备所需控件：`search.web` 选择 Instant 并启用 Search，`reasoning.extended` 启用 DeepThink，`image.input` 选择 Vision。显式冲突组合会在页面变化前失败。
 - `--kimi-search <auto|off>` 选择 Kimi Web search 行为。
 - `--kimi-plugin <exact-visible-label>` 选择一个精确的 Kimi Plugin。
-- `--kimi-skill <exact-visible-label>` 选择一个精确的 Kimi Skill。
+- `--kimi-skill <exact-visible-label>` 选择一个精确的 provider-native Kimi workflow；它与用户自己的 Harness `SKILL.md` 无关。
 - `--browser-visibility <auto|headed|headless>` 覆盖已配置的可见性策略。
 
 Identity 与 continuity：
@@ -708,7 +708,7 @@ tokenless provider-action \
 | `kimi.plugin.inspect` | 按精确可见名称列出已启用的 Kimi Plugins。 | 无；仅限 Kimi |
 | `kimi.plugin.select` | 选择一个精确的 Kimi Plugin。 | `--kimi-plugin <exact-visible-label>` |
 | `kimi.skill.inspect` | 按精确可见名称列出已启用的 Kimi Skills。 | 无；仅限 Kimi |
-| `kimi.skill.select` | 选择一个精确的 Kimi Skill。 | `--kimi-skill <exact-visible-label>` |
+| `kimi.skill.select` | 选择一个精确的 provider-native Kimi workflow；这不是 user-owned Harness Skill。 | `--kimi-skill <exact-visible-label>` |
 | `file.upload` | 通过可见 file controls 上传文件。 | 一个或多个 `--attach-file` |
 | `workspace.ensure` | 确保存在原生或 conversation-scoped Workspace。 | `--project-name`；`--workspace-mode` 和 instructions 可选 |
 | `prompt.clear` | 清空可见 composer。 | 无 |

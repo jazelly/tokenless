@@ -136,7 +136,7 @@ export class BrowserRuntimeController {
       this.state = 'quiescing'
       runner.abortController.abort()
       runner.service.stop()
-      const results = await this.settleRunner(runner)
+      const results = await this.settleRunner(runner, 'close')
       if (this.runner === runner) this.runner = null
       this.throwIfRunnerFailedToRecover(results)
       if (!this.terminal) this.state = 'quiesced'
@@ -153,7 +153,7 @@ export class BrowserRuntimeController {
         this.state = 'quiescing'
         runner.abortController.abort()
         runner.service.stop()
-        await this.settleRunner(runner)
+        await this.settleRunner(runner, 'detach')
         if (this.runner === runner) this.runner = null
       }
       this.state = 'stopped'
@@ -179,7 +179,7 @@ export class BrowserRuntimeController {
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
       daemonClient: createInProcessDaemonClient(this.store),
-      browserConnectionMode: config.browserConnectionMode,
+      browserConnectionMode: 'cdp',
       browserResolver,
       recoverAbortedClaim: (job) => this.store.recoverActiveClaim(job.job_id, job.claim_token),
     })
@@ -265,8 +265,9 @@ export class BrowserRuntimeController {
     return await runtimeManager.resolveForProfile({ slug: '<unbound>' })
   }
 
-  private async settleRunner(runner: RunnerInstance) {
-    const shutdown = runner.service.shutdown().catch(() => undefined)
+  private async settleRunner(runner: RunnerInstance, browserDisposition: 'close' | 'detach') {
+    const shutdown = (browserDisposition === 'close' ? runner.service.shutdown() : runner.service.detach())
+      .catch(() => undefined)
     return await Promise.allSettled([runner.loop, shutdown])
   }
 

@@ -30,9 +30,6 @@ let liveAttachmentPath
 let fallbackUploadControls
 
 test.after(async () => {
-  if (runtime) {
-    await runtime.stopDaemon({ homeDir, daemonUrl, timeoutMs: 60_000 }).catch(() => undefined)
-  }
   await inspection?.close().catch(() => undefined)
   if (liveAttachmentPath) await fs.rm(liveAttachmentPath, { force: true }).catch(() => undefined)
   restoreInspectionEnvironment?.()

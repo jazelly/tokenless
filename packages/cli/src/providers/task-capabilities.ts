@@ -1,7 +1,7 @@
 import { isProviderIdSyntax } from './provider-identity.js'
 import type { ProviderId } from './provider-identity.js'
 
-export const TASK_CAPABILITY_CATALOG_SCHEMA_ID = 'tokenless.task-capability-catalog.v1'
+export const TASK_CAPABILITY_CATALOG_SCHEMA_ID = 'tokenless.task-capability-catalog.v2'
 export const TASK_CAPABILITY_ROUTE_SCHEMA_ID = 'tokenless.task-capability-route.v1'
 
 export const TASK_CAPABILITIES = Object.freeze({
@@ -31,7 +31,6 @@ export const TASK_CAPABILITIES = Object.freeze({
   WORKSPACE_INSTRUCTIONS: 'workspace.instructions',
   WORKSPACE_KNOWLEDGE: 'workspace.knowledge',
   SOURCE_CONNECTED: 'source.connected',
-  SKILL_INVOKE: 'skill.invoke',
   RESPONSE_CITATIONS: 'response.citations',
   ARTIFACT_DOWNLOAD: 'artifact.download',
   TASK_BACKGROUND: 'task.background',
@@ -361,19 +360,6 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
     sideEffects: ['read_provider_state'],
     requiredEvidence: ['authorized_source_identity', 'visible_source_use'],
     outputKinds: ['text', 'citation'],
-  }),
-  defineCapability({
-    id: TASK_CAPABILITIES.SKILL_INVOKE,
-    title: 'Reusable skill',
-    description: 'Invoke an exact provider-native reusable skill selected by the caller.',
-    family: 'workspace_knowledge',
-    parametersSchema: objectParameters({
-      skill: { type: 'string', minLength: 1, maxLength: 240 },
-    }, ['skill']),
-    lifecycle: 'interactive',
-    sideEffects: ['read_provider_state', 'submit_prompt', 'persist_provider_state'],
-    requiredEvidence: ['exact_skill_identity', 'visible_skill_invocation', 'correlated_visible_response'],
-    outputKinds: ['text', 'file'],
   }),
   defineCapability({
     id: TASK_CAPABILITIES.RESPONSE_CITATIONS,

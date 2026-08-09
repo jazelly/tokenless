@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
-import { basename, resolve, sep } from 'node:path'
+import { basename, extname, resolve, sep } from 'node:path'
 import {
   firstEnabledLocator,
   firstFileInputLocator,
@@ -20,6 +20,11 @@ import type { ProviderDomDefinition } from '../provider-definition.js'
 import type { AttachmentInput, FileUploadResult, ProviderCapabilityInspection } from '../../playwright/actions.js'
 
 type AttachmentAction = typeof VISIBLE_ACTIONS.FILE_UPLOAD
+
+type VisibleAttachmentEvidence = {
+  id: string
+  extensions: readonly string[]
+}
 
 export class DomAttachmentCapability implements ProviderActionCapability<AttachmentAction> {
   readonly capability = PROVIDER_CAPABILITIES.FILE_UPLOAD
@@ -65,12 +70,9 @@ async function uploadFiles(
 ): Promise<FileUploadResult> {
   const attachments = value.map((attachment) => validateAttachmentInput(attachment))
   const files = await Promise.all(attachments.map((attachment) => resolveAttachmentPayload(context.attachmentRoot, attachment)))
-  const visibleEvidenceBeforeUpload = await visibleAttachmentEvidence(page, attachments, provider)
   let fileInput: Locator | null = null
   const chooser = await openProviderFileChooser(page, provider)
-  if (chooser) {
-    await chooser.setFiles(files)
-  } else {
+  if (!chooser) {
     fileInput = await firstFileInputLocator(page, provider.fileInputSelectors)
   }
   if (!fileInput && !chooser) {
@@ -80,7 +82,10 @@ async function uploadFiles(
       { retryable: false },
     )
   }
-  if (fileInput) {
+  const visibleEvidenceBeforeUpload = await visibleAttachmentEvidence(page, attachments)
+  if (chooser) {
+    await chooser.setFiles(files)
+  } else if (fileInput) {
     await fileInput.setInputFiles(files)
   }
   const acceptedProof = await waitForVisibleAttachmentProof(
@@ -88,7 +93,6 @@ async function uploadFiles(
     attachments,
     visibleEvidenceBeforeUpload,
     context.signal,
-    provider,
   )
   if (!acceptedProof) {
     throw providerCapabilityFailure(
@@ -232,17 +236,16 @@ async function inspectFileUploadAvailability(page: Page, provider: ProviderDomDe
 async function visibleAttachmentEvidence(
   page: Page,
   attachments: readonly AttachmentInput[],
-  provider: ProviderDomDefinition,
 ) {
   const evaluate = (page as Page & {
     evaluate?: (
-      callback: (input: { expectedNames: string[], allowExtensionless: boolean }) => string[],
-      input: { expectedNames: string[], allowExtensionless: boolean },
+      callback: (input: { expectedExtensions: string[] }) => VisibleAttachmentEvidence[],
+      input: { expectedExtensions: string[] },
     ) => Promise<unknown>
   }).evaluate
-  if (typeof evaluate !== 'function') return new Set<string>()
-  const names = attachments.map((attachment) => basename(attachment.name))
-  const result = await evaluate.call(page, ({ expectedNames, allowExtensionless }) => {
+  if (typeof evaluate !== 'function') return []
+  const extensions = [...new Set(attachments.map((attachment) => extname(basename(attachment.name)).toLowerCase()).filter(Boolean))]
+  const result = await evaluate.call(page, ({ expectedExtensions }) => {
     const isVisibleElement = (element: Element | null): element is HTMLElement | SVGElement => {
       if (!element || !(element instanceof HTMLElement || element instanceof SVGElement)) return false
       let node: Element | null = element
@@ -281,59 +284,92 @@ async function visibleAttachmentEvidence(
       }
     })
     const seen = new Set<Element>()
-    return elements
+    const candidates = elements
       .filter((element) => {
         if (seen.has(element) || !isVisibleElement(element)) return false
         seen.add(element)
         return true
       })
       .slice(0, 200)
-      .flatMap((element) => {
+      .map((element) => {
         const visibleText = [
           element.textContent ?? '',
           element.getAttribute('aria-label') ?? '',
           element.getAttribute('title') ?? '',
         ].join(' ').replace(/\s+/g, ' ').trim()
-        const matchesEveryAttachment = expectedNames.every((name) => {
-          if (visibleText.includes(name)) return true
-          if (!allowExtensionless || !element.matches('.file-card-container.success')) return false
-          const extensionIndex = name.lastIndexOf('.')
-          const stem = extensionIndex > 0 ? name.slice(0, extensionIndex) : name
-          return visibleText.includes(stem)
-        })
-        if (!matchesEveryAttachment) return []
+        const extensions = expectedExtensions.filter((extension) => (
+          new RegExp(`${extension.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9.])`, 'i').test(visibleText)
+        ))
         const tag = element.tagName.toLowerCase()
         const role = element.getAttribute('role') ?? ''
         const testId = element.getAttribute('data-testid') ?? ''
-        return [`${tag}|${role}|${testId}|${visibleText.slice(0, 240)}`]
+        return {
+          element,
+          evidence: {
+            id: `${tag}|${role}|${testId}|${visibleText.slice(0, 240)}`,
+            extensions,
+          },
+        }
       })
-  }, { expectedNames: names, allowExtensionless: provider.id === 'kimi' }).catch(() => [])
-  return new Set(Array.isArray(result) ? result.filter((entry): entry is string => typeof entry === 'string') : [])
+      .filter(({ evidence }) => expectedExtensions.length === 0 || evidence.extensions.length > 0)
+    return candidates
+      .filter(({ element }) => !candidates.some((candidate) => candidate.element !== element && element.contains(candidate.element)))
+      .map(({ evidence }) => evidence)
+  }, { expectedExtensions: extensions }).catch(() => [])
+  return Array.isArray(result)
+    ? result.filter((entry): entry is VisibleAttachmentEvidence => (
+      typeof entry === 'object' &&
+      entry !== null &&
+      typeof entry.id === 'string' &&
+      Array.isArray(entry.extensions) &&
+      entry.extensions.every((extension: unknown) => typeof extension === 'string')
+    ))
+    : []
 }
 
 async function visibleAttachmentProof(
   page: Page,
   attachments: readonly AttachmentInput[],
-  evidenceBeforeUpload: ReadonlySet<string>,
-  provider: ProviderDomDefinition,
+  evidenceBeforeUpload: readonly VisibleAttachmentEvidence[],
 ) {
-  const evidence = await visibleAttachmentEvidence(page, attachments, provider)
-  for (const entry of evidence) {
-    if (!evidenceBeforeUpload.has(entry)) return 'visible-attachment-filename'
+  const evidence = await visibleAttachmentEvidence(page, attachments)
+  const priorEvidence = new Map<string, number>()
+  for (const entry of evidenceBeforeUpload) {
+    priorEvidence.set(entry.id, (priorEvidence.get(entry.id) ?? 0) + 1)
   }
-  return null
+  const newEvidence = evidence.filter((entry) => {
+    const priorCount = priorEvidence.get(entry.id) ?? 0
+    if (priorCount === 0) return true
+    priorEvidence.set(entry.id, priorCount - 1)
+    return false
+  })
+  if (newEvidence.length < attachments.length) return null
+
+  const requiredExtensions = new Map<string, number>()
+  for (const attachment of attachments) {
+    const extension = extname(basename(attachment.name)).toLowerCase()
+    if (extension) requiredExtensions.set(extension, (requiredExtensions.get(extension) ?? 0) + 1)
+  }
+  for (const entry of newEvidence) {
+    for (const extension of entry.extensions) {
+      const requiredCount = requiredExtensions.get(extension) ?? 0
+      if (requiredCount > 0) requiredExtensions.set(extension, requiredCount - 1)
+    }
+  }
+  return [...requiredExtensions.values()].every((count) => count === 0)
+    ? 'visible-attachment-evidence'
+    : null
 }
 
 async function waitForVisibleAttachmentProof(
   page: Page,
   attachments: readonly AttachmentInput[],
-  evidenceBeforeUpload: ReadonlySet<string>,
+  evidenceBeforeUpload: readonly VisibleAttachmentEvidence[],
   signal: AbortSignal | undefined,
-  provider: ProviderDomDefinition,
 ) {
   for (let attempt = 0; attempt <= 75; attempt += 1) {
     assertNotAborted(signal)
-    const proof = await visibleAttachmentProof(page, attachments, evidenceBeforeUpload, provider)
+    const proof = await visibleAttachmentProof(page, attachments, evidenceBeforeUpload)
     if (proof) return proof
     if (attempt < 75) await waitForPageTimeout(page, 200)
   }

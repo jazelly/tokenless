@@ -5798,7 +5798,6 @@ function resolveProviderControls({
   const requiresDeepSeekReasoning = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.REASONING_EXTENDED)
   const requiresKimiSearch = provider === 'kimi' && requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB)
   const requiresKimiPlugin = provider === 'kimi' && requestedCapabilities.has(TASK_CAPABILITIES.SOURCE_CONNECTED)
-  const requiresKimiSkill = provider === 'kimi' && requestedCapabilities.has(TASK_CAPABILITIES.SKILL_INVOKE)
   const kimiSearch = args.kimiSearch === undefined
     ? (requiresKimiSearch ? 'auto' as const : undefined)
     : normalizeKimiSearch(args.kimiSearch)
@@ -5810,9 +5809,6 @@ function resolveProviderControls({
     : normalizeVisibleModelLabel(args.kimiSkill, '--kimi-skill', 'invalid_kimi_skill')
   if (requiresKimiPlugin && kimiPlugin === undefined) {
     throw usageError('task_capability_input_required', 'source.connected on Kimi requires --kimi-plugin <exact-visible-label>.')
-  }
-  if (requiresKimiSkill && kimiSkill === undefined) {
-    throw usageError('task_capability_input_required', 'skill.invoke on Kimi requires --kimi-skill <exact-visible-label>.')
   }
   if (requiresDeepSeekSearch && requiresDeepSeekVision) {
     throw usageError(

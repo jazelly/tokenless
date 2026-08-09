@@ -4,7 +4,7 @@ Last reviewed: 2026-08-04
 
 This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence. The normative naming, mapping, support, and extension rules live in the [Capability Matrix](capability-matrix.md).
 
-The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V1 routeable outcomes are:
+The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V2 routeable outcomes are:
 
 - `conversation.chat`: ChatGPT, Claude, Gemini, Grok, experimental Qwen, experimental Perplexity, experimental Z.ai, experimental Doubao, and experimental Kimi;
 - `file.upload`: ChatGPT, Claude, Grok, experimental Doubao, and experimental Kimi;
@@ -105,7 +105,9 @@ The caller catalog must describe outcomes, not provider controls. `qwen.mode`, `
 
 This is a candidate vocabulary. A capability becomes public only when at least one provider has a complete semantics and real-provider closure. Similar provider labels do not establish equivalent behavior.
 
-Keep the first public catalog small. Real-time voice conversations, persistent personalization or memory, arbitrary autonomous web actions, connector writes, and iterative artifact editing or sharing require separate safety and lifecycle contracts. The schema may add those outcomes later, but provider marketing labels such as “agent,” “canvas,” or “memory” must not enter V1 as underspecified generic capabilities.
+Provider-native labels such as Kimi Skill or Dola Homework remain namespaced workflows. A user-owned `SKILL.md` is separate Harness context delivered through `conversation.chat` plus `file.upload`; it is not part of the canonical capability vocabulary.
+
+Keep the public catalog small. Real-time voice conversations, persistent personalization or memory, arbitrary autonomous web actions, connector writes, and iterative artifact editing or sharing require separate safety and lifecycle contracts. The schema may add those outcomes later, but provider marketing labels such as “agent,” “canvas,” or “memory” must not enter V2 as underspecified generic capabilities.
 
 ### Task Requirement
 
@@ -128,7 +130,7 @@ type CapabilityRunRequest = Readonly<{
 }>
 ```
 
-All V1 requirements are mandatory. Attachments infer the corresponding input capabilities. Requested output kinds infer generation capabilities. The router must find one provider strategy set that satisfies every explicit and inferred requirement, including the requested parameter subset.
+All V2 requirements are mandatory. Attachments infer the corresponding input capabilities. Requested output kinds infer generation capabilities. The router must find one provider strategy set that satisfies every explicit and inferred requirement, including the requested parameter subset.
 
 Each catalog definition includes:
 
@@ -185,7 +187,7 @@ Document, presentation, spreadsheet, and website capabilities must declare their
 - Product documentation expands reconnaissance; it never makes a route eligible.
 - The router considers only implemented and real-E2E-closed provider strategies.
 - Account, region, rollout, and quota are runtime eligibility checks.
-- One V1 provider must satisfy the full requirement set.
+- One V2 provider must satisfy the full requirement set.
 - Provider ranking happens only after full-set capability compatibility. Fresh runtime eligibility wins over unchecked state, supported evidence wins over experimental evidence, and configured provider preference breaks the remaining tie.
 - Stale cached access is `unchecked`, not trusted as live eligibility. Every attempt performs a read-only visible session and capability-UI preflight before mutation; no probe prompt is allowed.
 - The job contract independently derives requirements from actions, attachment MIME types, and native workspace intent. A route that omits an action-required capability is invalid even when an internal caller supplied it.

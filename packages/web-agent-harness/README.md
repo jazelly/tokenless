@@ -23,7 +23,7 @@ Skill preparation and visible response control:
 
 The package reads only `SKILL.md`. It never reads or executes `references/`, `assets/`, or `scripts/`. The System Prompt is a required attachment; individual Skill attachments use soft omission results.
 
-Provider transport stays outside this package: the selected adapter must support both `conversation.chat` and `file.upload`. It must visibly accept the System Prompt before it calls `finalizeHarnessBootstrapTurn`; a rejected Skill becomes a soft `provider_upload_failed` omission, while a rejected System Prompt produces no prompt and no task submission. A run is single-writer; callers must not prepare the same turn concurrently.
+Provider transport stays outside this package: the selected adapter must support both `conversation.chat` and `file.upload`. User-owned Skills are context inputs, never provider capabilities. The adapter must visibly accept the context before it calls `finalizeHarnessBootstrapTurn`; a rejected Skill becomes a soft `provider_upload_failed` omission, while a rejected System Prompt produces no prompt and no task submission. A run is single-writer; callers must not prepare the same turn concurrently.
 
 ### Sequential mission admission
 
@@ -31,11 +31,11 @@ Provider transport stays outside this package: the selected adapter must support
 
 ### Local HTTP V0 bootstrap
 
-`startHarnessLocalHttpBootstrap` is the intentionally narrow local-control-plane seam. It binds the configured provider/profile, compiles and reads the required System Prompt Markdown, stages those exact bytes, and starts one canonical V0 new-conversation request. It returns the protocol `TurnState`; `readHarnessLocalHttpTurn` and `cancelHarnessLocalHttpTurn` operate on its opaque `turnRef`.
+`startHarnessLocalHttpBootstrap` is the intentionally narrow local-control-plane seam. It binds the configured provider/profile, compiles the required System Prompt, resolves caller-selected Skills, and stages their exact names, SHA-256 identities, and Markdown contents in one bounded context bundle. It then starts one canonical V0 new-conversation request. It returns the protocol `TurnState`; `readHarnessLocalHttpTurn` and `cancelHarnessLocalHttpTurn` operate on its opaque `turnRef`.
 
-`completeHarnessLocalHttpBootstrap` reads a succeeded turn, validates its delivered System Prompt digest and strict correlated Harness envelope, then finalizes the pending no-Skill bootstrap. It strips only bounded single-line provider chrome around one exact envelope; invalid output never finalizes the Harness state, and repeated completion is idempotent.
+`completeHarnessLocalHttpBootstrap` reads a succeeded turn, rebuilds and validates the delivered context-bundle digest, validates the strict correlated Harness envelope, then finalizes the pending bootstrap with its selected Skills. It strips only bounded single-line provider chrome around one exact envelope; invalid output never finalizes the Harness state, and repeated completion is idempotent.
 
-The start operation accepts no selected Skills (only an absent or empty `selectedSkills` value), tools, or MCP, and does not finalize the bootstrap. Its bootstrap text retains the normal no-Skill manifest identity, but a queued V0 state proves only local staging and durable scheduling, not visible-provider upload acceptance. If staging or start fails after preparation, the existing Harness state remains pending and is not accepted or finalized; only successful completion may backfill that receipt.
+The start operation accepts `selectedSkills` but still accepts no tools or MCP, and it does not finalize the bootstrap. The context bundle is a transport detail: every logical document retains its own name and digest in the Harness state and prompt manifest. A queued V0 state proves only local staging and durable scheduling, not visible-provider acceptance. If staging or start fails after preparation, the existing Harness state remains pending and is not accepted or finalized; only successful completion may backfill that receipt.
 
 Agent context is stored separately in `<TOKENLESS_HOME>/harness.sqlite3`. The ledger stores bounded IDs, canonical project identity, hashes, timestamps, provider mapping references, and job IDs. It does not store raw Codex prompts, transcripts, assistant messages, tool results, browser state, or credentials. The Web Provider API owns real provider Projects, conversations, and jobs; this package binds their returned opaque IDs to Harness conversations.
 

@@ -49,6 +49,7 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
         runId: 'local-http-bootstrap',
         stagingRoot: fixture.stagingRoot,
         skillRoot: fixture.skillRoot,
+        selectedSkills: [{ name: 'legal-writing', selectedBy: 'explicit_user' }],
         taskPrompt: 'Summarize the supplied contract.',
         nonce: 'local-http-bootstrap-nonce',
       })
@@ -60,7 +61,8 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
 
       const state = JSON.parse(await fs.readFile(path.join(fixture.stagingRoot, 'local-http-bootstrap', 'state.json'), 'utf8'))
       assert.equal(state.bootstrapTurn.status, 'pending')
-      assert.deepEqual(state.bootstrapTurn.candidateDelivery.attachments, [])
+      assert.equal(state.bootstrapTurn.candidateDelivery.attachments.length, 1)
+      assert.equal(state.bootstrapTurn.candidateDelivery.attachments[0].skillName, 'legal-writing')
       const compiled = await fs.readFile(state.systemPrompt.sourcePath)
       const mapping = daemon.store.getWebAiTurn(queued.turnRef)
       assert.ok(mapping)
@@ -73,12 +75,14 @@ test('built Harness bootstraps exact System Prompt bytes through real local HTTP
       assert.equal(bootstrapMessage.promptManifest.includes(`<system_prompt>${state.systemPrompt.name}</system_prompt>`), true)
       assert.equal(bootstrapMessage.promptManifest.includes(`<skill_registry_sha256>${state.registrySha256}</skill_registry_sha256>`), true)
       assert.equal(bootstrapMessage.promptManifest.includes(`<skill_delivery_sha256>${state.bootstrapTurn.candidateDelivery.sha256}</skill_delivery_sha256>`), true)
-      assert.equal(staged.sha256, state.systemPrompt.sha256)
-      assert.equal(staged.byte_length, compiled.byteLength)
-      assert.deepEqual(
-        await fs.readFile(path.join(homeDir, 'attachments', staged.bundle_id, `${staged.attachment_id}.bin`)),
-        compiled,
-      )
+      const stagedBundle = await fs.readFile(path.join(homeDir, 'attachments', staged.bundle_id, `${staged.attachment_id}.bin`), 'utf8')
+      const contextBundle = JSON.parse(stagedBundle.match(/```json\n(.+)\n```/s)[1])
+      const systemPromptDocument = contextBundle.documents.find((document) => document.kind === 'system_prompt')
+      const skillDocument = contextBundle.documents.find((document) => document.skillName === 'legal-writing')
+      assert.notEqual(staged.sha256, state.systemPrompt.sha256)
+      assert.equal(systemPromptDocument.content, compiled.toString('utf8'))
+      assert.equal(skillDocument.content.includes('# Legal Writing'), true)
+      assert.equal(skillDocument.sha256, state.bootstrapTurn.candidateDelivery.attachments[0].sha256)
 
       const read = await readHarnessLocalHttpTurn({ baseUrl: daemon.origin, token, turnRef: queued.turnRef })
       assert.equal(read.turnRef, queued.turnRef)
@@ -125,7 +129,6 @@ test('built Harness rejects a static-ineligible route before it stages a bootstr
       const { startHarnessLocalHttpBootstrap } = await import(harnessModule)
 
       for (const [runId, extra, code] of [
-        ['selected-skill-bootstrap', { selectedSkills: [{ name: 'legal-writing', selectedBy: 'explicit_user' }] }, 'harness_bootstrap_skills_unsupported'],
         ['tools-bootstrap', { tools: [] }, 'harness_bootstrap_tools_unsupported'],
       ]) {
         await assert.rejects(
@@ -173,7 +176,19 @@ test('built Harness rejects a static-ineligible route before it stages a bootstr
 async function createHarnessFixture(homeDir) {
   const stagingRoot = path.join(homeDir, 'harness-staging')
   const skillRoot = path.join(homeDir, 'skills')
-  await fs.mkdir(skillRoot, { recursive: true })
+  const legalWritingRoot = path.join(skillRoot, 'legal-writing')
+  await fs.mkdir(legalWritingRoot, { recursive: true })
+  await fs.writeFile(path.join(legalWritingRoot, 'SKILL.md'), [
+    '---',
+    'name: legal-writing',
+    'description: Review legal prose without claiming legal authority.',
+    '---',
+    '',
+    '# Legal Writing',
+    '',
+    'Identify ambiguity and preserve the author\'s intended meaning.',
+    '',
+  ].join('\n'))
   return {
     stagingRoot,
     skillRoot,

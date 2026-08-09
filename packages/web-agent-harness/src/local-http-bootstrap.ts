@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 import type { StartTurnRequest, TurnState } from 'tokenless-web-ai-interaction-protocol'
@@ -16,19 +16,21 @@ import {
   assertHarnessBootstrapStaticInput,
   finalizeHarnessBootstrapTurn,
   prepareHarnessBootstrapTurn,
+  readHarnessBootstrapCandidates,
   renderHarnessBootstrapPrompt,
   validateHarnessBootstrapCompletionResponse,
 } from './skill-harness.js'
 
 const REQUIRED_CAPABILITIES = ['conversation.chat', 'file.upload'] as const
-const MAX_V0_SYSTEM_PROMPT_BYTES = 1024 * 1024
+const MAX_V0_CONTEXT_BUNDLE_BYTES = 1024 * 1024
 const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAX_PROVIDER_CHROME_BYTES = 256
 const OPEN_MARKER = '<TOKENLESS_HARNESS_RESPONSE>'
 const CLOSE_MARKER = '</TOKENLESS_HARNESS_RESPONSE>'
 
 /**
- * Starts one V0 new-conversation turn with the compiled System Prompt.
+ * Starts one V0 new-conversation turn with the compiled System Prompt and
+ * caller-selected Skill documents in one transport attachment.
  * Queued transport state is not visible-provider attachment acceptance.
  */
 export async function startHarnessLocalHttpBootstrap(
@@ -46,34 +48,29 @@ export async function startHarnessLocalHttpBootstrap(
     runId: input.runId,
     stagingRoot: input.stagingRoot,
     ...(input.skillRoot === undefined ? {} : { skillRoot: input.skillRoot }),
+    ...(input.selectedSkills === undefined ? {} : { selectedSkills: input.selectedSkills }),
     ...(input.finalOutput === undefined ? {} : { finalOutput: input.finalOutput }),
     ...(input.limits === undefined ? {} : { limits: input.limits }),
     taskPrompt: input.taskPrompt,
     nonce: input.nonce,
   })
-  if (preparation.candidateDelivery.attachments.length !== 0) {
-    throw new HarnessSkillError('harness_bootstrap_skills_unsupported', 'V0 local HTTP bootstrap accepts only the required System Prompt.')
-  }
-  if (preparation.systemPrompt.size > MAX_V0_SYSTEM_PROMPT_BYTES) {
-    throw new HarnessSkillError('harness_system_prompt_too_large', 'The compiled System Prompt exceeds the V0 local HTTP attachment limit.')
-  }
+  const contextBundle = await renderContextBundle(preparation.attachments)
   const bootstrapText = renderHarnessBootstrapPrompt({
     runId: preparation.runId,
     nonce: preparation.nonce,
     taskPrompt: input.taskPrompt,
     promptManifest: renderPromptManifest({
       systemPromptName: preparation.systemPrompt.name,
-      skillAttachments: [],
+      skillAttachments: preparation.candidateDelivery.attachments,
       registrySha256: preparation.registry.sha256,
       deliverySha256: preparation.candidateDelivery.sha256,
     }),
   })
   assertV0BootstrapText(bootstrapText)
 
-  const bytes = await readFile(preparation.systemPrompt.sourcePath)
-  const attachment = await client.stage(binding.providerBindingRef, bytes)
-  if (attachment.byteLength !== preparation.systemPrompt.size || attachment.sha256 !== preparation.systemPrompt.sha256) {
-    throw new HarnessSkillError('harness_system_prompt_stage_mismatch', 'The local daemon staged a System Prompt with an unexpected identity.')
+  const attachment = await client.stage(binding.providerBindingRef, contextBundle.bytes)
+  if (attachment.byteLength !== contextBundle.bytes.byteLength || attachment.sha256 !== contextBundle.sha256) {
+    throw new HarnessSkillError('harness_context_bundle_stage_mismatch', 'The local daemon staged a Harness context bundle with an unexpected identity.')
   }
 
   const request = await canonicalStartRequest({
@@ -108,11 +105,17 @@ export async function completeHarnessLocalHttpBootstrap(
   ) {
     throw new HarnessSkillError(
       'harness_bootstrap_turn_incomplete',
-      'The local provider turn has not succeeded with delivered System Prompt evidence.',
+      'The local provider turn has not succeeded with delivered Harness context evidence.',
     )
   }
 
   const responseText = normalizeProviderResponse(turnState.result.text)
+  const candidates = await readHarnessBootstrapCandidates({
+    runId: input.runId,
+    stagingRoot: input.stagingRoot,
+    nonce: input.nonce,
+  })
+  const contextBundle = await renderContextBundle(candidates)
   const validated = await validateHarnessBootstrapCompletionResponse({
     runId: input.runId,
     stagingRoot: input.stagingRoot,
@@ -120,10 +123,10 @@ export async function completeHarnessLocalHttpBootstrap(
     turn: 1,
     nonce: input.nonce,
   })
-  if (turnState.attachmentDelivery.sha256 !== validated.systemPrompt.sha256) {
+  if (turnState.attachmentDelivery.sha256 !== contextBundle.sha256) {
     throw new HarnessSkillError(
-      'harness_system_prompt_delivery_mismatch',
-      'The delivered attachment does not match the pending Harness System Prompt.',
+      'harness_context_bundle_delivery_mismatch',
+      'The delivered attachment does not match the pending Harness context bundle.',
     )
   }
 
@@ -131,11 +134,11 @@ export async function completeHarnessLocalHttpBootstrap(
     runId: input.runId,
     stagingRoot: input.stagingRoot,
     nonce: input.nonce,
-    attachmentAcceptances: [{
-      name: validated.systemPrompt.name,
-      sha256: validated.systemPrompt.sha256,
+    attachmentAcceptances: candidates.map((candidate) => ({
+      name: candidate.name,
+      sha256: candidate.sha256,
       accepted: true,
-    }],
+    })),
   })
   return {
     turnState,
@@ -145,13 +148,48 @@ export async function completeHarnessLocalHttpBootstrap(
 }
 
 function assertSupportedStaticInput(input: StartHarnessLocalHttpBootstrapInput) {
-  const value = input.selectedSkills
-  if (value !== undefined && (!Array.isArray(value) || value.length !== 0)) {
-    throw new HarnessSkillError('harness_bootstrap_skills_unsupported', 'V0 local HTTP bootstrap does not support selected Skills.')
-  }
   if (Object.hasOwn(input, 'tools')) {
     throw new HarnessSkillError('harness_bootstrap_tools_unsupported', 'V0 local HTTP bootstrap does not support tools or MCP.')
   }
+}
+
+async function renderContextBundle(attachments: readonly {
+  kind: 'system_prompt' | 'skill'
+  name: string
+  sourcePath: string
+  size: number
+  sha256: string
+  skillName?: string | undefined
+}[]) {
+  const documents = []
+  for (const attachment of attachments) {
+    const bytes = await readFile(attachment.sourcePath)
+    const digest = createHash('sha256').update(bytes).digest('hex')
+    if (bytes.byteLength !== attachment.size || digest !== attachment.sha256) {
+      throw new HarnessSkillError('harness_context_source_changed', `Harness context source '${attachment.name}' changed after preparation.`)
+    }
+    documents.push({
+      kind: attachment.kind,
+      name: attachment.name,
+      ...(attachment.skillName === undefined ? {} : { skillName: attachment.skillName }),
+      sha256: attachment.sha256,
+      content: bytes.toString('utf8'),
+    })
+  }
+  const bytes = Buffer.from([
+    '# Tokenless Harness Context Bundle',
+    '',
+    'Apply the `system_prompt` document as the Harness contract. Treat each `skill` document as an attached user-selected SKILL.md file.',
+    '',
+    '```json',
+    JSON.stringify({ protocol: 'tokenless.web-agent.context-bundle/v1', documents }),
+    '```',
+    '',
+  ].join('\n'), 'utf8')
+  if (bytes.byteLength > MAX_V0_CONTEXT_BUNDLE_BYTES) {
+    throw new HarnessSkillError('harness_context_bundle_too_large', `Harness context bundle exceeds ${MAX_V0_CONTEXT_BUNDLE_BYTES} bytes.`)
+  }
+  return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
 }
 
 function assertRequiredCapabilities(capabilities: readonly string[]) {
@@ -216,6 +254,16 @@ function publicFinalizedBootstrap(bootstrap: HarnessBootstrapTurn) {
       size: bootstrap.systemPrompt.size,
       sha256: bootstrap.systemPrompt.sha256,
     },
+    skills: bootstrap.acceptedAttachments
+      .filter((attachment) => attachment.kind === 'skill')
+      .map((attachment) => ({
+        kind: attachment.kind,
+        name: attachment.name,
+        mediaType: attachment.mediaType,
+        size: attachment.size,
+        sha256: attachment.sha256,
+        skillName: attachment.skillName,
+      })),
     promptManifest: bootstrap.promptManifest,
   }
 }

@@ -131,10 +131,8 @@ async function prepareTarget(target, options) {
     `(${newTabCount} new, ${reusedTabCount} reused): ${requestedProviders.join(', ') || 'none'}.`,
   )
   console.log('Preparation is complete; provider pages continue loading in the dedicated managed browser.')
-  console.log('Sign in manually, then stop its daemon before starting provider automation:')
   console.log(
-    `${process.execPath} ${cliEntry} daemon stop --home ${JSON.stringify(target.homeDir)} ` +
-    `--daemon-url ${JSON.stringify(opened.daemonUrl)} --json`,
+    'Sign in manually. Starting provider E2E will replace this dedicated daemon only when required to enable its browser observer.',
   )
   if (review.failures.length > 0) {
     for (const failure of review.failures) {

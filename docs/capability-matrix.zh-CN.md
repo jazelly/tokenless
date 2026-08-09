@@ -6,15 +6,18 @@ Tokenless Capability Matrix 是 caller outcome 与 provider implementation 之�
 
 本文档是 capability 命名、mapping、support state 与扩展流程的规范性文档。尚未成为 Tokenless support 的产品调研记录见 [Provider Capability Census](provider-capability-census.md)。
 
-## 三层结构
+## 四个独立关注点
 
-Tokenless 将三个相关层次明确分开：
+Tokenless 将四个相关关注点明确分开：
 
 1. **Canonical capability catalog** — caller 可以要求的 provider-neutral outcome，例如 `conversation.chat`、`file.upload`、`search.web`。
-2. **Provider routes** — 从 canonical capability 到某个 provider strategy 的 evidence-backed mapping。
-3. **Live acceptance matrix** — route 对外发布前，必须通过 built CLI、packaged daemon、managed browser 与真实 provider network 的验收用例。
+2. **Provider bindings** — 从 canonical outcome 到 namespaced provider workflow/control 的 evidence-backed mapping。
+3. **User-owned Skills** — Web Agent Harness 交付的 caller-selected `SKILL.md` context；它是 job input，不是 provider capability。
+4. **Live acceptance matrix** — route 对外发布前，必须通过 built CLI、packaged daemon、managed browser 与真实 provider network 的验收用例。
 
-Provider-specific control 不会自动成为 canonical capability。例如 DeepSeek `Search` 是可能实现 `search.web` 的 adapter control；DeepSeek `Vision` 可能实现 `image.input`。公共契约描述 outcome，adapter 负责 provider UI 细节。
+Provider-specific control 不会自动成为 canonical capability。例如 DeepSeek `Search` 是可能实现 `search.web` 的 adapter control；Dola `translate` 目前只是实现 specialized chat path 的 namespaced workflow。公共契约描述 outcome，adapter 负责 provider UI 细节。
+
+用户选择的 Skill 也不是 capability。Harness 会解析 `SKILL.md`、固定其内容 hash，再与 Harness System Prompt 一起通过普通 `file.upload` 交付。因此 eligible provider 只需要 `conversation.chat` 与 `file.upload`，不需要 `skill.invoke`。
 
 ## 用户模型
 
@@ -91,8 +94,8 @@ Dola 已注册为需要登录的 experimental provider。用户选定的 managed
 | Create Image / AI Creation | `image.generation` | 已 live-observed 入口及带 model、ratio、style、template 的 Seedream 图片界面；completed image 与 bounded artifact reference 待完成 |
 | Writing | `document.generation` 或 `conversation.chat` | 已 live-observed `write_assistant` 入口；尚未证明输出形态，因此不声明 document 或 downloadable file |
 | Create Video | `video.generation` | 已 live-observed `video_generation` 入口；progress、terminal video 与 bounded artifact reference 待完成 |
-| Translate | `skill.invoke`, `conversation.chat` | 已 live-observed `translate` 入口；exact invocation 与关联翻译结果待完成 |
-| Homework | `skill.invoke`, `conversation.chat`；可能对应 `reasoning.extended` | 已 live-observed `exercise_assistant` 入口；exact invocation 与 reasoning outcome 待完成 |
+| Translate | `conversation.chat`；provider workflow `dola.translate` | 已 live-observed `translate` 入口；关联翻译结果待完成 |
+| Homework | `conversation.chat`；provider workflow `dola.exercise_assistant` | 已 live-observed `exercise_assistant` 入口；terminal homework outcome 待完成；不能仅凭按钮推导 extended reasoning |
 | Projects、文件库或持久知识 | `workspace.native`, `workspace.knowledge`, `artifact.download` | Unavailable：没有观察到 Project、文件库或持久知识管理界面 |
 
 Dola 没有独立观察到的 **Create File** 控件。可见的 **Writing** 入口不能直接当作文件创建；只有真实运行产出完整 document 后才能映射 `document.generation`，若结果可下载，还需要 `artifact.download` evidence。
@@ -114,7 +117,7 @@ Dola 没有独立观察到的 **Create File** 控件。可见的 **Writing** 入
 
 ## Capability families
 
-V1 catalog 按持久语义分组，而不是按 provider marketing category 分组：
+V2 catalog 按持久语义分组，而不是按 provider marketing category 分组：
 
 | Family | Canonical capabilities |
 | --- | --- |
@@ -182,11 +185,11 @@ Provider route 会另外声明 strategy、evidence identifiers，以及 `experim
 - 它需要的是新的 capability，还是新的 lifecycle/safety contract？
 - 组合现有 capabilities 是否更清晰？
 
-Provider-only concept 可以保留为 `deepseek.mode`、`qwen.mode` 等 namespaced action。它们可以实现 canonical capability，但自身无需进入公共 catalog。
+Provider-only concept 保留为 `deepseek.mode`、`kimi.skill`、`dola.translate`、`dola.exercise_assistant` 等 namespaced action/workflow。它们可以实现 canonical capability，但自身不进入 public catalog。User-owned Skills 始终留在 Harness context interface，也不进入该 namespace。
 
 ## Compatibility 与版本管理
 
-当前 catalog schema 是 `tokenless.task-capability-catalog.v1`。
+当前 catalog schema 是 `tokenless.task-capability-catalog.v2`。V2 删除 `skill.invoke`：provider-native workflow 保持 namespaced provider control，user-owned Skill 则作为 Harness input 经 `file.upload` 交付。
 
 - 新增独立 capability 通常属于 additive change。
 - 新增 optional parameter 在旧 request 语义完全不变时可以是 additive change。

@@ -14,7 +14,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   const result = runCli(['capabilities', 'list', '--json'])
   assert.equal(result.status, 0, result.stderr || result.stdout)
   const payload = JSON.parse(result.stdout)
-  assert.equal(payload.schema, 'tokenless.task-capability-catalog.v1')
+  assert.equal(payload.schema, 'tokenless.task-capability-catalog.v2')
 
   const byId = new Map(payload.capabilities.map((capability) => [capability.id, capability]))
   assert.equal(byId.get('conversation.chat').routeable, true)
@@ -37,6 +37,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.equal(byId.has('qwen.mode'), false)
   assert.equal(byId.has('model.choice'), false)
   assert.equal(byId.has('effort.choice'), false)
+  assert.equal(byId.has('skill.invoke'), false)
 })
 
 test('implicit run routing chooses the first usable cached provider in setup order', async () => {

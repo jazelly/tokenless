@@ -233,7 +233,7 @@ tokenless dashboard --profile work --no-open --json
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
 
-Provider readiness refreshes run implicitly. Tokenless starts a temporary headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
+Provider readiness refreshes run implicitly. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -310,7 +310,7 @@ The config shape is:
   "profilePreferences": {},
   "browser": "chrome",
   "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "browserConnectionMode": "playwright",
+  "browserConnectionMode": "cdp",
   "browserVisibility": "auto",
   "daemonUrl": null,
   "language": "en"
@@ -321,7 +321,7 @@ The config shape is:
 
 Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
 
-The config file also accepts the experimental `browserConnectionMode` value `playwright` or `cdp`; omitted values default to `playwright`. It intentionally has no CLI flag. Edit the JSON value only for capability evaluation, then restart the daemon. CDP does not change the selected profile, browser runtime, visibility policy, or provider mappings.
+`browserConnectionMode` is canonicalized to `cdp` so a daemon can detach from a managed browser and a later daemon can reconnect to the same resident process. The legacy `playwright` value remains accepted during config migration but is saved and reported as `cdp`.
 
 ### `tokenless upgrade`
 
@@ -336,7 +336,7 @@ Accepted options are `--json`, `--home`, `--daemon-url`, `--browser`, `--browser
 
 ### `tokenless daemon stop`
 
-Gracefully stops a compatible daemon after verifying its identity.
+Gracefully stops a compatible daemon after verifying its identity. Managed browsers remain running; a later daemon reconnects to them through their profile-scoped CDP endpoint.
 
 ```bash
 tokenless daemon stop --json
@@ -530,7 +530,7 @@ Provider controls:
 - DeepSeek canonical requirements prepare their required controls before mutation: `search.web` selects Instant and enables Search, `reasoning.extended` enables DeepThink, and `image.input` selects Vision. Explicit incompatible combinations fail before changing the page.
 - `--kimi-search <auto|off>` selects Kimi Web search behavior.
 - `--kimi-plugin <exact-visible-label>` selects one exact Kimi Plugin.
-- `--kimi-skill <exact-visible-label>` selects one exact Kimi Skill.
+- `--kimi-skill <exact-visible-label>` selects one exact provider-native Kimi workflow. It is unrelated to a user-owned Harness `SKILL.md`.
 - `--browser-visibility <auto|headed|headless>` overrides the configured visibility policy.
 
 Identity and continuity:
@@ -708,7 +708,7 @@ tokenless provider-action \
 | `kimi.plugin.inspect` | List enabled Kimi Plugins by exact visible name. | None; Kimi only |
 | `kimi.plugin.select` | Select one exact Kimi Plugin. | `--kimi-plugin <exact-visible-label>` |
 | `kimi.skill.inspect` | List enabled Kimi Skills by exact visible name. | None; Kimi only |
-| `kimi.skill.select` | Select one exact Kimi Skill. | `--kimi-skill <exact-visible-label>` |
+| `kimi.skill.select` | Select one exact provider-native Kimi workflow; this is not a user-owned Harness Skill. | `--kimi-skill <exact-visible-label>` |
 | `file.upload` | Upload files through visible file controls. | One or more `--attach-file` |
 | `workspace.ensure` | Ensure a native or conversation-scoped Workspace. | `--project-name`; optional `--workspace-mode` and instructions |
 | `prompt.clear` | Clear the visible composer. | None |

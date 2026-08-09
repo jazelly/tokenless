@@ -1,5 +1,6 @@
 import { chromium } from 'playwright-core'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import {
@@ -40,11 +41,6 @@ export type ManagedBrowserContext = {
   close(): Promise<void>
 }
 
-export type ManagedContextAcquisition = {
-  created: boolean
-  inheritedScheduledClose: boolean
-}
-
 export type ManagedPagePolicy = 'preserve' | 'replace'
 
 export type ManagedPageRequest = {
@@ -65,6 +61,8 @@ const PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS = [
   '--password-store=basic',
   '--use-mock-keychain',
 ] as const
+const BROWSER_RUNTIME_SESSION_FILE = 'tokenless-browser-runtime.json'
+const BROWSER_RUNTIME_SESSION_PROTOCOL = 'tokenless.browser-runtime-session.v1'
 
 export type PersistentContextManagerOptions = {
   maxContexts?: number
@@ -72,7 +70,6 @@ export type PersistentContextManagerOptions = {
   connectionMode?: BrowserConnectionMode | undefined
   browser?: ManagedBrowserLaunchTarget
   browserResolver?: ManagedBrowserResolver
-  timers?: PersistentContextManagerTimers | undefined
 }
 
 export type ManagedBrowserLaunchTarget = {
@@ -88,16 +85,6 @@ export type ManagedBrowserResolver = (
   profile: ManagedBrowserProfile,
 ) => Promise<ManagedBrowserLaunchTarget>
 
-export type PersistentContextManagerTimers = {
-  setTimeout(callback: () => void, ms: number): unknown
-  clearTimeout(handle: unknown): void
-}
-
-export type ScheduleProfileCloseOptions = {
-  delayMs: number
-  browserContext?: BrowserContext | undefined
-}
-
 type ActiveContext = {
   profile: ManagedBrowserProfile
   requestedVisibility: BrowserVisibility
@@ -106,6 +93,7 @@ type ActiveContext = {
   pagesByKey: Map<string, Page>
   reservedPagesByKey: Map<string, Page>
   closeBrowser: () => Promise<void>
+  detachBrowser: () => Promise<void>
   closePromise?: Promise<void> | undefined
   browserTarget: ManagedBrowserLaunchTarget
   closing: boolean
@@ -114,12 +102,7 @@ type ActiveContext = {
 type LaunchedManagedContext = {
   browserContext: BrowserContext
   closeBrowser: () => Promise<void>
-}
-
-type ScheduledContextClose = {
-  handle: unknown
-  delayMs: number
-  browserContext?: BrowserContext | undefined
+  detachBrowser: () => Promise<void>
 }
 
 export class PersistentContextManager {
@@ -128,11 +111,8 @@ export class PersistentContextManager {
   private readonly connectionMode: BrowserConnectionMode
   private readonly browser: ManagedBrowserLaunchTarget
   private readonly browserResolver: ManagedBrowserResolver
-  private readonly timers: PersistentContextManagerTimers
   private readonly contexts = new Map<string, ActiveContext>()
   private readonly lanes = new Map<string, Promise<unknown>>()
-  private readonly activeOperations = new Map<string, number>()
-  private readonly scheduledCloses = new Map<string, ScheduledContextClose>()
   private creationLane: Promise<unknown> = Promise.resolve()
   private shuttingDown = false
 
@@ -142,7 +122,6 @@ export class PersistentContextManager {
     this.connectionMode = options.connectionMode ?? 'playwright'
     this.browser = normalizeManagedBrowserLaunchTarget(options.browser)
     this.browserResolver = options.browserResolver ?? (async () => this.browser)
-    this.timers = options.timers ?? nativeTimers()
     if (!Number.isInteger(this.maxContexts) || this.maxContexts < 1 || this.maxContexts > MAX_ACTIVE_BROWSER_PROFILES) {
       throw tokenlessError(
         'invalid_context_limit',
@@ -153,17 +132,17 @@ export class PersistentContextManager {
 
   async runWithProfile<T>(
     profile: ManagedBrowserProfile,
-    operation: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>
+    operation: (context: ManagedBrowserContext) => Promise<T>
   ): Promise<T>
   async runWithProfile<T>(
     profile: ManagedBrowserProfile,
     visibility: BrowserVisibility,
-    operation: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>
+    operation: (context: ManagedBrowserContext) => Promise<T>
   ): Promise<T>
   async runWithProfile<T>(
     profile: ManagedBrowserProfile,
-    visibilityOrOperation: BrowserVisibility | ((context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>),
-    maybeOperation?: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>
+    visibilityOrOperation: BrowserVisibility | ((context: ManagedBrowserContext) => Promise<T>),
+    maybeOperation?: (context: ManagedBrowserContext) => Promise<T>
   ): Promise<T> {
     if (this.shuttingDown) {
       throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
@@ -171,16 +150,9 @@ export class PersistentContextManager {
     const { visibility, operation } = normalizeRunWithProfileArgs(visibilityOrOperation, maybeOperation)
     const previous = this.lanes.get(profile.id) ?? Promise.resolve()
     const current = previous.catch(() => undefined).then(async () => {
-      const activeBeforeAcquire = this.contexts.get(profile.id)
-      const scheduledCloseBrowserContext = this.scheduledCloses.get(profile.id)?.browserContext
-      this.cancelScheduledClose(profile.id)
-      this.incrementActiveOperation(profile.id)
       try {
         const context = await this.ensureContext(profile, visibility)
-        return await operation(context, {
-          created: activeBeforeAcquire?.browserContext !== context.browserContext,
-          inheritedScheduledClose: scheduledCloseBrowserContext === context.browserContext,
-        })
+        return await operation(context)
       } catch (error) {
         if (isBrowserClosedError(error)) {
           await this.closeProfile(profile.id).catch(() => undefined)
@@ -190,8 +162,6 @@ export class PersistentContextManager {
           })
         }
         throw error
-      } finally {
-        this.decrementActiveOperation(profile.id)
       }
     })
     const lane = current.catch(() => undefined).finally(() => {
@@ -205,7 +175,6 @@ export class PersistentContextManager {
     profile: ManagedBrowserProfile,
     visibility: BrowserVisibility = 'headed'
   ): Promise<ManagedBrowserContext> {
-    this.cancelScheduledClose(profile.id)
     const requestedVisibility = validateRequestedVisibility(visibility)
     const effectiveVisibility = resolveEffectiveBrowserVisibility(requestedVisibility)
     const browserTarget = normalizeManagedBrowserLaunchTarget(await this.browserResolver(profile))
@@ -275,6 +244,7 @@ export class PersistentContextManager {
         pagesByKey: new Map(),
         reservedPagesByKey: new Map(),
         closeBrowser: launched.closeBrowser,
+        detachBrowser: launched.detachBrowser,
         browserTarget,
         closing: false,
       }
@@ -300,51 +270,25 @@ export class PersistentContextManager {
   }
 
   async closeProfile(profileId: string): Promise<void> {
-    this.cancelScheduledClose(profileId)
     const active = this.contexts.get(profileId)
     if (!active) return
     await this.closeActiveContext(profileId, active)
   }
 
-  scheduleCloseProfile(profileId: string, options: ScheduleProfileCloseOptions): void {
-    const delayMs = normalizedPositiveInteger(options.delayMs)
-    this.cancelScheduledClose(profileId)
-    const handle = this.timers.setTimeout(() => {
-      const scheduled = this.scheduledCloses.get(profileId)
-      if (!scheduled || scheduled.handle !== handle) return
-      const active = this.contexts.get(profileId)
-      if (!active) {
-        this.scheduledCloses.delete(profileId)
-        return
-      }
-      if (scheduled.browserContext && active.browserContext !== scheduled.browserContext) {
-        this.scheduledCloses.delete(profileId)
-        return
-      }
-      if ((this.activeOperations.get(profileId) ?? 0) > 0 || active.closing) {
-        this.scheduledCloses.delete(profileId)
-        this.scheduleCloseProfile(profileId, {
-          delayMs: scheduled.delayMs,
-          ...(scheduled.browserContext === undefined ? {} : { browserContext: scheduled.browserContext }),
-        })
-        return
-      }
-      this.scheduledCloses.delete(profileId)
-      void this.closeActiveContext(profileId, active).catch(() => undefined)
-    }, delayMs)
-    unrefTimer(handle)
-    this.scheduledCloses.set(profileId, {
-      handle,
-      delayMs,
-      ...(options.browserContext === undefined ? {} : { browserContext: options.browserContext }),
-    })
-  }
-
   async shutdown(): Promise<void> {
     this.shuttingDown = true
-    for (const profileId of this.scheduledCloses.keys()) this.cancelScheduledClose(profileId)
     await this.creationLane.catch(() => undefined)
     await Promise.all([...this.contexts.keys()].map((profileId) => this.closeProfile(profileId)))
+  }
+
+  async detach(): Promise<void> {
+    this.shuttingDown = true
+    await this.creationLane.catch(() => undefined)
+    await Promise.all([...this.contexts.entries()].map(async ([profileId, active]) => {
+      active.closing = true
+      await active.detachBrowser()
+      if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
+    }))
   }
 
   private wrap(active: ActiveContext): ManagedBrowserContext {
@@ -416,7 +360,6 @@ export class PersistentContextManager {
   }
 
   private async closeActiveContext(profileId: string, active: ActiveContext): Promise<void> {
-    this.cancelScheduledClose(profileId)
     if (!active.closePromise) {
       active.closing = true
       active.closePromise = active.closeBrowser()
@@ -450,28 +393,10 @@ export class PersistentContextManager {
     return {
       browserContext,
       closeBrowser: async () => await browserContext.close(),
+      detachBrowser: async () => await browserContext.close(),
     }
   }
 
-  private cancelScheduledClose(profileId: string): void {
-    const scheduled = this.scheduledCloses.get(profileId)
-    if (!scheduled) return
-    this.scheduledCloses.delete(profileId)
-    this.timers.clearTimeout(scheduled.handle)
-  }
-
-  private incrementActiveOperation(profileId: string): void {
-    this.activeOperations.set(profileId, (this.activeOperations.get(profileId) ?? 0) + 1)
-  }
-
-  private decrementActiveOperation(profileId: string): void {
-    const next = (this.activeOperations.get(profileId) ?? 1) - 1
-    if (next > 0) {
-      this.activeOperations.set(profileId, next)
-      return
-    }
-    this.activeOperations.delete(profileId)
-  }
 }
 
 async function createBackgroundPage(browserContext: BrowserContext): Promise<Page> {
@@ -530,14 +455,24 @@ async function launchCdpManagedContext(
     )
   }
   const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
+  const sessionFile = path.join(userDataDir, BROWSER_RUNTIME_SESSION_FILE)
+  const launchSignature = cdpLaunchSignature(userDataDir, launchOptions, browserTarget)
+  const existing = await connectExistingCdpManagedContext({
+    endpointFile,
+    sessionFile,
+    launchSignature,
+  })
+  if (existing) return existing
   await fs.unlink(endpointFile).catch((error) => {
     if (!isMissingFileError(error)) throw error
   })
   const browserProcess = spawn(executablePath, cdpChromiumArguments(userDataDir, launchOptions, browserTarget), {
+    detached: true,
     stdio: 'ignore',
   })
   const browserExit = observeChildExit(browserProcess)
   await waitForChildSpawn(browserProcess)
+  browserProcess.unref()
 
   let connectedBrowser: Browser | undefined
   try {
@@ -548,17 +483,133 @@ async function launchCdpManagedContext(
       throw new Error('CDP managed browser must expose exactly one persistent context.')
     }
     const browser = connectedBrowser
+    await writeBrowserRuntimeSession(sessionFile, {
+      protocol: BROWSER_RUNTIME_SESSION_PROTOCOL,
+      launchSignature,
+      pid: browserProcess.pid ?? null,
+    })
     let closing: Promise<void> | undefined
+    let detaching: Promise<void> | undefined
     return {
       browserContext: contexts[0],
       closeBrowser() {
         closing ??= closeCdpManagedBrowser(browser, browserProcess, browserExit)
+          .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))
         return closing
+      },
+      detachBrowser() {
+        detaching ??= browser.close()
+        return detaching
       },
     }
   } catch (error) {
     await closeCdpManagedBrowser(connectedBrowser, browserProcess, browserExit).catch(() => undefined)
+    await removeBrowserRuntimeSession(sessionFile, endpointFile)
     throw error
+  }
+}
+
+async function connectExistingCdpManagedContext({
+  endpointFile,
+  sessionFile,
+  launchSignature,
+}: {
+  endpointFile: string
+  sessionFile: string
+  launchSignature: string
+}): Promise<LaunchedManagedContext | null> {
+  const session = await readBrowserRuntimeSession(sessionFile)
+  const endpoint = await readDevToolsEndpoint(endpointFile)
+  if (!session || !endpoint) return null
+  let browser: Browser | undefined
+  try {
+    browser = await chromium.connectOverCDP(endpoint)
+    if (session.launchSignature !== launchSignature) {
+      await closeConnectedCdpManagedBrowser(browser)
+      await removeBrowserRuntimeSession(sessionFile, endpointFile)
+      return null
+    }
+    const contexts = browser.contexts()
+    if (contexts.length !== 1 || !contexts[0]) {
+      await browser.close().catch(() => undefined)
+      return null
+    }
+    const connectedBrowser = browser
+    let closing: Promise<void> | undefined
+    let detaching: Promise<void> | undefined
+    return {
+      browserContext: contexts[0],
+      closeBrowser() {
+        closing ??= closeConnectedCdpManagedBrowser(connectedBrowser)
+          .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))
+        return closing
+      },
+      detachBrowser() {
+        detaching ??= connectedBrowser.close()
+        return detaching
+      },
+    }
+  } catch {
+    await browser?.close().catch(() => undefined)
+    await removeBrowserRuntimeSession(sessionFile, endpointFile)
+    return null
+  }
+}
+
+function cdpLaunchSignature(
+  userDataDir: string,
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+) {
+  return createHash('sha256').update(JSON.stringify({
+    executablePath: browserTarget.executablePath ?? null,
+    runtimeId: browserTarget.runtimeId ?? null,
+    arguments: cdpChromiumArguments(userDataDir, launchOptions, browserTarget),
+  })).digest('base64url')
+}
+
+async function writeBrowserRuntimeSession(
+  sessionFile: string,
+  session: { protocol: typeof BROWSER_RUNTIME_SESSION_PROTOCOL, launchSignature: string, pid: number | null },
+) {
+  const temporary = `${sessionFile}.${process.pid}.tmp`
+  await fs.writeFile(temporary, `${JSON.stringify(session, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  await fs.rename(temporary, sessionFile)
+}
+
+async function readBrowserRuntimeSession(sessionFile: string) {
+  try {
+    const value = JSON.parse(await fs.readFile(sessionFile, 'utf8')) as Record<string, unknown>
+    if (
+      value.protocol !== BROWSER_RUNTIME_SESSION_PROTOCOL ||
+      typeof value.launchSignature !== 'string' ||
+      (value.pid !== null && (!Number.isSafeInteger(value.pid) || Number(value.pid) <= 0))
+    ) return null
+    return { launchSignature: value.launchSignature, pid: value.pid as number | null }
+  } catch (error) {
+    if (isMissingFileError(error) || error instanceof SyntaxError) return null
+    throw error
+  }
+}
+
+async function removeBrowserRuntimeSession(sessionFile: string, endpointFile: string) {
+  await Promise.all([
+    fs.unlink(sessionFile).catch((error) => {
+      if (!isMissingFileError(error)) throw error
+    }),
+    fs.unlink(endpointFile).catch((error) => {
+      if (!isMissingFileError(error)) throw error
+    }),
+  ])
+}
+
+async function closeConnectedCdpManagedBrowser(browser: Browser) {
+  if (!browser.isConnected()) return
+  try {
+    const session = await browser.newBrowserCDPSession()
+    await session.send('Browser.close')
+  } catch {
+    await browser.close().catch(() => undefined)
   }
 }
 
@@ -679,17 +730,24 @@ async function waitForDevToolsEndpoint(
     if (exited) {
       throw new Error(`CDP managed browser exited before DevTools was ready (code ${exited.code}, signal ${exited.signal}).`)
     }
-    try {
-      const [port, websocketPath] = (await fs.readFile(endpointFile, 'utf8')).trim().split(/\r?\n/u)
-      if (/^\d+$/u.test(port ?? '') && /^\/devtools\/browser\/[A-Za-z0-9-]+$/u.test(websocketPath ?? '')) {
-        return `http://127.0.0.1:${port}`
-      }
-    } catch (error) {
-      if (!isMissingFileError(error)) throw error
-    }
+    const endpoint = await readDevToolsEndpoint(endpointFile)
+    if (endpoint) return endpoint
     await delay(50)
   }
   throw new Error('Timed out waiting for the CDP managed browser DevTools endpoint.')
+}
+
+async function readDevToolsEndpoint(endpointFile: string) {
+  try {
+    const [port, websocketPath] = (await fs.readFile(endpointFile, 'utf8')).trim().split(/\r?\n/u)
+    if (/^\d+$/u.test(port ?? '') && /^\/devtools\/browser\/[A-Za-z0-9-]+$/u.test(websocketPath ?? '')) {
+      return `http://127.0.0.1:${port}`
+    }
+    return null
+  } catch (error) {
+    if (isMissingFileError(error)) return null
+    throw error
+  }
 }
 
 export function managedBrowserLaunchOptions(
@@ -820,11 +878,11 @@ function sameBrowserRuntime(left: ManagedBrowserLaunchTarget, right: ManagedBrow
 }
 
 function normalizeRunWithProfileArgs<T>(
-  visibilityOrOperation: BrowserVisibility | ((context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>),
-  maybeOperation: ((context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>) | undefined
+  visibilityOrOperation: BrowserVisibility | ((context: ManagedBrowserContext) => Promise<T>),
+  maybeOperation: ((context: ManagedBrowserContext) => Promise<T>) | undefined
 ): {
   visibility: BrowserVisibility
-  operation: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => Promise<T>
+  operation: (context: ManagedBrowserContext) => Promise<T>
 } {
   if (typeof visibilityOrOperation === 'function') {
     return { visibility: 'headed', operation: visibilityOrOperation }
@@ -859,31 +917,6 @@ function validateRequestedVisibility(value: unknown): BrowserVisibility {
     throw tokenlessError('invalid_browser_visibility', 'Managed Playwright browser visibility must be auto, headed, or headless.')
   }
   return visibility
-}
-
-function normalizedPositiveInteger(value: number): number {
-  const numeric = Number(value)
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    throw tokenlessError('invalid_profile_close_delay', 'Managed Playwright profile close delay must be a positive integer.')
-  }
-  return Math.floor(numeric)
-}
-
-function nativeTimers(): PersistentContextManagerTimers {
-  return {
-    setTimeout(callback, ms) {
-      return setTimeout(callback, ms)
-    },
-    clearTimeout(handle) {
-      clearTimeout(handle as ReturnType<typeof setTimeout>)
-    },
-  }
-}
-
-function unrefTimer(handle: unknown) {
-  if (handle && typeof handle === 'object' && typeof (handle as { unref?: unknown }).unref === 'function') {
-    ;(handle as { unref: () => void }).unref()
-  }
 }
 
 function delay(ms: number) {

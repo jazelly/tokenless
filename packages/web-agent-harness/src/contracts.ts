@@ -51,16 +51,12 @@ export type PrepareHarnessBootstrapTurnInput = PrepareHarnessSkillRunInput & {
   nonce: string
 }
 
-/**
- * V0 local HTTP bootstrap accepts the required System Prompt only. Skill
- * delivery remains on the existing visible-provider receipt path.
- */
 export type StartHarnessLocalHttpBootstrapInput = Omit<PrepareHarnessBootstrapTurnInput, 'selectedSkills' | 'tools'> & {
   baseUrl: string
   token: string
   provider: string
   profileId: string
-  selectedSkills?: readonly [] | undefined
+  selectedSkills?: readonly SkillSelection[] | undefined
 }
 
 export type ReadHarnessLocalHttpTurnInput = {
@@ -83,6 +79,7 @@ export type HarnessLocalHttpFinalizedBootstrap = {
   turn: 1
   nonce: string
   systemPrompt: Pick<HarnessAttachment, 'kind' | 'name' | 'mediaType' | 'size' | 'sha256'>
+  skills: readonly Pick<HarnessAttachment, 'kind' | 'name' | 'mediaType' | 'size' | 'sha256' | 'skillName'>[]
   promptManifest: string
 }
 

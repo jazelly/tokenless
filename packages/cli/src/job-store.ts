@@ -141,7 +141,7 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
     profilePreferences: normalizeProfilePreferences(payload.profilePreferences),
     browser,
     browserExecutablePath,
-    browserConnectionMode: normalizeBrowserConnectionMode(payload.browserConnectionMode) ?? 'playwright',
+    browserConnectionMode: 'cdp',
     browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
@@ -222,7 +222,7 @@ function emptyTokenlessConfig(): TokenlessConfig {
     profilePreferences: {},
     browser: 'managed-chromium',
     browserExecutablePath: null,
-    browserConnectionMode: 'playwright',
+    browserConnectionMode: 'cdp',
     browserVisibility: 'auto',
     daemonUrl: null,
     language: 'en',
@@ -384,7 +384,7 @@ function validateConfigBrowserConnectionMode(value: unknown): BrowserConnectionM
       'Invalid Tokenless browser connection mode; expected playwright or cdp.',
     )
   }
-  return connectionMode
+  return 'cdp'
 }
 
 export async function hasConfiguredTokenlessLanguage(homeDir = tokenlessHome()) {

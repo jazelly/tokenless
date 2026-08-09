@@ -37,7 +37,6 @@ import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } fro
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
-  ManagedContextAcquisition,
   PersistentContextManager as PersistentContextManagerType,
 } from './browser/context-manager.js'
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
@@ -68,7 +67,6 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   responseWaitPollMs?: number | undefined
   userHandoverTimeoutMs?: number | undefined
   userHandoverPollMs?: number | undefined
-  autoEscalatedCloseDelayMs?: number | undefined
   attachmentRootForJob?: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
   recoverAbortedClaim?: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   cleanupAttachmentRoot?: boolean | undefined
@@ -172,7 +170,6 @@ const DEFAULT_POLL_IDLE_MS = 1_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
-const DEFAULT_AUTO_ESCALATED_CLOSE_DELAY_MS = 30_000
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 export class ManagedPlaywrightRunnerService {
   private readonly profileRegistry: ManagedProfileSource
@@ -184,7 +181,6 @@ export class ManagedPlaywrightRunnerService {
   private readonly responseWaitPollMs: number
   private readonly userHandoverTimeoutMs: number
   private readonly userHandoverPollMs: number
-  private readonly autoEscalatedCloseDelayMs: number
   private readonly attachmentRootForJob: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
   private readonly recoverAbortedClaim: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   private readonly cleanupAttachmentRoot: boolean
@@ -219,7 +215,7 @@ export class ManagedPlaywrightRunnerService {
     }
     this.daemonClient = options.daemonClient
     this.contextManager = options.contextManager ?? new PersistentContextManager({
-      connectionMode: options.browserConnectionMode ?? 'playwright',
+      connectionMode: options.browserConnectionMode ?? 'cdp',
       ...(options.browser ? { browser: options.browser } : {}),
       ...(options.browserResolver ? { browserResolver: options.browserResolver } : {}),
     })
@@ -229,7 +225,6 @@ export class ManagedPlaywrightRunnerService {
     this.responseWaitPollMs = normalizedPositiveInteger(options.responseWaitPollMs, DEFAULT_RESPONSE_WAIT_POLL_MS)
     this.userHandoverTimeoutMs = normalizedPositiveInteger(options.userHandoverTimeoutMs, DEFAULT_USER_HANDOVER_TIMEOUT_MS)
     this.userHandoverPollMs = normalizedPositiveInteger(options.userHandoverPollMs, DEFAULT_USER_HANDOVER_POLL_MS)
-    this.autoEscalatedCloseDelayMs = normalizedPositiveInteger(options.autoEscalatedCloseDelayMs, DEFAULT_AUTO_ESCALATED_CLOSE_DELAY_MS)
     const defaultAttachmentHomeDir = options.homeDir
     this.attachmentRootForJob = options.attachmentRootForJob ?? (
       defaultAttachmentHomeDir ? (job) => defaultAttachmentRootForJob(defaultAttachmentHomeDir, job) : undefined
@@ -428,6 +423,11 @@ export class ManagedPlaywrightRunnerService {
     await this.contextManager.shutdown()
   }
 
+  async detach() {
+    this.stop()
+    await this.contextManager.detach()
+  }
+
   async runUntilStopped(signal?: AbortSignal | undefined) {
     try {
       while (!this.stopped && !signal?.aborted) {
@@ -515,9 +515,6 @@ export class ManagedPlaywrightRunnerService {
     let renewError: unknown
     let attachmentRoot: string | undefined
     let providerAttachmentRoot: string | undefined
-    let autoEscalatedBrowserContext: BrowserContext | undefined
-    let implicitObservationBrowserContext: BrowserContext | undefined
-    let parkedImplicitObservation = false
     let terminalCompletion = false
     const renewTimer = setInterval(() => {
       void this.daemonClient.renewJobClaim({
@@ -597,18 +594,6 @@ export class ManagedPlaywrightRunnerService {
         signal,
         () => canceled,
         () => renewError,
-        (managedContext) => {
-          autoEscalatedBrowserContext = managedContext.browserContext
-        },
-        (managedContext, acquisition) => {
-          if (
-            (acquisition.created || acquisition.inheritedScheduledClose) &&
-            isAutomaticAuthObservation(request, request.browserVisibility) &&
-            managedContext.effectiveBrowserVisibility === 'headless'
-          ) {
-            implicitObservationBrowserContext = managedContext.browserContext
-          }
-        }
       )
       if (canceled || signal.aborted) {
         return { claimed: true, jobId: job.job_id, status: 'canceled' }
@@ -623,7 +608,6 @@ export class ManagedPlaywrightRunnerService {
       return { claimed: true, jobId: job.job_id, status: 'succeeded' }
     } catch (error) {
       if (error instanceof ParkedPlaywrightJob) {
-        parkedImplicitObservation = implicitObservationBrowserContext !== undefined
         attachmentRoot = undefined
         return { claimed: true, jobId: job.job_id, status: 'waiting_for_user' }
       }
@@ -667,18 +651,6 @@ export class ManagedPlaywrightRunnerService {
       const recoverClaim = outerSignal?.aborted && !terminalCompletion && !canceled && !renewError
       if (attachmentRoot && this.cleanupAttachmentRoot && !recoverClaim) {
         await fs.rm(attachmentRoot, { recursive: true, force: true }).catch(() => undefined)
-      }
-      if ((terminalCompletion || canceled) && autoEscalatedBrowserContext) {
-        this.contextManager.scheduleCloseProfile(profile.id, {
-          delayMs: this.autoEscalatedCloseDelayMs,
-          browserContext: autoEscalatedBrowserContext,
-        })
-      }
-      if ((terminalCompletion || canceled || parkedImplicitObservation) && implicitObservationBrowserContext) {
-        this.contextManager.scheduleCloseProfile(profile.id, {
-          delayMs: this.autoEscalatedCloseDelayMs,
-          browserContext: implicitObservationBrowserContext,
-        })
       }
       if (recoverClaim) {
         try {
@@ -739,16 +711,13 @@ export class ManagedPlaywrightRunnerService {
     signal: AbortSignal,
     isCanceled: () => boolean,
     renewalError: () => unknown,
-    onAutoEscalated: (context: ManagedBrowserContext) => void,
-    onContextAcquired: (context: ManagedBrowserContext, acquisition: ManagedContextAcquisition) => void,
   ): Promise<ManagedPlaywrightExecutionOutcome> {
     const outputSavingsEnabled = await this.outputSavingsEnabled()
     const outputSavingsWorkByRequestId = new Map<string, string>()
     const resumeVisibility = validateResumeVisibility(job.resume_json)
     const claimBrowserVisibility = requestedVisibilityForClaim(request.browserVisibility, resumeVisibility)
     const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
-    const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (initialManagedContext, acquisition) => {
-      onContextAcquired(initialManagedContext, acquisition)
+    const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (initialManagedContext) => {
       let managedContext = initialManagedContext
       const pageKey = managedPageKey(job, request)
       let page = await managedContext.acquirePage({ key: pageKey, policy: request.pagePolicy ?? 'preserve' })
@@ -833,7 +802,6 @@ export class ManagedPlaywrightRunnerService {
           signal,
           isCanceled,
           renewalError,
-          onAutoEscalated,
           waitForGuestSurface,
         })
         managedContext = cleared.managedContext
@@ -1056,7 +1024,6 @@ export class ManagedPlaywrightRunnerService {
     signal: AbortSignal
     isCanceled: () => boolean
     renewalError: () => unknown
-    onAutoEscalated: (context: ManagedBrowserContext) => void
     waitForGuestSurface: boolean
   }): Promise<ClearBlockerResult> {
     throwIfStopped(options.signal, options.isCanceled, options.renewalError)
@@ -1153,7 +1120,6 @@ export class ManagedPlaywrightRunnerService {
     if (options.claimBrowserVisibility === 'auto' && managedContext.effectiveBrowserVisibility === 'headless') {
       const url = trustedSwitchUrl(page, options.provider, options.request.target.url)
       managedContext = await managedContext.switchVisibility('headed')
-      options.onAutoEscalated(managedContext)
       page = await managedContext.acquirePage({ key: options.pageKey, policy: options.request.pagePolicy ?? 'preserve' })
       await navigateToTarget(page, options.provider, url, options.signal, true)
       if (!options.state.submitted) {
@@ -1529,9 +1495,6 @@ function liveInspectionTarget(capability: TaskCapabilityId): {
   }
   if (capability === TASK_CAPABILITIES.SOURCE_CONNECTED) {
     return { providerCapability: PROVIDER_CAPABILITIES.KIMI_PLUGIN, scope: 'overall' }
-  }
-  if (capability === TASK_CAPABILITIES.SKILL_INVOKE) {
-    return { providerCapability: PROVIDER_CAPABILITIES.KIMI_SKILL, scope: 'overall' }
   }
   if (new Set<TaskCapabilityId>([
     TASK_CAPABILITIES.RESEARCH_DEEP,

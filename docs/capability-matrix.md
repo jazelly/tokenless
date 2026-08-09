@@ -6,15 +6,18 @@ The Tokenless Capability Matrix is the public contract between caller outcomes a
 
 This document is normative for capability naming, mapping, support states, and extension. For current product reconnaissance that has not necessarily become Tokenless support, see the [Provider Capability Census](provider-capability-census.md).
 
-## The Three Layers
+## The Four Separate Concerns
 
-Tokenless keeps three related layers separate:
+Tokenless keeps four related concerns separate:
 
 1. **Canonical capability catalog** — provider-neutral outcomes a caller may require, such as `conversation.chat`, `file.upload`, or `search.web`.
-2. **Provider routes** — evidence-backed mappings from one canonical capability to one provider strategy.
-3. **Live acceptance matrix** — real-provider cases that must pass through the built CLI, packaged daemon, managed browser, and provider network before a route can be advertised.
+2. **Provider bindings** — evidence-backed mappings from canonical outcomes to namespaced provider workflows and controls.
+3. **User-owned Skills** — caller-selected `SKILL.md` context delivered by the Web Agent Harness; this is job input, not a provider capability.
+4. **Live acceptance matrix** — real-provider cases that must pass through the built CLI, packaged daemon, managed browser, and provider network before a route can be advertised.
 
-A provider-specific control is not automatically a canonical capability. For example, DeepSeek `Search` is an adapter control that may implement `search.web`; DeepSeek `Vision` may implement `image.input`. The public contract describes the outcome, while the adapter owns the provider UI details.
+A provider-specific control is not automatically a canonical capability. For example, DeepSeek `Search` is an adapter control that may implement `search.web`; Dola `translate` is a namespaced workflow that currently implements a specialized chat path. The public contract describes the outcome, while the adapter owns provider UI details.
+
+A user-selected Skill is also not a capability. The Harness resolves and content-addresses its `SKILL.md`, then delivers it through ordinary `file.upload` alongside the Harness System Prompt. The eligible provider therefore needs `conversation.chat` and `file.upload`; it never needs `skill.invoke`.
 
 ## User Model
 
@@ -91,8 +94,8 @@ Dola is registered as an experimental signed-in provider. The user-selected mana
 | Create Image / AI Creation | `image.generation` | Entry and Seedream image surface with model, ratio, style, and template controls are live-observed; completed image and bounded artifact reference pending |
 | Writing | `document.generation` or `conversation.chat` | `write_assistant` entry is live-observed; output form is not yet proven, so no document or downloadable-file claim |
 | Create Video | `video.generation` | `video_generation` entry is live-observed; progress, terminal video, and bounded artifact reference pending |
-| Translate | `skill.invoke`, `conversation.chat` | `translate` entry is live-observed; exact invocation and correlated translated output pending |
-| Homework | `skill.invoke`, `conversation.chat`; possible `reasoning.extended` | `exercise_assistant` entry is live-observed; exact invocation and reasoning outcome pending |
+| Translate | `conversation.chat`; provider workflow `dola.translate` | `translate` entry is live-observed; correlated translated output pending |
+| Homework | `conversation.chat`; provider workflow `dola.exercise_assistant` | `exercise_assistant` entry is live-observed; terminal homework outcome pending; no extended-reasoning claim is inferred from the button |
 | Projects, file library, or persistent knowledge | `workspace.native`, `workspace.knowledge`, `artifact.download` | Unavailable: no Project, file-library, or persistent knowledge-management surface was observed |
 
 Dola has no independently observed **Create File** control. The visible **Writing** entry must not be treated as file creation unless a real run produces a completed document; a downloadable result would additionally require `artifact.download` evidence.
@@ -114,7 +117,7 @@ Dola has no independently observed **Create File** control. The visible **Writin
 
 ## Capability Families
 
-The V1 catalog groups outcomes by durable semantics, not by provider marketing categories:
+The V2 catalog groups outcomes by durable semantics, not by provider marketing categories:
 
 | Family | Canonical capabilities |
 | --- | --- |
@@ -182,11 +185,11 @@ Before adding an identifier, answer all of these:
 - Does it need a new lifecycle or safety contract rather than a new capability?
 - Would composition of existing capabilities be clearer?
 
-Provider-only concepts may remain namespaced actions such as `deepseek.mode` or `qwen.mode`. They can later implement a canonical capability without entering the public catalog themselves.
+Provider-only concepts remain namespaced actions or workflows such as `deepseek.mode`, `kimi.skill`, `dola.translate`, or `dola.exercise_assistant`. They can implement a canonical capability without entering the public catalog themselves. User-owned Skills stay in the Harness context interface and never enter this namespace.
 
 ## Compatibility and Versioning
 
-The current catalog schema is `tokenless.task-capability-catalog.v1`.
+The current catalog schema is `tokenless.task-capability-catalog.v2`. V2 removes `skill.invoke`; provider-native workflows remain namespaced provider controls, while user-owned Skills are Harness inputs delivered through `file.upload`.
 
 - Adding an independent capability is normally additive.
 - Adding an optional parameter may be additive when existing requests keep identical semantics.
