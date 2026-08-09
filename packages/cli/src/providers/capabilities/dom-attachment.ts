@@ -307,9 +307,12 @@ async function visibleAttachmentEvidence(
             .toLowerCase()
           const extensions = expectedExtensions.filter((extension) => extension === visibleExtension)
           if (expectedExtensions.length > 0 && extensions.length === 0) return []
-          const statusText = (card.textContent ?? '').replace(/\s+/g, ' ').toLowerCase()
-          const failed = /(?:failed|error|unsupported)/.test(statusText)
-          const pending = /(?:parsing|processing|uploading)\s*(?:\.{3})?/.test(statusText)
+          const statusCard = card.cloneNode(true) as Element
+          statusCard.querySelectorAll('.fileitem-file-name-text, .fileitem-file-name-ext')
+            .forEach((node) => node.remove())
+          const statusText = (statusCard.textContent ?? '').replace(/\s+/g, ' ').toLowerCase()
+          const failed = /\b(?:failed|error|unsupported)\b/.test(statusText)
+          const pending = /\b(?:parsing|processing|uploading)\b\s*(?:\.{3})?/.test(statusText)
           return [{
             id: `qwen-card|${index}`,
             extensions,
@@ -440,7 +443,6 @@ async function visibleAttachmentProof(
     priorEvidence.set(entry.id, priorCount - 1)
     return false
   })
-  if (newEvidence.length < attachments.length) return null
   if (newEvidence.some((entry) => entry.failed)) {
     throw providerCapabilityFailure(
       'file_upload_processing_failed',
@@ -448,6 +450,7 @@ async function visibleAttachmentProof(
       { retryable: true },
     )
   }
+  if (newEvidence.length < attachments.length) return null
   if (newEvidence.some((entry) => entry.ready === false)) return null
 
   const requiredExtensions = new Map<string, number>()
