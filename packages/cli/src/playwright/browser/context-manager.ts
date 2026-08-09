@@ -2,6 +2,7 @@ import { chromium } from 'playwright-core'
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import {
@@ -36,8 +37,15 @@ export type ManagedBrowserContext = {
   effectiveBrowserVisibility: EffectiveBrowserVisibility
   browserContext: BrowserContext
   acquirePage(request: ManagedPageRequest): Promise<Page>
+  acquireTemporaryPage(): Promise<ManagedTemporaryPage>
   acquireReservedPage(request: ManagedPageRequest): Promise<Page>
   switchVisibility(visibility: BrowserVisibility): Promise<ManagedBrowserContext>
+  close(): Promise<void>
+}
+
+export type ManagedTemporaryPage = {
+  page: Page
+  ownership: 'task-owned'
   close(): Promise<void>
 }
 
@@ -174,6 +182,29 @@ export class PersistentContextManager {
     return await current
   }
 
+  async runWithProfileObservation<T>(
+    profile: ManagedBrowserProfile,
+    visibility: BrowserVisibility,
+    operation: (context: ManagedBrowserContext) => Promise<T>,
+  ): Promise<T> {
+    if (this.shuttingDown) {
+      throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
+    }
+    try {
+      const context = await this.ensureContext(profile, visibility)
+      return await operation(context)
+    } catch (error) {
+      if (isBrowserClosedError(error)) {
+        await this.closeProfile(profile.id).catch(() => undefined)
+        throw tokenlessError('playwright_browser_closed', 'The visible managed browser window was closed during the observation.', {
+          retryable: true,
+          cause: error,
+        })
+      }
+      throw error
+    }
+  }
+
   async ensureContext(
     profile: ManagedBrowserProfile,
     visibility: BrowserVisibility = 'headed'
@@ -232,7 +263,7 @@ export class PersistentContextManager {
         })
       }
       const launched = browserTarget.launchPolicy === 'native'
-        ? await connectNativeChromeContext(requestedVisibility)
+        ? await connectNativeBrowserContext(browserTarget.id, requestedVisibility)
         : await launchCdpManagedContext(
             profile.directory,
             managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
@@ -340,6 +371,21 @@ export class PersistentContextManager {
           if (active.pagesByKey.get(key) === page) active.pagesByKey.delete(key)
         })
         return page
+      },
+      async acquireTemporaryPage() {
+        const page = await createOwnedBackgroundPage(active)
+        let closed = false
+        return {
+          page,
+          ownership: 'task-owned' as const,
+          async close() {
+            if (closed) return
+            closed = true
+            await page.close().catch((error) => {
+              if (!page.isClosed()) throw error
+            })
+          },
+        }
       },
       async acquireReservedPage(request) {
         const key = validateManagedPageKey(request.key)
@@ -460,17 +506,19 @@ function nativeChromeVisibility(visibility: BrowserVisibility): EffectiveBrowser
   return 'headed'
 }
 
-async function connectNativeChromeContext(
+async function connectNativeBrowserContext(
+  browserId: string,
   visibility: BrowserVisibility,
 ): Promise<LaunchedManagedContext> {
   nativeChromeVisibility(visibility)
+  const browserName = nativeBrowserDisplayName(browserId)
   let browser: Browser
   try {
-    browser = await chromium.connectOverCDP('chrome')
+    browser = await chromium.connectOverCDP(await nativeBrowserEndpoint(browserId))
   } catch (cause) {
     throw tokenlessError(
       'native_chrome_connection_unavailable',
-      'Could not connect to the running Google Chrome. Tokenless native mode requires Chrome 144 or newer. Open chrome://inspect/#remote-debugging, allow remote debugging for this browser instance, and approve the connection request. Chrome manages the CDP endpoint; do not configure a fixed remote debugging port.',
+      `Could not connect to the running ${browserName}. Open ${browserId === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging, allow remote debugging for this browser instance, and approve the connection request. The browser manages the CDP endpoint; do not configure a fixed remote debugging port.`,
       { retryable: true, cause },
     )
   }
@@ -479,7 +527,7 @@ async function connectNativeChromeContext(
     await browser.close().catch(() => undefined)
     throw tokenlessError(
       'native_chrome_context_unavailable',
-      'The connected Google Chrome did not expose its default browser context.',
+      `The connected ${browserName} did not expose its default browser context.`,
       { retryable: true },
     )
   }
@@ -495,6 +543,54 @@ async function connectNativeChromeContext(
     closeBrowser: disconnect,
     detachBrowser: disconnect,
   }
+}
+
+function nativeBrowserDisplayName(browserId: string) {
+  if (browserId === 'chrome') return 'Google Chrome'
+  if (browserId === 'brave') return 'Brave Browser'
+  throw tokenlessError('native_chrome_required', `Native mode does not support browser '${browserId}'.`)
+}
+
+async function nativeBrowserEndpoint(browserId: string) {
+  const userDataDir = nativeBrowserUserDataDir(browserId)
+  const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
+  let contents: string
+  try {
+    contents = await fs.readFile(endpointFile, 'utf8')
+  } catch (cause) {
+    throw tokenlessError(
+      'native_chrome_connection_unavailable',
+      `Could not read the native browser CDP endpoint at ${endpointFile}.`,
+      { retryable: true, cause },
+    )
+  }
+  const [port] = contents.trim().split(/\r?\n/u)
+  if (!/^\d+$/u.test(port ?? '')) {
+    throw tokenlessError(
+      'native_chrome_connection_unavailable',
+      `The native browser CDP endpoint at ${endpointFile} is invalid.`,
+      { retryable: true },
+    )
+  }
+  return `http://127.0.0.1:${port}`
+}
+
+function nativeBrowserUserDataDir(browserId: string) {
+  nativeBrowserDisplayName(browserId)
+  if (process.platform === 'darwin') {
+    return browserId === 'brave'
+      ? path.join(os.homedir(), 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser')
+      : path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
+  }
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local')
+    return browserId === 'brave'
+      ? path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data')
+      : path.join(localAppData, 'Google', 'Chrome', 'User Data')
+  }
+  return browserId === 'brave'
+    ? path.join(os.homedir(), '.config', 'BraveSoftware', 'Brave-Browser')
+    : path.join(os.homedir(), '.config', 'google-chrome')
 }
 
 async function launchCdpManagedContext(
@@ -1066,7 +1162,7 @@ function normalizeManagedBrowserLaunchTarget(
   browser: ManagedBrowserLaunchTarget | undefined
 ): ManagedBrowserLaunchTarget {
   const id = String(browser?.id ?? 'chrome').trim().toLowerCase()
-  if (!['chrome', 'edge', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak', 'profile'].includes(id)) {
+  if (!['chrome', 'brave', 'edge', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak', 'profile'].includes(id)) {
     throw tokenlessError('unsupported_managed_browser', `Managed Playwright does not support browser '${id}'.`)
   }
   const executablePath = browser?.executablePath?.trim()

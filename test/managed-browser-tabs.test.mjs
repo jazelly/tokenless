@@ -128,6 +128,35 @@ test('CDP headed managed browser operates on background-created automation tabs'
   })
 })
 
+test('CDP readiness observations close three task-owned background tabs without touching existing pages', async () => {
+  await withCapabilityServer(async (origin) => {
+    await withManager(async ({ manager, profile }) => {
+      const managed = await manager.ensureContext(profile, 'headed')
+      const existing = await managed.acquirePage({ key: 'readiness-existing-page' })
+      await existing.goto(`${origin}/start`)
+      const existingUrl = existing.url()
+      const leases = await Promise.all(Array.from({ length: 3 }, async (_, index) => (
+        manager.runWithProfileObservation(profile, 'auto', async (context) => {
+          const lease = await context.acquireTemporaryPage()
+          await lease.page.goto(`${origin}/readiness-${index}`)
+          return lease
+        })
+      )))
+      try {
+        assert.equal(new Set(leases.map((lease) => lease.page)).size, 3)
+        assert.equal(leases.every((lease) => lease.ownership === 'task-owned' && !lease.page.isClosed()), true)
+        assert.equal(existing.isClosed(), false)
+        assert.equal(existing.url(), existingUrl)
+      } finally {
+        await Promise.all(leases.map((lease) => lease.close()))
+      }
+      assert.equal(leases.every((lease) => lease.page.isClosed()), true)
+      assert.equal(existing.isClosed(), false)
+      await existing.close()
+    })
+  })
+})
+
 test('CDP managed browser closes capability gaps at a real Chromium boundary', async () => {
   await withCapabilityServer(async (origin) => {
     await withManager(async ({ manager, profile, profileDirectory }) => {

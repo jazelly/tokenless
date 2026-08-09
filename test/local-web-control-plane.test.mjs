@@ -336,6 +336,10 @@ test('local web control plane opens directly, establishes UI sessions, and enfor
     assert.equal(readinessBody.profileSlug, 'work')
     assert.deepEqual(readinessBody.jobs.map((job) => job.provider), ['chatgpt', 'claude'])
     assert.equal(readinessBody.jobs.every((job) => job.status === 'queued' && job.taskId.startsWith('ui:readiness:')), true)
+    const readinessBatchPrefixes = readinessBody.jobs.map((job) => job.jobId.replace(/\d{3}$/u, ''))
+    assert.equal(new Set(readinessBatchPrefixes).size, 1)
+    const readinessTaskBatches = readinessBody.jobs.map((job) => job.taskId.split(':').slice(0, 3).join(':'))
+    assert.equal(new Set(readinessTaskBatches).size, 1)
     await Promise.all(readinessBody.jobs.map((job) => (
       daemon.store.cancelJob(job.jobId, { source: 'test-cleanup' }).catch(() => undefined)
     )))

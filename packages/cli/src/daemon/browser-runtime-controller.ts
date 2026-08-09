@@ -8,6 +8,7 @@ import {
 } from '../playwright/runner-service.js'
 import { isClaimRecoveryError, tokenlessError } from '../playwright/errors.js'
 import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
+import { readTokenlessConfig } from '../job-store.js'
 import type { JobStore } from './job-store.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 
@@ -158,14 +159,16 @@ export class BrowserRuntimeController {
 
   private async createRunner(): Promise<RunnerInstance> {
     const runtimeManager = new BrowserRuntimeManager({ homeDir: this.store.homeDir })
+    const config = await readTokenlessConfig(this.store.homeDir)
+    const nativeBrowser = config.browser === 'brave' ? 'brave' : 'chrome'
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
       daemonClient: createInProcessDaemonClient(this.store),
       browserResolver: async (profile) => {
         if (!profile.runtimeBinding) {
           return {
-            id: 'chrome',
-            runtimeId: 'native:chrome',
+            id: nativeBrowser,
+            runtimeId: `native:${nativeBrowser}`,
             launchPolicy: 'native',
           }
         }

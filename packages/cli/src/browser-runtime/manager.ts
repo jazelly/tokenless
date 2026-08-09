@@ -569,12 +569,14 @@ async function systemBrowserExecutable(
   if (platform === 'darwin-arm64' || platform === 'darwin-x64') {
     const applicationNames: Record<SystemBrowserId, string> = {
       chrome: 'Google Chrome.app',
+      brave: 'Brave Browser.app',
       edge: 'Microsoft Edge.app',
       chromium: 'Chromium.app',
       'chrome-for-testing': 'Google Chrome for Testing.app',
     }
     const executableNames: Record<SystemBrowserId, string> = {
       chrome: 'Google Chrome',
+      brave: 'Brave Browser',
       edge: 'Microsoft Edge',
       chromium: 'Chromium',
       'chrome-for-testing': 'Google Chrome for Testing',
@@ -594,6 +596,7 @@ async function systemBrowserExecutable(
 
   const relativeExecutables: Record<SystemBrowserId, readonly string[]> = {
     chrome: ['Google/Chrome/Application/chrome.exe'],
+    brave: ['BraveSoftware/Brave-Browser/Application/brave.exe'],
     edge: ['Microsoft/Edge/Application/msedge.exe'],
     chromium: ['Chromium/Application/chrome.exe'],
     'chrome-for-testing': ['Google/Chrome for Testing/Application/chrome.exe'],
@@ -612,6 +615,7 @@ async function systemBrowserExecutable(
 function systemBrowserDisplayName(browserId: SystemBrowserId) {
   const names: Record<SystemBrowserId, string> = {
     chrome: 'Google Chrome',
+    brave: 'Brave Browser',
     edge: 'Microsoft Edge',
     chromium: 'Chromium',
     'chrome-for-testing': 'Google Chrome for Testing',

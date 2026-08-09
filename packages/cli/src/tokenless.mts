@@ -2906,13 +2906,33 @@ async function setupCommand(args: CliArgs) {
     if (args.antiDetect === true && explicitBrowser !== null && explicitBrowser !== 'cloak') {
       throw usageError('setup_anti_detect_browser_conflict', '--anti-detect can only be combined with --browser cloak.')
     }
-    if (explicitBrowser !== null && explicitBrowser !== 'chrome' && explicitBrowser !== 'cloak') {
+    if (explicitBrowser !== null && explicitBrowser !== 'chrome' && explicitBrowser !== 'brave' && explicitBrowser !== 'cloak') {
       throw usageError(
         'setup_browser_unsupported',
-        'Setup supports native Chrome by default or explicit --browser cloak.',
+        'Setup supports native Chrome, native Brave, or explicit --browser cloak.',
       )
     }
-    const useCloak = args.antiDetect === true || explicitBrowser === 'cloak'
+    const useCloak = args.antiDetect === true || explicitBrowser === 'cloak' || (
+      prompt !== null && explicitBrowser === null
+        ? await prompt.confirm(t('cliSetupAntiDetectPrompt'), false)
+        : false
+    )
+    const nativeBrowser = useCloak
+      ? 'chrome'
+      : explicitBrowser === 'chrome' || explicitBrowser === 'brave'
+      ? explicitBrowser
+      : prompt
+      ? await prompt.select(
+          t('cliSetupNativeBrowserPrompt'),
+          [
+            { label: t('cliSetupNativeBrowserChrome'), value: 'chrome' as const },
+            { label: t('cliSetupNativeBrowserBrave'), value: 'brave' as const },
+          ],
+          config.browser === 'brave' ? 1 : 0,
+        )
+      : config.browser === 'brave'
+      ? 'brave'
+      : 'chrome'
     const selectedRuntime = useCloak
       ? await presenter.withProgress(
           'Preparing CloakBrowser',
@@ -2931,7 +2951,7 @@ async function setupCommand(args: CliArgs) {
       })
     }
     if (
-      config.browser !== 'chrome' ||
+      config.browser !== nativeBrowser ||
       config.browserExecutablePath !== null ||
       config.browserVisibility !== 'headed'
     ) {
@@ -2942,7 +2962,7 @@ async function setupCommand(args: CliArgs) {
       })
       config = await writeTokenlessConfig({
         homeDir,
-        browser: 'chrome',
+        browser: nativeBrowser,
         browserExecutablePath: null,
         browserVisibility: 'headed',
       })
@@ -2952,6 +2972,7 @@ async function setupCommand(args: CliArgs) {
       args,
       homeDir,
       runtime: selectedRuntime,
+      nativeBrowser,
       prompt,
       presenter,
     })
@@ -2969,7 +2990,7 @@ async function setupCommand(args: CliArgs) {
       })
       await writeTokenlessConfig({
         homeDir,
-        browser: 'chrome',
+        browser: nativeBrowser,
         browserExecutablePath: null,
         browserVisibility: 'headed',
         daemonUrl: configuredDaemonUrl,
@@ -3114,13 +3135,13 @@ async function setupCommand(args: CliArgs) {
             capabilityCheck: 'launch',
           }
         : {
-            id: 'chrome',
+            id: nativeBrowser,
             mode: 'native',
             antiDetect: false,
-            minimumVersion: 144,
-            runtimeId: 'native:chrome',
+            minimumVersion: nativeBrowser === 'chrome' ? 144 : null,
+            runtimeId: `native:${nativeBrowser}`,
             family: 'native',
-            displayName: 'Native Google Chrome',
+            displayName: nativeBrowser === 'brave' ? 'Native Brave Browser' : 'Native Google Chrome',
             version: null,
             source: 'system',
             capabilityCheck: 'connection',
@@ -3242,12 +3263,14 @@ async function ensureSetupManagedProfile({
   args,
   homeDir,
   runtime,
+  nativeBrowser,
   prompt,
   presenter,
 }: {
   args: CliArgs
   homeDir: string
   runtime: ResolvedBrowserRuntime | null
+  nativeBrowser: 'chrome' | 'brave'
   prompt: ReturnType<typeof createSetupPrompt> | null
   presenter: SetupPresenter
 }) {
@@ -3255,12 +3278,12 @@ async function ensureSetupManagedProfile({
     return await ensureSetupRuntimeBoundProfile({ args, homeDir, runtime, prompt, presenter })
   }
   presenter.explain({
-    title: 'Native Chrome',
+    title: nativeBrowser === 'brave' ? 'Native Brave Browser' : 'Native Google Chrome',
     lines: [
-      'Tokenless connects to the stable Google Chrome already running on this computer.',
-      'Chrome 144 or newer is required. Enable remote debugging at chrome://inspect/#remote-debugging and approve the connection request.',
-      'Chrome manages the underlying CDP endpoint and Tokenless discovers it automatically; no --remote-debugging-port launch flag or fixed-port setting is required.',
-      'Native mode is headed-only. Tokenless does not copy your browser profile or own the Chrome process.',
+      `Tokenless connects to the ${nativeBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} already running on this computer.`,
+      `Enable remote debugging at ${nativeBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging and approve the connection request.`,
+      'The browser manages the underlying CDP endpoint and Tokenless discovers it automatically; no --remote-debugging-port launch flag or fixed-port setting is required.',
+      'Native mode is headed-only. Tokenless does not copy your browser profile or own the browser process.',
     ],
   })
   const registry = new ManagedProfileRegistry(homeDir)

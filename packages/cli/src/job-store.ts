@@ -143,7 +143,8 @@ async function readTokenlessConfigUnlocked(homeDir: string) {
   if (payload.outputSavings !== undefined && !isOutputSavingsConfig(payload.outputSavings)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  const browser = 'chrome'
+  const normalizedBrowser = normalizeBrowserId(payload.browser)
+  const browser = normalizedBrowser === 'brave' ? 'brave' : 'chrome'
   const browserExecutablePath = null
   const config: TokenlessConfig = {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,

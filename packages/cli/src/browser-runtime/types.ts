@@ -1,5 +1,6 @@
 export const SYSTEM_BROWSER_IDS = Object.freeze([
   'chrome',
+  'brave',
   'edge',
   'chromium',
   'chrome-for-testing',
@@ -95,6 +96,8 @@ export function normalizeBrowserSelection(value: unknown): BrowserSelection | nu
   const aliases: Record<string, BrowserSelection> = {
     'google-chrome': 'chrome',
     googlechrome: 'chrome',
+    'brave-browser': 'brave',
+    bravebrowser: 'brave',
     'chrome-testing': 'chrome-for-testing',
     'chrome-for-testing-legacy': 'chrome-for-testing',
     'chromium-browser': 'chromium',

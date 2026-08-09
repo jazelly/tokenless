@@ -168,6 +168,7 @@ const DEFAULT_POLL_IDLE_MS = 1_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
+const MAX_READINESS_BATCH_CONCURRENCY = 3
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 export class ManagedPlaywrightRunnerService {
   private readonly profileRegistry: ManagedProfileSource
@@ -475,7 +476,7 @@ export class ManagedPlaywrightRunnerService {
       })
       if (!claimed.job) continue
       this.inFlightProfiles.add(profile.id)
-      const jobPromise = this.executeClaimedJob(profile, claimed.job, signal)
+      const jobPromise = this.executeClaimedBatch(profile, claimed.job, signal)
         .then(() => undefined)
         .catch((error) => {
           if (isClaimRecoveryError(error)) throw error
@@ -488,6 +489,37 @@ export class ManagedPlaywrightRunnerService {
       started += 1
     }
     return started
+  }
+
+  private async executeClaimedBatch(
+    profile: ManagedBrowserProfile,
+    firstJob: DaemonClaimedJob,
+    signal?: AbortSignal | undefined,
+  ) {
+    const executions = [this.executeClaimedJob(profile, firstJob, signal)]
+    const batchPrefix = readinessBatchPrefix(firstJob)
+    let claimError: unknown
+    try {
+      if (batchPrefix) {
+        while (executions.length < MAX_READINESS_BATCH_CONCURRENCY && !this.stopped && !signal?.aborted) {
+          const claimed = await this.daemonClient.claimNextJob({
+            executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
+            profileId: profile.id,
+            action: MANAGED_PLAYWRIGHT_JOB_ACTION,
+            jobIdPrefix: batchPrefix,
+            signal,
+          })
+          if (!claimed.job) break
+          executions.push(this.executeClaimedJob(profile, claimed.job, signal))
+        }
+      }
+    } catch (error) {
+      claimError = error
+    }
+    const results = await Promise.allSettled(executions)
+    if (claimError) throw claimError
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
   }
 
   private async waitForSchedulerProgress(signal?: AbortSignal | undefined) {
@@ -714,13 +746,16 @@ export class ManagedPlaywrightRunnerService {
     const resumeVisibility = validateResumeVisibility(job.resume_json)
     const claimBrowserVisibility = requestedVisibilityForClaim(request.browserVisibility, resumeVisibility)
     const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
-    const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (initialManagedContext) => {
+    const automaticAuthObservation = isAutomaticAuthObservation(request, claimBrowserVisibility)
+    const operation = async (initialManagedContext: ManagedBrowserContext) => {
       let managedContext = initialManagedContext
       const pageKey = managedPageKey(job, request)
-      let page = await managedContext.acquirePage({ key: pageKey, policy: request.pagePolicy ?? 'preserve' })
-      const provider = getProviderInstanceById(request.provider)
-      if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
-      const state = executionStateFromCheckpoint(restoredCheckpoint)
+      const temporaryPage = automaticAuthObservation ? await managedContext.acquireTemporaryPage() : null
+      let page = temporaryPage?.page ?? await managedContext.acquirePage({ key: pageKey, policy: request.pagePolicy ?? 'preserve' })
+      try {
+        const provider = getProviderInstanceById(request.provider)
+        if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
+        const state = executionStateFromCheckpoint(restoredCheckpoint)
       if (state.submitted !== null && job.provider_submitted_at === null) {
         await this.daemonClient.recordProviderSubmission({
           jobId: job.job_id,
@@ -972,8 +1007,14 @@ export class ManagedPlaywrightRunnerService {
           }
         }
       }
-      return state.responses
-    })
+        return state.responses
+      } finally {
+        await temporaryPage?.close()
+      }
+    }
+    const responses = await (automaticAuthObservation
+      ? this.contextManager.runWithProfileObservation(profile, claimBrowserVisibility, operation)
+      : this.contextManager.runWithProfile(profile, claimBrowserVisibility, operation))
     return {
       result: {
         protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
@@ -1532,6 +1573,17 @@ function isAutomaticAuthObservation(
   return claimBrowserVisibility === 'auto' && request.actions.every((action) => (
     action.action === VISIBLE_ACTIONS.AUTH_STATUS
   ))
+}
+
+function readinessBatchPrefix(job: DaemonClaimedJob) {
+  const match = /^(ui-readiness-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)/u.exec(job.job_id)
+  if (!match?.[1]) return null
+  try {
+    const request = validateManagedPlaywrightJobRequest(job.request_json)
+    return isAutomaticAuthObservation(request, request.browserVisibility) ? match[1] : null
+  } catch {
+    return null
+  }
 }
 
 function validateRunnerCheckpoint(

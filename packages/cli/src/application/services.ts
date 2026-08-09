@@ -235,8 +235,11 @@ export class TokenlessApplicationServices {
       : normalizeBrowserVisibility(input.browserVisibility)
     if (!browserVisibility) throw applicationError('invalid_browser_visibility', 'Browser visibility is invalid.')
     requireNativeChromeVisibility(browserVisibility)
-    if (input.browser !== undefined && normalizeBrowserSelection(input.browser) !== 'chrome') {
-      throw applicationError('native_chrome_required', 'Tokenless supports the running stable Google Chrome in native mode only.')
+    const requestedBrowser = input.browser === undefined
+      ? current.browser
+      : normalizeBrowserSelection(input.browser)
+    if (requestedBrowser !== 'chrome' && requestedBrowser !== 'brave') {
+      throw applicationError('native_chrome_required', 'Tokenless native mode supports a running Google Chrome or Brave Browser.')
     }
     if (input.browserExecutablePath !== undefined && input.browserExecutablePath !== null && input.browserExecutablePath !== '') {
       throw applicationError('native_chrome_executable_unsupported', 'Native Chrome discovers the running stable channel and does not accept an executable path.')
@@ -247,7 +250,7 @@ export class TokenlessApplicationServices {
     }
     const saved = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
-      browser: 'chrome',
+      browser: requestedBrowser,
       browserExecutablePath: null,
       browserVisibility: 'headed',
       language,
@@ -340,9 +343,13 @@ export class TokenlessApplicationServices {
     const profile = await this.profiles.resolveProfile(slug)
     const configured = profileConfig(await this.migratedConfig(), profile.slug)
     const enabled = new Set(configured.enabledProviders)
+    const batchId = randomUUID()
     const jobs = listProviderInstances()
       .filter((provider) => provider.descriptor.stage !== 'disabled' && enabled.has(provider.id))
-      .map((provider) => this.createProviderActionJob(profile, provider.id, 'readiness'))
+      .map((provider, index) => this.createProviderActionJob(profile, provider.id, 'readiness', {
+        jobId: `ui-readiness-${batchId}-${String(index).padStart(3, '0')}`,
+        taskId: `ui:readiness:${batchId}:${provider.id}`,
+      }))
     if (jobs.length > 0) await this.runtimeController?.wake()
     return { profileSlug: profile.slug, jobs }
   }
@@ -351,6 +358,7 @@ export class TokenlessApplicationServices {
     profile: ManagedProfileRecord,
     provider: ProviderId,
     action: 'open' | 'readiness' | 'controls',
+    identity?: { jobId: string; taskId: string },
   ) {
     const visibleAction = action === 'readiness'
       ? VISIBLE_ACTIONS.AUTH_STATUS
@@ -368,7 +376,7 @@ export class TokenlessApplicationServices {
       provider,
       browserVisibility: action === 'readiness' ? 'auto' : 'headed',
       userHandoff: action === 'open',
-      taskId: `ui:${action}:${randomUUID()}`,
+      taskId: identity?.taskId ?? `ui:${action}:${randomUUID()}`,
       actions,
     })
     const job = this.store.createJob({
@@ -377,6 +385,7 @@ export class TokenlessApplicationServices {
       request_json: request,
       execution_backend: PLAYWRIGHT_EXECUTION_BACKEND,
       profile_id: profile.id,
+      ...(identity === undefined ? {} : { job_id: identity.jobId }),
     })
     return publicJobSummary(publicView(job), [profile])
   }

@@ -216,7 +216,7 @@ tokenless dashboard --profile work --no-open --json
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
 
-Provider readiness refreshes run implicitly. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
+Provider readiness refreshes run implicitly in batches of up to three. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. Each check owns one temporary background tab and closes it on every completion, failure, blocker, timeout, or cancellation path; user-owned tabs remain untouched. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
