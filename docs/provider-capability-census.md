@@ -11,7 +11,7 @@ The checked-in runtime catalog and provider routing matrix live in `packages/cli
 - `search.web`: experimental Kimi; and
 - `response.citations`: experimental Kimi search.
 
-All other entries below remain discoverable candidates. In particular, `workspace.native`, `research.deep`, citations as a required production postcondition, continuation as an explicit capability, generated media, and generated work artifacts remain non-routeable until their complete execution contracts are implemented and real-provider E2E-closed.
+All other entries below remain discoverable candidates. In particular, `research.deep`, citations as a required production postcondition, continuation as an explicit capability, generated media, and generated work artifacts remain non-routeable until their complete execution contracts are implemented and real-provider E2E-closed.
 
 ## Evidence Ladder
 

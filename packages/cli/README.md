@@ -98,6 +98,8 @@ Implicit normal runs persist compatible provider alternatives. Before prompt sub
 | Perplexity | Experimental | Guest supported |
 | Z.ai / GLM | Experimental | Guest supported |
 | Doubao / 豆包 | Experimental | Sign-in required |
+| Kimi | Experimental | Sign-in required |
+| Dola | Experimental | Sign-in required |
 | Arena | Supported | Sign-in required |
 | Meta AI | Experimental | Sign-in required |
 

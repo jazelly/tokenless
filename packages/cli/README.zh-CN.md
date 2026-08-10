@@ -90,6 +90,8 @@ tokenless run \
 | Perplexity | 实验性 | 支持 guest |
 | Z.ai / GLM | 实验性 | 支持 guest |
 | Doubao / 豆包 | 实验性 | 需要登录 |
+| Kimi | 实验性 | 需要登录 |
+| Dola | 实验性 | 需要登录 |
 | Arena | 已支持 | 需要登录 |
 | Meta AI | 实验性 | 需要登录 |
 
