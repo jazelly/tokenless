@@ -434,6 +434,8 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('kimi', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('kimi', TASK_CAPABILITIES.SEARCH_WEB, 'experimental', 'kimi-web-search-auto', ['kimi-search']),
   route('kimi', TASK_CAPABILITIES.RESPONSE_CITATIONS, 'experimental', 'kimi-visible-citations', ['kimi-search']),
+  route('meta', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
+  route('meta', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('arena', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['workspace-response-baseline']),
 ] satisfies readonly ProviderTaskCapabilityRoute[])
 

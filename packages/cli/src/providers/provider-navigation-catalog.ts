@@ -16,6 +16,7 @@ export type ProviderNavigationCatalogId =
   | 'doubao'
   | 'kimi'
   | 'dola'
+  | 'meta'
 
 function pages(...patterns: ProviderPagePattern[]) {
   return Object.freeze(patterns.map((pattern) => Object.freeze(pattern)))
@@ -43,6 +44,8 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
     origins: ['https://arena.ai'],
     pagePatterns: pages(
       { kind: 'entry', urlPattern: 'https://arena.ai/' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/text' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/text/direct' },
       { kind: 'conversation', urlPattern: 'https://arena.ai/c/:conversationId' },
     ),
     trustedSignInOrigins: [],
@@ -185,5 +188,15 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
     trustedSignInOrigins: [
       { origin: 'https://accounts.google.com' },
     ],
+  }),
+  meta: navigation({
+    entryUrl: 'https://meta.ai/',
+    homeUrl: 'https://meta.ai/',
+    origins: ['https://meta.ai'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://meta.ai/' },
+      { kind: 'conversation', urlPattern: 'https://meta.ai/prompt/:conversationId' },
+    ),
+    trustedSignInOrigins: [],
   }),
 } satisfies Readonly<Record<ProviderNavigationCatalogId, ProviderNavigationDefinition>>)

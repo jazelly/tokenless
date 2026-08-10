@@ -7,6 +7,7 @@ import { DoubaoProvider } from './doubao-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
 import { GrokProvider } from './grok-provider.js'
 import { KimiProvider } from './kimi-provider.js'
+import { MetaProvider } from './meta-provider.js'
 import { PerplexityProvider } from './perplexity-provider.js'
 import { QwenProvider } from './qwen-provider.js'
 import { ZaiProvider } from './zai-provider.js'
@@ -164,6 +165,7 @@ export const providerInstances = Object.freeze([
   new KimiProvider(),
   new DolaProvider(),
   new ArenaProvider(),
+  new MetaProvider(),
 ] satisfies readonly ProviderInstance[])
 
 export const providerRegistry = ProviderRegistry.create(providerInstances)

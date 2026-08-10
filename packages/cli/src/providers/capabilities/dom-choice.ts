@@ -208,6 +208,7 @@ async function exactVisibleChoiceLocator(page: Page, label: string): Promise<Loc
   const candidates = page.locator([
     '[role="menuitem"]',
     '[role="menuitemradio"]',
+    '[role="menuitemcheckbox"]',
     '[role="option"]',
     '[cmdk-item]',
     '.ant-select-item-option',
@@ -217,7 +218,8 @@ async function exactVisibleChoiceLocator(page: Page, label: string): Promise<Loc
     const candidate = candidates.nth(index)
     const text = await candidate.evaluate((element) => (
       element.querySelector('.label')?.textContent ??
-      (element.matches('[role="menuitemradio"]') ? element.querySelector('.truncate')?.textContent : null) ??
+      element.querySelector('.text-subheadline')?.textContent ??
+      (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate')?.textContent : null) ??
       element.getAttribute('aria-label') ??
       element.textContent ??
       ''
@@ -263,7 +265,7 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
   const locators = [
     provider.id === 'claude'
       ? page.locator('[role="menuitemradio"]').filter({ visible: true })
-      : root.locator('[role="menuitem"], [role="option"], [cmdk-item], button').filter({ visible: true }),
+      : root.locator('[role="menuitem"], [role="menuitemcheckbox"], [role="option"], [cmdk-item], button').filter({ visible: true }),
     page.locator('.ant-select-dropdown').filter({ visible: true })
       .locator('.ant-select-item-option').filter({ visible: true }),
   ]
@@ -271,7 +273,8 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
   for (const locator of locators) {
     const values = await locator.evaluateAll((elements, choiceAvailability) => elements.slice(0, 80).map((element) => {
       const labelElement = element.querySelector('.label') ??
-        (element.matches('[role="menuitemradio"]') ? element.querySelector('.truncate') : null)
+        element.querySelector('.text-subheadline') ??
+        (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate') : null)
       const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
       const fullText = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
       const ariaSelected = element.getAttribute('aria-selected') === 'true' ||

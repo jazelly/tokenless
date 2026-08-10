@@ -73,6 +73,10 @@
       "dola": {
         "modelFamily": "*",
         "promptAction": "interactive.usage"
+      },
+      "meta": {
+        "modelFamily": "*",
+        "promptAction": "interactive.usage"
       }
     }
   },
@@ -90,6 +94,13 @@
       "url": "https://www.dola.com/chat",
       "authority": "official",
       "retrievedAt": "2026-08-09"
+    },
+    "meta-consumer-web": {
+      "publisher": "Meta",
+      "title": "Meta AI consumer web chat",
+      "url": "https://meta.ai/",
+      "authority": "official",
+      "retrievedAt": "2026-08-10"
     },
     "openai-gpt55-chatgpt": {
       "publisher": "OpenAI",
@@ -2170,6 +2181,62 @@
             {
               "kind": "unknown",
               "sourceIds": ["arena-consumer-web"]
+            }
+          ],
+          "notes": [
+            "The observed signed-in consumer Web surface did not publish an exact numeric allowance or reset window.",
+            "Runtime visible limits remain authoritative and fail closed."
+          ]
+        }
+      ]
+    },
+    "meta": {
+      "label": "Meta AI",
+      "plans": [
+        {
+          "id": "signed_in_unknown",
+          "family": "unknown",
+          "labels": []
+        },
+        {
+          "id": "unknown",
+          "family": "unknown",
+          "labels": []
+        }
+      ],
+      "usageDrivers": [
+        "selected_mode",
+        "system_capacity"
+      ],
+      "runtimeSignals": [],
+      "rules": [
+        {
+          "id": "meta.consumer-web.numeric-limits-unknown",
+          "status": "active",
+          "scope": "provider_profile",
+          "appliesTo": {
+            "planIds": ["signed_in_unknown", "unknown"],
+            "accessClasses": ["signed_in_unknown", "unknown"],
+            "modelFamilies": ["*"],
+            "actions": ["interactive.usage", "file.upload"]
+          },
+          "meter": {
+            "kind": "unknown",
+            "unit": "usage"
+          },
+          "window": {
+            "kind": "unknown"
+          },
+          "allowance": {
+            "kind": "unknown"
+          },
+          "limitBehavior": {
+            "kind": "provider_managed"
+          },
+          "evidence": [
+            {
+              "kind": "unknown",
+              "sourceIds": ["meta-consumer-web"]
             }
           ],
           "notes": [

@@ -741,6 +741,35 @@
         "kimi-agent-swarm": "provider_specific_capability",
         "kimi-library-workflows": "provider_specific_capability"
       }
+    },
+    "meta": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "effort-choice",
+        "file-selection",
+        "workspace-response-baseline"
+      ],
+      "unavailable": {
+        "model-choice": "no_independent_model_control_declared",
+        "conversation-workflow": "real_terminal_response_and_attachment_closure_not_proven_2026_08_10",
+        "workspace-response-citations": "real_terminal_response_and_citation_closure_not_proven_2026_08_10",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
+        "native-project": "native_project_not_observed",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
+      }
     }
   }
 }

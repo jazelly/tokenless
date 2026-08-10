@@ -99,8 +99,9 @@ Implicit normal runs persist compatible provider alternatives. Before prompt sub
 | Z.ai / GLM | Experimental | Guest supported |
 | Doubao / 豆包 | Experimental | Sign-in required |
 | Arena | Supported | Sign-in required |
+| Meta AI | Experimental | Sign-in required |
 
-Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state. Doubao text-file selection is experimentally routeable; its advanced modes and Web skills are exposed as provider controls without advertising their still-unclosed outcome lifecycles.
+Prompt submission and response reading are the shared baseline. Files, citations, model or effort controls, conversation continuation, and Workspaces depend on the visible provider, profile, and account state. Meta AI chat and file upload are experimentally routeable from a selected signed-in profile; Instant/Thinking selection is available, while image generation remains unadvertised until the CLI exposes its artifact lifecycle.
 
 Inspect the current runtime capability state:
 

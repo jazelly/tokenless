@@ -36,7 +36,8 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
-| [Provider Direct Protocol and Browser Session Bridge](P0-direct-provider-protocol.md) | Add an explicit direct mode that reuses a selected browser profile's provider session and proves ChatGPT text chat through a browser-impersonating Node.js HTTP transport. | P0 |
+| [Code Benchmark Prompt Collection](P0-code-benchmark-prompt-collection.md) | Replace marker-only provider prompts with a provenance-pinned, code-only benchmark collection for smoke, coding, debugging, reasoning, and later repository-agent tests. | P0 |
+| [Provider Direct Protocol and Browser Session Bridge](P0-direct-provider-protocol.md) | Select a high-fidelity browser session and impersonating transport combination, then add explicit direct-provider protocol capabilities against real endpoints. | P0 |
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |

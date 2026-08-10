@@ -91,8 +91,9 @@ tokenless run \
 | Z.ai / GLM | 实验性 | 支持 guest |
 | Doubao / 豆包 | 实验性 | 需要登录 |
 | Arena | 已支持 | 需要登录 |
+| Meta AI | 实验性 | 需要登录 |
 
-Prompt 提交与 response 读取是共同 baseline。File、citation、model/effort control、continuation 和 Workspace 支持取决于 provider、profile 和 account state。不受支持、有歧义或未证明的行为会 fail closed。
+Prompt 提交与 response 读取是共同 baseline。File、citation、model/effort control、continuation 和 Workspace 支持取决于 provider、profile 和 account state。Meta AI 的 chat 与 file upload 已可从选定的登录 profile 实验性路由，并支持 Instant/Thinking 选择；在 CLI 暴露图片 artifact lifecycle 前，image generation 仍不公开。
 
 ## Qwen Modes
 

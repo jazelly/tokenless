@@ -610,11 +610,21 @@ async function choiceLabelVisible(page, label) {
 }
 
 async function fileSelection({ provider, journey }) {
-  const extension = provider === 'gemini' ? '.md' : '.txt'
-  const name = `${markerFor(provider, 'ATTACHMENT')}${extension}`
+  const extension = provider === 'gemini' || provider === 'meta' ? '.md' : '.txt'
+  const name = provider === 'meta'
+    ? `browser-fingerprint-review-${compactTimestamp(new Date())}${extension}`
+    : `${markerFor(provider, 'ATTACHMENT')}${extension}`
   const file = path.join(root, 'test-results', 'live-provider-inputs', name)
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
-  await fs.writeFile(file, `${name}\n`, { mode: 0o600 })
+  const contents = provider === 'meta'
+    ? [
+        '# Browser Fingerprint Review',
+        '',
+        'A browser identity spans TLS ClientHello behavior, HTTP/2 settings, request headers, JavaScript APIs, IP reputation, and behavioral timing.',
+        'Matching one layer does not establish end-to-end browser equivalence.',
+      ].join('\n')
+    : `${name}\n`
+  await fs.writeFile(file, contents, { mode: 0o600 })
   const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
   let geminiAttachmentCardsBefore = null
   try {
@@ -654,7 +664,7 @@ async function fileSelection({ provider, journey }) {
         'Gemini observer must see one newly visible physical attachment card',
       )
     } else {
-      const visibleName = provider === 'kimi' ? path.parse(name).name : name
+      const visibleName = provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name
       assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
     }
     await uploaded.close()
@@ -816,6 +826,28 @@ async function workspaceResponseCitations({ provider, journey }) {
 }
 
 async function workspaceResponseBaseline({ provider, journey }) {
+  if (provider === 'meta') {
+    const run = await journey.run([
+      '--project-name', `Meta defensive browser review ${compactTimestamp(new Date())}`,
+      '--workspace-mode', 'conversation',
+      '--prompt', [
+        'For a defensive engineering review, explain in three to five sentences why matching a TLS fingerprint alone does not prove that a client is a real browser.',
+        'Include at least two other protocol or behavior layers a defender can compare.',
+        'Do not provide bypass instructions.',
+      ].join(' '),
+    ])
+    const text = responseResult(run.payload, 'response.read')?.text ?? ''
+    assert.ok(text.length >= 180, 'Meta must return a substantive terminal response')
+    assert.match(text, /TLS/i)
+    assert.match(text, /HTTP\/?2|headers?|JavaScript|behaviou?r|IP reputation/i)
+    assert.doesNotMatch(text, /(?:sorry|can't|cannot|unable to) help (?:you )?with this request/i)
+    const visibleAnswer = run.page.locator('[data-testid="assistant-message"]:visible').last()
+    assert.equal(await visibleAnswer.count(), 1, 'Meta observer must see the terminal assistant response')
+    assert.match(await visibleAnswer.innerText(), /TLS/i)
+    assertConversationWorkspaceResult(provider, journey.taskId, run)
+    await run.close()
+    return
+  }
   const name = markerFor(provider, 'WORKSPACE_RESPONSE')
   const responseMarker = markerFor(provider, 'WORKSPACE_RESPONSE_MARKER')
   const prompt = provider === 'doubao'

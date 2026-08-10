@@ -269,13 +269,17 @@ async function visibleAttachmentEvidence(
 ) {
   const evaluate = (page as Page & {
     evaluate?: (
-      callback: (input: { expectedExtensions: string[]; providerId: string }) => VisibleAttachmentEvidence[],
-      input: { expectedExtensions: string[]; providerId: string },
+      callback: (input: { expectedExtensions: string[]; expectedStems: string[]; providerId: string }) => VisibleAttachmentEvidence[],
+      input: { expectedExtensions: string[]; expectedStems: string[]; providerId: string },
     ) => Promise<unknown>
   }).evaluate
   if (typeof evaluate !== 'function') return []
   const extensions = [...new Set(attachments.map((attachment) => extname(basename(attachment.name)).toLowerCase()).filter(Boolean))]
-  const result = await evaluate.call(page, ({ expectedExtensions, providerId }) => {
+  const stems = [...new Set(attachments.map((attachment) => {
+    const name = basename(attachment.name)
+    return name.slice(0, name.length - extname(name).length).toLowerCase()
+  }).filter(Boolean))]
+  const result = await evaluate.call(page, ({ expectedExtensions, expectedStems, providerId }) => {
     const isVisibleElement = (element: Element | null): element is HTMLElement | SVGElement => {
       if (!element || !(element instanceof HTMLElement || element instanceof SVGElement)) return false
       let node: Element | null = element
@@ -351,6 +355,7 @@ async function visibleAttachmentEvidence(
       '[aria-label*="upload" i]',
       '[aria-label*="file" i]',
       '[class*="attachment-node-"]',
+      '[class~="group/attachment-tile"]',
       '.file-card-container.success',
       '[title]',
       '[role="listitem"]',
@@ -390,6 +395,10 @@ async function visibleAttachmentEvidence(
             : ''
         const zaiChip = providerId === 'zai' && element.matches('.chip-scroll > button')
         const extensions = expectedExtensions.filter((extension) => {
+          if (providerId === 'meta') {
+            const normalizedVisibleText = visibleText.toLowerCase()
+            if (expectedStems.some((stem) => normalizedVisibleText.includes(stem))) return true
+          }
           if (zaiChip) {
             const visibleExtension = extension.replace(/^\./, '')
             return new RegExp(`(?:^|\\s)${visibleExtension.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*·`, 'i').test(visibleText)
@@ -425,7 +434,7 @@ async function visibleAttachmentEvidence(
     return evidenceCandidates
       .filter(({ element }) => !evidenceCandidates.some((candidate) => candidate.element !== element && element.contains(candidate.element)))
       .map(({ evidence }) => evidence)
-  }, { expectedExtensions: extensions, providerId: provider.id }).catch(() => [])
+  }, { expectedExtensions: extensions, expectedStems: stems, providerId: provider.id }).catch(() => [])
   return Array.isArray(result)
     ? result.filter((entry): entry is VisibleAttachmentEvidence => (
       typeof entry === 'object' &&

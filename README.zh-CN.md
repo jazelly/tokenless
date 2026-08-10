@@ -28,7 +28,7 @@
 
 ## 10 家 provider，一个本地接口
 
-目前有 5 家 provider 受支持，另外 7 家处于实验阶段；未经验证的工作流会明确停止。
+目前有 5 家 provider 受支持，另外 8 家处于实验阶段；未经验证的工作流会明确停止。
 
 <table>
   <tr>
@@ -48,6 +48,7 @@
   <tr>
     <td align="center" width="20%"><img src="https://sf-flow-web-cdn.ciciai.com/obj/ocean-flow-web-sg/dola_web/favicon-dola.png" alt="Dola" width="32" height="32"><br><strong>Dola</strong><br><sub>实验性</sub></td>
     <td align="center" width="20%"><img src="https://arena.ai/favicon.ico" alt="Arena" width="32" height="32"><br><strong>Arena</strong><br><sub>已支持</sub></td>
+    <td align="center" width="20%"><img src="https://meta.ai/favicon.ico" alt="Meta AI" width="32" height="32"><br><strong>Meta AI</strong><br><sub>实验性</sub></td>
   </tr>
 </table>
 

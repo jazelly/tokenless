@@ -45,7 +45,10 @@ export function decideProviderSession(
   }
 
   const authOffer = observation.blockers.find((blocker) => blocker.code === 'provider_sign_in_visible')
-  if (observation.authentication === 'unauthenticated' || authOffer) {
+  if (
+    observation.authentication === 'unauthenticated' ||
+    (authOffer && observation.authentication !== 'authenticated')
+  ) {
     if (provider.access.guest === 'unsupported') {
       return {
         kind: 'handoff',
