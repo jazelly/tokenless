@@ -20,11 +20,11 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.equal(byId.get('conversation.chat').routeable, true)
   assert.deepEqual(
     byId.get('conversation.chat').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'perplexity', 'zai', 'doubao', 'kimi', 'arena'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'perplexity', 'zai', 'doubao', 'kimi', 'meta', 'arena'],
   )
   assert.deepEqual(
     byId.get('file.upload').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'zai', 'doubao', 'kimi'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'zai', 'doubao', 'kimi', 'meta'],
   )
   assert.deepEqual(byId.get('search.web').routes.map((route) => route.provider), ['kimi'])
   assert.deepEqual(byId.get('response.citations').routes.map((route) => route.provider), ['kimi'])

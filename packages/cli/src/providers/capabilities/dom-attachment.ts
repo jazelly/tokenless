@@ -355,13 +355,13 @@ async function visibleAttachmentEvidence(
       '[aria-label*="upload" i]',
       '[aria-label*="file" i]',
       '[class*="attachment-node-"]',
-      '[class~="group/attachment-tile"]',
       '.file-card-container.success',
       '[title]',
       '[role="listitem"]',
       '[role="status"]',
       'li',
       '[data-default-action="true"] button[aria-label]',
+      ...(providerId === 'meta' ? ['[class~="group/attachment-tile"]'] : []),
       ...(providerId === 'zai' ? ['.chip-scroll > button'] : []),
     ]
     const elements = selectors.flatMap((selector) => {

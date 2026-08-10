@@ -6,8 +6,8 @@ This is a product reconnaissance record, not a Tokenless support declaration. Of
 
 The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V2 routeable outcomes are:
 
-- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, Arena, experimental Qwen, experimental Perplexity, experimental Z.ai, experimental Doubao, and experimental Kimi;
-- `file.upload`: ChatGPT, Claude, Grok, experimental Doubao, and experimental Kimi;
+- `conversation.chat`: ChatGPT, Claude, Gemini, Grok, Arena, experimental Perplexity, experimental Z.ai, experimental Doubao, experimental Kimi, and experimental Meta AI;
+- `file.upload`: ChatGPT, Claude, Grok, experimental Gemini, experimental DeepSeek, experimental Z.ai, experimental Doubao, experimental Kimi, and experimental Meta AI;
 - `search.web`: experimental Kimi; and
 - `response.citations`: experimental Kimi search.
 
@@ -43,6 +43,7 @@ The product surface is broader than the current Tokenless evidence. The middle c
 | Kimi | Signed-in web chat; Instant, K3, and K3 Swarm models; Standard/High thinking effort; files, Web search, Plugins, Skills, Projects, and broader research/agent/artifact surfaces | Experimental signed-in `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` routes with built-CLI managed-Cloak closure. Exact Plugin/Skill inspection and selection are implemented and control-closed. Their submitted outcomes are capacity-blocked; Projects, research, agent, and artifact lifecycles remain gate-pending and unadvertised |
 | Dola | Signed-in web chat; Fast and Pro choices; file input; Create Image, Writing, Create Video, Translate, and Homework entries; a separate Seedream image-creation surface; no observed Project, file library, or persistent knowledge-management surface | Experimental signed-in adapter and release gates are registered from the user-selected managed profile. Visible controls, exact public skill keys, and numeric conversation routes were observed. Writing is not classified as file creation without a completed document artifact; built-product readiness, selection, file acceptance, response, continuation, and generation closure remain pending, so no canonical route is advertised |
 | Arena | Signed-in Battle, Direct, and Side-by-Side chat; model selection; file input; Search, Code, Agent, Image, and Video surfaces | Supported signed-in Direct chat route with built-CLI managed-Cloak closure for exact Direct selection, default Max routing, readiness, prompt drafting, completed single-logical-turn response, durable conversation mapping, and same-conversation continuation. Exact provider-owned Terms/Privacy onboarding handling is implemented from a real observed dialog; all other modes and non-chat surfaces remain unadvertised until their terminal outcomes close independently |
+| Meta AI | Signed-in web chat; Instant and Thinking modes; broad file input; visible image generation; research-progress and assistant-response surfaces | Experimental signed-in `conversation.chat` and text-file `file.upload` routes with built-CLI managed-Cloak closure for readiness, prompt drafting, exact Instant/Thinking selection, visible file acceptance, a substantive completed response, and durable conversation mapping. A real image artifact was generated and manually observed, but generated media, citations, and continuation remain unadvertised until their public action lifecycles close |
 
 Official references:
 
@@ -59,13 +60,13 @@ Official references:
 - [Kimi web product](https://www.kimi.com/)
 - [Dola web product](https://www.dola.com/chat)
 - [Arena model selection](https://help.arena.ai/articles/1858200927-arena-experiments-new-model-selector), [file upload](https://help.arena.ai/articles/5595418316-arena-how-to-file-upload), and [Agent Mode](https://help.arena.ai/articles/5432423882-how-to-use-agent-mode)
+- [Meta AI web product](https://about.fb.com/news/2025/04/introducing-meta-ai-app-new-way-access-ai-assistant/) and [Muse Image on meta.ai](https://ai.meta.com/blog/introducing-muse-image-muse-video-msl/)
 
 ## Candidate Web Providers
 
 | Candidate | Canonical web entry | Officially documented or currently confirmed surface | Recommended evaluation |
 | --- | --- | --- | --- |
 | Mistral Le Chat | `https://chat.mistral.ai/` | Web search and citations, Deep Research, Think mode, Projects and Libraries, files, code interpreter, image generation/editing, Canvas, agents, and MCP connectors | P1. Broad capability match with relatively clear official documentation; useful second adapter for research and artifact semantics |
-| Meta AI | `https://www.meta.ai/` | Web chat, voice, personalization, image generation and editing, multi-reference composition, search-grounded image creation, Discover, and limited document editor/import experiments | P2 image-first candidate. Do not infer Deep Research, stable file analysis, or document workflow from experiments |
 | Microsoft Copilot | `https://copilot.microsoft.com/` | Web chat, Quick/Think Deeper/Smart modes, Deep Research, file upload, image generation/editing, Pages, connectors, voice, and browser-related experiences | Blocked in the 2026-08-01 Cloak precheck: the signed-out surface exposed Microsoft, Apple, and Google sign-in choices but no guest composer. Resume only with an explicitly selected setup-managed signed-in profile |
 | Tencent Yuanbao | `https://yuanbao.tencent.com/` | Web product, Tencent-enhanced web search, multi-format file reading, reasoning/model surfaces, and the broader Tencent content ecosystem | P2. Valuable Chinese search and file route; advanced artifact and workspace claims need official and live closure |
 | MiniMax Agent | `https://agent.minimax.io/` | Long-horizon planning, web and application generation, code execution, multimedia understanding and generation, and MCP integrations | P3 specialist adapter. Its autonomous-agent lifecycle is materially different from chat and should not be forced into the baseline provider contract |
@@ -76,7 +77,6 @@ Official candidate references:
 - [Perplexity overview](https://www.perplexity.ai/help-center/en/articles/10352895-how-does-perplexity-work), [Spaces](https://hub-prod.perplexity.ai/hub/faq/what-are-spaces), [image generation](https://www.perplexity.ai/help-center/en/articles/10354781-generating-images-with-perplexity), and [generated assets](https://www.perplexity.ai/help-center/en/articles/12528830-creating-assets-with-perplexity-overview)
 - [Mistral Le Chat research and Projects](https://mistral.ai/news/le-chat-dives-deep/) and [Le Chat product surface](https://mistral.ai/news/all-new-le-chat/)
 - [DeepSeek V4 web modes](https://api-docs.deepseek.com/news/news260424) and [DeepSeek updates](https://api-docs.deepseek.com/updates/)
-- [Meta AI web product](https://about.fb.com/news/2025/04/introducing-meta-ai-app-new-way-access-ai-assistant/) and [Muse Image on meta.ai](https://ai.meta.com/blog/introducing-muse-image-muse-video-msl/)
 - [Microsoft Copilot capabilities](https://support.microsoft.com/en-gb/microsoft-copilot), [Deep Research](https://support.microsoft.com/en-us/Microsoft-Copilot/deep-research-in-microsoft-copilot), and [file upload](https://support.microsoft.com/en-US/microsoft-copilot/file-upload-in-microsoft-copilot)
 - [Tencent Yuanbao web search](https://cloud.tencent.com/product/wsa) and [desktop file support](https://yuanbao.tencent.com/evt/dl)
 - [MiniMax Agent](https://www.minimax.io/news/minimax-agent)

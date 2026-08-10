@@ -26,7 +26,7 @@
 
 <p align="center"><sub>截图来自真实本地浏览器 session；token 总量与任务状态均为真实本地数据，不是 benchmark。</sub></p>
 
-## 10 家 provider，一个本地接口
+## 13 家 provider，一个本地接口
 
 目前有 5 家 provider 受支持，另外 8 家处于实验阶段；未经验证的工作流会明确停止。
 

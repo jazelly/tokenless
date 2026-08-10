@@ -754,7 +754,7 @@
       ],
       "unavailable": {
         "model-choice": "no_independent_model_control_declared",
-        "conversation-workflow": "real_terminal_response_and_attachment_closure_not_proven_2026_08_10",
+        "conversation-workflow": "same_conversation_two_process_and_citation_closure_not_proven_2026_08_10",
         "workspace-response-citations": "real_terminal_response_and_citation_closure_not_proven_2026_08_10",
         "qwen-mode-workspace": "provider_specific_capability",
         "deepseek-controls": "provider_specific_capability",

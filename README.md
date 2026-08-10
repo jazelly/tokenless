@@ -26,7 +26,7 @@
 
 <p align="center"><sub>Captured from a real local browser session; token totals and job states are actual local dashboard data, not a benchmark.</sub></p>
 
-## 10 providers. One local interface.
+## 13 providers. One local interface.
 
 Five providers are supported today; eight more are experimental and fail closed when a workflow is not verified.
 

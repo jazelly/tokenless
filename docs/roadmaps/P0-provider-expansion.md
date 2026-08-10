@@ -38,6 +38,7 @@ As of 2026-08-09:
 - Microsoft Copilot remains unregistered because both Cloak checks exposed a sign-in surface and no guest composer, and no login was attempted under the authentication-skip policy.
 - Dola is registered as an experimental signed-in provider from the user-selected `web-ai` managed profile. The visible session confirmed the chat composer, file picker, Fast/Pro menu, numeric conversation URLs, and image, writing, video, translation, and homework entry points. The adapter and readiness/draft/model/file/two-turn real-provider release gates are implemented; no route is advertised until the built-product gates close.
 - Arena is registered as a supported signed-in provider on its current `https://arena.ai/` surface. The adapter selects exact Direct mode with the visible default Max router and deduplicates only identical responsive renderings of one logical answer. The built CLI, packaged daemon, headed `web-ai` Cloak profile, and real provider network closed readiness, prompt drafting, a correlated completed response, durable `/c/:conversationId` mapping, and same-conversation continuation. It also handles the exact provider-owned Terms/Privacy onboarding dialog before prompt input; explicit model/mode selection, files, Battle/Side-by-Side, Search, Code, Agent, Image, and Video remain unadvertised until independently closed.
+- Meta AI is registered as an experimental signed-in provider on `https://meta.ai/`. The built CLI, packaged daemon, selected `web-ai` Cloak profile, and real provider network closed readiness, prompt drafting, exact Instant/Thinking selection, visible text-file acceptance, a substantive completed response, and durable `/prompt/:conversationId` mapping. `conversation.chat` and text-file `file.upload` are routeable; a real generated image was observed manually, while generated media, citations, and explicit continuation remain unadvertised until their action lifecycles close.
 
 | Qwen capability | Current state | Evidence boundary |
 | --- | --- | --- |
@@ -98,6 +99,16 @@ As of 2026-08-09:
 | Homework | Chat candidate through provider workflow `dola.exercise_assistant` | `exercise_assistant` is visible; terminal outcome pending; no reasoning tier is inferred from the control |
 | Projects and file management | Unavailable | No Project, file library, persistent knowledge, or independent Create File surface was observed |
 
+| Meta AI capability | Current state | Evidence boundary |
+| --- | --- | --- |
+| Signed-in composer | Experimental, available | User-selected runtime-bound Cloak profile through built CLI and packaged daemon |
+| Conversation chat | Experimental, routeable | Substantive defensive browser-fingerprinting review, completed visible answer, durable conversation mapping, and real provider state passed |
+| File upload | Experimental, routeable for text files | Native file chooser, visible filename-stem attachment card, and provider acceptance passed |
+| Thinking effort | Experimental provider control | Instant and Thinking inspected, selected, visibly verified, and restored |
+| Image generation | Live observed; public route unavailable | A new visible 1920×1280 image completed on the real provider, but the CLI has no public image lifecycle action contract yet |
+| Citations and continuation | Unavailable | The final research answer exposed no closed visible citation mapping, and the two-process continuation gate has not run |
+| Native workspace | Unavailable | No provider-native Project or persistent workspace lifecycle was observed |
+
 The maintained [Provider Capability Census](../provider-capability-census.md) records official product surfaces, current Tokenless evidence, candidate providers, and the proposed canonical capability schema.
 
 The next evaluation wave is:
@@ -106,7 +117,7 @@ The next evaluation wave is:
 2. Mistral Le Chat, prioritizing a second independent research/Project/artifact implementation; and
 3. DeepSeek Chat signed-in closure, prioritizing the compact baseline first, then mode selection, search, and files as independent capabilities.
 
-Meta AI, Microsoft Copilot, Tencent Yuanbao, and MiniMax Agent remain scored candidates. Meta AI is currently strongest as an image-generation/editing candidate rather than a Deep Research provider. MiniMax Agent requires a distinct long-horizon agent lifecycle and must not distort the baseline chat contract. This is a discovery order, not a claim that every candidate is already suitable for automation or will ship.
+Microsoft Copilot, Tencent Yuanbao, and MiniMax Agent remain scored candidates. MiniMax Agent requires a distinct long-horizon agent lifecycle and must not distort the baseline chat contract. This is a discovery order, not a claim that every candidate is already suitable for automation or will ship.
 
 Official product entry points:
 

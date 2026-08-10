@@ -7,7 +7,6 @@ import {
   providerCapabilities,
 } from './provider-definition.js'
 import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
-import { MetaImageGenerationCapability } from './capabilities/meta-image-generation.js'
 
 export class MetaProvider extends BaseProvider<'meta'> {
   constructor() {
@@ -75,8 +74,6 @@ export class MetaProvider extends BaseProvider<'meta'> {
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
       capabilities: providerCapabilities(),
     })
-    super(provider, {
-      imageGeneration: new MetaImageGenerationCapability(provider),
-    })
+    super(provider)
   }
 }

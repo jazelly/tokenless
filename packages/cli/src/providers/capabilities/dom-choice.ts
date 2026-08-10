@@ -218,7 +218,7 @@ async function exactVisibleChoiceLocator(page: Page, label: string): Promise<Loc
     const candidate = candidates.nth(index)
     const text = await candidate.evaluate((element) => (
       element.querySelector('.label')?.textContent ??
-      element.querySelector('.text-subheadline')?.textContent ??
+      (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline')?.textContent : null) ??
       (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate')?.textContent : null) ??
       element.getAttribute('aria-label') ??
       element.textContent ??
@@ -273,7 +273,7 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
   for (const locator of locators) {
     const values = await locator.evaluateAll((elements, choiceAvailability) => elements.slice(0, 80).map((element) => {
       const labelElement = element.querySelector('.label') ??
-        element.querySelector('.text-subheadline') ??
+        (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline') : null) ??
         (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate') : null)
       const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
       const fullText = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
