@@ -7,7 +7,7 @@ Tokenless runs locally. It operates visible ChatGPT, Claude, Gemini, Grok, and e
 ## Data handling
 
 - Managed browser profiles, provider sign-in state, configuration, job state, logs, and snapshots remain on the user's device.
-- With explicit consent, setup can copy selected ChatGPT, Claude, Grok, or experimental Qwen sign-in records and limited Chromium compatibility state from an existing Chrome or Brave profile into a separate Tokenless-managed profile. Compatibility state includes Origin Bound Certs, Trust Tokens, TransportSecurity, Visited Links, the Affiliation Database, and the Site Characteristics Database. Gemini and shared Google sign-in data are not imported. Passwords, full history, bookmarks, payment data, sync data, unrelated site storage, and caches are excluded.
+- Setup does not copy or import browser profiles. In native mode, browser state and credentials remain in the running Google Chrome or Brave Browser selected by the user.
 - Authentication values stay opaque to agents. Tokenless does not print, log, export, or send them to a Tokenless service.
 - Browser visibility settings (`auto`, `headed`, and `headless`) only change how the local managed browser is presented. They do not disable Chromium sandboxing, and they keep the same local daemon and managed profile flow.
 - Prompt text, selected files, and visible page actions are sent only to the provider chosen by the user. That provider's privacy, retention, and subscription terms apply.
@@ -18,7 +18,7 @@ Tokenless runs locally. It operates visible ChatGPT, Claude, Gemini, Grok, and e
 
 ## User control
 
-Profile import requires explicit consent and never changes the source browser profile. Users can inspect managed profiles with `tokenless profiles list`, remove one with `tokenless profiles clear --profile <slug>`, or remove all with `tokenless profiles clear --all`. Removing `~/.tokenless` removes local runtime state.
+Users can inspect logical Tokenless profiles with `tokenless profiles list`, remove one with `tokenless profiles clear --profile <slug>`, or remove all with `tokenless profiles clear --all`. These commands do not remove or modify the selected Chrome or Brave browser profile. Removing `~/.tokenless` removes local Tokenless runtime state.
 
 ## Contact
 

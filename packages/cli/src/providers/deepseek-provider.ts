@@ -28,9 +28,6 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.deepseek,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['deepseek.com']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),
@@ -47,20 +44,20 @@ export class DeepSeekProvider extends BaseProvider<'deepseek'> {
         paidPlanLabels: Object.freeze([]),
       }),
       composerSelectors: Object.freeze([
-        'textarea[name="search"][placeholder="Message DeepSeek"]',
+        'textarea[placeholder="Message DeepSeek"]',
       ]),
       submitSelectors: Object.freeze([
-        'div[role="button"].ds-button.ds-button--primary:not(.ds-button--disabled)',
+        'div.ds-button.ds-button--primary.ds-button--filled:not(.ds-button--disabled)',
       ]),
       answerSelectors: Object.freeze([
         '.ds-markdown.ds-assistant-message-main-content',
         '.ds-message > .ds-markdown',
       ]),
       fileInputSelectors: Object.freeze([
-        'input[type="file"][multiple]',
+        'input[type="file"][multiple][accept*=".md"]',
       ]),
       fileUploadTriggerSelectors: Object.freeze([
-        'div[role="button"].ds-button.ds-button--iconLabelPrimary',
+        'div.ds-button.ds-button--iconLabelPrimary',
       ]),
       fileUploadLocalSelectors: Object.freeze([]),
       modelControlSelectors: Object.freeze([]),

@@ -1,4 +1,3 @@
-import { localizeText } from './localization.js'
 import { paintCliText, resolveCliColorEnabled } from './cli-output.js'
 
 type WritableStream = {
@@ -42,10 +41,6 @@ type ExplainOptions = {
 const SPINNER_FRAMES = Object.freeze(['-', '\\', '|', '/'])
 const REPLACE_TERMINAL_LINE = '\u001b[2K\u001b[1G'
 
-export const SETUP_MANAGED_PROFILE_DISCLOSURE = Object.freeze([
-  'Keeps sign-ins between jobs inside a Tokenless-managed profile. With explicit consent, setup can copy a selected local profile as an opaque filesystem tree without reading its authentication values.',
-])
-
 export const SETUP_READINESS_DISCLOSURE = Object.freeze([
   'Checks visible sign-in state without submitting a prompt.',
 ])
@@ -77,29 +72,29 @@ export class SetupPresenter {
     return this.enabled
   }
 
-  welcome() {
+  welcome(title: string) {
     if (!this.enabled) return
     this.write([
       '',
-      this.paint('brightCyan', localizeText('Tokenless setup')),
+      this.paint('brightCyan', title),
       '',
     ].join('\n'))
   }
 
   explain({ title, lines }: ExplainOptions) {
     if (!this.enabled) return
-    this.write(`${this.paint('bright', localizeText(title))}\n`)
-    for (const line of lines) this.write(`  ${this.paint('dim', '-')} ${localizeText(line)}\n`)
+    this.write(`${this.paint('bright', title)}\n`)
+    for (const line of lines) this.write(`  ${this.paint('dim', '-')} ${line}\n`)
   }
 
   note(message: string) {
     if (!this.enabled) return
-    this.write(`  ${this.paint('yellow', '*')} ${localizeText(message)}\n`)
+    this.write(`  ${this.paint('yellow', '*')} ${message}\n`)
   }
 
   success(message: string) {
     if (!this.enabled) return
-    this.write(`  ${this.paint('green', 'OK')} ${localizeText(message)}\n`)
+    this.write(`  ${this.paint('green', 'OK')} ${message}\n`)
   }
 
   async withProgress<T>(message: string, task: () => Promise<T>): Promise<T> {
@@ -111,7 +106,7 @@ export class SetupPresenter {
       const prefix = this.animationEnabled
         ? `${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]}`
         : '-'
-      this.writeProgress(prefix, localizeText(message))
+      this.writeProgress(prefix, message)
     }
 
     if (this.animationEnabled) {
@@ -122,20 +117,20 @@ export class SetupPresenter {
     try {
       const result = await task()
       if (timer !== null) this.timers.clearInterval(timer)
-      if (this.animationEnabled) this.finishProgress('OK', localizeText(message), 'green')
+      if (this.animationEnabled) this.finishProgress('OK', message, 'green')
       else this.success(message)
       return result
     } catch (error) {
       if (timer !== null) this.timers.clearInterval(timer)
-      if (this.animationEnabled) this.finishProgress('X', localizeText(message), 'red')
-      else this.write(`  ${this.paint('red', 'X')} ${localizeText(message)}\n`)
+      if (this.animationEnabled) this.finishProgress('X', message, 'red')
+      else this.write(`  ${this.paint('red', 'X')} ${message}\n`)
       throw error
     }
   }
 
   summary(message: string) {
     if (!this.enabled) return
-    this.write(`\n${this.paint('brightGreen', localizeText(message))}\n`)
+    this.write(`\n${this.paint('brightGreen', message)}\n`)
   }
 
   private writeProgress(prefix: string, message: string) {

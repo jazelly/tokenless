@@ -7,14 +7,16 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
+import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliDir = path.join(root, 'packages/cli')
 const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 const cliIndex = pathToFileURL(path.join(cliDir, 'dist/src/index.js')).href
 const playwrightIndex = pathToFileURL(path.join(cliDir, 'dist/src/playwright/index.js')).href
-const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
-const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
+const browserTarget = await resolveConfiguredBrowserTarget()
+const homeDir = browserTarget.homeDir
+const profileSlug = browserTarget.profile.slug
 const daemonUrl = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_DAEMON_URL')
 const primaryProvider = requiredEnv('TOKENLESS_LIVE_FALLBACK_PRIMARY')
 const fallbackProvider = requiredEnv('TOKENLESS_LIVE_FALLBACK_PROVIDER')
@@ -30,9 +32,6 @@ let liveAttachmentPath
 let fallbackUploadControls
 
 test.after(async () => {
-  if (runtime) {
-    await runtime.stopDaemon({ homeDir, daemonUrl, timeoutMs: 60_000 }).catch(() => undefined)
-  }
   await inspection?.close().catch(() => undefined)
   if (liveAttachmentPath) await fs.rm(liveAttachmentPath, { force: true }).catch(() => undefined)
   restoreInspectionEnvironment?.()

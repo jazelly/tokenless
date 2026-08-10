@@ -26,6 +26,12 @@ import {
   createStartupOwnerToken,
   type DaemonRuntimeEndpoint,
 } from './daemon/runtime-state.js'
+import type {
+  SnapshotDiagnosticElement,
+  SnapshotResponseCandidate,
+  SnapshotResponseDiagnostics,
+  SnapshotResponseSelectorDiagnostics,
+} from './playwright/actions.js'
 
 export {
   DAEMON_CONTROL_API_REVISION,
@@ -45,6 +51,17 @@ const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 5_000
 const MAX_TIMEOUT_MS = 2_147_483_647
 const BUILD_INFO_TIMEOUT_MS = 2_000
 const BUILD_INFO_OUTPUT_LIMIT_BYTES = 16_384
+const SNAPSHOT_DIAGNOSTICS_MAX_BYTES = 64 * 1024
+const SNAPSHOT_DIAGNOSTICS_MAX_SELECTORS = 8
+const SNAPSHOT_DIAGNOSTICS_MAX_CANDIDATES = 3
+const SNAPSHOT_DIAGNOSTICS_MAX_ANCESTORS = 3
+const SNAPSHOT_DIAGNOSTIC_TAGS = new Set<SnapshotDiagnosticElement['tag']>(['article', 'blockquote', 'button', 'code', 'div', 'element', 'li', 'main', 'ol', 'p', 'pre', 'section', 'span', 'ul'])
+const SNAPSHOT_DIAGNOSTIC_VALUES = {
+  role: new Set<NonNullable<SnapshotDiagnosticElement['role']>>(['button', 'textbox', 'menuitem', 'option', 'combobox', 'listbox']),
+  boolean: new Set<NonNullable<SnapshotDiagnosticElement['ariaBusy']>>(['true', 'false']),
+  ariaLive: new Set<NonNullable<SnapshotDiagnosticElement['ariaLive']>>(['assertive', 'off', 'polite']),
+  dataState: new Set<NonNullable<SnapshotDiagnosticElement['dataState']>>(['active', 'closed', 'complete', 'idle', 'inactive', 'loading', 'open', 'pending']),
+}
 
 type RuntimeError = Error & {
   code?: string
@@ -565,7 +582,7 @@ export async function stopDaemon({
     )
   }
   if (pid !== undefined) await removePidIfOwned(ready.actualHome ?? expectedHome, pid)
-  await clearPersistedEndpointIfOwned(homeDir, { url, pid })
+  await clearPersistedEndpointIfOwned(homeDir, { url, pid }, stopTimeoutMs)
   return {
     ok: true,
     status: 'stopped',
@@ -701,12 +718,15 @@ export async function persistDaemonSnapshot({
   await fs.mkdir(dir, { recursive: true, mode: 0o700 })
   const htmlPath = path.join(dir, 'dom.sanitized.html')
   const probesPath = path.join(dir, 'selector-probes.json')
+  const responseDiagnosticsPath = path.join(dir, 'response-diagnostics.json')
   const metadataPath = path.join(dir, 'metadata.json')
   const textPath = typeof snapshot.visibleText === 'string'
     ? path.join(dir, 'visible-text.txt')
     : null
+  const responseDiagnostics = sanitizeSnapshotResponseDiagnostics(snapshot.responseDiagnostics)
   await fs.writeFile(htmlPath, `${typeof snapshot.html === 'string' ? snapshot.html : ''}\n`, { mode: 0o600 })
   await fs.writeFile(probesPath, `${JSON.stringify(snapshot.selectorProbes ?? {}, null, 2)}\n`, { mode: 0o600 })
+  await fs.writeFile(responseDiagnosticsPath, `${JSON.stringify(responseDiagnostics, null, 2)}\n`, { mode: 0o600 })
   if (textPath) await fs.writeFile(textPath, `${snapshot.visibleText}\n`, { mode: 0o600 })
   const metadata = {
     protocol: DAEMON_SNAPSHOT_SCHEMA_ID,
@@ -720,6 +740,7 @@ export async function persistDaemonSnapshot({
     includeText: Boolean(snapshot.includeText),
     htmlPath,
     selectorProbesPath: probesPath,
+    responseDiagnosticsPath,
     visibleTextPath: textPath,
   }
   await fs.writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, { mode: 0o600 })
@@ -932,14 +953,23 @@ function daemonReadyResult(
 
 async function clearPersistedEndpointIfOwned(
   homeDir: string,
-  { url, pid }: { url: string; pid?: number | undefined }
+  { url, pid }: { url: string; pid?: number | undefined },
+  timeoutMs = 1_000
 ) {
-  const runtimeState = await DaemonRuntimeState.openIfExists(homeDir)
-  try {
-    runtimeState?.clearEndpoint({ origin: url, pid })
-  } finally {
-    runtimeState?.close()
-  }
+  const deadline = Date.now() + timeoutMs
+  do {
+    let runtimeState: DaemonRuntimeState | null = null
+    try {
+      runtimeState = await DaemonRuntimeState.openIfExists(homeDir)
+      runtimeState?.clearEndpoint({ origin: url, pid })
+      return
+    } catch (error) {
+      if (!isTransientRuntimeStateConflict(error) || Date.now() >= deadline) throw error
+      await delay(25)
+    } finally {
+      runtimeState?.close()
+    }
+  } while (true)
 }
 
 function daemonPidFromReady(probe: DaemonReadyProbe) {
@@ -992,6 +1022,16 @@ function pidIsAlive(pid: number) {
     if (code === 'ESRCH') return false
     return false
   }
+}
+
+function isTransientRuntimeStateConflict(error: unknown) {
+  const code = (error as { code?: unknown }).code
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  return code === 'daemon_runtime_state_sqlite_failed' && (
+    message.includes('database is locked') ||
+    message.includes('database table is locked') ||
+    message.includes('busy')
+  )
 }
 
 function isReplaceableDaemonCompatibilityMismatch(probe: DaemonReadyProbe) {
@@ -1146,6 +1186,91 @@ function unwrapSnapshot(result: unknown): JsonRecord | null {
     if (snapshot?.status === 'snapshotted') return snapshot
   }
   return null
+}
+
+function sanitizeSnapshotResponseDiagnostics(value: unknown): SnapshotResponseDiagnostics {
+  const source = objectRecord(value)
+  const answerSelectors = sanitizeSnapshotResponseGroup(source.answerSelectors)
+  const busySelectors = sanitizeSnapshotResponseGroup(source.busySelectors)
+  const diagnostics = {
+    truncated: source.truncated === true || answerSelectors.truncated || busySelectors.truncated,
+    answerSelectors,
+    busySelectors,
+  } satisfies SnapshotResponseDiagnostics
+  if (JSON.stringify(diagnostics).length <= SNAPSHOT_DIAGNOSTICS_MAX_BYTES) return diagnostics
+  const withoutCandidates = (selector: SnapshotResponseSelectorDiagnostics) => ({ ...selector, truncated: true, candidates: [] })
+  return {
+    truncated: true,
+    answerSelectors: { ...answerSelectors, truncated: true, selectors: answerSelectors.selectors.map(withoutCandidates) },
+    busySelectors: { ...busySelectors, truncated: true, selectors: busySelectors.selectors.map(withoutCandidates) },
+  }
+}
+
+function sanitizeSnapshotResponseGroup(value: unknown) {
+  const source = objectRecord(value)
+  const input = Array.isArray(source.selectors) ? source.selectors : []
+  const selectors = input.slice(0, SNAPSHOT_DIAGNOSTICS_MAX_SELECTORS)
+    .map((selector, index) => sanitizeSnapshotResponseSelector(selector, index))
+  return {
+    configured: boundedSnapshotInteger(source.configured),
+    truncated: source.truncated === true || input.length > SNAPSHOT_DIAGNOSTICS_MAX_SELECTORS,
+    selectors,
+  }
+}
+
+function sanitizeSnapshotResponseSelector(value: unknown, fallbackIndex: number): SnapshotResponseSelectorDiagnostics {
+  const source = objectRecord(value)
+  const input = Array.isArray(source.candidates) ? source.candidates : []
+  const total = boundedSnapshotInteger(source.total)
+  return {
+    selectorIndex: boundedSnapshotInteger(source.selectorIndex, fallbackIndex, SNAPSHOT_DIAGNOSTICS_MAX_SELECTORS - 1),
+    total,
+    visible: Math.min(total, boundedSnapshotInteger(source.visible)),
+    truncated: source.truncated === true || input.length > SNAPSHOT_DIAGNOSTICS_MAX_CANDIDATES || input.some((candidate) => {
+      const ancestors = objectRecord(candidate).ancestors
+      return Array.isArray(ancestors) && ancestors.length > SNAPSHOT_DIAGNOSTICS_MAX_ANCESTORS
+    }),
+    candidates: input.slice(-SNAPSHOT_DIAGNOSTICS_MAX_CANDIDATES).map(sanitizeSnapshotResponseCandidate),
+  }
+}
+
+function sanitizeSnapshotResponseCandidate(value: unknown): SnapshotResponseCandidate {
+  const source = objectRecord(value)
+  const input = Array.isArray(source.ancestors) ? source.ancestors : []
+  return {
+    ...sanitizeSnapshotDiagnosticElement(source),
+    visibleTextLength: boundedSnapshotInteger(source.visibleTextLength),
+    ancestors: input.slice(0, SNAPSHOT_DIAGNOSTICS_MAX_ANCESTORS).map(sanitizeSnapshotDiagnosticElement),
+  }
+}
+
+function sanitizeSnapshotDiagnosticElement(value: unknown): SnapshotDiagnosticElement {
+  const source = objectRecord(value)
+  const tag = typeof source.tag === 'string' && SNAPSHOT_DIAGNOSTIC_TAGS.has(source.tag as SnapshotDiagnosticElement['tag'])
+    ? source.tag as SnapshotDiagnosticElement['tag']
+    : 'element'
+  const allowed = <T extends string>(candidate: unknown, values: Set<T>) => (
+    typeof candidate === 'string' && values.has(candidate as T) ? candidate as T : undefined
+  )
+  const role = allowed(source.role, SNAPSHOT_DIAGNOSTIC_VALUES.role)
+  const ariaBusy = allowed(source.ariaBusy, SNAPSHOT_DIAGNOSTIC_VALUES.boolean)
+  const ariaLive = allowed(source.ariaLive, SNAPSHOT_DIAGNOSTIC_VALUES.ariaLive)
+  const dataIsStreaming = allowed(source.dataIsStreaming, SNAPSHOT_DIAGNOSTIC_VALUES.boolean)
+  const dataState = allowed(source.dataState, SNAPSHOT_DIAGNOSTIC_VALUES.dataState)
+  return {
+    tag,
+    ...(role ? { role } : {}),
+    ...(ariaBusy ? { ariaBusy } : {}),
+    ...(ariaLive ? { ariaLive } : {}),
+    ...(dataIsStreaming ? { dataIsStreaming } : {}),
+    ...(dataState ? { dataState } : {}),
+  }
+}
+
+function boundedSnapshotInteger(value: unknown, fallback = 0, maximum = Number.MAX_SAFE_INTEGER) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? Math.min(value, maximum)
+    : fallback
 }
 
 function safeSegment(value: unknown) {

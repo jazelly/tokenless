@@ -21,9 +21,6 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.perplexity,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['perplexity.ai']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),
@@ -63,12 +60,17 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
       fileUploadTriggerSelectors: Object.freeze([
         'button[aria-label="Add files or tools"]',
       ]),
-      fileUploadLocalSelectors: Object.freeze([]),
+      fileUploadLocalSelectors: Object.freeze([
+        '[role="menuitem"]:has-text("Upload files or images")',
+      ]),
       modelControlSelectors: Object.freeze([
         'button[aria-label="Model"]',
       ]),
       effortControlSelectors: Object.freeze([]),
-      authIndicators: Object.freeze([]),
+      authIndicators: Object.freeze([
+        'button:has(img[alt="Profile avatar"])',
+        'button[aria-label^="Profile avatar"]',
+      ]),
       loginIndicators: Object.freeze([
         'button:has-text("Sign In")',
       ]),
@@ -77,6 +79,7 @@ export class PerplexityProvider extends BaseProvider<'perplexity'> {
         'iframe[src*="hcaptcha.com" i]',
         'iframe[src*="challenges.cloudflare.com" i]',
         'text=/rate limit|too many requests/i',
+        'text=/upgrade for additional document analysis/i',
         'text=/upgrade required|upgrade your plan/i',
       ]),
       busySelectors: Object.freeze([

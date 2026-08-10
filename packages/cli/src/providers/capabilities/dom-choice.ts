@@ -1,4 +1,4 @@
-import { firstVisibleLocator } from '../dom-locators.js'
+import { firstVisibleLocator, waitForVisibleLocator } from '../dom-locators.js'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
@@ -114,20 +114,45 @@ async function inspectChoices(
     }
   }
   await waitForProviderChoiceSurface(page, provider)
-  const trigger = await firstVisibleLocator(page, selectors)
+  const trigger = await waitForVisibleLocator(page, selectors, 10_000)
   if (!trigger) {
     return {
       supported: false as const,
       reason: 'selector_not_available' as const,
     }
   }
+  if (await trigger.getAttribute('aria-expanded') === 'true') {
+    await dismissChoiceSurface(page, trigger)
+  }
   await trigger.click({ timeout: 5000 })
   await page.waitForTimeout(300)
+  await openNestedChoiceSurface(page, provider, kind)
   const choices = await collectVisibleChoices(page, provider, trigger)
-  if (!keepOpen) await page.keyboard.press('Escape').catch(() => undefined)
+  if (!keepOpen) await dismissChoiceSurface(page, trigger)
   return {
     supported: true as const,
     choices,
+  }
+}
+
+async function openNestedChoiceSurface(page: Page, provider: ProviderDomDefinition, kind: ChoiceKind) {
+  if (provider.id !== 'claude' || kind !== 'model') return
+  const moreModels = page.locator('[role="menuitem"]')
+    .filter({ visible: true })
+    .filter({ hasText: /^More models/u })
+    .last()
+  if (await moreModels.count() === 0) return
+  await moreModels.hover({ timeout: 5000 })
+  await page.waitForTimeout(500)
+}
+
+async function dismissChoiceSurface(page: Page, trigger: Locator) {
+  await trigger.press('Escape').catch(() => undefined)
+  await page.keyboard.press('Escape').catch(() => undefined)
+  await page.waitForTimeout(100)
+  if (await trigger.getAttribute('aria-expanded') === 'true') {
+    await trigger.click({ timeout: 5000, force: true }).catch(() => undefined)
+    await page.waitForTimeout(100)
   }
 }
 
@@ -165,7 +190,12 @@ async function selectChoice(
       visibleProof: 'exact-label-not-found',
     }
   }
-  await option.click({ timeout: 5000 })
+  if (provider.id === 'claude') {
+    await option.focus()
+    await option.press('Enter')
+  } else {
+    await option.click({ timeout: 5000 })
+  }
   const visible = await waitForSelectedLabel(page, provider, kind, label)
   return {
     supported: true as const,
@@ -187,6 +217,7 @@ async function exactVisibleChoiceLocator(page: Page, label: string): Promise<Loc
     const candidate = candidates.nth(index)
     const text = await candidate.evaluate((element) => (
       element.querySelector('.label')?.textContent ??
+      (element.matches('[role="menuitemradio"]') ? element.querySelector('.truncate')?.textContent : null) ??
       element.getAttribute('aria-label') ??
       element.textContent ??
       ''
@@ -218,23 +249,33 @@ async function waitForSelectedLabel(
 }
 
 async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition, trigger: Locator): Promise<Choice[]> {
+  const triggerLabel = await trigger.evaluate((element) => (
+    `${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''}`
+  ).replace(/\s+/gu, ' ').trim()).catch(() => '')
   const controlledId = await trigger.getAttribute('aria-controls')
   const controlledRoot = controlledId
     ? page.locator(`[id="${controlledId.replace(/["\\]/gu, '\\$&')}"]`).filter({ visible: true })
     : null
   const overlayRoot = page.locator('[role="menu"], [role="listbox"], [role="dialog"]').filter({ visible: true }).last()
-  const root = controlledRoot && await controlledRoot.count() > 0 ? controlledRoot : overlayRoot
+  const root = provider.id !== 'claude' && controlledRoot && await controlledRoot.count() > 0
+    ? controlledRoot
+    : overlayRoot
   const locators = [
-    root.locator('[role="menuitem"], [role="option"], [cmdk-item], button').filter({ visible: true }),
+    provider.id === 'claude'
+      ? page.locator('[role="menuitemradio"]').filter({ visible: true })
+      : root.locator('[role="menuitem"], [role="option"], [cmdk-item], button').filter({ visible: true }),
     page.locator('.ant-select-dropdown').filter({ visible: true })
       .locator('.ant-select-item-option').filter({ visible: true }),
   ]
   const choices: Choice[] = []
   for (const locator of locators) {
     const values = await locator.evaluateAll((elements, choiceAvailability) => elements.slice(0, 80).map((element) => {
-      const labelElement = element.querySelector('.label')
+      const labelElement = element.querySelector('.label') ??
+        (element.matches('[role="menuitemradio"]') ? element.querySelector('.truncate') : null)
       const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
+      const fullText = (element.textContent ?? '').replace(/\s+/g, ' ').trim()
       const ariaSelected = element.getAttribute('aria-selected') === 'true' ||
+        element.getAttribute('aria-checked') === 'true' ||
         element.getAttribute('data-state') === 'checked' ||
         element.classList.contains('selected') ||
         element.querySelector('[aria-label="Selected"]') !== null
@@ -248,7 +289,7 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
           (choiceAvailability.mutedOpacityClassToken !== null && classTokens.has(choiceAvailability.mutedOpacityClassToken)) ||
           (style !== null && Number(style.opacity) < 1)
         )
-      const unrelatedAccountControl = /(?:sign|log) in|upgrade|subscribe/i.test(text) ||
+      const unrelatedAccountControl = /(?:sign|log) in|upgrade|subscribe/i.test(fullText) ||
         /(?:sign|log)[-_]?in|upgrade|subscribe/i.test(element.getAttribute('data-testid') ?? element.getAttribute('data-test-id') ?? '')
       const disabled = (
         element.hasAttribute('disabled') ||
@@ -267,9 +308,16 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
     choices.push(...values)
   }
   const seen = new Set<string>()
-  return choices.filter((choice) => {
+  const uniqueChoices = choices.filter((choice) => {
     if (seen.has(choice.label)) return false
     seen.add(choice.label)
     return true
   })
+  if (uniqueChoices.some((choice) => choice.selected)) return uniqueChoices
+  const selected = uniqueChoices.find((choice) => (
+    triggerLabel === choice.label || triggerLabel.includes(choice.label)
+  ))
+  return selected
+    ? uniqueChoices.map((choice) => choice === selected ? { ...choice, selected: true } : choice)
+    : uniqueChoices
 }

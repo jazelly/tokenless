@@ -7,7 +7,7 @@
 - [README](../README.zh-CN.md) — 产品概览、安装与首次运行。
 - [CLI 命令](../COMMANDS.zh-CN.md) — 完整 command 与 option reference。
 - [Capability Matrix](capability-matrix.zh-CN.md) — canonical outcomes、当前 provider mappings、support states 与扩展规则。
-- [隐私政策](../PRIVACY.md) — browser profile、credential、file 与本地数据边界。
+- [隐私政策](../PRIVACY.zh-CN.md) — browser profile、credential、file 与本地数据边界。
 
 ## 概念与架构
 
@@ -18,13 +18,15 @@
 ## Provider 与 Capability 开发
 
 - 从 [Capability Matrix 扩展流程](capability-matrix.zh-CN.md#新增-capability) 开始。
-- 遵守 [Provider DOM Fixture Policy](../test/fixtures/provider-dom/README.md)。
+- Provider 行为只能通过配置好的浏览器 profile 在真实 provider 网站上开发与验证。
 - 在 [`live-provider-capability-matrix.json`](../test/live-provider-capability-matrix.json) 声明必需的真实 provider cases。
 - 在 [`live-managed-playwright.e2e.mjs`](../test/live-managed-playwright.e2e.mjs) 实现真实 journeys。
 - Provider-specific behavior 应保留在 [`packages/cli/src/providers/`](../packages/cli/src/providers/) 中。
 
 ## 新增文档
 
+- 不要提交大段文字墙：保持段落简短；如果项目符号、表格、图示或截图能更快表达同一信息，就使用它们。
+- Root README 应保持为便于浏览的 landing page；详细说明应放进负责该主题的专门文档，并从 README 链接过去。
 - 安装与首次运行指南放在配对的 root README 中。
 - 稳定的用户与开发者契约放在 `docs/` 下，并从本索引链接。
 - 完整 CLI syntax 放在配对的 `COMMANDS` reference 中，避免在不同 guide 重复维护。

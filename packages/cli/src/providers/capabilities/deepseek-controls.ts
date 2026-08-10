@@ -1,7 +1,9 @@
+import { basename, extname } from 'node:path'
 import { PROVIDER_CAPABILITIES } from '../provider-identity.js'
 import { VISIBLE_ACTIONS } from '../contracts.js'
 import { DomAttachmentCapability } from './dom-attachment.js'
 import { providerCapabilityFailure } from '../capability-set.js'
+import { VISIBLE_ATTACHMENT_SCHEMA_ID } from '../../schema-ids.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderActionCapability } from '../capability-set.js'
 import type { VisibleActionRequest, DeepSeekMode } from '../contracts.js'
@@ -79,8 +81,99 @@ export class DeepSeekAttachmentCapability implements ProviderActionCapability<ty
         { retryable: false },
       )
     }
-    return await this.delegate.execute(page, request, context)
+    const visibleCardsBeforeUpload = await visibleDeepSeekAttachmentExtensions(page)
+    try {
+      return await this.delegate.execute(page, request, context)
+    } catch (error) {
+      if (
+        !isAttachmentEvidenceFailure(error) ||
+        !hasNewDeepSeekAttachmentExtensions(
+          visibleCardsBeforeUpload,
+          await visibleDeepSeekAttachmentExtensions(page),
+          request.payload.attachments.map((attachment) => attachment.name),
+        )
+      ) {
+        throw error
+      }
+      return {
+        acceptance: 'accepted',
+        visibleProof: 'deepseek-visible-composer-attachment-cards',
+        attachments: request.payload.attachments.map((attachment) => ({
+          protocol: VISIBLE_ATTACHMENT_SCHEMA_ID,
+          bundleId: attachment.bundleId,
+          attachmentId: attachment.attachmentId,
+          name: basename(attachment.name),
+          type: attachment.type,
+          size: attachment.size,
+          sha256: attachment.sha256,
+          visible: true,
+        })),
+      }
+    }
   }
+}
+
+function isAttachmentEvidenceFailure(error: unknown) {
+  return typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'file_upload_not_visibly_accepted'
+}
+
+function hasNewDeepSeekAttachmentExtensions(
+  before: readonly string[],
+  after: readonly string[],
+  attachmentNames: readonly string[],
+) {
+  if (after.length < before.length + attachmentNames.length) return false
+  const newExtensions = new Map<string, number>()
+  for (const extension of after) newExtensions.set(extension, (newExtensions.get(extension) ?? 0) + 1)
+  for (const extension of before) {
+    const count = newExtensions.get(extension) ?? 0
+    if (count > 0) newExtensions.set(extension, count - 1)
+  }
+  for (const attachmentName of attachmentNames) {
+    const extension = extname(attachmentName).toLowerCase().replace(/^\./, '')
+    if (!extension) return false
+    const count = newExtensions.get(extension) ?? 0
+    if (count === 0) return false
+    newExtensions.set(extension, count - 1)
+  }
+  return true
+}
+
+async function visibleDeepSeekAttachmentExtensions(page: Page) {
+  const evaluate = (page as Page & {
+    evaluate?: (callback: () => string[]) => Promise<unknown>
+  }).evaluate
+  if (typeof evaluate !== 'function') return []
+  const result = await evaluate.call(page, () => {
+    const composer = document.querySelector('textarea[placeholder="Message DeepSeek"]')
+    const composerRegion = composer?.parentElement?.parentElement?.parentElement
+    if (!composerRegion) return []
+    const visible = (element: Element) => {
+      let node: Element | null = element
+      while (node) {
+        const style = window.getComputedStyle(node)
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false
+        node = node.parentElement
+      }
+      const box = element.getBoundingClientRect()
+      return box.width > 0 && box.height > 0
+    }
+    const cards = new Map<Element, string>()
+    for (const badge of composerRegion.querySelectorAll('div')) {
+      if (!visible(badge) || badge.childElementCount !== 0) continue
+      const match = /^(?<extension>[A-Za-z0-9]+)\s+\d+(?:\.\d+)?(?:B|KB|MB|GB)$/u.exec((badge.textContent ?? '').trim())
+      const card = badge.parentElement
+      if (!match?.groups?.extension || !card || !visible(card)) continue
+      cards.set(card, match.groups.extension.toLowerCase())
+    }
+    return [...cards.values()]
+  }).catch(() => [])
+  return Array.isArray(result) && result.every((extension) => typeof extension === 'string')
+    ? result
+    : []
 }
 
 export class DeepSeekModeCapability implements ProviderActionCapability<ModeAction> {

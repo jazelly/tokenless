@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tokenless-internal:web-ai-interaction-protocol:v0:turn-state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "turnRef", "providerRef", "providerBindingRef", "conversationRef", "lifecycle", "dispatchCertainty", "attachmentDelivery"],
+  "properties": {
+    "protocol": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/protocol" },
+    "turnRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/turnRef" },
+    "providerRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerRef" },
+    "providerBindingRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerBindingRef" },
+    "conversationRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/conversationRef" },
+    "lifecycle": { "enum": ["queued", "running", "waiting_for_user", "succeeded", "failed", "cancelled"] },
+    "dispatchCertainty": { "enum": ["not_dispatched", "dispatched", "ambiguous"] },
+    "attachmentDelivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "attachmentRef", "sha256"],
+      "properties": {
+        "status": { "enum": ["pending", "delivered", "rejected"] },
+        "attachmentRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/attachmentRef" },
+        "sha256": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/sha256" }
+      }
+    },
+    "waitingReason": { "enum": ["authentication", "mfa", "captcha", "consent", "provider_blocker", "ambiguous_submission", "manual_intervention"] },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "citations"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 65536, "x-tokenless-internal-maxUtf8Bytes": 131072 },
+        "citations": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/citation" }
+        }
+      }
+    },
+    "error": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/stableError" },
+    "cancelReason": { "enum": ["client_requested", "provider_cancelled", "timeout", "user_declined", "shutdown"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "lifecycle": { "const": "waiting_for_user" } }, "required": ["lifecycle"] },
+      "then": { "required": ["waitingReason"], "not": { "anyOf": [{ "required": ["result"] }, { "required": ["error"] }, { "required": ["cancelReason"] }] } }
+    },
+    {
+      "if": { "properties": { "lifecycle": { "const": "succeeded" } }, "required": ["lifecycle"] },
+      "then": { "properties": { "dispatchCertainty": { "const": "dispatched" } }, "required": ["result"], "not": { "anyOf": [{ "required": ["error"] }, { "required": ["waitingReason"] }, { "required": ["cancelReason"] }] } }
+    },
+    {
+      "if": { "properties": { "lifecycle": { "const": "failed" } }, "required": ["lifecycle"] },
+      "then": { "required": ["error"], "not": { "anyOf": [{ "required": ["result"] }, { "required": ["waitingReason"] }, { "required": ["cancelReason"] }] } }
+    },
+    {
+      "if": { "properties": { "lifecycle": { "const": "cancelled" } }, "required": ["lifecycle"] },
+      "then": { "required": ["cancelReason"], "not": { "anyOf": [{ "required": ["result"] }, { "required": ["error"] }, { "required": ["waitingReason"] }] } }
+    },
+    {
+      "if": { "properties": { "lifecycle": { "enum": ["queued", "running"] } }, "required": ["lifecycle"] },
+      "then": { "not": { "anyOf": [{ "required": ["result"] }, { "required": ["error"] }, { "required": ["waitingReason"] }, { "required": ["cancelReason"] }] } }
+    },
+    {
+      "if": { "properties": { "lifecycle": { "const": "queued" } }, "required": ["lifecycle"] },
+      "then": {
+        "properties": {
+          "dispatchCertainty": { "const": "not_dispatched" },
+          "attachmentDelivery": {
+            "type": "object",
+            "properties": { "status": { "const": "pending" } },
+            "required": ["status"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "waitingReason": { "const": "ambiguous_submission" } }, "required": ["waitingReason"] },
+      "then": { "properties": { "dispatchCertainty": { "const": "ambiguous" } } }
+    },
+    {
+      "if": {
+        "properties": {
+          "attachmentDelivery": {
+            "type": "object",
+            "properties": { "status": { "const": "rejected" } },
+            "required": ["status"]
+          }
+        },
+        "required": ["attachmentDelivery"]
+      },
+      "then": {
+        "properties": {
+          "lifecycle": { "const": "failed" },
+          "dispatchCertainty": { "const": "not_dispatched" }
+        },
+        "required": ["error"]
+      }
+    },
+    {
+      "if": { "properties": { "dispatchCertainty": { "enum": ["dispatched", "ambiguous"] } }, "required": ["dispatchCertainty"] },
+      "then": {
+        "properties": {
+          "attachmentDelivery": {
+            "type": "object",
+            "properties": { "status": { "const": "delivered" } },
+            "required": ["status"]
+          }
+        }
+      }
+    }
+  ]
+}

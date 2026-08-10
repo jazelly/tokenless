@@ -18,13 +18,15 @@ This index separates user guidance, stable product contracts, implementation arc
 ## Provider and Capability Development
 
 - Start with the [Capability Matrix extension process](capability-matrix.md#adding-a-new-capability).
-- Follow the [Provider DOM Fixture Policy](../test/fixtures/provider-dom/README.md).
+- Develop and verify provider behavior only against the real provider website through the configured browser profile.
 - Declare required real-provider cases in [`live-provider-capability-matrix.json`](../test/live-provider-capability-matrix.json).
 - Implement real journeys in [`live-managed-playwright.e2e.mjs`](../test/live-managed-playwright.e2e.mjs).
 - Keep provider-specific behavior under [`packages/cli/src/providers/`](../packages/cli/src/providers/).
 
 ## Adding Documentation
 
+- Do not ship walls of text: keep paragraphs short, and switch to bullets, tables, diagrams, or screenshots when they communicate the same information faster.
+- Keep the root README as a scannable landing page; move detailed explanations into the focused document that owns them and link to it.
 - Put installation and first-run guidance in the paired root READMEs.
 - Put stable user and developer contracts under `docs/` and link them from this index.
 - Put complete CLI syntax in the paired `COMMANDS` references rather than duplicating it across guides.

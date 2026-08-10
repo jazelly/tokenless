@@ -14,6 +14,7 @@ export type ProviderNavigationCatalogId =
   | 'zai'
   | 'doubao'
   | 'kimi'
+  | 'dola'
 
 function pages(...patterns: ProviderPagePattern[]) {
   return Object.freeze(patterns.map((pattern) => Object.freeze(pattern)))
@@ -160,5 +161,18 @@ export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
       { kind: 'capability', urlPattern: 'https://www.kimi.com/sheets' },
     ),
     trustedSignInOrigins: [],
+  }),
+  dola: navigation({
+    entryUrl: 'https://www.dola.com/chat',
+    homeUrl: 'https://www.dola.com/chat',
+    origins: ['https://www.dola.com'],
+    pagePatterns: pages(
+      { kind: 'entry', urlPattern: 'https://www.dola.com/chat' },
+      { kind: 'conversation', urlPattern: 'https://www.dola.com/chat/:conversationId' },
+      { kind: 'capability', urlPattern: 'https://www.dola.com/chat/create-image' },
+    ),
+    trustedSignInOrigins: [
+      { origin: 'https://accounts.google.com' },
+    ],
   }),
 } satisfies Readonly<Record<ProviderNavigationCatalogId, ProviderNavigationDefinition>>)

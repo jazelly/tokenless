@@ -8,6 +8,7 @@ export {
 } from './catalog.js'
 export { OutputSavingsRuntimeManager } from './runtime-manager.js'
 export type { OutputSavingsRuntimeInspection } from './runtime-manager.js'
+export type { CaptureVisibleOutput } from './capture.js'
 export { OUTPUT_SAVINGS_MEASUREMENT_SCHEMA } from './measurement.js'
 export type {
   MeasureVisibleOutput,

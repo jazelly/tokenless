@@ -7,10 +7,17 @@ const repoRoot = path.resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const skillNames = ['tokenless', 'tokenless-install']
 const home = os.homedir()
 const skillRoots = [
-  path.join(home, '.codex'),
   path.join(home, '.agent'),
   path.join(home, '.agents'),
+  path.join(home, '.codex'),
   path.join(home, '.claude'),
+  path.join(home, '.cursor'),
+  path.join(home, '.copilot'),
+  path.join(home, '.gemini'),
+  path.join(home, '.hermes'),
+  path.join(home, '.config', 'opencode'),
+  path.join(home, '.pi', 'agent'),
+  path.join(home, '.codeium', 'windsurf'),
 ]
 
 for (const skillName of skillNames) {

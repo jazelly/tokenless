@@ -13,7 +13,7 @@ const cliEntry = path.join(cliDir, 'dist/src/tokenless.mjs')
 
 test('checked-in live provider capability matrix classifies every registered provider and case', () => {
   const matrix = loadLiveProviderCapabilityMatrix()
-  assert.equal(matrix.schema, 'tokenless.live-provider-capability-matrix.v1')
+  assert.equal(matrix.schema, 'tokenless.live-provider-capability-matrix.v2')
   assert.deepEqual(matrix.knownIssueSkips, [{
     provider: 'claude',
     reason: 'claude_recurring_cloudflare_human_check',
@@ -76,92 +76,157 @@ test('built capability routes stay provenance-bound to required live provider ma
   }
 })
 
-test('persistent config defaults, stores, and validates browser runtime fields through the filesystem boundary', async () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-connection-mode-'))
+test('persistent config preserves native Chrome or Brave and removes managed browser settings', async () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-browser-runtime-'))
   const runtime = await import('../packages/cli/dist/src/index.js')
   try {
     const defaults = await runtime.readTokenlessConfig(homeDir)
-    assert.deepEqual(defaults.outputSavings, { enabled: false })
-    assert.equal(defaults.browserConnectionMode, 'playwright')
+    assert.deepEqual(defaults.outputSavings, { enabled: true })
+    assert.equal(defaults.browser, 'chrome')
+    assert.equal(Object.hasOwn(defaults, 'browserConnectionMode'), false)
     assert.equal(defaults.browserExecutablePath, null)
-    assert.deepEqual(defaults.providerWhitelist, [
-      'chatgpt',
-      'claude',
-      'gemini',
-      'grok',
-      'qwen',
-      'deepseek',
-      'perplexity',
-      'zai',
-      'doubao',
-      'kimi',
-    ])
+    assert.deepEqual(defaults.profiles, {})
+    assert.equal(Object.hasOwn(defaults, 'providerWhitelist'), false)
+    assert.equal(Object.hasOwn(defaults, 'profilePreferences'), false)
     assert.equal(Object.hasOwn(defaults, 'preferredProviders'), false)
-    assert.equal(
-      (await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'cdp' })).browserConnectionMode,
-      'cdp',
-    )
-    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserConnectionMode, 'cdp')
     assert.deepEqual(
-      (await runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: true } })).outputSavings,
-      { enabled: true },
+      (await runtime.writeTokenlessConfig({ homeDir, outputSavings: { enabled: false } })).outputSavings,
+      { enabled: false },
     )
-    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).outputSavings, { enabled: true })
-    const executablePath = path.join(homeDir, 'browsers', 'chrome')
-    await runtime.writeTokenlessConfig({ homeDir, browser: 'chrome', browserExecutablePath: executablePath })
-    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, executablePath)
+    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).outputSavings, { enabled: false })
+    const savedConfig = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.equal(Object.hasOwn(savedConfig, 'browserConnectionMode'), false)
     await runtime.writeTokenlessConfig({ homeDir, browser: 'brave' })
-    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, null)
-    const managedExecutablePath = path.join(homeDir, 'browser', 'runtimes', 'managed-chromium', 'browser')
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browser, 'brave')
+    const nativeExecutablePath = path.join(homeDir, 'user-provided', 'brave')
+    await runtime.writeTokenlessConfig({
+      homeDir,
+      browser: 'brave',
+      browserExecutablePath: nativeExecutablePath,
+    })
+    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, nativeExecutablePath)
+    const legacyExecutablePath = path.join(homeDir, 'browser', 'runtimes', 'managed-chromium', 'browser')
     await runtime.writeTokenlessConfig({
       homeDir,
       browser: 'managed-chromium',
-      browserExecutablePath: managedExecutablePath,
+      browserExecutablePath: legacyExecutablePath,
+      browserVisibility: 'headless',
     })
-    assert.equal((await runtime.readTokenlessConfig(homeDir)).browserExecutablePath, managedExecutablePath)
-    await assert.rejects(
-      runtime.writeTokenlessConfig({
-        homeDir,
-        browser: 'managed-chromium',
-        browserExecutablePath: path.join(homeDir, 'outside-managed-runtime'),
-      }),
-      (error) => error?.code === 'tokenless_config_invalid',
-    )
-    await assert.rejects(
-      runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: 'webdriver' }),
-      (error) => error?.code === 'tokenless_config_invalid',
-    )
-    await assert.rejects(
-      runtime.writeTokenlessConfig({ homeDir, browserExecutablePath: 'relative/browser' }),
-      (error) => error?.code === 'tokenless_config_invalid',
-    )
+    const migrated = await runtime.readTokenlessConfig(homeDir)
+    assert.equal(migrated.browser, 'chrome')
+    assert.equal(migrated.browserExecutablePath, null)
+    assert.equal(migrated.browserVisibility, 'headed')
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('persistent config migrates the legacy preferredProviders key to providerWhitelist', async () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-provider-whitelist-migration-'))
+test('new profiles are logical native Chrome profiles and do not provision a browser runtime', () => {
+  const homeDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tokenless-native-browser-default-'))
+  try {
+    const result = spawnSync(process.execPath, [
+      cliEntry,
+      'profiles',
+      'add',
+      '--profile',
+      'default',
+      '--home',
+      homeDir,
+      '--json',
+    ], { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.equal(JSON.parse(result.stdout).profile.browserMode, 'native')
+    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), true)
+    const config = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.deepEqual(Object.keys(config.profiles), ['default'])
+    assert.ok(config.profiles.default.enabledProviders.includes('chatgpt'))
+    assert.equal(Object.hasOwn(config, 'profilePreferences'), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'runtimes')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('concurrent single-profile config updates preserve both memberships', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-concurrency-')))
+  const runtime = await import('../packages/cli/dist/src/index.js')
+  const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
+  try {
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'alpha', lifecycle: 'ready', setDefault: true })
+    await registry.addProfile({ slug: 'beta', lifecycle: 'ready' })
+    const stale = await runtime.readTokenlessConfig(homeDir)
+    await Promise.all([
+      runtime.upsertTokenlessProfileConfig({
+        homeDir,
+        slug: 'alpha',
+        profile: { ...stale.profiles.alpha, enabledProviders: ['chatgpt'] },
+      }),
+      runtime.upsertTokenlessProfileConfig({
+        homeDir,
+        slug: 'beta',
+        profile: { ...stale.profiles.beta, enabledProviders: ['claude'] },
+      }),
+    ])
+    const persisted = JSON.parse(fs.readFileSync(path.join(homeDir, 'config.json'), 'utf8'))
+    assert.deepEqual(persisted.profiles.alpha.enabledProviders, ['chatgpt'])
+    assert.deepEqual(persisted.profiles.beta.enabledProviders, ['claude'])
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('managed Chrome for Testing catalog follows the platform Cloak major', async () => {
+  const { managedBrowserCatalogEntry } = await import('../packages/cli/dist/src/browser-runtime/catalog.js')
+  const mac = managedBrowserCatalogEntry('managed-chromium', 'darwin-arm64')
+  const windows = managedBrowserCatalogEntry('managed-chromium', 'win32-x64')
+  assert.equal(mac.browserVersion, '145.0.7632.6')
+  assert.equal(windows.browserVersion, '146.0.7680.165')
+  assert.equal(windows.sha256, '65d1d4d993da8b24fc871f59f7c8100ffc3719afd58cbf843d81d6ada9bc9880')
+  assert.equal(path.basename(windows.executableRelativePath), 'chrome.exe')
+})
+
+test('persistent config migrates every registered legacy profile into config.profiles', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-config-migration-')))
   const configPath = path.join(homeDir, 'config.json')
   const runtime = await import('../packages/cli/dist/src/index.js')
+  const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
   try {
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'default', lifecycle: 'ready', setDefault: true })
+    await registry.addProfile({ slug: 'work', lifecycle: 'ready' })
     fs.writeFileSync(configPath, `${JSON.stringify({
       protocol: 'tokenless.config.v1',
-      preferredProviders: ['gemini', 'chatgpt'],
+      providerWhitelist: ['gemini', 'claude'],
+      profilePreferences: {
+        default: {
+          profileId: 'default',
+          roleLabel: 'Personal',
+          enabledProviders: ['chatgpt'],
+          browserVisibility: 'headed',
+          proxy: null,
+        },
+      },
+      browser: 'cloak',
+      browserVisibility: 'auto',
     }, null, 2)}\n`, { mode: 0o600 })
-    assert.deepEqual((await runtime.readTokenlessConfig(homeDir)).providerWhitelist, ['gemini', 'chatgpt'])
-
-    await runtime.writeTokenlessConfig({ homeDir, language: 'zh-CN' })
+    const migrated = await runtime.readTokenlessConfig(homeDir)
+    assert.deepEqual(migrated.profiles.default.enabledProviders, ['chatgpt'])
+    assert.equal(migrated.profiles.default.roleLabel, 'Personal')
+    assert.deepEqual(migrated.profiles.work.enabledProviders, ['gemini', 'claude'])
     const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'))
-    assert.deepEqual(persisted.providerWhitelist, ['gemini', 'chatgpt'])
+    assert.deepEqual(Object.keys(persisted.profiles), ['default', 'work'])
+    assert.equal(Object.hasOwn(persisted.profiles.default, 'profileId'), false)
+    assert.equal(Object.hasOwn(persisted, 'profilePreferences'), false)
+    assert.equal(Object.hasOwn(persisted, 'providerWhitelist'), false)
     assert.equal(Object.hasOwn(persisted, 'preferredProviders'), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
-test('output savings stays disabled and absent from disk until the user explicitly enables it', () => {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-output-savings-disabled-'))
+test('output savings defaults on without downloading its runtime during status checks', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-output-savings-default-on-'))
   try {
     const result = spawnSync(process.execPath, [
       cliEntry,
@@ -175,8 +240,8 @@ test('output savings stays disabled and absent from disk until the user explicit
     assert.deepEqual(JSON.parse(result.stdout), {
       ok: true,
       outputSavings: {
-        enabled: false,
-        collection: 'disabled',
+        enabled: true,
+        collection: 'unavailable',
         estimator: 'o200k_base',
         runtime: {
           state: 'not_installed',
@@ -203,9 +268,19 @@ test('output savings stays disabled and absent from disk until the user explicit
 
 test('workspace packages keep standalone product names', () => {
   const cli = readJson('packages/cli/package.json')
+  const harness = readJson('packages/web-agent-harness/package.json')
+  const protocol = readJson('packages/web-ai-interaction-protocol/package.json')
   assert.equal(cli.name, 'tokenless')
   assert.deepEqual(cli.bin, { tokenless: 'dist/src/tokenless.mjs' })
   assert.ok(!cli.name.startsWith('@tokenless/'))
+  assert.equal(harness.name, 'tokenless-web-agent-harness')
+  assert.equal(harness.private, true)
+  assert.deepEqual(harness.exports, { '.': './dist/src/index.js' })
+  assert.equal(protocol.name, 'tokenless-web-ai-interaction-protocol')
+  assert.equal(protocol.private, true)
+  assert.deepEqual(protocol.exports, { '.': './dist/src/index.js', './local-http': './dist/src/local-http.js' })
+  assert.ok(protocol.files.includes('schemas/v0'))
+  assert.ok(protocol.files.includes('spec'))
   assert.equal(fs.existsSync(path.join(root, 'packages/extension')), false)
 })
 
@@ -249,8 +324,8 @@ test('CLI help separates canonical and advanced commands into described workflow
     'Manage AI providers and their visible controls.',
     'Use miscellaneous maintenance and help commands.',
     'Customize, inspect, resume, or cancel jobs.',
-    'Automate browser runtime and clean-profile setup.',
-    'Discover metadata or manage clean browser profiles.',
+    'Connect native Chrome and configure Tokenless profiles.',
+    'Manage logical Tokenless profiles.',
     'Use low-level actions and provider-specific controls.',
     'Inspect or update persistent Tokenless configuration.',
   ]) {
@@ -261,6 +336,7 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(canonicalUsage, /tokenless capabilities list --json/)
   assert.match(canonicalUsage, /tokenless run --capability <capability>/)
   assert.match(canonicalUsage, /tokenless setup/)
+  assert.match(canonicalUsage, /tokenless agents install codex/)
   assert.match(canonicalUsage, /tokenless profiles list/)
   assert.match(canonicalUsage, /tokenless provider-status/)
   assert.match(canonicalUsage, /tokenless doctor/)
@@ -275,6 +351,7 @@ test('CLI help separates canonical and advanced commands into described workflow
   assert.match(advancedUsage, /tokenless state/)
   assert.match(advancedUsage, /tokenless profiles remove/)
   assert.match(advancedUsage, /tokenless config/)
+  assert.match(advancedUsage, /tokenless agents inspect codex/)
   assert.match(advancedUsage, /tokenless savings enable --json/)
   assert.match(result.stderr, /^Short options:$/m)
   assert.match(result.stderr, /^  -P, --profile <slug>        Select a managed browser profile\.$/m)
@@ -329,7 +406,7 @@ test('CLI localizes human output from system setup locale and persistent languag
   }
 })
 
-test('CLI accepts distinct case-sensitive short options for profile and provider', () => {
+test('CLI accepts distinct case-sensitive short options for profile and provider', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-short-options-')))
   try {
     const added = spawnSync(process.execPath, [
@@ -471,9 +548,7 @@ test('CLI rejects misspelled, unknown, and wrong-command options with usage befo
     ['prompt', '--provider', 'chatgpt'],
     ['profiles', 'add', '--action', 'prompt.submit'],
     ['profiles', 'clear', '--action', 'prompt.submit'],
-    ['profiles', 'discover', '--profile', 'default'],
     ['profiles', 'list', '--profile', 'default'],
-    ['profiles', 'reset', '--action', 'prompt.submit'],
     ['profiles', 'status', '--all'],
     ['profiles', 'open', '--all'],
     ['profiles', 'set-default', '--provider', 'chatgpt'],
@@ -534,7 +609,7 @@ test('CLI keeps human output succinct and exposes verbose diagnostics with contr
     const json = runCli(['config', '--home', homeDir, '--json', '--color'])
     assert.equal(json.status, 0, json.stderr)
     assert.doesNotMatch(json.stdout, /\u001b\[/)
-    assert.deepEqual(JSON.parse(json.stdout).config.browserVisibility, 'auto')
+    assert.deepEqual(JSON.parse(json.stdout).config.browserVisibility, 'headed')
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -596,6 +671,8 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/playwright/index.d.ts'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/daemon-entry.mjs'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/tokenless.mjs'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/web-agent-harness/src/index.js'))
+    assert.ok(universalPack.files.some((file) => file.path === 'dist/web-agent-harness/src/index.d.ts'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/index.html'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/app.js'))
     assert.ok(universalPack.files.some((file) => file.path === 'dist/src/daemon/ui/styles.css'))
@@ -631,6 +708,19 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', '@tokenless', 'playwright')), false)
     assert.equal(fs.existsSync(path.join(installDir, 'node_modules', 'tokenless-native-darwin-arm64')), false)
     assert.equal(fs.existsSync(installedDaemonEntry), true)
+    assert.equal(fs.existsSync(path.join(installedCli, 'dist', 'web-agent-harness', 'src', 'index.js')), true)
+
+    const codexHome = path.join(installDir, 'codex-home')
+    const tokenlessHome = path.join(installDir, 'tokenless-home')
+    const installedCodex = spawnSync(process.execPath, [
+      path.join(installedCli, 'dist', 'src', 'tokenless.mjs'),
+      'agents', 'install', 'codex',
+      '--codex-home', codexHome,
+      '--home', tokenlessHome,
+      '--json',
+    ], { cwd: installDir, encoding: 'utf8' })
+    assert.equal(installedCodex.status, 0, installedCodex.stderr || installedCodex.stdout)
+    assert.equal(JSON.parse(installedCodex.stdout).status.hooks.installed, true)
 
     const buildInfo = JSON.parse(execFileSync(process.execPath, [installedDaemonEntry, '--tokenless-build-info'], {
       encoding: 'utf8',
@@ -655,45 +745,16 @@ test('pure JS CLI packs, installs, and exposes executable runtime artifacts', ()
 })
 
 test('CLI rejects removed local fallback routes before network access', () => {
-  for (const flag of ['--fresh', '-f']) {
-    const conflict = spawnSync(process.execPath, [
-      cliEntry,
-      'setup',
-      flag,
-      '--import-browser-profile',
-      'Default',
-      '--json',
-    ], { cwd: root, encoding: 'utf8' })
-    assert.equal(conflict.status, 1)
-    const payload = JSON.parse(conflict.stdout)
-    assert.equal(payload.error.code, 'setup_profile_choice_conflict')
-    assert.match(payload.error.message, /--fresh cannot be combined with --import-browser-profile/)
-  }
-
-  const reimportConflict = spawnSync(process.execPath, [
-    cliEntry,
-    'setup',
-    '--fresh',
-    '--reimport-profile',
-    '--json',
-  ], { cwd: root, encoding: 'utf8' })
-  assert.equal(reimportConflict.status, 1)
-  assert.equal(JSON.parse(reimportConflict.stdout).error.code, 'setup_profile_choice_conflict')
-
-  const copyConsentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-copy-consent-'))
-  const copyConsentHome = path.join(copyConsentRoot, 'home')
-  try {
-    for (const args of [
-      ['setup', '--import-browser-profile', 'Default', '--home', copyConsentHome, '--json'],
-      ['profiles', 'add', '--profile', 'copied', '--import-browser-profile', 'Default', '--home', copyConsentHome, '--json'],
-    ]) {
-      const result = spawnSync(process.execPath, [cliEntry, ...args], { cwd: root, encoding: 'utf8' })
-      assert.equal(result.status, 1, result.stderr || result.stdout)
-      assert.equal(JSON.parse(result.stdout).error.code, 'profile_import_consent_required')
-      assert.equal(fs.existsSync(copyConsentHome), false, 'missing consent must fail before local profile mutation')
-    }
-  } finally {
-    fs.rmSync(copyConsentRoot, { recursive: true, force: true })
+  for (const args of [
+    ['setup', '--import-browser-profile', 'Default', '--json'],
+    ['setup', '--reimport-profile', '--json'],
+    ['profiles', 'add', '--profile', 'copied', '--consent-local-profile-copy', '--json'],
+    ['profiles', 'discover', '--json'],
+    ['profiles', 'reset', '--profile', 'default', '--json'],
+  ]) {
+    const result = spawnSync(process.execPath, [cliEntry, ...args], { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 2, result.stderr || result.stdout)
+    assert.ok(['unknown_argument', 'profiles_command_invalid'].includes(JSON.parse(result.stdout).error.code))
   }
 
   const compatibilityAlias = spawnSync(process.execPath, [
@@ -703,7 +764,7 @@ test('CLI rejects removed local fallback routes before network access', () => {
     '--json',
   ], { cwd: root, encoding: 'utf8' })
   assert.equal(compatibilityAlias.status, 2)
-  assert.equal(JSON.parse(compatibilityAlias.stdout).error.code, 'invalid_option')
+  assert.equal(JSON.parse(compatibilityAlias.stdout).error.code, 'unknown_argument')
 
   const removed = spawnSync(process.execPath, [
     cliEntry,
@@ -756,159 +817,27 @@ test('CLI rejects removed local fallback routes before network access', () => {
   assert.equal(JSON.parse(removedProjectRouteFlag.stdout).error.code, 'unknown_argument')
 })
 
-test('built CLI classifies Chromium profile directories without reading browser state', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-profile-inventory-'))
-  const expectedCloakVersion = process.platform === 'win32'
-    ? '146.0.7680.177'
-    : '145.0.7632.109'
-  try {
-    fs.mkdirSync(path.join(root, 'Default'))
-    fs.mkdirSync(path.join(root, 'Profile 1'))
-    fs.mkdirSync(path.join(root, 'System Profile'))
-    fs.writeFileSync(path.join(root, 'Last Version'), expectedCloakVersion)
-    fs.writeFileSync(path.join(root, 'Local State'), 'intentionally invalid and never read')
-
-    const aligned = spawnSync(process.execPath, [
-      cliEntry,
-      'profiles',
-      'discover',
-      '--browser',
-      'edge',
-      '--browser-user-data-dir',
-      root,
-      '--json',
-    ], { cwd: root, encoding: 'utf8' })
-    assert.equal(aligned.status, 0, aligned.stderr || aligned.stdout)
-    const alignedPayload = JSON.parse(aligned.stdout)
-    assert.equal(alignedPayload.cloak.browserVersion, expectedCloakVersion)
-    assert.equal(alignedPayload.roots[0].browser, 'edge')
-    assert.deepEqual(
-      alignedPayload.roots[0].profiles.map((profile) => ({
-        directoryKey: profile.directoryKey,
-        compatibility: profile.cloakCompatibility,
-      })),
-      [
-        { directoryKey: 'Default', compatibility: 'aligned' },
-        { directoryKey: 'Profile 1', compatibility: 'aligned' },
-      ],
-    )
-
-    fs.writeFileSync(path.join(root, 'Last Version'), '150.0.7871.187')
-    const mismatched = spawnSync(process.execPath, [
-      cliEntry,
-      'profiles',
-      'discover',
-      '--browser',
-      'edge',
-      '--browser-user-data-dir',
-      root,
-      '--json',
-    ], { cwd: root, encoding: 'utf8' })
-    assert.equal(mismatched.status, 0, mismatched.stderr || mismatched.stdout)
-    assert.deepEqual(
-      JSON.parse(mismatched.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
-      ['not_aligned', 'not_aligned'],
-    )
-
-    fs.writeFileSync(path.join(root, 'Last Version'), '146.0.7680')
-    const incomplete = spawnSync(process.execPath, [
-      cliEntry,
-      'profiles',
-      'discover',
-      '--browser',
-      'edge',
-      '--browser-user-data-dir',
-      root,
-      '--json',
-    ], { cwd: root, encoding: 'utf8' })
-    assert.equal(incomplete.status, 0, incomplete.stderr || incomplete.stdout)
-    assert.deepEqual(
-      JSON.parse(incomplete.stdout).roots[0].profiles.map((profile) => profile.cloakCompatibility),
-      ['unknown', 'unknown'],
-    )
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test('Cloak setup gates explicit profile import on an exact supported browser version before download', () => {
+test('built CLI reads managed profile registries without enforcing POSIX mode bits', async () => {
   const temporaryRoot = fs.realpathSync(os.tmpdir())
-  const profileRoot = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-cloak-import-profile-'))
-  const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-cloak-import-home-'))
-  const expectedCloakVersion = process.platform === 'win32'
-    ? '146.0.7680.177'
-    : '145.0.7632.109'
-  const setupArgs = [
-    cliEntry,
-    'setup',
-    '--browser', 'cloak',
-    '--import-browser-profile', 'Default',
-    '--browser-user-data-dir', profileRoot,
-    '--consent-local-profile-copy',
-    '--defaults',
-    '--no-browser-download',
-    '--home', homeDir,
-    '--json',
-  ]
+  const homeDir = fs.mkdtempSync(path.join(temporaryRoot, 'tokenless-profile-registry-mode-'))
   try {
-    fs.mkdirSync(path.join(profileRoot, 'Default'))
-    fs.writeFileSync(path.join(profileRoot, 'Last Version'), '150.0.7871.187')
-    fs.writeFileSync(path.join(profileRoot, 'Local State'), 'intentionally invalid and never read')
+    const { ManagedProfileRegistry } = await import('../packages/cli/dist/src/playwright/profiles/registry.js')
+    const registry = new ManagedProfileRegistry(homeDir)
+    await registry.addProfile({ slug: 'mode-visible', lifecycle: 'ready' })
+    fs.chmodSync(registry.paths.registryFile, 0o644)
 
-    const mismatched = spawnSync(process.execPath, setupArgs, { cwd: root, encoding: 'utf8' })
-    assert.equal(mismatched.status, 1, mismatched.stderr || mismatched.stdout)
-    assert.equal(JSON.parse(mismatched.stdout).error.code, 'cloak_profile_version_incompatible')
-
-    fs.writeFileSync(path.join(profileRoot, 'Last Version'), expectedCloakVersion)
-    const aligned = spawnSync(process.execPath, setupArgs, { cwd: root, encoding: 'utf8' })
-    assert.equal(aligned.status, 1, aligned.stderr || aligned.stdout)
-    assert.equal(JSON.parse(aligned.stdout).error.code, 'browser_runtime_download_required')
-  } finally {
-    fs.rmSync(homeDir, { recursive: true, force: true })
-    fs.rmSync(profileRoot, { recursive: true, force: true })
-  }
-})
-
-test('non-interactive Cloak setup requires an explicit Anti-Detect selection', () => {
-  const homeDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'tokenless-cloak-consent-'))
-  try {
-    const configured = spawnSync(process.execPath, [
+    const listed = spawnSync(process.execPath, [
       cliEntry,
-      'config',
-      '--browser',
-      'cloak',
+      'profiles',
+      'list',
       '--home',
       homeDir,
       '--json',
     ], { cwd: root, encoding: 'utf8' })
-    assert.equal(configured.status, 0, configured.stderr || configured.stdout)
-
-    const implicit = spawnSync(process.execPath, [
-      cliEntry,
-      'setup',
-      '--defaults',
-      '--no-browser-download',
-      '--home',
-      homeDir,
-      '--json',
-    ], { cwd: root, encoding: 'utf8' })
-    assert.equal(implicit.status, 1, implicit.stderr || implicit.stdout)
-    assert.equal(JSON.parse(implicit.stdout).error.code, 'setup_cloak_confirmation_required')
-    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
-
-    const explicit = spawnSync(process.execPath, [
-      cliEntry,
-      'setup',
-      '--anti-detect',
-      '--fresh',
-      '--no-browser-download',
-      '--home',
-      homeDir,
-      '--json',
-    ], { cwd: root, encoding: 'utf8' })
-    assert.equal(explicit.status, 1, explicit.stderr || explicit.stdout)
-    assert.equal(JSON.parse(explicit.stdout).error.code, 'browser_runtime_download_required')
-    assert.equal(fs.existsSync(path.join(homeDir, 'browser', 'profiles.json')), false)
+    assert.equal(listed.status, 0, listed.stderr || listed.stdout)
+    const payload = JSON.parse(listed.stdout)
+    assert.equal(payload.ok, true)
+    assert.deepEqual(payload.profiles.map((profile) => profile.slug), ['mode-visible'])
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }

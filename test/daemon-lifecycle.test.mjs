@@ -396,8 +396,8 @@ test('doctor is read-only for an uninitialized Tokenless home', () => {
     assert.equal(payload.checks.managedProfile.ok, false)
     assert.deepEqual(payload.checks.outputSavings, {
       ok: true,
-      enabled: false,
-      collection: 'disabled',
+      enabled: true,
+      collection: 'unavailable',
       runtime: {
         runtimeId: 'tiktoken-o200k_base-1.0.22',
         state: 'not_installed',
@@ -409,6 +409,43 @@ test('doctor is read-only for an uninitialized Tokenless home', () => {
     assert.equal(fs.existsSync(homeDir), false, result.stdout)
   } finally {
     fs.rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('doctor reports a saved but unusable browser executable path as incomplete configuration', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-doctor-browser-path-')))
+  const configuredPath = path.join(homeDir, 'missing-google-chrome')
+  fs.writeFileSync(path.join(homeDir, 'config.json'), `${JSON.stringify({
+    protocol: 'tokenless.config.v1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    profiles: {},
+    browser: 'chrome',
+    browserExecutablePath: configuredPath,
+    browserVisibility: 'headed',
+    daemonUrl: null,
+    language: 'en',
+    outputSavings: { enabled: true },
+  }, null, 2)}\n`, { mode: 0o600 })
+  const before = snapshotTree(homeDir)
+  try {
+    const result = runCli(['doctor', '--home', homeDir, '--daemon-url', 'http://127.0.0.1:9', '--json'])
+    assert.equal(result.status, 1)
+    const payload = JSON.parse(result.stdout)
+    assert.equal(payload.checks.config.ok, true)
+    assert.equal(payload.checks.configuration.ok, false)
+    assert.equal(payload.checks.configuration.complete, false)
+    assert.deepEqual(payload.checks.configuration.browser, {
+      selection: 'chrome',
+      executablePathConfigured: true,
+      executablePathValid: false,
+      resolved: payload.checks.browser.ok,
+    })
+    const issue = payload.checks.configuration.issues.find((candidate) => candidate.code === 'browser_executable_path_unusable')
+    assert.equal(issue.message.includes(configuredPath), true)
+    assert.match(issue.nextAction, /--browser-executable-path/)
+    assert.deepEqual(snapshotTree(homeDir), before)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
 
@@ -443,6 +480,9 @@ test('daemon stop uses bearer-authenticated self-shutdown for a verified daemon'
     assert.equal(payload.pid, pid)
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.pid.json')), false)
     assert.equal(await pidExited(pid), true)
+    const repeated = runCli(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    assert.equal(repeated.status, 0, repeated.stderr || repeated.stdout)
+    assert.equal(JSON.parse(repeated.stdout).status, 'not_running')
     pid = undefined
   } finally {
     if (pid) await stopPid(pid)
@@ -539,8 +579,6 @@ test('doctor validates an existing managed profile registry without mutating hom
       personal: {
         slug: 'personal',
         id: profileId,
-        label: 'Personal',
-        labelOrigin: 'user',
         directory: path.join(profilesDir, profileId),
         lifecycle: 'ready',
         createdAt: now,
@@ -664,7 +702,7 @@ async function startReadyOnlyDaemon({ homeDir, daemonUrl, token, version }) {
   function closeServer() {
     if (closed) return Promise.resolve()
     closed = true
-    return new Promise((resolve) => server.close(() => resolve()))
+    return closeHttpServer(server)
   }
 }
 
@@ -682,9 +720,17 @@ async function startForeignListener(daemonUrl) {
     close() {
       if (closed) return Promise.resolve()
       closed = true
-      return new Promise((resolve) => server.close(() => resolve()))
+      return closeHttpServer(server)
     },
   }
+}
+
+function closeHttpServer(server) {
+  const closing = new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve())
+  })
+  server.closeAllConnections()
+  return closing
 }
 
 function readPersistedRuntimeOrigin(homeDir) {
@@ -721,7 +767,6 @@ function seedStartingRuntimeState(homeDir, { generation, ownerToken, ownerPid })
   const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'))
   try {
     database.exec(`
-      PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS daemon_runtime_state (
         id TEXT PRIMARY KEY NOT NULL CHECK (id = 'daemon'),
         generation INTEGER NOT NULL,

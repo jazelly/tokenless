@@ -91,8 +91,8 @@ function validateUiOpenApiDocument(artifactPath, parsed) {
   if (!isRecord(parsed.components?.securitySchemes?.uiSession) || !isRecord(parsed.components?.securitySchemes?.csrf)) {
     throw new Error(`${artifactPath} must define uiSession and csrf security schemes`)
   }
-  if (JSON.stringify(parsed.security) !== JSON.stringify([{ uiSession: [] }])) {
-    throw new Error(`${artifactPath} must require the UI session by default`)
+  if (parsed.security !== undefined) {
+    throw new Error(`${artifactPath} must not require the UI session globally because UI GET requests establish it automatically`)
   }
 
   const mutationSecurity = JSON.stringify([{ uiSession: [], csrf: [] }])
@@ -111,6 +111,9 @@ function validateUiOpenApiDocument(artifactPath, parsed) {
       operationIds.add(operation.operationId)
       if (!isRecord(operation.responses) || Object.keys(operation.responses).length === 0) {
         throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must define responses`)
+      }
+      if (method === 'get' && operation.security !== undefined && JSON.stringify(operation.security) !== '[]') {
+        throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must allow automatic UI session establishment`)
       }
       if (method !== 'get' && JSON.stringify(operation.security) !== mutationSecurity) {
         throw new Error(`${artifactPath} ${method.toUpperCase()} ${route} must require UI session and CSRF security`)
@@ -232,14 +235,16 @@ function escapeJsonPointer(value) {
 
 function newAjv() {
   const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false })
-  ajv.addKeyword({
-    keyword: 'x-tokenless-maxUtf8Bytes',
-    type: 'string',
-    schemaType: 'number',
-    validate(limit, value) {
-      return Buffer.byteLength(value, 'utf8') <= limit
-    },
-  })
+  for (const keyword of ['x-tokenless-maxUtf8Bytes', 'x-tokenless-internal-maxUtf8Bytes']) {
+    ajv.addKeyword({
+      keyword,
+      type: 'string',
+      schemaType: 'number',
+      validate(limit, value) {
+        return Buffer.byteLength(value, 'utf8') <= limit
+      },
+    })
+  }
   addFormats(ajv)
   return ajv
 }

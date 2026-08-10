@@ -2,7 +2,6 @@ export const SYSTEM_BROWSER_IDS = Object.freeze([
   'chrome',
   'brave',
   'edge',
-  'arc',
   'chromium',
   'chrome-for-testing',
 ] as const)
@@ -20,7 +19,12 @@ export type BrowserSelection = (typeof BROWSER_SELECTIONS)[number]
 export type ManagedBrowserFamily = 'managed-chromium' | 'cloak'
 export type BrowserRuntimeFamily = 'system' | ManagedBrowserFamily | 'test'
 export type BrowserLaunchPolicy = 'standard' | 'cloak' | 'test-profile'
-export type BrowserRuntimePlatform = 'darwin-arm64' | 'win32-x64'
+export type BrowserRuntimePlatform =
+  | 'darwin-arm64'
+  | 'darwin-x64'
+  | 'linux-arm64'
+  | 'linux-x64'
+  | 'win32-x64'
 
 export type BrowserRuntimeBinding = {
   runtimeId: string
@@ -92,12 +96,13 @@ export function normalizeBrowserSelection(value: unknown): BrowserSelection | nu
   const aliases: Record<string, BrowserSelection> = {
     'google-chrome': 'chrome',
     googlechrome: 'chrome',
+    'brave-browser': 'brave',
+    bravebrowser: 'brave',
     'chrome-testing': 'chrome-for-testing',
     'chrome-for-testing-legacy': 'chrome-for-testing',
     'chromium-browser': 'chromium',
     'microsoft-edge': 'edge',
     msedge: 'edge',
-    'brave-browser': 'brave',
     managed: 'managed-chromium',
     'tokenless-chromium': 'managed-chromium',
     cloakbrowser: 'cloak',

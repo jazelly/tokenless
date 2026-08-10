@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
+import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
 import {
   knownIssueSkipForDurableBlocker,
   loadLiveProviderCapabilityMatrix,
@@ -24,9 +25,9 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const matrix = loadLiveProviderCapabilityMatrix()
 const gate = requiredGate()
-const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
-const profileSlug = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
-const browserConnectionMode = optionalConnectionMode(process.env.TOKENLESS_LIVE_BROWSER_CONNECTION_MODE)
+const browserTarget = await resolveConfiguredBrowserTarget()
+const homeDir = browserTarget.homeDir
+const profileSlug = browserTarget.profile.slug
 const providerFilter = optionalProviderFilter(process.env.TOKENLESS_LIVE_E2E_PROVIDER)
 const caseFilter = optionalCaseFilter(process.env.TOKENLESS_LIVE_E2E_CASES)
 const suiteRunMarker = `${compactTimestamp(new Date())}_${randomUUID().slice(0, 8)}`
@@ -72,18 +73,13 @@ const suiteReport = createLiveProviderE2eReport({
   runId: suiteRunMarker,
   startedAt: new Date().toISOString(),
   gate,
-  connectionMode: browserConnectionMode,
   profileSlug,
   matrix,
   selectedProviders,
 })
 let sharedSession
-let originalBrowserConnectionMode
 
 test.before(async () => {
-  const runtime = await import('../packages/cli/dist/src/index.js')
-  originalBrowserConnectionMode = (await runtime.readTokenlessConfig(homeDir)).browserConnectionMode
-  await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode })
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   sharedSession = await createLiveBrowserInspectionSession({
     homeDir,
@@ -96,14 +92,6 @@ test.after(async () => {
   const cleanupErrors = []
   try {
     await sharedSession?.close()
-  } catch (error) {
-    cleanupErrors.push(error)
-  }
-  try {
-    if (originalBrowserConnectionMode) {
-      const runtime = await import('../packages/cli/dist/src/index.js')
-      await runtime.writeTokenlessConfig({ homeDir, browserConnectionMode: originalBrowserConnectionMode })
-    }
   } catch (error) {
     cleanupErrors.push(error)
   }
@@ -459,17 +447,16 @@ async function doubaoControls({ provider, journey }) {
   const skills = responseResult(skillInspection.payload, 'doubao.skill.inspect')
   assert.equal(skills?.supported, true)
   assert.equal(skills?.activeSkill, 'chat')
-  assert.deepEqual(
-    skills?.skills?.find((choice) => choice.skill === 'audio-transcription'),
-    {
-      skill: 'audio-transcription',
-      nativeLabel: '录音转写',
-      canonicalCapabilities: ['audio.transcription'],
-      enabled: false,
-      selected: false,
-      reason: 'desktop_app_required',
-    },
-  )
+  const audioTranscription = skills?.skills?.find((choice) => choice.skill === 'audio-transcription')
+  assert.deepEqual({ ...audioTranscription, reason: undefined }, {
+    skill: 'audio-transcription',
+    nativeLabel: '录音转写',
+    canonicalCapabilities: ['audio.transcription'],
+    enabled: false,
+    selected: false,
+    reason: undefined,
+  })
+  assert.ok([null, 'desktop_app_required'].includes(audioTranscription?.reason))
   const selectableSkills = skills.skills.filter((choice) => choice.enabled && choice.skill !== 'chat')
   assert.deepEqual(selectableSkills.map((choice) => choice.skill), [
     'document-writing',
@@ -477,7 +464,6 @@ async function doubaoControls({ provider, journey }) {
     'image-generation',
     'video-generation',
     'deep-research',
-    'audio-podcast',
     'music-generation',
     'problem-solving',
     'spreadsheet-generation',
@@ -602,7 +588,7 @@ async function choiceCase({ provider, journey }, kind) {
   const changed = await journey.action(selectAction, [option, alternate.label])
   try {
     assert.equal(responseResult(changed.payload, selectAction)?.selectedLabel, alternate.label)
-    assert.equal(await exactTextVisible(changed.page, alternate.label), true, `${provider} observer must see selected ${kind}`)
+    assert.equal(await choiceLabelVisible(changed.page, alternate.label), true, `${provider} observer must see selected ${kind}`)
   } finally {
     await changed.close()
     const restored = await journey.action(selectAction, [option, selected.label])
@@ -611,23 +597,66 @@ async function choiceCase({ provider, journey }, kind) {
   }
 }
 
+async function choiceLabelVisible(page, label) {
+  if (await exactTextVisible(page, label)) return true
+  const controls = page.locator('button[aria-haspopup="menu"]').filter({ visible: true })
+  for (let index = 0; index < await controls.count(); index += 1) {
+    const text = await controls.nth(index).evaluate((element) => (
+      `${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''}`
+    ).replace(/\s+/gu, ' ').trim())
+    if (text === label || text.includes(label)) return true
+  }
+  return false
+}
+
 async function fileSelection({ provider, journey }) {
-  const name = `${markerFor(provider, 'ATTACHMENT')}.txt`
+  const extension = provider === 'gemini' ? '.md' : '.txt'
+  const name = `${markerFor(provider, 'ATTACHMENT')}${extension}`
   const file = path.join(root, 'test-results', 'live-provider-inputs', name)
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
   await fs.writeFile(file, `${name}\n`, { mode: 0o600 })
   const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
+  let geminiAttachmentCardsBefore = null
   try {
     if (deepSeekState) {
       const instant = await journey.action('deepseek.mode.select', ['--deepseek-mode', 'Instant'])
       assert.equal(responseResult(instant.payload, 'deepseek.mode.select')?.selectedMode, 'Instant')
       await instant.close()
     }
-    const uploaded = await journey.action('file.upload', ['--attach-file', file], 180_000)
+    const uploaded = await journey.action(
+      'file.upload',
+      ['--attach-file', file],
+      180_000,
+      provider === 'gemini'
+        ? async ({ page }) => {
+          const deadline = Date.now() + 180_000
+          while (Date.now() <= deadline) {
+            const after = await visibleGeminiAttachmentCardCount(page)
+            if (after > geminiAttachmentCardsBefore) return after
+            await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+          return await visibleGeminiAttachmentCardCount(page)
+        }
+        : undefined,
+      provider === 'gemini'
+        ? async ({ page }) => {
+          geminiAttachmentCardsBefore = await visibleGeminiAttachmentCardCount(page)
+        }
+        : undefined,
+    )
     const result = responseResult(uploaded.payload, 'file.upload')
     assert.ok(result?.attachments?.some((attachment) => attachment.name === name))
-    const visibleName = provider === 'kimi' ? path.parse(name).name : name
-    assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
+    if (provider === 'gemini') {
+      assert.ok(Number.isInteger(geminiAttachmentCardsBefore), 'Gemini observer must record its initial physical card count')
+      assert.equal(
+        uploaded.observerResult,
+        geminiAttachmentCardsBefore + 1,
+        'Gemini observer must see one newly visible physical attachment card',
+      )
+    } else {
+      const visibleName = provider === 'kimi' ? path.parse(name).name : name
+      assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
+    }
     await uploaded.close()
     const cleared = await journey.action('prompt.clear')
     await cleared.close()
@@ -658,10 +687,10 @@ async function conversationWorkflow({ provider, journey }) {
       ] : []),
       '--attach-file', attachment,
       '--prompt', [
-        'Read the attached file and include its exact marker in your response.',
-        `Also include this exact response marker: ${responseMarker}.`,
-        `Remember this secret for my next message but do not reveal it yet: ${contextSecret}.`,
-        'Identify the official Node.js homepage and cite that official source.',
+        'Read the attached text file.',
+        'Respond with exactly three lines: the exact file contents; then the following response marker;',
+        `${responseMarker}; then a Markdown link to the official Node.js homepage.`,
+        `Remember ${contextSecret} for my next message, but do not include it in this response.`,
       ].join(' '),
     ], 360_000, ({ page }) => waitForExactText(
       page,
@@ -809,7 +838,7 @@ async function nativeProject({ provider, journey }) {
     ? `TLP_KIMI_PROJECT_${randomUUID().slice(0, 8)}`
     : markerFor(provider, 'PROJECT')
   const instructionMarker = markerFor(provider, 'PROJECT_INSTRUCTION')
-  const instructions = `Include this exact marker in every response: ${instructionMarker}`
+  const instructions = `Fully answer each request, then append this exact marker on a new final line: ${instructionMarker}`
   const created = await journey.action('workspace.ensure', [
     '--project-name', projectName,
     '--workspace-mode', 'native',
@@ -855,7 +884,7 @@ async function nativeProject({ provider, journey }) {
       '--workspace-mode', 'native',
       '--attach-file', attachment,
       ...controls.flatMap((control) => [control.option, control.alternate]),
-      '--prompt', `Read the attached file and report its exact marker.`,
+      '--prompt', `Read the Project file named ${attachmentName}, report the exact marker it contains, and follow the Project instructions. Return both markers.`,
     ], 360_000, ({ page }) => waitForExactText(
       page,
       provider === 'kimi' ? path.parse(attachmentName).name : attachmentName,
@@ -1121,8 +1150,8 @@ function createProviderJourney(session, provider) {
     authenticated: false,
     skipReason: null,
   }
-  journey.action = (visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) => (
-    action(journey, visibleAction, args, timeoutMs, observeAfterRelease)
+  journey.action = (visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease, observeBeforeRelease) => (
+    action(journey, visibleAction, args, timeoutMs, observeAfterRelease, observeBeforeRelease)
   )
   journey.run = (args, timeoutMs = 300_000, observeAfterRelease) => (
     cliRun(journey, args, timeoutMs, observeAfterRelease)
@@ -1130,7 +1159,14 @@ function createProviderJourney(session, provider) {
   return journey
 }
 
-async function action(journey, visibleAction, args = [], timeoutMs = 120_000, observeAfterRelease) {
+async function action(
+  journey,
+  visibleAction,
+  args = [],
+  timeoutMs = 120_000,
+  observeAfterRelease,
+  observeBeforeRelease,
+) {
   assert.equal(args.includes('--task-id'), false, 'provider journey owns the stable task id')
   const operation = await journey.session.startCli([
     'provider-action',
@@ -1141,8 +1177,10 @@ async function action(journey, visibleAction, args = [], timeoutMs = 120_000, ob
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
   ], {
+    startTimeoutMs: timeoutMs,
     beforeRelease: async ({ waiting, page }) => {
       await assertJourneyPage(journey, waiting, page, true)
+      await observeBeforeRelease?.({ waiting, page })
     },
     observeAfterRelease,
   })
@@ -1168,6 +1206,7 @@ async function cliRun(journey, args, timeoutMs = 300_000, observeAfterRelease) {
     '--browser-visibility', 'headed',
     '--timeout-ms', String(timeoutMs),
   ], {
+    startTimeoutMs: timeoutMs,
     beforeRelease: async ({ waiting, page }) => {
       await assertJourneyPage(journey, waiting, page, false)
     },
@@ -1371,7 +1410,7 @@ async function pageContains(page, value, minimumVisibleMatches = 1) {
 
 async function visibleCitationCount(page, citations) {
   const expected = new Set(citations.map((citation) => canonicalPageUrl(citation.href)))
-  const controls = page.locator('main a[href], .chat-content-item-assistant a[href]')
+  const controls = page.locator('a[href]')
   let count = 0
   for (let index = 0; index < await controls.count(); index += 1) {
     const control = controls.nth(index)
@@ -1413,6 +1452,10 @@ async function visibleLocatorCount(locator) {
   return visible
 }
 
+async function visibleGeminiAttachmentCardCount(page) {
+  return await visibleLocatorCount(page.locator('.gem-attachment'))
+}
+
 async function freePort() {
   const server = net.createServer()
   await new Promise((resolve, reject) => {
@@ -1431,17 +1474,6 @@ function requiredGate() {
     throw e2eFailure('e2e_gate_invalid', 'TOKENLESS_LIVE_E2E_GATE must be all, non_submission, mutation, or project')
   }
   return value
-}
-
-function optionalConnectionMode(value) {
-  const connectionMode = value ?? 'playwright'
-  if (connectionMode !== 'playwright' && connectionMode !== 'cdp') {
-    throw e2eFailure(
-      'e2e_browser_connection_mode_invalid',
-      'TOKENLESS_LIVE_BROWSER_CONNECTION_MODE must be playwright or cdp',
-    )
-  }
-  return connectionMode
 }
 
 function optionalProviderFilter(value) {

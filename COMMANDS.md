@@ -12,17 +12,16 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless --version` | Print the installed CLI version. | None |
 | `tokenless install` | Low-level local runtime provisioning; use `tokenless upgrade` for normal maintenance. | None |
 | `tokenless setup` | Configure skills, browser, profiles, daemon, and one-time provider sign-in checks. | Yes |
-| `tokenless dashboard` | Open or mint a one-time URL for the authenticated local web control plane. | None |
+| `tokenless agents <install\|status\|inspect\|uninstall> codex` | Manage the optional Codex guidance, native hooks, and exact Harness context binding. | None |
+| `tokenless dashboard` | Open the local web control plane, or print its direct loopback URL. | None |
 | `tokenless doctor` | Read local configuration and runtime health without refreshing providers. | None |
 | `tokenless config` | Read or update persistent Tokenless configuration. | None |
 | `tokenless upgrade` | Upgrade the global CLI, skills, local runtime, and run doctor. | None |
-| `tokenless profiles discover` | Read safe directory/version metadata for known Chromium profiles and classify alignment with the platform Cloak pin. | None |
-| `tokenless profiles add` | Create a clean managed browser profile. | None |
+| `tokenless profiles add` | Create a logical Tokenless profile for tabs and provider configuration. | None |
 | `tokenless profiles list` | List profiles and their last saved provider observations. | None |
 | `tokenless profiles status` | Check one provider live and save the observation to the profile registry. | Yes |
 | `tokenless profiles open` | Open a managed profile headed, optionally navigating to one provider. | Optional |
 | `tokenless profiles set-default` | Select the default managed profile. | None |
-| `tokenless profiles reset` | Legacy compatibility command; profile copying is disabled. | None |
 | `tokenless profiles clear` | Delete one or all managed profiles as a human maintenance action. | None |
 | `tokenless profiles remove` | Delete one managed profile with explicit confirmation. | None |
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
@@ -59,11 +58,13 @@ deepseek
 perplexity
 zai
 doubao
+kimi
+dola
 ```
 
-ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, and Doubao / 豆包 are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
+ChatGPT, Claude, Gemini, and Grok are supported providers. Qwen / 千问, DeepSeek, Perplexity, Z.ai / GLM, Doubao / 豆包, Kimi, and Dola are experimental: only their evidence-backed routes and controls are advertised, while unproven continuation and optional capabilities remain unavailable or unknown.
 
-Runtime browser values are `auto`, `chrome`, `chrome-for-testing`, `chromium`, `edge`, `arc`, `brave`, `managed-chromium`, and `cloak`. `auto` prefers an installed system browser and uses the locked managed fallback only when none exists. `cloak` is explicit opt-in. New Tokenless profiles are clean by default and runtime-bound. An explicitly selected local Chromium profile can instead be copied after `--consent-local-profile-copy`; Tokenless treats its contents as an opaque local filesystem tree.
+Tokenless uses native mode: Playwright attaches to the user's already-running Google Chrome or Brave Browser. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging` and approve the browser's connection prompt. The browser manages the underlying CDP endpoint and Tokenless discovers it automatically, so native mode does not require `--remote-debugging-port` or a configured fixed port. Connection success is the capability check; there is no profile version compatibility matrix. Native mode is headed-only and never copies a browser profile.
 
 ### Short options
 
@@ -71,7 +72,6 @@ Short options are case-sensitive:
 
 - `-P <slug>` is short for `--profile <slug>`.
 - `-p <provider>` is short for `--provider <provider>`.
-- `-f` is short for `--fresh` during setup.
 - `-v` is short for `--verbose`.
 - `-V` is short for `--version`.
 
@@ -91,7 +91,7 @@ These options are available where the command needs the corresponding runtime be
 | `--daemon-url <url>` | Set the preferred loopback daemon URL. If its port is occupied, Tokenless may bind the next free port and records the actual endpoint in SQLite. |
 | `--agent-kind <kind>` | Address a job or replay drain to an explicit agent kind; use with `--agent-session-id`. |
 | `--agent-session-id <id>` | Address a job or replay drain to an explicit agent session; use with `--agent-kind`. |
-| `--browser-visibility <auto\|headed\|headless>` | Choose the browser visibility policy. |
+| `--browser-visibility <headed>` | Native Chrome is headed-only. |
 | `--timeout-ms <ms>` | Override the command or job wait timeout. |
 | `--daemon-start-timeout-ms <ms>` | Override daemon startup waiting. |
 | `--runner-heartbeat-timeout-ms <ms>` | Accepted for compatibility; the embedded Playwright runtime ignores it. |
@@ -127,12 +127,12 @@ tokenless -V
 
 ### `tokenless install` (low-level compatibility)
 
-Resolves or installs the selected exact browser runtime, saves the runtime preference, upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, and ensures that the local daemon matches the installed CLI version and control API revision. Use `tokenless upgrade` for the normal user-facing maintenance workflow; this command remains available for low-level runtime provisioning and compatibility automation. A proof-verified daemon for the same Tokenless home is gracefully restarted from the current CLI package when either value is stale; foreign or unverified listeners are never stopped.
+Resolves or installs the selected exact browser runtime, saves the runtime preference, upserts the required global Tokenless agent skills, verifies the packaged TypeScript daemon runtime, and ensures that the local daemon matches the installed CLI version and control API revision. The canonical skill copy is kept in `~/.agents/skills`; when common agent roots already exist, maintenance also refreshes direct copies for Codex, Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, Pi, Hermes, and Windsurf, plus the legacy `~/.agent/skills` location. Use `tokenless upgrade` for the normal user-facing maintenance workflow; this command remains available for low-level runtime provisioning and compatibility automation. A proof-verified daemon for the same Tokenless home is gracefully restarted from the current CLI package when either value is stale; foreign or unverified listeners are never stopped.
 
 ```bash
 tokenless install --browser auto --json
 tokenless install --browser cloak --json
-tokenless install --browsers chrome,brave --json
+tokenless install --browsers chrome,edge --json
 ```
 
 Main options:
@@ -146,7 +146,7 @@ This command does not update the global npm CLI, configure a managed profile, or
 
 ### `tokenless setup`
 
-Runs the complete onboarding flow: discovers system and cached runtimes, resolves or installs the exact selected browser, creates or selects a runtime-compatible managed profile, saves the verified selection, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and performs one live sign-in check for every enabled provider. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
+Runs the complete onboarding flow: asks about Anti-Detect, selects a user-supplied Chrome or Brave for native mode or prepares CloakBrowser, creates or selects a logical Tokenless profile, saves configuration, upserts the global Tokenless agent skills, reconciles the daemon to the installed CLI version, and checks enabled providers when browser access is available. With `--install-codex`, setup explicitly installs Tokenless guidance and hooks after preferences are saved and before skill maintenance; setup without the flag never installs them, including non-interactive runs. Manual trust in Codex `/hooks` remains required. Skill maintenance keeps `~/.agents/skills` canonical and refreshes direct copies for already-present common agent roots, including `~/.codex/skills` and `~/.claude/skills`; it also repairs the legacy `~/.agent/skills` location. No browser is downloaded by npm postinstall, daemon startup, or ordinary job execution. If no language preference exists, setup detects the system locale, selects `zh-CN` for Chinese locales or `en` otherwise, and persists it in config.
 
 Interactive setup:
 
@@ -154,44 +154,57 @@ Interactive setup:
 tokenless setup
 ```
 
-Create or reuse a clean profile non-interactively:
+Create or reuse a logical profile non-interactively:
 
 ```bash
-tokenless setup --profile default --fresh --json
-tokenless setup --anti-detect --profile cloak-default --fresh --json
-tokenless setup --browser managed-chromium --profile managed-default --fresh --json
+tokenless setup --profile default --defaults --json
+tokenless setup --install-codex --codex-home <dir> --profile default --defaults --json
 ```
 
 Main options:
 
-- `--profile <slug>` selects or names the managed profile.
-- `--anti-detect` explicitly selects the catalog-pinned CloakBrowser runtime and confirms a clean Cloak-bound profile in non-interactive setup. Explicit `--browser cloak` carries the same confirmation; a stored Cloak preference alone fails before download.
+- `--profile <slug>` selects or names the logical Tokenless profile.
+- `--install-codex` explicitly installs the optional Codex guidance, native hooks, and skills during setup.
+- `--codex-home <dir>` selects a custom Codex state root and requires `--install-codex`.
 - `--provider-whitelist <list>` selects provider membership for that profile during non-interactive setup.
 - `--no-open` completes setup without opening the dashboard.
-- `--browser <browser>` selects `auto`, one exact system browser, `managed-chromium`, or `cloak`.
-- `--no-browser-download` fails instead of downloading a missing managed runtime.
-- `--repair-browser` explicitly reinstalls a selected `managed-chromium` or `cloak` runtime. It cannot be combined with `--no-browser-download`.
-- `--fresh` or `-f` creates a clean managed profile.
-- `--import-browser-profile <key> --consent-local-profile-copy` copies one explicitly selected local Chromium profile into the managed profile without parsing authentication values.
 - `--defaults` selects non-interactive defaults.
-- `--label <name>` sets the profile display label.
 - `--set-default` makes the selected profile the default.
+- `--browser-executable-path <absolute-path>` supplies a user-installed Chrome or Brave executable when automatic discovery cannot find it.
 
-`auto` is the first-run default and prefers an installed Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing executable. Interactive setup asks whether to use Anti-Detect; declining does not open a separate browser-runtime picker. Normal mode follows an explicit `--browser`, then the saved concrete preference, then deterministic automatic discovery. Setup resolves the result to a concrete `browser` plus a verified `browserExecutablePath` in `config.json`. Later launches verify that cached executable first and scan standard installation paths only when the cache is missing or no longer runnable; a successful fallback refreshes the cache. If no supported system browser exists, setup downloads the locked Chrome for Testing 145 artifact into `$TOKENLESS_HOME/browser/runtimes`. An explicit missing system-browser choice fails with the exact config command and dashboard field needed to supply a path. Cloak is downloaded only after explicit selection, uses the official platform-specific release pin, and is never bundled with Tokenless. The first runtime targets are Apple Silicon macOS and Windows x64 (Intel and AMD); Windows remains prerelease until its real-hardware gates pass.
+Setup first asks whether to use Anti-Detect mode. If declined, the user chooses user-supplied Google Chrome or Brave Browser; Tokenless does not bundle or download either browser. Setup then tries the configured executable path and standard installation locations. If neither resolves, setup still saves configuration and finishes with an `action_required` warning, skips provider browser checks, and tells the user how to add an absolute executable path. Before the first browser action, Tokenless validates that path or retries standard discovery; the action fails clearly if neither works. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares. Enable remote debugging at `chrome://inspect/#remote-debugging` or `brave://inspect/#remote-debugging` before browser use.
 
-`browserExecutablePath` may point outside `TOKENLESS_HOME` only for an explicitly selected system browser. Paths for `managed-chromium` and `cloak` are derived from the catalog-pinned runtime under `$TOKENLESS_HOME/browser/runtimes`; an arbitrary config value cannot replace or bypass that managed runtime.
+Interactive `setup` lists every supported provider, enables all of them by default, and lets the user remove providers by replying with their displayed numbers; pressing Enter keeps them all. Non-interactive setup uses `--provider-whitelist`, the existing profile's `enabledProviders`, or all supported providers for a new profile. When a browser resolves, setup checks provider state and leaves headed review tabs open. When it does not, setup skips those browser checks and opens the dashboard so the user can add the executable path.
 
-The Anti-Detect question states that accepting it will download and install the verified, platform-pinned CloakBrowser under `TOKENLESS_HOME` when needed; there is no later installation confirmation. After Anti-Detect is selected, setup does not run system-browser executable discovery for runtime selection. It links to the official CloakBrowser project, shows the exact platform artifact and Chromium version, and scans known Chrome, Brave, Edge, Arc, Chromium, and Chrome for Testing profile directories. Discovery reads only the directory key and `Last Version` and classifies an exact four-component match. When compatible profiles exist, setup presents one choice containing `Start clean` and the compatible profile sources. Selecting a profile explicitly authorizes its opaque local copy; there are no separate import or copy-consent questions. When none align, setup skips the source choice and uses a clean profile. An explicitly requested incompatible or unknown-version import fails before download instead of being silently ignored. The installer then downloads, verifies, extracts, version-checks, and smoke-launches Cloak; setup immediately persists `browser: "cloak"` and its managed `browserExecutablePath`. Copying remains opaque: Tokenless does not parse `Local State`, cookies, browser storage, or authentication values. Non-interactive import still requires `--consent-local-profile-copy` because no visible profile-source selection occurred.
+Every new profile starts with all non-disabled providers, including Gemini. Its membership can be changed with `--profile <slug> --provider-whitelist <list>` or through the dashboard.
 
-Managed profiles record a runtime binding. Setup will not open a profile with a different runtime family or with an older browser than the version that created it. Changing runtime family normally creates a clean profile; an explicit import can populate the new runtime-bound profile from a selected local Chromium profile. The managed profile then preserves its browser-managed session across jobs.
+### `tokenless agents <install|status|inspect|uninstall> codex`
 
-Interactive `setup` asks which providers belong to the selected profile. Non-interactive setup uses `--provider-whitelist`, the existing profile scope, or the persisted default whitelist. Guest access, signed-out pages, unknown state, and sign-in-required pages are recorded observations rather than setup failures; only technical check failures make setup fail. After every setup, Tokenless leaves one headed review tab open for each enabled provider so the user can inspect sign-in state directly. Unless `--json`, `--defaults`, or `--no-open` suppresses an interactive handoff, setup also opens the local dashboard.
+Manages the optional Codex integration without launching, wrapping, or replacing Codex:
 
-The default `providerWhitelist` contains every non-disabled provider except Gemini. Gemini remains available and can be added explicitly with `--provider-whitelist` or through the dashboard.
+```bash
+tokenless agents install codex
+tokenless agents status codex --json
+tokenless agents inspect codex --chat-id <codex-thread-id> --json
+tokenless agents uninstall codex
+```
+
+`install` writes one versioned inline guidance block into the effective global Codex instruction file and merges Tokenless-owned groups into `$CODEX_HOME/hooks.json`. A non-empty `AGENTS.override.md` is the effective same-directory source, so Tokenless patches it instead of `AGENTS.md`; the command never creates an override. Existing instructions and non-Tokenless hooks are preserved. Restart Codex, open `/hooks`, and explicitly trust the Tokenless hook definition before relying on automatic binding.
+
+Users continue launching Codex normally. The hooks observe lifecycle events and react only when an actual Tokenless Bash or MCP call occurs. Hook `session_id` is immutable session-tree provenance; `turn_id` and `tool_use_id` identify the Hook lifecycle records. For CLI/shell execution, Codex supplies the concrete task as `CODEX_THREAD_ID`, and Tokenless resolves it before provider access so descendants do not collapse into the root conversation. A bounded best-effort App Server `thread/read` confirms the concrete task, canonical cwd, session tree, and available lineage; it does not start, resume, relay, or proxy a Codex TUI.
+
+`status` reports the exact instruction and hook paths and verifies the current guidance body and hook command without creating Harness state; stale or edited definitions report as not installed and `install` repairs them. `inspect` reads one exact chat from the separate Harness database, including local project, turns, invocations, stable provider task identity, and provider Project/conversation bindings. The ledger stores hashes rather than raw prompts and does not store transcripts, assistant messages, credentials, or browser state. `uninstall` removes Tokenless-owned guidance from both global instruction filenames and removes only Tokenless hook groups; retained Harness history is not deleted.
+
+Main options:
+
+- `--codex-home <dir>` selects an explicit Codex state root instead of `CODEX_HOME` or `~/.codex`.
+- `--home <dir>` selects the Tokenless state root.
+- `--chat-id <id>` is required by `inspect` and must be the exact Codex thread ID.
+- `--json` returns the structured status or context contract.
 
 ### `tokenless dashboard`
 
-Starts or discovers the same-home daemon, mints a single-use 60-second bootstrap ticket, and opens one reserved dashboard tab in the selected managed profile:
+Starts or discovers the same-home daemon and opens one reserved dashboard tab in the selected managed profile. You can also open the daemon loopback URL directly in your browser:
 
 ```bash
 tokenless dashboard
@@ -199,9 +212,11 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` returns the one-time loopback bootstrap URL without launching a browser. The URL redirects immediately to `/ui/` after use and cannot be reused. The resulting browser session is short-lived, stored in an `HttpOnly` `SameSite=Strict` cookie, and uses exact-Origin plus CSRF checks for mutations. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
+`--no-open` prints the direct loopback console URL without launching a browser. Opening `/` redirects to `/ui/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie. UI mutations continue to require exact-Origin and CSRF checks. The dashboard never receives the daemon bearer token, provider cookies, browser storage, Keychain data, raw DOM, claim tokens, checkpoints, or private filesystem paths.
 
 The dashboard provides Overview, Profiles, Providers, Capabilities, Jobs, and System/Diagnostics areas. Provider membership, visibility, role label, and an optional credential-free HTTP/HTTPS/SOCKS5 proxy are profile scoped. CLI recovery equivalents remain available:
+
+Provider readiness refreshes run implicitly in batches of up to three. Tokenless starts a resident headless browser when the profile is idle, or reuses an already-running headed profile without replacing its browser, closing its existing tabs, or bringing the check to the foreground. Each check owns one temporary background tab and closes it on every completion, failure, blocker, timeout, or cancellation path; user-owned tabs remain untouched. A readiness check that encounters sign-in or verification records the required action; visible browser interaction starts only from an explicit provider, browser, or job action.
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -212,13 +227,13 @@ tokenless state --profile work --json
 
 ### `tokenless doctor`
 
-Performs a read-only health report over Node.js, installed skills, packaged runtime, daemon identity and version, embedded Playwright runtime, browser preference, resolved runtime family and exact executable version, checksum state, default profile/runtime compatibility, configuration, and cached provider readiness.
+Performs a read-only health report over Node.js, installed skills, packaged runtime, daemon identity and version, embedded Playwright runtime, browser preference, resolved runtime family and exact executable version, checksum state, configuration completeness, default profile/runtime health, and cached provider readiness. `checks.config` reports whether `config.json` parses; `checks.configuration` reports whether the saved browser selection and executable path, daemon URL, and default profile are complete enough for browser use. A stale custom browser path remains unhealthy even when standard browser discovery succeeds.
 
 ```bash
 tokenless doctor --json
 ```
 
-`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. `checks.managedProfile.ok` reports registry/profile health, while `checks.profileRuntime.ok` independently reports whether that profile has a compatible resolvable browser binding. Provider readiness comes from the last saved profile observation. `checks.providerReadiness.ok` reports whether configured providers have recorded observations; `usableProviders` lists the cached providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
+`doctor` does not open provider pages, refresh authentication, start the daemon, or repair state. Each `checks.configuration.issues` entry includes a code, localized message, and next action. `checks.managedProfile.ok` reports registry/profile health, while `checks.profileRuntime.ok` independently reports whether that profile has a resolvable browser binding. Provider readiness comes from the last saved profile observation. `checks.providerReadiness.ok` reports whether configured providers have recorded observations; `usableProviders` lists the cached providers eligible for implicit routing. Because the daemon is on demand, a normally stopped daemon and embedded browser runtime are reported as healthy stopped state rather than installation damage.
 
 Main options: `--browser`, `--daemon-url`, `--home`, and `--json`.
 
@@ -230,34 +245,40 @@ Reads persistent configuration when called without configuration options:
 tokenless config --json
 ```
 
-Updates one or more persistent values when options are supplied:
+Updates global values without `--profile`:
 
 ```bash
 tokenless config \
   --language zh-CN \
-  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
-  --browser-executable-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --browser-visibility auto \
+  --daemon-url http://127.0.0.1:7331 \
+  --json
+```
+
+Updates provider membership and visibility for one profile with `--profile`:
+
+```bash
+tokenless config \
+  --profile work \
+  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
+  --browser-visibility headed \
   --json
 ```
 
 Configurable values:
 
 - `--language <en|zh-CN>`
-- `--provider-whitelist <list>`
-- `--browser <browser>`
-- `--browser-executable-path <absolute-path>` for an explicit system browser
-- `--clear-browser-executable-path` to force discovery on the next resolution
-- `--browser-visibility <auto|headed|headless>`
-- `--proxy-server <http|https|socks5-url>` with optional `--proxy-bypass <comma-separated-list>`
-- `--clear-proxy`
+- `--profile <slug> --provider-whitelist <list>`
+- `--profile <slug> --browser-visibility headed`
+- `--browser chrome`
+- `--browser-executable-path <absolute-path>`
+- `--clear-browser-executable-path`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
-Add `--profile <slug>` to scope `--provider-whitelist`, `--browser-visibility`, and credential-free proxy settings to one managed profile. Proxy options require `--profile`; `--clear-proxy` removes that profile's endpoint. Global `providerWhitelist` remains a compatibility union for older callers, while routing reads the selected profile's membership.
+Provider membership belongs only to the selected entry in `profiles`. Routing requires that entry and never falls back to a global provider list.
 
-The persisted JSON key is `providerWhitelist`. Tokenless still reads the legacy `preferredProviders` key and rewrites it as `providerWhitelist` on the next config update. The undocumented legacy `--preferred-providers` flag remains accepted as an alias during migration.
+Tokenless migrates the concrete legacy per-profile side table once by combining it with `browser/profiles.json`. A registered profile missing from the old table receives the old root provider list as its explicit `enabledProviders`; canonical config never retains either legacy key. The undocumented legacy `--preferred-providers` flag remains accepted as a CLI alias.
 
 The config shape is:
 
@@ -265,23 +286,20 @@ The config shape is:
 {
   "protocol": "tokenless.config.v1",
   "updatedAt": "2026-08-02T02:09:40.254Z",
-  "providerWhitelist": [
-    "chatgpt",
-    "claude",
-    "grok",
-    "qwen",
-    "deepseek",
-    "perplexity",
-    "zai",
-    "doubao"
-  ],
-  "profilePreferences": {},
+  "profiles": {
+    "default": {
+      "roleLabel": "Personal",
+      "enabledProviders": ["chatgpt", "claude"],
+      "browserVisibility": "headed",
+      "proxy": null
+    }
+  },
   "browser": "chrome",
-  "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "browserConnectionMode": "playwright",
-  "browserVisibility": "auto",
+  "browserExecutablePath": null,
+  "browserVisibility": "headed",
   "daemonUrl": null,
-  "language": "en"
+  "language": "en",
+  "outputSavings": { "enabled": true }
 }
 ```
 
@@ -289,11 +307,11 @@ The config shape is:
 
 Human-readable command output and the default provider response language follow `language`; an explicit language request in the prompt takes precedence. Command names, flags, JSON keys, error codes, status values, and other integration terms remain stable. `daemonUrl` is the preferred start endpoint, not mutable runtime status. Tokenless never rewrites it when that port is busy; the daemon records its actual bound endpoint in the SQLite runtime-state row.
 
-The config file also accepts the experimental `browserConnectionMode` value `playwright` or `cdp`; omitted values default to `playwright`. It intentionally has no CLI flag. Edit the JSON value only for capability evaluation, then restart the daemon. CDP does not change the selected profile, browser runtime, visibility policy, or provider mappings.
+Tokenless always controls managed Chromium through CDP while exposing Playwright's browser, page, and locator APIs internally. The resident browser can therefore outlive one daemon connection and be reattached by a later daemon without a user-selectable connection mode.
 
 ### `tokenless upgrade`
 
-Runs the canonical user-facing maintenance pipeline. It updates the global npm CLI, resolves and verifies the installed CLI, invokes that new CLI's shared maintenance module to upsert global agent skills and reconcile the matching daemon, then runs doctor. Use this instead of `tokenless install` for normal installation maintenance and upgrades.
+Runs the canonical user-facing maintenance pipeline. It updates the global npm CLI, resolves and verifies the installed CLI, invokes that new CLI's shared maintenance module to upsert global agent skills across the canonical and detected direct agent roots and reconcile the matching daemon, then runs doctor. Use this instead of `tokenless install` for normal installation maintenance and upgrades.
 
 ```bash
 tokenless upgrade
@@ -304,7 +322,7 @@ Accepted options are `--json`, `--home`, `--daemon-url`, `--browser`, `--browser
 
 ### `tokenless daemon stop`
 
-Gracefully stops a compatible daemon after verifying its identity.
+Gracefully stops a compatible daemon after verifying its identity. Managed browsers remain running; a later daemon reconnects to them through their profile-scoped CDP endpoint.
 
 ```bash
 tokenless daemon stop --json
@@ -314,29 +332,17 @@ Options: `--home`, `--daemon-url`, `--timeout-ms`, and `--json`.
 
 The command discovers the actual endpoint from SQLite and does not kill an unverified or incompatible process merely because it occupies the preferred port.
 
-## Managed Profiles
+## Tokenless Profiles
 
-A managed profile is one persistent local browser identity. One profile may hold sessions for all enabled providers.
-
-### `tokenless profiles discover`
-
-Reads safe profile directory/version metadata for Chrome, Brave, Edge, Arc, Chromium, or Chrome for Testing without copying or modifying browser data. Each profile reports `aligned`, `not_aligned`, or `unknown` against the current platform Cloak pin. Discovery does not make a profile importable and does not parse `Local State`.
-
-```bash
-tokenless profiles discover --browser all --json
-tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user-data --json
-```
+A Tokenless profile groups provider tabs and configuration inside the connected Chrome or Brave identity. It does not create or copy a separate browser identity.
 
 ### `tokenless profiles add`
 
-Creates a clean managed profile or, after explicit consent, copies a selected local Chromium profile:
+Creates a logical Tokenless profile:
 
 ```bash
-tokenless profiles add -P work --label "Work" --set-default --json
-tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
+tokenless profiles add -P work --set-default --json
 ```
-
-The copy remains local and opaque. Tokenless copies filesystem entries but does not inspect or report cookies, storage, passwords, tokens, or Keychain data.
 
 ### `tokenless profiles list`
 
@@ -378,14 +384,6 @@ Makes one registered profile the default.
 
 ```bash
 tokenless profiles set-default -P work --json
-```
-
-### `tokenless profiles reset`
-
-Replaces an imported managed profile with a fresh opaque copy from its recorded local source. Explicit consent is required again.
-
-```bash
-tokenless profiles reset -P work --consent-local-profile-copy --json
 ```
 
 ### `tokenless profiles clear`
@@ -437,7 +435,7 @@ The projection reports the matched catalog plan and rules, local usage, publishe
 
 ### `tokenless savings`
 
-Manage the optional output-only savings estimate. It is disabled by default and setup never enables or downloads it.
+Manage the output-only savings estimate. It is enabled by default, while setup and dashboard reads never download the tokenizer.
 
 ```bash
 tokenless savings status --json
@@ -447,7 +445,7 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-`enable` lazily downloads and verifies the pinned `o200k_base` WASM tokenizer before setting `outputSavings.enabled` to `true`. `disable` stops future measurements while retaining history and the runtime. `clear` removes the durable measurement history, and `uninstall` disables measurement and removes the runtime; both destructive operations require `--confirm-delete`. `status` is read-only with respect to configuration and tokenizer installation. None of these commands opens a provider page.
+`enable` downloads and verifies the pinned `o200k_base` WASM tokenizer before setting `outputSavings.enabled` to `true`. Normal default-on use instead installs it lazily after the first provider job has already completed and durably handed its measurement work to the daemon. `disable` discards queued text and prevents in-flight results from being saved while retaining history and the runtime. `clear` discards pre-clear work and removes the durable measurement history, and `uninstall` disables measurement, discards work, and removes the runtime; both destructive operations require `--confirm-delete`. `status` is read-only with respect to configuration and tokenizer installation. None of these commands opens a provider page.
 
 Measurements cover only normalized visible assistant output and are attributed to the triggering durable job and response. They are stable cross-provider estimates, not provider billing values; input tokens, hidden reasoning, and private backend traffic are excluded.
 
@@ -467,7 +465,7 @@ Provider selection:
 
 - Explicit `--provider <provider>` or `TOKENLESS_PROVIDER` is exact and is not replaced based on cached usability.
 - `--capability <capability>` is repeatable and requests canonical caller outcomes rather than provider-specific controls.
-- Tokenless merges explicit capabilities with structural inference: a normal `submit_and_read` run requires `conversation.chat`, `--attach-file` requires `file.upload` plus `image.input`, `audio.input`, or `video.input` when applicable, and `--workspace-mode native` requires `workspace.native`.
+- Tokenless merges explicit capabilities with structural inference: a normal `submit_and_read` run requires `conversation.chat`, `--attach-file` requires `file.upload` plus `image.input`, `audio.input`, or `video.input` when applicable, and `--workspace-mode auto` or `native` requires `workspace.native`.
 - When no provider is explicit, the configured provider list filters membership. Tokenless then filters for providers that satisfy the full implication-expanded requirement set and ranks routes by fresh cached eligibility and evidence maturity (`supported` before `experimental`); configured list position is the final tie-breaker and cannot override those stronger signals. Stale usable observations remain `unchecked` until the runner performs its live read-only preflight.
 - An explicit provider that cannot satisfy the full requirement set fails before daemon submission instead of silently switching.
 - Unknown and sign-in-required observations are not usable for implicit routing. If no cached provider is usable, the CLI returns `provider_unavailable` with provider observation context before creating a daemon job.
@@ -497,14 +495,14 @@ Provider controls:
 - DeepSeek canonical requirements prepare their required controls before mutation: `search.web` selects Instant and enables Search, `reasoning.extended` enables DeepThink, and `image.input` selects Vision. Explicit incompatible combinations fail before changing the page.
 - `--kimi-search <auto|off>` selects Kimi Web search behavior.
 - `--kimi-plugin <exact-visible-label>` selects one exact Kimi Plugin.
-- `--kimi-skill <exact-visible-label>` selects one exact Kimi Skill.
+- `--kimi-skill <exact-visible-label>` selects one exact provider-native Kimi workflow. It is unrelated to a user-owned Harness `SKILL.md`.
 - `--browser-visibility <auto|headed|headless>` overrides the configured visibility policy.
 
 Identity and continuity:
 
 - `--task-id <id>` supplies durable task identity.
 - `--idempotency-key <id>` supplies the same identity when no task ID is used.
-- `--project-name <name>` and `--chat-name <name>` contribute to derived task identity.
+- `--project-name <name>` and `--chat-name <name>` contribute to derived task identity without requesting Workspace handling.
 - `--workspace-mode <auto|native|conversation>` explicitly requests Workspace handling and requires `--project-name`.
 - `--project-instructions <text>` or `--project-instructions-file <path>` supplies optional Workspace instructions.
 - `--agent-kind <kind>` and `--agent-session-id <id>` address the job to one agent recipient. Both are required together; the same values may come from `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID`.
@@ -675,7 +673,7 @@ tokenless provider-action \
 | `kimi.plugin.inspect` | List enabled Kimi Plugins by exact visible name. | None; Kimi only |
 | `kimi.plugin.select` | Select one exact Kimi Plugin. | `--kimi-plugin <exact-visible-label>` |
 | `kimi.skill.inspect` | List enabled Kimi Skills by exact visible name. | None; Kimi only |
-| `kimi.skill.select` | Select one exact Kimi Skill. | `--kimi-skill <exact-visible-label>` |
+| `kimi.skill.select` | Select one exact provider-native Kimi workflow; this is not a user-owned Harness Skill. | `--kimi-skill <exact-visible-label>` |
 | `file.upload` | Upload files through visible file controls. | One or more `--attach-file` |
 | `workspace.ensure` | Ensure a native or conversation-scoped Workspace. | `--project-name`; optional `--workspace-mode` and instructions |
 | `prompt.clear` | Clear the visible composer. | None |
@@ -737,12 +735,9 @@ The following aliases are accepted for compatibility. Prefer the canonical form 
 | `tokenless provider-auth-status` | `tokenless provider-status` |
 | `tokenless inspect-provider-controls` | `tokenless provider-controls` |
 | `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
-| `--import-chrome-profile` | `--import-browser-profile` |
-| `--chrome-user-data-dir` | `--browser-user-data-dir` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
 | `--conversation-key` | `--idempotency-key` |
-| `--clean-profile` | `--fresh` |
 
 ## Status and Side-Effect Summary
 
@@ -765,29 +760,24 @@ Commands that may open or operate a provider page are `setup`, `profiles status`
 
 ## Manual Real-Browser Acceptance
 
-The authenticated provider capability harness keeps a separate persistent profile for every explicitly selected production browser. It derives a test-only home at `<TOKENLESS_HOME>/e2e/live-provider` by default, or uses `TOKENLESS_LIVE_PROVIDER_TEST_HOME` or `--home` when explicitly supplied. The test home must differ from the ordinary Tokenless home and remain outside every repository/worktree. Browser selection `cloak`, for example, resolves stable slug `live-provider-cloak`; the production registry at `<test-home>/browser/profiles.json` maps that slug to the opaque directory `<test-home>/browser/profiles/<uuid>`. The harness validates that directory, its private permissions, lifecycle, executable, and runtime binding before any provider automation. It rejects `auto` because automatic discovery could resolve a different executable across runs, and it never reuses one profile across browser runtimes.
+The authenticated provider capability harness reads the complete config named by `TOKENLESS_TEST_CONFIG` and uses only the adjacent production registry's default profile. Profile slugs remain developer-owned because each developer chooses that default outside the harness. The config must remain outside every repository/worktree; before browser automation, the harness validates the profile directory, private permissions, lifecycle, executable, and exact runtime binding.
 
-Prepare and manually authenticate one browser-specific profile before running its provider gates:
+Create a repository-local `.env`, then manually authenticate the config's default profile:
 
-```bash
-npm run test:e2e:prepare -- --browser cloak
-# Sign in manually in each provider tab, then run the printed daemon-stop command.
-npm run test:e2e -- --browser cloak
-npm run test:e2e:connection-matrix -- --browser cloak
+```dotenv
+TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-home/config.json
 ```
 
-Supported authenticated-profile selections are `chrome`, `brave`, `edge`, `arc`, `chromium`, `chrome-for-testing`, `managed-chromium`, and `cloak`. `prepare` installs or resolves the exact browser, keeps its maintenance skill output inside the test-only home, and creates or reuses only its deterministic profile slug. Its login-page list is the profile's effective provider whitelist: `profilePreferences[slug].enabledProviders` when present, otherwise the top-level `providerWhitelist`. Fresh configs include every registered non-disabled provider, including Gemini; regional or network reachability is evidence reported by E2E rather than a reason to remove a provider from preparation. Preparation preserves the configured order and never rewrites either list. It requests every listed provider-entry tab in one concurrent Chromium background-tab batch, then exits without waiting for page load, login, or Playwright target observation. If a proof-verified daemon for the same dedicated home predates the provider-tab endpoint, preparation gracefully replaces it with the current built daemon and retries the handoff once. The detached daemon remains the browser owner while Chromium persists the dedicated profile normally. The browser may take focus on its initial launch but does not foreground every provider tab in sequence. Preparation does not read the capability matrix, run provider jobs, call `setup` or `profiles status`, automate login, or inspect authentication data. Use `--no-open` for preparation validation without provider navigation or the manual browser handoff. The `run` command uses the live capability matrix to execute declared provider journeys once in Playwright mode; `connection-matrix` runs the same selected profile sequentially in Playwright and CDP modes. Each invocation writes a private JSON report under `test-results/live-provider-e2e/`, grouped first by provider and then by capability. Readiness failures are classified separately from capability assertions; `network_or_navigation` records observable reachability failure without claiming a particular firewall or regional cause. Both run modes perform real provider mutations and may incur usage cost.
+```bash
+npm run test:e2e
+```
 
-Browser-runtime and provider-surface acceptance tests are explicit local gates and do not run in CI:
+The default profile's existing production runtime binding selects the browser; test commands do not accept browser, home, or profile overrides. Sign in manually using normal Tokenless workflows before running a live suite. The `run` command uses the live capability matrix through the CDP-controlled browser and writes a private JSON report under `test-results/live-provider-e2e/`, grouped first by provider and then by capability. Readiness failures are classified separately from capability assertions; `network_or_navigation` records observable reachability failure without claiming a particular firewall or regional cause. Provider runs perform real mutations and may incur usage cost.
+
+Provider-surface acceptance is an explicit local gate and does not run in CI:
 
 ```bash
-npm run test:e2e:browser-runtime
 npm run test:e2e:browser-surfaces
-npm run test:e2e:system-surfaces
-npm run test:e2e:managed-surfaces
-npm run test:e2e:cloak-surfaces
 ```
 
-On a machine intentionally prepared without a supported system browser, run `npm run test:e2e:browser-runtime -- --expected-auto managed-chromium` to require proof of the lazy managed fallback. The default command requires `auto` to resolve a system browser. Run both commands on each targeted Windows x64 CPU class; npm forwards these arguments identically from `cmd.exe`, PowerShell, and POSIX shells.
-
-The browser surface gate runs the same real headed, keychain-neutral test profile against system auto-selection, managed Chrome for Testing, and Cloak. Each case always visits every registered provider plus Google Search over the real network before aggregating failures, fails on a detected anti-bot challenge, and reports only public location, title, response status, and structured challenge outcomes. It does not authenticate, submit prompts, read browser storage, capture screenshots, or replace the authenticated built-CLI provider release gate. The three selection-specific commands run only system, managed, or Cloak respectively.
+The browser surface gate reuses the config's default persistent profile with its existing visibility and controls it through Tokenless's production CDP path. It never creates, closes, switches, or deletes a browser profile or resident browser. Each run visits every registered provider plus Google Search over the real network, fails on a detected anti-bot challenge, and reports only public location, title, response status, and structured challenge outcomes. It does not submit prompts, read browser storage, capture screenshots, or replace the authenticated built-CLI provider release gate.

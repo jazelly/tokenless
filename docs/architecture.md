@@ -6,7 +6,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI and a
 
 1. The `tokenless` CLI handles setup, profile management, job submission, state, cancellation, and diagnostics.
 2. The local TypeScript daemon stores jobs in SQLite and exposes an authenticated loopback control plane.
-3. The Playwright worker claims managed-web jobs and runs them in persistent managed browser profiles.
+3. The Playwright worker claims managed-web jobs, connects over CDP to independently launched resident Chromium processes, and uses Playwright browser, page, and locator APIs inside persistent managed profiles.
 4. The provider navigation catalog centrally declares each entry URL, automation home, owned origins, known page patterns, and trusted sign-in routes; the provider registry adds access, account-plan, selector, and capability policy for ChatGPT, Claude, Gemini, Grok, Qwen, DeepSeek, Perplexity, Z.ai, and Doubao.
 5. The provider-session state machine turns visible page observations and catalog policy into ready, guest-continuation, handoff, wait, or terminal decisions.
 6. Provider adapters translate shared actions into visible provider page operations after the session decision allows them.
@@ -20,7 +20,7 @@ Tokenless exposes visible AI websites through a provider-neutral local CLI and a
 | Interface | Execution path | Authentication | Status |
 | --- | --- | --- | --- |
 | CLI | CLI → daemon → Playwright worker → managed profile → visible provider page | Provider sign-in stored inside the managed profile | Primary interface |
-| Local dashboard | Browser → `/ui-api/v1` → shared services/daemon → managed profile → visible provider page | One-time bootstrap ticket plus short-lived UI session; provider sign-in remains inside the managed profile | Local administration interface |
+| Local dashboard | Browser → `/ui-api/v1` → shared services/daemon → managed profile → visible provider page | Direct loopback opening plus a short-lived UI session; provider sign-in remains inside the managed profile | Local administration interface |
 | Machine API | Trusted local caller → bearer API → daemon → Playwright worker | Daemon bearer token plus provider sign-in inside the managed profile | Local scripting interface |
 
 ## Managed Playwright flow
@@ -109,7 +109,7 @@ The provider-session machine is intentionally separate from the daemon job state
 
 The daemon binds to loopback, stores its bearer token beside its SQLite database, and protects job and control endpoints with that token. The daemon home and token use restrictive filesystem permissions on supported systems. User configuration stores a preferred loopback origin. The daemon may scan upward from that port when it is occupied, while a single SQLite runtime-state row records the current actual origin, startup generation, and owner. CLI processes probe that row and coordinate startup through a compare-and-swap lease; no operating-system service actively restarts the daemon.
 
-The bearer-protected machine endpoints remain an internal runtime control plane. Browser administration uses a separate `/ui-api/v1` surface documented in `api/tokenless-ui-api.openapi.json`. An authenticated CLI call mints a random, 60-second, single-use ticket; `/ui/bootstrap` consumes it, sets an `HttpOnly`, `SameSite=Strict`, path-scoped session cookie, and redirects to `/ui/` so the ticket leaves browser history. UI mutations require the exact daemon Origin and a per-session CSRF header. Sessions live only in daemon memory and are invalidated on restart.
+The bearer-protected machine endpoints remain an internal runtime control plane. Browser administration uses a separate `/ui-api/v1` surface documented in `api/tokenless-ui-api.openapi.json`. Opening the daemon's loopback root redirects to `/ui/` and establishes a short-lived `HttpOnly`, `SameSite=Strict` session cookie; allowed UI GET requests establish a replacement session when needed. UI mutations require the exact daemon Origin and a per-session CSRF header. Sessions live only in daemon memory and are invalidated on restart.
 
 All UI routes enforce the daemon's exact loopback `Host`, a restrictive same-origin CSP, `frame-ancestors 'none'`, `nosniff`, and `Referrer-Policy: no-referrer`. The browser application lives under `packages/cli/src/daemon/ui`: `app.ts` is the single startup interface, the dashboard controller owns state and event orchestration, the HTTP client owns session/CSRF/ETag behavior, and page modules are pure renderers. A dedicated `tsconfig.ui.json` type-checks and emits browser-native ES modules separately from the Node daemon build. Static assets are still bundled in the same npm package, served by the daemon, and load no remote JavaScript, fonts, analytics, or CDN resources. Purpose-built responses redact control tokens, claims, checkpoints, browser storage, raw DOM, legacy source paths, and private file paths. Bounded polling uses revision ETags and defers rendering while a form has uncommitted edits; there is no SSE or WebSocket transport.
 
@@ -124,7 +124,7 @@ Stable task identifiers come from explicit task or idempotency keys, or from age
 ## Browser boundary
 
 - Each active managed profile owns one browser instance backed by that profile's persistent user-data directory. Providers and conversations use independently keyed tabs inside their profile's browser. The daemon may retain up to four profile-owned instances and never closes one profile to launch another; additional profiles wait for capacity or fail explicitly at a direct open boundary.
-- Playwright launches the exact executable resolved from the profile's runtime binding with a persistent non-default user-data directory. The browser library and managed browser versions are independently pinned.
+- Tokenless independently launches the exact Chromium executable resolved from the profile's runtime binding with a persistent non-default user-data directory and a profile-scoped loopback DevTools endpoint. The worker attaches with Playwright `connectOverCDP`; provider automation still uses Playwright browser, context, page, and locator APIs. The browser library and managed browser versions are independently pinned.
 - Automation uses approved provider origins, visible page controls, and visible postconditions.
 - Provider credentials and browser sign-in data stay opaque inside the managed profile; only visible account display and subscription labels cross the boundary.
 - Sign-in, CAPTCHA, account limits, payment, consent, and confirmation remain user actions.
@@ -151,7 +151,7 @@ Tokenless stores a global browser visibility fallback and profile-scoped visibil
 
 The persistent config stores the concrete `browser` selected by setup together with `browserExecutablePath`. For system browsers, the path is a verified cache: resolution tries it first, requires a runnable executable with a readable Chromium version, falls back to standard installation discovery on failure, and refreshes the cache after a successful fallback. The cache is used only when the requested profile binding matches the configured browser. Managed Chromium and Cloak ignore arbitrary path overrides and resolve their catalog-pinned executable under the versioned `$TOKENLESS_HOME/browser/runtimes` tree.
 
-The persistent config also stores `browserConnectionMode`, with `playwright` as the backward-compatible default and `cdp` as an experimental capability-evaluation mode. This is a daemon-runner setting rather than a job field or CLI flag. Native mode uses `launchPersistentContext`; CDP mode launches the exact profile-bound Chromium executable with an ephemeral loopback DevTools endpoint and then uses `connectOverCDP`. Both modes preserve the same profile, visibility, page-key, provider, and durable-mapping contracts. The daemon must be restarted after this config value changes.
+CDP is the only managed browser-control boundary and is not a user-selectable configuration mode. Tokenless detaches from the resident Chromium process when the daemon stops and a later daemon reconnects through Playwright `connectOverCDP`. A launch-signature change—such as visibility, runtime, or proxy—still closes and relaunches the browser because Chromium cannot apply those process-level settings in place.
 
 - `auto` starts headless. If the provider page becomes blocked by user-resolvable sign-in, CAPTCHA, MFA, consent, or confirmation, the runner switches the same managed profile into headed mode and marks the job `waiting_for_user`.
 - Terminal errors do not trigger a visible window.

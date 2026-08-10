@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { constants as fsConstants } from 'node:fs'
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { getProviderDescriptorById } from '../../providers/registry.js'
@@ -13,9 +12,7 @@ import type {
 } from '../../providers/registry.js'
 import type { BrowserRuntimeBinding } from '../../browser-runtime/types.js'
 
-export type ProfileLifecycleState = 'created' | 'importing' | 'ready' | 'removed' | 'failed'
-export type ManagedProfileLabelOrigin = 'slug' | 'import' | 'user'
-
+export type ProfileLifecycleState = 'created' | 'ready' | 'removed' | 'failed'
 export type ProviderStatus = {
   provider: ProviderId
   auth: 'authenticated' | 'unauthenticated' | 'unknown'
@@ -31,21 +28,11 @@ export type ProviderStatus = {
 export type ManagedProfileRecord = {
   slug: string
   id: string
-  label: string
-  labelOrigin: ManagedProfileLabelOrigin
   directory: string
   lifecycle: ProfileLifecycleState
   createdAt: string
   updatedAt: string
   runtimeBinding?: BrowserRuntimeBinding | undefined
-  import?: {
-    source: string
-    profileDirectoryKey: string
-    importedAt: string
-    browser?: string | undefined
-    browserVersion?: string | undefined
-    providers?: readonly ProviderId[] | undefined
-  }
   lastObservedAuth: Partial<Record<ProviderId, ProviderStatus>>
 }
 
@@ -57,8 +44,6 @@ export type ManagedProfileRegistryData = {
 
 export type AddProfileOptions = {
   slug: string
-  label?: string
-  labelOrigin?: ManagedProfileLabelOrigin
   setDefault?: boolean
   lifecycle?: ProfileLifecycleState
   runtimeBinding?: BrowserRuntimeBinding
@@ -97,12 +82,9 @@ export class ManagedProfileRegistry {
       const id = randomUUID()
       const directory = this.profileDirectory(id)
       const lifecycle = options.lifecycle ?? 'created'
-      const labelOrigin = options.labelOrigin ?? (options.label === undefined ? 'slug' : 'user')
       const record: ManagedProfileRecord = {
         slug,
         id,
-        label: normalizeLabel(options.label, slug),
-        labelOrigin,
         directory,
         lifecycle,
         createdAt: now,
@@ -147,26 +129,6 @@ export class ManagedProfileRegistry {
       data.defaultProfile = normalized
       await this.writeUnlocked(data)
       return record
-    })
-  }
-
-  async updateLabel(slug: string, label: string): Promise<ManagedProfileRecord> {
-    return await this.withWriteLock(async () => {
-      const normalized = normalizeSlug(slug)
-      const data = await this.readUnlocked()
-      const record = data.profiles[normalized]
-      if (!record || record.lifecycle === 'removed') {
-        throw tokenlessError('profile_not_found', `Managed profile '${normalized}' is not registered.`)
-      }
-      const updated: ManagedProfileRecord = {
-        ...record,
-        label: normalizeLabel(label, record.slug),
-        labelOrigin: 'user',
-        updatedAt: new Date().toISOString(),
-      }
-      data.profiles[normalized] = updated
-      await this.writeUnlocked(data)
-      return updated
     })
   }
 
@@ -253,37 +215,6 @@ export class ManagedProfileRegistry {
     })
   }
 
-  async markImported(slug: string, imported: { source: string; profileDirectoryKey: string; profileName?: string; importedAt?: string; browser?: string; browserVersion?: string | null; providers?: readonly ProviderId[] }): Promise<ManagedProfileRecord> {
-    return await this.withWriteLock(async () => {
-      const data = await this.readUnlocked()
-      const record = data.profiles[normalizeSlug(slug)]
-      if (!record) throw tokenlessError('profile_not_found', 'Managed profile is not registered.')
-      const now = new Date().toISOString()
-      const usesImportedLabel = imported.profileName !== undefined && record.labelOrigin !== 'user'
-      const updated: ManagedProfileRecord = {
-        ...record,
-        ...(usesImportedLabel ? {
-          label: normalizeLabel(imported.profileName, record.slug),
-          labelOrigin: 'import',
-        } : {}),
-        lifecycle: 'ready',
-        updatedAt: now,
-        lastObservedAuth: {},
-        import: {
-          source: imported.source.slice(0, 512),
-          profileDirectoryKey: imported.profileDirectoryKey.slice(0, 128),
-          importedAt: imported.importedAt === undefined ? now : parseIso(imported.importedAt),
-          ...(imported.browser ? { browser: normalizeImportedBrowser(imported.browser) } : {}),
-          ...(imported.browserVersion ? { browserVersion: normalizeImportedBrowserVersion(imported.browserVersion) } : {}),
-          ...(imported.providers ? { providers: normalizeImportedProviders(imported.providers) } : {}),
-        },
-      }
-      data.profiles[updated.slug] = updated
-      await this.writeUnlocked(data)
-      return updated
-    })
-  }
-
   async read(): Promise<ManagedProfileRegistryData> {
     return await this.readUnlocked()
   }
@@ -301,15 +232,6 @@ export class ManagedProfileRegistry {
   private async readUnlocked(): Promise<ManagedProfileRegistryData> {
     await this.ensureDirectories()
     try {
-      const handle = await open(this.paths.registryFile, fsConstants.O_RDONLY)
-      try {
-        const fileStat = await handle.stat()
-        if ((fileStat.mode & 0o077) !== 0) {
-          throw tokenlessError('profile_registry_permissions', 'Managed profile registry permissions are too broad.')
-        }
-      } finally {
-        await handle.close()
-      }
       const parsed = JSON.parse(await readFile(this.paths.registryFile, 'utf8')) as unknown
       return parseRegistry(parsed, this.paths.profilesRoot)
     } catch (error) {
@@ -352,15 +274,6 @@ export class ManagedProfileRegistry {
 export async function readManagedProfileRegistryReadOnly(tokenlessHome = tokenlessHomeFromEnv()): Promise<ManagedProfileRegistryData> {
   const registry = new ManagedProfileRegistry(tokenlessHome)
   try {
-    const handle = await open(registry.paths.registryFile, fsConstants.O_RDONLY)
-    try {
-      const fileStat = await handle.stat()
-      if ((fileStat.mode & 0o077) !== 0) {
-        throw tokenlessError('profile_registry_permissions', 'Managed profile registry permissions are too broad.')
-      }
-    } finally {
-      await handle.close()
-    }
     const parsed = JSON.parse(await readFile(registry.paths.registryFile, 'utf8')) as unknown
     return parseRegistry(parsed, registry.paths.profilesRoot)
   } catch (error) {
@@ -402,19 +315,14 @@ function parseRegistry(value: unknown, profilesRoot: string): ManagedProfileRegi
     if (record.directory !== directory || !isPathInside(profilesRoot, directory)) {
       throw tokenlessError('invalid_profile_registry', 'Managed profile directory is malformed.')
     }
-    const label = typeof record.label === 'string' ? record.label.slice(0, 120) : normalizedSlug
-    const importMetadata = parseImportMetadata(record.import)
     profiles[normalizedSlug] = {
       slug: normalizedSlug,
       id: record.id,
-      label,
-      labelOrigin: parseLabelOrigin(record.labelOrigin, label, normalizedSlug, 'import' in importMetadata),
       directory,
       lifecycle: parseLifecycle(record.lifecycle),
       createdAt: parseIso(record.createdAt),
       updatedAt: parseIso(record.updatedAt),
       ...parseRuntimeBinding(record.runtimeBinding),
-      ...importMetadata,
       lastObservedAuth: parseProviderStatuses(record.lastObservedAuth),
     }
   }
@@ -465,12 +373,6 @@ function sameRuntimeBinding(left: BrowserRuntimeBinding, right: BrowserRuntimeBi
     left.browserId === right.browserId &&
     left.createdWithVersion === right.createdWithVersion &&
     left.profileFormat === right.profileFormat
-}
-
-function parseLabelOrigin(value: unknown, label: string, slug: string, imported: boolean): ManagedProfileLabelOrigin {
-  if (value === 'slug' || value === 'import' || value === 'user') return value
-  if (imported && label === slug) return 'import'
-  return label === slug ? 'slug' : 'user'
 }
 
 function parseProviderStatuses(value: unknown): Partial<Record<ProviderId, ProviderStatus>> {
@@ -552,60 +454,6 @@ function normalizeProviderAccountValue(value: string) {
   return value.replace(/\s+/g, ' ').trim().slice(0, 120) || null
 }
 
-function parseImportMetadata(value: unknown): Pick<ManagedProfileRecord, 'import'> | Record<string, never> {
-  if (!isRecord(value)) return {}
-  if (typeof value.source !== 'string' || typeof value.profileDirectoryKey !== 'string') return {}
-  return {
-    import: {
-      source: value.source.slice(0, 512),
-      profileDirectoryKey: value.profileDirectoryKey.slice(0, 128),
-      importedAt: parseIso(value.importedAt),
-      ...(typeof value.browser === 'string' ? { browser: normalizeImportedBrowser(value.browser) } : {}),
-      ...(typeof value.browserVersion === 'string' ? { browserVersion: normalizeImportedBrowserVersion(value.browserVersion) } : {}),
-      ...(value.providers === undefined ? {} : { providers: normalizeImportedProviders(value.providers) }),
-    },
-  }
-}
-
-function normalizeImportedBrowserVersion(value: string) {
-  const version = value.trim()
-  if (!/^\d+(?:\.\d+){1,3}$/.test(version)) {
-    throw tokenlessError('invalid_imported_browser_version', 'Imported browser version is invalid.')
-  }
-  return version
-}
-
-function normalizeLabel(label: string | undefined, fallback: string) {
-  if (label === undefined) return fallback
-  const normalized = label.trim().replace(/\s+/g, ' ')
-  if (normalized.length < 1 || Buffer.byteLength(normalized, 'utf8') > 120 || /[\u0000-\u001f\u007f]/.test(normalized)) {
-    throw tokenlessError('invalid_profile_label', 'Managed profile label is invalid.')
-  }
-  return normalized
-}
-
-function normalizeImportedBrowser(value: string) {
-  const browser = value.trim().toLowerCase()
-  if (!['chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing'].includes(browser)) {
-    throw tokenlessError('invalid_profile_registry', 'Managed profile import browser is invalid.')
-  }
-  return browser
-}
-
-function normalizeImportedProviders(value: unknown): ProviderId[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 4) {
-    throw tokenlessError('invalid_profile_registry', 'Managed profile import providers are invalid.')
-  }
-  const providers: ProviderId[] = []
-  for (const provider of value) {
-    if (typeof provider !== 'string' || !isProviderId(provider) || providers.includes(provider)) {
-      throw tokenlessError('invalid_profile_registry', 'Managed profile import providers are invalid.')
-    }
-    providers.push(provider)
-  }
-  return providers
-}
-
 function emptyRegistry(): ManagedProfileRegistryData {
   return {
     version: 1,
@@ -615,7 +463,7 @@ function emptyRegistry(): ManagedProfileRegistryData {
 }
 
 function parseLifecycle(value: unknown): ProfileLifecycleState {
-  if (value === 'created' || value === 'importing' || value === 'ready' || value === 'removed' || value === 'failed') return value
+  if (value === 'created' || value === 'ready' || value === 'removed' || value === 'failed') return value
   throw tokenlessError('invalid_profile_registry', 'Managed profile lifecycle is malformed.')
 }
 

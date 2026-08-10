@@ -6,6 +6,8 @@ import path from 'node:path'
 
 import { tokenlessHome } from './job-store.js'
 import { tokenlessPackageVersion } from './platform-package.js'
+import { t } from './localization.js'
+import type { CliMessageKey } from './i18n/catalog.js'
 
 type UpgradeArgs = Record<string, any> & { files?: string[]; attachFiles?: string[] }
 
@@ -58,12 +60,12 @@ export type UpgradeProgressEvent = {
   errorCode?: string
 }
 
-const UPGRADE_PHASE_LABELS: Record<UpgradePhaseName, string> = Object.freeze({
-  npmInstall: 'Updating global CLI',
-  resolveGlobalCli: 'Verifying installed CLI',
-  skills: 'Refreshing agent skills',
-  runtimeInstall: 'Updating local runtime',
-  doctor: 'Running doctor',
+const UPGRADE_PHASE_LABELS: Record<UpgradePhaseName, CliMessageKey> = Object.freeze({
+  npmInstall: 'upgradePhaseNpmInstall',
+  resolveGlobalCli: 'upgradePhaseResolveGlobalCli',
+  skills: 'upgradePhaseSkills',
+  runtimeInstall: 'upgradePhaseRuntimeInstall',
+  doctor: 'upgradePhaseDoctor',
 })
 
 const NPM_INSTALL_TIMEOUT_MS = 180_000
@@ -143,26 +145,25 @@ export async function runUpgradeCommand(args: UpgradeArgs, dependencies?: Partia
 }
 
 export function formatUpgradeProgress(event: UpgradeProgressEvent) {
-  if (event.status === 'started') return `  - ${event.label}...`
-  if (event.status === 'succeeded') return `  OK ${event.label}`
-  return `  X ${event.label}${event.errorCode ? ` (${event.errorCode})` : ''}`
+  if (event.status === 'started') return t('upgradeProgressStarted', { label: event.label })
+  if (event.status === 'succeeded') return t('upgradeProgressSucceeded', { label: event.label })
+  return t('upgradeProgressFailed', { label: event.label, error: event.errorCode ? ` (${event.errorCode})` : '' })
 }
 
 export function formatUpgradeSummary(result: Record<string, any>) {
   const beforeVersion = String(result.cli?.beforeVersion ?? 'unknown')
   const afterVersion = String(result.cli?.afterVersion ?? 'unknown')
   if (result.ok === true) {
-    const versionSummary = beforeVersion === afterVersion
-      ? `Tokenless ${afterVersion} is up to date.`
-      : `Tokenless upgraded from ${beforeVersion} to ${afterVersion}.`
-    return `${versionSummary} Skills and local runtime are current; doctor is healthy.`
+    return beforeVersion === afterVersion
+      ? t('upgradeCurrent', { version: afterVersion })
+      : t('upgradeChanged', { before: beforeVersion, after: afterVersion })
   }
   const failed = Object.entries(result.phases ?? {})
     .find(([, phase]) => (phase as PhaseResult)?.ok !== true) as [UpgradePhaseName, PhaseResult] | undefined
-  if (!failed) return 'Tokenless upgrade did not complete. Rerun tokenless upgrade for a full diagnostic.'
+  if (!failed) return t('upgradeIncomplete')
   const [phase, detail] = failed
   const code = detail.error?.code
-  return `Tokenless upgrade stopped at ${UPGRADE_PHASE_LABELS[phase]}${code ? ` (${code})` : ''}. Resolve that failure, then rerun tokenless upgrade.`
+  return t('upgradeStopped', { label: t(UPGRADE_PHASE_LABELS[phase]), error: code ? ` (${code})` : '' })
 }
 
 function emitUpgradeProgress(
@@ -174,7 +175,7 @@ function emitUpgradeProgress(
   try {
     deps.onProgress?.({
       phase,
-      label: UPGRADE_PHASE_LABELS[phase],
+      label: t(UPGRADE_PHASE_LABELS[phase]),
       status,
       ...(result?.error?.code ? { errorCode: result.error.code } : {}),
     })

@@ -9,11 +9,59 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliEntry = path.join(root, 'packages/cli/dist/src/tokenless.mjs')
 
-test('built CLI explicitly installs, verifies, enables, measures, disables, and removes the real output savings runtime', { timeout: 180_000 }, async () => {
+test('built daemon completes the job before its durable background tokenizer work updates savings', { timeout: 180_000 }, async () => {
   const tempRoot = fs.realpathSync.native(os.tmpdir())
   const homeDir = fs.realpathSync.native(fs.mkdtempSync(path.join(tempRoot, 'tokenless-output-savings-runtime-')))
   try {
-    const enabled = runSavings(homeDir, 'enable')
+    const initial = runSavings(homeDir, 'status')
+    assert.equal(initial.outputSavings.enabled, true)
+    assert.equal(initial.outputSavings.collection, 'unavailable')
+    assert.equal(initial.outputSavings.runtime.state, 'not_installed')
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
+
+    const [{ startDaemon }, { OutputSavingsRuntimeManager }, { JobStore }] = await Promise.all([
+      import('../packages/cli/dist/src/daemon/lifecycle.js'),
+      import('../packages/cli/dist/src/index.js'),
+      import('../packages/cli/dist/src/daemon/job-store.js'),
+    ])
+    const runtimeManager = new OutputSavingsRuntimeManager(homeDir)
+    const handoffStore = await JobStore.open(homeDir)
+    try {
+      const created = handoffStore.createJob({
+        provider: 'chatgpt',
+        action: 'visible_provider_actions',
+        request_json: { taskId: 'background-savings' },
+        profile_id: 'savings-profile',
+      })
+      const claimed = handoffStore.claimJob(created.job_id, created.claim_token)
+      handoffStore.markRunning(claimed.job_id, claimed.claim_token)
+      const completed = handoffStore.completeJob(claimed.job_id, claimed.claim_token, {
+        result_json: {
+          protocol: 'tokenless.playwright.job.v3',
+          provider: 'chatgpt',
+          responses: [],
+        },
+        output_savings_work: [{
+          response_request_id: 'background-savings-response',
+          source_text: 'hello world',
+        }],
+      })
+      assert.equal(completed.status, 'succeeded')
+      assert.equal(handoffStore.outputSavingsSummary().estimated_output_tokens, 0)
+      assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
+    } finally {
+      handoffStore.close()
+    }
+
+    const daemon = await startDaemon({ homeDir, port: 0 })
+    try {
+      await waitFor(() => daemon.store.outputSavingsSummary().estimated_output_tokens === 2)
+      assert.equal(daemon.store.pendingOutputSavingsWorkCount(), 0)
+    } finally {
+      await daemon.close()
+    }
+
+    const enabled = runSavings(homeDir, 'status')
     assert.equal(enabled.outputSavings.enabled, true)
     assert.equal(enabled.outputSavings.collection, 'enabled')
     assert.deepEqual(enabled.outputSavings.runtime, {
@@ -25,25 +73,12 @@ test('built CLI explicitly installs, verifies, enables, measures, disables, and 
       checksumVerified: true,
       selfTestVerified: true,
     })
-    assert.equal(enabled.outputSavings.summary.estimated_output_tokens, 0)
+    assert.equal(enabled.outputSavings.summary.estimated_output_tokens, 2)
+    assert.equal(enabled.outputSavings.summary.response_count, 1)
+    assert.equal(enabled.outputSavings.summary.job_count, 1)
 
-    const { OutputSavingsRuntimeManager } = await import('../packages/cli/dist/src/index.js')
-    const runtimeManager = new OutputSavingsRuntimeManager(homeDir)
-    const measurement = await runtimeManager.measure('hello world')
-    assert.deepEqual({ ...measurement, measuredAt: '<measured-at>' }, {
-      schema: 'tokenless.output-savings-measurement.v1',
-      state: 'measured',
-      basis: 'visible_assistant_text',
-      estimator: 'o200k_base',
-      estimatorRevision: 'tiktoken-o200k_base-1.0.22',
-      estimatedOutputTokens: 2,
-      visibleCharacters: 11,
-      sourceTextSha256: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9',
-      measuredAt: '<measured-at>',
-    })
-
-    const status = runSavings(homeDir, 'status')
-    assert.deepEqual(status.outputSavings, enabled.outputSavings)
+    const explicitlyEnabled = runSavings(homeDir, 'enable')
+    assert.deepEqual(explicitlyEnabled.outputSavings, enabled.outputSavings)
 
     const disabled = runSavings(homeDir, 'disable')
     assert.equal(disabled.outputSavings.enabled, false)
@@ -63,6 +98,64 @@ test('built CLI explicitly installs, verifies, enables, measures, disables, and 
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
+
+test('disabling output savings discards durable work without installing the tokenizer', async () => {
+  const tempRoot = fs.realpathSync.native(os.tmpdir())
+  const homeDir = fs.realpathSync.native(fs.mkdtempSync(path.join(tempRoot, 'tokenless-output-savings-disabled-')))
+  try {
+    const { JobStore } = await import('../packages/cli/dist/src/daemon/job-store.js')
+    const store = await JobStore.open(homeDir)
+    try {
+      const created = store.createJob({
+        provider: 'chatgpt',
+        action: 'visible_provider_actions',
+        request_json: { taskId: 'disabled-savings' },
+        profile_id: 'savings-profile',
+      })
+      const claimed = store.claimJob(created.job_id, created.claim_token)
+      store.markRunning(claimed.job_id, claimed.claim_token)
+      store.completeJob(claimed.job_id, claimed.claim_token, {
+        result_json: {
+          protocol: 'tokenless.playwright.job.v3',
+          provider: 'chatgpt',
+          responses: [],
+        },
+        output_savings_work: [{
+          response_request_id: 'disabled-savings-response',
+          source_text: 'hello world',
+        }],
+      })
+      assert.equal(store.pendingOutputSavingsWorkCount(), 1)
+    } finally {
+      store.close()
+    }
+
+    const disabled = runSavings(homeDir, 'disable')
+    assert.equal(disabled.outputSavings.enabled, false)
+    assert.equal(disabled.outputSavings.collection, 'disabled')
+    assert.equal(disabled.outputSavings.summary.estimated_output_tokens, 0)
+
+    const reopened = await JobStore.open(homeDir)
+    try {
+      assert.equal(reopened.pendingOutputSavingsWorkCount(), 0)
+      assert.equal(reopened.outputSavingsSummary().estimated_output_tokens, 0)
+    } finally {
+      reopened.close()
+    }
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenizers')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+async function waitFor(predicate, timeoutMs = 30_000) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  assert.fail(`Condition was not met within ${timeoutMs}ms.`)
+}
 
 function runSavings(homeDir, subcommand, ...extra) {
   const result = spawnSync(process.execPath, [

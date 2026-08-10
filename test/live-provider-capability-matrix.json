@@ -1,11 +1,7 @@
 {
-  "schema": "tokenless.live-provider-capability-matrix.v1",
-  "connectionModes": [
-    "playwright",
-    "cdp"
-  ],
+  "schema": "tokenless.live-provider-capability-matrix.v2",
   "journey": {
-    "scope": "provider_connection_mode",
+    "scope": "provider_capability",
     "pagePolicy": "one_managed_page",
     "caseOrder": "providers.required",
     "identityProof": [
@@ -433,10 +429,10 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "model-choice",
-        "file-selection",
-        "conversation-workflow",
-        "native-project"
+      "model-choice",
+      "file-selection",
+      "conversation-workflow",
+      "native-project"
       ],
       "unavailable": {
         "effort-choice": "no_independent_effort_control_declared",
@@ -462,6 +458,7 @@
       "required": [
         "session-readiness",
         "prompt-draft",
+        "file-selection",
         "workspace-response-citations"
       ],
       "unavailable": {
@@ -470,8 +467,7 @@
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
-        "file-selection": "no_visible_upload_control_in_selected_guest_profile_2026_07_28",
-        "conversation-workflow": "no_upload_or_continuation_closure_in_selected_guest_profile",
+        "conversation-workflow": "no_continuation_closure_in_selected_profile",
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
@@ -489,15 +485,15 @@
       "stage": "supported",
       "account": "signed_in_selected_setup_profile",
       "required": [
-        "session-readiness",
-        "prompt-draft",
-        "model-choice",
-        "effort-choice",
-        "file-selection",
-        "conversation-workflow",
-        "native-project"
+      "session-readiness",
+      "prompt-draft",
+      "file-selection",
+      "conversation-workflow"
       ],
       "unavailable": {
+        "model-choice": "selected_free_plan_only_fast_enabled_2026_08_10",
+      "effort-choice": "no_independent_effort_control_observed_2026_08_10",
+      "native-project": "no_visible_project_instruction_control_2026_08_10",
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
@@ -520,18 +516,18 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "effort-choice",
-        "qwen-mode-workspace"
+        "effort-choice"
       ],
       "unavailable": {
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
         "model-choice": "no_real_selection_closure",
-        "file-selection": "no_real_visible_attachment_closure",
+        "file-selection": "three_markdown_cards_accepted_but_submit_click_had_no_visible_transition_2026_08_09",
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
-        "workspace-response-citations": "covered_by_qwen_mode_workspace",
-        "workspace-response-baseline": "covered_by_qwen_mode_workspace",
+        "workspace-response-citations": "no_real_visible_response_closure_after_repeated_12_minute_timeouts_2026_08_10",
+        "workspace-response-baseline": "no_real_visible_response_closure_after_repeated_12_minute_timeouts_2026_08_10",
+        "qwen-mode-workspace": "no_real_visible_response_closure_after_repeated_12_minute_timeouts_2026_08_10",
         "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_proven",
         "kimi-library-controls": "provider_specific_capability",
@@ -549,17 +545,17 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "deepseek-controls",
-        "file-selection",
-        "deepseek-search-reasoning",
-        "deepseek-vision-input",
-        "conversation-workflow"
+        "file-selection"
       ],
       "unavailable": {
         "model-choice": "no_real_selection_closure",
         "effort-choice": "no_independent_effort_control_declared",
-        "workspace-response-citations": "covered_by_conversation_workflow",
-        "workspace-response-baseline": "covered_by_conversation_workflow",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "no_real_image_input_closure",
+        "conversation-workflow": "no_real_visible_citation_closure_2026_08_10",
+        "workspace-response-citations": "no_real_visible_citation_closure_2026_08_10",
+        "workspace-response-baseline": "no_real_visible_citation_closure_2026_08_10",
         "qwen-mode-workspace": "provider_specific_capability",
         "doubao-controls": "provider_specific_capability",
         "native-project": "native_project_not_observed",
@@ -586,7 +582,7 @@
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
-        "file-selection": "no_real_visible_attachment_closure",
+        "file-selection": "selected_free_plan_third_document_visible_upgrade_gate_2026_08_09",
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-baseline": "covered_by_workspace_response_citations",
         "qwen-mode-workspace": "provider_specific_capability",
@@ -607,6 +603,7 @@
       "required": [
         "session-readiness",
         "prompt-draft",
+        "file-selection",
         "workspace-response-baseline"
       ],
       "unavailable": {
@@ -615,7 +612,6 @@
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
-        "file-selection": "no_real_visible_attachment_closure",
         "conversation-workflow": "no_real_attachment_or_continuation_closure",
         "workspace-response-citations": "no_real_visible_citation_closure",
         "qwen-mode-workspace": "provider_specific_capability",
@@ -665,18 +661,10 @@
       "required": [
         "session-readiness",
         "prompt-draft",
-        "model-choice",
         "effort-choice",
         "file-selection",
         "conversation-workflow",
-        "native-project",
-        "kimi-library-controls",
-        "kimi-library-workflows",
-        "kimi-search",
-        "kimi-deep-research",
-        "kimi-artifacts",
-        "kimi-long-running",
-        "kimi-agent-swarm"
+        "kimi-search"
       ],
       "unavailable": {
         "deepseek-controls": "provider_specific_capability",
@@ -685,7 +673,44 @@
         "workspace-response-citations": "covered_by_conversation_workflow",
         "workspace-response-baseline": "covered_by_conversation_workflow",
         "qwen-mode-workspace": "provider_specific_capability",
-        "doubao-controls": "provider_specific_capability"
+        "doubao-controls": "provider_specific_capability",
+        "model-choice": "instant_selection_not_returned_in_repeated_real_runs_2026_08_10",
+        "native-project": "exact_project_name_not_visibly_confirmed_in_repeated_real_runs_2026_08_10",
+        "kimi-library-controls": "exact_plugin_selection_not_visibly_confirmed_2026_08_10",
+        "kimi-library-workflows": "no_real_visible_response_closure_after_repeated_failure_and_timeout_2026_08_10",
+        "kimi-deep-research": "visible_provider_blocker_in_repeated_real_runs_2026_08_10",
+        "kimi-artifacts": "visible_provider_blocker_in_repeated_real_runs_2026_08_10",
+        "kimi-long-running": "visible_provider_blocker_in_repeated_real_runs_2026_08_10",
+        "kimi-agent-swarm": "no_terminal_state_before_18_minute_timeout_2026_08_10"
+      }
+    },
+    "dola": {
+      "stage": "experimental",
+      "account": "signed_in_selected_setup_profile",
+      "required": [
+        "session-readiness",
+        "prompt-draft",
+        "model-choice"
+      ],
+      "unavailable": {
+        "effort-choice": "no_independent_effort_control_declared",
+        "file-selection": "selected_setup_profile_multi_document_and_sequential_selection_only_one_visible_card_2026_08_09",
+        "conversation-workflow": "no_real_submitted_response_closure",
+        "deepseek-controls": "provider_specific_capability",
+        "deepseek-search-reasoning": "provider_specific_capability",
+        "deepseek-vision-input": "provider_specific_capability",
+        "workspace-response-citations": "covered_by_conversation_workflow",
+        "workspace-response-baseline": "covered_by_conversation_workflow",
+        "qwen-mode-workspace": "provider_specific_capability",
+        "doubao-controls": "provider_specific_capability",
+        "native-project": "native_project_not_observed",
+        "kimi-library-controls": "provider_specific_capability",
+        "kimi-search": "provider_specific_capability",
+        "kimi-deep-research": "provider_specific_capability",
+        "kimi-artifacts": "provider_specific_capability",
+        "kimi-long-running": "provider_specific_capability",
+        "kimi-agent-swarm": "provider_specific_capability",
+        "kimi-library-workflows": "provider_specific_capability"
       }
     }
   }

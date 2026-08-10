@@ -104,6 +104,9 @@ export class DaemonRuntimeState {
         pid: parsed.pid,
         updatedAt: parsed.updatedAt,
       } satisfies DaemonRuntimeEndpoint
+    } catch (error) {
+      if (isTransientSqliteConflict(error)) return null
+      throw error
     } finally {
       db.close()
     }
@@ -115,7 +118,7 @@ export class DaemonRuntimeState {
     try {
       this.#db = new DatabaseSync(this.databasePath)
       this.#db.exec('PRAGMA foreign_keys = ON;')
-      this.#db.exec('PRAGMA busy_timeout = 5000;')
+      this.#db.exec('PRAGMA busy_timeout = 250;')
     } catch (error) {
       throw runtimeStateError('daemon_runtime_state_unavailable', sqliteMessage(error), true)
     }
@@ -128,7 +131,13 @@ export class DaemonRuntimeState {
   }
 
   endpoint(): DaemonRuntimeEndpoint | null {
-    const row = this.runtimeRow()
+    let row: ReturnType<DaemonRuntimeState['runtimeRow']>
+    try {
+      row = this.runtimeRow()
+    } catch (error) {
+      if (isTransientSqliteConflict(error)) return null
+      throw error
+    }
     if (!row || row.state !== 'running' || !row.origin) return null
     return {
       origin: normalizeLoopbackHttpOrigin(row.origin),
@@ -220,7 +229,8 @@ export class DaemonRuntimeState {
     const normalizedPid = normalizePid(ownerPid)
     const expiresAt = saturatingAdd(nowMs, normalizedLeaseMs)
     const now = nowRfc3339()
-    return this.transaction(() => {
+    try {
+      return this.transaction(() => {
       const existing = this.runtimeRow()
       const existingPidAlive = existing?.pid !== null && existing?.pid !== undefined && pidIsAlive(existing.pid)
       const runningTakeoverMatched = existing?.state === 'running' &&
@@ -260,7 +270,11 @@ export class DaemonRuntimeState {
         now
       )
       return { acquired: true, lease: this.startupLease() }
-    })
+      })
+    } catch (error) {
+      if (isTransientSqliteConflict(error)) return { acquired: false, lease: null }
+      throw error
+    }
   }
 
   releaseStartupLease(ownerToken: string) {
@@ -284,8 +298,7 @@ export class DaemonRuntimeState {
   }
 
   private initialize() {
-    this.execWithBusyRetry(`
-      PRAGMA journal_mode = WAL;
+    this.exec(`
       PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS daemon_runtime_state (
         id TEXT PRIMARY KEY NOT NULL CHECK (id = 'daemon'),
@@ -322,23 +335,6 @@ export class DaemonRuntimeState {
     }
   }
 
-  private execWithBusyRetry(sql: string) {
-    let lastError: unknown
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      try {
-        this.#db.exec(sql)
-        return
-      } catch (error) {
-        if (!isSqliteBusy(error)) {
-          throw runtimeStateError('daemon_runtime_state_sqlite_failed', sqliteMessage(error), true)
-        }
-        lastError = error
-        sleepSync(50)
-      }
-    }
-    throw runtimeStateError('daemon_runtime_state_sqlite_busy', sqliteMessage(lastError), true)
-  }
-
   private run(sql: string, ...params: SQLInputValue[]) {
     try {
       return this.#db.prepare(sql).run(...params)
@@ -356,7 +352,7 @@ export class DaemonRuntimeState {
   }
 
   private transaction<T>(callback: () => T) {
-    this.exec('BEGIN IMMEDIATE')
+    this.exec('BEGIN')
     try {
       const result = callback()
       this.exec('COMMIT')
@@ -510,14 +506,13 @@ function sqliteMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : String(error)
 }
 
-function isSqliteBusy(error: unknown) {
-  const code = (error as { code?: unknown }).code
-  return code === 'ERR_SQLITE_BUSY' || code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED'
-}
 
-function sleepSync(ms: number) {
-  const view = new Int32Array(new SharedArrayBuffer(4))
-  Atomics.wait(view, 0, 0, ms)
+function isTransientSqliteConflict(error: unknown) {
+  const candidate = error as { code?: unknown; message?: unknown }
+  const code = String(candidate.code ?? '')
+  const message = String(candidate.message ?? error).toLowerCase()
+  return (code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED' || code === 'ERR_SQLITE_ERROR' || code === 'daemon_runtime_state_sqlite_failed') &&
+    (message.includes('database is locked') || message.includes('database table is locked') || message.includes('busy'))
 }
 
 function runtimeStateError(code: string, message: string, retryable: boolean) {

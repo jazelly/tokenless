@@ -182,9 +182,7 @@ export type OpenDashboardOptions = DaemonClientOptions & {
 }
 
 export type OpenDashboardResponse = {
-  ticket: string
-  bootstrapUrl: string
-  expiresAt: string
+  url: string
   opened: null | (BrowserRuntimeOpenProfileResponse & { url: string, reused: boolean })
 }
 
@@ -597,7 +595,7 @@ export async function openTokenlessDashboard({
   const daemon = await authenticatedDaemonAccess({ daemonUrl: explicitDaemonUrl, homeDir, requestTimeoutMs })
   return daemonRequest<OpenDashboardResponse>({
     daemonUrl: daemon.daemonUrl,
-    path: '/control/ui-bootstrap',
+    path: '/control/dashboard',
     body: {
       ...(profileId ? { profile_id: profileId } : {}),
       open,
@@ -640,7 +638,7 @@ export async function waitDaemonJobResult({
   requestTimeoutMs,
   signal,
   jobId,
-  timeoutMs = 180000,
+  timeoutMs,
   pollMs = 250,
   heartbeatMs = 30000,
   onStatus,
@@ -651,7 +649,7 @@ export async function waitDaemonJobResult({
   const startedAt = Date.now()
   let lastStatus: string | undefined
   let lastHeartbeatAt = startedAt
-  while (Date.now() - startedAt < timeoutMs) {
+  while (timeoutMs === undefined || Date.now() - startedAt < timeoutMs) {
     const job = await getDaemonJob({ daemonUrl: explicitDaemonUrl, homeDir, jobId, requestTimeoutMs, signal })
     const elapsedMs = Date.now() - startedAt
     if (job.status !== lastStatus) {

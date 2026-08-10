@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte'
-  import BrowserProfileSourcePicker from './BrowserProfileSourcePicker.svelte'
+  import type { MessageKey } from '../localization.js'
   import type { JsonRecord } from '../types.js'
 
   let {
@@ -10,30 +10,20 @@
     busy,
     oncancel,
     onsubmit,
-    ondiscoverprofiles,
   }: {
     snapshot: JsonRecord
     profile?: JsonRecord
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
     oncancel: () => void
     onsubmit: (value: JsonRecord) => Promise<void>
-    ondiscoverprofiles: (input: JsonRecord) => Promise<JsonRecord>
   } = $props()
 
   let slug = $state(untrack(() => profile?.slug ?? ''))
-  let label = $state(untrack(() => profile?.label ?? ''))
-  let roleLabel = $state(untrack(() => profile?.preferences?.roleLabel ?? ''))
-  let browserVisibility = $state(untrack(() => profile?.preferences?.browserVisibility ?? snapshot.config.browserVisibility ?? 'auto'))
-  let enabledProviders = $state<string[]>(untrack(() => profile?.preferences?.enabledProviders
-    ? [...profile.preferences.enabledProviders]
-    : Array.isArray(snapshot.config.providerWhitelist)
-      ? [...snapshot.config.providerWhitelist]
-      : snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled').map((provider: JsonRecord) => provider.id)))
-  let proxy = $state(untrack(() => profile?.preferences?.proxy?.server ?? ''))
-  let proxyBypass = $state(untrack(() => profile?.preferences?.proxy?.bypass?.join(', ') ?? ''))
-  let importSourceId = $state('')
-  let consentLocalProfileCopy = $state(false)
+  let roleLabel = $state(untrack(() => profile?.roleLabel ?? ''))
+  let enabledProviders = $state<string[]>(untrack(() => Array.isArray(profile?.enabledProviders)
+    ? [...profile.enabledProviders]
+    : snapshot.providers.filter((provider: JsonRecord) => provider.stage !== 'disabled').map((provider: JsonRecord) => provider.id)))
   let error = $state('')
   let errorElement = $state<HTMLDivElement>()
 
@@ -43,23 +33,25 @@
       : enabledProviders.filter((entry) => entry !== provider)
   }
 
+  function browserBindingLabel() {
+    const binding = profile?.browserBinding
+    if (binding && typeof binding === 'object' && !Array.isArray(binding)) {
+      const browserId = (binding as JsonRecord).browserId
+      const runtimeId = (binding as JsonRecord).runtimeId
+      if (typeof browserId === 'string' && typeof runtimeId === 'string') return `${browserId} · ${runtimeId}`
+    }
+    return `${snapshot.config.browser} · native:${snapshot.config.browser}`
+  }
+
   async function submit(event: SubmitEvent) {
     event.preventDefault()
     error = ''
     try {
       await onsubmit({
         ...(!profile ? { slug } : {}),
-        label,
         roleLabel,
-        browserVisibility,
+        browserVisibility: 'headed',
         enabledProviders,
-        ...(!profile && importSourceId ? { importSourceId, consentLocalProfileCopy } : {}),
-        proxy: proxy.trim()
-          ? {
-              server: proxy.trim(),
-              bypass: proxyBypass.split(',').map((entry: string) => entry.trim()).filter(Boolean),
-            }
-          : null,
       })
     } catch (caught) {
       error = caught instanceof Error ? caught.message : t('requestFailed')
@@ -77,39 +69,11 @@
     </label>
   {/if}
   <label class="field">
-    <span>{t('label')} <small>{t('required')}</small></span>
-    <input name="label" bind:value={label} required maxlength="80" autocomplete="off" data-testid="profile-label" />
-  </label>
-  <label class="field">
     <span>{t('role')} <small>{t('optional')}</small></span>
     <input name="roleLabel" bind:value={roleLabel} maxlength="80" autocomplete="off" data-testid="profile-role" />
   </label>
 
-  <div class="form-grid compact">
-    <label class="field">
-      <span>{t('visibility')}</span>
-      <select name="browserVisibility" bind:value={browserVisibility} data-testid="profile-visibility">
-        <option value="auto">auto</option>
-        <option value="headed">headed</option>
-        <option value="headless">headless</option>
-      </select>
-    </label>
-    <div class="field read-only-field">
-      <span>{t('profileBrowser')}</span>
-      <strong>{profile?.runtimeBinding?.browserId ?? snapshot.config.browser}</strong>
-    </div>
-  </div>
-
-  {#if !profile}
-    <BrowserProfileSourcePicker
-      bind:sourceId={importSourceId}
-      bind:consent={consentLocalProfileCopy}
-      {t}
-      {busy}
-      testId="profile"
-      ondiscover={ondiscoverprofiles}
-    />
-  {/if}
+  <div class="field read-only-field"><span>{t('profileBrowser')}</span><strong translate="no" data-testid="profile-form-browser-binding">{browserBindingLabel()}</strong></div>
 
   <fieldset class="fieldset">
     <legend>{t('providerAccess')}</legend>
@@ -129,26 +93,11 @@
     </div>
   </fieldset>
 
-  <details class="details-block">
-    <summary>{t('proxySettings')}</summary>
-    <div class="details-content">
-      <label class="field">
-        <span>{t('proxy')}</span>
-        <input name="proxy" bind:value={proxy} placeholder="socks5://127.0.0.1:1080…" autocomplete="off" spellcheck="false" inputmode="url" data-testid="profile-proxy" />
-      </label>
-      <label class="field">
-        <span>{t('proxyBypass')}</span>
-        <input name="proxyBypass" bind:value={proxyBypass} autocomplete="off" spellcheck="false" data-testid="profile-proxy-bypass" />
-      </label>
-      <p class="form-note">{t('proxyRestartNote')}</p>
-    </div>
-  </details>
-
   {#if error}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1" data-testid="profile-form-error"><span>{error}</span></div>{/if}
 
   <div class="form-actions">
     <button class="button secondary" type="button" onclick={oncancel}>{t('cancel')}</button>
-    <button class="button primary" type="submit" disabled={busy || (importSourceId !== '' && !consentLocalProfileCopy)} data-testid="profile-submit">
+    <button class="button primary" type="submit" disabled={busy} data-testid="profile-submit">
       {#if busy}<span class="spinner mini"></span>{/if}{profile ? t('save') : t('create')}
     </button>
   </div>

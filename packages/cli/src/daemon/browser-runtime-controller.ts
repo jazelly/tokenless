@@ -7,13 +7,9 @@ import {
   type ManagedProviderTabsOpenResult,
 } from '../playwright/runner-service.js'
 import { isClaimRecoveryError, tokenlessError } from '../playwright/errors.js'
-import { resolveE2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
-import type { E2EBrowserInspectionConfig } from '../playwright/e2e-inspection.js'
-import { readTokenlessConfig, writeTokenlessConfig, type TokenlessConfig } from '../job-store.js'
 import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
+import { readTokenlessConfig } from '../job-store.js'
 import type { JobStore } from './job-store.js'
-import type { ManagedBrowserLaunchTarget } from '../playwright/browser/context-manager.js'
-import type { ManagedBrowserProfile } from '../playwright/browser/context-manager.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 
 export type BrowserRuntimeState = 'running' | 'quiescing' | 'quiesced' | 'stopped'
@@ -108,10 +104,10 @@ export class BrowserRuntimeController {
     })
   }
 
-  async openControlPlane(profileId: string, bootstrapUrl: string) {
+  async openControlPlane(profileId: string, consoleUrl: string) {
     return await this.enqueue(async () => {
       const runner = await this.ensureRunningInLane()
-      const opened = await runner.service.openControlPlane(profileId, bootstrapUrl)
+      const opened = await runner.service.openControlPlane(profileId, consoleUrl)
       return { ...opened, status: this.status() }
     })
   }
@@ -136,7 +132,7 @@ export class BrowserRuntimeController {
       this.state = 'quiescing'
       runner.abortController.abort()
       runner.service.stop()
-      const results = await this.settleRunner(runner)
+      const results = await this.settleRunner(runner, 'close')
       if (this.runner === runner) this.runner = null
       this.throwIfRunnerFailedToRecover(results)
       if (!this.terminal) this.state = 'quiesced'
@@ -153,7 +149,7 @@ export class BrowserRuntimeController {
         this.state = 'quiescing'
         runner.abortController.abort()
         runner.service.stop()
-        await this.settleRunner(runner)
+        await this.settleRunner(runner, 'detach')
         if (this.runner === runner) this.runner = null
       }
       this.state = 'stopped'
@@ -164,23 +160,34 @@ export class BrowserRuntimeController {
   private async createRunner(): Promise<RunnerInstance> {
     const runtimeManager = new BrowserRuntimeManager({ homeDir: this.store.homeDir })
     const config = await readTokenlessConfig(this.store.homeDir)
-    const e2eInspection = resolveE2EBrowserInspectionConfig(this.store.homeDir)
-    const resolvedTargets = new Map<string, Promise<ManagedBrowserLaunchTarget>>()
-    const browserResolver = async (profile: ManagedBrowserProfile) => {
-      const cacheKey = profile.runtimeBinding?.runtimeId ?? `unbound:${profile.id}`
-      let pending = resolvedTargets.get(cacheKey)
-      if (!pending) {
-        pending = this.resolveBrowserLaunchTarget(profile, runtimeManager, config, e2eInspection)
-        resolvedTargets.set(cacheKey, pending)
-        pending.catch(() => resolvedTargets.delete(cacheKey))
-      }
-      return await pending
-    }
+    const nativeBrowser = config.browser === 'brave' ? 'brave' : 'chrome'
     const service = new ManagedPlaywrightRunnerService({
       homeDir: this.store.homeDir,
       daemonClient: createInProcessDaemonClient(this.store),
-      browserConnectionMode: config.browserConnectionMode,
-      browserResolver,
+      browserResolver: async (profile) => {
+        if (!profile.runtimeBinding) {
+          const runtime = await runtimeManager.ensure(nativeBrowser, {
+            allowDownload: false,
+            browserExecutablePath: config.browserExecutablePath,
+          })
+          return {
+            id: nativeBrowser,
+            executablePath: runtime.executablePath,
+            runtimeId: `native:${nativeBrowser}`,
+            launchPolicy: 'native',
+          }
+        }
+        const runtime = await runtimeManager.resolveForProfile({
+          slug: profile.id,
+          runtimeBinding: profile.runtimeBinding,
+        })
+        return {
+          id: runtime.browserId,
+          executablePath: runtime.executablePath,
+          runtimeId: runtime.runtimeId,
+          launchPolicy: runtime.launchPolicy,
+        }
+      },
       recoverAbortedClaim: (job) => this.store.recoverActiveClaim(job.job_id, job.claim_token),
     })
     const abortController = new AbortController()
@@ -216,57 +223,9 @@ export class BrowserRuntimeController {
     return this.runner
   }
 
-  private async resolveBrowserLaunchTarget(
-    profile: ManagedBrowserProfile,
-    runtimeManager: BrowserRuntimeManager,
-    config: TokenlessConfig,
-    e2eInspection: E2EBrowserInspectionConfig | null,
-  ): Promise<ManagedBrowserLaunchTarget> {
-    const runtime = profile.runtimeBinding
-      ? await runtimeManager.resolveForProfile({
-          slug: profile.id,
-          runtimeBinding: profile.runtimeBinding,
-        }, {
-          browserExecutablePath: profile.runtimeBinding.browserId === config.browser
-            ? config.browserExecutablePath
-            : null,
-        })
-      : await this.resolveLegacyTestProfileRuntime(runtimeManager)
-    if (
-      runtime.family !== 'test' &&
-      runtime.selection === config.browser &&
-      runtime.executablePath !== config.browserExecutablePath
-    ) {
-      await writeTokenlessConfig({
-        homeDir: this.store.homeDir,
-        browserExecutablePath: runtime.executablePath,
-      })
-      config.browserExecutablePath = runtime.executablePath
-    }
-    return {
-      id: runtime.browserId,
-      executablePath: runtime.executablePath,
-      runtimeId: runtime.runtimeId,
-      launchPolicy: runtime.launchPolicy,
-      ...(e2eInspection ? {
-        e2eInspection: true,
-        ...(e2eInspection.hostResolverRule
-          ? { e2eHostResolverRule: e2eInspection.hostResolverRule.chromiumValue }
-          : {}),
-      } : {}),
-    }
-  }
-
-  private async resolveLegacyTestProfileRuntime(runtimeManager: BrowserRuntimeManager) {
-    const configuredBrowser = (await readTokenlessConfig(this.store.homeDir)).browser
-    if (configuredBrowser === 'profile') {
-      return await runtimeManager.ensure('profile', { allowDownload: false })
-    }
-    return await runtimeManager.resolveForProfile({ slug: '<unbound>' })
-  }
-
-  private async settleRunner(runner: RunnerInstance) {
-    const shutdown = runner.service.shutdown().catch(() => undefined)
+  private async settleRunner(runner: RunnerInstance, browserDisposition: 'close' | 'detach') {
+    const shutdown = (browserDisposition === 'close' ? runner.service.shutdown() : runner.service.detach())
+      .catch(() => undefined)
     return await Promise.allSettled([runner.loop, shutdown])
   }
 

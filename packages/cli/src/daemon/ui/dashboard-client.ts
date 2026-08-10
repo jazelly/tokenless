@@ -3,13 +3,15 @@ import type { JsonRecord, Language, SnapshotResult } from './types.js'
 
 export class DashboardRequestError extends Error {
   readonly code: string
+  readonly diagnostic: string
   readonly sessionExpired: boolean
   readonly status: number | undefined
 
-  constructor(message: string, options: { code?: string, sessionExpired?: boolean, status?: number } = {}) {
+  constructor(message: string, options: { code?: string, diagnostic?: string, sessionExpired?: boolean, status?: number } = {}) {
     super(message)
     this.name = 'DashboardRequestError'
     this.code = options.code ?? ''
+    this.diagnostic = options.diagnostic ?? ''
     this.sessionExpired = options.sessionExpired ?? false
     this.status = options.status
   }
@@ -60,9 +62,15 @@ export class DashboardClient {
     const body = await response.json().catch(() => ({})) as JsonRecord
     if (!response.ok) {
       const code = typeof body?.error?.code === 'string' ? body.error.code : ''
+      const language = this.currentLanguage()
+      const summary = translateError(language, code, body?.error?.message)
+      const diagnostic = typeof body?.error?.message === 'string' ? body.error.message : ''
+      const message = diagnostic && diagnostic !== summary
+        ? `${summary}\n${translate(language, 'diagnostics')}: ${diagnostic}`
+        : summary
       throw new DashboardRequestError(
-        translateError(this.currentLanguage(), code, body?.error?.message),
-        { code, status: response.status },
+        message,
+        { code, diagnostic, status: response.status },
       )
     }
     if (path === '/snapshot') this.snapshotEtag = response.headers.get('etag') ?? ''

@@ -9,6 +9,7 @@ import {
   removeStagedVisibleAttachmentBundle,
   validateVisibleAttachmentDescriptor,
 } from '../visible-attachments.js'
+import { checkpointIndicatesPromptSubmission } from '../playwright/submission-certainty.js'
 import {
   providerCapacityPolicy,
   providerRateLimitCatalog,
@@ -31,6 +32,9 @@ import {
 } from './errors.js'
 
 export type { JobStatus } from './errors.js'
+
+const MAX_OUTPUT_SAVINGS_SOURCE_BYTES = 4 * 1024 * 1024
+const OUTPUT_SAVINGS_HANDOFF_DELAY_MS = 750
 
 export type ExecutionBackend = 'playwright'
 
@@ -116,6 +120,30 @@ export type OutputSavingsSummary = {
   last_measured_at: string | null
 }
 
+export type OutputSavingsWorkInput = {
+  response_request_id: string
+  source_text: string
+}
+
+export type OutputSavingsWork = OutputSavingsWorkInput & {
+  work_id: number
+  job_id: string
+  created_at: string
+  available_at_ms: number
+  attempt_count: number
+  last_error_code: string | null
+}
+
+export type CompletedOutputSavingsWork = {
+  estimated_output_tokens: number
+  visible_characters: number
+  estimator: string
+  estimator_revision: string
+  basis: 'visible_assistant_text'
+  source_text_sha256: string
+  measured_at: string
+}
+
 export type ListJobsInput = {
   status?: JobStatus | undefined
   execution_backend?: ExecutionBackend | undefined
@@ -174,6 +202,60 @@ export type ProviderTaskConversationMapping = {
   observed_at: string
 }
 
+export type WebAiBinding = {
+  binding_ref: string
+  provider_ref: string
+  provider: string
+  profile_id: string
+}
+
+export type WebAiStagedAttachment = {
+  attachment_ref: string
+  binding_ref: string
+  bundle_id: string
+  attachment_id: string
+  media_type: 'text/markdown'
+  byte_length: number
+  sha256: string
+}
+
+export type WebAiTurn = {
+  turn_ref: string
+  binding_ref: string
+  provider_ref: string
+  conversation_ref: string
+  attachment_ref: string
+  request_ref: string | null
+  request_sha256: string | null
+  job_id: string
+  cancelled: boolean
+  cancel_dispatch_certainty: 'not_dispatched' | 'dispatched' | 'ambiguous'
+  cancel_attachment_delivery: 'pending' | 'delivered'
+}
+
+export type WebAiRequestCancellation =
+  | { kind: 'cancelled_before_start' }
+  | { kind: 'turn'; turn: WebAiTurn }
+
+export class WebAiRequestRefConflictError extends Error {
+  readonly code = 'web_ai_request_ref_conflict'
+
+  constructor() {
+    super('web ai requestRef was already used for a different request')
+    this.name = 'WebAiRequestRefConflictError'
+  }
+}
+
+/** A durable request cancellation was recorded before a V0 turn could be created. */
+export class WebAiRequestCancelledError extends Error {
+  readonly code = 'web_ai_request_cancelled'
+
+  constructor() {
+    super('web ai requestRef was cancelled before turn creation')
+    this.name = 'WebAiRequestCancelledError'
+  }
+}
+
 const DATABASE_FILE_NAME = 'tokenless.sqlite3'
 const CONTROL_TOKEN_FILE_NAME = 'daemon.token'
 const DEFAULT_CLAIM_LEASE_MS = 30_000
@@ -213,6 +295,7 @@ export class JobStore {
 
   #db: DatabaseSync
   #closed = false
+  #outputSavingsWorkListener: (() => void) | undefined
 
   static async open(homeDir = defaultHomeDir(), claimLeaseMs = DEFAULT_CLAIM_LEASE_MS) {
     await ensureTokenlessHome(homeDir)
@@ -231,7 +314,7 @@ export class JobStore {
     try {
       this.#db = new DatabaseSync(this.databasePath)
       this.#db.exec('PRAGMA foreign_keys = ON;')
-      this.#db.exec('PRAGMA busy_timeout = 5000;')
+      this.#db.exec('PRAGMA busy_timeout = 250;')
     } catch (error) {
       throw sqliteError(error)
     }
@@ -259,6 +342,10 @@ export class JobStore {
   }
 
   createJob(input: CreateJobInput) {
+    return this.transaction(() => this.insertJob(input))
+  }
+
+  private insertJob(input: CreateJobInput) {
     const provider = normalizeNonempty(String(input.provider ?? ''), 'provider')
     const action = normalizeNonempty(String(input.action ?? ''), 'action')
     const executionBackend = input.execution_backend ?? 'playwright'
@@ -276,8 +363,7 @@ export class JobStore {
     const requestJson = stringifyJson(input.request_json)
     const providerAttemptsJson = stringifyJson([providerAttempt(1, provider, 'queued', now)])
 
-    this.transaction(() => {
-      this.run(
+    this.run(
         `INSERT INTO jobs (
           job_id, claim_token, execution_backend, profile_id, agent_kind, agent_session_id,
           provider, action, status, request_json,
@@ -307,12 +393,279 @@ export class JobStore {
         summary.chat_name,
         summary.idempotency_key
       )
-      for (const taskKey of summary.task_keys) {
-        this.run('INSERT INTO job_task_keys (job_id, task_id) VALUES (?, ?)', jobId, taskKey)
+    for (const taskKey of summary.task_keys) {
+      this.run('INSERT INTO job_task_keys (job_id, task_id) VALUES (?, ?)', jobId, taskKey)
+    }
+
+    return this.getJobWithoutRecovery(jobId)
+  }
+
+  getOrCreateWebAiBinding(input: { provider: string; profile_id: string; provider_ref: string; binding_ref: string }) {
+    const provider = mappingText(input.provider, 'provider', 128)
+    const profileId = mappingText(input.profile_id, 'profile_id', PROFILE_ID_CHARS)
+    const providerRef = webAiRef(input.provider_ref, 'provider_ref')
+    const bindingRef = webAiRef(input.binding_ref, 'binding_ref')
+    this.transaction(() => {
+      const existing = this.get(
+        'SELECT binding_ref, provider_ref FROM web_ai_v0_bindings WHERE provider = ? AND profile_id = ?',
+        provider,
+        profileId,
+      )
+      if (!existing) {
+        this.run(
+          'INSERT INTO web_ai_v0_bindings (binding_ref, provider_ref, provider, profile_id, created_at) VALUES (?, ?, ?, ?, ?)',
+          bindingRef,
+          providerRef,
+          provider,
+          profileId,
+          nowRfc3339(),
+        )
       }
     })
+    return this.requireWebAiBindingByProvider(provider, profileId)
+  }
 
-    return this.getJob(jobId)
+  getWebAiBinding(bindingRef: string) {
+    const row = this.get(
+      'SELECT binding_ref, provider_ref, provider, profile_id FROM web_ai_v0_bindings WHERE binding_ref = ?',
+      webAiRef(bindingRef, 'binding_ref'),
+    )
+    return row ? rowToWebAiBinding(row) : null
+  }
+
+  private requireWebAiBindingByProvider(provider: string, profileId: string) {
+    const row = this.get(
+      'SELECT binding_ref, provider_ref, provider, profile_id FROM web_ai_v0_bindings WHERE provider = ? AND profile_id = ?',
+      provider,
+      profileId,
+    )
+    if (!row) throw invalidInput('web ai provider binding was not found')
+    return rowToWebAiBinding(row)
+  }
+
+  createWebAiStagedAttachment(input: WebAiStagedAttachment) {
+    const binding = this.getWebAiBinding(input.binding_ref)
+    if (!binding) throw invalidInput('web ai provider binding was not found')
+    const staged = normalizeWebAiStagedAttachment(input)
+    this.run(
+      `INSERT INTO web_ai_v0_staged_attachments (
+         attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      staged.attachment_ref,
+      staged.binding_ref,
+      staged.bundle_id,
+      staged.attachment_id,
+      staged.media_type,
+      staged.byte_length,
+      staged.sha256,
+      nowRfc3339(),
+    )
+    return staged
+  }
+
+  getWebAiStagedAttachment(attachmentRef: string) {
+    const row = this.get(
+      `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
+       FROM web_ai_v0_staged_attachments WHERE attachment_ref = ?`,
+      webAiRef(attachmentRef, 'attachment_ref'),
+    )
+    return row ? rowToWebAiStagedAttachment(row) : null
+  }
+
+  /** Internal control-plane observability; never exposed by the HTTP protocol. */
+  webAiStageStatus(attachmentRef: string) {
+    const row = this.get(
+      'SELECT consumed_turn_ref FROM web_ai_v0_staged_attachments WHERE attachment_ref = ?',
+      webAiRef(attachmentRef, 'attachment_ref'),
+    )
+    return row ? { consumed: row.consumed_turn_ref !== null } : null
+  }
+
+  /** Internal aggregate counts used by daemon maintenance and control-plane diagnostics. */
+  webAiCounts() {
+    const count = (table: 'web_ai_v0_bindings' | 'web_ai_v0_staged_attachments' | 'web_ai_v0_turns') => {
+      const row = this.get(`SELECT count(*) AS count FROM ${table}`)
+      return Number(row?.count ?? 0)
+    }
+    return {
+      bindings: count('web_ai_v0_bindings'),
+      stagedAttachments: count('web_ai_v0_staged_attachments'),
+      turns: count('web_ai_v0_turns'),
+    }
+  }
+
+  getWebAiStagedAttachmentByBundle(bundleId: string) {
+    const row = this.get(
+      `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
+       FROM web_ai_v0_staged_attachments WHERE bundle_id = ?`,
+      mappingText(bundleId, 'bundle_id', 64),
+    )
+    return row ? rowToWebAiStagedAttachment(row) : null
+  }
+
+  webAiBundleCleanupDisposition(bundleId: string) {
+    const row = this.get(
+      `SELECT staged.consumed_turn_ref, turns.cancelled, turns.cancel_attachment_delivery
+       FROM web_ai_v0_staged_attachments AS staged
+       LEFT JOIN web_ai_v0_turns AS turns ON turns.attachment_ref = staged.attachment_ref
+       WHERE staged.bundle_id = ?`,
+      mappingText(bundleId, 'bundle_id', 64),
+    )
+    if (!row) return 'orphan' as const
+    if (row.consumed_turn_ref === null) return 'retained' as const
+    return Number(row.cancelled) === 1 && row.cancel_attachment_delivery === 'pending'
+      ? 'delete' as const : 'retained' as const
+  }
+
+  removeWebAiStagedAttachmentByBundle(bundleId: string) {
+    return this.run('DELETE FROM web_ai_v0_staged_attachments WHERE bundle_id = ? AND consumed_turn_ref IS NULL', mappingText(bundleId, 'bundle_id', 64)).changes === 1
+  }
+
+  cleanupAbandonedWebAiStages(olderThanMs: number) {
+    if (!Number.isSafeInteger(olderThanMs) || olderThanMs < 0) throw invalidInput('web ai stage cleanup time is invalid')
+    const cutoff = new Date(olderThanMs).toISOString()
+    return this.transaction(() => {
+      const rows = this.all(
+        `SELECT attachment_ref, binding_ref, bundle_id, attachment_id, media_type, byte_length, sha256
+         FROM web_ai_v0_staged_attachments
+         WHERE consumed_turn_ref IS NULL AND created_at < ?`,
+        cutoff,
+      ).map(rowToWebAiStagedAttachment)
+      if (rows.length > 0) this.run(
+        'DELETE FROM web_ai_v0_staged_attachments WHERE consumed_turn_ref IS NULL AND created_at < ?',
+        cutoff,
+      )
+      return rows
+    })
+  }
+
+  createWebAiTurn(input: {
+    turn_ref: string
+    binding_ref: string
+    conversation_ref: string
+    attachment_refs: readonly string[]
+    request_ref: string
+    request_sha256: string
+    job: CreateJobInput
+  }) {
+    const turnRef = webAiRef(input.turn_ref, 'turn_ref')
+    const conversationRef = webAiRef(input.conversation_ref, 'conversation_ref')
+    const requestRef = webAiRequestRef(input.request_ref)
+    const requestSha256 = webAiRequestSha256(input.request_sha256)
+    const binding = this.getWebAiBinding(input.binding_ref)
+    if (!binding) throw invalidInput('web ai provider binding was not found')
+    const attachments = input.attachment_refs.map((attachmentRef) => this.getWebAiStagedAttachment(attachmentRef))
+    const attachment = attachments[0]
+    if (!attachment || attachments.some((candidate) => !candidate || candidate.binding_ref !== binding.binding_ref || candidate.bundle_id !== attachment.bundle_id)) {
+      throw invalidInput('web ai staged attachment was not found')
+    }
+    return this.transaction(() => {
+      const existing = this.getWebAiTurnByRequestRef(requestRef)
+      if (existing) {
+        if (existing.request_sha256 !== requestSha256) throw new WebAiRequestRefConflictError()
+        return existing
+      }
+      if (this.hasWebAiRequestCancellation(requestRef)) throw new WebAiRequestCancelledError()
+      for (const candidate of attachments) {
+        const unused = this.run(
+          'UPDATE web_ai_v0_staged_attachments SET consumed_turn_ref = ? WHERE attachment_ref = ? AND consumed_turn_ref IS NULL',
+          turnRef,
+          candidate!.attachment_ref,
+        )
+        if (unused.changes !== 1) throw invalidInput('web ai staged attachment has already been consumed')
+      }
+      const job = this.insertJob(input.job)
+      this.run(
+        `INSERT INTO web_ai_v0_turns (
+          turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
+          cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 'not_dispatched', 'pending', ?, ?, ?)`,
+        turnRef,
+        binding.binding_ref,
+        binding.provider_ref,
+        conversationRef,
+        attachment.attachment_ref,
+        job.job_id,
+        requestRef,
+        requestSha256,
+        nowRfc3339(),
+      )
+      return this.getWebAiTurn(turnRef)!
+    })
+  }
+
+  getWebAiTurn(turnRef: string) {
+    const row = this.get(
+      `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
+              cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256
+       FROM web_ai_v0_turns WHERE turn_ref = ?`,
+      webAiRef(turnRef, 'turn_ref'),
+    )
+    return row ? rowToWebAiTurn(row) : null
+  }
+
+  getWebAiTurnByRequestRef(requestRef: string) {
+    const row = this.get(
+      `SELECT turn_ref, binding_ref, provider_ref, conversation_ref, attachment_ref, job_id, cancelled,
+              cancel_dispatch_certainty, cancel_attachment_delivery, request_ref, request_sha256
+       FROM web_ai_v0_turns WHERE request_ref = ?`,
+      webAiRequestRef(requestRef),
+    )
+    return row ? rowToWebAiTurn(row) : null
+  }
+
+  cancelWebAiTurn(turnRef: string) {
+    return this.transaction(() => {
+      const turn = this.getWebAiTurn(turnRef)
+      return turn ? this.cancelWebAiTurnInTransaction(turn) : null
+    })
+  }
+
+  /** Atomically prevents a new turn for this requestRef, or cancels its existing turn. */
+  cancelWebAiRequest(requestRef: string): WebAiRequestCancellation {
+    const canonicalRequestRef = webAiRequestRef(requestRef)
+    return this.transaction(() => {
+      const turn = this.getWebAiTurnByRequestRef(canonicalRequestRef)
+      if (turn) return { kind: 'turn', turn: this.cancelWebAiTurnInTransaction(turn) }
+      this.run(
+        `INSERT OR IGNORE INTO web_ai_v0_request_cancellations (request_ref, created_at)
+         VALUES (?, ?)`,
+        canonicalRequestRef,
+        nowRfc3339(),
+      )
+      return { kind: 'cancelled_before_start' }
+    })
+  }
+
+  private cancelWebAiTurnInTransaction(turn: WebAiTurn) {
+    const job = this.getJobWithoutRecovery(turn.job_id)
+    if (turn.cancelled || job.status === 'canceled') return turn
+    if (!['queued', 'claimed', 'running', 'waiting_for_user'].includes(job.status)) throw invalidInput('web ai turn cannot be cancelled in its current state')
+    const certainty = job.provider_submitted_at !== null
+      ? 'dispatched'
+      : (checkpointIndicatesPromptSubmission(job.checkpoint_json) ? 'ambiguous' : 'not_dispatched')
+    const delivery = certainty === 'not_dispatched' ? 'pending' : 'delivered'
+    const now = nowRfc3339()
+    const attempts = updateCurrentProviderAttempt(job, 'canceled', null, now)
+    this.run(
+      `UPDATE jobs SET status = 'canceled', result_json = NULL, error_json = ?, blocker_json = NULL,
+        checkpoint_json = NULL, resume_json = NULL, provider_attempts_json = ?, updated_at = ?,
+        claim_expires_at = NULL, outcome_revision = outcome_revision + 1
+       WHERE job_id = ? AND status IN ('queued', 'claimed', 'running', 'waiting_for_user')`,
+      stringifyJson({ code: 'job_canceled', reason: 'web ai client requested cancellation' }),
+      stringifyJson(attempts),
+      now,
+      turn.job_id,
+    )
+    this.run('UPDATE web_ai_v0_turns SET cancelled = 1, cancel_dispatch_certainty = ?, cancel_attachment_delivery = ? WHERE turn_ref = ?', certainty, delivery, turn.turn_ref)
+    return this.getWebAiTurn(turn.turn_ref)!
+  }
+
+  private hasWebAiRequestCancellation(requestRef: string) {
+    return this.get(
+      'SELECT request_ref FROM web_ai_v0_request_cancellations WHERE request_ref = ?',
+      webAiRequestRef(requestRef),
+    ) !== undefined
   }
 
   drainReplaySummaries(recipientInput: AgentRecipient, requestedLimit?: number) {
@@ -1107,7 +1460,13 @@ export class JobStore {
     })
   }
 
-  completeJob(jobId: string, claimToken: string, completion: { result_json: unknown } | { error_json: unknown }) {
+  completeJob(
+    jobId: string,
+    claimToken: string,
+    completion:
+      | { result_json: unknown; output_savings_work?: readonly OutputSavingsWorkInput[] | undefined }
+      | { error_json: unknown },
+  ) {
     const nowMs = nowUnixMillis()
     const now = nowRfc3339()
     const status: JobStatus = 'result_json' in completion ? 'succeeded' : 'failed'
@@ -1120,34 +1479,52 @@ export class JobStore {
       ...attempts.slice(0, -1),
       { ...current, status, completedAt: now },
     ]
-    const result = this.run(
-      `UPDATE jobs
-       SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL,
-           checkpoint_json = NULL, resume_json = NULL,
-           provider_attempts_json = ?, updated_at = ?, claim_expires_at = NULL,
-           outcome_revision = outcome_revision + 1
-       WHERE job_id = ?
-         AND claim_token = ?
-         AND status IN ('claimed', 'running', 'waiting_for_user')
-         AND claim_expires_at > ?`,
-      status,
-      resultJson,
-      errorJson,
-      stringifyJson(completedAttempts),
-      now,
-      jobId,
-      claimToken,
-      nowMs
-    )
-    if (result.changes === 1) {
+    let workEnqueued = false
+    const completed = this.transaction(() => {
+      const result = this.run(
+        `UPDATE jobs
+         SET status = ?, result_json = ?, error_json = ?, blocker_json = NULL,
+             checkpoint_json = NULL, resume_json = NULL,
+             provider_attempts_json = ?, updated_at = ?, claim_expires_at = NULL,
+             outcome_revision = outcome_revision + 1
+         WHERE job_id = ?
+           AND claim_token = ?
+           AND status IN ('claimed', 'running', 'waiting_for_user')
+           AND claim_expires_at > ?`,
+        status,
+        resultJson,
+        errorJson,
+        stringifyJson(completedAttempts),
+        now,
+        jobId,
+        claimToken,
+        nowMs,
+      )
+      if (result.changes !== 1) return null
+      if ('result_json' in completion) {
+        try {
+          workEnqueued = this.enqueueOutputSavingsWork(
+            jobId,
+            completion.output_savings_work ?? [],
+            nowMs,
+            now,
+          )
+        } catch {
+          // Optional work handoff never changes the provider job outcome.
+        }
+      }
+      return this.getJobWithoutRecovery(jobId)
+    })
+    if (completed) {
       if ('result_json' in completion) {
         try {
           this.recordOutputSavingsForJob(jobId, completion.result_json)
         } catch {
-          // Optional measurement persistence never changes the provider job outcome.
+          // Legacy measurement reconciliation never changes the provider job outcome.
         }
       }
-      return this.getJobWithoutRecovery(jobId)
+      if (workEnqueued) this.#outputSavingsWorkListener?.()
+      return completed
     }
     return this.explainActiveClaimFailure(jobId, claimToken, nowMs)
   }
@@ -1202,6 +1579,87 @@ export class JobStore {
     ).map(rowToOutputSavingsEvent)
   }
 
+  pendingOutputSavingsWorkCount() {
+    const row = this.get('SELECT COUNT(*) AS count FROM output_savings_work')
+    return Number(row?.count ?? 0)
+  }
+
+  nextOutputSavingsWork(nowMs = nowUnixMillis()): OutputSavingsWork | null {
+    const row = this.get(
+      `SELECT work_id, job_id, response_request_id, source_text, created_at,
+              available_at_ms, attempt_count, last_error_code
+       FROM output_savings_work
+       WHERE available_at_ms <= ?
+       ORDER BY available_at_ms ASC, work_id ASC
+       LIMIT 1`,
+      nowMs,
+    )
+    return row ? rowToOutputSavingsWork(row) : null
+  }
+
+  nextOutputSavingsWorkAvailableAt(): number | null {
+    const row = this.get('SELECT MIN(available_at_ms) AS available_at_ms FROM output_savings_work')
+    return row?.available_at_ms === null || row?.available_at_ms === undefined
+      ? null
+      : Number(row.available_at_ms)
+  }
+
+  completeOutputSavingsWork(workId: number, measurement: CompletedOutputSavingsWork) {
+    return this.transaction(() => {
+      const work = this.get(
+        `SELECT work_id, job_id, response_request_id
+         FROM output_savings_work
+         WHERE work_id = ?`,
+        workId,
+      )
+      if (!work) return false
+      this.run(
+        `INSERT OR IGNORE INTO output_savings_events (
+           job_id, response_request_id, estimated_output_tokens, visible_characters,
+           estimator, estimator_revision, basis, source_text_sha256, measured_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        String(work.job_id),
+        String(work.response_request_id),
+        measurement.estimated_output_tokens,
+        measurement.visible_characters,
+        measurement.estimator,
+        measurement.estimator_revision,
+        measurement.basis,
+        measurement.source_text_sha256,
+        measurement.measured_at,
+      )
+      this.run('DELETE FROM output_savings_work WHERE work_id = ?', workId)
+      return true
+    })
+  }
+
+  deferOutputSavingsWork(workId: number, errorCode: string, delayMs: number) {
+    const boundedDelay = Math.max(1_000, Math.min(60_000, Math.floor(delayMs)))
+    const result = this.run(
+      `UPDATE output_savings_work
+       SET attempt_count = attempt_count + 1,
+           last_error_code = ?,
+           available_at_ms = ?
+       WHERE work_id = ?`,
+      errorCode.slice(0, 128),
+      nowUnixMillis() + boundedDelay,
+      workId,
+    )
+    if (result.changes === 1) this.#outputSavingsWorkListener?.()
+    return result.changes === 1
+  }
+
+  discardOutputSavingsWork(workId?: number) {
+    const result = workId === undefined
+      ? this.run('DELETE FROM output_savings_work')
+      : this.run('DELETE FROM output_savings_work WHERE work_id = ?', workId)
+    return Number(result.changes)
+  }
+
+  setOutputSavingsWorkListener(listener: (() => void) | undefined) {
+    this.#outputSavingsWorkListener = listener
+  }
+
   clearOutputSavings() {
     return this.transaction(() => {
       const clearedThrough = nowRfc3339()
@@ -1253,6 +1711,7 @@ export class JobStore {
          ON CONFLICT(singleton) DO UPDATE SET cleared_through = excluded.cleared_through`,
         clearedThrough,
       )
+      this.run('DELETE FROM output_savings_work')
       const result = this.run('DELETE FROM output_savings_events')
       return { cleared: Number(result.changes) }
     })
@@ -1292,6 +1751,30 @@ export class JobStore {
         )
       }
     })
+  }
+
+  private enqueueOutputSavingsWork(
+    jobId: string,
+    work: readonly OutputSavingsWorkInput[],
+    nowMs: number,
+    now: string,
+  ) {
+    let enqueued = false
+    for (const candidate of work) {
+      if (!isOutputSavingsWorkInput(candidate)) continue
+      const result = this.run(
+        `INSERT OR IGNORE INTO output_savings_work (
+           job_id, response_request_id, source_text, created_at, available_at_ms
+         ) VALUES (?, ?, ?, ?, ?)`,
+        jobId,
+        candidate.response_request_id,
+        candidate.source_text,
+        now,
+        nowMs + OUTPUT_SAVINGS_HANDOFF_DELAY_MS,
+      )
+      enqueued ||= result.changes === 1
+    }
+    return enqueued
   }
 
   async cancelJob(jobId: string, reason: unknown | undefined) {
@@ -1566,18 +2049,61 @@ export class JobStore {
   }
 
   private initialize() {
-    this.execWithBusyRetry(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA foreign_keys = ON;
-    `)
+    this.exec('PRAGMA foreign_keys = ON;')
     this.createBaseTables()
+    this.ensureWebAiStagedAttachmentMultiplicity()
+    this.ensureWebAiTurnColumns()
     this.migrateJobsTable()
     this.createIndexes()
     restrictFilePermissionsSync(this.databasePath)
   }
 
+  private ensureWebAiStagedAttachmentMultiplicity() {
+    const table = this.get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'web_ai_v0_staged_attachments'")
+    if (!String(table?.sql ?? '').includes('consumed_turn_ref TEXT UNIQUE')) return
+    this.exec('PRAGMA foreign_keys = OFF;')
+    try {
+      this.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE web_ai_v0_staged_attachments_next (
+          attachment_ref TEXT PRIMARY KEY NOT NULL CHECK (length(attachment_ref) BETWEEN 1 AND 128),
+          binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE CASCADE,
+          bundle_id TEXT NOT NULL CHECK (length(bundle_id) BETWEEN 1 AND 64),
+          attachment_id TEXT NOT NULL CHECK (length(attachment_id) BETWEEN 1 AND 64),
+          media_type TEXT NOT NULL CHECK (media_type = 'text/markdown'),
+          byte_length INTEGER NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
+          sha256 TEXT NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+          consumed_turn_ref TEXT,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO web_ai_v0_staged_attachments_next
+          SELECT * FROM web_ai_v0_staged_attachments;
+        DROP TABLE web_ai_v0_staged_attachments;
+        ALTER TABLE web_ai_v0_staged_attachments_next RENAME TO web_ai_v0_staged_attachments;
+        COMMIT;
+      `)
+    } catch (error) {
+      try { this.exec('ROLLBACK;') } catch {}
+      throw error
+    } finally {
+      this.exec('PRAGMA foreign_keys = ON;')
+    }
+    const violation = this.get('PRAGMA foreign_key_check')
+    if (violation) throw sqliteError(new Error('Web AI attachment migration violated a foreign key.'))
+  }
+
+  private ensureWebAiTurnColumns() {
+    const tables = new Set(this.all("SELECT name FROM sqlite_master WHERE type = 'table'").map((row) => String(row.name)))
+    if (!tables.has('web_ai_v0_turns')) return
+    const columns = new Set(this.all('PRAGMA table_info(web_ai_v0_turns)').map((row) => String(row.name)))
+    if (!columns.has('cancel_dispatch_certainty')) this.exec("ALTER TABLE web_ai_v0_turns ADD COLUMN cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched'")
+    if (!columns.has('cancel_attachment_delivery')) this.exec("ALTER TABLE web_ai_v0_turns ADD COLUMN cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending'")
+    if (!columns.has('request_ref')) this.exec('ALTER TABLE web_ai_v0_turns ADD COLUMN request_ref TEXT')
+    if (!columns.has('request_sha256')) this.exec('ALTER TABLE web_ai_v0_turns ADD COLUMN request_sha256 TEXT')
+  }
+
   private createBaseTables() {
-    this.execWithBusyRetry(`
+    this.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY NOT NULL,
         claim_token TEXT NOT NULL,
@@ -1655,6 +2181,17 @@ export class JobStore {
         measured_at TEXT NOT NULL,
         PRIMARY KEY (job_id, response_request_id, estimator_revision)
       );
+      CREATE TABLE IF NOT EXISTS output_savings_work (
+        work_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+        response_request_id TEXT NOT NULL CHECK (length(response_request_id) BETWEEN 1 AND 128),
+        source_text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        available_at_ms INTEGER NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) BETWEEN 1 AND 128),
+        UNIQUE (job_id, response_request_id)
+      );
       CREATE TABLE IF NOT EXISTS output_savings_state (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         cleared_through TEXT
@@ -1705,11 +2242,49 @@ export class JobStore {
         observed_at TEXT NOT NULL,
         PRIMARY KEY (provider, profile_id, task_id)
       );
+      CREATE TABLE IF NOT EXISTS web_ai_v0_bindings (
+        binding_ref TEXT PRIMARY KEY NOT NULL CHECK (length(binding_ref) BETWEEN 1 AND 128),
+        provider_ref TEXT NOT NULL CHECK (length(provider_ref) BETWEEN 1 AND 128),
+        provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 128),
+        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
+        created_at TEXT NOT NULL,
+        UNIQUE (provider, profile_id)
+      );
+      CREATE TABLE IF NOT EXISTS web_ai_v0_staged_attachments (
+        attachment_ref TEXT PRIMARY KEY NOT NULL CHECK (length(attachment_ref) BETWEEN 1 AND 128),
+        binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE CASCADE,
+        bundle_id TEXT NOT NULL CHECK (length(bundle_id) BETWEEN 1 AND 64),
+        attachment_id TEXT NOT NULL CHECK (length(attachment_id) BETWEEN 1 AND 64),
+        media_type TEXT NOT NULL CHECK (media_type = 'text/markdown'),
+        byte_length INTEGER NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
+        sha256 TEXT NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+        consumed_turn_ref TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS web_ai_v0_turns (
+        turn_ref TEXT PRIMARY KEY NOT NULL CHECK (length(turn_ref) BETWEEN 1 AND 128),
+        binding_ref TEXT NOT NULL REFERENCES web_ai_v0_bindings(binding_ref) ON DELETE RESTRICT,
+        provider_ref TEXT NOT NULL CHECK (length(provider_ref) BETWEEN 1 AND 128),
+        conversation_ref TEXT NOT NULL CHECK (length(conversation_ref) BETWEEN 1 AND 128),
+        attachment_ref TEXT NOT NULL UNIQUE REFERENCES web_ai_v0_staged_attachments(attachment_ref) ON DELETE RESTRICT,
+        job_id TEXT NOT NULL UNIQUE REFERENCES jobs(job_id) ON DELETE RESTRICT,
+        cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1)),
+        cancel_dispatch_certainty TEXT NOT NULL DEFAULT 'not_dispatched' CHECK (cancel_dispatch_certainty IN ('not_dispatched', 'dispatched', 'ambiguous')),
+        cancel_attachment_delivery TEXT NOT NULL DEFAULT 'pending' CHECK (cancel_attachment_delivery IN ('pending', 'delivered')),
+        request_ref TEXT CHECK (request_ref IS NULL OR (length(request_ref) = 40 AND substr(request_ref, 1, 8) = 'request:' AND substr(request_ref, 9) NOT GLOB '*[^0-9a-f]*')),
+        request_sha256 TEXT CHECK (request_sha256 IS NULL OR (length(request_sha256) = 64 AND request_sha256 NOT GLOB '*[^0-9a-f]*')),
+        created_at TEXT NOT NULL,
+        CHECK ((request_ref IS NULL AND request_sha256 IS NULL) OR (request_ref IS NOT NULL AND request_sha256 IS NOT NULL))
+      );
+      CREATE TABLE IF NOT EXISTS web_ai_v0_request_cancellations (
+        request_ref TEXT PRIMARY KEY NOT NULL CHECK (length(request_ref) = 40 AND substr(request_ref, 1, 8) = 'request:' AND substr(request_ref, 9) NOT GLOB '*[^0-9a-f]*'),
+        created_at TEXT NOT NULL
+      );
     `)
   }
 
   private createIndexes() {
-    this.execWithBusyRetry(`
+    this.exec(`
       CREATE INDEX IF NOT EXISTS jobs_status_created_at_idx
         ON jobs(status, created_at);
       CREATE INDEX IF NOT EXISTS jobs_provider_action_idx
@@ -1741,12 +2316,20 @@ export class JobStore {
         ON provider_task_conversations(proved_job_id);
       CREATE INDEX IF NOT EXISTS output_savings_measured_at_idx
         ON output_savings_events(measured_at, job_id);
+      CREATE INDEX IF NOT EXISTS output_savings_work_available_idx
+        ON output_savings_work(available_at_ms, work_id);
+      CREATE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_abandoned_idx
+        ON web_ai_v0_staged_attachments(consumed_turn_ref, created_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_staged_attachments_bundle_attachment_idx
+        ON web_ai_v0_staged_attachments(bundle_id, attachment_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS web_ai_v0_turns_request_ref_idx
+        ON web_ai_v0_turns(request_ref)
+        WHERE request_ref IS NOT NULL;
     `)
   }
 
   private migrateJobsTable() {
-    this.execWithBusyRetry('BEGIN IMMEDIATE')
-    try {
+    {
       for (const [column, definition] of [
         ['checkpoint_json', 'TEXT'],
         ['resume_json', 'TEXT'],
@@ -1785,14 +2368,6 @@ export class JobStore {
             AND replay_reported_job_updated_at = updated_at
         `)
       }
-      this.exec('COMMIT')
-    } catch (error) {
-      try {
-        this.exec('ROLLBACK')
-      } catch {
-        // The transaction may already have been closed by SQLite after an error.
-      }
-      throw error
     }
   }
 
@@ -1867,20 +2442,6 @@ export class JobStore {
     }
   }
 
-  private execWithBusyRetry(sql: string) {
-    let lastError: unknown
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      try {
-        this.#db.exec(sql)
-        return
-      } catch (error) {
-        if (!isSqliteBusy(error)) throw sqliteError(error)
-        lastError = error
-        sleepSync(50)
-      }
-    }
-    throw sqliteError(lastError)
-  }
 
   private run(sql: string, ...params: SQLInputValue[]) {
     try {
@@ -1912,7 +2473,7 @@ export class JobStore {
   }
 
   private transaction<T>(callback: () => T) {
-    this.exec('BEGIN IMMEDIATE')
+    this.exec('BEGIN')
     try {
       const result = callback()
       this.exec('COMMIT')
@@ -2045,6 +2606,85 @@ function rowToJob(row: Record<string, unknown>): Job {
   }
 }
 
+function webAiRef(value: unknown, field: string) {
+  if (typeof value !== 'string' || !/^(?:provider|binding|attachment|turn|conversation):[a-f0-9]{32}$/.test(value)) {
+    throw invalidInput(`${field} is invalid`)
+  }
+  return value
+}
+
+function webAiRequestRef(value: unknown) {
+  if (typeof value !== 'string' || !/^request:[a-f0-9]{32}$/.test(value)) {
+    throw invalidInput('request_ref is invalid')
+  }
+  return value
+}
+
+function webAiRequestSha256(value: unknown) {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw invalidInput('request_sha256 is invalid')
+  }
+  return value
+}
+
+function rowToWebAiBinding(row: Record<string, unknown>): WebAiBinding {
+  return {
+    binding_ref: webAiRef(row.binding_ref, 'binding_ref'),
+    provider_ref: webAiRef(row.provider_ref, 'provider_ref'),
+    provider: mappingText(row.provider, 'provider', 128),
+    profile_id: mappingText(row.profile_id, 'profile_id', PROFILE_ID_CHARS),
+  }
+}
+
+function normalizeWebAiStagedAttachment(value: WebAiStagedAttachment): WebAiStagedAttachment {
+  if (value.media_type !== 'text/markdown') throw invalidInput('web ai attachment media type is invalid')
+  if (!Number.isSafeInteger(value.byte_length) || value.byte_length < 1 || value.byte_length > 1024 * 1024) {
+    throw invalidInput('web ai attachment byte length is invalid')
+  }
+  if (!/^[a-f0-9]{64}$/.test(value.sha256)) throw invalidInput('web ai attachment sha256 is invalid')
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(value.bundle_id) || !/^[A-Za-z0-9_-]{1,64}$/.test(value.attachment_id)) {
+    throw invalidInput('web ai attachment storage identity is invalid')
+  }
+  return {
+    attachment_ref: webAiRef(value.attachment_ref, 'attachment_ref'),
+    binding_ref: webAiRef(value.binding_ref, 'binding_ref'),
+    bundle_id: value.bundle_id,
+    attachment_id: value.attachment_id,
+    media_type: value.media_type,
+    byte_length: value.byte_length,
+    sha256: value.sha256,
+  }
+}
+
+function rowToWebAiStagedAttachment(row: Record<string, unknown>): WebAiStagedAttachment {
+  return normalizeWebAiStagedAttachment({
+    attachment_ref: String(row.attachment_ref),
+    binding_ref: String(row.binding_ref),
+    bundle_id: String(row.bundle_id),
+    attachment_id: String(row.attachment_id),
+    media_type: String(row.media_type) as 'text/markdown',
+    byte_length: Number(row.byte_length),
+    sha256: String(row.sha256),
+  })
+}
+
+function rowToWebAiTurn(row: Record<string, unknown>): WebAiTurn {
+  return {
+    turn_ref: webAiRef(row.turn_ref, 'turn_ref'),
+    binding_ref: webAiRef(row.binding_ref, 'binding_ref'),
+    provider_ref: webAiRef(row.provider_ref, 'provider_ref'),
+    conversation_ref: webAiRef(row.conversation_ref, 'conversation_ref'),
+    attachment_ref: webAiRef(row.attachment_ref, 'attachment_ref'),
+    request_ref: row.request_ref === null ? null : webAiRequestRef(row.request_ref),
+    request_sha256: row.request_sha256 === null ? null : webAiRequestSha256(row.request_sha256),
+    job_id: normalizeNonempty(String(row.job_id), 'job_id'),
+    cancelled: Number(row.cancelled) === 1,
+    cancel_dispatch_certainty: row.cancel_dispatch_certainty === 'dispatched' || row.cancel_dispatch_certainty === 'ambiguous'
+      ? row.cancel_dispatch_certainty : 'not_dispatched',
+    cancel_attachment_delivery: row.cancel_attachment_delivery === 'delivered' ? 'delivered' : 'pending',
+  }
+}
+
 type ProviderAttempt = {
   attempt: number
   provider: string
@@ -2132,6 +2772,30 @@ function rowToOutputSavingsEvent(row: Record<string, unknown>): OutputSavingsEve
     source_text_sha256: String(row.source_text_sha256),
     measured_at: String(row.measured_at),
   }
+}
+
+function rowToOutputSavingsWork(row: Record<string, unknown>): OutputSavingsWork {
+  return {
+    work_id: Number(row.work_id),
+    job_id: String(row.job_id),
+    response_request_id: String(row.response_request_id),
+    source_text: String(row.source_text),
+    created_at: String(row.created_at),
+    available_at_ms: Number(row.available_at_ms),
+    attempt_count: Number(row.attempt_count),
+    last_error_code: nullableString(row.last_error_code),
+  }
+}
+
+function isOutputSavingsWorkInput(value: unknown): value is OutputSavingsWorkInput {
+  return Boolean(value) &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof (value as OutputSavingsWorkInput).response_request_id === 'string' &&
+    (value as OutputSavingsWorkInput).response_request_id.length >= 1 &&
+    (value as OutputSavingsWorkInput).response_request_id.length <= 128 &&
+    typeof (value as OutputSavingsWorkInput).source_text === 'string' &&
+    Buffer.byteLength((value as OutputSavingsWorkInput).source_text, 'utf8') <= MAX_OUTPUT_SAVINGS_SOURCE_BYTES
 }
 
 function outputSavingsEventsFromResult(jobId: string, resultJson: unknown): OutputSavingsEvent[] {
@@ -2505,16 +3169,6 @@ function jsonRecord(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function isSqliteBusy(error: unknown) {
-  const candidate = error as { code?: unknown; errcode?: unknown; message?: unknown }
-  return candidate.code === 'ERR_SQLITE_ERROR' &&
-    (candidate.errcode === 5 || String(candidate.message ?? '').includes('database is locked'))
-}
-
-function sleepSync(ms: number) {
-  const buffer = new SharedArrayBuffer(4)
-  Atomics.wait(new Int32Array(buffer), 0, 0, ms)
-}
 
 function restrictFilePermissionsSync(filePath: string) {
   if (process.platform === 'win32' || !fsSync.existsSync(filePath)) return

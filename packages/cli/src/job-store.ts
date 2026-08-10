@@ -2,7 +2,6 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeBrowserVisibility } from './browser-visibility.js'
-import { normalizeBrowserConnectionMode, type BrowserConnectionMode } from './browser-connection-mode.js'
 import { normalizeTokenlessLanguage, type TokenlessLanguage } from './localization.js'
 import { TOKENLESS_CONFIG_SCHEMA_ID } from './schema-ids.js'
 import { providerRegistry } from './providers/registry.js'
@@ -24,11 +23,9 @@ type JsonRecord = Record<string, unknown>
 export type TokenlessConfig = {
   protocol: typeof TOKENLESS_CONFIG_SCHEMA_ID
   updatedAt: string | null
-  providerWhitelist: string[]
-  profilePreferences: Record<string, ManagedProfilePreferences>
+  profiles: Record<string, ManagedProfileConfig>
   browser: BrowserSelection
   browserExecutablePath: string | null
-  browserConnectionMode: BrowserConnectionMode
   browserVisibility: BrowserVisibility
   daemonUrl: string | null
   language: TokenlessLanguage
@@ -39,8 +36,7 @@ export type OutputSavingsConfig = {
   enabled: boolean
 }
 
-export type ManagedProfilePreferences = {
-  profileId: string
+export type ManagedProfileConfig = {
   roleLabel: string
   enabledProviders: string[]
   browserVisibility: BrowserVisibility
@@ -86,19 +82,41 @@ export function deriveTaskId({
   ].filter(Boolean).join(':')
 }
 
-export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<TokenlessConfig> {
+export async function readTokenlessConfig(
+  homeDir = tokenlessHome(),
+  { persistMigrations = true }: { persistMigrations?: boolean } = {}
+): Promise<TokenlessConfig> {
+  const initial = await readTokenlessConfigUnlocked(homeDir)
+  if (!initial.needsWrite || !persistMigrations) return initial.config
+  return await withConfigWriterLock(homeDir, async () => {
+    const latest = await readTokenlessConfigUnlocked(homeDir)
+    if (!latest.needsWrite) return latest.config
+    latest.config.updatedAt = new Date().toISOString()
+    await writeJsonAtomic(configPath(homeDir), latest.config, 0o600)
+    return latest.config
+  })
+}
+
+async function readTokenlessConfigUnlocked(homeDir: string) {
   const file = configPath(homeDir)
   let payload: unknown
   try {
     payload = JSON.parse(await fs.readFile(file, 'utf8')) as unknown
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyTokenlessConfig()
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      const config = emptyTokenlessConfig()
+      config.profiles = await configuredProfiles(homeDir, {})
+      return { config, needsWrite: Object.keys(config.profiles).length > 0 }
+    }
     throw configError(
       'tokenless_config_unreadable',
       `Cannot read Tokenless config at ${file}: ${error instanceof Error ? error.message : String(error)}`
     )
   }
   if (!isJsonRecord(payload) || payload.protocol !== TOKENLESS_CONFIG_SCHEMA_ID) {
+    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
+  }
+  if (payload.profiles !== undefined && !isJsonRecord(payload.profiles)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
   if (payload.providerWhitelist !== undefined && !Array.isArray(payload.providerWhitelist)) {
@@ -116,9 +134,6 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.browserExecutablePath !== undefined && !isConfigBrowserExecutablePath(payload.browserExecutablePath)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  if (payload.browserConnectionMode !== undefined && !normalizeBrowserConnectionMode(payload.browserConnectionMode)) {
-    throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
-  }
   if (payload.browserVisibility !== undefined && !normalizeBrowserVisibility(payload.browserVisibility)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
@@ -131,102 +146,148 @@ export async function readTokenlessConfig(homeDir = tokenlessHome()): Promise<To
   if (payload.outputSavings !== undefined && !isOutputSavingsConfig(payload.outputSavings)) {
     throw configError('tokenless_config_invalid', `Invalid Tokenless config at ${file}.`)
   }
-  const browser = normalizeBrowserId(payload.browser) ?? 'auto'
-  const browserExecutablePath = normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
+  const normalizedBrowser = normalizeBrowserId(payload.browser)
+  const browser = normalizedBrowser === 'brave' ? 'brave' : 'chrome'
+  const browserExecutablePath = normalizedBrowser === 'chrome' || normalizedBrowser === 'brave'
+    ? normalizeConfigBrowserExecutablePath(payload.browserExecutablePath)
+    : null
   validateConfigBrowserExecutablePathScope(homeDir, browser, browserExecutablePath, file)
-  return {
+  const config: TokenlessConfig = {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : null,
-    providerWhitelist: configuredProviderWhitelist(payload),
-    profilePreferences: normalizeProfilePreferences(payload.profilePreferences),
+    profiles: await configuredProfiles(homeDir, payload),
     browser,
     browserExecutablePath,
-    browserConnectionMode: normalizeBrowserConnectionMode(payload.browserConnectionMode) ?? 'playwright',
-    browserVisibility: normalizeBrowserVisibility(payload.browserVisibility, 'auto') ?? 'auto',
+    browserVisibility: 'headed',
     daemonUrl: normalizeDaemonUrl(payload.daemonUrl),
     language: normalizeTokenlessLanguage(payload.language) ?? 'en',
     outputSavings: normalizeOutputSavingsConfig(payload.outputSavings),
   }
+  return { config, needsWrite: JSON.stringify(payload) !== JSON.stringify(config) }
 }
 
 export async function writeTokenlessConfig({
   homeDir = tokenlessHome(),
-  providerWhitelist,
-  profilePreferences,
+  profiles,
   browser,
   browserExecutablePath,
-  browserConnectionMode,
   browserVisibility,
   daemonUrl,
   language,
   outputSavings,
 }: {
   homeDir?: string
-  providerWhitelist?: unknown
-  profilePreferences?: unknown
+  profiles?: unknown
   browser?: unknown
   browserExecutablePath?: unknown
-  browserConnectionMode?: unknown
   browserVisibility?: unknown
   daemonUrl?: unknown
   language?: unknown
   outputSavings?: unknown
 } = {}) {
-  await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
-  await fs.chmod(homeDir, 0o700).catch(() => undefined)
-  const canonicalHome = await fs.realpath(homeDir)
-  return await withPrivateSqliteWriterLock(path.join(canonicalHome, 'config.writer.sqlite'), async () => {
-    const current = await readTokenlessConfig(homeDir)
-    const nextBrowser = browser === undefined ? current.browser : validateConfigBrowser(browser)
+  return await withConfigWriterLock(homeDir, async () => {
+    const current = (await readTokenlessConfigUnlocked(homeDir)).config
+    const requestedBrowserSelection = browser === undefined ? current.browser : validateConfigBrowser(browser)
+    const requestedBrowser = requestedBrowserSelection === 'brave' ? 'brave' : 'chrome'
+    const requestedBrowserExecutablePath = browserExecutablePath === undefined
+      ? requestedBrowser === current.browser && (
+          requestedBrowserSelection === 'chrome' || requestedBrowserSelection === 'brave'
+        )
+        ? current.browserExecutablePath
+        : null
+      : requestedBrowserSelection === 'chrome' || requestedBrowserSelection === 'brave'
+        ? validateConfigBrowserExecutablePath(browserExecutablePath)
+        : null
+    validateConfigBrowserExecutablePathScope(
+      homeDir,
+      requestedBrowser,
+      requestedBrowserExecutablePath,
+      configPath(homeDir),
+    )
     const config: TokenlessConfig = {
       protocol: TOKENLESS_CONFIG_SCHEMA_ID,
       updatedAt: new Date().toISOString(),
-      providerWhitelist: providerWhitelist === undefined
-        ? current.providerWhitelist
-        : normalizeProviderList(providerWhitelist),
-      profilePreferences: profilePreferences === undefined
-        ? current.profilePreferences
-        : validateProfilePreferences(profilePreferences),
-      browser: nextBrowser,
-      browserExecutablePath: browserExecutablePath === undefined
-        ? (nextBrowser === current.browser ? current.browserExecutablePath : null)
-        : validateConfigBrowserExecutablePath(browserExecutablePath),
-      browserConnectionMode: browserConnectionMode === undefined
-        ? current.browserConnectionMode
-        : validateConfigBrowserConnectionMode(browserConnectionMode),
-      browserVisibility: browserVisibility === undefined
-        ? current.browserVisibility
-        : validateConfigBrowserVisibility(browserVisibility),
+      profiles: await configuredProfiles(homeDir, {
+        profiles: profiles === undefined ? current.profiles : validateProfiles(profiles),
+      }),
+      browser: requestedBrowser,
+      browserExecutablePath: requestedBrowserExecutablePath,
+      browserVisibility: 'headed',
       daemonUrl: daemonUrl === undefined ? current.daemonUrl : normalizeDaemonUrl(daemonUrl),
       language: language === undefined ? current.language : validateConfigLanguage(language),
       outputSavings: outputSavings === undefined
         ? current.outputSavings
         : validateOutputSavingsConfig(outputSavings),
     }
-    validateConfigBrowserExecutablePathScope(
-      homeDir,
-      config.browser,
-      config.browserExecutablePath,
-      configPath(homeDir),
-    )
     await writeJsonAtomic(configPath(homeDir), config, 0o600)
     return config
   })
+}
+
+export async function upsertTokenlessProfileConfig({
+  homeDir = tokenlessHome(),
+  slug,
+  profile,
+}: {
+  homeDir?: string
+  slug: string
+  profile: unknown
+}) {
+  const normalized = validateProfiles({ [slug]: profile })[slug]
+  if (!normalized) throw configError('tokenless_config_invalid', `Invalid Tokenless profile configuration for '${slug}'.`)
+  return await withConfigWriterLock(homeDir, async () => {
+    const current = (await readTokenlessConfigUnlocked(homeDir)).config
+    const config = {
+      ...current,
+      updatedAt: new Date().toISOString(),
+      profiles: await configuredProfiles(homeDir, {
+        profiles: { ...current.profiles, [slug]: normalized },
+      }),
+    }
+    await writeJsonAtomic(configPath(homeDir), config, 0o600)
+    return config
+  })
+}
+
+export async function deleteTokenlessProfileConfig({
+  homeDir = tokenlessHome(),
+  slug,
+}: {
+  homeDir?: string
+  slug: string
+}) {
+  return await withConfigWriterLock(homeDir, async () => {
+    const current = (await readTokenlessConfigUnlocked(homeDir)).config
+    const profiles = { ...current.profiles }
+    delete profiles[slug]
+    const config = {
+      ...current,
+      updatedAt: new Date().toISOString(),
+      profiles: await configuredProfiles(homeDir, { profiles }),
+    }
+    await writeJsonAtomic(configPath(homeDir), config, 0o600)
+    return config
+  })
+}
+
+async function withConfigWriterLock<T>(homeDir: string, operation: () => Promise<T>) {
+  await fs.mkdir(homeDir, { recursive: true, mode: 0o700 })
+  await fs.chmod(homeDir, 0o700).catch(() => undefined)
+  const canonicalHome = await fs.realpath(homeDir)
+  return await withPrivateSqliteWriterLock(path.join(canonicalHome, 'config.writer.sqlite'), operation)
 }
 
 function emptyTokenlessConfig(): TokenlessConfig {
   return {
     protocol: TOKENLESS_CONFIG_SCHEMA_ID,
     updatedAt: null,
-    providerWhitelist: defaultProviderWhitelist(),
-    profilePreferences: {},
-    browser: 'auto',
+    profiles: {},
+    browser: 'chrome',
     browserExecutablePath: null,
-    browserConnectionMode: 'playwright',
-    browserVisibility: 'auto',
+    browserVisibility: 'headed',
     daemonUrl: null,
     language: 'en',
-    outputSavings: { enabled: false },
+    outputSavings: { enabled: true },
   }
 }
 
@@ -237,7 +298,7 @@ function isOutputSavingsConfig(value: unknown): value is OutputSavingsConfig {
 }
 
 function normalizeOutputSavingsConfig(value: unknown): OutputSavingsConfig {
-  return isOutputSavingsConfig(value) ? { enabled: value.enabled } : { enabled: false }
+  return isOutputSavingsConfig(value) ? { enabled: value.enabled } : { enabled: true }
 }
 
 function validateOutputSavingsConfig(value: unknown): OutputSavingsConfig {
@@ -254,39 +315,60 @@ function defaultProviderWhitelist() {
     .map((provider) => provider.id)
 }
 
-function configuredProviderWhitelist(payload: JsonRecord) {
-  if (payload.providerWhitelist !== undefined) {
-    return normalizeProviderList(payload.providerWhitelist)
-  }
-  const legacyProviders = normalizeProviderList(payload.preferredProviders)
-  return legacyProviders.length > 0 ? legacyProviders : defaultProviderWhitelist()
-}
-
-function validateProfilePreferences(value: unknown) {
+function validateProfiles(value: unknown) {
   if (!isJsonRecord(value)) {
-    throw configError('tokenless_config_invalid', 'Invalid Tokenless profile preferences.')
+    throw configError('tokenless_config_invalid', 'Invalid Tokenless profiles configuration.')
   }
-  return normalizeProfilePreferences(value)
+  return normalizeProfiles(value)
 }
 
-function normalizeProfilePreferences(value: unknown): Record<string, ManagedProfilePreferences> {
+function normalizeProfiles(value: unknown): Record<string, ManagedProfileConfig> {
   if (!isJsonRecord(value)) return {}
-  const preferences: Record<string, ManagedProfilePreferences> = {}
+  const profiles: Record<string, ManagedProfileConfig> = {}
   for (const [profileId, candidate] of Object.entries(value)) {
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(profileId) || !isJsonRecord(candidate)) continue
-    const browserVisibility = normalizeBrowserVisibility(candidate.browserVisibility, 'auto')
-    if (!browserVisibility) continue
-    const proxy = normalizeManagedProfileProxy(candidate.proxy)
-    if (candidate.proxy !== undefined && candidate.proxy !== null && proxy === undefined) continue
-    preferences[profileId] = {
-      profileId,
+    profiles[profileId] = {
       roleLabel: normalizeRoleLabel(candidate.roleLabel),
       enabledProviders: normalizeProviderList(candidate.enabledProviders),
-      browserVisibility,
-      proxy: proxy ?? null,
+      browserVisibility: 'headed',
+      proxy: null,
     }
   }
-  return preferences
+  return profiles
+}
+
+async function configuredProfiles(homeDir: string, payload: JsonRecord): Promise<Record<string, ManagedProfileConfig>> {
+  const registrySlugs = await readRegisteredProfileSlugs(homeDir)
+  const configured = normalizeProfiles(payload.profiles)
+  const legacy = normalizeProfiles(payload.profilePreferences)
+  const legacyProviders = configuredLegacyProviders(payload)
+  return Object.fromEntries(registrySlugs.map((slug) => [slug, configured[slug] ?? legacy[slug] ?? {
+    roleLabel: '',
+    enabledProviders: legacyProviders,
+    browserVisibility: 'headed' as const,
+    proxy: null,
+  }]))
+}
+
+function configuredLegacyProviders(payload: JsonRecord) {
+  if (payload.providerWhitelist !== undefined) return normalizeProviderList(payload.providerWhitelist)
+  const preferred = normalizeProviderList(payload.preferredProviders)
+  return preferred.length > 0 ? preferred : defaultProviderWhitelist()
+}
+
+async function readRegisteredProfileSlugs(homeDir: string) {
+  try {
+    const payload = JSON.parse(await fs.readFile(path.join(homeDir, 'browser', 'profiles.json'), 'utf8')) as unknown
+    if (!isJsonRecord(payload) || !isJsonRecord(payload.profiles)) return []
+    return Object.entries(payload.profiles).flatMap(([slug, profile]) => (
+      /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug) && isJsonRecord(profile) && profile.lifecycle !== 'removed'
+        ? [slug]
+        : []
+    )).sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
 }
 
 function normalizeRoleLabel(value: unknown) {
@@ -374,17 +456,6 @@ function validateConfigLanguage(value: unknown): TokenlessLanguage {
   const language = normalizeTokenlessLanguage(value)
   if (!language) throw configError('tokenless_config_invalid', 'Invalid Tokenless language; expected en or zh-CN.')
   return language
-}
-
-function validateConfigBrowserConnectionMode(value: unknown): BrowserConnectionMode {
-  const connectionMode = normalizeBrowserConnectionMode(value)
-  if (!connectionMode) {
-    throw configError(
-      'tokenless_config_invalid',
-      'Invalid Tokenless browser connection mode; expected playwright or cdp.',
-    )
-  }
-  return connectionMode
 }
 
 export async function hasConfiguredTokenlessLanguage(homeDir = tokenlessHome()) {

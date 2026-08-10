@@ -4,13 +4,13 @@
   import Modal from '../components/Modal.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
-  import { stateLabel } from '../localization.js'
+  import { stateLabel, translateError, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let { snapshot, language, t, busy, onget, onmutate }: {
     snapshot: JsonRecord
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
     onget: (path: string) => Promise<JsonRecord | null>
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
@@ -75,6 +75,13 @@
       errorElement?.focus()
     }
   }
+
+  function jobErrorSummary(value: JsonRecord | null | undefined) {
+    if (!value) return t('none')
+    const code = typeof value.code === 'string' ? value.code : ''
+    const fallback = typeof value.message === 'string' ? value.message : t('requestFailed')
+    return translateError(language, code, fallback)
+  }
 </script>
 
 <section class="page" data-testid="jobs-view">
@@ -83,7 +90,7 @@
     <label class="search-field"><Search size={16} /><input name="jobSearch" type="search" bind:value={search} placeholder={t('searchJobs')} autocomplete="off" data-testid="job-search" />{#if search}<button type="button" aria-label={t('close')} onclick={() => search = ''}><X size={14} /></button>{/if}</label>
     <select name="jobStatus" bind:value={status} aria-label={t('allStatuses')} data-testid="job-status"><option value="">{t('allStatuses')}</option>{#each ['queued', 'claimed', 'running', 'waiting_for_user', 'succeeded', 'failed', 'canceled', 'timed_out'] as value}<option value={value}>{stateLabel(language, value)}</option>{/each}</select>
     <select name="jobProvider" bind:value={provider} aria-label={t('allProviders')}><option value="">{t('allProviders')}</option>{#each snapshot.providers as entry}<option value={entry.id}>{entry.label}</option>{/each}</select>
-    <select name="jobProfile" bind:value={profile} aria-label={t('allProfiles')}><option value="">{t('allProfiles')}</option>{#each snapshot.profiles as entry}<option value={entry.slug}>{entry.label}</option>{/each}</select>
+    <select name="jobProfile" bind:value={profile} aria-label={t('allProfiles')}><option value="">{t('allProfiles')}</option>{#each snapshot.profiles as entry}<option value={entry.slug}>{entry.slug}</option>{/each}</select>
   </div>
 
   {#if error && !detail}<div bind:this={errorElement} class="inline-feedback error" role="alert" tabindex="-1"><span>{error}</span></div>{/if}
@@ -112,7 +119,11 @@
       {#if detail.status === 'waiting_for_user'}<button class="button primary" type="button" disabled={busy} onclick={() => jobAction('resume')}>{t('resume')}</button>{:else if ['queued', 'claimed', 'running'].includes(detail.status)}<button class="button danger" type="button" disabled={busy} onclick={() => jobAction('cancel')}>{t('cancel')}</button>{/if}
       {#if detail.outputSavings.responseCount > 0}<section><h3>{t('outputSavings')}</h3><p>{t('estimatedTokensSaved')}: {formatNumber(detail.outputSavings.estimatedOutputTokens, language)}<br />{t('measuredResponses')}: {formatNumber(detail.outputSavings.responseCount, language)}</p></section>{/if}
       <section><h3>{t('result')}</h3><pre>{JSON.stringify(detail.result, null, 2)}</pre></section>
-      <section><h3>{t('error')}</h3><pre>{JSON.stringify(detail.error ?? detail.blocker, null, 2)}</pre></section>
+      <section>
+        <h3>{t('error')}</h3>
+        <p class="inline-feedback error" data-testid="job-error-summary">{jobErrorSummary(detail.error ?? detail.blocker)}</p>
+        <details><summary>{t('details')}</summary><pre>{JSON.stringify(detail.error ?? detail.blocker, null, 2)}</pre></details>
+      </section>
       <section><h3>{t('attempts')}</h3><pre>{JSON.stringify(detail.providerAttempts, null, 2)}</pre></section>
     </div>
   </Modal>

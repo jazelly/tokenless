@@ -364,7 +364,7 @@ Subscription state is crucial matching evidence but never authorization. Normali
 - A stale plan observation lowers confidence and may trigger fresh read-only inspection before mutation.
 - Plan variants that Tokenless cannot distinguish remain grouped until real visible evidence supports a finer distinction.
 
-## Candidate Routing and Provider Whitelist
+## Candidate Routing and Profile Provider Membership
 
 Rate-limit awareness participates in the existing capability router rather than creating a second router.
 
@@ -372,11 +372,11 @@ Candidate construction and selection proceed in this order:
 
 1. An explicit caller provider or profile remains a hard constraint.
 2. Otherwise, construct eligible `(provider, profileId)` candidates from configured profiles and current access observations.
-3. Filter out providers not present in `providerWhitelist`; an empty whitelist admits no implicit route.
+3. Filter out providers not present in `profiles[slug].enabledProviders`; an empty list admits no implicit route.
 4. Apply the same capability support, subscription, blocker, capacity, fairness, and recovery algorithms to the filtered set.
 5. Select an admitted candidate, or return the earliest useful deferral when every remaining candidate is temporarily ineligible.
 
-`providerWhitelist` is only a provider filter. List position does not override capability eligibility, rate-limit capacity, fairness, profile health, or the rest of the selection algorithm. Tokenless never escapes the configured whitelist silently, and providers inside it receive no special rate-limit allowance.
+The selected profile's `enabledProviders` is only a provider filter. List position does not override capability eligibility, rate-limit capacity, fairness, profile health, or the rest of the selection algorithm. Tokenless never escapes the configured profile membership silently, and providers inside it receive no special rate-limit allowance.
 
 ## Recovery and Ownership
 
@@ -457,7 +457,7 @@ Exit: two chats in one project can execute concurrently on separate pages while 
 
 - Add evidence-backed provider/profile concurrency caps.
 - Apply fair scheduling, dynamic rate-limit reduction, and capacity reservations.
-- Filter candidates through `providerWhitelist` when configured, then apply the same capacity and fairness algorithm inside that scope.
+- Filter candidates through the selected profile's `enabledProviders`, then apply the same capacity and fairness algorithm inside that scope.
 - Route an unsubmitted request to another eligible provider/profile candidate only when the caller's constraints and filtered routing scope allow it.
 - Support additional browser-runtime workers only after daemon leases and profile ownership prevent the same persistent profile from opening in two workers.
 - Publish operational metrics without prompt, response, credential, or private path content.
@@ -478,7 +478,7 @@ Exit: concurrency scales across profiles and supported providers without weakeni
 - The packaged JSON catalog covers every supported provider, distinguishes exact from uncertain knowledge, and preserves official evidence and review dates.
 - Capacity projection uses the existing jobs table plus immutable provider submission time; no separate rate-limit ledger table exists.
 - A provider/profile diagnostic reports the matched subscription rule, local sliding-window usage, estimated remaining capacity, estimated eligibility, and confidence.
-- `providerWhitelist` filters the provider candidate set without overriding capability, capacity, fairness, or recovery policy.
+- The selected profile's `enabledProviders` filters the provider candidate set without overriding capability, capacity, fairness, or recovery policy.
 - Reaching a real provider limit produces a retryable deferral or visible blocker and never causes an ambiguous submission to be replayed elsewhere.
 - Lease fencing prevents stale workers from mutating durable state.
 - Cancellation, timeout, waiting-for-user, and shutdown release or retain lanes according to documented state transitions.
@@ -533,5 +533,5 @@ Exit: concurrency scales across profiles and supported providers without weakeni
 - Guaranteeing that Tokenless's estimate exactly matches private provider enforcement
 - Correlating one external provider account across multiple managed browser profiles
 - Adding a separate usage or rate-limit ledger table in V1
-- Treating `providerWhitelist` ordering as a rate-limit or scheduling priority
+- Treating `enabledProviders` ordering as a rate-limit or scheduling priority
 - Rotating profiles or providers to evade provider restrictions

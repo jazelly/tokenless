@@ -1,6 +1,7 @@
 import { ChatGptProvider } from './chatgpt-provider.js'
 import { ClaudeProvider } from './claude-provider.js'
 import { DeepSeekProvider } from './deepseek-provider.js'
+import { DolaProvider } from './dola-provider.js'
 import { DoubaoProvider } from './doubao-provider.js'
 import { GeminiProvider } from './gemini-provider.js'
 import { GrokProvider } from './grok-provider.js'
@@ -160,6 +161,7 @@ export const providerInstances = Object.freeze([
   new ZaiProvider(),
   new DoubaoProvider(),
   new KimiProvider(),
+  new DolaProvider(),
 ] satisfies readonly ProviderInstance[])
 
 export const providerRegistry = ProviderRegistry.create(providerInstances)
@@ -266,11 +268,6 @@ function validateProviderDescriptor(descriptor: ProviderDescriptor<ProviderId>) 
     }
     if (entry.pathPrefixes?.some((prefix) => !prefix.startsWith('/'))) {
       throw new Error(`Provider ${descriptor.id} trusted sign-in path prefix is invalid.`)
-    }
-  }
-  for (const domain of descriptor.profileImport.cookieDomains) {
-    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)) {
-      throw new Error(`Provider ${descriptor.id} profile cookie domain is invalid.`)
     }
   }
 }

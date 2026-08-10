@@ -14,22 +14,25 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   const result = runCli(['capabilities', 'list', '--json'])
   assert.equal(result.status, 0, result.stderr || result.stdout)
   const payload = JSON.parse(result.stdout)
-  assert.equal(payload.schema, 'tokenless.task-capability-catalog.v1')
+  assert.equal(payload.schema, 'tokenless.task-capability-catalog.v2')
 
   const byId = new Map(payload.capabilities.map((capability) => [capability.id, capability]))
   assert.equal(byId.get('conversation.chat').routeable, true)
   assert.deepEqual(
     byId.get('conversation.chat').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'qwen', 'perplexity', 'zai', 'doubao', 'kimi'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'perplexity', 'zai', 'doubao', 'kimi'],
   )
   assert.deepEqual(
     byId.get('file.upload').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'grok', 'doubao', 'kimi'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'zai', 'doubao', 'kimi'],
   )
   assert.deepEqual(byId.get('search.web').routes.map((route) => route.provider), ['kimi'])
   assert.deepEqual(byId.get('response.citations').routes.map((route) => route.provider), ['kimi'])
-  assert.equal(byId.get('workspace.native').routeable, false)
-  assert.deepEqual(byId.get('workspace.native').routes, [])
+  assert.equal(byId.get('workspace.native').routeable, true)
+  assert.deepEqual(
+    byId.get('workspace.native').routes.map((route) => route.provider),
+    ['claude'],
+  )
   assert.equal(byId.get('research.deep').routeable, false)
   assert.deepEqual(byId.get('research.deep').routes, [])
   assert.equal(byId.get('audio.transcription').routeable, false)
@@ -37,6 +40,7 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   assert.equal(byId.has('qwen.mode'), false)
   assert.equal(byId.has('model.choice'), false)
   assert.equal(byId.has('effort.choice'), false)
+  assert.equal(byId.has('skill.invoke'), false)
 })
 
 test('implicit run routing chooses the first usable cached provider in setup order', async () => {
@@ -96,7 +100,7 @@ test('implicit run routing chooses the first usable cached provider in setup ord
   }
 })
 
-test('attachment inference routes around a usable provider without file acceptance closure', async () => {
+test('explicit attachment run uses a provider with file acceptance closure', async () => {
   const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-capability-file-route-')))
   const daemonUrl = `http://127.0.0.1:${await freePort()}`
   const attachment = path.join(homeDir, 'evidence.txt')
@@ -115,6 +119,8 @@ test('attachment inference routes around a usable provider without file acceptan
       homeDir,
       '--daemon-url',
       daemonUrl,
+      '--provider',
+      'gemini',
       '--prompt',
       'Tokenless capability file routing test',
       '--attach-file',
@@ -125,7 +131,7 @@ test('attachment inference routes around a usable provider without file acceptan
     daemonStarted = result.status === 0
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const payload = JSON.parse(result.stdout)
-    assert.equal(payload.provider, 'grok')
+    assert.equal(payload.provider, 'gemini')
     assert.deepEqual(payload.capabilityRoute.requirements, ['conversation.chat', 'file.upload'])
     assert.deepEqual(
       payload.capabilityRoute.strategies,
@@ -159,9 +165,9 @@ test('explicit provider fails before daemon submission when required capability 
   fs.writeFileSync(attachment, 'Tokenless explicit route evidence.\n')
   try {
     seedManagedProfile(homeDir, {
-      gemini: observedProvider('gemini', 'unauthenticated', 'guest'),
+      perplexity: observedProvider('perplexity', 'unauthenticated', 'guest'),
     })
-    writeConfig(homeDir, ['gemini'], daemonUrl)
+    writeConfig(homeDir, ['perplexity'], daemonUrl)
 
     const result = runCli([
       'run',
@@ -170,7 +176,7 @@ test('explicit provider fails before daemon submission when required capability 
       '--daemon-url',
       daemonUrl,
       '--provider',
-      'gemini',
+      'perplexity',
       '--capability',
       'file.upload',
       '--attach-file',
@@ -385,8 +391,6 @@ function seedManagedProfile(homeDir, lastObservedAuth) {
       default: {
         slug: 'default',
         id,
-        label: 'default',
-        labelOrigin: 'slug',
         directory,
         lifecycle: 'ready',
         createdAt: new Date().toISOString(),

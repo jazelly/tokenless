@@ -19,9 +19,6 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
         legacyRequests: true,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.gemini,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze([]),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),
@@ -60,6 +57,7 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
         'input[type="file"]',
       ]),
       fileUploadTriggerSelectors: Object.freeze([
+        'button[aria-label="Upload & tools"]',
         'button[aria-label="Upload and tools"]',
       ]),
       fileUploadLocalSelectors: Object.freeze([
@@ -74,7 +72,8 @@ export class GeminiProvider extends BaseProvider<'gemini'> {
       ]),
       effortControlSelectors: Object.freeze([]),
       authIndicators: Object.freeze([
-        'a[href^="https://accounts.google.com/SignOutOptions"]',
+        'a[href*="accounts.google.com/SignOutOptions"]',
+        'a[href="/search"][aria-label="Search chats"]',
       ]),
       loginIndicators: Object.freeze([
         'a[href*="accounts.google.com/ServiceLogin"]',

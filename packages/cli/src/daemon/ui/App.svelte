@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { Blocks, LayoutDashboard, ListChecks, PanelsTopLeft, Settings, UsersRound } from '@lucide/svelte'
   import { DashboardClient } from './dashboard-client.js'
-  import { translate, translateError } from './localization.js'
+  import { translate } from './localization.js'
   import CapabilitiesView from './views/CapabilitiesView.svelte'
   import JobsView from './views/JobsView.svelte'
   import OverviewView from './views/OverviewView.svelte'
@@ -22,18 +22,15 @@
 
   let language = $state<Language>(initialLanguage)
   let snapshot = $state<JsonRecord | null>(null)
-  let browserRuntimeCatalog = $state<JsonRecord | null>(null)
   let offline = $state(false)
   let busy = $state(false)
-  let runtimeBusy = $state(false)
+  let readinessBusy = $state(false)
   let fatal = $state('')
   let toast = $state('')
   let selectedProfile = $state(new URL(location.href).searchParams.get('profile') ?? '')
   let section = $state<Section>(parseSection(location.hash))
   let toastTimer = 0
   let pollTimer = 0
-  let runtimeCatalogTimer = 0
-  let runtimeCatalogRequest: Promise<void> | null = null
   const client = new DashboardClient(() => language)
 
   const navigation = $derived([
@@ -75,7 +72,6 @@
       skipLink?.removeEventListener('click', skipToContent)
       window.clearTimeout(pollTimer)
       window.clearTimeout(toastTimer)
-      window.clearTimeout(runtimeCatalogTimer)
     }
   })
 
@@ -83,7 +79,6 @@
     try {
       await client.authenticate()
       await refresh()
-      runtimeCatalogTimer = window.setTimeout(() => void refreshBrowserRuntimes(), 700)
       schedulePoll()
     } catch (error) {
       fatal = error instanceof Error ? error.message : t('requestFailed')
@@ -93,7 +88,7 @@
   function schedulePoll() {
     window.clearTimeout(pollTimer)
     pollTimer = window.setTimeout(async () => {
-      if (!document.hidden && !busy && !runtimeBusy) await refresh()
+      if (!document.hidden && !busy) await refresh()
       schedulePoll()
     }, 3000)
   }
@@ -148,7 +143,6 @@
     try {
       const result = await client.mutate(path, body, method)
       await refresh()
-      if (path === '/config') void refreshBrowserRuntimes()
       if (announce) showToast(t('updateSaved'))
       return result
     } catch (error) {
@@ -159,60 +153,42 @@
     }
   }
 
-  async function refreshBrowserRuntimes() {
-    if (runtimeCatalogRequest) return await runtimeCatalogRequest
-    runtimeCatalogRequest = (async () => {
-      try {
-        browserRuntimeCatalog = await client.get('/browser-runtimes')
-      } catch (error) {
-        if (!browserRuntimeCatalog) showToast(error instanceof Error ? error.message : t('requestFailed'))
-      } finally {
-        runtimeCatalogRequest = null
+  async function refreshProviderReadiness(profileSlug: string) {
+    if (readinessBusy) return
+    readinessBusy = true
+    try {
+      const result = await client.mutate(`/profiles/${encodeURIComponent(profileSlug)}/providers/actions/readiness`, {}) ?? {}
+      const jobIds = Array.isArray(result.jobs)
+        ? result.jobs.flatMap((job: JsonRecord) => typeof job.jobId === 'string' ? [job.jobId] : [])
+        : []
+      if (jobIds.length === 0) {
+        showToast(t('noEnabledProviders'))
+        return
       }
-    })()
-    await runtimeCatalogRequest
-  }
-
-  async function inspectBrowserRuntime(browser: string, executablePath?: string) {
-    runtimeBusy = true
-    try {
-      const result = await client.mutate('/browser-runtimes/inspect', {
-        browser,
-        ...(executablePath ? { browserExecutablePath: executablePath } : {}),
-      }) ?? {}
-      return result.ok === false && typeof result.code === 'string'
-        ? { ...result, message: translateError(language, result.code, String(result.message || '')) }
-        : result
+      const jobs = await waitForReadinessJobs(jobIds)
+      showToast(t(jobs.some((job) => job.status !== 'succeeded')
+        ? 'providerReadinessPartiallyRefreshed'
+        : 'providerReadinessRefreshed'))
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : t('requestFailed'))
     } finally {
-      runtimeBusy = false
+      readinessBusy = false
+      await refresh()
     }
   }
 
-  async function installBrowserRuntime(browser: string, repair = false) {
-    runtimeBusy = true
-    try {
-      const result = await client.mutate('/browser-runtimes/install', { browser, repair }) ?? {}
-      await refreshBrowserRuntimes()
-      showToast(t(repair ? 'runtimeRepaired' : 'runtimeInstalled'))
-      return result
-    } finally {
-      runtimeBusy = false
+  async function waitForReadinessJobs(jobIds: string[]) {
+    const expected = new Set(jobIds)
+    const deadline = Date.now() + 120_000
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 750))
+      await refresh()
+      const jobs = snapshot?.jobs?.filter((job: JsonRecord) => expected.has(job.jobId)) ?? []
+      if (jobs.length === expected.size && jobs.every((job: JsonRecord) => !['queued', 'claimed', 'running'].includes(job.status))) {
+        return jobs as JsonRecord[]
+      }
     }
-  }
-
-  async function discoverBrowserProfileSources(input: JsonRecord) {
-    runtimeBusy = true
-    try {
-      return await client.mutate('/browser-profile-sources/discover', input) ?? { sources: [] }
-    } finally {
-      runtimeBusy = false
-    }
-  }
-
-  async function clearBrowserExecutablePath(browser: string) {
-    const inspection = await inspectBrowserRuntime(browser)
-    if (inspection.ok !== true) throw new Error(String(inspection.message || t('browserUnavailable')))
-    await mutate('/config', { browser, browserExecutablePath: null }, 'PATCH')
+    throw new Error(t('providerReadinessRefreshTimedOut'))
   }
 
   async function setup(config: JsonRecord, profile: JsonRecord) {
@@ -251,12 +227,7 @@
     {snapshot}
     {language}
     {t}
-    busy={busy || runtimeBusy}
-    browserRuntimeCatalog={browserRuntimeCatalog}
-    oninspectbrowser={inspectBrowserRuntime}
-    oninstallbrowser={installBrowserRuntime}
-    onclearbrowserpath={clearBrowserExecutablePath}
-    ondiscoverprofiles={discoverBrowserProfileSources}
+    {busy}
     onsetup={setup}
   />
 {:else}
@@ -287,7 +258,7 @@
       <div><img src="/ui/mark.png" alt="" width="24" height="24" /><strong translate="no">Tokenless</strong></div>
       <label class="mobile-profile-select">
         <span class="sr-only">{t('selectProfile')}</span>
-        <select name="activeProfile" value={selectedProfile} onchange={(event) => selectProfile(event.currentTarget.value)}>{#each snapshot.profiles as profile}<option value={profile.slug}>{profile.label}</option>{/each}</select>
+        <select name="activeProfile" value={selectedProfile} onchange={(event) => selectProfile(event.currentTarget.value)}>{#each snapshot.profiles as profile}<option value={profile.slug}>{profile.slug}</option>{/each}</select>
       </label>
     </header>
 
@@ -295,9 +266,9 @@
 
     <main id="main" tabindex="-1" class:profile-main={section === 'profiles'}>
       {#if section === 'overview'}
-        <OverviewView {snapshot} {selectedProfile} {language} {t} onmutate={mutate} />
+        <OverviewView {snapshot} {selectedProfile} {language} {t} {readinessBusy} onrefreshreadiness={refreshProviderReadiness} />
       {:else if section === 'profiles'}
-        <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} ondiscoverprofiles={discoverBrowserProfileSources} />
+        <ProfilesView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
       {:else if section === 'providers'}
         <ProvidersView {snapshot} {selectedProfile} {language} {t} {busy} onselect={selectProfile} onmutate={mutate} />
       {:else if section === 'capabilities'}
@@ -309,11 +280,7 @@
           {snapshot}
           {language}
           {t}
-          busy={busy || runtimeBusy}
-          browserRuntimeCatalog={browserRuntimeCatalog}
-          oninspectbrowser={inspectBrowserRuntime}
-          oninstallbrowser={installBrowserRuntime}
-          onclearbrowserpath={clearBrowserExecutablePath}
+          {busy}
           onmutate={mutate}
           ontoast={showToast}
         />

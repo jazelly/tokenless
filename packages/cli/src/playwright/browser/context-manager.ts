@@ -1,7 +1,10 @@
 import { chromium } from 'playwright-core'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import {
   normalizeBrowserVisibility,
   resolveEffectiveBrowserVisibility,
@@ -11,13 +14,12 @@ import type { BrowserVisibility, EffectiveBrowserVisibility } from '../../browse
 import type { Browser, BrowserContext, Page } from 'playwright-core'
 import type { ChildProcess } from 'node:child_process'
 import type { BrowserRuntimeBinding } from '../../browser-runtime/types.js'
-import type { BrowserConnectionMode } from '../../browser-connection-mode.js'
 
 export type ManagedBrowserProfile = {
   id: string
   slug?: string | undefined
   directory: string
-  lifecycle?: 'created' | 'importing' | 'ready' | 'removed' | 'failed'
+  lifecycle?: 'created' | 'ready' | 'removed' | 'failed'
   runtimeBinding?: BrowserRuntimeBinding | undefined
   proxy?: { server: string, bypass: readonly string[] } | null | undefined
   lastObservedAuth?: Partial<Record<string, {
@@ -35,8 +37,16 @@ export type ManagedBrowserContext = {
   effectiveBrowserVisibility: EffectiveBrowserVisibility
   browserContext: BrowserContext
   acquirePage(request: ManagedPageRequest): Promise<Page>
+  acquireProviderPage(request: ManagedProviderPageRequest): Promise<ManagedProviderPageLease>
+  acquireTemporaryPage(): Promise<ManagedTemporaryPage>
   acquireReservedPage(request: ManagedPageRequest): Promise<Page>
   switchVisibility(visibility: BrowserVisibility): Promise<ManagedBrowserContext>
+  close(): Promise<void>
+}
+
+export type ManagedTemporaryPage = {
+  page: Page
+  ownership: 'task-owned'
   close(): Promise<void>
 }
 
@@ -47,27 +57,37 @@ export type ManagedPageRequest = {
   policy?: ManagedPagePolicy | undefined
 }
 
-export type ManagedContextLauncher = (
-  userDataDir: string,
-  options: PersistentChromeLaunchOptions
-) => Promise<BrowserContext>
+export type ManagedProviderPageRequest = {
+  provider: string
+  taskKey: string
+  policy?: ManagedPagePolicy | undefined
+  matchesExistingPage?: ((page: Page) => boolean) | undefined
+  isAvailablePage?: ((page: Page) => Promise<boolean>) | undefined
+}
+
+export type ManagedProviderPageLease = {
+  page: Page
+  release(): Promise<void>
+  protect(): Promise<void>
+}
 
 export type PersistentChromeLaunchOptions = NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>
 
 export const MAX_ACTIVE_BROWSER_PROFILES = 4
+const PROVIDER_PAGE_IDLE_TTL_MS = 30 * 60_000
 
-const KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS = [
+const PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS = [
   '--password-store=basic',
   '--use-mock-keychain',
 ] as const
+const BROWSER_RUNTIME_SESSION_FILE = 'tokenless-browser-runtime.json'
+const BROWSER_RUNTIME_SESSION_PROTOCOL = 'tokenless.browser-runtime-session.v1'
+const execFileAsync = promisify(execFile)
 
 export type PersistentContextManagerOptions = {
   maxContexts?: number
-  launcher?: ManagedContextLauncher
-  connectionMode?: BrowserConnectionMode | undefined
   browser?: ManagedBrowserLaunchTarget
   browserResolver?: ManagedBrowserResolver
-  timers?: PersistentContextManagerTimers | undefined
 }
 
 export type ManagedBrowserLaunchTarget = {
@@ -76,22 +96,12 @@ export type ManagedBrowserLaunchTarget = {
   e2eInspection?: boolean | undefined
   e2eHostResolverRule?: string | undefined
   runtimeId?: string | undefined
-  launchPolicy?: 'standard' | 'cloak' | 'test-profile' | undefined
+  launchPolicy?: 'standard' | 'cloak' | 'test-profile' | 'native' | undefined
 }
 
 export type ManagedBrowserResolver = (
   profile: ManagedBrowserProfile,
 ) => Promise<ManagedBrowserLaunchTarget>
-
-export type PersistentContextManagerTimers = {
-  setTimeout(callback: () => void, ms: number): unknown
-  clearTimeout(handle: unknown): void
-}
-
-export type ScheduleProfileCloseOptions = {
-  delayMs: number
-  browserContext?: BrowserContext | undefined
-}
 
 type ActiveContext = {
   profile: ManagedBrowserProfile
@@ -100,44 +110,55 @@ type ActiveContext = {
   browserContext: BrowserContext
   pagesByKey: Map<string, Page>
   reservedPagesByKey: Map<string, Page>
+  ownedPages: Set<Page>
+  providerPages: Map<Page, ProviderPageState>
+  providerPageCleanupTimer?: ReturnType<typeof setTimeout> | undefined
+  reuseExistingPages: boolean
   closeBrowser: () => Promise<void>
+  detachBrowser: () => Promise<void>
   closePromise?: Promise<void> | undefined
   browserTarget: ManagedBrowserLaunchTarget
   closing: boolean
 }
 
-type LaunchedManagedContext = {
-  browserContext: BrowserContext
-  closeBrowser: () => Promise<void>
+type ProviderPageState = {
+  provider: string
+  taskKey: string
+  ownership: 'tokenless-owned' | 'borrowed'
+  status: 'leased' | 'idle' | 'protected' | 'closing'
+  idleSince: number | null
 }
 
-type ScheduledContextClose = {
-  handle: unknown
-  delayMs: number
-  browserContext?: BrowserContext | undefined
+type LaunchedManagedContext = {
+  browserContext: BrowserContext
+  effectiveVisibility: EffectiveBrowserVisibility
+  closeBrowser: () => Promise<void>
+  detachBrowser: () => Promise<void>
+  reuseExistingPages: boolean
+}
+
+type ResidentLaunchCandidate = {
+  launchSignature: string
+  effectiveVisibility: EffectiveBrowserVisibility
+  executablePath: string
+  arguments: readonly string[]
+  hasProxy: boolean
+  testProfile: boolean
 }
 
 export class PersistentContextManager {
   private readonly maxContexts: number
-  private readonly launcher: ManagedContextLauncher
-  private readonly connectionMode: BrowserConnectionMode
   private readonly browser: ManagedBrowserLaunchTarget
   private readonly browserResolver: ManagedBrowserResolver
-  private readonly timers: PersistentContextManagerTimers
   private readonly contexts = new Map<string, ActiveContext>()
   private readonly lanes = new Map<string, Promise<unknown>>()
-  private readonly activeOperations = new Map<string, number>()
-  private readonly scheduledCloses = new Map<string, ScheduledContextClose>()
   private creationLane: Promise<unknown> = Promise.resolve()
   private shuttingDown = false
 
   constructor(options: PersistentContextManagerOptions = {}) {
     this.maxContexts = options.maxContexts ?? MAX_ACTIVE_BROWSER_PROFILES
-    this.launcher = options.launcher ?? ((userDataDir, launchOptions) => chromium.launchPersistentContext(userDataDir, launchOptions))
-    this.connectionMode = options.connectionMode ?? 'playwright'
     this.browser = normalizeManagedBrowserLaunchTarget(options.browser)
     this.browserResolver = options.browserResolver ?? (async () => this.browser)
-    this.timers = options.timers ?? nativeTimers()
     if (!Number.isInteger(this.maxContexts) || this.maxContexts < 1 || this.maxContexts > MAX_ACTIVE_BROWSER_PROFILES) {
       throw tokenlessError(
         'invalid_context_limit',
@@ -166,8 +187,6 @@ export class PersistentContextManager {
     const { visibility, operation } = normalizeRunWithProfileArgs(visibilityOrOperation, maybeOperation)
     const previous = this.lanes.get(profile.id) ?? Promise.resolve()
     const current = previous.catch(() => undefined).then(async () => {
-      this.cancelScheduledClose(profile.id)
-      this.incrementActiveOperation(profile.id)
       try {
         const context = await this.ensureContext(profile, visibility)
         return await operation(context)
@@ -180,8 +199,6 @@ export class PersistentContextManager {
           })
         }
         throw error
-      } finally {
-        this.decrementActiveOperation(profile.id)
       }
     })
     const lane = current.catch(() => undefined).finally(() => {
@@ -191,20 +208,44 @@ export class PersistentContextManager {
     return await current
   }
 
+  async runWithProfileObservation<T>(
+    profile: ManagedBrowserProfile,
+    visibility: BrowserVisibility,
+    operation: (context: ManagedBrowserContext) => Promise<T>,
+  ): Promise<T> {
+    if (this.shuttingDown) {
+      throw tokenlessError('playwright_manager_closed', 'Managed Playwright context manager is shutting down.', { retryable: true })
+    }
+    try {
+      const context = await this.ensureContext(profile, visibility)
+      return await operation(context)
+    } catch (error) {
+      if (isBrowserClosedError(error)) {
+        await this.closeProfile(profile.id).catch(() => undefined)
+        throw tokenlessError('playwright_browser_closed', 'The visible managed browser window was closed during the observation.', {
+          retryable: true,
+          cause: error,
+        })
+      }
+      throw error
+    }
+  }
+
   async ensureContext(
     profile: ManagedBrowserProfile,
     visibility: BrowserVisibility = 'headed'
   ): Promise<ManagedBrowserContext> {
-    this.cancelScheduledClose(profile.id)
     const requestedVisibility = validateRequestedVisibility(visibility)
-    const effectiveVisibility = resolveEffectiveBrowserVisibility(requestedVisibility)
     const browserTarget = normalizeManagedBrowserLaunchTarget(await this.browserResolver(profile))
+    const effectiveVisibility = browserTarget.launchPolicy === 'native'
+      ? nativeChromeVisibility(requestedVisibility)
+      : resolveEffectiveBrowserVisibility(requestedVisibility)
     const existing = this.contexts.get(profile.id)
     if (
       existing &&
       !existing.closing &&
       isManagedBrowserConnected(existing) &&
-      existing.effectiveVisibility === effectiveVisibility &&
+      visibilityMatches(existing, requestedVisibility, effectiveVisibility) &&
       sameBrowserRuntime(existing.browserTarget, browserTarget) &&
       sameBrowserProxy(existing.profile.proxy, profile.proxy)
     ) {
@@ -222,7 +263,7 @@ export class PersistentContextManager {
         current &&
         !current.closing &&
         isManagedBrowserConnected(current) &&
-        current.effectiveVisibility === effectiveVisibility &&
+        visibilityMatches(current, requestedVisibility, effectiveVisibility) &&
         sameBrowserRuntime(current.browserTarget, browserTarget) &&
         sameBrowserProxy(current.profile.proxy, profile.proxy)
       ) {
@@ -247,11 +288,14 @@ export class PersistentContextManager {
           if (!isMissingFileError(error)) throw error
         })
       }
-      const launched = await this.launchContext(
-        profile.directory,
-        managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
-        browserTarget,
-      )
+      const launched = browserTarget.launchPolicy === 'native'
+        ? await connectNativeBrowserContext(browserTarget.id, requestedVisibility)
+        : await launchCdpManagedContext(
+            profile.directory,
+            managedBrowserLaunchOptions(browserTarget, requestedVisibility, profile.proxy),
+            browserTarget,
+            requestedVisibility,
+          )
       const { browserContext } = launched
       if (this.shuttingDown) {
         await launched.closeBrowser().catch(() => undefined)
@@ -260,11 +304,15 @@ export class PersistentContextManager {
       const active: ActiveContext = {
         profile,
         requestedVisibility,
-        effectiveVisibility,
+        effectiveVisibility: launched.effectiveVisibility,
         browserContext,
         pagesByKey: new Map(),
         reservedPagesByKey: new Map(),
+        ownedPages: new Set(),
+        providerPages: new Map(),
+        reuseExistingPages: launched.reuseExistingPages,
         closeBrowser: launched.closeBrowser,
+        detachBrowser: launched.detachBrowser,
         browserTarget,
         closing: false,
       }
@@ -290,51 +338,26 @@ export class PersistentContextManager {
   }
 
   async closeProfile(profileId: string): Promise<void> {
-    this.cancelScheduledClose(profileId)
     const active = this.contexts.get(profileId)
     if (!active) return
     await this.closeActiveContext(profileId, active)
   }
 
-  scheduleCloseProfile(profileId: string, options: ScheduleProfileCloseOptions): void {
-    const delayMs = normalizedPositiveInteger(options.delayMs)
-    this.cancelScheduledClose(profileId)
-    const handle = this.timers.setTimeout(() => {
-      const scheduled = this.scheduledCloses.get(profileId)
-      if (!scheduled || scheduled.handle !== handle) return
-      const active = this.contexts.get(profileId)
-      if (!active) {
-        this.scheduledCloses.delete(profileId)
-        return
-      }
-      if (scheduled.browserContext && active.browserContext !== scheduled.browserContext) {
-        this.scheduledCloses.delete(profileId)
-        return
-      }
-      if ((this.activeOperations.get(profileId) ?? 0) > 0 || active.closing) {
-        this.scheduledCloses.delete(profileId)
-        this.scheduleCloseProfile(profileId, {
-          delayMs: scheduled.delayMs,
-          ...(scheduled.browserContext === undefined ? {} : { browserContext: scheduled.browserContext }),
-        })
-        return
-      }
-      this.scheduledCloses.delete(profileId)
-      void this.closeActiveContext(profileId, active).catch(() => undefined)
-    }, delayMs)
-    unrefTimer(handle)
-    this.scheduledCloses.set(profileId, {
-      handle,
-      delayMs,
-      ...(options.browserContext === undefined ? {} : { browserContext: options.browserContext }),
-    })
-  }
-
   async shutdown(): Promise<void> {
     this.shuttingDown = true
-    for (const profileId of this.scheduledCloses.keys()) this.cancelScheduledClose(profileId)
     await this.creationLane.catch(() => undefined)
     await Promise.all([...this.contexts.keys()].map((profileId) => this.closeProfile(profileId)))
+  }
+
+  async detach(): Promise<void> {
+    this.shuttingDown = true
+    await this.creationLane.catch(() => undefined)
+    await Promise.all([...this.contexts.entries()].map(async ([profileId, active]) => {
+      active.closing = true
+      clearProviderPageCleanup(active)
+      await active.detachBrowser()
+      if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
+    }))
   }
 
   private wrap(active: ActiveContext): ManagedBrowserContext {
@@ -354,16 +377,23 @@ export class PersistentContextManager {
         if (existing && !existing.isClosed()) return existing
         if (existing) active.pagesByKey.delete(key)
 
-        const pages = active.browserContext.pages().filter((page) => !page.isClosed())
+        const pages = active.browserContext.pages().filter((page) => (
+          !page.isClosed() && (active.reuseExistingPages || active.ownedPages.has(page))
+        ))
         const claimedPages = new Set([
           ...active.pagesByKey.values(),
           ...active.reservedPagesByKey.values(),
+          ...active.providerPages.keys(),
         ])
-        const replaceablePages = pages.filter((candidate) => !new Set(active.reservedPagesByKey.values()).has(candidate))
+        const reservedPages = new Set(active.reservedPagesByKey.values())
+        const providerPages = new Set(active.providerPages.keys())
+        const replaceablePages = pages.filter((candidate) => (
+          !reservedPages.has(candidate) && !providerPages.has(candidate) && (active.ownedPages.has(candidate) || claimedPages.has(candidate))
+        ))
         const page = policy === 'replace'
-          ? replaceablePages.at(-1) ?? await createBackgroundPage(active.browserContext)
+          ? replaceablePages.at(-1) ?? await createOwnedBackgroundPage(active)
           : pages.find((candidate) => !claimedPages.has(candidate) && candidate.url() === 'about:blank')
-            ?? await createBackgroundPage(active.browserContext)
+            ?? await createOwnedBackgroundPage(active)
         if (policy === 'replace') {
           for (const [claimedKey, claimedPage] of active.pagesByKey) {
             if (claimedPage === page) active.pagesByKey.delete(claimedKey)
@@ -374,6 +404,100 @@ export class PersistentContextManager {
           if (active.pagesByKey.get(key) === page) active.pagesByKey.delete(key)
         })
         return page
+      },
+      async acquireProviderPage(request) {
+        const provider = validateManagedPageKey(request.provider)
+        const taskKey = validateManagedPageKey(request.taskKey)
+        const policy = request.policy ?? 'preserve'
+        if (policy !== 'preserve' && policy !== 'replace') {
+          throw tokenlessError('invalid_managed_page_policy', 'Managed browser page policy must be preserve or replace.')
+        }
+        await closeExpiredProviderPages(active)
+
+        const protectedPage = [...active.providerPages.entries()].find(([page, state]) => (
+          !page.isClosed() &&
+          state.provider === provider &&
+          state.taskKey === taskKey &&
+          state.status === 'protected'
+        ))
+        if (protectedPage) {
+          const [page, state] = protectedPage
+          state.status = 'leased'
+          return providerPageLease(active, page, state)
+        }
+        const idlePages = [...active.providerPages.entries()].filter(([page, state]) => (
+          !page.isClosed() && state.provider === provider && state.status === 'idle'
+        ))
+        const preferredIdlePages = policy === 'preserve'
+          ? idlePages.find(([, state]) => state.taskKey === taskKey) ?? idlePages[0]
+          : idlePages.find(([, state]) => state.taskKey !== taskKey) ?? idlePages[0]
+        const orderedIdlePages = preferredIdlePages
+          ? [preferredIdlePages, ...idlePages.filter((entry) => entry !== preferredIdlePages)]
+          : idlePages
+        for (const [page, state] of orderedIdlePages) {
+          if (request.isAvailablePage && !await request.isAvailablePage(page)) continue
+          if (page.isClosed() || active.providerPages.get(page) !== state || state.status !== 'idle') continue
+          state.taskKey = taskKey
+          state.status = 'leased'
+          state.idleSince = null
+          scheduleProviderPageCleanup(active)
+          return providerPageLease(active, page, state)
+        }
+
+        const claimedPages = new Set([
+          ...active.pagesByKey.values(),
+          ...active.reservedPagesByKey.values(),
+          ...active.providerPages.keys(),
+        ])
+        const reusablePages = active.browserContext.pages().filter((page) => (
+          !page.isClosed() && !claimedPages.has(page)
+        ))
+        let borrowedPage: Page | undefined
+        if (active.reuseExistingPages && request.matchesExistingPage) {
+          for (const candidate of reusablePages) {
+            if (!request.matchesExistingPage(candidate)) continue
+            if (request.isAvailablePage && !await request.isAvailablePage(candidate)) continue
+            if (!candidate.isClosed() && !managedPageClaimed(active, candidate)) {
+              borrowedPage = candidate
+              break
+            }
+          }
+        }
+        const ownedBlankPage = reusablePages.find((page) => (
+          !page.isClosed() &&
+          !managedPageClaimed(active, page) &&
+          active.ownedPages.has(page) &&
+          page.url() === 'about:blank'
+        ))
+        const page = borrowedPage ?? ownedBlankPage ?? await createOwnedBackgroundPage(active)
+        const state: ProviderPageState = {
+          provider,
+          taskKey,
+          ownership: active.ownedPages.has(page) ? 'tokenless-owned' : 'borrowed',
+          status: 'leased',
+          idleSince: null,
+        }
+        active.providerPages.set(page, state)
+        page.once('close', () => {
+          active.providerPages.delete(page)
+          scheduleProviderPageCleanup(active)
+        })
+        return providerPageLease(active, page, state)
+      },
+      async acquireTemporaryPage() {
+        const page = await createOwnedBackgroundPage(active)
+        let closed = false
+        return {
+          page,
+          ownership: 'task-owned' as const,
+          async close() {
+            if (closed) return
+            closed = true
+            await page.close().catch((error) => {
+              if (!page.isClosed()) throw error
+            })
+          },
+        }
       },
       async acquireReservedPage(request) {
         const key = validateManagedPageKey(request.key)
@@ -386,10 +510,16 @@ export class PersistentContextManager {
         const claimedPages = new Set([
           ...active.pagesByKey.values(),
           ...active.reservedPagesByKey.values(),
+          ...active.providerPages.keys(),
         ])
         const page = active.browserContext.pages()
-          .find((candidate) => !candidate.isClosed() && !claimedPages.has(candidate) && candidate.url() === 'about:blank')
-          ?? await createBackgroundPage(active.browserContext)
+          .find((candidate) => (
+            !candidate.isClosed() &&
+            (active.reuseExistingPages || active.ownedPages.has(candidate)) &&
+            !claimedPages.has(candidate) &&
+            candidate.url() === 'about:blank'
+          ))
+          ?? await createOwnedBackgroundPage(active)
         active.reservedPagesByKey.set(key, page)
         page.once('close', () => {
           if (active.reservedPagesByKey.get(key) === page) active.reservedPagesByKey.delete(key)
@@ -406,9 +536,9 @@ export class PersistentContextManager {
   }
 
   private async closeActiveContext(profileId: string, active: ActiveContext): Promise<void> {
-    this.cancelScheduledClose(profileId)
     if (!active.closePromise) {
       active.closing = true
+      clearProviderPageCleanup(active)
       active.closePromise = active.closeBrowser()
         .then(() => {
           if (this.contexts.get(profileId) === active) this.contexts.delete(profileId)
@@ -428,41 +558,107 @@ export class PersistentContextManager {
     await active.closePromise
   }
 
-  private async launchContext(
-    userDataDir: string,
-    launchOptions: PersistentChromeLaunchOptions,
-    browserTarget: ManagedBrowserLaunchTarget,
-  ): Promise<LaunchedManagedContext> {
-    assertKeychainNeutralE2ELaunch(launchOptions, browserTarget)
-    if (this.connectionMode === 'cdp') {
-      return await launchCdpManagedContext(userDataDir, launchOptions, browserTarget)
-    }
-    const browserContext = await this.launcher(userDataDir, launchOptions)
-    return {
-      browserContext,
-      closeBrowser: async () => await browserContext.close(),
-    }
-  }
+}
 
-  private cancelScheduledClose(profileId: string): void {
-    const scheduled = this.scheduledCloses.get(profileId)
-    if (!scheduled) return
-    this.scheduledCloses.delete(profileId)
-    this.timers.clearTimeout(scheduled.handle)
-  }
+function managedPageClaimed(active: ActiveContext, page: Page) {
+  return active.providerPages.has(page) ||
+    [...active.pagesByKey.values()].includes(page) ||
+    [...active.reservedPagesByKey.values()].includes(page)
+}
 
-  private incrementActiveOperation(profileId: string): void {
-    this.activeOperations.set(profileId, (this.activeOperations.get(profileId) ?? 0) + 1)
+function providerPageLease(
+  active: ActiveContext,
+  page: Page,
+  state: ProviderPageState,
+): ManagedProviderPageLease {
+  let settled = false
+  return {
+    page,
+    async release() {
+      if (settled) return
+      settled = true
+      if (active.providerPages.get(page) !== state || state.status !== 'leased') return
+      state.status = 'idle'
+      state.idleSince = Date.now()
+      scheduleProviderPageCleanup(active)
+    },
+    async protect() {
+      if (settled) return
+      settled = true
+      if (active.providerPages.get(page) !== state || state.status !== 'leased') return
+      state.status = 'protected'
+      state.idleSince = null
+      scheduleProviderPageCleanup(active)
+    },
   }
+}
 
-  private decrementActiveOperation(profileId: string): void {
-    const next = (this.activeOperations.get(profileId) ?? 1) - 1
-    if (next > 0) {
-      this.activeOperations.set(profileId, next)
-      return
+async function closeExpiredProviderPages(active: ActiveContext) {
+  if (active.closing) return
+  const cutoff = Date.now() - PROVIDER_PAGE_IDLE_TTL_MS
+  for (const [page, state] of expiringProviderPages(active)) {
+    if ((state.idleSince ?? Number.POSITIVE_INFINITY) > cutoff) continue
+    state.status = 'closing'
+    try {
+      await page.close()
+    } catch {
+      if (active.providerPages.get(page) === state && !page.isClosed()) {
+        state.status = 'idle'
+        state.idleSince = Date.now()
+      }
     }
-    this.activeOperations.delete(profileId)
   }
+  scheduleProviderPageCleanup(active)
+}
+
+function scheduleProviderPageCleanup(active: ActiveContext) {
+  clearProviderPageCleanup(active)
+  if (active.closing) return
+  const now = Date.now()
+  const nextCleanupAt = expiringProviderPages(active)
+    .map(([, state]) => (state.idleSince ?? now) + PROVIDER_PAGE_IDLE_TTL_MS)
+    .sort((left, right) => left - right)[0]
+  if (nextCleanupAt === undefined) return
+  active.providerPageCleanupTimer = setTimeout(() => {
+    active.providerPageCleanupTimer = undefined
+    void closeExpiredProviderPages(active)
+  }, Math.max(0, nextCleanupAt - now))
+  active.providerPageCleanupTimer.unref?.()
+}
+
+function expiringProviderPages(active: ActiveContext): Array<[Page, ProviderPageState]> {
+  const idlePagesByProvider = new Map<string, Array<[Page, ProviderPageState]>>()
+  for (const entry of active.providerPages) {
+    const [page, state] = entry
+    if (page.isClosed()) {
+      active.providerPages.delete(page)
+      continue
+    }
+    if (state.status !== 'idle' || state.idleSince === null) continue
+    const pages = idlePagesByProvider.get(state.provider) ?? []
+    pages.push(entry)
+    idlePagesByProvider.set(state.provider, pages)
+  }
+  return [...idlePagesByProvider.values()].flatMap((pages) => {
+    const borrowed = pages.some(([, state]) => state.ownership === 'borrowed')
+    const owned = pages
+      .filter(([, state]) => state.ownership === 'tokenless-owned')
+      .sort(([, left], [, right]) => (right.idleSince ?? 0) - (left.idleSince ?? 0))
+    return borrowed ? owned : owned.slice(1)
+  })
+}
+
+function clearProviderPageCleanup(active: ActiveContext) {
+  if (active.providerPageCleanupTimer === undefined) return
+  clearTimeout(active.providerPageCleanupTimer)
+  active.providerPageCleanupTimer = undefined
+}
+
+async function createOwnedBackgroundPage(active: ActiveContext): Promise<Page> {
+  const page = await createBackgroundPage(active.browserContext)
+  active.ownedPages.add(page)
+  page.once('close', () => active.ownedPages.delete(page))
+  return page
 }
 
 async function createBackgroundPage(browserContext: BrowserContext): Promise<Page> {
@@ -470,6 +666,9 @@ async function createBackgroundPage(browserContext: BrowserContext): Promise<Pag
   if (!browser?.isConnected()) {
     throw tokenlessError('playwright_browser_closed', 'Managed browser is no longer connected.', { retryable: true })
   }
+  const candidatePages = new Set<Page>()
+  const trackCandidate = (page: Page) => candidatePages.add(page)
+  browserContext.on('page', trackCandidate)
   const session = await browser.newBrowserCDPSession()
   let targetId: string | undefined
   try {
@@ -479,27 +678,34 @@ async function createBackgroundPage(browserContext: BrowserContext): Promise<Pag
       focus: false,
     })
     targetId = created.targetId
+  } catch (error) {
+    browserContext.off('page', trackCandidate)
+    throw error
   } finally {
     await session.detach().catch(() => undefined)
   }
-  const deadline = Date.now() + 10_000
-  const inspectedPages = new Set<Page>()
-  while (Date.now() <= deadline) {
-    for (const page of browserContext.pages()) {
-      if (page.isClosed() || inspectedPages.has(page)) continue
-      const pageSession = await browserContext.newCDPSession(page).catch(() => null)
-      if (!pageSession) continue
-      try {
-        const target = await pageSession.send('Target.getTargetInfo')
-        inspectedPages.add(page)
-        if (target.targetInfo.targetId === targetId) return page
-      } catch {
-        if (page.isClosed()) inspectedPages.add(page)
-      } finally {
-        await pageSession.detach().catch(() => undefined)
+  try {
+    const deadline = Date.now() + 10_000
+    const inspectedPages = new Set<Page>()
+    while (Date.now() <= deadline) {
+      for (const page of candidatePages) {
+        if (page.isClosed() || inspectedPages.has(page)) continue
+        const pageSession = await browserContext.newCDPSession(page).catch(() => null)
+        if (!pageSession) continue
+        try {
+          const target = await pageSession.send('Target.getTargetInfo')
+          inspectedPages.add(page)
+          if (target.targetInfo.targetId === targetId) return page
+        } catch {
+          if (page.isClosed()) inspectedPages.add(page)
+        } finally {
+          await pageSession.detach().catch(() => undefined)
+        }
       }
+      await delay(Math.min(25, Math.max(1, deadline - Date.now())))
     }
-    await delay(Math.min(25, Math.max(1, deadline - Date.now())))
+  } finally {
+    browserContext.off('page', trackCandidate)
   }
   throw tokenlessError(
     'playwright_background_page_unavailable',
@@ -508,27 +714,147 @@ async function createBackgroundPage(browserContext: BrowserContext): Promise<Pag
   )
 }
 
+function nativeChromeVisibility(visibility: BrowserVisibility): EffectiveBrowserVisibility {
+  if (visibility === 'headless') {
+    throw tokenlessError(
+      'native_chrome_headless_unsupported',
+      'Native Chrome uses the browser already opened by the user and supports headed mode only.',
+    )
+  }
+  return 'headed'
+}
+
+async function connectNativeBrowserContext(
+  browserId: string,
+  visibility: BrowserVisibility,
+): Promise<LaunchedManagedContext> {
+  nativeChromeVisibility(visibility)
+  const browserName = nativeBrowserDisplayName(browserId)
+  let browser: Browser
+  try {
+    browser = await chromium.connectOverCDP(await nativeBrowserEndpoint(browserId))
+  } catch (cause) {
+    throw tokenlessError(
+      'native_chrome_connection_unavailable',
+      `Could not connect to the running ${browserName}. Open ${browserId === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging, allow remote debugging for this browser instance, and approve the connection request. The browser manages the CDP endpoint; do not configure a fixed remote debugging port.`,
+      { retryable: true, cause },
+    )
+  }
+  const contexts = browser.contexts()
+  if (contexts.length !== 1 || !contexts[0]) {
+    await browser.close().catch(() => undefined)
+    throw tokenlessError(
+      'native_chrome_context_unavailable',
+      `The connected ${browserName} did not expose its default browser context.`,
+      { retryable: true },
+    )
+  }
+  let disconnecting: Promise<void> | undefined
+  const disconnect = () => {
+    disconnecting ??= browser.close()
+    return disconnecting
+  }
+  return {
+    browserContext: contexts[0],
+    effectiveVisibility: 'headed',
+    reuseExistingPages: false,
+    closeBrowser: disconnect,
+    detachBrowser: disconnect,
+  }
+}
+
+function nativeBrowserDisplayName(browserId: string) {
+  if (browserId === 'chrome') return 'Google Chrome'
+  if (browserId === 'brave') return 'Brave Browser'
+  throw tokenlessError('native_chrome_required', `Native mode does not support browser '${browserId}'.`)
+}
+
+async function nativeBrowserEndpoint(browserId: string) {
+  const userDataDir = nativeBrowserUserDataDir(browserId)
+  const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
+  let contents: string
+  try {
+    contents = await fs.readFile(endpointFile, 'utf8')
+  } catch (cause) {
+    throw tokenlessError(
+      'native_chrome_connection_unavailable',
+      `Could not read the native browser CDP endpoint at ${endpointFile}.`,
+      { retryable: true, cause },
+    )
+  }
+  const [port] = contents.trim().split(/\r?\n/u)
+  if (!/^\d+$/u.test(port ?? '')) {
+    throw tokenlessError(
+      'native_chrome_connection_unavailable',
+      `The native browser CDP endpoint at ${endpointFile} is invalid.`,
+      { retryable: true },
+    )
+  }
+  return `http://127.0.0.1:${port}`
+}
+
+function nativeBrowserUserDataDir(browserId: string) {
+  nativeBrowserDisplayName(browserId)
+  if (process.platform === 'darwin') {
+    return browserId === 'brave'
+      ? path.join(os.homedir(), 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser')
+      : path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome')
+  }
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local')
+    return browserId === 'brave'
+      ? path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data')
+      : path.join(localAppData, 'Google', 'Chrome', 'User Data')
+  }
+  return browserId === 'brave'
+    ? path.join(os.homedir(), '.config', 'BraveSoftware', 'Brave-Browser')
+    : path.join(os.homedir(), '.config', 'google-chrome')
+}
+
 async function launchCdpManagedContext(
   userDataDir: string,
   launchOptions: PersistentChromeLaunchOptions,
   browserTarget: ManagedBrowserLaunchTarget,
+  requestedVisibility: BrowserVisibility,
 ): Promise<LaunchedManagedContext> {
   const executablePath = browserTarget.executablePath
   if (!executablePath) {
     throw tokenlessError(
       'cdp_browser_executable_required',
-      'CDP connection mode requires an explicit Chromium browser executable path.',
+      'Managed browser control requires an explicit Chromium browser executable path.',
     )
   }
   const endpointFile = path.join(userDataDir, 'DevToolsActivePort')
+  const sessionFile = path.join(userDataDir, BROWSER_RUNTIME_SESSION_FILE)
+  const residentLaunchCandidates = [residentLaunchCandidate(userDataDir, launchOptions, browserTarget)]
+  if (requestedVisibility === 'auto') {
+    residentLaunchCandidates.push(residentLaunchCandidate(userDataDir, {
+      ...launchOptions,
+      headless: false,
+      viewport: null,
+    }, browserTarget))
+  }
+  const [launch] = residentLaunchCandidates
+  if (!launch) throw new Error('Managed browser launch candidates must not be empty.')
+  const launchSignature = launch.launchSignature
+  const compatibleLaunchSignatures = new Set(residentLaunchCandidates.map((candidate) => candidate.launchSignature))
+  const existing = await connectExistingCdpManagedContext({
+    endpointFile,
+    sessionFile,
+    compatibleLaunchSignatures,
+    residentLaunchCandidates,
+  })
+  if (existing) return existing
   await fs.unlink(endpointFile).catch((error) => {
     if (!isMissingFileError(error)) throw error
   })
   const browserProcess = spawn(executablePath, cdpChromiumArguments(userDataDir, launchOptions, browserTarget), {
+    detached: true,
     stdio: 'ignore',
   })
   const browserExit = observeChildExit(browserProcess)
   await waitForChildSpawn(browserProcess)
+  browserProcess.unref()
 
   let connectedBrowser: Browser | undefined
   try {
@@ -539,18 +865,296 @@ async function launchCdpManagedContext(
       throw new Error('CDP managed browser must expose exactly one persistent context.')
     }
     const browser = connectedBrowser
+    await writeBrowserRuntimeSession(sessionFile, {
+      protocol: BROWSER_RUNTIME_SESSION_PROTOCOL,
+      launchSignature,
+      pid: browserProcess.pid ?? null,
+      effectiveVisibility: launchOptions.headless ? 'headless' : 'headed',
+    })
     let closing: Promise<void> | undefined
+    let detaching: Promise<void> | undefined
     return {
       browserContext: contexts[0],
+      effectiveVisibility: launchOptions.headless ? 'headless' : 'headed',
+      reuseExistingPages: true,
       closeBrowser() {
         closing ??= closeCdpManagedBrowser(browser, browserProcess, browserExit)
+          .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))
         return closing
+      },
+      detachBrowser() {
+        detaching ??= browser.close()
+        return detaching
       },
     }
   } catch (error) {
     await closeCdpManagedBrowser(connectedBrowser, browserProcess, browserExit).catch(() => undefined)
+    await removeBrowserRuntimeSession(sessionFile, endpointFile)
     throw error
   }
+}
+
+async function connectExistingCdpManagedContext({
+  endpointFile,
+  sessionFile,
+  compatibleLaunchSignatures,
+  residentLaunchCandidates,
+}: {
+  endpointFile: string
+  sessionFile: string
+  compatibleLaunchSignatures: ReadonlySet<string>
+  residentLaunchCandidates: readonly ResidentLaunchCandidate[]
+}): Promise<LaunchedManagedContext | null> {
+  const session = await readBrowserRuntimeSession(sessionFile)
+  const endpoint = await readDevToolsEndpoint(endpointFile)
+  if (!endpoint) return null
+  let browser: Browser | undefined
+  try {
+    browser = await chromium.connectOverCDP(endpoint)
+    if (session && !compatibleLaunchSignatures.has(session.launchSignature)) {
+      await closeConnectedCdpManagedBrowser(browser, session.pid)
+      await removeBrowserRuntimeSession(sessionFile, endpointFile)
+      return null
+    }
+    const contexts = browser.contexts()
+    if (contexts.length !== 1 || !contexts[0]) {
+      await browser.close().catch(() => undefined)
+      return null
+    }
+    const residentSession = session ?? await verifiedLegacyResidentSession(browser, residentLaunchCandidates)
+    if (!residentSession) {
+      await browser.close().catch(() => undefined)
+      throw tokenlessError(
+        'playwright_legacy_resident_browser_unverified',
+        'The resident managed browser could not be verified against the requested profile and launch configuration. Close the browser before retrying.',
+      )
+    }
+    if (!session) await writeBrowserRuntimeSession(sessionFile, {
+      protocol: BROWSER_RUNTIME_SESSION_PROTOCOL,
+      ...residentSession,
+    })
+    const connectedBrowser = browser
+    let closing: Promise<void> | undefined
+    let detaching: Promise<void> | undefined
+    return {
+      browserContext: contexts[0],
+      effectiveVisibility: residentSession.effectiveVisibility,
+      reuseExistingPages: true,
+      closeBrowser() {
+        closing ??= closeConnectedCdpManagedBrowser(connectedBrowser, residentSession.pid)
+          .finally(() => removeBrowserRuntimeSession(sessionFile, endpointFile))
+        return closing
+      },
+      detachBrowser() {
+        detaching ??= connectedBrowser.close()
+        return detaching
+      },
+    }
+  } catch (error) {
+    await browser?.close().catch(() => undefined)
+    if ((error as { code?: unknown }).code === 'playwright_legacy_resident_browser_unverified') throw error
+    await removeBrowserRuntimeSession(sessionFile, endpointFile)
+    return null
+  }
+}
+
+function residentLaunchCandidate(
+  userDataDir: string,
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+): ResidentLaunchCandidate {
+  const executablePath = browserTarget.executablePath
+  if (!executablePath) throw new Error('CDP managed browser requires an executable path.')
+  const arguments_ = cdpChromiumArguments(userDataDir, launchOptions, browserTarget)
+  return {
+    launchSignature: cdpLaunchSignature(userDataDir, launchOptions, browserTarget),
+    effectiveVisibility: launchOptions.headless ? 'headless' : 'headed',
+    executablePath,
+    arguments: arguments_,
+    hasProxy: launchOptions.proxy !== undefined,
+    testProfile: browserTarget.launchPolicy === 'test-profile',
+  }
+}
+
+async function verifiedLegacyResidentSession(
+  browser: Browser,
+  candidates: readonly ResidentLaunchCandidate[],
+) {
+  const pid = await cdpBrowserProcessId(browser)
+  if (pid === null) return null
+  const command = await browserProcessCommand(pid)
+  if (!command) return null
+  const candidate = candidates.find((current) => residentCommandMatches(command, current))
+  if (!candidate) return null
+  return {
+    launchSignature: candidate.launchSignature,
+    pid,
+    effectiveVisibility: candidate.effectiveVisibility,
+  }
+}
+
+async function browserProcessCommand(pid: number) {
+  if (process.platform !== 'darwin') return null
+  try {
+    const { stdout } = await execFileAsync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'command='])
+    const command = String(stdout).trim()
+    return command || null
+  } catch {
+    return null
+  }
+}
+
+function residentCommandMatches(command: string, candidate: ResidentLaunchCandidate) {
+  if (candidate.hasProxy) return false
+  if (!(command === candidate.executablePath || command.startsWith(`${candidate.executablePath} `))) return false
+  const actualArguments = command.slice(candidate.executablePath.length).trim().split(/\s+/u).filter(Boolean)
+  const expectedPositionals = candidate.arguments.filter((argument) => !argument.startsWith('--'))
+  const actualPositionals = actualArguments.filter((argument) => !argument.startsWith('--'))
+  if (actualPositionals.length !== expectedPositionals.length || actualPositionals.some((argument, index) => argument !== expectedPositionals[index])) {
+    return false
+  }
+  const expectedFlags = new Set(candidate.arguments.filter((argument) => argument.startsWith('--')))
+  const actualFlags = command.match(/(?:^|\s)(--[^\s]+)/gu)?.map((argument) => argument.trim()) ?? []
+  if (actualFlags.some((argument) => {
+    if (argument === '--no-sandbox' || isProxyArgument(argument)) return true
+    if (!candidate.testProfile && PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS.includes(argument as never)) return true
+    return !expectedFlags.has(argument)
+  })) return false
+  const actualHeadless = commandHasArgument(command, '--headless=new')
+  if ((candidate.effectiveVisibility === 'headless') !== actualHeadless) return false
+  return candidate.arguments.every((argument) => commandHasArgument(command, argument))
+}
+
+function isProxyArgument(argument: string) {
+  return argument === '--no-proxy-server' || argument.startsWith('--proxy-')
+}
+
+function commandHasArgument(command: string, argument: string) {
+  const escaped = argument.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  return new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, 'u').test(command)
+}
+
+async function cdpBrowserProcessId(browser: Browser) {
+  let session: Awaited<ReturnType<Browser['newBrowserCDPSession']>> | undefined
+  try {
+    session = await browser.newBrowserCDPSession()
+    const result = await session.send('SystemInfo.getProcessInfo') as {
+      processInfo?: Array<{ type?: unknown, id?: unknown }>
+    }
+    const browserProcess = result.processInfo?.find((candidate) => candidate.type === 'browser')
+    return browserProcess && Number.isSafeInteger(browserProcess.id) && Number(browserProcess.id) > 0
+      ? Number(browserProcess.id)
+      : null
+  } catch {
+    return null
+  } finally {
+    await session?.detach().catch(() => undefined)
+  }
+}
+
+function cdpLaunchSignature(
+  userDataDir: string,
+  launchOptions: PersistentChromeLaunchOptions,
+  browserTarget: ManagedBrowserLaunchTarget,
+) {
+  return createHash('sha256').update(JSON.stringify({
+    executablePath: browserTarget.executablePath ?? null,
+    runtimeId: browserTarget.runtimeId ?? null,
+    proxy: launchOptions.proxy ?? null,
+    arguments: cdpChromiumArguments(userDataDir, launchOptions, browserTarget),
+  })).digest('base64url')
+}
+
+async function writeBrowserRuntimeSession(
+  sessionFile: string,
+  session: {
+    protocol: typeof BROWSER_RUNTIME_SESSION_PROTOCOL
+    launchSignature: string
+    pid: number | null
+    effectiveVisibility: EffectiveBrowserVisibility
+  },
+) {
+  const temporary = `${sessionFile}.${process.pid}.tmp`
+  await fs.writeFile(temporary, `${JSON.stringify(session, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  await fs.rename(temporary, sessionFile)
+}
+
+async function readBrowserRuntimeSession(sessionFile: string) {
+  let raw: string
+  try {
+    raw = await fs.readFile(sessionFile, 'utf8')
+  } catch (error) {
+    if (isMissingFileError(error)) return null
+    throw error
+  }
+  let value: Record<string, unknown>
+  try {
+    value = JSON.parse(raw) as Record<string, unknown>
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw tokenlessError('playwright_browser_runtime_session_invalid', 'Managed browser runtime session metadata is invalid.')
+    }
+    throw error
+  }
+  if (
+    value.protocol !== BROWSER_RUNTIME_SESSION_PROTOCOL ||
+    typeof value.launchSignature !== 'string' ||
+    (value.effectiveVisibility !== 'headed' && value.effectiveVisibility !== 'headless') ||
+    (value.pid !== null && (!Number.isSafeInteger(value.pid) || Number(value.pid) <= 0))
+  ) {
+    throw tokenlessError('playwright_browser_runtime_session_invalid', 'Managed browser runtime session metadata is invalid.')
+  }
+  return {
+    launchSignature: value.launchSignature,
+    pid: value.pid as number | null,
+    effectiveVisibility: value.effectiveVisibility as EffectiveBrowserVisibility,
+  }
+}
+
+async function removeBrowserRuntimeSession(sessionFile: string, endpointFile: string) {
+  await Promise.all([
+    fs.unlink(sessionFile).catch((error) => {
+      if (!isMissingFileError(error)) throw error
+    }),
+    fs.unlink(endpointFile).catch((error) => {
+      if (!isMissingFileError(error)) throw error
+    }),
+  ])
+}
+
+async function closeConnectedCdpManagedBrowser(browser: Browser, pid: number | null) {
+  if (browser.isConnected()) {
+    try {
+      const session = await browser.newBrowserCDPSession()
+      await session.send('Browser.close')
+    } catch {
+      await browser.close().catch(() => undefined)
+    }
+  }
+  if (pid === null || await waitForPidExit(pid, 5_000)) return
+  process.kill(pid, 'SIGTERM')
+  if (await waitForPidExit(pid, 2_000)) return
+  process.kill(pid, 'SIGKILL')
+  if (await waitForPidExit(pid, 2_000)) return
+  throw tokenlessError(
+    'playwright_browser_close_failed',
+    'The resident managed browser did not exit after explicit shutdown.',
+    { retryable: true },
+  )
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+      throw error
+    }
+    await delay(50)
+  }
+  return false
 }
 
 function cdpChromiumArguments(
@@ -630,7 +1234,7 @@ async function closeCdpManagedBrowser(
       if (!killed && browserProcess.exitCode === null && browserProcess.signalCode === null) {
         throw tokenlessError(
           'playwright_browser_close_failed',
-          'The managed Chromium browser did not exit after shutdown.',
+          'The managed Chrome for Testing browser did not exit after shutdown.',
           { retryable: true },
         )
       }
@@ -670,17 +1274,24 @@ async function waitForDevToolsEndpoint(
     if (exited) {
       throw new Error(`CDP managed browser exited before DevTools was ready (code ${exited.code}, signal ${exited.signal}).`)
     }
-    try {
-      const [port, websocketPath] = (await fs.readFile(endpointFile, 'utf8')).trim().split(/\r?\n/u)
-      if (/^\d+$/u.test(port ?? '') && /^\/devtools\/browser\/[A-Za-z0-9-]+$/u.test(websocketPath ?? '')) {
-        return `http://127.0.0.1:${port}`
-      }
-    } catch (error) {
-      if (!isMissingFileError(error)) throw error
-    }
+    const endpoint = await readDevToolsEndpoint(endpointFile)
+    if (endpoint) return endpoint
     await delay(50)
   }
   throw new Error('Timed out waiting for the CDP managed browser DevTools endpoint.')
+}
+
+async function readDevToolsEndpoint(endpointFile: string) {
+  try {
+    const [port, websocketPath] = (await fs.readFile(endpointFile, 'utf8')).trim().split(/\r?\n/u)
+    if (/^\d+$/u.test(port ?? '') && /^\/devtools\/browser\/[A-Za-z0-9-]+$/u.test(websocketPath ?? '')) {
+      return `http://127.0.0.1:${port}`
+    }
+    return null
+  } catch (error) {
+    if (isMissingFileError(error)) return null
+    throw error
+  }
 }
 
 export function managedBrowserLaunchOptions(
@@ -702,12 +1313,15 @@ export function managedBrowserLaunchOptions(
   const launchOptions: PersistentChromeLaunchOptions = {
     ...executable,
     headless: effectiveVisibility === 'headless',
+    ...(effectiveVisibility === 'headed' ? { viewport: null } : {}),
     chromiumSandbox: true,
     args: [
       '--disable-sync',
       '--no-first-run',
       '--no-default-browser-check',
-      ...KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS,
+      ...(normalized.launchPolicy === 'test-profile'
+        ? PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS
+        : []),
       ...(normalized.e2eInspection
         ? [
             '--remote-debugging-address=127.0.0.1',
@@ -718,9 +1332,16 @@ export function managedBrowserLaunchOptions(
           ]
         : []),
     ],
+    ...(normalized.launchPolicy === 'test-profile'
+      ? {}
+      : { ignoreDefaultArgs: [...PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS] }),
   }
   if (normalized.launchPolicy === 'cloak') {
-    launchOptions.ignoreDefaultArgs = ['--enable-automation', '--enable-unsafe-swiftshader']
+    launchOptions.ignoreDefaultArgs = [
+      ...PLAYWRIGHT_KEYCHAIN_NEUTRAL_DEFAULT_ARGUMENTS,
+      '--enable-automation',
+      '--enable-unsafe-swiftshader',
+    ]
   }
   if (proxy) {
     launchOptions.proxy = {
@@ -729,22 +1350,6 @@ export function managedBrowserLaunchOptions(
     }
   }
   return launchOptions
-}
-
-function assertKeychainNeutralE2ELaunch(
-  launchOptions: PersistentChromeLaunchOptions,
-  browserTarget: ManagedBrowserLaunchTarget,
-) {
-  if (!browserTarget.e2eInspection) return
-  const args = new Set(launchOptions.args ?? [])
-  for (const required of KEYCHAIN_NEUTRAL_CHROMIUM_ARGUMENTS) {
-    if (!args.has(required)) {
-      throw tokenlessError(
-        'e2e_keychain_neutral_launch_required',
-        `Browser E2E requires ${required} before the browser process can start.`,
-      )
-    }
-  }
 }
 
 export function chromeLaunchOptions(): PersistentChromeLaunchOptions {
@@ -763,11 +1368,19 @@ function isManagedBrowserConnected(active: ActiveContext) {
   return active.browserContext.browser()?.isConnected() === true
 }
 
+function visibilityMatches(
+  active: ActiveContext,
+  requestedVisibility: BrowserVisibility,
+  effectiveVisibility: EffectiveBrowserVisibility,
+) {
+  return requestedVisibility === 'auto' || active.effectiveVisibility === effectiveVisibility
+}
+
 function normalizeManagedBrowserLaunchTarget(
   browser: ManagedBrowserLaunchTarget | undefined
 ): ManagedBrowserLaunchTarget {
   const id = String(browser?.id ?? 'chrome').trim().toLowerCase()
-  if (!['chrome', 'brave', 'edge', 'arc', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak', 'profile'].includes(id)) {
+  if (!['chrome', 'brave', 'edge', 'chromium', 'chrome-for-testing', 'managed-chromium', 'cloak', 'profile'].includes(id)) {
     throw tokenlessError('unsupported_managed_browser', `Managed Playwright does not support browser '${id}'.`)
   }
   const executablePath = browser?.executablePath?.trim()
@@ -848,31 +1461,6 @@ function validateRequestedVisibility(value: unknown): BrowserVisibility {
     throw tokenlessError('invalid_browser_visibility', 'Managed Playwright browser visibility must be auto, headed, or headless.')
   }
   return visibility
-}
-
-function normalizedPositiveInteger(value: number): number {
-  const numeric = Number(value)
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    throw tokenlessError('invalid_profile_close_delay', 'Managed Playwright profile close delay must be a positive integer.')
-  }
-  return Math.floor(numeric)
-}
-
-function nativeTimers(): PersistentContextManagerTimers {
-  return {
-    setTimeout(callback, ms) {
-      return setTimeout(callback, ms)
-    },
-    clearTimeout(handle) {
-      clearTimeout(handle as ReturnType<typeof setTimeout>)
-    },
-  }
-}
-
-function unrefTimer(handle: unknown) {
-  if (handle && typeof handle === 'object' && typeof (handle as { unref?: unknown }).unref === 'function') {
-    ;(handle as { unref: () => void }).unref()
-  }
 }
 
 function delay(ms: number) {

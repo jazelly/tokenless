@@ -1,6 +1,6 @@
 # Tokenless Roadmaps
 
-Status: active product direction | Last reviewed: 2026-08-04
+Status: active product direction | Last reviewed: 2026-08-09
 
 This directory contains long-horizon product and engineering roadmaps. It is separate from `plans/`, which contains bounded implementation plans for individual pieces of work.
 
@@ -36,25 +36,24 @@ Every roadmap filename must begin with its product priority (`P0-`, `P1-`, `P2-`
 
 | Roadmap | Outcome | Current priority |
 | --- | --- | --- |
-| [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-selection-and-cloak.md) | Use an exact profile-bound Chromium runtime, prefer the user's installed browser, provide a locked managed fallback, add explicit verified Cloak installation, and classify local Chromium profile versions without reading or copying browser secrets. | P0 |
-| [Windows AMD64 Cloak Setup Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md) | Execute and record the clean Windows AMD x86-64 Anti-Detect setup matrix for Chrome, Brave, and Arc 145/150 profiles, exact Cloak 146 alignment, verified installation, isolation, and recovery paths. | P0 |
-| [Browser Connection Mode Capability Evaluation](P0-browser-connection-mode-capability-evaluation.md) | Compare native Playwright and CDP connections against the same local-browser and real-provider capability matrices without changing the default. | P0 |
 | [Real Provider Browser E2E and Native Projects](P0-real-provider-browser-e2e-and-native-projects.md) | Prove every advertised visible capability against real provider websites and add real Claude and Grok native Project creation, reuse, and continuation. | P0 |
 | [Provider Expansion and Parity](P0-provider-expansion.md) | Add high-value AI web providers and maintain an evidence-backed capability catalog and routing matrix across them. | P0 |
 | [Context Delivery and Workspace Alignment](P0-context-delivery-and-workspace-alignment.md) | Carry authorized task, repository, instruction, and file context into the exact provider Project or conversation, including a new chat. | P0 |
-| [Web Agent Harness](P0-web-agent-harness.md) | Build a ChatGPT-first, Web-Provider-specific harness package that injects skills and an MCP calling protocol over the current Web Provider API, ready for later extraction into its own project. | P0 |
+| [Web AI Interaction Protocol](P0-web-ai-interaction-protocol.md) | Define the versioned, provider-neutral turn interface through which the Web Agent Harness drives durable visible-provider work without importing browser or daemon internals. | P0 |
+| [Web Agent Harness](P0-web-agent-harness.md) | Own Agent adapters and context persistence, then build a ChatGPT-first file-based web Harness with a compiled System Prompt Bundle, Skill registry, validated model output, complete action batches, consolidated user input, rooted filesystem work, and resumable MCP tool execution. | P0 |
+| [Codex Guided Delegation and Session Binding](P0-codex-guided-delegation-and-session-binding.md) | Keep Codex's normal model provider and user launch flow while adding RTK-style guidance, native hooks for exact chat/turn/tool-call identity, bounded App Server enrichment, and provider conversation continuity. | P0 |
 | [Concurrency and Session Scheduling](P0-concurrency-and-session-scheduling.md) | Persist every invocation through the local daemon and schedule exact project, workspace, conversation, profile, and page lanes safely under concurrent load. | P0 |
 | [Local Web Control Plane](P0-local-web-control-plane.md) | Provide a secure localhost console for setup handoff, browser identities, provider configuration, capabilities, jobs, diagnostics, and user recovery. | P0 |
-| [Agent Session Integrations](P1-agent-session-integrations.md) | Expose the current Web Provider operations through a northbound local MCP interface, then bind jobs to exact agent sessions with Codex as the first deep lifecycle integration; this is not the Web Agent Harness. | P1 |
+| [Agent Session Integrations](P1-agent-session-integrations.md) | Expose current Web Provider and later Harness operations through a caller-facing local MCP interface, then bind jobs to exact Agent projects, threads, and turns with Codex as the first exact identity integration. | P1 |
 | [Project Knowledge Graph and Provider Mirroring](P1-project-knowledge-graph-and-provider-mirroring.md) | Build a local project graph and maintain an approved, provider-ready project context mirror for web-based coding agents. | P1 |
-| [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a fully opt-in, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
+| [Optional Output Savings Measurement](P1-optional-output-savings-measurement.md) | Attribute versioned estimates of visible assistant output to durable jobs through a default-on, opt-out, lazily downloaded, low-duty-cycle local tokenizer. | P1 |
 
 Priority describes product importance, not a promise that all work proceeds serially.
 
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): Provider Architecture and Registry was completed and the Daemon Fastify HTTP API direction was cancelled on 2026-07-27.
+- [Archive](archived/README.md): the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; Browser Connection Mode Capability Evaluation and Provider Architecture and Registry were completed; the Daemon Fastify HTTP API direction was cancelled.
 
 ## How the Roadmaps Fit Together
 
@@ -63,13 +62,15 @@ flowchart LR
   Caller["Trusted local caller<br/>HTTP create + polling"]
   UI["Local web control plane<br/>profiles + providers + jobs"]
   API["Local daemon API<br/>auth + schemas + job reads"]
-  Session["Agent session binding<br/>session id + working directory"]
+  Session["Agent session binding<br/>session tree + thread + working directory"]
+  Codex["Codex guided delegation<br/>AGENTS + hooks + App Server enrichment"]
   Scheduler["Durable scheduler<br/>identity + lanes + backpressure"]
   Context["Context envelope<br/>provenance + policy + limits"]
   Harness["Web agent harness<br/>instructions + durable tool loop"]
-  Tools["Tool runtime<br/>southbound MCP + local tools"]
+  Protocol["Web AI Interaction Protocol<br/>provider turns + state + evidence"]
+  Tools["Tool runtime<br/>batched filesystem + MCP execution"]
   Graph["Project knowledge graph<br/>rules + architecture + symbols"]
-  Browser["Browser runtime manager<br/>system + managed + Cloak"]
+  Browser["Browser connection<br/>native Chrome or Brave + explicit Cloak"]
   Provider["Provider adapters<br/>visible capabilities"]
   Workspace["Provider workspace mirror<br/>Project or conversation"]
   Task["Web-agent task<br/>exact session and project context"]
@@ -77,13 +78,16 @@ flowchart LR
   Caller --> API
   UI --> API
   Session --> API
+  Session --> Codex
+  Codex --> Harness
   API --> Scheduler
   Scheduler --> Context
   Graph --> Context
   API --> Harness
   Session --> Harness
   Context --> Harness
-  Harness --> Scheduler
+  Harness --> Protocol
+  Protocol --> Scheduler
   Harness --> Tools
   Tools --> Harness
   Context --> Provider
@@ -97,31 +101,36 @@ flowchart LR
 The shared contracts should be built before provider-specific shortcuts:
 
 1. Use the completed typed provider registry, `BaseProvider` execution skeleton, and provider-owned capability classes documented in the archived [Provider Architecture and Registry](archived/P0-provider-architecture-and-registry.md) roadmap.
-2. Establish exact, profile-bound browser runtime selection and verified system, managed, and Cloak launch paths.
+2. Connect the user-selected native Chrome or Brave browser through its browser-managed CDP endpoint; keep Cloak as an explicit Anti-Detect path.
 3. Establish the real-provider browser E2E evidence plane and close Claude and Grok native Project identity before depending on those capabilities for broader context delivery.
 4. Define stable provider capability, context-envelope, agent-session, and mirror-manifest contracts.
 5. Add the authenticated local web control plane over shared application services without exposing the daemon bearer token to browser JavaScript.
 6. Keep the daemon's small built-in HTTP server and make polling the explicit asynchronous caller and UI contract.
 7. Make the local daemon the durable authority for idempotency, admission, scheduling lanes, conversation identity, and recovery.
-8. Build the ChatGPT-first web agent harness as an independently buildable package over exact provider turns, durable checkpoints, explicit approvals, southbound MCP tools, and finite loop limits; defer repository extraction until the interface is stable.
-9. Expand provider coverage using the same visible-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
-10. Add exact session binding, beginning with Codex lifecycle hooks and explicit invocation metadata.
-11. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
+8. Specify the minimal Web AI Interaction Protocol slice for capability negotiation, exact workspace and conversation identity, one durable provider turn, waiting, recovery, results, and evidence; adopt it on the current Provider side before treating the Harness dependency as stable.
+9. Build the ChatGPT-first web agent harness as one independently buildable deep module exposed through package, authenticated daemon HTTP, and CLI adapters; require existing `conversation.chat` plus `file.upload`, compile and upload one System Prompt Bundle containing the global Skill registry and event protocol, accept upstream Skill preselections and batched web-model `skillLoads`, deliver individual `SKILL.md` revisions on a best-effort basis, and add durable checkpoints, strict output validation, complete action batches, consolidated user interactions, rooted filesystem operations, resumable MCP tool execution, aggregate results, and finite loop limits; defer repository extraction until the interface is stable.
+10. Expand provider coverage using the same visible-session and evidence requirements as the existing providers; agent-harness eligibility closes independently from normal QA support.
+11. Add Codex guided delegation through a reversible inline `AGENTS.md` policy and native lifecycle hooks; bind exact project, thread, turn, and tool-call identity in normally launched Codex sessions, and use bounded App Server reads only to enrich session-tree and lineage while leaving ordinary Codex model traffic unchanged.
+12. Produce a local project graph and synchronize bounded, reviewable context artifacts into the bound provider workspace.
 
 ## Shared Product Principles
 
 - **Visible provider boundary:** operate provider websites through visible controls and visible postconditions. Do not depend on private provider APIs.
 - **Harness-owned agency:** provider websites supply verified model turns; Tokenless owns instruction precedence, tool authorization, execution, durable looping, and termination.
-- **Directional MCP roles:** the northbound Tokenless MCP server is a caller interface; southbound MCP clients are separately configured tool adapters and never inherit caller authority.
+- **Registry-driven Skill selection:** upstream Agent preselections are a fast path, while the uploaded System Prompt Bundle exposes every valid global Skill's bounded metadata so the web model can request additional Skills by name on any turn.
+- **Hard bootstrap, soft Skill bodies:** every Harness route requires `conversation.chat` and `file.upload`, and the System Prompt Bundle must arrive before the first task Prompt; individual `SKILL.md` resolution or upload failures are recorded and omitted without terminating the bootstrapped chat.
+- **Web-turn efficiency:** upload the System Prompt Bundle and initial preselections in one first attachment action, then batch-upload every later requested Skill before the next Prompt; require each non-final model response to contain all currently needed Skills, knowable actions, and missing inputs; return one aggregate batch result; spend another provider turn only when new instructions or prior results reveal a genuinely new dependency.
+- **Role-based MCP separation:** the caller MCP interface and web-model-driven MCP tool execution use separate sessions, credentials, tools, and approval decisions; caller authority never transfers implicitly.
 - **Evidence before availability:** selectors or menu presence are not success. A capability is supported only when a real visible-session sequence proves the final outcome.
-- **Fail closed:** ambiguous identity, navigation, attachment state, workspace selection, or context delivery must return an explicit unavailable or unknown result.
+- **Fail closed for required inputs:** ambiguous identity, navigation, required attachment state, workspace selection, or required context delivery returns an explicit unavailable or unknown result; explicitly best-effort Skill delivery is instead recorded and skipped.
 - **Exact identity over names:** use provider/profile/resource identifiers and agent/session/worktree identity. Human-readable project and chat names are metadata, not primary keys.
+- **Hierarchy-preserving Agent delegation:** an Agent project maps to one exact provider workspace binding when it first delegates, each Agent thread maps to its own provider conversation, delegated runs retain their originating Agent turn, and forks or subagents preserve explicit lineage without sharing conversations implicitly.
 - **Daemon-owned concurrency:** every invocation is durably admitted, deduplicated, scheduled, leased, checkpointed, and completed through the local daemon.
 - **Conversation single-writer:** one conversation accepts at most one mutating job at a time; unrelated conversations may run concurrently only within explicit profile and provider limits.
 - **Local-first and consent-based:** indexing, session binding, and staging happen locally. Upload only the bounded artifacts a user or authorized agent has approved.
 - **Provenance-preserving context:** every instruction and source must retain its origin, scope, freshness, and sharing policy.
 - **No hidden-prompt extraction:** Tokenless may carry instructions explicitly supplied or exported by the caller. It must not scrape concealed platform, developer, or provider prompts.
-- **Real-boundary testing:** provider and agent integrations require focused integration or browser E2E evidence through the built CLI, daemon, filesystem, lifecycle hook, and real visible provider session.
+- **Real-boundary testing:** provider and Agent integrations require focused integration or browser E2E evidence through the built CLI, daemon, filesystem, supported Agent control surface, and real visible provider session.
 - **Honest degradation:** when a provider cannot represent a system instruction, Project, graph artifact, or other semantic layer natively, report the fallback instead of claiming parity.
 
 ## Roadmap Maintenance

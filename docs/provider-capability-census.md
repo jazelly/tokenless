@@ -4,7 +4,7 @@ Last reviewed: 2026-08-04
 
 This is a product reconnaissance record, not a Tokenless support declaration. Official provider documentation establishes that a product feature exists. Tokenless advertises a route only after the provider adapter implements the complete visible lifecycle and real-provider browser E2E closes the required evidence. The normative naming, mapping, support, and extension rules live in the [Capability Matrix](capability-matrix.md).
 
-The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V1 routeable outcomes are:
+The checked-in runtime catalog and provider routing matrix live in `packages/cli/src/providers/task-capabilities.ts`. `tokenless capabilities list --json` exposes that versioned catalog without opening a browser. The current V2 routeable outcomes are:
 
 - `conversation.chat`: ChatGPT, Claude, Gemini, Grok, experimental Qwen, experimental Perplexity, experimental Z.ai, experimental Doubao, and experimental Kimi;
 - `file.upload`: ChatGPT, Claude, Grok, experimental Doubao, and experimental Kimi;
@@ -41,6 +41,7 @@ The product surface is broader than the current Tokenless evidence. The middle c
 | Z.ai / GLM | GLM-5.2 web chat, 1M context, flexible effort levels, coding, and long-horizon agent strengths | Experimental guest chat route with built-CLI managed-Cloak closure for guest continuation, readiness, prompt drafting, submission, completed visible response, conversation mapping, and durable state; files, continuation, model or effort selection, and advanced GLM workflows remain unadvertised |
 | Doubao / 豆包 | Signed-in Chinese web chat; visible free-account discrimination; Fast, Expert, and Work Task modes; writing, presentation, image, video, deep-research, podcast, music, problem-solving, and spreadsheet Web skills; broad file input; desktop-only recording transcription entry | Experimental signed-in adapter with built-CLI managed-Cloak closure for readiness, prompt drafting, account-name and free-tier inspection, file acceptance, exact mode/skill selection, unavailable-state reporting, and restoration. Text-file `file.upload` is routeable. Advanced skill outcomes remain unadvertised until their full lifecycles close; the chat mutation gate remains release-blocked by a visible provider verification iframe |
 | Kimi | Signed-in web chat; Instant, K3, and K3 Swarm models; Standard/High thinking effort; files, Web search, Plugins, Skills, Projects, and broader research/agent/artifact surfaces | Experimental signed-in `conversation.chat`, text-file `file.upload`, `search.web`, and search-backed `response.citations` routes with built-CLI managed-Cloak closure. Exact Plugin/Skill inspection and selection are implemented and control-closed. Their submitted outcomes are capacity-blocked; Projects, research, agent, and artifact lifecycles remain gate-pending and unadvertised |
+| Dola | Signed-in web chat; Fast and Pro choices; file input; Create Image, Writing, Create Video, Translate, and Homework entries; a separate Seedream image-creation surface; no observed Project, file library, or persistent knowledge-management surface | Experimental signed-in adapter and release gates are registered from the user-selected managed profile. Visible controls, exact public skill keys, and numeric conversation routes were observed. Writing is not classified as file creation without a completed document artifact; built-product readiness, selection, file acceptance, response, continuation, and generation closure remain pending, so no canonical route is advertised |
 
 Official references:
 
@@ -55,6 +56,7 @@ Official references:
 - [Doubao official feature introduction](https://www.doubao.com/legal/feature_intro)
 - [Doubao paid service agreement](https://www.doubao.com/legal/ey01)
 - [Kimi web product](https://www.kimi.com/)
+- [Dola web product](https://www.dola.com/chat)
 
 ## Candidate Web Providers
 
@@ -103,7 +105,9 @@ The caller catalog must describe outcomes, not provider controls. `qwen.mode`, `
 
 This is a candidate vocabulary. A capability becomes public only when at least one provider has a complete semantics and real-provider closure. Similar provider labels do not establish equivalent behavior.
 
-Keep the first public catalog small. Real-time voice conversations, persistent personalization or memory, arbitrary autonomous web actions, connector writes, and iterative artifact editing or sharing require separate safety and lifecycle contracts. The schema may add those outcomes later, but provider marketing labels such as “agent,” “canvas,” or “memory” must not enter V1 as underspecified generic capabilities.
+Provider-native labels such as Kimi Skill or Dola Homework remain namespaced workflows. A user-owned `SKILL.md` is separate Harness context delivered through `conversation.chat` plus `file.upload`; it is not part of the canonical capability vocabulary.
+
+Keep the public catalog small. Real-time voice conversations, persistent personalization or memory, arbitrary autonomous web actions, connector writes, and iterative artifact editing or sharing require separate safety and lifecycle contracts. The schema may add those outcomes later, but provider marketing labels such as “agent,” “canvas,” or “memory” must not enter V2 as underspecified generic capabilities.
 
 ### Task Requirement
 
@@ -126,7 +130,7 @@ type CapabilityRunRequest = Readonly<{
 }>
 ```
 
-All V1 requirements are mandatory. Attachments infer the corresponding input capabilities. Requested output kinds infer generation capabilities. The router must find one provider strategy set that satisfies every explicit and inferred requirement, including the requested parameter subset.
+All V2 requirements are mandatory. Attachments infer the corresponding input capabilities. Requested output kinds infer generation capabilities. The router must find one provider strategy set that satisfies every explicit and inferred requirement, including the requested parameter subset.
 
 Each catalog definition includes:
 
@@ -183,7 +187,7 @@ Document, presentation, spreadsheet, and website capabilities must declare their
 - Product documentation expands reconnaissance; it never makes a route eligible.
 - The router considers only implemented and real-E2E-closed provider strategies.
 - Account, region, rollout, and quota are runtime eligibility checks.
-- One V1 provider must satisfy the full requirement set.
+- One V2 provider must satisfy the full requirement set.
 - Provider ranking happens only after full-set capability compatibility. Fresh runtime eligibility wins over unchecked state, supported evidence wins over experimental evidence, and configured provider preference breaks the remaining tie.
 - Stale cached access is `unchecked`, not trusted as live eligibility. Every attempt performs a read-only visible session and capability-UI preflight before mutation; no probe prompt is allowed.
 - The job contract independently derives requirements from actions, attachment MIME types, and native workspace intent. A route that omits an action-required capability is invalid even when an internal caller supplied it.

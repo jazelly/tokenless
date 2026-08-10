@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tokenless-internal:web-ai-interaction-protocol:v0:capability-document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "providerRef", "supportedCapabilities"],
+  "properties": {
+    "protocol": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/protocol" },
+    "providerRef": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/providerRef" },
+    "supportedCapabilities": { "$ref": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common#/$defs/capabilities" }
+  }
+}

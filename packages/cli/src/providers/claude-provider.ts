@@ -20,9 +20,6 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
         legacyRequests: true,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.claude,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['claude.ai', 'anthropic.com']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),
@@ -52,9 +49,7 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
         'button[type="submit"]',
       ]),
       answerSelectors: Object.freeze([
-        '[data-testid="virtual-message-list"] .font-claude-response-body',
-        'main .font-claude-response-body',
-        '.font-claude-response-body',
+        '.standard-markdown:has(.font-claude-response-body)',
       ]),
       fileInputSelectors: Object.freeze([
         'input#chat-input-file-upload-onpage[data-testid="file-upload"][type="file"]',
@@ -96,6 +91,7 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
     })
     super(provider, {
       workspace: new NativeProjectWorkspaceCapability(provider, {
+        createSubmitActivation: 'dom',
         listUrl: 'https://claude.ai/projects',
         projectPath: /^\/project\/(?<resourceId>[A-Za-z0-9_-]+)(?:\/|$)/u,
         projectLinkSelectors: Object.freeze([
@@ -108,19 +104,22 @@ export class ClaudeProvider extends BaseProvider<'claude'> {
         ]),
         nameInputSelectors: Object.freeze([
           'input[aria-label="Project name"]',
+          'input[placeholder="Name your project"]',
           'input[placeholder*="project name" i]',
           '[role="dialog"] input[type="text"]',
         ]),
         instructionsInputSelectors: Object.freeze([
           'textarea[aria-label*="project instructions" i]',
+          'textarea[aria-label="Set project instructions"]',
           'textarea[placeholder*="instructions" i]',
-          '[role="dialog"] textarea',
         ]),
         createSubmitSelectors: Object.freeze([
+          'form button[type="submit"]:has-text("Create project")',
           '[role="dialog"] button:has-text("Create project")',
           '[role="dialog"] button:has-text("Create")',
         ]),
         instructionOpenSelectors: Object.freeze([
+          'button[aria-label="Edit instructions"]',
           'button:has-text("Set project instructions")',
           'button:has-text("Add instructions")',
           'button:has-text("Edit instructions")',

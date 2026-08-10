@@ -8,13 +8,11 @@ import {
 } from './provider-definition.js'
 import { MenuTextAccountInspector } from './account-inspectors.js'
 import { tokenlessError } from '../playwright/errors.js'
-import { QwenModeCapability } from './capabilities/qwen-mode.js'
 import type { Locator, Page } from 'playwright-core'
 import type { ProviderExecutionContext } from './execution-context.js'
 import type { ProviderDomDefinition } from './provider-definition.js'
 import { PROVIDER_NAVIGATION_CATALOG } from './provider-navigation-catalog.js'
 
-const QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS = 15_000
 const QWEN_APP_HYDRATION_AGE_MS = 3_000
 
 export class QwenProvider extends BaseProvider<'qwen'> {
@@ -28,9 +26,6 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         legacyRequests: false,
       }),
       navigation: PROVIDER_NAVIGATION_CATALOG.qwen,
-      profileImport: Object.freeze({
-        cookieDomains: Object.freeze(['qwen.ai']),
-      }),
       controls: Object.freeze({
         chatSurface: false,
       }),
@@ -56,14 +51,23 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         '.qwen-chat-message-assistant .chat-response-message .qwen-markdown',
         '.qwen-chat-message-assistant .qwen-markdown',
       ]),
-      fileInputSelectors: Object.freeze([]),
-      fileUploadTriggerSelectors: Object.freeze([]),
-      fileUploadLocalSelectors: Object.freeze([]),
+      fileInputSelectors: Object.freeze([
+        '#filesUpload[type="file"]',
+      ]),
+      fileUploadTriggerSelectors: Object.freeze([
+        '[role="button"][aria-label="Select Mode"]',
+      ]),
+      fileUploadLocalSelectors: Object.freeze([
+        '[role="menuitem"].mode-select-common-item:has-text("Upload attachment")',
+      ]),
       modelControlSelectors: Object.freeze([]),
       effortControlSelectors: Object.freeze([
         '.qwen-select-thinking',
       ]),
-      authIndicators: Object.freeze([]),
+      authIndicators: Object.freeze([
+        'button:has(img[alt="User profile"])',
+        'button[aria-label^="User profile"]',
+      ]),
       loginIndicators: Object.freeze([
         'button:has-text("Log in")',
         'button:has-text("Sign up")',
@@ -74,21 +78,25 @@ export class QwenProvider extends BaseProvider<'qwen'> {
         'button.stop-button',
         '.qwen-chat-message-awaiting-response',
       ]),
+      interactionTimings: Object.freeze({
+        attachmentReadyTimeoutMs: 120_000,
+        promptControlTimeoutMs: 30_000,
+        submissionAcceptanceTimeoutMs: 30_000,
+      }),
       choiceAvailability: DEFAULT_CHOICE_AVAILABILITY,
-      capabilities: providerCapabilities({ qwenMode: true }),
+      capabilities: providerCapabilities(),
     })
-    super(provider, {
-      extensions: Object.freeze([
-        new QwenModeCapability(provider),
-      ]),
-    })
+    super(provider)
   }
 
-  protected override async inputPrompt(page: Page, text: string, _context: ProviderExecutionContext) {
-    const deadline = Date.now() + QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS
+  protected override async inputPrompt(page: Page, text: string, context: ProviderExecutionContext) {
+    const timeoutMs = this.definition.interactionTimings.promptControlTimeoutMs
+    const deadline = Date.now() + timeoutMs
+    assertNotAborted(context.signal)
     await waitForQwenAppHydration(page, deadline)
     let composerObserved = false
     do {
+      assertNotAborted(context.signal)
       const composer = await waitForVisibleLocator(
         page,
         this.definition.composerSelectors,
@@ -110,7 +118,7 @@ export class QwenProvider extends BaseProvider<'qwen'> {
     if (!composerObserved) {
       throw tokenlessError(
         'prompt_input_visibility_timeout',
-        `Timed out after ${QWEN_PROMPT_CONTROL_VISIBILITY_TIMEOUT_MS}ms waiting for a visible prompt input.`,
+        `Timed out after ${timeoutMs}ms waiting for a visible prompt input.`,
         { retryable: true },
       )
     }
@@ -120,6 +128,10 @@ export class QwenProvider extends BaseProvider<'qwen'> {
       { retryable: true },
     )
   }
+}
+
+function assertNotAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw signal.reason ?? new Error('Visible provider action was aborted.')
 }
 
 async function waitForQwenAppHydration(page: Page, deadline: number) {

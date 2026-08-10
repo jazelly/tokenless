@@ -436,12 +436,67 @@ export type ResponseReadResult = {
   text: string
   citations: readonly VisibleCitation[]
   visibleProof: string
+  decisionDiagnostics: ResponseDecisionDiagnostics
   outputSavings?: import('../output-savings/index.js').OutputSavingsResult
+}
+
+export type ResponseDecisionElement = {
+  tag: 'article' | 'blockquote' | 'button' | 'code' | 'div' | 'element' | 'li' | 'main' | 'ol' | 'p' | 'pre' | 'section' | 'span' | 'ul'
+  role?: 'button' | 'textbox' | 'menuitem' | 'option' | 'combobox' | 'listbox'
+  ariaBusy?: 'true' | 'false'
+  ariaLive?: 'assertive' | 'off' | 'polite'
+  dataIsStreaming?: 'true' | 'false'
+  dataState?: 'active' | 'closed' | 'complete' | 'idle' | 'inactive' | 'loading' | 'open' | 'pending'
+}
+
+export type ResponseDecisionDiagnostics = {
+  selected: (ResponseDecisionElement & { ancestors: readonly ResponseDecisionElement[] }) | null
+  visibleAnswerCount: number
+  visibleBusyCount: number
+  generationStopVisible: boolean
 }
 
 export type VisibleCitation = {
   label: string
   href: string
+}
+
+export type SnapshotDiagnosticElement = {
+  tag: 'article' | 'blockquote' | 'button' | 'code' | 'div' | 'element' | 'li' | 'main' | 'ol' | 'p' | 'pre' | 'section' | 'span' | 'ul'
+  role?: 'button' | 'textbox' | 'menuitem' | 'option' | 'combobox' | 'listbox'
+  dataTestId?: string
+  ariaBusy?: 'true' | 'false'
+  ariaLive?: 'assertive' | 'off' | 'polite'
+  dataIsStreaming?: 'true' | 'false'
+  dataState?: 'active' | 'closed' | 'complete' | 'idle' | 'inactive' | 'loading' | 'open' | 'pending'
+  classTokens?: readonly string[]
+}
+
+export type SnapshotResponseCandidate = SnapshotDiagnosticElement & {
+  visibleTextLength: number
+  ancestors: readonly SnapshotDiagnosticElement[]
+}
+
+export type SnapshotResponseSelectorDiagnostics = {
+  selectorIndex: number
+  total: number
+  visible: number
+  truncated: boolean
+  candidates: readonly SnapshotResponseCandidate[]
+}
+
+export type SnapshotResponseDiagnostics = {
+  truncated: boolean
+  answerSelectors: {
+    configured: number
+    truncated: boolean
+    selectors: readonly SnapshotResponseSelectorDiagnostics[]
+  }
+  busySelectors: {
+    configured: number
+    truncated: boolean
+    selectors: readonly SnapshotResponseSelectorDiagnostics[]
+  }
 }
 
 export type SnapshotResult = {
@@ -459,6 +514,7 @@ export type SnapshotResult = {
     login: number
     blocker: number
   }
+  responseDiagnostics: SnapshotResponseDiagnostics
   page: {
     origin: string
   }

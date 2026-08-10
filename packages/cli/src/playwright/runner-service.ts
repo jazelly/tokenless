@@ -31,19 +31,19 @@ import {
 } from './provider-failure-classification.js'
 import { VISIBLE_ACTIONS, VISIBLE_ACTION_SCHEMA_ID, isVisibleActionProtocolVersion } from './actions.js'
 import { ManagedProfileRegistry } from './profiles/registry.js'
+import { checkpointIndicatesExternalMutation } from './submission-certainty.js'
 import { readTokenlessConfig } from '../job-store.js'
-import { OutputSavingsRuntimeManager } from '../output-savings/index.js'
-import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById, listTaskCapabilityDefinitions } from '../providers/registry.js'
+import { PROVIDER_CAPABILITIES, TASK_CAPABILITIES, getProviderInstanceById } from '../providers/registry.js'
 import type {
   ManagedBrowserContext,
   ManagedBrowserProfile,
+  ManagedProviderPageLease,
   PersistentContextManager as PersistentContextManagerType,
 } from './browser/context-manager.js'
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
 import type { ProviderCapabilityId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
-import type { BrowserConnectionMode } from '../browser-connection-mode.js'
 import type { VisibleAction, VisibleActionRequest } from './actions.js'
 import type { VisibleActionResponse } from './actions.js'
 import type { VisibleBlocker } from './actions.js'
@@ -51,6 +51,7 @@ import type { NativeWorkspaceEnsureResult } from './actions.js'
 import type { ProviderActionPreparation } from '../providers/contracts.js'
 import type { ProviderCapacityProjection } from '../providers/rate-limit-policy.js'
 import type { BrowserContext, Page } from 'playwright-core'
+import type { OutputSavingsWorkInput } from '../daemon/job-store.js'
 
 export type ManagedPlaywrightRunnerServiceOptions = {
   homeDir?: string | undefined
@@ -58,16 +59,13 @@ export type ManagedPlaywrightRunnerServiceOptions = {
   daemonClient: ManagedDaemonClient
   contextManager?: PersistentContextManagerType | undefined
   browser?: ManagedBrowserLaunchTarget | undefined
-  browserConnectionMode?: BrowserConnectionMode | undefined
   browserResolver?: ManagedBrowserResolver | undefined
   pollIdleMs?: number | undefined
   renewIntervalMs?: number | undefined
   cancelPollMs?: number | undefined
-  responseWaitTimeoutMs?: number | undefined
   responseWaitPollMs?: number | undefined
   userHandoverTimeoutMs?: number | undefined
   userHandoverPollMs?: number | undefined
-  autoEscalatedCloseDelayMs?: number | undefined
   attachmentRootForJob?: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
   recoverAbortedClaim?: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   cleanupAttachmentRoot?: boolean | undefined
@@ -86,6 +84,11 @@ export type ManagedPlaywrightJobResult = {
   protocol: typeof MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID
   provider: string
   responses: readonly VisibleActionResponse[]
+}
+
+type ManagedPlaywrightExecutionOutcome = {
+  result: ManagedPlaywrightJobResult
+  outputSavingsWork: readonly OutputSavingsWorkInput[]
 }
 
 export type ManagedProfileOpenResult = {
@@ -155,6 +158,7 @@ type RunnerExecutionState = {
 type ClearBlockerResult = {
   managedContext: ManagedBrowserContext
   page: Page
+  providerPageLease: ManagedProviderPageLease | null
   waitedMs: number
 }
 
@@ -163,12 +167,10 @@ type RunnerProvider = NonNullable<ReturnType<typeof getProviderInstanceById>>
 const DEFAULT_RENEW_INTERVAL_MS = 10_000
 const DEFAULT_CANCEL_POLL_MS = 500
 const DEFAULT_POLL_IDLE_MS = 1_000
-const DEFAULT_RESPONSE_WAIT_TIMEOUT_MS = 120_000
-const LONG_RUNNING_RESPONSE_WAIT_TIMEOUT_MS = 2_160_000
 const DEFAULT_RESPONSE_WAIT_POLL_MS = 250
 const DEFAULT_USER_HANDOVER_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_USER_HANDOVER_POLL_MS = 1_000
-const DEFAULT_AUTO_ESCALATED_CLOSE_DELAY_MS = 30_000
+const MAX_READINESS_BATCH_CONCURRENCY = 3
 const SAFE_JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 export class ManagedPlaywrightRunnerService {
   private readonly profileRegistry: ManagedProfileSource
@@ -177,11 +179,9 @@ export class ManagedPlaywrightRunnerService {
   private readonly pollIdleMs: number
   private readonly renewIntervalMs: number
   private readonly cancelPollMs: number
-  private readonly responseWaitTimeoutMs: number
   private readonly responseWaitPollMs: number
   private readonly userHandoverTimeoutMs: number
   private readonly userHandoverPollMs: number
-  private readonly autoEscalatedCloseDelayMs: number
   private readonly attachmentRootForJob: ((job: DaemonJob) => string | undefined | Promise<string | undefined>) | undefined
   private readonly recoverAbortedClaim: ((job: DaemonClaimedJob) => Promise<unknown> | unknown) | undefined
   private readonly cleanupAttachmentRoot: boolean
@@ -189,7 +189,6 @@ export class ManagedPlaywrightRunnerService {
   private readonly e2eInspection: E2EBrowserInspectionConfig | null
   private readonly controlPlanePageKey: string
   private readonly homeDir: string | undefined
-  private readonly outputSavingsRuntimeManager: OutputSavingsRuntimeManager | undefined
   private readonly providerTabsByProfile = new Map<string, Map<string, Page>>()
   private readonly pendingProviderTabsByProfile = new Map<string, Set<string>>()
   private readonly inFlightProfiles = new Set<string>()
@@ -198,9 +197,6 @@ export class ManagedPlaywrightRunnerService {
 
   constructor(options: ManagedPlaywrightRunnerServiceOptions) {
     this.homeDir = options.homeDir === undefined ? undefined : path.resolve(options.homeDir)
-    this.outputSavingsRuntimeManager = this.homeDir
-      ? new OutputSavingsRuntimeManager(this.homeDir)
-      : undefined
     if (options.profileRegistry) {
       this.profileRegistry = options.profileRegistry
     } else {
@@ -213,25 +209,22 @@ export class ManagedPlaywrightRunnerService {
           ])
           return profiles.map((profile) => ({
             ...profile,
-            proxy: config.profilePreferences[profile.slug]?.proxy ?? null,
+            proxy: config.profiles[profile.slug]?.proxy ?? null,
           }))
         },
       }
     }
     this.daemonClient = options.daemonClient
     this.contextManager = options.contextManager ?? new PersistentContextManager({
-      connectionMode: options.browserConnectionMode ?? 'playwright',
       ...(options.browser ? { browser: options.browser } : {}),
       ...(options.browserResolver ? { browserResolver: options.browserResolver } : {}),
     })
     this.pollIdleMs = normalizedPositiveInteger(options.pollIdleMs, DEFAULT_POLL_IDLE_MS)
     this.renewIntervalMs = normalizedPositiveInteger(options.renewIntervalMs, DEFAULT_RENEW_INTERVAL_MS)
     this.cancelPollMs = normalizedPositiveInteger(options.cancelPollMs, DEFAULT_CANCEL_POLL_MS)
-    this.responseWaitTimeoutMs = normalizedPositiveInteger(options.responseWaitTimeoutMs, DEFAULT_RESPONSE_WAIT_TIMEOUT_MS)
     this.responseWaitPollMs = normalizedPositiveInteger(options.responseWaitPollMs, DEFAULT_RESPONSE_WAIT_POLL_MS)
     this.userHandoverTimeoutMs = normalizedPositiveInteger(options.userHandoverTimeoutMs, DEFAULT_USER_HANDOVER_TIMEOUT_MS)
     this.userHandoverPollMs = normalizedPositiveInteger(options.userHandoverPollMs, DEFAULT_USER_HANDOVER_POLL_MS)
-    this.autoEscalatedCloseDelayMs = normalizedPositiveInteger(options.autoEscalatedCloseDelayMs, DEFAULT_AUTO_ESCALATED_CLOSE_DELAY_MS)
     const defaultAttachmentHomeDir = options.homeDir
     this.attachmentRootForJob = options.attachmentRootForJob ?? (
       defaultAttachmentHomeDir ? (job) => defaultAttachmentRootForJob(defaultAttachmentHomeDir, job) : undefined
@@ -327,37 +320,56 @@ export class ManagedPlaywrightRunnerService {
       claimedPages.add(initialBlankPage)
       knownProviderTabs.set(initialProvider.id, initialBlankPage)
       pendingProviderTabs.add(initialProvider.id)
-      tabs.push({
-        provider: initialProvider.id,
-        url: initialProvider.descriptor.navigation.entryUrl,
-        reused: false,
-      })
-      void initialBlankPage.goto(initialProvider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
-        .catch(() => knownProviderTabs.delete(initialProvider.id))
-        .finally(() => pendingProviderTabs.delete(initialProvider.id))
+      try {
+        await initialBlankPage.goto(initialProvider.descriptor.navigation.entryUrl, { waitUntil: 'commit' })
+        tabs.push({
+          provider: initialProvider.id,
+          url: initialProvider.descriptor.navigation.entryUrl,
+          reused: false,
+        })
+      } catch (error) {
+        knownProviderTabs.delete(initialProvider.id)
+        failures.push(providerTabOpenFailure(initialProvider.id, error))
+      } finally {
+        pendingProviderTabs.delete(initialProvider.id)
+      }
     }
     if (missing.length > 0) {
       const browser = managedContext.browserContext.browser()
       if (!browser) throw tokenlessError('playwright_browser_closed', 'Managed browser is no longer connected.')
       const session = await browser.newBrowserCDPSession()
-      const requests = missing.map((provider) => {
+      const requests = missing.map(async (provider) => {
         pendingProviderTabs.add(provider.id)
-        tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: false })
-        return session.send('Target.createTarget', {
-          url: provider.descriptor.navigation.entryUrl,
-          background: true,
-          focus: false,
-        }).then(async (created) => {
+        try {
+          const created = await session.send('Target.createTarget', {
+            url: provider.descriptor.navigation.entryUrl,
+            background: true,
+            focus: false,
+          })
           const createdPages = await waitForChromiumTargetPages(
             managedContext.browserContext,
             new Set([created.targetId]),
             10_000,
           )
           const page = createdPages.get(created.targetId)
-          if (page) knownProviderTabs.set(provider.id, page)
-        }).finally(() => pendingProviderTabs.delete(provider.id))
+          if (!page) {
+            throw tokenlessError(
+              'playwright_background_page_unavailable',
+              `Chromium created the ${provider.id} tab but Playwright did not expose its page.`,
+              { retryable: true, details: { provider: provider.id, targetId: created.targetId } },
+            )
+          }
+          knownProviderTabs.set(provider.id, page)
+          tabs.push({ provider: provider.id, url: provider.descriptor.navigation.entryUrl, reused: false })
+        } catch (error) {
+          knownProviderTabs.delete(provider.id)
+          failures.push(providerTabOpenFailure(provider.id, error))
+        } finally {
+          pendingProviderTabs.delete(provider.id)
+        }
       })
-      void Promise.allSettled(requests).finally(() => session.detach().catch(() => undefined))
+      await Promise.all(requests)
+      await session.detach().catch(() => undefined)
     }
     if (pendingProviderTabs.size === 0) {
       this.pendingProviderTabsByProfile.delete(profile.id)
@@ -378,8 +390,8 @@ export class ManagedPlaywrightRunnerService {
     }
   }
 
-  async openControlPlane(profileId: string, bootstrapUrl: string): Promise<ManagedControlPlaneOpenResult> {
-    const parsed = new URL(bootstrapUrl)
+  async openControlPlane(profileId: string, consoleUrl: string): Promise<ManagedControlPlaneOpenResult> {
+    const parsed = new URL(consoleUrl)
     if (
       parsed.protocol !== 'http:' ||
       parsed.username ||
@@ -409,6 +421,11 @@ export class ManagedPlaywrightRunnerService {
   async shutdown() {
     this.stop()
     await this.contextManager.shutdown()
+  }
+
+  async detach() {
+    this.stop()
+    await this.contextManager.detach()
   }
 
   async runUntilStopped(signal?: AbortSignal | undefined) {
@@ -461,7 +478,7 @@ export class ManagedPlaywrightRunnerService {
       })
       if (!claimed.job) continue
       this.inFlightProfiles.add(profile.id)
-      const jobPromise = this.executeClaimedJob(profile, claimed.job, signal)
+      const jobPromise = this.executeClaimedBatch(profile, claimed.job, signal)
         .then(() => undefined)
         .catch((error) => {
           if (isClaimRecoveryError(error)) throw error
@@ -474,6 +491,37 @@ export class ManagedPlaywrightRunnerService {
       started += 1
     }
     return started
+  }
+
+  private async executeClaimedBatch(
+    profile: ManagedBrowserProfile,
+    firstJob: DaemonClaimedJob,
+    signal?: AbortSignal | undefined,
+  ) {
+    const executions = [this.executeClaimedJob(profile, firstJob, signal)]
+    const batchPrefix = readinessBatchPrefix(firstJob)
+    let claimError: unknown
+    try {
+      if (batchPrefix) {
+        while (executions.length < MAX_READINESS_BATCH_CONCURRENCY && !this.stopped && !signal?.aborted) {
+          const claimed = await this.daemonClient.claimNextJob({
+            executionBackend: PLAYWRIGHT_EXECUTION_BACKEND,
+            profileId: profile.id,
+            action: MANAGED_PLAYWRIGHT_JOB_ACTION,
+            jobIdPrefix: batchPrefix,
+            signal,
+          })
+          if (!claimed.job) break
+          executions.push(this.executeClaimedJob(profile, claimed.job, signal))
+        }
+      }
+    } catch (error) {
+      claimError = error
+    }
+    const results = await Promise.allSettled(executions)
+    if (claimError) throw claimError
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
   }
 
   private async waitForSchedulerProgress(signal?: AbortSignal | undefined) {
@@ -498,7 +546,6 @@ export class ManagedPlaywrightRunnerService {
     let renewError: unknown
     let attachmentRoot: string | undefined
     let providerAttachmentRoot: string | undefined
-    let autoEscalatedBrowserContext: BrowserContext | undefined
     let terminalCompletion = false
     const renewTimer = setInterval(() => {
       void this.daemonClient.renewJobClaim({
@@ -520,7 +567,7 @@ export class ManagedPlaywrightRunnerService {
 
     try {
       const request = this.validateClaimedJob(profile, job)
-      if (job.provider_submitted_at === null && !checkpointIndicatesSubmission(job.checkpoint_json)) {
+      if (job.provider_submitted_at === null && !checkpointIndicatesExternalMutation(job.checkpoint_json)) {
         const subscription = rateLimitSubscription(profile, job.provider)
         const projection = await this.daemonClient.projectJobProviderCapacity({
           jobId: job.job_id,
@@ -570,7 +617,7 @@ export class ManagedPlaywrightRunnerService {
         claimToken: job.claim_token,
         signal,
       })
-      const result = await this.executeActions(
+      const execution = await this.executeActions(
         profile,
         job,
         request,
@@ -578,9 +625,6 @@ export class ManagedPlaywrightRunnerService {
         signal,
         () => canceled,
         () => renewError,
-        (managedContext) => {
-          autoEscalatedBrowserContext = managedContext.browserContext
-        }
       )
       if (canceled || signal.aborted) {
         return { claimed: true, jobId: job.job_id, status: 'canceled' }
@@ -588,7 +632,8 @@ export class ManagedPlaywrightRunnerService {
       await this.daemonClient.completeJob({
         jobId: job.job_id,
         claimToken: job.claim_token,
-        result,
+        result: execution.result,
+        outputSavingsWork: execution.outputSavingsWork,
       })
       terminalCompletion = true
       return { claimed: true, jobId: job.job_id, status: 'succeeded' }
@@ -637,12 +682,6 @@ export class ManagedPlaywrightRunnerService {
       const recoverClaim = outerSignal?.aborted && !terminalCompletion && !canceled && !renewError
       if (attachmentRoot && this.cleanupAttachmentRoot && !recoverClaim) {
         await fs.rm(attachmentRoot, { recursive: true, force: true }).catch(() => undefined)
-      }
-      if ((terminalCompletion || canceled) && autoEscalatedBrowserContext) {
-        this.contextManager.scheduleCloseProfile(profile.id, {
-          delayMs: this.autoEscalatedCloseDelayMs,
-          browserContext: autoEscalatedBrowserContext,
-        })
       }
       if (recoverClaim) {
         try {
@@ -703,19 +742,35 @@ export class ManagedPlaywrightRunnerService {
     signal: AbortSignal,
     isCanceled: () => boolean,
     renewalError: () => unknown,
-    onAutoEscalated: (context: ManagedBrowserContext) => void
-  ): Promise<ManagedPlaywrightJobResult> {
-    const outputSavingsManager = await this.outputSavingsManager()
+  ): Promise<ManagedPlaywrightExecutionOutcome> {
+    const outputSavingsEnabled = await this.outputSavingsEnabled()
+    const outputSavingsWorkByRequestId = new Map<string, string>()
     const resumeVisibility = validateResumeVisibility(job.resume_json)
     const claimBrowserVisibility = requestedVisibilityForClaim(request.browserVisibility, resumeVisibility)
     const restoredCheckpoint = validateRunnerCheckpoint(job.checkpoint_json, profile, job, request)
-    const responses = await this.contextManager.runWithProfile(profile, claimBrowserVisibility, async (initialManagedContext) => {
+    const automaticAuthObservation = isAutomaticAuthObservation(request, claimBrowserVisibility)
+    const operation = async (initialManagedContext: ManagedBrowserContext) => {
       let managedContext = initialManagedContext
       const pageKey = managedPageKey(job, request)
-      let page = await managedContext.acquirePage({ key: pageKey, policy: request.pagePolicy ?? 'preserve' })
       const provider = getProviderInstanceById(request.provider)
       if (!provider) throw tokenlessError('unknown_playwright_job_provider', 'Managed Playwright job provider is not supported.')
-      const state = executionStateFromCheckpoint(restoredCheckpoint)
+      const temporaryPage = automaticAuthObservation ? await managedContext.acquireTemporaryPage() : null
+      let providerPageLease = temporaryPage === null
+        ? await managedContext.acquireProviderPage({
+            provider: provider.id,
+            taskKey: pageKey,
+            policy: request.pagePolicy,
+            matchesExistingPage: (candidate) => providerOwnsPage(provider, candidate),
+            isAvailablePage: (candidate) => providerPageAvailable(provider, candidate),
+          })
+        : null
+      const acquiredPage = temporaryPage?.page ?? providerPageLease?.page
+      if (!acquiredPage) {
+        throw tokenlessError('playwright_provider_page_unavailable', 'Managed provider page is unavailable.', { retryable: true })
+      }
+      let page: Page = acquiredPage
+      try {
+        const state = executionStateFromCheckpoint(restoredCheckpoint)
       if (state.submitted !== null && job.provider_submitted_at === null) {
         await this.daemonClient.recordProviderSubmission({
           jobId: job.job_id,
@@ -787,6 +842,7 @@ export class ManagedPlaywrightRunnerService {
           job,
           request,
           pageKey,
+          providerPageLease,
           claimBrowserVisibility,
           provider,
           state,
@@ -794,11 +850,11 @@ export class ManagedPlaywrightRunnerService {
           signal,
           isCanceled,
           renewalError,
-          onAutoEscalated,
           waitForGuestSurface,
         })
         managedContext = cleared.managedContext
         page = cleared.page
+        providerPageLease = cleared.providerPageLease
         return cleared.waitedMs
       }
       if (request.capabilityRoute && state.actionCursor === 0 && state.submitted === null) {
@@ -837,7 +893,6 @@ export class ManagedPlaywrightRunnerService {
               provider,
               action,
               preparation: state.preparation,
-              timeoutMs: responseWaitTimeoutForRoute(request.capabilityRoute, this.responseWaitTimeoutMs),
               pollMs: this.responseWaitPollMs,
               signal,
               isCanceled,
@@ -866,13 +921,16 @@ export class ManagedPlaywrightRunnerService {
           }
         }
         await this.checkpointJob(profile, job, request, state, checkpointPhaseForAction('started', actionIndex, action, page, provider))
+        let capturedVisibleOutput: string | undefined
         const providerContext = {
           profileId: profile.id,
           operationId: job.job_id,
           signal,
           now: this.now,
-          ...(outputSavingsManager
-            ? { measureVisibleOutput: (text: string) => outputSavingsManager.measure(text, { signal }) }
+          ...(outputSavingsEnabled
+            ? { captureVisibleOutput: (text: string) => {
+                capturedVisibleOutput = text
+              } }
             : {}),
           ...(attachmentRoot === undefined ? {} : { attachmentRoot }),
         }
@@ -896,6 +954,9 @@ export class ManagedPlaywrightRunnerService {
             actionLifecycle: lifecycle,
           })
           await failOrFallback(failure)
+        }
+        if (action.action === VISIBLE_ACTIONS.RESPONSE_READ && capturedVisibleOutput !== undefined) {
+          outputSavingsWorkByRequestId.set(action.requestId, capturedVisibleOutput)
         }
         state.responses.push(response)
         if (lifecycle.completion === 'records_submission') {
@@ -963,21 +1024,32 @@ export class ManagedPlaywrightRunnerService {
           }
         }
       }
-      return state.responses
-    })
+        return state.responses
+      } finally {
+        await temporaryPage?.close()
+        await providerPageLease?.release()
+      }
+    }
+    const responses = await (automaticAuthObservation
+      ? this.contextManager.runWithProfileObservation(profile, claimBrowserVisibility, operation)
+      : this.contextManager.runWithProfile(profile, claimBrowserVisibility, operation))
     return {
-      protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
-      provider: request.provider,
-      responses,
+      result: {
+        protocol: MANAGED_PLAYWRIGHT_JOB_SCHEMA_ID,
+        provider: request.provider,
+        responses,
+      },
+      outputSavingsWork: [...outputSavingsWorkByRequestId].map(([response_request_id, source_text]) => ({
+        response_request_id,
+        source_text,
+      })),
     }
   }
 
-  private async outputSavingsManager() {
-    if (!this.homeDir || !this.outputSavingsRuntimeManager) return null
+  private async outputSavingsEnabled() {
+    if (!this.homeDir) return false
     const config = await readTokenlessConfig(this.homeDir)
     return config.outputSavings.enabled
-      ? this.outputSavingsRuntimeManager
-      : null
   }
 
   private async checkpointJob(
@@ -1001,6 +1073,7 @@ export class ManagedPlaywrightRunnerService {
     job: DaemonClaimedJob
     request: ManagedPlaywrightJobRequest
     pageKey: string
+    providerPageLease: ManagedProviderPageLease | null
     claimBrowserVisibility: BrowserVisibility
     provider: RunnerProvider
     state: RunnerExecutionState
@@ -1008,7 +1081,6 @@ export class ManagedPlaywrightRunnerService {
     signal: AbortSignal
     isCanceled: () => boolean
     renewalError: () => unknown
-    onAutoEscalated: (context: ManagedBrowserContext) => void
     waitForGuestSurface: boolean
   }): Promise<ClearBlockerResult> {
     throwIfStopped(options.signal, options.isCanceled, options.renewalError)
@@ -1019,7 +1091,12 @@ export class ManagedPlaywrightRunnerService {
       options.state.submitted !== null,
     )
     if (!initial.blocked) {
-      return { managedContext: options.managedContext, page: options.page, waitedMs: 0 }
+      return {
+        managedContext: options.managedContext,
+        page: options.page,
+        providerPageLease: options.providerPageLease,
+        waitedMs: 0,
+      }
     }
     const failure = classifyVisibleProviderBlocker(initial.primary)
     const fallbackRequest = safeFallbackRequest(options.request, options.state, failure)
@@ -1033,7 +1110,7 @@ export class ManagedPlaywrightRunnerService {
           ...blockerPayload(options.job, initial.blockers, {
             requestedVisibility: options.claimBrowserVisibility,
             effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-            windowOpen: options.claimBrowserVisibility !== 'headless',
+            windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
           }),
           failure,
         },
@@ -1051,7 +1128,7 @@ export class ManagedPlaywrightRunnerService {
           ...blockerPayload(options.job, initial.blockers, {
             requestedVisibility: options.claimBrowserVisibility,
             effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-            windowOpen: options.claimBrowserVisibility !== 'headless',
+            windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
           }),
           failure,
           retryAfterSeconds: initialCapacityDelay,
@@ -1079,7 +1156,11 @@ export class ManagedPlaywrightRunnerService {
       claimToken: options.job.claim_token,
       checkpoint,
     })
-    if (options.claimBrowserVisibility === 'headless' || this.e2eInspection) {
+    if (
+      options.claimBrowserVisibility === 'headless' ||
+      this.e2eInspection ||
+      isAutomaticAuthObservation(options.request, options.claimBrowserVisibility)
+    ) {
       await this.daemonClient.parkJob({
         jobId: options.job.job_id,
         claimToken: options.job.claim_token,
@@ -1087,22 +1168,31 @@ export class ManagedPlaywrightRunnerService {
           ...blockerPayload(options.job, initial.blockers, {
             requestedVisibility: options.claimBrowserVisibility,
             effectiveVisibility: options.managedContext.effectiveBrowserVisibility,
-            windowOpen: options.claimBrowserVisibility !== 'headless',
+            windowOpen: options.managedContext.effectiveBrowserVisibility === 'headed',
           }),
           failure,
           fallbackStopped: providerFallbackStopReason(options.request, options.state, failure),
         },
         checkpoint,
       })
+      await options.providerPageLease?.protect()
       throw new ParkedPlaywrightJob()
     }
     let managedContext = options.managedContext
     let page = options.page
+    let providerPageLease = options.providerPageLease
     if (options.claimBrowserVisibility === 'auto' && managedContext.effectiveBrowserVisibility === 'headless') {
       const url = trustedSwitchUrl(page, options.provider, options.request.target.url)
+      await providerPageLease?.release()
       managedContext = await managedContext.switchVisibility('headed')
-      options.onAutoEscalated(managedContext)
-      page = await managedContext.acquirePage({ key: options.pageKey, policy: options.request.pagePolicy ?? 'preserve' })
+      providerPageLease = await managedContext.acquireProviderPage({
+        provider: options.provider.id,
+        taskKey: options.pageKey,
+        policy: options.request.pagePolicy,
+        matchesExistingPage: (candidate) => providerOwnsPage(options.provider, candidate),
+        isAvailablePage: (candidate) => providerPageAvailable(options.provider, candidate),
+      })
+      page = providerPageLease.page
       await navigateToTarget(page, options.provider, url, options.signal, true)
       if (!options.state.submitted) {
         await reconstructCompletedPreSubmitActions(page, {
@@ -1183,7 +1273,7 @@ export class ManagedPlaywrightRunnerService {
           jobId: options.job.job_id,
           claimToken: options.job.claim_token,
         })
-        return { managedContext, page, waitedMs: Date.now() - startedAt }
+        return { managedContext, page, providerPageLease, waitedMs: Date.now() - startedAt }
       }
     }
     throw tokenlessError(
@@ -1199,7 +1289,6 @@ export class ManagedPlaywrightRunnerService {
       provider: RunnerProvider
       action: VisibleActionRequest
       preparation: ProviderActionPreparation
-      timeoutMs: number
       pollMs: number
       signal: AbortSignal
       isCanceled: () => boolean
@@ -1207,16 +1296,13 @@ export class ManagedPlaywrightRunnerService {
       clearBlocker: () => Promise<number>
     }
   ) {
-    let deadline = Date.now() + options.timeoutMs
-    while (Date.now() <= deadline) {
+    while (true) {
       throwIfStopped(options.signal, options.isCanceled, options.renewalError)
-      const waitedMs = await options.clearBlocker()
-      deadline += waitedMs
+      await options.clearBlocker()
       const page = getPage()
       if ((await options.provider.observeAction(page, options.action, options.preparation)).state === 'ready') return
-      await delay(Math.min(options.pollMs, Math.max(1, deadline - Date.now())), options.signal)
+      await delay(options.pollMs, options.signal)
     }
-    throw tokenlessError('playwright_response_timeout', 'Timed out waiting for a new visible provider response.', { retryable: true })
   }
 }
 
@@ -1323,13 +1409,6 @@ function rateLimitSubscription(profile: ManagedBrowserProfile, provider: string)
     tierLabel: observed?.account?.tier.label ?? null,
     subscriptionLabel: observed?.account?.subscription ?? null,
   }
-}
-
-function checkpointIndicatesSubmission(value: unknown) {
-  if (!isPlainRecord(value)) return false
-  if (value.submitted !== null && value.submitted !== undefined) return true
-  const phase = isPlainRecord(value.phase) ? value.phase : null
-  return phase?.state === 'started' && phase.mutating === true
 }
 
 function observedCapacityDelaySeconds(blocker: VisibleBlocker) {
@@ -1489,9 +1568,6 @@ function liveInspectionTarget(capability: TaskCapabilityId): {
   if (capability === TASK_CAPABILITIES.SOURCE_CONNECTED) {
     return { providerCapability: PROVIDER_CAPABILITIES.KIMI_PLUGIN, scope: 'overall' }
   }
-  if (capability === TASK_CAPABILITIES.SKILL_INVOKE) {
-    return { providerCapability: PROVIDER_CAPABILITIES.KIMI_SKILL, scope: 'overall' }
-  }
   if (new Set<TaskCapabilityId>([
     TASK_CAPABILITIES.RESEARCH_DEEP,
     TASK_CAPABILITIES.DOCUMENT_GENERATION,
@@ -1509,14 +1585,6 @@ function liveInspectionTarget(capability: TaskCapabilityId): {
   return null
 }
 
-function responseWaitTimeoutForRoute(route: TaskCapabilityRoute | null | undefined, fallback: number) {
-  if (!route) return fallback
-  const definitions = new Map(listTaskCapabilityDefinitions().map((definition) => [definition.id, definition]))
-  return route.requirements.some((capability) => definitions.get(capability)?.lifecycle === 'long_running')
-    ? Math.max(fallback, LONG_RUNNING_RESPONSE_WAIT_TIMEOUT_MS)
-    : fallback
-}
-
 function validateResumeVisibility(value: unknown): Extract<BrowserVisibility, 'headed'> | null {
   if (value === null || value === undefined) return null
   if (!isPlainRecord(value) || value.browser_visibility !== 'headed') {
@@ -1530,6 +1598,26 @@ function requestedVisibilityForClaim(
   resumeVisibility: Extract<BrowserVisibility, 'headed'> | null
 ): BrowserVisibility {
   return resumeVisibility === 'headed' ? 'headed' : requestVisibility
+}
+
+function isAutomaticAuthObservation(
+  request: ManagedPlaywrightJobRequest,
+  claimBrowserVisibility: BrowserVisibility,
+) {
+  return claimBrowserVisibility === 'auto' && request.actions.every((action) => (
+    action.action === VISIBLE_ACTIONS.AUTH_STATUS
+  ))
+}
+
+function readinessBatchPrefix(job: DaemonClaimedJob) {
+  const match = /^(ui-readiness-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)/u.exec(job.job_id)
+  if (!match?.[1]) return null
+  try {
+    const request = validateManagedPlaywrightJobRequest(job.request_json)
+    return isAutomaticAuthObservation(request, request.browserVisibility) ? match[1] : null
+  } catch {
+    return null
+  }
 }
 
 function validateRunnerCheckpoint(
@@ -2091,6 +2179,22 @@ function providerOwnsPage(
 ) {
   const classification = provider.navigation.classify(page.url())
   return classification.kind === 'approved' || classification.kind === 'trusted_sign_in'
+}
+
+async function providerPageAvailable(provider: RunnerProvider, page: Page) {
+  try {
+    return !(await provider.observeResponse(page)).busy
+  } catch {
+    return false
+  }
+}
+
+function providerTabOpenFailure(provider: string, error: unknown) {
+  return {
+    provider,
+    code: 'provider_tab_open_failed' as const,
+    message: errorResponse(error).message,
+  }
 }
 
 function fallbackBlocker(page: Page, provider: RunnerProvider): VisibleBlocker {

@@ -784,7 +784,7 @@ test('built Playwright validators enforce the current internal schema IDs', {
 
   const routeDecision = playwright.resolveTaskCapabilityRoute({
     requirements: [playwright.TASK_CAPABILITIES.CONVERSATION_CHAT],
-    candidates: [{ provider: 'qwen', runtimeEligibility: 'unchecked' }],
+    candidates: [{ provider: 'chatgpt', runtimeEligibility: 'unchecked' }],
   })
   assert.equal(routeDecision.ok, true)
   const rankedRoutes = playwright.resolveTaskCapabilityRoutes({
@@ -795,10 +795,10 @@ test('built Playwright validators enforce the current internal schema IDs', {
     ],
   })
   assert.equal(rankedRoutes.ok, true)
-  assert.deepEqual(rankedRoutes.routes.map((route) => route.provider), ['chatgpt', 'qwen'])
+  assert.deepEqual(rankedRoutes.routes.map((route) => route.provider), ['chatgpt'])
   assert.deepEqual(
     rankedRoutes.evaluated.map((evaluation) => [evaluation.provider, evaluation.rank, evaluation.support]),
-    [['qwen', 2, 'experimental'], ['chatgpt', 1, 'supported']],
+    [['qwen', null, null], ['chatgpt', 1, 'supported']],
   )
   const completeSetRoutes = playwright.resolveTaskCapabilityRoutes({
     requirements: [
@@ -811,12 +811,12 @@ test('built Playwright validators enforce the current internal schema IDs', {
     ],
   })
   assert.equal(completeSetRoutes.ok, true)
-  assert.deepEqual(completeSetRoutes.routes.map((route) => route.provider), ['chatgpt'])
-  assert.deepEqual(completeSetRoutes.evaluated[0].missingCapabilities, [playwright.TASK_CAPABILITIES.FILE_UPLOAD])
+  assert.deepEqual(completeSetRoutes.routes.map((route) => route.provider), ['chatgpt', 'gemini'])
+  assert.deepEqual(completeSetRoutes.evaluated[0].missingCapabilities, [])
   const routed = playwright.createManagedPlaywrightJobRequest({
-    provider: 'qwen',
-    target: { kind: 'provider_home', url: 'https://chat.qwen.ai/' },
-    taskId: 'v3-qwen-capability-route',
+    provider: 'chatgpt',
+    target: { kind: 'provider_home', url: 'https://chatgpt.com/' },
+    taskId: 'v3-chatgpt-capability-route',
     capabilityRoute: routeDecision.route,
     browserVisibility: 'headless',
     actions: [
@@ -1194,101 +1194,58 @@ test('SQLite durably and idempotently attributes measured visible output to its 
   }
 })
 
-for (const browserConnectionMode of ['playwright', 'cdp']) {
-test(`profiles open without provider uses ${browserConnectionMode} through daemon browser runtime control`, {
-  timeout: 60_000,
-}, async () => {
+test('SQLite completes the provider job before durable output savings work is processed', async () => {
   requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-profile-open-providerless-')
-  const profile = createReadyManagedProfile(homeDir)
-  const runtime = await importCli()
-  const { chromium } = await import('playwright-core')
-  const previousExecutable = process.env.TOKENLESS_BROWSER_EXECUTABLE
-  const previousProvider = process.env.TOKENLESS_PROVIDER
-  process.env.TOKENLESS_BROWSER_EXECUTABLE = chromium.executablePath()
-  process.env.TOKENLESS_PROVIDER = 'claude'
-  let daemon
+  const homeDir = tempHome('tokenless-output-savings-handoff-')
+  const { JobStore } = await import(`${pathToFileURL(path.join(cliDir, 'dist/src/daemon/job-store.js')).href}?test=${randomUUID()}`)
+  let store = await JobStore.open(homeDir)
   try {
-    await runtime.writeTokenlessConfig({ homeDir, browser: 'profile', browserConnectionMode })
-    daemon = await startTsDaemon(homeDir)
-    await runtime.writeTokenlessConfig({ homeDir, daemonUrl: daemon.url })
-
-    const result = runCli([
-      'profiles',
-      'open',
-      '--home',
-      homeDir,
-      '--json',
-    ])
-    assert.equal(result.status, 0, result.stderr || result.stdout)
-    const payload = JSON.parse(result.stdout)
-    assert.equal(payload.ok, true)
-    assert.equal(payload.command, 'profiles.open')
-    assert.equal(payload.transport, 'daemon')
-    assert.equal(payload.backend, 'playwright')
-    assert.equal(payload.profile.slug, 'default')
-    assert.equal(payload.profile.id, profile.id)
-    assert.equal(Object.hasOwn(payload, 'provider'), false)
-    assert.equal(Object.hasOwn(payload, 'jobId'), false)
-    assert.equal(Object.hasOwn(payload, 'result'), false)
-    assert.equal(payload.browser.requestedVisibility, 'headed')
-    assert.equal(payload.browser.effectiveVisibility, 'headed')
-    assert.equal(payload.runner.runtime, 'embedded')
-    assert.equal(payload.runner.runtimeStatus, 'running')
-    assert.equal(payload.runner.activeProfileCount, 1)
-
-    const token = readControlToken(homeDir)
-    const jobs = await daemonRequest(daemon.url, token, 'GET', `/jobs?profile_id=${encodeURIComponent(profile.id)}`)
-    assert.deepEqual(jobs, [])
-  } finally {
-    if (previousExecutable === undefined) delete process.env.TOKENLESS_BROWSER_EXECUTABLE
-    else process.env.TOKENLESS_BROWSER_EXECUTABLE = previousExecutable
-    if (previousProvider === undefined) delete process.env.TOKENLESS_PROVIDER
-    else process.env.TOKENLESS_PROVIDER = previousProvider
-    await shutdownDaemon(daemon).catch(() => undefined)
-    await terminateChildrenForHome(homeDir)
-    fs.rmSync(homeDir, { recursive: true, force: true })
-  }
-})
-}
-
-test('profile removal quiesces the TS browser runtime while preserving the old runner JSON shape', {
-  timeout: 60_000,
-}, async () => {
-  requireBuiltArtifacts()
-  const homeDir = tempHome('tokenless-ts-profile-remove-quiesce-')
-  createReadyManagedProfile(homeDir)
-  const daemon = await startTsDaemon(homeDir)
-  try {
-    const runtime = await importCli()
-    await runtime.writeTokenlessConfig({ homeDir, daemonUrl: daemon.url })
-    const result = runCli([
-      'profiles',
-      'remove',
-      '--home',
-      homeDir,
-      '--profile',
-      'default',
-      '--confirm-delete',
-      '--json',
-    ])
-    assert.equal(result.status, 0, result.stderr || result.stdout)
-    const payload = JSON.parse(result.stdout)
-    assert.equal(payload.ok, true)
-    assert.deepEqual(payload.runner, {
-      state: 'stopped',
-      pid: null,
-      sessionId: null,
-      safeToStop: false,
-      heartbeatAt: null,
+    const created = store.createJob({
+      provider: 'chatgpt',
+      action: managedPlaywrightJobAction,
+      request_json: { taskId: 'savings-handoff-task' },
+      profile_id: 'savings-profile',
     })
-    assert.deepEqual(Object.keys(payload.runner).sort(), ['heartbeatAt', 'pid', 'safeToStop', 'sessionId', 'state'].sort())
-    const token = readControlToken(homeDir)
-    const status = await daemonRequest(daemon.url, token, 'GET', '/control/browser-runtime/status')
-    assert.equal(status.status, 'quiesced')
+    const claimed = store.claimJob(created.job_id, created.claim_token)
+    store.markRunning(claimed.job_id, claimed.claim_token)
+    const result = {
+      protocol: 'tokenless.playwright.job.v3',
+      provider: 'chatgpt',
+      responses: [{
+        protocol: 'tokenless.playwright.visible-action.v3',
+        requestId: 'savings-handoff-response',
+        provider: 'chatgpt',
+        action: 'response.read',
+        ok: true,
+        result: {
+          text: 'hello world',
+          citations: [],
+          visibleProof: 'visible-answer-read',
+        },
+        error: null,
+      }],
+    }
+    const completed = store.completeJob(claimed.job_id, claimed.claim_token, {
+      result_json: result,
+      output_savings_work: [{
+        response_request_id: 'savings-handoff-response',
+        source_text: 'hello world',
+      }],
+    })
+    assert.equal(completed.status, 'succeeded')
+    assert.deepEqual(completed.result_json, result)
+    assert.equal(JSON.stringify(completed.result_json).includes('source_text'), false)
+    assert.equal(store.outputSavingsSummary().estimated_output_tokens, 0)
+    assert.equal(store.pendingOutputSavingsWorkCount(), 1)
+
+    store.close()
+    store = await JobStore.open(homeDir)
+    const work = store.nextOutputSavingsWork(Date.now() + 10_000)
+    assert.equal(work.job_id, created.job_id)
+    assert.equal(work.response_request_id, 'savings-handoff-response')
+    assert.equal(work.source_text, 'hello world')
   } finally {
-    await shutdownDaemon(daemon).catch(() => undefined)
-    await terminateChildrenForHome(homeDir)
+    store.close()
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
 })
@@ -1298,7 +1255,7 @@ test('TS daemon closes when the embedded managed Playwright scheduler exits fata
 }, async () => {
   requireBuiltArtifacts()
   const homeDir = tempHome('tokenless-ts-embedded-scheduler-fatal-')
-  createOverlyPermissiveManagedProfileRegistry(homeDir)
+  createMalformedManagedProfileRegistry(homeDir)
   const port = await freePort()
   const url = `http://127.0.0.1:${port}`
   const child = spawn(process.execPath, [
@@ -1469,8 +1426,6 @@ function createReadyManagedProfile(homeDir, options = {}) {
       default: {
         slug: 'default',
         id: profileId,
-        label: 'Default',
-        labelOrigin: 'slug',
         directory: profileDir,
         lifecycle: 'ready',
         createdAt: now,
@@ -1486,17 +1441,12 @@ function assertProfileDirectoryEmpty(profileDir) {
   assert.deepEqual(fs.readdirSync(profileDir).sort(), [])
 }
 
-function createOverlyPermissiveManagedProfileRegistry(homeDir) {
+function createMalformedManagedProfileRegistry(homeDir) {
   const browserDir = path.join(homeDir, 'browser')
   const profilesRoot = path.join(browserDir, 'profiles')
   fs.mkdirSync(profilesRoot, { recursive: true, mode: 0o700 })
   const registryPath = path.join(browserDir, 'profiles.json')
-  fs.writeFileSync(registryPath, `${JSON.stringify({
-    version: 1,
-    defaultProfile: null,
-    profiles: {},
-  }, null, 2)}\n`, { mode: 0o644 })
-  fs.chmodSync(registryPath, 0o644)
+  fs.writeFileSync(registryPath, '{}\n', { mode: 0o600 })
 }
 
 async function waitForDaemonJobStatus(daemonUrl, token, jobId, status, timeoutMs) {

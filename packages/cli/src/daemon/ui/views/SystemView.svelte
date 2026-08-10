@@ -1,10 +1,9 @@
 <script lang="ts">
   import { Calculator, Clipboard, Moon, PauseCircle, ShieldCheck } from '@lucide/svelte'
   import { tick, untrack } from 'svelte'
-  import BrowserRuntimePicker from '../components/BrowserRuntimePicker.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatNumber, formatTime } from '../formatting.js'
-  import { stateLabel } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let {
@@ -12,29 +11,20 @@
     language,
     t,
     busy,
-    browserRuntimeCatalog,
-    oninspectbrowser,
-    oninstallbrowser,
-    onclearbrowserpath,
     onmutate,
     ontoast,
   }: {
     snapshot: JsonRecord
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
-    browserRuntimeCatalog: JsonRecord | null
-    oninspectbrowser: (browser: string, executablePath?: string) => Promise<JsonRecord>
-    oninstallbrowser: (browser: string, repair?: boolean) => Promise<JsonRecord>
-    onclearbrowserpath: (browser: string) => Promise<void>
     onmutate: (path: string, body?: unknown, method?: string) => Promise<unknown>
     ontoast: (message: string) => void
   } = $props()
 
   let selectedLanguage = $state(untrack(() => snapshot.config.language as Language))
-  let browser = $state(untrack(() => snapshot.config.browser))
+  let selectedBrowser = $state<'chrome' | 'brave'>(untrack(() => snapshot.config.browser === 'brave' ? 'brave' : 'chrome'))
   let browserExecutablePath = $state('')
-  let browserVisibility = $state(untrack(() => snapshot.config.browserVisibility))
   let formError = $state('')
   let errorElement = $state<HTMLDivElement>()
 
@@ -47,18 +37,14 @@
   async function save(event: SubmitEvent) {
     event.preventDefault()
     formError = ''
-    const body: JsonRecord = { language: selectedLanguage, browser, browserVisibility }
-    if (browserExecutablePath.trim()) body.browserExecutablePath = browserExecutablePath.trim()
+    const body: JsonRecord = {
+      language: selectedLanguage,
+      browser: selectedBrowser,
+      ...(browserExecutablePath.trim() ? { browserExecutablePath: browserExecutablePath.trim() } : {}),
+      browserVisibility: 'headed',
+    }
     try {
-      if (browserExecutablePath.trim()) {
-        const inspection = await oninspectbrowser(browser, browserExecutablePath.trim())
-        if (inspection.ok !== true) {
-          await showFormError(String(inspection.message || t('browserUnavailable')))
-          return
-        }
-      }
       await onmutate('/config', body, 'PATCH')
-      browserExecutablePath = ''
     } catch (error) {
       await showFormError(error instanceof Error ? error.message : t('requestFailed'))
     }
@@ -125,19 +111,18 @@
     if (item.id === 'profiles') {
       if (snapshot.profiles.length === 0) return t('noManagedProfiles')
       const count = formatNumber(snapshot.profiles.length, language)
-      return language === 'zh-CN'
-        ? `已注册 ${count} 个 managed profile。`
-        : `${count} managed profile${snapshot.profiles.length === 1 ? '' : 's'} registered.`
+      return `${count} ${t('profilesRegistered')}`
     }
     if (item.id === 'scheduler') {
       const count = formatNumber(snapshot.runtime.activeJobCount, language)
-      return language === 'zh-CN'
-        ? `${count} 个浏览器任务正在运行。`
-        : `${count} active browser job${snapshot.runtime.activeJobCount === 1 ? '' : 's'}.`
+      return `${count} ${t('activeBrowserJobs')}`
     }
     if (item.id === 'output-savings') {
       if (!snapshot.outputSavings.enabled) return t('savingsDisabled')
-      return snapshot.outputSavings.runtime.state === 'ready' ? t('tokenizerReady') : t('tokenizerUnavailable')
+      if (snapshot.outputSavings.runtime.state === 'ready') return t('tokenizerReady')
+      return snapshot.outputSavings.runtime.state === 'not_installed'
+        ? t('tokenizerPreparesOnFirstResponse')
+        : t('tokenizerUnavailable')
     }
     return item.message
   }
@@ -160,21 +145,10 @@
     <section class="settings-section system-card">
       <div class="settings-section-title"><h2>{t('runtime')}</h2><ShieldCheck size={17} /></div>
       <div class="form-stack">
-        <BrowserRuntimePicker
-          bind:browser
-          bind:executablePath={browserExecutablePath}
-          catalog={browserRuntimeCatalog}
-          {t}
-          {busy}
-          pathConfigured={snapshot.config.browserExecutablePathConfigured === true}
-          configuredBrowser={snapshot.config.browser}
-          testId="config"
-          allowRepair={true}
-          oninspect={oninspectbrowser}
-          oninstall={oninstallbrowser}
-          onclear={onclearbrowserpath}
-        />
-        <label class="field"><span>{t('defaultVisibility')}</span><select name="browserVisibility" bind:value={browserVisibility} data-testid="config-visibility"><option value="auto">auto</option><option value="headed">headed</option><option value="headless">headless</option></select></label>
+        <label class="field"><span>{t('profileBrowser')}</span><select name="browser" bind:value={selectedBrowser} data-testid="config-browser"><option value="chrome">{t('googleChrome')}</option><option value="brave">{t('braveBrowser')}</option></select></label>
+        <label class="field"><span>{t('browserExecutablePath')} <small>{t('optional')}</small></span><input name="browserExecutablePath" bind:value={browserExecutablePath} placeholder={t('browserExecutablePathPlaceholder')} autocomplete="off" spellcheck="false" data-testid="config-browser-executable-path" /><small>{snapshot.config.browserExecutablePathConfigured ? t('browserExecutablePathConfigured') : t('browserExecutablePathHelp')}</small></label>
+        <div class="field read-only-field"><span>{t('defaultVisibility')}</span><strong>headed</strong></div>
+        <p class="form-note">{selectedBrowser === 'brave' ? 'brave' : 'chrome'}://inspect/#remote-debugging · {t('nativeChromeConnectionHelp')}</p>
       </div>
     </section>
     <div class="system-actions">
@@ -196,6 +170,9 @@
     <p class="output-savings-help">{t('lazyTokenizerDownload')}</p>
     <div class="output-savings-actions">
       {#if snapshot.outputSavings.enabled}
+        {#if snapshot.outputSavings.runtime.state !== 'ready'}
+          <button class="button primary" type="button" disabled={busy} onclick={enableOutputSavings} data-testid="output-savings-install">{t('prepareTokenizerNow')}</button>
+        {/if}
         <button class="button secondary" type="button" disabled={busy} onclick={disableOutputSavings} data-testid="output-savings-disable">{t('disableOutputSavings')}</button>
       {:else}
         <button class="button primary" type="button" disabled={busy} onclick={enableOutputSavings} data-testid="output-savings-enable">{t('enableOutputSavings')}</button>

@@ -76,6 +76,7 @@ export type CreateManagedPlaywrightJobRequestInput = {
   fallback?: ManagedPlaywrightFallbackPlan | null | undefined
   context?: ContextEnvelope | null | undefined
   contextLanguage?: 'en' | 'zh-CN' | null | undefined
+  contextUpstream?: ContextEnvelope['upstream'] | undefined
   browserVisibility?: unknown
   userHandoff?: unknown
   pagePolicy?: unknown
@@ -125,6 +126,7 @@ export function createManagedPlaywrightJobRequest(
       requirements: input.capabilityRoute?.requirements ?? deriveTaskCapabilityRequirements(actions),
       actions,
       language: input.contextLanguage,
+      upstream: input.contextUpstream,
     }),
     browserVisibility: validateJobBrowserVisibility(input.browserVisibility ?? 'auto'),
     userHandoff: validateUserHandoff(input.userHandoff ?? false),

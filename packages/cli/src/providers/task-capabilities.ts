@@ -1,7 +1,7 @@
 import { isProviderIdSyntax } from './provider-identity.js'
 import type { ProviderId } from './provider-identity.js'
 
-export const TASK_CAPABILITY_CATALOG_SCHEMA_ID = 'tokenless.task-capability-catalog.v1'
+export const TASK_CAPABILITY_CATALOG_SCHEMA_ID = 'tokenless.task-capability-catalog.v2'
 export const TASK_CAPABILITY_ROUTE_SCHEMA_ID = 'tokenless.task-capability-route.v1'
 
 export const TASK_CAPABILITIES = Object.freeze({
@@ -31,7 +31,6 @@ export const TASK_CAPABILITIES = Object.freeze({
   WORKSPACE_INSTRUCTIONS: 'workspace.instructions',
   WORKSPACE_KNOWLEDGE: 'workspace.knowledge',
   SOURCE_CONNECTED: 'source.connected',
-  SKILL_INVOKE: 'skill.invoke',
   RESPONSE_CITATIONS: 'response.citations',
   ARTIFACT_DOWNLOAD: 'artifact.download',
   TASK_BACKGROUND: 'task.background',
@@ -363,19 +362,6 @@ const TASK_CAPABILITY_CATALOG = Object.freeze([
     outputKinds: ['text', 'citation'],
   }),
   defineCapability({
-    id: TASK_CAPABILITIES.SKILL_INVOKE,
-    title: 'Reusable skill',
-    description: 'Invoke an exact provider-native reusable skill selected by the caller.',
-    family: 'workspace_knowledge',
-    parametersSchema: objectParameters({
-      skill: { type: 'string', minLength: 1, maxLength: 240 },
-    }, ['skill']),
-    lifecycle: 'interactive',
-    sideEffects: ['read_provider_state', 'submit_prompt', 'persist_provider_state'],
-    requiredEvidence: ['exact_skill_identity', 'visible_skill_invocation', 'correlated_visible_response'],
-    outputKinds: ['text', 'file'],
-  }),
-  defineCapability({
     id: TASK_CAPABILITIES.RESPONSE_CITATIONS,
     title: 'Response citations',
     description: 'Require normalized citations backed by links visible in the provider response.',
@@ -433,12 +419,15 @@ const PROVIDER_TASK_CAPABILITY_ROUTES = Object.freeze([
   route('chatgpt', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow']),
   route('claude', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
   route('claude', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow', 'native-project']),
+  route('claude', TASK_CAPABILITIES.WORKSPACE_NATIVE, 'supported', 'native-project', ['native-project']),
   route('gemini', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['workspace-response-citations']),
+  route('gemini', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('grok', TASK_CAPABILITIES.CONVERSATION_CHAT, 'supported', 'visible-conversation', ['conversation-workflow']),
-  route('grok', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow', 'native-project']),
-  route('qwen', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['qwen-mode-workspace']),
+  route('grok', TASK_CAPABILITIES.FILE_UPLOAD, 'supported', 'visible-file-attachment', ['conversation-workflow']),
+  route('deepseek', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('perplexity', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-citations']),
   route('zai', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
+  route('zai', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('doubao', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['workspace-response-baseline']),
   route('doubao', TASK_CAPABILITIES.FILE_UPLOAD, 'experimental', 'visible-file-attachment', ['file-selection']),
   route('kimi', TASK_CAPABILITIES.CONVERSATION_CHAT, 'experimental', 'visible-conversation', ['conversation-workflow']),

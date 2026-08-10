@@ -1,24 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
-import path from 'node:path'
-
 import {
+  deleteTokenlessProfileConfig,
   readTokenlessConfig,
-  normalizeManagedProfileProxy,
+  upsertTokenlessProfileConfig,
   writeTokenlessConfig,
-  type ManagedProfilePreferences,
+  type ManagedProfileConfig,
   type TokenlessConfig,
 } from '../job-store.js'
 import { tokenlessPackageVersion } from '../platform-package.js'
 import { BrowserRuntimeManager } from '../browser-runtime/manager.js'
-import {
-  SYSTEM_BROWSER_IDS,
-  isSystemBrowserId,
-  normalizeBrowserSelection,
-  type BrowserCandidate,
-  type BrowserSelection,
-  type ResolvedBrowserRuntime,
-  type SystemBrowserId,
-} from '../browser-runtime/types.js'
+import { normalizeBrowserSelection } from '../browser-runtime/types.js'
 import { normalizeBrowserVisibility } from '../browser-visibility.js'
 import {
   createManagedPlaywrightJobRequest,
@@ -39,13 +30,6 @@ import {
   type ManagedProfileRecord,
 } from '../playwright/profiles/registry.js'
 import {
-  MANAGED_CHROMIUM_BROWSER_IDS,
-  discoverChromiumProfiles,
-  discoverKnownChromiumProfiles,
-  type ManagedChromiumBrowserId,
-} from '../playwright/profiles/chrome-discovery.js'
-import { copyOpaqueChromiumProfile } from '../playwright/profiles/opaque-copy.js'
-import {
   publicView,
   type Job,
   type JobStore,
@@ -55,43 +39,15 @@ import {
 } from '../daemon/job-store.js'
 import type { BrowserRuntimeController } from '../daemon/browser-runtime-controller.js'
 import { OUTPUT_SAVINGS_ESTIMATOR } from '../output-savings/catalog.js'
+import type { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { OutputSavingsRuntimeManager } from '../output-savings/runtime-manager.js'
 
 export type UiApplicationServicesOptions = {
   store: JobStore
   runtimeController?: BrowserRuntimeController | undefined
+  outputSavingsProcessor?: OutputSavingsProcessor | undefined
   origin: () => string
   startedAt: number
-}
-
-const WEB_BROWSER_SELECTIONS = [
-  'auto',
-  ...SYSTEM_BROWSER_IDS,
-  'managed-chromium',
-  'cloak',
-] as const satisfies readonly BrowserSelection[]
-
-const WEB_BROWSER_LABELS: Record<(typeof WEB_BROWSER_SELECTIONS)[number], string> = {
-  auto: 'Automatic',
-  chrome: 'Google Chrome',
-  brave: 'Brave Browser',
-  edge: 'Microsoft Edge',
-  arc: 'Arc',
-  chromium: 'Chromium',
-  'chrome-for-testing': 'Google Chrome for Testing',
-  'managed-chromium': 'Managed Chromium',
-  cloak: 'CloakBrowser',
-}
-
-const WEB_PROFILE_SOURCE_TTL_MS = 5 * 60 * 1000
-
-type UiBrowserProfileSource = {
-  browser: ManagedChromiumBrowserId
-  userDataDir: string
-  directoryKey: string
-  name: string
-  browserVersion: string | null
-  expiresAt: number
 }
 
 export class TokenlessApplicationServices {
@@ -101,10 +57,9 @@ export class TokenlessApplicationServices {
   readonly outputSavingsRuntimeManager: OutputSavingsRuntimeManager
 
   private readonly runtimeController: BrowserRuntimeController | undefined
+  private readonly outputSavingsProcessor: OutputSavingsProcessor | undefined
   private readonly origin: () => string
   private readonly startedAt: number
-  private browserDiscoveryCache: { expiresAt: number, candidates: BrowserCandidate[] } | undefined
-  private readonly browserProfileSources = new Map<string, UiBrowserProfileSource>()
 
   constructor(options: UiApplicationServicesOptions) {
     this.store = options.store
@@ -112,6 +67,7 @@ export class TokenlessApplicationServices {
     this.runtimeManager = new BrowserRuntimeManager({ homeDir: options.store.homeDir })
     this.outputSavingsRuntimeManager = new OutputSavingsRuntimeManager(options.store.homeDir)
     this.runtimeController = options.runtimeController
+    this.outputSavingsProcessor = options.outputSavingsProcessor
     this.origin = options.origin
     this.startedAt = options.startedAt
   }
@@ -158,14 +114,15 @@ export class TokenlessApplicationServices {
       profiles: profiles.map((profile) => publicProfile(
         profile,
         profileData.defaultProfile,
-        profilePreferences(config, profile),
+        profileConfig(config, profile.slug),
+        config.browser,
       )),
       providers: providers.map((provider) => ({
         ...provider,
         profiles: profiles.map((profile) => providerProfileState(
           provider.id,
           profile,
-          profilePreferences(config, profile),
+          profileConfig(config, profile.slug),
           capabilityRoutes,
           jobs,
         )),
@@ -226,6 +183,7 @@ export class TokenlessApplicationServices {
       homeDir: this.store.homeDir,
       outputSavings: { enabled: false },
     })
+    await this.discardPendingOutputSavingsWork()
     return await this.outputSavingsState(config)
   }
 
@@ -241,6 +199,7 @@ export class TokenlessApplicationServices {
       homeDir: this.store.homeDir,
       outputSavings: { enabled: false },
     })
+    await this.discardPendingOutputSavingsWork()
     await this.outputSavingsRuntimeManager.remove()
     return await this.outputSavingsState(config)
   }
@@ -253,6 +212,7 @@ export class TokenlessApplicationServices {
         'Output savings history removal requires explicit confirmation.',
       )
     }
+    await this.discardPendingOutputSavingsWork()
     const cleared = this.store.clearOutputSavings().cleared
     return {
       ...await this.outputSavingsState(),
@@ -260,332 +220,120 @@ export class TokenlessApplicationServices {
     }
   }
 
-  async browserRuntimes() {
-    const config = await this.migratedConfig()
-    const discovered = this.browserDiscoveryCache && this.browserDiscoveryCache.expiresAt > Date.now()
-      ? this.browserDiscoveryCache.candidates
-      : await this.runtimeManager.discover()
-    this.browserDiscoveryCache = {
-      expiresAt: Date.now() + 30_000,
-      candidates: discovered,
+  private async discardPendingOutputSavingsWork() {
+    if (this.outputSavingsProcessor) {
+      await this.outputSavingsProcessor.discardPending()
+      return
     }
-    const candidates = new Map(discovered.map((candidate) => [candidate.selection, candidate]))
-    const configured = await this.runtimeManager.inspect(config.browser, {
-      browserExecutablePath: config.browserExecutablePath,
-    })
-    if (configured.ok && configured.runtime && !candidates.has(configured.runtime.selection)) {
-      candidates.set(configured.runtime.selection, runtimeCandidate(configured.runtime))
-    }
-    return {
-      selected: config.browser,
-      browserExecutablePathConfigured: config.browserExecutablePath !== null,
-      options: WEB_BROWSER_SELECTIONS.map((selection) => publicBrowserOption(
-        selection,
-        candidates.get(selection),
-        config.browser === selection,
-      )),
-    }
-  }
-
-  async inspectBrowserRuntime(input: Record<string, unknown>) {
-    try {
-      requireKnownFields(input, ['browser', 'browserExecutablePath'])
-      const browser = normalizeBrowserSelection(input.browser)
-      if (!browser || !WEB_BROWSER_SELECTIONS.includes(browser as (typeof WEB_BROWSER_SELECTIONS)[number])) {
-        throw applicationError('invalid_browser', 'Browser selection is invalid.')
-      }
-      const executablePath = Object.hasOwn(input, 'browserExecutablePath')
-        ? applicationBrowserExecutablePath(input.browserExecutablePath, browser)
-        : null
-      if (executablePath && !isSystemBrowserId(browser)) {
-        throw applicationError(
-          'browser_executable_path_requires_system_browser',
-          'Browser executable path requires an explicit system browser such as chrome or brave.',
-        )
-      }
-      const inspection = await this.runtimeManager.inspect(browser, {
-        browserExecutablePath: executablePath,
-      })
-      if (!inspection.ok || !inspection.runtime) {
-        return {
-          ok: false,
-          runtime: null,
-          code: inspection.code ?? 'browser_runtime_unavailable',
-          message: inspection.message ?? 'Browser runtime is unavailable.',
-        }
-      }
-      requireExactExecutablePath(executablePath, inspection.runtime)
-      return {
-        ok: true,
-        runtime: publicBrowserRuntime(inspection.runtime),
-        code: null,
-        message: null,
-      }
-    } catch (error) {
-      const value = error as { code?: string, message?: string }
-      return {
-        ok: false,
-        runtime: null,
-        code: value.code ?? 'browser_runtime_unavailable',
-        message: value.message ?? 'Browser runtime is unavailable.',
-      }
-    }
-  }
-
-  async installBrowserRuntime(input: Record<string, unknown>) {
-    requireKnownFields(input, ['browser', 'repair'])
-    const browser = normalizeBrowserSelection(input.browser)
-    if (browser !== 'managed-chromium' && browser !== 'cloak') {
-      throw applicationError(
-        'browser_runtime_install_requires_managed_browser',
-        'Only managed-chromium and cloak can be installed by Tokenless.',
-      )
-    }
-    const repair = input.repair === true
-    if (repair && this.runtimeController?.status().activeJobCount) {
-      throw applicationError(
-        'browser_runtime_repair_unsafe',
-        'Browser runtime repair cannot start while browser jobs are active.',
-      )
-    }
-    if (repair) await this.runtimeController?.quiesce()
-    const runtime = await this.runtimeManager.ensure(browser, {
-      allowDownload: true,
-      repair,
-    })
-    this.browserDiscoveryCache = undefined
-    const config = await this.migratedConfig()
-    if (config.browser === browser) {
-      await writeTokenlessConfig({
-        homeDir: this.store.homeDir,
-        browserExecutablePath: runtime.executablePath,
-      })
-    }
-    return publicBrowserRuntime(runtime)
-  }
-
-  async discoverBrowserProfileSources(input: Record<string, unknown>) {
-    requireKnownFields(input, ['browser', 'userDataDir'])
-    const browser = input.browser === undefined
-      ? null
-      : MANAGED_CHROMIUM_BROWSER_IDS.includes(input.browser as ManagedChromiumBrowserId)
-      ? input.browser as ManagedChromiumBrowserId
-      : null
-    if (input.browser !== undefined && !browser) {
-      throw applicationError('invalid_browser_profile_source', 'Browser profile source is invalid.')
-    }
-    const userDataDir = typeof input.userDataDir === 'string' ? input.userDataDir.trim() : ''
-    if (userDataDir && (!browser || !path.isAbsolute(userDataDir))) {
-      throw applicationError(
-        'invalid_browser_profile_source',
-        'A custom browser profile root requires one browser and an absolute user data directory.',
-      )
-    }
-    const roots = userDataDir
-      ? await discoverChromiumProfiles({ browser: browser!, userDataDirs: [userDataDir] })
-      : await discoverKnownChromiumProfiles(browser ? { browsers: [browser] } : {})
-    const config = await this.migratedConfig()
-    const runtime = config.browser === 'cloak'
-      ? (await this.runtimeManager.inspect(config.browser, {
-          browserExecutablePath: config.browserExecutablePath,
-        })).runtime
-      : null
-    this.browserProfileSources.clear()
-    const candidates = roots.flatMap((root) => root.profiles.map((profile) => ({ root, profile }))).slice(0, 100)
-    const sources = candidates.map(({ root, profile }) => {
-      const id = randomUUID()
-      const source: UiBrowserProfileSource = {
-        browser: root.browser,
-        userDataDir: root.userDataDir,
-        directoryKey: profile.directoryKey,
-        name: profile.name,
-        browserVersion: profile.browserVersion,
-        expiresAt: Date.now() + WEB_PROFILE_SOURCE_TTL_MS,
-      }
-      this.browserProfileSources.set(id, source)
-      const compatible = runtime?.family !== 'cloak' || source.browserVersion === runtime.actualVersion
-      return {
-        id,
-        browser: source.browser,
-        browserLabel: WEB_BROWSER_LABELS[source.browser],
-        directoryKey: source.directoryKey,
-        name: source.name,
-        browserVersion: source.browserVersion,
-        compatible,
-      }
-    })
-    return { sources }
+    this.store.discardOutputSavingsWork()
   }
 
   async updateConfig(input: Record<string, unknown>) {
     requireKnownFields(input, ['browser', 'browserExecutablePath', 'browserVisibility', 'language'])
     const current = await this.migratedConfig()
-    let browser = input.browser === undefined
-      ? current.browser
-      : normalizeBrowserSelection(input.browser)
-    if (!browser) throw applicationError('invalid_browser', 'Browser selection is invalid.')
-    const executablePathProvided = Object.hasOwn(input, 'browserExecutablePath')
-    let browserExecutablePath = executablePathProvided
-      ? applicationBrowserExecutablePath(input.browserExecutablePath, browser)
-      : browser === current.browser ? current.browserExecutablePath : null
-    if (executablePathProvided && browserExecutablePath && !isSystemBrowserId(browser)) {
-      throw applicationError(
-        'browser_executable_path_requires_system_browser',
-        'Browser executable path requires an explicit system browser such as chrome or brave.',
-      )
-    }
     const browserVisibility = input.browserVisibility === undefined
-      ? current.browserVisibility
+      ? 'headed'
       : normalizeBrowserVisibility(input.browserVisibility)
     if (!browserVisibility) throw applicationError('invalid_browser_visibility', 'Browser visibility is invalid.')
+    requireNativeChromeVisibility(browserVisibility)
+    const requestedBrowser = input.browser === undefined
+      ? current.browser
+      : normalizeBrowserSelection(input.browser)
+    if (requestedBrowser !== 'chrome' && requestedBrowser !== 'brave') {
+      throw applicationError('native_chrome_required', 'Tokenless native mode supports a running Google Chrome or Brave Browser.')
+    }
+    let requestedBrowserExecutablePath = requestedBrowser === current.browser
+      ? current.browserExecutablePath
+      : null
+    if (input.browserExecutablePath === null || input.browserExecutablePath === '') {
+      requestedBrowserExecutablePath = null
+    } else if (input.browserExecutablePath !== undefined) {
+      try {
+        const runtime = await this.runtimeManager.ensure(requestedBrowser, {
+          allowDownload: false,
+          browserExecutablePath: String(input.browserExecutablePath),
+        })
+        requestedBrowserExecutablePath = runtime.executablePath
+      } catch {
+        throw applicationError(
+          'browser_executable_not_found',
+          `Tokenless could not validate the ${requestedBrowser === 'brave' ? 'Brave Browser' : 'Google Chrome'} executable path. Choose the correct browser and provide its absolute executable path.`,
+        )
+      }
+    }
     const language = input.language === undefined ? current.language : input.language
     if (language !== 'en' && language !== 'zh-CN') {
       throw applicationError('invalid_language', 'Language must be en or zh-CN.')
     }
-    const clearingExecutablePath = executablePathProvided && browserExecutablePath === null
-    const shouldResolveBrowser = executablePathProvided || browser !== current.browser
-    if (shouldResolveBrowser) {
-      const inspection = await this.runtimeManager.inspect(browser, {
-        allowDownload: false,
-        browserExecutablePath,
-      })
-      if (!inspection.ok || !inspection.runtime) {
-        throw applicationError(
-          inspection.code ?? 'browser_runtime_unavailable',
-          inspection.message ?? 'Browser runtime is unavailable.',
-        )
+    if (
+      requestedBrowser !== current.browser ||
+      requestedBrowserExecutablePath !== current.browserExecutablePath
+    ) {
+      if (this.runtimeController?.status().activeJobCount) {
+        throw applicationError('browser_mutation_unsafe', 'The native browser cannot be changed while browser jobs are active.')
       }
-      const runtime = inspection.runtime
-      if (executablePathProvided) requireExactExecutablePath(browserExecutablePath, runtime)
-      browser = runtime.selection
-      browserExecutablePath = clearingExecutablePath ? null : runtime.executablePath
+      await this.runtimeController?.quiesce()
     }
-    const browserRuntimeChanged = browser !== current.browser ||
-      browserExecutablePath !== current.browserExecutablePath
-    if (browserRuntimeChanged && this.runtimeController?.status().activeJobCount) {
-      throw applicationError('browser_mutation_unsafe', 'Browser selection cannot change while browser jobs are active.')
-    }
-    if (browserRuntimeChanged) await this.runtimeController?.quiesce()
     const saved = await writeTokenlessConfig({
       homeDir: this.store.homeDir,
-      browser,
-      browserExecutablePath,
-      browserVisibility,
+      browser: requestedBrowser,
+      browserExecutablePath: requestedBrowserExecutablePath,
+      browserVisibility: 'headed',
       language,
     })
-    this.browserDiscoveryCache = undefined
     return publicConfig(saved)
   }
 
   async createProfile(input: Record<string, unknown>) {
-    requireKnownFields(input, ['slug', 'label', 'roleLabel', 'enabledProviders', 'browserVisibility', 'proxy', 'setDefault', 'importSourceId', 'consentLocalProfileCopy'])
+    requireKnownFields(input, ['slug', 'roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
     const slug = requiredSlug(input.slug)
-    const config = await this.migratedConfig()
-    const label = optionalLabel(input.label)
-    const importSourceId = typeof input.importSourceId === 'string' ? input.importSourceId.trim() : ''
-    let importSource = importSourceId ? this.browserProfileSources.get(importSourceId) : undefined
-    if (importSource && importSource.expiresAt <= Date.now()) {
-      this.browserProfileSources.delete(importSourceId)
-      importSource = undefined
-    }
-    if (importSourceId && !importSource) {
-      throw applicationError('browser_profile_source_expired', 'Discover and select the browser profile again.')
-    }
-    if (importSource && input.consentLocalProfileCopy !== true) {
-      throw applicationError('browser_profile_copy_consent_required', 'Browser profile copy requires explicit consent.')
-    }
-    const preferences = {
+    const browserVisibility = input.browserVisibility === undefined
+      ? 'headed'
+      : requiredVisibility(input.browserVisibility)
+    requireNativeChromeVisibility(browserVisibility)
+    const profileConfiguration = {
       roleLabel: optionalRoleLabel(input.roleLabel) ?? '',
       enabledProviders: input.enabledProviders === undefined
-        ? config.providerWhitelist
+        ? configurableProviderIds()
         : providerList(input.enabledProviders),
-      browserVisibility: input.browserVisibility === undefined
-        ? config.browserVisibility
-        : requiredVisibility(input.browserVisibility),
-      proxy: input.proxy === undefined ? null : validateProxy(input.proxy),
+      browserVisibility: 'headed' as const,
+      proxy: null,
     }
-    const runtime = await this.runtimeManager.ensure(config.browser, {
-      allowDownload: false,
-      browserExecutablePath: config.browserExecutablePath,
-    })
-    if (importSource && runtime.family === 'cloak' && importSource.browserVersion !== runtime.actualVersion) {
-      throw applicationError(
-        'browser_profile_version_incompatible',
-        'The selected browser profile version is not compatible with this CloakBrowser runtime.',
-      )
-    }
-    if (
-      config.browser !== runtime.selection ||
-      config.browserExecutablePath !== runtime.executablePath
-    ) {
-      await writeTokenlessConfig({
-        homeDir: this.store.homeDir,
-        browser: runtime.selection,
-        browserExecutablePath: runtime.executablePath,
-      })
-    }
-    let profile = await this.profiles.addProfile({
+    const profile = await this.profiles.addProfile({
       slug,
-      label: label ?? slug,
-      labelOrigin: label === undefined ? 'slug' : 'user',
-      lifecycle: importSource ? 'importing' : 'ready',
+      lifecycle: 'ready',
       setDefault: input.setDefault === true,
-      runtimeBinding: runtimeBinding(runtime),
     })
     try {
-      if (importSource) {
-        await copyOpaqueChromiumProfile({
-          sourceUserDataDir: importSource.userDataDir,
-          profileDirectoryKey: importSource.directoryKey,
-          destinationDir: profile.directory,
-          tokenlessHome: this.store.homeDir,
-        })
-        profile = await this.profiles.markImported(profile.slug, {
-          source: importSource.userDataDir,
-          profileDirectoryKey: importSource.directoryKey,
-          profileName: importSource.name,
-          browser: importSource.browser,
-          browserVersion: importSource.browserVersion,
-        })
-        this.browserProfileSources.delete(importSourceId)
-      }
-      await this.updateProfilePreferences(profile, preferences)
-      return publicProfile(profile, (await this.profiles.read()).defaultProfile, profilePreferences(await this.migratedConfig(), profile))
+      await this.updateProfileConfig(profile, profileConfiguration)
+      const config = await this.migratedConfig()
+      return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser)
     } catch (error) {
       await this.profiles.removeProfile(slug, { confirmDelete: true }).catch(() => undefined)
-      if (importSource) {
-        const value = error as { code?: string }
-        throw applicationError(value.code ?? 'browser_profile_import_failed', 'Browser profile copy failed.')
-      }
       throw error
     }
   }
 
   async updateProfile(slug: string, input: Record<string, unknown>) {
-    requireKnownFields(input, ['label', 'roleLabel', 'enabledProviders', 'browserVisibility', 'proxy', 'setDefault'])
+    requireKnownFields(input, ['roleLabel', 'enabledProviders', 'browserVisibility', 'setDefault'])
     let profile = await this.profiles.resolveProfile(slug)
-    const label = input.label === undefined ? undefined : requiredLabel(input.label)
-    const current = profilePreferences(await this.migratedConfig(), profile)
+    const current = profileConfig(await this.migratedConfig(), profile.slug)
+    const browserVisibility = input.browserVisibility === undefined
+      ? current.browserVisibility
+      : requiredVisibility(input.browserVisibility)
+    requireNativeChromeVisibility(browserVisibility)
     const next = {
       roleLabel: input.roleLabel === undefined ? current.roleLabel : optionalRoleLabel(input.roleLabel) ?? '',
       enabledProviders: input.enabledProviders === undefined
         ? current.enabledProviders
         : providerList(input.enabledProviders),
-      browserVisibility: input.browserVisibility === undefined
-        ? current.browserVisibility
-        : requiredVisibility(input.browserVisibility),
-      proxy: input.proxy === undefined ? current.proxy : validateProxy(input.proxy),
+      browserVisibility: 'headed' as const,
+      proxy: null,
     }
-    if (JSON.stringify(next.proxy) !== JSON.stringify(current.proxy)) {
-      if (this.runtimeController?.status().activeJobCount) {
-        throw applicationError('profile_proxy_mutation_unsafe', 'Proxy settings cannot change while browser jobs are active.')
-      }
-      await this.runtimeController?.quiesce()
-    }
-    if (label !== undefined) profile = await this.profiles.updateLabel(slug, label)
     if (input.setDefault === true) profile = await this.profiles.setDefault(slug)
-    await this.updateProfilePreferences(profile, next)
-    return publicProfile(profile, (await this.profiles.read()).defaultProfile, profilePreferences(await this.migratedConfig(), profile))
+    await this.updateProfileConfig(profile, next)
+    const config = await this.migratedConfig()
+    return publicProfile(profile, (await this.profiles.read()).defaultProfile, profileConfig(config, profile.slug), config.browser)
   }
 
   async removeProfile(slug: string) {
@@ -595,68 +343,8 @@ export class TokenlessApplicationServices {
     }
     await this.runtimeController?.quiesce()
     const profile = await this.profiles.removeProfile(slug, { confirmDelete: true })
-    const config = await this.migratedConfig()
-    const profilePreferences = { ...config.profilePreferences }
-    delete profilePreferences[slug]
-    await writeTokenlessConfig({ homeDir: this.store.homeDir, profilePreferences })
+    await deleteTokenlessProfileConfig({ homeDir: this.store.homeDir, slug })
     return { slug: profile.slug, removed: true }
-  }
-
-  async reimportProfile(slug: string, input: Record<string, unknown>) {
-    requireKnownFields(input, ['consentLocalProfileCopy'])
-    if (input.consentLocalProfileCopy !== true) {
-      throw applicationError('browser_profile_copy_consent_required', 'Browser profile copy requires explicit consent.')
-    }
-    if (this.runtimeController?.status().activeJobCount) {
-      throw applicationError('profile_mutation_unsafe', 'A profile cannot be re-imported while browser jobs are active.')
-    }
-    const profile = await this.profiles.resolveProfile(slug)
-    if (!profile.import) {
-      throw applicationError('profile_reimport_source_required', 'This managed profile has no recorded import source.')
-    }
-    const config = await this.migratedConfig()
-    let runtime: ResolvedBrowserRuntime
-    try {
-      runtime = await this.runtimeManager.resolveForProfile(profile, {
-        browserExecutablePath: profile.runtimeBinding?.browserId === config.browser
-          ? config.browserExecutablePath
-          : null,
-      })
-    } catch (error) {
-      const value = error as { code?: string, message?: string }
-      throw applicationError(value.code ?? 'browser_runtime_unavailable', value.message ?? 'Browser runtime is unavailable.')
-    }
-    if (runtime.family === 'cloak' && profile.import.browserVersion !== runtime.actualVersion) {
-      throw applicationError(
-        'browser_profile_version_incompatible',
-        'The recorded browser profile version is not compatible with this CloakBrowser runtime.',
-      )
-    }
-    await this.runtimeController?.quiesce()
-    await this.profiles.updateLifecycle(profile.slug, 'importing')
-    try {
-      await copyOpaqueChromiumProfile({
-        sourceUserDataDir: profile.import.source,
-        profileDirectoryKey: profile.import.profileDirectoryKey,
-        destinationDir: profile.directory,
-        tokenlessHome: this.store.homeDir,
-      })
-      const updated = await this.profiles.markImported(profile.slug, {
-        source: profile.import.source,
-        profileDirectoryKey: profile.import.profileDirectoryKey,
-        ...(profile.import.browser ? { browser: profile.import.browser } : {}),
-        ...(profile.import.browserVersion ? { browserVersion: profile.import.browserVersion } : {}),
-      })
-      return publicProfile(
-        updated,
-        (await this.profiles.read()).defaultProfile,
-        profilePreferences(await this.migratedConfig(), updated),
-      )
-    } catch (error) {
-      await this.profiles.updateLifecycle(profile.slug, 'failed').catch(() => undefined)
-      const value = error as { code?: string }
-      throw applicationError(value.code ?? 'browser_profile_import_failed', 'Browser profile copy failed.')
-    }
   }
 
   async providerAction(slug: string, providerValue: string, action: 'open' | 'readiness' | 'controls') {
@@ -665,10 +353,36 @@ export class TokenlessApplicationServices {
     if (!provider || provider.descriptor.stage === 'disabled') {
       throw applicationError('provider_not_supported', 'Provider is not supported.')
     }
-    const preferences = profilePreferences(await this.migratedConfig(), profile)
-    if (!preferences.enabledProviders.includes(provider.id)) {
+    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before opening it.')
     }
+    const job = this.createProviderActionJob(profile, provider.id, action)
+    await this.runtimeController?.wake()
+    return job
+  }
+
+  async refreshProviderReadiness(slug: string) {
+    const profile = await this.profiles.resolveProfile(slug)
+    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    const enabled = new Set(configured.enabledProviders)
+    const batchId = randomUUID()
+    const jobs = listProviderInstances()
+      .filter((provider) => provider.descriptor.stage !== 'disabled' && enabled.has(provider.id))
+      .map((provider, index) => this.createProviderActionJob(profile, provider.id, 'readiness', {
+        jobId: `ui-readiness-${batchId}-${String(index).padStart(3, '0')}`,
+        taskId: `ui:readiness:${batchId}:${provider.id}`,
+      }))
+    if (jobs.length > 0) await this.runtimeController?.wake()
+    return { profileSlug: profile.slug, jobs }
+  }
+
+  private createProviderActionJob(
+    profile: ManagedProfileRecord,
+    provider: ProviderId,
+    action: 'open' | 'readiness' | 'controls',
+    identity?: { jobId: string; taskId: string },
+  ) {
     const visibleAction = action === 'readiness'
       ? VISIBLE_ACTIONS.AUTH_STATUS
       : action === 'controls'
@@ -682,20 +396,20 @@ export class TokenlessApplicationServices {
         ]
       : [{ action: visibleAction, payload: {} }]
     const request = createManagedPlaywrightJobRequest({
-      provider: provider.id,
-      browserVisibility: action === 'readiness' ? preferences.browserVisibility : 'headed',
+      provider,
+      browserVisibility: action === 'readiness' ? 'auto' : 'headed',
       userHandoff: action === 'open',
-      taskId: `ui:${action}:${randomUUID()}`,
+      taskId: identity?.taskId ?? `ui:${action}:${randomUUID()}`,
       actions,
     })
     const job = this.store.createJob({
-      provider: provider.id,
+      provider,
       action: MANAGED_PLAYWRIGHT_JOB_ACTION,
       request_json: request,
       execution_backend: PLAYWRIGHT_EXECUTION_BACKEND,
       profile_id: profile.id,
+      ...(identity === undefined ? {} : { job_id: identity.jobId }),
     })
-    await this.runtimeController?.wake()
     return publicJobSummary(publicView(job), [profile])
   }
 
@@ -715,8 +429,8 @@ export class TokenlessApplicationServices {
     if (!provider || provider.descriptor.stage === 'disabled') {
       throw applicationError('provider_not_supported', 'Provider is not supported.')
     }
-    const preferences = profilePreferences(await this.migratedConfig(), profile)
-    if (!preferences.enabledProviders.includes(provider.id)) {
+    const configured = profileConfig(await this.migratedConfig(), profile.slug)
+    if (!configured.enabledProviders.includes(provider.id)) {
       throw applicationError('provider_not_enabled', 'Enable the provider for this profile before changing controls.')
     }
     const request = createManagedPlaywrightJobRequest({
@@ -742,8 +456,7 @@ export class TokenlessApplicationServices {
   async openProfile(slug: string) {
     const profile = await this.profiles.resolveProfile(slug)
     if (!this.runtimeController) throw applicationError('browser_runtime_unavailable', 'Browser runtime is unavailable.')
-    const preferences = profilePreferences(await this.migratedConfig(), profile)
-    return await this.runtimeController.openProfile(profile.id, preferences.browserVisibility)
+    return await this.runtimeController.openProfile(profile.id, 'headed')
   }
 
   async quiesceRuntime() {
@@ -763,39 +476,17 @@ export class TokenlessApplicationServices {
   }
 
   private async migratedConfig() {
-    const config = await readTokenlessConfig(this.store.homeDir)
-    const profiles = await this.profiles.listProfiles()
-    const missing = profiles.filter((profile) => !config.profilePreferences[profile.slug])
-    if (missing.length === 0) return config
-    const enabledProviders = config.providerWhitelist
-    const profilePreferences = { ...config.profilePreferences }
-    for (const profile of missing) {
-      profilePreferences[profile.slug] = {
-        profileId: profile.slug,
-        roleLabel: '',
-        enabledProviders,
-        browserVisibility: config.browserVisibility,
-        proxy: null,
-      }
-    }
-    return await writeTokenlessConfig({ homeDir: this.store.homeDir, profilePreferences })
+    return await readTokenlessConfig(this.store.homeDir)
   }
 
-  private async updateProfilePreferences(
+  private async updateProfileConfig(
     profile: ManagedProfileRecord,
-    next: Omit<ManagedProfilePreferences, 'profileId'>,
+    next: ManagedProfileConfig,
   ) {
-    const config = await this.migratedConfig()
-    const profilePreferences = {
-      ...config.profilePreferences,
-      [profile.slug]: { profileId: profile.slug, ...next },
-    }
-    const providerWhitelist = [...new Set(Object.values(profilePreferences)
-      .flatMap((preferences) => preferences.enabledProviders))]
-    await writeTokenlessConfig({
+    await upsertTokenlessProfileConfig({
       homeDir: this.store.homeDir,
-      profilePreferences,
-      providerWhitelist,
+      slug: profile.slug,
+      profile: next,
     })
   }
 
@@ -831,12 +522,14 @@ export class TokenlessApplicationServices {
       },
       {
         id: 'output-savings',
-        state: !outputSavings.enabled || outputSavings.runtime.state === 'ready' ? 'ok' : 'error',
+        state: !outputSavings.enabled || outputSavings.runtime.state !== 'invalid' ? 'ok' : 'error',
         message: !outputSavings.enabled
-          ? 'Optional output savings measurement is disabled.'
+          ? 'Output savings measurement is disabled.'
           : outputSavings.runtime.state === 'ready'
             ? 'The output savings tokenizer runtime is ready.'
-            : 'Output savings is enabled, but its tokenizer runtime is unavailable.',
+            : outputSavings.runtime.state === 'not_installed'
+              ? 'The output savings tokenizer will be installed when the first visible response is measured.'
+              : 'Output savings is enabled, but its tokenizer runtime is invalid.',
       },
     ]
   }
@@ -898,10 +591,9 @@ export class TokenlessApplicationServices {
 function publicConfig(config: TokenlessConfig) {
   return {
     updatedAt: config.updatedAt,
-    providerWhitelist: config.providerWhitelist,
+    profiles: config.profiles,
     browser: config.browser,
     browserExecutablePathConfigured: config.browserExecutablePath !== null,
-    browserConnectionMode: config.browserConnectionMode,
     browserVisibility: config.browserVisibility,
     daemonUrl: config.daemonUrl,
     language: config.language,
@@ -909,116 +601,36 @@ function publicConfig(config: TokenlessConfig) {
   }
 }
 
-function publicBrowserOption(
-  selection: (typeof WEB_BROWSER_SELECTIONS)[number],
-  candidate: BrowserCandidate | undefined,
-  selected: boolean,
-) {
-  const managed = selection === 'managed-chromium' || selection === 'cloak'
-  return {
-    selection,
-    displayName: candidate?.displayName ?? WEB_BROWSER_LABELS[selection],
-    family: candidate?.family ?? (managed ? selection : selection === 'auto' ? 'automatic' : 'system'),
-    version: candidate?.version ?? null,
-    source: candidate?.source ?? null,
-    installed: selection === 'auto' || candidate !== undefined,
-    available: selection === 'auto' || candidate !== undefined,
-    downloadRequired: managed && candidate === undefined,
-    customPathAllowed: isSystemBrowserId(selection),
-    selected,
-  }
-}
-
-function publicBrowserRuntime(runtime: ResolvedBrowserRuntime) {
-  return {
-    selection: runtime.selection,
-    runtimeId: runtime.runtimeId,
-    family: runtime.family,
-    browserId: runtime.browserId,
-    displayName: runtime.displayName,
-    platform: runtime.platform,
-    version: runtime.actualVersion,
-    source: runtime.source,
-    managed: runtime.managed,
-    checksumVerified: runtime.checksumVerified,
-  }
-}
-
-function runtimeCandidate(runtime: ResolvedBrowserRuntime): BrowserCandidate {
-  return {
-    selection: runtime.selection,
-    runtimeId: runtime.runtimeId,
-    family: runtime.family,
-    browserId: runtime.browserId,
-    displayName: runtime.displayName,
-    platform: runtime.platform,
-    version: runtime.actualVersion,
-    source: runtime.source,
-    executablePath: runtime.executablePath,
-    managed: runtime.managed,
-    installed: true,
-    downloadRequired: false,
-  }
-}
-
-function requireExactExecutablePath(
-  requestedPath: string | null,
-  runtime: ResolvedBrowserRuntime,
-) {
-  if (!requestedPath || path.normalize(runtime.executablePath) === path.normalize(requestedPath)) return
-  throw applicationError(
-    'browser_executable_not_found',
-    'The selected executable could not be verified. Tokenless did not replace it with another browser.',
-  )
-}
-
-function applicationBrowserExecutablePath(value: unknown, browser: BrowserSelection) {
-  if (value === null) return null
-  const executablePath = typeof value === 'string' ? value.trim() : ''
-  if (!executablePath || !path.isAbsolute(executablePath)) {
-    throw applicationError(
-      'invalid_browser_executable_path',
-      'Browser executable path must be null or an absolute path.',
-    )
-  }
-  const normalized = path.normalize(executablePath)
-  if (process.platform !== 'darwin' || !normalized.toLowerCase().endsWith('.app') || !isSystemBrowserId(browser)) {
-    return normalized
-  }
-  return path.join(normalized, 'Contents', 'MacOS', macOsBrowserExecutableName(browser))
-}
-
-function macOsBrowserExecutableName(browser: SystemBrowserId) {
-  const names: Record<SystemBrowserId, string> = {
-    chrome: 'Google Chrome',
-    brave: 'Brave Browser',
-    edge: 'Microsoft Edge',
-    arc: 'Arc',
-    chromium: 'Chromium',
-    'chrome-for-testing': 'Google Chrome for Testing',
-  }
-  return names[browser]
-}
-
 function publicProfile(
   profile: ManagedProfileRecord,
   defaultSlug: string | null,
-  preferences: ManagedProfilePreferences,
+  configured: ManagedProfileConfig,
+  configuredBrowser: string,
 ) {
+  const browserBinding = profile.runtimeBinding
+    ? {
+        browserId: profile.runtimeBinding.browserId,
+        runtimeId: profile.runtimeBinding.runtimeId,
+        family: profile.runtimeBinding.family,
+      }
+    : {
+        browserId: configuredBrowser,
+        runtimeId: `native:${configuredBrowser}`,
+        family: 'system',
+      }
   return {
     slug: profile.slug,
     id: profile.id,
-    label: profile.label,
     lifecycle: profile.lifecycle,
     isDefault: profile.slug === defaultSlug,
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
-    runtimeBinding: profile.runtimeBinding ?? null,
-    import: profile.import ? {
-      browser: profile.import.browser ?? null,
-      importedAt: profile.import.importedAt,
-    } : null,
-    preferences,
+    browserMode: browserBinding.family === 'system' ? 'native' : 'managed',
+    browserBinding,
+    roleLabel: configured.roleLabel,
+    enabledProviders: configured.enabledProviders,
+    browserVisibility: configured.browserVisibility,
+    proxy: configured.proxy,
     observations: Object.values(profile.lastObservedAuth).map((status) => status ? {
       provider: status.provider,
       auth: status.auth,
@@ -1032,21 +644,21 @@ function publicProfile(
 function providerProfileState(
   provider: ProviderId,
   profile: ManagedProfileRecord,
-  preferences: ManagedProfilePreferences,
+  configured: ManagedProfileConfig,
   routes: ReturnType<typeof listProviderTaskCapabilityRoutes>,
   jobs: Job[],
 ) {
   const observation = profile.lastObservedAuth[provider]
   return {
     profileId: profile.slug,
-    enabled: preferences.enabledProviders.includes(provider),
+    enabled: configured.enabledProviders.includes(provider),
     observation: observation ? {
       auth: observation.auth,
       access: observation.access,
       checkedAt: observation.checkedAt,
       account: observation.auth === 'authenticated' ? observation.account ?? null : null,
     } : null,
-    runtimeEligibility: preferences.enabledProviders.includes(provider) && usableAccess(observation?.access)
+    runtimeEligibility: configured.enabledProviders.includes(provider) && usableAccess(observation?.access)
       ? 'eligible'
       : 'ineligible',
     capabilities: routes.filter((route) => route.provider === provider).map((route) => ({
@@ -1176,14 +788,17 @@ function redactPrivatePaths(value: string) {
     .replace(/(^|[\s("'=])[A-Za-z]:\\[^\s"'<>]*/g, '$1[redacted path]')
 }
 
-function profilePreferences(config: TokenlessConfig, profile: ManagedProfileRecord): ManagedProfilePreferences {
-  return config.profilePreferences[profile.slug] ?? {
-    profileId: profile.slug,
-    roleLabel: '',
-    enabledProviders: config.providerWhitelist,
-    browserVisibility: config.browserVisibility,
-    proxy: null,
-  }
+function profileConfig(config: TokenlessConfig, slug: string): ManagedProfileConfig {
+  const configured = config.profiles[slug]
+  if (!configured) throw applicationError('profile_not_configured', `Managed profile '${slug}' has no configuration.`)
+  return configured
+}
+
+function configurableProviderIds(): ProviderId[] {
+  return listProviderDescriptors()
+    .filter((provider) => provider.stage !== 'disabled')
+    .sort((left, right) => left.setupOrder - right.setupOrder)
+    .map((provider) => provider.id)
 }
 
 function supportedProviderIds() {
@@ -1201,18 +816,19 @@ function providerList(value: unknown): string[] {
   return providers
 }
 
-function validateProxy(value: unknown): ManagedProfilePreferences['proxy'] {
-  const proxy = normalizeManagedProfileProxy(value)
-  if (proxy === undefined) {
-    throw applicationError('invalid_proxy', 'Proxy must use HTTP, HTTPS, or SOCKS5 without embedded credentials.')
-  }
-  return proxy
-}
-
 function requiredVisibility(value: unknown) {
   const visibility = normalizeBrowserVisibility(value)
   if (!visibility) throw applicationError('invalid_browser_visibility', 'Browser visibility is invalid.')
   return visibility
+}
+
+function requireNativeChromeVisibility(value: ReturnType<typeof requiredVisibility>) {
+  if (value !== 'headed') {
+    throw applicationError(
+      'native_chrome_headless_unsupported',
+      'Native Chrome uses the browser already opened by the user and supports headed mode only.',
+    )
+  }
 }
 
 function requiredSlug(value: unknown) {
@@ -1220,18 +836,6 @@ function requiredSlug(value: unknown) {
     throw applicationError('invalid_profile_slug', 'Profile slug must use lowercase letters, numbers, and hyphens.')
   }
   return value
-}
-
-function optionalLabel(value: unknown) {
-  if (value === undefined || value === null || value === '') return undefined
-  return requiredLabel(value)
-}
-
-function requiredLabel(value: unknown) {
-  if (typeof value !== 'string' || !value.trim() || value.trim().length > 80) {
-    throw applicationError('invalid_profile_label', 'Profile label must be between 1 and 80 characters.')
-  }
-  return value.trim().replace(/\s+/g, ' ')
 }
 
 function optionalRoleLabel(value: unknown) {
@@ -1261,16 +865,6 @@ function usableAccess(value: unknown) {
   return value === 'guest' || value === 'signed_in_free' || value === 'signed_in_paid' || value === 'signed_in_unknown'
 }
 
-function runtimeBinding(runtime: Awaited<ReturnType<BrowserRuntimeManager['ensure']>>) {
-  return {
-    runtimeId: runtime.runtimeId,
-    family: runtime.family,
-    browserId: runtime.browserId,
-    createdWithVersion: runtime.actualVersion,
-    profileFormat: 1 as const,
-  }
-}
-
 function revisionFor(value: unknown) {
   return createHash('sha256').update(JSON.stringify(value)).digest('base64url').slice(0, 24)
 }
@@ -1281,6 +875,11 @@ function record(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function applicationError(code: string, message: string) {
-  return Object.assign(new Error(message), { code, status: 400 })
+function applicationError(code: string, message: string, params: Record<string, string | number> = {}) {
+  return Object.assign(new Error(message), {
+    code,
+    messageKey: `error.${code}`,
+    params,
+    status: 400,
+  })
 }

@@ -2,23 +2,23 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 
 import { createLiveBrowserInspectionSession } from './helpers/live-browser-observer.mjs'
+import { resolveConfiguredBrowserTarget } from './helpers/configured-browser-profile.mjs'
 
 const execFileAsync = promisify(execFile)
 const cliEntry = path.resolve('packages/cli/dist/src/tokenless.mjs')
 const gate = requiredEnv('TOKENLESS_LIVE_WEB_UI_GATE')
 assert.equal(gate, 'representative-provider', 'TOKENLESS_LIVE_WEB_UI_GATE must be representative-provider')
-const homeDir = path.resolve(requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_HOME'))
-const profile = requiredEnv('TOKENLESS_LIVE_MANAGED_PLAYWRIGHT_PROFILE')
-const fixtureFile = path.resolve(requiredEnv('TOKENLESS_LIVE_WEB_UI_FIXTURE_FILE'))
-const fixtureSuite = requiredEnv('TOKENLESS_LIVE_WEB_UI_FIXTURE_SUITE')
-const fixtureCases = loadFixtureCases(fixtureFile, fixtureSuite, { homeDir, profile })
-const provider = fixtureCases[0].provider.id
+const target = await resolveConfiguredBrowserTarget()
+const { homeDir } = target
+const profile = target.profile.slug
+const matrixFile = path.resolve('test', 'live-web-ui-matrix.json')
+const matrixCases = loadMatrixCases(matrixFile, 'representative-provider')
+const provider = matrixCases[0].provider.id
 
 let inspection
 let runningJob
@@ -59,18 +59,15 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
   assert.equal(dashboard.profile.slug, profile)
   assert.equal(dashboard.dashboard.opened, false)
 
-  let page
+  let page = runningJob.page.context().pages()[0]
   let authenticatedDashboardUrl
   const consoleFailures = []
-  try {
-    for (const fixtureCase of fixtureCases) {
-      if (fixtureCase.startup.context === 'fresh' || !page || page.isClosed()) {
-        await page?.close()
+  for (const matrixCase of matrixCases) {
+      if (matrixCase.startup.context === 'fresh' || !page || page.isClosed()) {
         page = await runningJob.page.context().newPage()
         observePage(page, consoleFailures)
       }
-      await page.setViewportSize(fixtureCase.startup.viewport)
-      if (fixtureCase.startup.reload && new URL(page.url()).protocol.startsWith('http')) {
+      if (matrixCase.startup.reload && new URL(page.url()).protocol.startsWith('http')) {
         await page.reload({ waitUntil: 'networkidle' })
       } else {
         await page.goto(authenticatedDashboardUrl ?? dashboard.dashboard.url, { waitUntil: 'networkidle' })
@@ -80,17 +77,14 @@ test(`Web UI displays one completed real-provider job from ${profile}`, { timeou
       await page.getByTestId('job-search').fill(taskId)
       const row = page.getByTestId(`job-${run.payload.jobId}`)
       await row.waitFor()
-      assert.match(await row.textContent(), /Succeeded|已完成/, fixtureCase.id)
+      assert.match(await row.textContent(), /Succeeded|已完成/, matrixCase.id)
       await row.click()
       const detail = page.getByTestId('job-detail')
       await detail.waitFor()
-      assert.match(await detail.textContent(), new RegExp(marker), fixtureCase.id)
-      assert.equal(await hasDocumentOverflow(page), false, fixtureCase.id)
-    }
-    assert.deepEqual(consoleFailures, [])
-  } finally {
-    await page?.close()
+      assert.match(await detail.textContent(), new RegExp(marker), matrixCase.id)
+      assert.equal(await hasDocumentOverflow(page), false, matrixCase.id)
   }
+  assert.deepEqual(consoleFailures, [])
 
   await runningJob.close()
   runningJob = undefined
@@ -113,33 +107,22 @@ function observePage(page, failures) {
   })
 }
 
-function loadFixtureCases(filename, suiteName, target) {
-  const fixture = JSON.parse(fs.readFileSync(filename, 'utf8'))
-  assert.equal(fixture.schema, 'tokenless.live-web-ui-fixtures.v1', 'unsupported Web UI fixture schema')
-  const caseIds = fixture.suites?.[suiteName]
-  assert.equal(Array.isArray(caseIds) && caseIds.length > 0, true, `Web UI fixture suite '${suiteName}' is empty or missing`)
+function loadMatrixCases(filename, suiteName) {
+  const matrix = JSON.parse(fs.readFileSync(filename, 'utf8'))
+  assert.equal(matrix.schema, 'tokenless.live-web-ui-matrix.v1', 'unsupported Web UI matrix schema')
+  const caseIds = matrix.suites?.[suiteName]
+  assert.equal(Array.isArray(caseIds) && caseIds.length > 0, true, `Web UI matrix suite '${suiteName}' is empty or missing`)
   return caseIds.map((id) => {
-    const entry = fixture.cases?.[id]
-    assert.equal(Boolean(entry), true, `Web UI fixture case '${id}' is missing`)
-    const profileEntry = fixture.profiles?.[entry.profile]
-    const providerEntry = fixture.providers?.[entry.provider]
-    const startup = fixture.startups?.[entry.startup]
-    const homeEntry = profileEntry && fixture.homes?.[profileEntry.home]
-    assert.equal(Boolean(profileEntry && providerEntry && startup && homeEntry), true, `Web UI fixture case '${id}' has an invalid reference`)
-    assert.equal(resolveHome(homeEntry.path), target.homeDir, `Web UI fixture case '${id}' must use the prepared test-only home`)
-    assert.equal(profileEntry.slug, target.profile, `Web UI fixture case '${id}' must use the prepared profile`)
-    assert.equal(providerEntry.id, 'chatgpt', `Web UI fixture case '${id}' must use the representative ChatGPT provider`)
-    assert.equal(['fresh', 'shared'].includes(startup.context), true, `Web UI fixture case '${id}' has an invalid startup context`)
-    assert.equal(typeof startup.reload, 'boolean', `Web UI fixture case '${id}' must declare reload`)
-    assert.equal(Number.isInteger(startup.viewport?.width) && startup.viewport.width >= 320, true, `Web UI fixture case '${id}' has an invalid viewport width`)
-    assert.equal(Number.isInteger(startup.viewport?.height) && startup.viewport.height >= 480, true, `Web UI fixture case '${id}' has an invalid viewport height`)
-    return { id, profile: profileEntry, provider: providerEntry, startup }
+    const entry = matrix.cases?.[id]
+    assert.equal(Boolean(entry), true, `Web UI matrix case '${id}' is missing`)
+    const providerEntry = matrix.providers?.[entry.provider]
+    const startup = matrix.startups?.[entry.startup]
+    assert.equal(Boolean(providerEntry && startup), true, `Web UI matrix case '${id}' has an invalid reference`)
+    assert.equal(providerEntry.id, 'chatgpt', `Web UI matrix case '${id}' must use the representative ChatGPT provider`)
+    assert.equal(['fresh', 'shared'].includes(startup.context), true, `Web UI matrix case '${id}' has an invalid startup context`)
+    assert.equal(typeof startup.reload, 'boolean', `Web UI matrix case '${id}' must declare reload`)
+    return { id, provider: providerEntry, startup }
   })
-}
-
-function resolveHome(value) {
-  assert.equal(typeof value, 'string', 'Web UI fixture home path must be a string')
-  return path.resolve(value === '~' ? os.homedir() : value.startsWith(`~${path.sep}`) ? path.join(os.homedir(), value.slice(2)) : value)
 }
 
 async function hasDocumentOverflow(page) {

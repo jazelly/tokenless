@@ -1,12 +1,14 @@
 # Tokenless CLI
 
-`tokenless` gives agents local CLI access to visible AI websites through managed Playwright browser profiles. Provider credentials and browser state stay on the user's machine.
+`tokenless` gives agents local CLI access to visible AI websites by attaching Playwright to the user's running Google Chrome or Brave Browser. Provider credentials and browser state stay in the selected browser on the user's machine.
 
-[Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
+[中文](README.zh-CN.md) · [Commands](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) · [Capability Matrix](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.md) · [Capability Matrix 中文](https://github.com/jazelly/tokenless/blob/main/docs/capability-matrix.zh-CN.md) · [中文命令参考](https://github.com/jazelly/tokenless/blob/main/COMMANDS.zh-CN.md) · [Privacy](https://github.com/jazelly/tokenless/blob/main/PRIVACY.md)
 
 ## Install
 
-Requires Node.js 22.13+. The first browser-runtime targets are Apple Silicon macOS and x64 Windows. Windows remains prerelease until its real-hardware gates pass.
+Browser features require Node.js 22.13+ and a current Google Chrome or Brave Browser release that exposes its browser-managed remote debugging endpoint. Apple Silicon macOS is the current target; Windows x64 remains prerelease.
+
+Chrome and Brave are user-supplied browsers: Tokenless does not bundle or download either one. If setup cannot find the selected browser, it still saves configuration, skips provider checks, and ends with instructions for adding an executable path. The first browser action validates that path or retries standard discovery. During setup, CloakBrowser is the only browser runtime Tokenless downloads and prepares.
 
 ```bash
 npm install --global tokenless@latest
@@ -14,15 +16,25 @@ tokenless setup
 tokenless doctor --json
 ```
 
-`setup` first resolves an exact browser runtime, creates or selects a runtime-bound managed profile, then installs the required agent skills, prepares the local daemon, checks every enabled provider once, and leaves one headed provider review tab open for each enabled provider. Normal mode uses an explicit browser, then the saved preference, then automatic discovery; `auto` prefers an installed system browser and lazily downloads Tokenless-managed Chrome for Testing 145 only when none exists. Interactive setup asks whether to use Anti-Detect mode and states that accepting will install the verified platform-pinned CloakBrowser under `TOKENLESS_HOME` when needed. Declining does not open a separate runtime picker. Before download, the Cloak flow links to the official project, shows the platform pin, scans only safe directory/version metadata for known local Chromium profiles, and classifies exact version alignment. If compatible profiles exist, one source choice offers `Start clean` and those profiles; selecting a profile explicitly authorizes its opaque local copy without a separate import, copy-consent, or installation confirmation. For non-interactive setup, explicit `--anti-detect` or `--browser cloak` authorizes installation; a stored Cloak preference alone fails before download, and import still requires `--consent-local-profile-copy`. Tokenless downloads Cloak from its official release and does not redistribute it. On first setup it also detects `en` or `zh-CN` from the system locale; use `tokenless config --language <en|zh-CN>` to override the saved preference.
+Before browser use, open `chrome://inspect/#remote-debugging` in the Google Chrome instance you already use or `brave://inspect/#remote-debugging` in Brave, enable remote debugging, and approve the browser's connection prompt. Setup asks about Anti-Detect mode, then lets native-mode users choose Chrome or Brave. If browser discovery fails, setup still completes and tells the user how to add an executable path; provider checks wait until browser access is available.
 
 For a clean non-interactive profile:
 
 ```bash
-tokenless setup --fresh --json
+tokenless setup --defaults --json
 ```
 
-Fresh setup creates or reuses a profile only when its runtime binding is compatible, resolves the selected browser, and uses the persisted `providerWhitelist`. Its default contains every provider whose registry stage is not `disabled` except Gemini; add Gemini explicitly with `--provider-whitelist` or through the dashboard. A runtime-family change creates a clean profile instead of opening existing data with another browser. The default includes experimental Qwen, DeepSeek, Perplexity, Z.ai, and Doubao. Setup reports sign-in state without opening a sign-in handoff.
+Setup creates or reuses the named logical profile and uses its persisted `profiles[slug].enabledProviders`. Interactive setup lets you remove providers by number. Setup reports visible sign-in state without automating sign-in.
+
+## Optional Codex Integration
+
+```bash
+tokenless agents install codex
+```
+
+Restart Codex and trust the Tokenless definition in `/hooks`, then continue launching Codex normally. Tokenless does not provide a Codex wrapper, relay, or custom model provider. It adds reversible global guidance plus native hooks that bind an actual Tokenless invocation to the exact Codex chat, turn, tool call, local project, Harness conversation, and observed provider Project/conversation.
+
+Use `tokenless agents status codex --json`, `tokenless agents inspect codex --chat-id <codex-thread-id> --json`, and `tokenless agents uninstall codex` for inspection and removal. The separate Harness ledger stores bounded IDs and hashes, not raw Codex prompts, transcripts, credentials, or browser state.
 
 ## Run
 
@@ -128,16 +140,12 @@ tokenless profiles open --profile work --provider claude
 tokenless profiles status --profile work --provider claude --json
 ```
 
-New profiles are bound to the exact runtime that created them. They start clean unless the user explicitly selects a version-compatible local Chromium profile for opaque filesystem copy. Tokenless does not inspect or expose individual cookies, tokens, browser storage, or authentication values. The managed browser then keeps that profile's session across jobs.
+Tokenless profiles organize provider tabs and configuration; they do not create separate browser identities. Tokenless does not inspect or expose individual cookies, tokens, browser storage, Keychain data, or authentication values.
 
 ## Browser and Local Runtime
 
-Browser visibility defaults to `auto`: jobs start headless and open a visible window only for user-resolvable blockers. Use `headed` or `headless` for an explicit policy. A waiting headless job must be resumed, not resubmitted:
+Native mode is headed-only because it controls the Chrome or Brave instance the user already opened. Stopping or restarting the daemon disconnects Playwright without closing the browser.
 
-```bash
-tokenless resume --job-id <job-id> --browser-visibility headed --json
-```
-
-Every request uses the authenticated loopback daemon and a persistent non-default browser profile. Credentials remain opaque to agents. Sign-in, CAPTCHA, consent, payment, plan, and confirmation steps remain under user control.
+Every request uses the authenticated loopback daemon and Tokenless-owned tabs in the user's selected browser. Credentials remain opaque to agents. Sign-in, CAPTCHA, consent, payment, plan, and confirmation steps remain under user control.
 
 See the [command reference](https://github.com/jazelly/tokenless/blob/main/COMMANDS.md) for all commands and options, and [Architecture](https://github.com/jazelly/tokenless/blob/main/docs/architecture.md) for runtime details.

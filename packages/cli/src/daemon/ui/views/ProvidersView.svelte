@@ -1,14 +1,14 @@
 <script lang="ts">
   import { ExternalLink, RefreshCw, ScanSearch } from '@lucide/svelte'
   import PageHeader from '../components/PageHeader.svelte'
-  import { stateLabel } from '../localization.js'
+  import { stateLabel, type MessageKey } from '../localization.js'
   import type { JsonRecord, Language } from '../types.js'
 
   let { snapshot, selectedProfile, language, t, busy, onselect, onmutate }: {
     snapshot: JsonRecord
     selectedProfile: string
     language: Language
-    t: (key: any) => string
+    t: (key: MessageKey) => string
     busy: boolean
     onselect: (slug: string) => void
     onmutate: (path: string, body?: unknown, method?: string, announce?: boolean) => Promise<unknown>
@@ -22,7 +22,7 @@
 
   async function toggle(provider: JsonRecord, input: HTMLInputElement) {
     const enabled = input.checked
-    const next = new Set<string>(profile.preferences.enabledProviders)
+    const next = new Set<string>(profile.enabledProviders)
     if (enabled) next.add(provider.id)
     else next.delete(provider.id)
     try {
@@ -56,7 +56,7 @@
       <label class="inline-select">
         <span class="sr-only">{t('selectProfile')}</span>
         <select name="providerProfile" value={profile?.slug} onchange={(event) => onselect(event.currentTarget.value)} data-testid="provider-profile">
-          {#each snapshot.profiles as entry}<option value={entry.slug}>{entry.label}</option>{/each}
+          {#each snapshot.profiles as entry}<option value={entry.slug}>{entry.slug}</option>{/each}
         </select>
       </label>
     {/snippet}
@@ -76,7 +76,7 @@
         </header>
         <div class="provider-account">
           <span>{t('account')}</span>
-          <strong>{state?.observation?.account?.name ?? state?.observation?.access ?? t('neverChecked')}</strong>
+          <strong>{state?.observation?.account?.name ?? (state?.observation?.access ? stateLabel(language, state.observation.access) : t('neverChecked'))}</strong>
         </div>
         {#if state?.controls?.model?.length}
           <label class="field compact-field"><span>{t('model')}</span><select name={`${provider.id}-model`} disabled={!state.enabled || busy} onchange={(event) => choose(provider, 'model', event.currentTarget.value)}>{#each state.controls.model as choice}<option value={choice.label} selected={choice.selected} disabled={!choice.enabled} translate="no">{choice.label}</option>{/each}</select></label>

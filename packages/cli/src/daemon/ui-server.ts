@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { hasConfiguredTokenlessLanguage, readTokenlessConfig } from '../job-store.js'
+import { t } from '../localization.js'
 import { TokenlessApplicationServices } from '../application/services.js'
 import { DaemonError, daemonErrorCodeRetryable, daemonErrorStatus } from './errors.js'
 import { UiSessionManager } from './ui-session.js'
@@ -27,33 +28,32 @@ export class TokenlessUiServer {
     this.origin = options.origin
   }
 
-  mintTicket(profileId?: string | null) {
-    return this.sessions.mintTicket(this.origin(), profileId)
+  consoleUrl(profileId?: string | null) {
+    const url = new URL('/ui/', this.origin())
+    if (profileId) url.searchParams.set('profile', profileId)
+    return url.toString()
+  }
+
+  redirectToConsole(request: IncomingMessage, response: ServerResponse) {
+    this.requireOrigin(request)
+    this.sessions.ensureSession(request, response)
+    this.securityHeaders(response)
+    response.writeHead(303, { location: '/ui/' })
+    response.end()
   }
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL) {
-    this.requireHost(request)
+    const requestOrigin = this.requireOrigin(request)
     const method = request.method ?? 'GET'
-    if (method === 'GET' && url.pathname === '/ui/bootstrap') {
-      const ticket = url.searchParams.get('ticket') ?? ''
-      const session = this.sessions.consumeTicket(ticket, response)
-      if (!session) throw uiError('ui_ticket_invalid', 'The dashboard bootstrap ticket is invalid or expired.', 401)
-      this.securityHeaders(response)
-      const location = session.initialProfileId
-        ? `/ui/?profile=${encodeURIComponent(session.initialProfileId)}`
-        : '/ui/'
-      response.writeHead(303, { location })
-      response.end()
-      return
-    }
     if (method === 'GET' && (url.pathname === '/ui' || url.pathname === '/ui/')) {
+      this.sessions.ensureSession(request, response)
       const language = await this.initialLanguage(request)
       const template = await fs.readFile(path.join(UI_ROOT, 'index.html'), 'utf8')
       const body = template
         .replaceAll('__TOKENLESS_LANG__', language)
-        .replaceAll('__TOKENLESS_TITLE__', language === 'zh-CN' ? 'Tokenless 本地控制台' : 'Tokenless local console')
-        .replaceAll('__TOKENLESS_SKIP__', language === 'zh-CN' ? '跳到主要内容' : 'Skip to content')
-        .replaceAll('__TOKENLESS_LANGUAGE_LABEL__', language === 'zh-CN' ? '语言' : 'Language')
+        .replaceAll('__TOKENLESS_TITLE__', t('dashboardTitle', {}, language))
+        .replaceAll('__TOKENLESS_SKIP__', t('dashboardSkip', {}, language))
+        .replaceAll('__TOKENLESS_LANGUAGE_LABEL__', t('dashboardLanguage', {}, language))
         .replaceAll('__TOKENLESS_EN_SELECTED__', language === 'en' ? 'selected' : '')
         .replaceAll('__TOKENLESS_ZH_SELECTED__', language === 'zh-CN' ? 'selected' : '')
       this.writeAsset(response, 200, body, 'text/html; charset=utf-8')
@@ -75,8 +75,8 @@ export class TokenlessUiServer {
 
     if (!url.pathname.startsWith('/ui-api/v1/')) return false
     const session = method === 'GET'
-      ? this.sessions.requireSession(request)
-      : this.sessions.requireMutation(request, this.origin())
+      ? this.sessions.ensureSession(request, response)
+      : this.sessions.requireMutation(request, requestOrigin)
     if (method === 'GET' && url.pathname === '/ui-api/v1/session') {
       this.writeJson(response, 200, {
         csrf: session.csrf,
@@ -94,22 +94,6 @@ export class TokenlessUiServer {
         return true
       }
       this.writeJson(response, 200, snapshot, { etag })
-      return true
-    }
-    if (method === 'GET' && url.pathname === '/ui-api/v1/browser-runtimes') {
-      this.writeJson(response, 200, await this.services.browserRuntimes())
-      return true
-    }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/browser-runtimes/inspect') {
-      this.writeJson(response, 200, await this.services.inspectBrowserRuntime(await readJson(request)))
-      return true
-    }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/browser-runtimes/install') {
-      this.writeJson(response, 200, await this.services.installBrowserRuntime(await readJson(request)))
-      return true
-    }
-    if (method === 'POST' && url.pathname === '/ui-api/v1/browser-profile-sources/discover') {
-      this.writeJson(response, 200, await this.services.discoverBrowserProfileSources(await readJson(request)))
       return true
     }
     const jobMatch = /^\/ui-api\/v1\/jobs\/([^/]+)(?:\/(cancel|resume))?$/.exec(url.pathname)
@@ -151,7 +135,7 @@ export class TokenlessUiServer {
       this.writeJson(response, 201, await this.services.createProfile(await readJson(request)))
       return true
     }
-    const profileMatch = /^\/ui-api\/v1\/profiles\/([^/]+)(?:\/(open|reimport))?$/.exec(url.pathname)
+    const profileMatch = /^\/ui-api\/v1\/profiles\/([^/]+)(?:\/(open))?$/.exec(url.pathname)
     if (profileMatch && method === 'PATCH' && !profileMatch[2]) {
       this.writeJson(response, 200, await this.services.updateProfile(
         decodeURIComponent(profileMatch[1] ?? ''),
@@ -167,10 +151,10 @@ export class TokenlessUiServer {
       this.writeJson(response, 200, await this.services.openProfile(decodeURIComponent(profileMatch[1] ?? '')))
       return true
     }
-    if (profileMatch && method === 'POST' && profileMatch[2] === 'reimport') {
-      this.writeJson(response, 200, await this.services.reimportProfile(
-        decodeURIComponent(profileMatch[1] ?? ''),
-        await readJson(request),
+    const profileReadinessMatch = /^\/ui-api\/v1\/profiles\/([^/]+)\/providers\/actions\/readiness$/.exec(url.pathname)
+    if (profileReadinessMatch && method === 'POST') {
+      this.writeJson(response, 202, await this.services.refreshProviderReadiness(
+        decodeURIComponent(profileReadinessMatch[1] ?? ''),
       ))
       return true
     }
@@ -228,10 +212,17 @@ export class TokenlessUiServer {
     return /(^|,)\s*zh(?:-|;|,|$)/i.test(accepted) ? 'zh-CN' : 'en'
   }
 
-  private requireHost(request: IncomingMessage) {
-    const expected = new URL(this.origin()).host.toLowerCase()
+  private requireOrigin(request: IncomingMessage) {
+    const expected = new URL(this.origin())
     const host = (request.headers.host ?? '').toLowerCase()
-    if (host !== expected) throw uiError('ui_host_rejected', 'The request Host is not allowed.', 403)
+    const allowedHosts = new Set([expected.host.toLowerCase()])
+    if (expected.hostname === '127.0.0.1' || expected.hostname === '[::1]') {
+      allowedHosts.add(`localhost${expected.port ? `:${expected.port}` : ''}`)
+    } else if (expected.hostname === 'localhost') {
+      allowedHosts.add(`127.0.0.1${expected.port ? `:${expected.port}` : ''}`)
+    }
+    if (!allowedHosts.has(host)) throw uiError('ui_host_rejected', 'The request Host is not allowed.', 403)
+    return `${expected.protocol}//${host}`
   }
 
   private securityHeaders(response: ServerResponse) {

@@ -1,5 +1,33 @@
 import type { Locator, Page } from 'playwright-core'
 
+export async function waitForNextDomObservation(
+  page: Page,
+  deadline: number,
+  attempt: number,
+  signal?: AbortSignal,
+) {
+  assertNotAborted(signal)
+  const backoffMs = Math.min(2_000, 100 * (2 ** Math.min(attempt, 5)))
+  const delayMs = Math.min(backoffMs, Math.max(1, deadline - Date.now()))
+  if (!signal) {
+    await page.waitForTimeout(delayMs).catch(() => undefined)
+    return
+  }
+  let rejectOnAbort: ((reason?: unknown) => void) | undefined
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = reject
+  })
+  const onAbort = () => rejectOnAbort?.(signal.reason ?? new Error('Visible provider action was aborted.'))
+  signal.addEventListener('abort', onAbort, { once: true })
+  if (signal.aborted) onAbort()
+  try {
+    await Promise.race([page.waitForTimeout(delayMs).catch(() => undefined), aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+  assertNotAborted(signal)
+}
+
 export async function firstVisibleLocator(page: Page, selectors: readonly string[], timeoutMs = 1000): Promise<Locator | null> {
   for (const selector of selectors) {
     const locator = page.locator(selector).filter({ visible: true }).first()
@@ -134,4 +162,8 @@ async function locatorIsUnavailable(locator: Locator) {
       (dataDisabled !== null && dataDisabled !== 'false') ||
       /upgrade|subscribe|requires paid|plan limit|log in|sign in/.test(`${text} ${aria}`)
   }).catch(() => false)
+}
+
+function assertNotAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw signal.reason ?? new Error('Visible provider action was aborted.')
 }

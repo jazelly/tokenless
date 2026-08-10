@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tokenless-internal:web-ai-interaction-protocol:v0:common",
+  "$defs": {
+    "protocol": { "const": "tokenless.internal.web-ai-interaction-protocol/v0" },
+    "requestRef": { "type": "string", "pattern": "^request:[a-f0-9]{32}$", "maxLength": 40, "x-tokenless-internal-maxUtf8Bytes": 40 },
+    "providerRef": { "type": "string", "pattern": "^provider:[a-f0-9]{32}$", "maxLength": 41, "x-tokenless-internal-maxUtf8Bytes": 41 },
+    "providerBindingRef": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$", "maxLength": 40, "x-tokenless-internal-maxUtf8Bytes": 40 },
+    "conversationRef": { "type": "string", "pattern": "^conversation:[a-f0-9]{32}$", "maxLength": 45, "x-tokenless-internal-maxUtf8Bytes": 45 },
+    "turnRef": { "type": "string", "pattern": "^turn:[a-f0-9]{32}$", "maxLength": 37, "x-tokenless-internal-maxUtf8Bytes": 37 },
+    "attachmentRef": { "type": "string", "pattern": "^attachment:[a-f0-9]{32}$", "maxLength": 43, "x-tokenless-internal-maxUtf8Bytes": 43 },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "capability": { "enum": ["conversation.chat", "file.upload"] },
+    "capabilities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capability" },
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true
+    },
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https?://", "format": "uri", "maxLength": 2048, "x-tokenless-internal-maxUtf8Bytes": 4096 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 512, "x-tokenless-internal-maxUtf8Bytes": 1024 }
+      }
+    },
+    "stableError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "unsupported_capability", "invalid_request", "resource_not_found", "identity_mismatch",
+            "authentication_required", "user_intervention_required", "provider_unavailable", "upload_failed",
+            "submission_failed", "response_failed", "timeout", "cancellation_requested", "recovery_failed",
+            "ambiguous_external_mutation"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 512, "x-tokenless-internal-maxUtf8Bytes": 1024 }
+      }
+    }
+  }
+}

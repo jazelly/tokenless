@@ -37,35 +37,35 @@ Create a prompt file when the request needs structured context:
 ```bash
 tokenless \
   --project-root "/absolute/path/to/project" \
-  --project-name "<agent project name>" \
-  --chat-name "<agent task name>" \
   --prompt "<user request>" \
   --file <relative-shareable-file> \
   --output /tmp/tokenless-prompt.md
 ```
 
+When no native hook binding exists, add `--project-name` and `--chat-name` as explicit display metadata. In a hook-bound session, omit them so the later run uses the hook-owned project and conversation identity.
+
 Include only the request, explicit shareable context, and intentionally selected files. Never include hidden reasoning, credentials, cookies, browser storage, private headers, unrelated private files, or secrets.
 
 ## Run through the visible provider website
+
+When `TOKENLESS_CONTEXT_BINDING_ID` is present, the native Agent hook already supplies the exact Agent chat, turn, tool call, Tokenless project, conversation, and stable provider task identity. Do not pass or invent `--agent-kind`, `--agent-session-id`, `--task-id`, `--project-name`, or `--chat-name`; the Tokenless CLI applies the hook-owned values and rejects a conflicting task id.
 
 ```bash
 tokenless run \
   --profile "<managed-profile>" \
   --provider chatgpt \
-  --agent-kind "<agent kind>" \
-  --agent-session-id "<stable agent session id>" \
-  --project-name "<agent project name>" \
-  --chat-name "<agent task name>" \
   --project-root "/absolute/path/to/project" \
   --prompt-file /tmp/tokenless-prompt.md \
   --json
 ```
 
+Only callers without a native Tokenless binding should add explicit `--agent-kind`, `--agent-session-id`, `--project-name`, and `--chat-name`. Such callers retain the returned `taskId` and pass `--task-id` on later turns. Never reconstruct these values from a chat title, recent file, or guessed session.
+
 Omit `--browser-visibility` in ordinary jobs so the configured default applies. Pass it only when the user explicitly asks for a different visibility policy on this job. If a run parks with `waiting_for_user`, keep the same `jobId`/`taskId` and resume the same daemon job with headed visibility instead of resubmitting it.
 
 Repeat `--attach-file <path>` only for files the user intends to share. Tokenless stages regular files privately, verifies integrity, uploads through the visible page control, and keeps raw local paths out of daemon job results.
 
-File results distinguish `selected` from `accepted`. Treat only `accepted` as provider-visible attachment proof; `selected` means the local chooser or hidden file input received the file but the current fixture contract did not prove a visible provider acknowledgement.
+File results distinguish `selected` from `accepted`. Treat only `accepted` as provider-visible attachment proof; `selected` means the local chooser or hidden file input received the file but the real provider website did not show the required visible acknowledgement.
 
 `--project-name` remains task metadata unless the user explicitly requests Workspace behavior. For the experimental provider-neutral Workspace flow, pass one of:
 
@@ -75,7 +75,7 @@ tokenless run --project-name "<name>" --workspace-mode native ...
 tokenless run --project-name "<name>" --workspace-mode conversation ...
 ```
 
-`auto` may report a conversation fallback, `native` fails when fixture-proven native creation is unavailable, and `conversation` requests the conversation strategy. Never describe a conversation fallback as a native provider Project. Inspect the current full capability map with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
+`auto` may report a conversation fallback, `native` fails when real-provider E2E has not proven native creation, and `conversation` requests the conversation strategy. Never describe a conversation fallback as a native provider Project. Inspect the current full capability map with `tokenless provider-action --action capability.inspect --provider <provider> --json`.
 
 Use `provider-controls` to discover exact visible labels before requesting a model or effort setting:
 
@@ -87,7 +87,7 @@ Pass only an exact returned label with `--model`, ordered `--model-fallback`, or
 
 For work expected to exceed three minutes, keep the daemon job attached and add `--long-running`. Do not use `--no-wait`, do not replace the web task with a local agent run, and do not claim a result before the daemon reports `succeeded`.
 
-Retain the returned `jobId` and `taskId`, and pass `--task-id "<taskId>"` on later turns for the same task. Continue waiting while a run reports `queued`, `claimed`, `running`, or `daemon_waiting`. If it reports `waiting_for_user`, stop the agent task immediately and inspect `blocker.browser.windowOpen`: when true, tell the user to complete the visible verification or sign-in in the already-open managed browser window, keep the same `jobId`/`taskId`, and query the same task only after the user confirms; when false, run `tokenless resume --job-id "<jobId>" --browser-visibility headed --json` for that exact job, then complete the opened visible browser handoff; never retry, reimport, resubmit, or create a replacement job. Do not claim completion until the daemon reports `succeeded`. Stop on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch` and report the exact visible blocker.
+Retain the returned `jobId` and `taskId`. In a hook-bound Agent session, later invocations receive that stable task identity automatically. In an unbound session, pass `--task-id "<taskId>"` on later turns for the same task. Continue waiting while a run reports `queued`, `claimed`, `running`, or `daemon_waiting`. If it reports `waiting_for_user`, stop the agent task immediately and inspect `blocker.browser.windowOpen`: when true, tell the user to complete the visible verification or sign-in in the already-open managed browser window, keep the same `jobId`/`taskId`, and query the same task only after the user confirms; when false, run `tokenless resume --job-id "<jobId>" --browser-visibility headed --json` for that exact job, then complete the opened visible browser handoff; never retry, reimport, resubmit, or create a replacement job. Do not claim completion until the daemon reports `succeeded`. Stop on `failed`, `canceled`, `timed_out`, `blocked`, or `ui_mismatch` and report the exact visible blocker.
 
 If a run fails with `prompt_input_visibility_timeout` or `prompt_submit_visibility_timeout`, report which visible control did not appear within the bounded wait. Do not reinterpret that result as proof that authentication is required. If it fails with `prompt_input_failed` or `prompt_submit_failed`, report that the control appeared but the visible input or click operation failed.
 
@@ -97,7 +97,7 @@ Use `profiles open` only for headed browser handoff. It always opens a visible b
 
 ## Recover after an agent restart
 
-Keep one stable `agent kind` and `agent session id` for the lifetime of an agent session. Pass both flags on addressed jobs, or set `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID` so `run`, `state`, `resume`, `cancel`, and replay use the same recipient.
+Native Tokenless hooks own stable Agent identity when `TOKENLESS_CONTEXT_BINDING_ID` is present; keep their environment unchanged for the invocation. For unbound callers, keep one stable `agent kind` and `agent session id` for the lifetime of an agent session. Pass both flags on addressed jobs, or set `TOKENLESS_AGENT_KIND` and `TOKENLESS_AGENT_SESSION_ID` so `run`, `state`, `resume`, `cancel`, and replay use the same recipient.
 
 After the agent process restarts, drain previously unseen outcome summaries once:
 

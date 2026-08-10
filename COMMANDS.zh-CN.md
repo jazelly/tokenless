@@ -12,17 +12,16 @@
 | `tokenless --version` | 输出当前安装的 CLI 版本。 | 否 |
 | `tokenless install` | 底层本地 runtime provisioning；日常维护请使用 `tokenless upgrade`。 | 否 |
 | `tokenless setup` | 配置 skills、浏览器、profiles、daemon，并执行一次 provider 登录检查。 | 是 |
-| `tokenless dashboard` | 打开已认证的本地 Web 控制台，或生成一次性 URL。 | 否 |
+| `tokenless agents <install\|status\|inspect\|uninstall> codex` | 管理可选的 Codex guidance、native hooks 和精确 Harness context binding。 | 否 |
+| `tokenless dashboard` | 打开本地 Web 控制台，或输出可直接访问的 loopback URL。 | 否 |
 | `tokenless doctor` | 只读检查本地配置和 runtime 健康状态，不刷新 provider。 | 否 |
 | `tokenless config` | 读取或更新 Tokenless 持久化配置。 | 否 |
 | `tokenless upgrade` | 升级全局 CLI、skills、本地 runtime，并运行 doctor。 | 否 |
-| `tokenless profiles discover` | 读取已知 Chromium profile 的安全目录/版本元数据，并按当前平台 Cloak pin 分类。 | 否 |
-| `tokenless profiles add` | 创建 clean managed browser profile。 | 否 |
+| `tokenless profiles add` | 创建用于 tab 与 provider configuration 的逻辑 Tokenless profile。 | 否 |
 | `tokenless profiles list` | 列出 profiles 及其最后保存的 provider 检查结果。 | 否 |
 | `tokenless profiles status` | 实时检查一家 provider，并把结果保存到 profile registry。 | 是 |
 | `tokenless profiles open` | 以 headed browser 打开 managed profile，可选择是否导航到 provider。 | 可选 |
 | `tokenless profiles set-default` | 设置默认 managed profile。 | 否 |
-| `tokenless profiles reset` | 旧版兼容命令；profile copy 已禁用。 | 否 |
 | `tokenless profiles clear` | 作为人工维护操作删除一个或全部 managed profiles。 | 否 |
 | `tokenless profiles remove` | 通过显式确认删除一个 managed profile。 | 否 |
 | `tokenless capabilities list` | 列出 canonical task capabilities 和已有证据闭环的 provider routes。 | 否 |
@@ -59,11 +58,13 @@ deepseek
 perplexity
 zai
 doubao
+kimi
+dola
 ```
 
-ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM 和 Doubao / 豆包目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
+ChatGPT、Claude、Gemini 和 Grok 是 supported providers。Qwen / 千问、DeepSeek、Perplexity、Z.ai / GLM、Doubao / 豆包、Kimi 和 Dola 目前为 experimental：只公开已有证据支撑的 routes 与 controls；尚未证明的 continuation 和可选 capability 保持 unavailable 或 unknown。
 
-Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromium`、`edge`、`arc`、`brave`、`managed-chromium` 和 `cloak`。`auto` 优先使用已安装的 system browser，仅在没有可用项时使用锁定的 managed fallback；`cloak` 必须显式选择。Tokenless 新建的 profile 默认是 clean 且绑定 runtime。也可以在提供 `--consent-local-profile-copy` 后复制一个明确选定的本机 Chromium profile；Tokenless 会把其中内容作为 opaque 本地文件树处理。
+Tokenless 使用 native mode：Playwright 直接连接用户已经运行的 Google Chrome 或 Brave Browser。请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging，并确认浏览器的连接提示。底层 CDP endpoint 由浏览器管理、由 Tokenless 自动发现，因此 native mode 不需要 `--remote-debugging-port` 或固定端口设置。连接成功就是 capability check，不再维护 profile 版本兼容矩阵。Native mode 目前只支持 headed，且不会复制 browser profile。
 
 ### 短选项
 
@@ -71,7 +72,6 @@ Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromiu
 
 - `-P <slug>` 是 `--profile <slug>` 的短形式。
 - `-p <provider>` 是 `--provider <provider>` 的短形式。
-- Setup 中的 `-f` 是 `--fresh` 的短形式。
 - `-v` 是 `--verbose` 的短形式。
 - `-V` 是 `--version` 的短形式。
 
@@ -91,7 +91,7 @@ Runtime browser 可选值为 `auto`、`chrome`、`chrome-for-testing`、`chromiu
 | `--daemon-url <url>` | 设置首选 loopback daemon URL。若其端口被占用，Tokenless 可顺延到下一个空闲端口，并把实际 endpoint 记录到 SQLite。 |
 | `--agent-kind <kind>` | 将 job 或 replay drain 定向到显式 agent kind；必须与 `--agent-session-id` 同时使用。 |
 | `--agent-session-id <id>` | 将 job 或 replay drain 定向到显式 agent session；必须与 `--agent-kind` 同时使用。 |
-| `--browser-visibility <auto\|headed\|headless>` | 选择浏览器可见性策略。 |
+| `--browser-visibility <headed>` | Native Chrome 目前只支持 headed。 |
 | `--timeout-ms <ms>` | 覆盖命令或 job 的等待时间。 |
 | `--daemon-start-timeout-ms <ms>` | 覆盖 daemon 启动等待时间。 |
 | `--runner-heartbeat-timeout-ms <ms>` | 为兼容保留；embedded Playwright runtime 会忽略它。 |
@@ -127,26 +127,26 @@ tokenless -V
 
 ### `tokenless install`（底层兼容命令）
 
-解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 的版本和 control API revision 一致。面向普通用户的日常维护请使用 `tokenless upgrade`；本命令保留给底层 runtime provisioning 和兼容性自动化。如果同一 Tokenless home 下通过 proof 验证的 daemon 任一值已过期，当前 CLI package 会优雅重启它；foreign 或未经验证的 listener 绝不会被停止。
+解析或安装所选的精确 browser runtime，保存 runtime preference，upsert 所需的全局 Tokenless agent skills，验证打包的 TypeScript daemon runtime，并确保本地 daemon 与已安装 CLI 的版本和 control API revision 一致。canonical skill copy 保存在 `~/.agents/skills`；当常见 agent root 已存在时，maintenance 还会刷新 Codex、Claude Code、Cursor、Copilot、Gemini CLI、OpenCode、Pi、Hermes 和 Windsurf 的 direct copy，以及 legacy 的 `~/.agent/skills`。面向普通用户的日常维护请使用 `tokenless upgrade`；本命令保留给底层 runtime provisioning 和兼容性自动化。如果同一 Tokenless home 下通过 proof 验证的 daemon 任一值已过期，当前 CLI package 会优雅重启它；foreign 或未经验证的 listener 绝不会被停止。
 
 ```bash
 tokenless install --browser auto --json
 tokenless install --browser cloak --json
-tokenless install --browsers chrome,brave --json
+tokenless install --browsers chrome,edge --json
 ```
 
 主要选项：
 
 - `--browser <browser>` 选择一个 browser preference。Managed selection 只会在 install 或 setup 期间下载。
 - `--browsers <list>` 验证逗号分隔的浏览器列表。
-- `--repair-browser` 显式替换所选 managed Chromium 或 Cloak cache；只有新下载的 replacement 通过全部校验后才会替换，repair 失败时会恢复原 cache。
+- `--repair-browser` 显式替换所选 managed Chrome for Testing 或 Cloak cache；只有新下载的 replacement 通过全部校验后才会替换，repair 失败时会恢复原 cache。
 - `--daemon-url`、`--daemon-start-timeout-ms`、`--home` 和 `--json` 控制本地 runtime。
 
 该命令不会更新全局 npm CLI，不会配置 managed profile，也不会检查 provider 登录状态。直接使用本命令时，完成后仍需运行 `tokenless setup`。
 
 ### `tokenless setup`
 
-执行完整 onboarding：发现 system 与 cached runtimes，解析或安装精确的所选 browser，创建或选择 runtime-compatible managed profile，保存已验证的 selection，upsert 全局 Tokenless agent skills，将 daemon 对齐已安装 CLI 版本，并对所有 enabled providers 各执行一次实时登录检查。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
+执行完整 onboarding：先询问是否使用 Anti-Detect；native mode 选择用户自行提供的 Chrome 或 Brave，否则准备 CloakBrowser；然后创建或选择逻辑 Tokenless profile、保存配置、upsert 全局 Tokenless agent skills、将 daemon 对齐已安装 CLI 版本，并在 browser access 可用时检查 enabled providers。使用 `--install-codex` 时，setup 会在保存 preferences 之后、skill maintenance 之前显式安装 Tokenless guidance 与 hooks；不带该 flag 时不会安装，非交互运行也不会静默安装。Codex `/hooks` 中的手工信任仍然是必需步骤。Skill maintenance 以 `~/.agents/skills` 为 canonical，并刷新已经存在的常见 agent root（包括 `~/.codex/skills` 和 `~/.claude/skills`）中的 direct copy；同时修复 legacy 的 `~/.agent/skills`。npm postinstall、daemon startup 和普通 job execution 都不会下载 browser。如果尚未配置语言，setup 会检测系统 locale：中文 locale 选择 `zh-CN`，其他情况选择 `en`，并将结果写入 config。
 
 交互式 setup：
 
@@ -154,44 +154,57 @@ tokenless install --browsers chrome,brave --json
 tokenless setup
 ```
 
-非交互创建或复用 clean profile：
+非交互创建或复用逻辑 profile：
 
 ```bash
-tokenless setup --profile default --fresh --json
-tokenless setup --anti-detect --profile cloak-default --fresh --json
-tokenless setup --browser managed-chromium --profile managed-default --fresh --json
+tokenless setup --profile default --defaults --json
+tokenless setup --install-codex --codex-home <dir> --profile default --defaults --json
 ```
 
 主要选项：
 
-- `--profile <slug>` 选择或命名 managed profile。
-- `--anti-detect` 显式选择 catalog 锁定的 CloakBrowser runtime，并在非交互 setup 中确认使用 clean 且绑定 Cloak 的 profile。显式 `--browser cloak` 具有相同确认语义；仅有已保存的 Cloak preference 会在下载前失败。
+- `--profile <slug>` 选择或命名逻辑 Tokenless profile。
+- `--install-codex` 在 setup 中显式安装可选的 Codex guidance、native hooks 和 skills。
+- `--codex-home <dir>` 选择自定义 Codex state root，并且必须与 `--install-codex` 同时使用。
 - `--provider-whitelist <list>` 在非交互 setup 中设置该 profile 的 provider membership。
 - `--no-open` 完成 setup，但不打开控制台。
-- `--browser <browser>` 选择 `auto`、一个精确 system browser、`managed-chromium` 或 `cloak`。
-- `--no-browser-download` 在缺少 managed runtime 时直接失败，而不是下载。
-- `--repair-browser` 显式重新安装所选 `managed-chromium` 或 `cloak` runtime；不能与 `--no-browser-download` 同时使用。
-- `--fresh` 或 `-f` 创建 clean managed profile。
-- `--import-browser-profile <key> --consent-local-profile-copy` 把一个明确选定的本机 Chromium profile 复制进 managed profile，并且不解析认证值。
 - `--defaults` 选择非交互默认值。
-- `--label <name>` 设置 profile display label。
 - `--set-default` 将所选 profile 设为默认。
+- `--browser-executable-path <absolute-path>` 可在自动 discovery 失败时提供用户自行安装的 Chrome 或 Brave executable。
 
-`auto` 是首次运行的默认值，会优先使用已安装的 Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing executable。交互式 setup 只询问是否使用 Anti-Detect；拒绝后不会再打开单独的 browser-runtime 选择器。普通模式依次遵循显式 `--browser`、已保存的具体偏好和确定性的自动发现。Setup 会把结果解析为具体的 `browser`，并把验证过的 `browserExecutablePath` 一起保存到 `config.json`。后续启动会先验证这条缓存；仅当缓存缺失或已经不可运行时，才扫描标准安装路径，fallback 成功后还会刷新缓存。没有支持的 system browser 时，setup 才会把锁定的 Chrome for Testing 145 artifact 下载到 `$TOKENLESS_HOME/browser/runtimes`。显式选择但找不到的 system browser 会失败，并给出用于手动设置路径的准确 config 命令和 dashboard 字段。Cloak 仅在用户显式选择后从官方平台 release pin 下载，永远不会被打包进 Tokenless。首批目标平台是 Apple Silicon Mac 与 Windows x64（Intel 和 AMD）；Windows 在真机 gate 通过前仍属于 prerelease。
+Setup 会先询问是否使用 Anti-Detect mode。若选择不使用，用户再选择由自己提供的 Google Chrome 或 Brave Browser；Tokenless 不会 bundle 或下载这两种浏览器。Setup 随后检查已配置 executable path 和标准安装位置；两者都找不到时，仍会保存配置并以 `action_required` warning 完成，同时跳过 provider browser 检查，并提示用户添加绝对 executable path。首次 browser action 前，Tokenless 会验证已配置 path 或再次尝试标准 discovery；两者仍失败时，该 action 才会明确失败。在 setup 过程中，CloakBrowser 是 Tokenless 唯一会下载并准备的 browser runtime。使用浏览器前请在 `chrome://inspect/#remote-debugging` 或 `brave://inspect/#remote-debugging` 启用 remote debugging。
 
-只有明确选择的 system browser 才允许 `browserExecutablePath` 指向 `TOKENLESS_HOME` 外部。`managed-chromium` 与 `cloak` 的路径由 catalog 锁定的 runtime 决定，并位于 `$TOKENLESS_HOME/browser/runtimes`；config 中的任意路径不能替换或绕过该 managed runtime。
+交互式 `setup` 会列出所有受支持的 provider，默认全部启用，并允许用户回复界面显示的编号移除 provider；直接回车则保留全部。非交互 setup 会使用 `--provider-whitelist`、已有 profile 的 `enabledProviders`，或为新 profile 使用所有受支持 provider。浏览器可解析时，setup 会检查 provider 状态并保留 headed review tabs；找不到浏览器时则跳过这些 browser 检查并打开 dashboard，供用户添加 executable path。
 
-Anti-Detect 问题本身会说明：接受后，如有需要，Tokenless 将在 `TOKENLESS_HOME` 下下载并安装经过验证、按平台固定版本的 CloakBrowser；后面不再询问是否继续安装。选择 Anti-Detect 后，setup 不会为了选择 runtime 而扫描 system-browser executable。它会链接到 CloakBrowser 官方项目，显示当前平台精确的 artifact 和 Chromium 版本，并扫描已知 Chrome、Brave、Edge、Arc、Chromium 与 Chrome for Testing profile 目录。发现阶段只读取目录 key 和 `Last Version`，并按完整四段版本做精确匹配。有兼容 profile 时，setup 只显示一次选择，其中包含 `Start clean` 和兼容 profile 来源；选择某个 profile 本身就构成对 opaque 本地复制的明确授权，不再另外询问是否 import 或是否同意 copy。没有匹配项时会跳过来源选择并使用 clean profile。用户显式要求导入版本不匹配或未知的 profile 时，会在下载前明确失败，而不是静默忽略。Installer 随后依次下载、校验、解包、检查版本并 smoke-launch Cloak；setup 会立即持久化 `browser: "cloak"` 及其 managed `browserExecutablePath`。复制过程保持 opaque：Tokenless 不会解析 `Local State`、cookies、browser storage 或认证值。非交互 import 因为没有发生可见的 profile 来源选择，仍要求 `--consent-local-profile-copy`。
+每个新 profile 默认包含所有非 `disabled` provider，包括 Gemini。可通过 `--profile <slug> --provider-whitelist <list>` 或控制台修改其 membership。
 
-Managed profile 会记录 runtime binding。Setup 不会用不同 runtime family 或低于 profile 创建版本的 browser 打开它。切换 runtime family 通常会创建 clean profile；显式 import 可以从选定的本机 Chromium profile 填充新建且绑定 runtime 的 profile。之后由 managed profile 自己跨 job 保留 browser-managed session。
+### `tokenless agents <install|status|inspect|uninstall> codex`
 
-交互式 `setup` 会询问哪些 provider 属于当前 profile。非交互 setup 会依次使用 `--provider-whitelist`、已有 profile 范围或持久化的默认 whitelist。Guest access、signed-out 页面、unknown state 与 sign-in-required 页面都会作为 observation 记录，而不是 setup failure；只有技术性检查失败才会让 setup 失败。每次 setup 完成后，Tokenless 都会为每个 enabled provider 保留一个 headed 审核 tab，让用户亲自检查登录状态。除非 `--json`、`--defaults` 或 `--no-open` 关闭交互 handoff，setup 还会打开本地控制台。
+管理可选的 Codex 集成，但不会启动、包装或替换 Codex：
 
-默认 `providerWhitelist` 包含除 Gemini 外的所有非 `disabled` provider。Gemini 仍然可用，可通过 `--provider-whitelist` 或控制台显式加入。
+```bash
+tokenless agents install codex
+tokenless agents status codex --json
+tokenless agents inspect codex --chat-id <codex-thread-id> --json
+tokenless agents uninstall codex
+```
+
+`install` 会把一个 versioned inline guidance block 写入实际生效的全局 Codex instruction file，并把 Tokenless 自己的 groups 合并到 `$CODEX_HOME/hooks.json`。同目录存在非空 `AGENTS.override.md` 时，它是实际生效的 source，所以 Tokenless 会修改它而不是 `AGENTS.md`；命令本身不会创建 override。已有 instructions 和非 Tokenless hooks 都会保留。安装后必须重启 Codex，打开 `/hooks`，并显式信任 Tokenless hook definition，之后才能依赖自动绑定。
+
+用户仍然按照原来的方式启动 Codex。Hooks 会观察 lifecycle events，但只在一次真实的 Tokenless Bash 或 MCP 调用发生时执行绑定。Hook `session_id` 是不可变的 session-tree provenance；`turn_id` 与 `tool_use_id` 标识 Hook lifecycle records。对于 CLI/shell 执行，Codex 通过 `CODEX_THREAD_ID` 提供具体 task，Tokenless 会在访问 provider 前解析该 ID，避免 descendant 被合并到 root conversation。一次受限且 best-effort 的 App Server `thread/read` 会确认具体 task、canonical cwd、session tree 和可用 lineage；它不会启动、恢复、relay 或 proxy Codex TUI。
+
+`status` 会报告准确的 instruction/hook paths，并验证当前 guidance body 与 hook command；它不会创建 Harness state。过期或被修改的 definition 会显示为未安装，再次运行 `install` 即可修复。`inspect` 从独立的 Harness 数据库读取一个精确 chat，包括 local project、turns、invocations、稳定的 provider task identity，以及 provider Project/conversation bindings。Ledger 只保存 prompt hash，不保存原始 prompts、transcripts、assistant messages、credentials 或 browser state。`uninstall` 会从两个全局 instruction filenames 中移除 Tokenless guidance，并且只移除 Tokenless hook groups；已经保留的 Harness history 不会删除。
+
+主要选项：
+
+- `--codex-home <dir>` 显式选择 Codex state root，而不是使用 `CODEX_HOME` 或 `~/.codex`。
+- `--home <dir>` 选择 Tokenless state root。
+- `--chat-id <id>` 是 `inspect` 的必填项，必须传精确的 Codex thread ID。
+- `--json` 返回结构化 status 或 context contract。
 
 ### `tokenless dashboard`
 
-启动或发现同一 Tokenless home 的 daemon，签发一个 60 秒内有效且只能使用一次的 bootstrap ticket，并在所选 managed profile 中打开一个保留的控制台标签页：
+启动或发现同一 Tokenless home 的 daemon，并在所选 managed profile 中打开一个保留的控制台标签页。也可以直接在浏览器中打开 daemon 的 loopback URL：
 
 ```bash
 tokenless dashboard
@@ -199,9 +212,11 @@ tokenless dashboard --profile work
 tokenless dashboard --profile work --no-open --json
 ```
 
-`--no-open` 不启动浏览器，只返回一次性 loopback bootstrap URL。URL 使用后会立刻跳转到 `/ui/`，且不能重复使用。浏览器 session 有有效期，保存在 `HttpOnly`、`SameSite=Strict` cookie 中；所有 mutation 还会校验 exact Origin 和 CSRF。控制台不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
+`--no-open` 不启动浏览器，只输出可直接访问的 loopback 控制台 URL。打开 `/` 会跳转到 `/ui/`，并建立短期有效的 `HttpOnly`、`SameSite=Strict` session cookie；所有 mutation 仍会校验 exact Origin 和 CSRF。控制台不会收到 daemon bearer token、provider cookies、browser storage、Keychain 数据、raw DOM、claim token、checkpoint 或私有文件路径。
 
 控制台包含 Overview、Profiles、Providers、Capabilities、Jobs 和 System/Diagnostics。Provider membership、visibility、role label，以及不带凭据的 HTTP/HTTPS/SOCKS5 proxy 都按 profile 配置。CLI 恢复入口仍然完整保留：
+
+Provider 就绪状态刷新会以最多三个一批的方式隐式运行。Profile 空闲时，Tokenless 会启动常驻 headless browser；如果同一 Profile 已有 headed browser，则复用该 runtime，不替换 browser、不关闭现有 tabs，也不把检查带到前台。每项检查只拥有一个临时后台 tab，并在完成、失败、遇到 blocker、超时或取消时关闭它；用户原有 tabs 不受影响。刷新遇到登录或验证时只记录所需操作；只有显式 Provider、browser 或 job 操作才会启动可见 browser interaction。
 
 ```bash
 tokenless config --profile work --provider-whitelist chatgpt,claude --browser-visibility headed --json
@@ -212,13 +227,13 @@ tokenless state --profile work --json
 
 ### `tokenless doctor`
 
-只读检查 Node.js、已安装 skills、打包 runtime、daemon identity/version、embedded Playwright runtime、browser preference、解析出的 runtime family 与精确 executable version、checksum 状态、默认 profile/runtime compatibility、配置，以及缓存的 provider readiness。
+只读检查 Node.js、已安装 skills、打包 runtime、daemon identity/version、embedded Playwright runtime、browser preference、解析出的 runtime family 与精确 executable version、checksum 状态、配置完整性、默认 profile/runtime 健康状态，以及缓存的 provider readiness。`checks.config` 表示 `config.json` 能否解析；`checks.configuration` 表示已保存的 browser selection、executable path、daemon URL 和默认 profile 是否已完整到可使用 browser 功能。即使标准 browser discovery 成功，已失效的自定义 browser path 仍会被判定为不健康。
 
 ```bash
 tokenless doctor --json
 ```
 
-`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。`checks.managedProfile.ok` 表示 registry/profile 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析且兼容的 browser binding。Provider readiness 来自 profile 中最后保存的检查结果。`checks.providerReadiness.ok` 表示 configured providers 是否已有 recorded observations；`usableProviders` 列出缓存中可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
+`doctor` 不会打开 provider 页面、刷新认证状态、启动 daemon 或修复状态。每个 `checks.configuration.issues` 都包含 code、本地化 message 和 next action。`checks.managedProfile.ok` 表示 registry/profile 本身是否健康，`checks.profileRuntime.ok` 则独立表示该 profile 是否具有可解析的 browser binding。Provider readiness 来自 profile 中最后保存的检查结果。`checks.providerReadiness.ok` 表示 configured providers 是否已有 recorded observations；`usableProviders` 列出缓存中可用于隐式路由的 providers。因为 daemon 按需运行，正常停止的 daemon 和 embedded browser runtime 会被报告为健康的 stopped 状态，而不是安装损坏。
 
 主要选项：`--browser`、`--daemon-url`、`--home` 和 `--json`。
 
@@ -230,34 +245,40 @@ tokenless doctor --json
 tokenless config --json
 ```
 
-传入选项时，更新一个或多个持久化值：
+不带 `--profile` 时更新全局配置：
 
 ```bash
 tokenless config \
   --language zh-CN \
-  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
   --browser chrome \
-  --browser-executable-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --browser-visibility auto \
+  --daemon-url http://127.0.0.1:7331 \
+  --json
+```
+
+带 `--profile` 时更新该 profile 的 provider membership 与 visibility：
+
+```bash
+tokenless config \
+  --profile work \
+  --provider-whitelist chatgpt,claude,gemini,grok,qwen \
+  --browser-visibility headed \
   --json
 ```
 
 可配置内容：
 
 - `--language <en|zh-CN>`
-- `--provider-whitelist <list>`
-- `--browser <browser>`
-- `--browser-executable-path <绝对路径>`，用于明确选择的 system browser
-- `--clear-browser-executable-path`，让下次解析重新执行 discovery
-- `--browser-visibility <auto|headed|headless>`
-- `--proxy-server <http|https|socks5-url>`，可搭配 `--proxy-bypass <逗号分隔列表>`
-- `--clear-proxy`
+- `--profile <slug> --provider-whitelist <list>`
+- `--profile <slug> --browser-visibility headed`
+- `--browser chrome`
+- `--browser-executable-path <absolute-path>`
+- `--clear-browser-executable-path`
 - `--daemon-url <loopback-url>`
 - `--home <path>`
 
-增加 `--profile <slug>` 后，`--provider-whitelist`、`--browser-visibility` 和不带凭据的 proxy 设置会只作用于一个 managed profile。Proxy 选项必须搭配 `--profile`；`--clear-proxy` 会移除该 profile 的 endpoint。全局 `providerWhitelist` 会继续作为旧 caller 的兼容 union；路由会读取当前 profile 的 membership。
+Provider membership 只属于 `profiles` 中选定的 entry。路由必须读到该 entry，绝不会 fallback 到全局 provider list。
 
-持久化 JSON key 现在是 `providerWhitelist`。Tokenless 仍会读取旧 `preferredProviders` key，并在下一次配置更新时将其改写为 `providerWhitelist`。迁移期间，未写入文档的旧 `--preferred-providers` flag 仍作为 alias 接受。
+Tokenless 会把具体的旧 per-profile side table 与 `browser/profiles.json` 合并并迁移一次。旧表中缺失的 registered profile 会把旧 root provider list 物化为自己的 `enabledProviders`；canonical config 不再保留任一旧 key。未写入文档的旧 `--preferred-providers` flag 仍作为 CLI alias 接受。
 
 完整 config shape 如下：
 
@@ -265,23 +286,20 @@ tokenless config \
 {
   "protocol": "tokenless.config.v1",
   "updatedAt": "2026-08-02T02:09:40.254Z",
-  "providerWhitelist": [
-    "chatgpt",
-    "claude",
-    "grok",
-    "qwen",
-    "deepseek",
-    "perplexity",
-    "zai",
-    "doubao"
-  ],
-  "profilePreferences": {},
+  "profiles": {
+    "default": {
+      "roleLabel": "Personal",
+      "enabledProviders": ["chatgpt", "claude"],
+      "browserVisibility": "headed",
+      "proxy": null
+    }
+  },
   "browser": "chrome",
-  "browserExecutablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "browserConnectionMode": "playwright",
-  "browserVisibility": "auto",
+  "browserExecutablePath": null,
+  "browserVisibility": "headed",
   "daemonUrl": null,
-  "language": "en"
+  "language": "en",
+  "outputSavings": { "enabled": true }
 }
 ```
 
@@ -289,11 +307,11 @@ tokenless config \
 
 面向用户的命令文案和 provider 默认回复语言都会遵循 `language`；prompt 中明确指定的语言优先。命令名、flags、JSON keys、error codes、status values 和其他 integration terms 保持稳定。`daemonUrl` 是首选启动 endpoint，而不是可变 runtime 状态。首选端口繁忙时 Tokenless 不会改写它；daemon 会把实际绑定 endpoint 记录到 SQLite runtime-state row。
 
-Config 文件还接受实验性的 `browserConnectionMode`，值为 `playwright` 或 `cdp`；省略时默认使用 `playwright`。该设置刻意不提供 CLI flag。仅在 capability evaluation 时编辑这个 JSON 值，之后重启 daemon。CDP 不会改变所选 profile、browser runtime、visibility policy 或 provider mappings。
+Tokenless 始终通过 CDP 控制 managed Chromium，内部仍使用 Playwright 的 browser、page 和 locator API。常驻浏览器因此可以在一次 daemon 连接结束后继续运行，并由之后的 daemon 重新接入，不再提供可选的 connection mode。
 
 ### `tokenless upgrade`
 
-执行面向普通用户的 canonical maintenance pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来 upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。日常安装维护和升级请使用它，不要直接使用 `tokenless install`。
+执行面向普通用户的 canonical maintenance pipeline：更新全局 npm CLI、解析并验证已安装 CLI、调用新 CLI 的共享 maintenance 模块来跨 canonical 与已检测到的 direct agent root upsert 全局 agent skills 并协调匹配版本的 daemon，然后运行 doctor。日常安装维护和升级请使用它，不要直接使用 `tokenless install`。
 
 ```bash
 tokenless upgrade
@@ -304,7 +322,7 @@ tokenless upgrade --json
 
 ### `tokenless daemon stop`
 
-验证 daemon identity 后，优雅停止兼容的 daemon。
+验证 daemon identity 后，优雅停止兼容的 daemon。Managed browsers 会继续运行；之后启动的 daemon 会通过 profile-scoped CDP endpoint 重新接入。
 
 ```bash
 tokenless daemon stop --json
@@ -314,29 +332,17 @@ tokenless daemon stop --json
 
 该命令会从 SQLite 发现实际 endpoint，也不会因为某个未验证或不兼容的进程占用了首选端口，就直接杀掉该进程。
 
-## Managed Profiles
+## Tokenless Profiles
 
-一个 managed profile 代表一个持久化的本地 browser identity。一个 profile 可以同时保存所有 enabled providers 的 sessions。
-
-### `tokenless profiles discover`
-
-只读取 Chrome、Brave、Edge、Arc、Chromium 或 Chrome for Testing 的安全 profile 目录/版本元数据，不复制或修改 browser data。每个 profile 都会根据当前平台 Cloak pin 返回 `aligned`、`not_aligned` 或 `unknown`。Discovery 不代表 profile 可以被导入，也不会解析 `Local State`。
-
-```bash
-tokenless profiles discover --browser all --json
-tokenless profiles discover --browser edge --browser-user-data-dir /path/to/user-data --json
-```
+一个 Tokenless profile 用于组织已连接 Chrome 或 Brave identity 中的 provider tabs 与 configuration；它不会创建或复制单独的 browser identity。
 
 ### `tokenless profiles add`
 
-创建 clean managed profile，或在明确同意后复制选定的本机 Chromium profile：
+创建逻辑 Tokenless profile：
 
 ```bash
-tokenless profiles add -P work --label "Work" --set-default --json
-tokenless profiles add -P cloak-work --browser cloak --import-browser-profile Default --consent-local-profile-copy --set-default --json
+tokenless profiles add -P work --set-default --json
 ```
-
-复制只发生在本机，并保持 opaque。Tokenless 会复制文件系统条目，但不会检查或报告 cookies、storage、密码、tokens 或 Keychain 数据。
 
 ### `tokenless profiles list`
 
@@ -378,14 +384,6 @@ tokenless profiles open -P work -p claude --json
 
 ```bash
 tokenless profiles set-default -P work --json
-```
-
-### `tokenless profiles reset`
-
-使用记录的本机来源重新进行一次 opaque copy，并替换已导入的 managed profile。每次都必须再次明确同意。
-
-```bash
-tokenless profiles reset -P work --consent-local-profile-copy --json
 ```
 
 ### `tokenless profiles clear`
@@ -437,7 +435,7 @@ tokenless limits inspect --profile default --provider chatgpt --json
 
 ### `tokenless savings`
 
-管理可选、只计算 output 的节省估算。它默认停用，setup 也绝不会启用或下载 tokenizer。
+管理只计算 output 的节省估算。它默认开启，但 setup 和 Dashboard 读取绝不会下载 tokenizer。
 
 ```bash
 tokenless savings status --json
@@ -447,7 +445,7 @@ tokenless savings clear --confirm-delete --json
 tokenless savings uninstall --confirm-delete --json
 ```
 
-`enable` 会先按需下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。`disable` 停止后续计量，但保留历史和 runtime。`clear` 删除持久化计量历史；`uninstall` 停用计量并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
+`enable` 会先下载并验证固定版本的 `o200k_base` WASM tokenizer，再把 `outputSavings.enabled` 设为 `true`。正常的默认开启流程则会等到第一个 provider job 已经完成、并把计量工作持久交接给 daemon 后，才在后台懒安装。`disable` 会丢弃排队文本、阻止进行中的结果被保存，并保留历史和 runtime。`clear` 会丢弃清空前的工作并删除持久化计量历史；`uninstall` 会停用计量、丢弃工作并移除 runtime；这两个破坏性操作都必须提供 `--confirm-delete`。`status` 对配置和 tokenizer 安装状态都是只读的。所有这些命令都不会打开 provider 页面。
 
 计量范围仅包括经过规范化的可见 assistant 输出，并归属到触发它的 durable job 和 response。它是稳定的跨 provider estimate，不是 provider billing 数值；input token、隐藏推理和私有 backend traffic 都不在范围内。
 
@@ -467,7 +465,7 @@ Provider 选择：
 
 - 显式 `--provider <provider>` 或 `TOKENLESS_PROVIDER` 会保持精确匹配，不会因为缓存可用性而被替换。
 - `--capability <capability>` 可以重复使用，用于请求 canonical caller outcome，而不是 provider 专属控件。
-- Tokenless 会合并显式 capabilities 与结构化推导：普通 `submit_and_read` run 要求 `conversation.chat`，`--attach-file` 要求 `file.upload`，并在适用时增加 `image.input`、`audio.input` 或 `video.input`；`--workspace-mode native` 要求 `workspace.native`。
+- Tokenless 会合并显式 capabilities 与结构化推导：普通 `submit_and_read` run 要求 `conversation.chat`，`--attach-file` 要求 `file.upload`，并在适用时增加 `image.input`、`audio.input` 或 `video.input`；`--workspace-mode auto` 或 `native` 要求 `workspace.native`。
 - 未显式指定 provider 时，配置的 provider list 会过滤 membership。Tokenless 会再筛出满足完整 implication-expanded requirement set 的 providers，并按照 fresh cached eligibility 和 evidence maturity（`supported` 优先于 `experimental`）对 routes 排序；配置 list 的 position 仅作为最终 tie-breaker，不能覆盖这些更强的信号。过期但曾可用的 observation 会保持为 `unchecked`，直到 runner 执行实时只读 preflight。
 - 显式 provider 无法满足完整 requirement set 时，会在提交 daemon job 前失败，不会静默切换。
 - Unknown 与 sign-in-required observations 不可用于隐式路由。如果没有可用 cached provider，CLI 会在创建 daemon job 前返回带 provider observation context 的 `provider_unavailable`。
@@ -497,14 +495,14 @@ Provider 控件：
 - DeepSeek canonical requirements 会在 mutation 前准备所需控件：`search.web` 选择 Instant 并启用 Search，`reasoning.extended` 启用 DeepThink，`image.input` 选择 Vision。显式冲突组合会在页面变化前失败。
 - `--kimi-search <auto|off>` 选择 Kimi Web search 行为。
 - `--kimi-plugin <exact-visible-label>` 选择一个精确的 Kimi Plugin。
-- `--kimi-skill <exact-visible-label>` 选择一个精确的 Kimi Skill。
+- `--kimi-skill <exact-visible-label>` 选择一个精确的 provider-native Kimi workflow；它与用户自己的 Harness `SKILL.md` 无关。
 - `--browser-visibility <auto|headed|headless>` 覆盖已配置的可见性策略。
 
 Identity 与 continuity：
 
 - `--task-id <id>` 提供持久化 task identity。
 - `--idempotency-key <id>` 在没有 task ID 时提供相同 identity。
-- `--project-name <name>` 和 `--chat-name <name>` 会参与推导 task identity。
+- `--project-name <name>` 和 `--chat-name <name>` 会参与推导 task identity，但不会请求 Workspace 处理。
 - `--workspace-mode <auto|native|conversation>` 显式请求 Workspace 处理，并要求同时提供 `--project-name`。
 - `--project-instructions <text>` 或 `--project-instructions-file <path>` 提供可选 Workspace instructions。
 - `--agent-kind <kind>` 和 `--agent-session-id <id>` 将 job 定向到一个 agent recipient。两者必须同时提供，也可通过 `TOKENLESS_AGENT_KIND` 与 `TOKENLESS_AGENT_SESSION_ID` 提供。
@@ -675,7 +673,7 @@ tokenless provider-action \
 | `kimi.plugin.inspect` | 按精确可见名称列出已启用的 Kimi Plugins。 | 无；仅限 Kimi |
 | `kimi.plugin.select` | 选择一个精确的 Kimi Plugin。 | `--kimi-plugin <exact-visible-label>` |
 | `kimi.skill.inspect` | 按精确可见名称列出已启用的 Kimi Skills。 | 无；仅限 Kimi |
-| `kimi.skill.select` | 选择一个精确的 Kimi Skill。 | `--kimi-skill <exact-visible-label>` |
+| `kimi.skill.select` | 选择一个精确的 provider-native Kimi workflow；这不是 user-owned Harness Skill。 | `--kimi-skill <exact-visible-label>` |
 | `file.upload` | 通过可见 file controls 上传文件。 | 一个或多个 `--attach-file` |
 | `workspace.ensure` | 确保存在原生或 conversation-scoped Workspace。 | `--project-name`；`--workspace-mode` 和 instructions 可选 |
 | `prompt.clear` | 清空可见 composer。 | 无 |
@@ -737,12 +735,9 @@ tokenless prompt \
 | `tokenless provider-auth-status` | `tokenless provider-status` |
 | `tokenless inspect-provider-controls` | `tokenless provider-controls` |
 | `tokenless inspect-chatgpt-controls` | `tokenless chatgpt-controls` |
-| `--import-chrome-profile` | `--import-browser-profile` |
-| `--chrome-user-data-dir` | `--browser-user-data-dir` |
 | `--turn-context` | `--context` |
 | `--turn-context-file` | `--context-file` |
 | `--conversation-key` | `--idempotency-key` |
-| `--clean-profile` | `--fresh` |
 
 ## 状态与副作用总结
 
@@ -765,29 +760,24 @@ provider-status
 
 ## 手动真实浏览器验收
 
-已认证 provider capability harness 会为每个显式选择的 production browser 保留一个独立的持久化 profile。默认 test-only home 是 `<TOKENLESS_HOME>/e2e/live-provider`；也可显式使用 `TOKENLESS_LIVE_PROVIDER_TEST_HOME` 或 `--home`。Test home 必须不同于普通 Tokenless home，并且位于所有 repository/worktree 之外。例如，browser selection `cloak` 会解析为稳定 slug `live-provider-cloak`；production registry `<test-home>/browser/profiles.json` 再把该 slug 映射到 opaque 目录 `<test-home>/browser/profiles/<uuid>`。在启动任何 provider automation 前，harness 会验证该目录、私有权限、lifecycle、executable 和 runtime binding。它拒绝 `auto`，因为 automatic discovery 可能在不同运行中解析到不同 executable；不同 browser runtime 也绝不会共用一个 profile。
+已认证 provider capability harness 会读取 `TOKENLESS_TEST_CONFIG` 指向的完整 config，并且只使用相邻 production registry 的 default profile。每位开发者在 harness 之外选择自己的 default，因此 profile slug 仍是开发者变量。该 config 必须位于所有 repository/worktree 之外；启动 browser automation 前，harness 会验证 profile directory、私有权限、lifecycle、executable 和精确的 runtime binding。
 
-先准备并手动登录一个 browser-specific profile，然后再运行 provider gates：
+先创建 repository-local `.env`，然后手动登录该 config 的 default profile：
 
-```bash
-npm run test:e2e:prepare -- --browser cloak
-# 在每个 provider tab 中手动登录，然后执行 harness 打印的 daemon-stop 命令。
-npm run test:e2e -- --browser cloak
-npm run test:e2e:connection-matrix -- --browser cloak
+```dotenv
+TOKENLESS_TEST_CONFIG=/absolute/path/to/tokenless-home/config.json
 ```
 
-已认证 profile 支持 `chrome`、`brave`、`edge`、`arc`、`chromium`、`chrome-for-testing`、`managed-chromium` 和 `cloak`。`prepare` 会安装或解析精确 browser，把 maintenance skill 输出限制在 test-only home 内，并且只创建或复用它的确定性 profile slug。登录页面名单来自该 profile 的有效 provider whitelist：存在 `profilePreferences[slug].enabledProviders` 时使用它，否则使用 top-level `providerWhitelist`。Fresh config 会包含所有已注册且未 disabled 的 provider，包括 Gemini；区域或网络可达性应作为 E2E evidence 报告，而不是从 preparation 中排除 provider 的理由。Preparation 保留配置顺序，绝不会改写这两个名单。它会通过一次并发的 Chromium background-tab batch 请求名单中的每个 provider-entry tab，然后立即退出，不等待 page load、登录或 Playwright target observation。如果同一 dedicated home 下已通过 proof 验证的 daemon 早于 provider-tab endpoint，preparation 会优雅替换为当前 built daemon，并重试一次 handoff。Detached daemon 会继续持有 browser，Chromium 则照常把状态持久化到 dedicated profile。Browser 首次启动时仍可能取得一次焦点，但不会再按顺序把每个 provider tab 带到前台。Preparation 不读取 capability matrix，不运行 provider jobs，也不会调用 `setup`、`profiles status`、自动登录或检查认证数据。可用 `--no-open` 只验证 preparation，不导航 provider，也不进行人工 browser handoff。`run` 才会使用 live capability matrix，在 Playwright mode 下执行其中声明的 provider journeys；`connection-matrix` 会用同一个 selected profile 依次运行 Playwright 与 CDP mode。每次调用都会在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。两种 run mode 都会真实修改 provider 侧状态，并可能产生使用费用。
+```bash
+npm run test:e2e
+```
 
-Browser runtime 与 provider surface 验收是显式本地 gate，不会在 CI 中运行：
+Default profile 既有的 production runtime binding 会选择 browser；测试命令不接受 browser、home 或 profile override。运行 live suite 前，请通过正常 Tokenless workflow 手动登录。`run` 会使用 live capability matrix，通过 CDP 控制的 browser 执行声明的 provider journey，并在 `test-results/live-provider-e2e/` 下写入 private JSON report，先按 provider 分组，再按 capability 分层。Readiness failure 与 capability assertion 会分别分类；`network_or_navigation` 只记录可观察到的可达性失败，不会断言具体 firewall 或区域原因。Provider run 会真实修改 provider 侧状态，并可能产生使用费用。
+
+Provider surface 验收是显式本地 gate，不会在 CI 中运行：
 
 ```bash
-npm run test:e2e:browser-runtime
 npm run test:e2e:browser-surfaces
-npm run test:e2e:system-surfaces
-npm run test:e2e:managed-surfaces
-npm run test:e2e:cloak-surfaces
 ```
 
-在特意准备为“没有受支持 system browser”的机器上，运行 `npm run test:e2e:browser-runtime -- --expected-auto managed-chromium`，强制证明 lazy managed fallback。默认命令则要求 `auto` 解析到 system browser。每一种目标 Windows x64 CPU 类型都要分别运行这两条命令；npm 从 `cmd.exe`、PowerShell 和 POSIX shell 转发这些参数时行为一致。
-
-Browser surface gate 会用同一套真实 headed、keychain-neutral test profile 分别测试 system auto-selection、managed Chrome for Testing 和 Cloak。每个 case 都会先通过真实网络访问全部已注册 providers 和 Google Search，再汇总所有失败；检测到 anti-bot challenge 时会失败，并且只报告公开 location、title、response status 与结构化 challenge 结果。它不会登录、提交 prompt、读取 browser storage、截屏，也不能替代使用已认证 profile 的 built-CLI provider release gate。三个 selection-specific 命令分别只运行 system、managed 或 Cloak case。
+Browser surface gate 会按现有 visibility 复用 config 的 default persistent profile，并通过 Tokenless production CDP path 控制它。它绝不会创建、关闭、切换或删除 browser profile 或 resident browser。每次运行都会通过真实网络访问全部已注册 providers 和 Google Search，检测到 anti-bot challenge 时失败，并且只报告公开 location、title、response status 与结构化 challenge 结果。它不会提交 prompt、读取 browser storage、截屏，也不能替代使用已认证 profile 的 built-CLI provider release gate。

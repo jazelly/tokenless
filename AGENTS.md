@@ -9,6 +9,14 @@
 - Keep paired docs, such as `README.md` and `README.zh-CN.md`, structurally and semantically aligned.
 - Internal technical docs may remain English when translation adds no user value.
 
+## Documentation style
+
+- Do not ship walls of text. Keep paragraphs to one to three short sentences, and use a list, table, diagram, or screenshot when it makes the same point faster.
+- Keep product READMEs as scannable landing pages: lead with the value proposition and product visual, then show providers, quick start, and links to deeper documentation.
+- Put detailed reference material in the focused document that owns it and link there instead of duplicating long explanations.
+- Prefer one clear sentence over a section, and a few concrete bullets over a paragraph that merely enumerates features or steps.
+- Label illustrative or staged screenshots and metrics so they cannot be mistaken for benchmarks or production telemetry.
+
 ## Tokenless skill
 
 - Do not read or invoke the external `tokenless` skill during repository work. Use this file, source, and tests.
@@ -35,29 +43,39 @@
 
 ## Testing
 
-- Test externally observable behavior through real boundaries: built CLI, packaged TypeScript daemon, filesystem, local Chromium/Playwright, or provider website.
+- Test externally observable behavior through real boundaries: built CLI, packaged TypeScript daemon, filesystem, local Google Chrome controlled through Playwright, or provider website.
 - Use focused integration or browser E2E for cross-runner/runtime/provider behavior. Prefer browser proof when feasible.
 - Keep default browser E2E to representative core flows. Cover rare crash/restart or failure injection only when required, reproduced, or visibly material; otherwise use focused real-boundary integration.
 - No unit tests, mocks, fakes, stubs, spies, synthetic fetches, fake runtime/browser objects, injected test doubles, or source/doc regex tests.
 
+### Test Browser Policy
+
+- Every repository browser test must load `TOKENLESS_TEST_CONFIG` from the repository-local `.env`. It points to one complete Tokenless `config.json`; its adjacent production profile registry is the only source of the test profile name, directory, and runtime binding.
+- Different developers may use different profile slugs. The adjacent registry's default profile is the only browser-test profile; tests must never select, hard-code, derive, or separately configure another name.
+- Never launch Playwright's bundled Chromium (`chromium.executablePath()`) or resolve a browser outside `TOKENLESS_TEST_CONFIG`. Browser selection and executable resolution come from that default profile's production runtime binding.
+- Playwright browser tests must use `test/helpers/configured-browser-profile.mjs` and Tokenless's production CDP path.
+- Browser tests must not create disposable user-data directories or delete a browser profile or config home during teardown. Reuse the configured profile across runs; profile deletion requires an explicit user request naming that profile.
+- Direct `chromium.launch()`, `chromium.launchPersistentContext()`, and ad hoc browser process launches are forbidden in test files. Tests must not resize browser windows or emulate a viewport.
+- Browser tests must never test profile deletion, browser crash/kill, explicit browser/context/page close, forced relaunch, runtime replacement/repair, visibility-switch relaunch, or corruption of `DevToolsActivePort`, PID, CDP endpoint, or runtime-session metadata.
+- Browser tests may create provider-side conversations or other ordinary functional artifacts. Teardown detaches only CDP clients and leaves the profile, resident browser, runtime, pages, and browser metadata intact.
+
 ### Credential and macOS Keychain Safety
 
-- Browser auth stays opaque in the user-controlled managed profile. After explicit user consent, Tokenless may copy a user-selected browser profile only as an opaque local filesystem tree between user-controlled profiles; it must not parse or expose individual authentication values.
-- Never request, inspect, export, log, transmit, decrypt, or dump passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets; never use `security`, Keychain APIs, or equivalent tools. An explicitly authorized opaque local profile copy is not secret extraction.
-- Never automate or encourage Keychain approval, including `Allow` or `Always Allow`.
-- Tests, helpers, and test browsers must not trigger Keychain prompts. Any prompt fails the run: stop the browser/test, tell the user to choose `Deny` or `Cancel` without a password, then fix launch settings before retrying.
-- Every production and test Chromium launch must retain `--password-store=basic` and `--use-mock-keychain`, regardless of the configured browser executable.
+- Browser auth stays opaque in the user's running Google Chrome. Tokenless must not copy or import browser profiles.
+- Tokenless code, tests, and tooling must never directly inspect, export, log, transmit, decrypt, or dump passwords, cookies, tokens, keys, hidden auth headers, Keychain items, or browser-storage secrets, and must never call `security`, Keychain APIs, or equivalent tools. Chrome's normal local Keychain use is not secret extraction by Tokenless.
+- On macOS, production native mode uses the running Chrome's normal Keychain access. Never add `--password-store=basic` or `--use-mock-keychain` to production browser control.
+- Keychain approval remains a user-controlled security decision. Tokenless may explain why the expected browser is asking and the user may approve it, but tests and automation must never click the prompt, enter a password, or weaken the prompt on the user's behalf.
+- Installer smoke checks may stay keychain-neutral because they do not become reusable test profiles. Browser-surface and real-provider E2E use the configured persistent profile and the production credential-storage policy; they may pause for manual user approval.
 - Keychain safety never permits mocked browser boundaries.
-- For browser-launch changes, verify keychain-neutral production and test options, enabled Chromium sandboxing, process cleanup, and focused real-boundary completion without prompts.
-- Regression guard: never remove either keychain-neutral flag from any Chromium launch; inconsistent storage modes caused the prior `Chromium Safe Storage` prompt in provider-less `profiles open` conformance.
+- For browser-launch changes, verify native credential storage on the configured persistent profile, keychain neutrality only for installer smoke checks, enabled Chromium sandboxing, CDP detach, profile preservation, resident-browser preservation, and focused real-boundary completion.
+- Regression guard: production native Chrome control must remain free of `--password-store=basic` and `--use-mock-keychain`.
 
-### Provider DOM Fixture Policy
+### Provider Website Boundary
 
-- Fixtures must be redacted, provenance-bound reductions captured from real visible provider sessions.
-- Use them only for focused selector, parser, sanitizer, and observed-DOM checks.
-- Never use fixture routes, network interception, or simulated responses in built CLI/daemon E2E; never call fixture evidence E2E/live or use it for support, capability, acceptance, or release claims.
-- Never invent DOM or infer transitions from separate before/after fixtures.
-- Capture each materially distinct capability-relevant real state; redact it, record provenance, add it to the manifest, and preserve variants affecting behavior.
+- Do not create, capture, store, generate, promote, or test against provider DOM fixtures, reduced DOM snapshots, provider replicas, locally hosted provider pages, route interception, or simulated provider responses.
+- Develop and verify provider selectors, parsers, blockers, controls, transitions, and outcomes only against the real provider website in the configured persistent browser profile.
+- A provider behavior change requires a focused real-provider integration or browser E2E case through the built CLI and packaged daemon. If the real site cannot currently prove the behavior, fail or leave the capability unadvertised; do not substitute fixture evidence.
+- Local daemon, API, filesystem, installer, and control-plane tests may use their real local boundaries, but they must not impersonate a provider website or claim provider behavior.
 
 ### Real Provider Browser E2E
 
