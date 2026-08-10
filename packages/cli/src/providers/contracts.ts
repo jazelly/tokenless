@@ -15,6 +15,8 @@ export const VISIBLE_ACTIONS = Object.freeze({
   AUTH_STATUS: 'auth.status',
   MODEL_INSPECT: 'model.inspect',
   MODEL_SELECT: 'model.select',
+  ARENA_SURFACE_INSPECT: 'arena.surface.inspect',
+  ARENA_SURFACE_SELECT: 'arena.surface.select',
   EFFORT_INSPECT: 'effort.inspect',
   EFFORT_SELECT: 'effort.select',
   QWEN_MODE_INSPECT: 'qwen.mode.inspect',
@@ -80,6 +82,12 @@ export type AttachmentInput = {
 export type EmptyVisibleActionPayload = Record<string, never>
 export type VisibleSelectionPayload = {
   label: string
+}
+export type ArenaSurfaceMode = 'battle' | 'side-by-side' | 'direct'
+export type ArenaSurfaceModality = 'text' | 'search' | 'image' | 'code'
+export type ArenaSurfaceSelectionPayload = {
+  mode: ArenaSurfaceMode
+  modality: ArenaSurfaceModality
 }
 export type QwenModeSelectionPayload = {
   mode: string
@@ -152,6 +160,14 @@ export type ModelInspectActionRequest = VisibleActionRequestEnvelope<
 export type ModelSelectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.MODEL_SELECT,
   VisibleSelectionPayload
+>
+export type ArenaSurfaceInspectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.ARENA_SURFACE_INSPECT,
+  EmptyVisibleActionPayload
+>
+export type ArenaSurfaceSelectActionRequest = VisibleActionRequestEnvelope<
+  typeof VISIBLE_ACTIONS.ARENA_SURFACE_SELECT,
+  ArenaSurfaceSelectionPayload
 >
 export type EffortInspectActionRequest = VisibleActionRequestEnvelope<
   typeof VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -275,6 +291,8 @@ export type VisibleActionRequest =
   | AuthStatusActionRequest
   | ModelInspectActionRequest
   | ModelSelectActionRequest
+  | ArenaSurfaceInspectActionRequest
+  | ArenaSurfaceSelectActionRequest
   | EffortInspectActionRequest
   | EffortSelectActionRequest
   | QwenModeInspectActionRequest

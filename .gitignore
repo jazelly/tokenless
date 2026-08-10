@@ -18,6 +18,8 @@ docs/*
 !docs/api-proxy-integration.zh-CN.md
 !docs/capability-matrix.md
 !docs/capability-matrix.zh-CN.md
+!docs/openai-compatible-api.md
+!docs/openai-compatible-api.zh-CN.md
 !docs/provider-capability-census.md
 !docs/provider-rate-limits.md
 !docs/roadmaps/

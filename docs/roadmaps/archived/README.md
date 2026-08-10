@@ -24,6 +24,7 @@ Archived roadmap filenames retain the `P0-` through `P3-` product-priority prefi
 
 | Roadmap | Disposition |
 | --- | --- |
+| [Arena Full Capability Integration](P0-arena-full-capability-integration.md) | Completed 2026-08-11 after Direct, Search, comparison, Image, Code, Agent, Video, task routes, and OpenAI-compatible chat passed real-provider or authenticated local-HTTP boundaries and independent review. |
 | [Browser Runtime Selection and Cloak Integration](P0-browser-runtime-selection-and-cloak.md) | Superseded 2026-08-09 by setup-time native Chrome/Brave selection and browser-managed CDP connection; the source-profile compatibility matrix is retired. |
 | [Windows AMD64 Browser Runtime and Surface Acceptance Test Plan](P0-windows-amd64-cloak-setup-acceptance-test-plan.md) | Retired 2026-08-09 with the source-profile compatibility matrix it was designed to validate. |
 | [Browser Connection Mode Capability Evaluation](P0-browser-connection-mode-capability-evaluation.md) | Completed 2026-08-09 after native Playwright and CDP evidence supported consolidating browser control on CDP. |

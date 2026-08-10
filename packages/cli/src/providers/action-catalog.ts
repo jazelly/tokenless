@@ -5,6 +5,7 @@ import { VISIBLE_ACTIONS } from './contracts.js'
 import type { ProviderCapabilityId } from './provider-identity.js'
 import type {
   AttachmentInput,
+  ArenaSurfaceSelectionPayload,
   EmptyVisibleActionPayload,
   FileUploadPayload,
   PromptInputPayload,
@@ -102,6 +103,18 @@ export const VISIBLE_ACTION_CATALOG = Object.freeze({
     lifecycle: reconstructableGatedMutation,
     requiredCapabilities: [PROVIDER_CAPABILITIES.MODEL_CHOICE],
     validatePayload: validateSelectionPayload,
+  }),
+  [VISIBLE_ACTIONS.ARENA_SURFACE_INSPECT]: defineAction({
+    action: VISIBLE_ACTIONS.ARENA_SURFACE_INSPECT,
+    lifecycle: gatedReadOnly,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.ARENA_SURFACE],
+    validatePayload: validateEmptyPayload,
+  }),
+  [VISIBLE_ACTIONS.ARENA_SURFACE_SELECT]: defineAction({
+    action: VISIBLE_ACTIONS.ARENA_SURFACE_SELECT,
+    lifecycle: reconstructableGatedMutation,
+    requiredCapabilities: [PROVIDER_CAPABILITIES.ARENA_SURFACE],
+    validatePayload: validateArenaSurfaceSelectionPayload,
   }),
   [VISIBLE_ACTIONS.EFFORT_INSPECT]: defineAction({
     action: VISIBLE_ACTIONS.EFFORT_INSPECT,
@@ -349,6 +362,17 @@ function validateSelectionPayload(payload: Record<string, unknown>): VisibleSele
   requireExactKeys(payload, ['label'], 'invalid_visible_action_payload')
   validateVisibleLabel(payload.label)
   return payload as VisibleSelectionPayload
+}
+
+function validateArenaSurfaceSelectionPayload(payload: Record<string, unknown>): ArenaSurfaceSelectionPayload {
+  requireExactKeys(payload, ['mode', 'modality'], 'invalid_visible_action_payload')
+  if (payload.mode !== 'battle' && payload.mode !== 'side-by-side' && payload.mode !== 'direct') {
+    throw tokenlessError('invalid_visible_action_payload', 'Arena surface mode must be battle, side-by-side, or direct.')
+  }
+  if (payload.modality !== 'text' && payload.modality !== 'search' && payload.modality !== 'image' && payload.modality !== 'code') {
+    throw tokenlessError('invalid_visible_action_payload', 'Arena surface modality must be text, search, image, or code.')
+  }
+  return payload as ArenaSurfaceSelectionPayload
 }
 
 function validateQwenModeSelectionPayload(payload: Record<string, unknown>): QwenModeSelectionPayload {

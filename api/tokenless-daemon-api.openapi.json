@@ -187,6 +187,39 @@
         }
       }
     },
+    "/v1/models": {
+      "get": {
+        "operationId": "listOpenAiCompatibleModels",
+        "summary": "List the Arena models exposed by the local OpenAI-compatible adapter",
+        "responses": {
+          "200": { "description": "OpenAI-compatible model list", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiModelList" } } } },
+          "401": { "description": "Missing control bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "403": { "description": "Rejected control bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "500": { "description": "Sanitized local configuration failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "503": { "description": "Arena is not enabled in the default managed profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "operationId": "createOpenAiCompatibleChatCompletion",
+        "summary": "Run one non-streaming stateless Arena Direct chat completion",
+        "description": "The exact model arena:max selects Arena Direct's visible Max router. A single user message is submitted verbatim; bounded multi-message text history is framed as one JSON transcript document in a new conversation. Streaming, tools, non-text content, and continuation are unsupported. Disconnecting the HTTP client cancels the active local job.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiChatCompletionRequest" } } } },
+        "responses": {
+          "200": { "description": "OpenAI-compatible non-streaming chat completion", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiChatCompletionResponse" } } } },
+          "400": { "description": "Invalid or unsupported chat request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "401": { "description": "Missing control bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "403": { "description": "Rejected control bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "404": { "description": "Requested model is not exposed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "413": { "description": "Request body exceeds the 2 MiB HTTP boundary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "415": { "description": "Request content type is not application/json", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "500": { "description": "Sanitized local configuration failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "502": { "description": "Sanitized Arena upstream failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } },
+          "504": { "description": "Arena completion exceeded the HTTP deadline", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpenAiErrorResponse" } } } }
+        }
+      }
+    },
     "/v1/web-ai/bindings": {
       "post": {
         "operationId": "bindWebAiInteractionV0",
@@ -1317,6 +1350,47 @@
       }
     },
     "schemas": {
+      "OpenAiModelList": {
+        "type": "object", "additionalProperties": false, "required": ["object", "data"],
+        "properties": {
+          "object": { "const": "list" },
+          "data": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["id", "object", "created", "owned_by"], "properties": { "id": { "const": "arena:max" }, "object": { "const": "model" }, "created": { "type": "integer", "minimum": 0 }, "owned_by": { "const": "arena" } } } }
+        }
+      },
+      "OpenAiTextPart": {
+        "type": "object", "additionalProperties": false, "required": ["type", "text"],
+        "properties": { "type": { "const": "text" }, "text": { "type": "string" } }
+      },
+      "OpenAiChatMessage": {
+        "type": "object", "additionalProperties": false, "required": ["role", "content"],
+        "properties": {
+          "role": { "type": "string", "enum": ["system", "developer", "user", "assistant"] },
+          "content": { "oneOf": [{ "type": "string" }, { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/OpenAiTextPart" } }] }
+        }
+      },
+      "OpenAiChatCompletionRequest": {
+        "type": "object", "additionalProperties": false, "required": ["model", "messages"],
+        "properties": {
+          "model": { "const": "arena:max" },
+          "messages": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/components/schemas/OpenAiChatMessage" } },
+          "stream": { "const": false }
+        }
+      },
+      "OpenAiChatCompletionResponse": {
+        "type": "object", "additionalProperties": false, "required": ["id", "object", "created", "model", "choices", "x_tokenless"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^chatcmpl-[A-Za-z0-9-]+$" },
+          "object": { "const": "chat.completion" },
+          "created": { "type": "integer", "minimum": 0 },
+          "model": { "const": "arena:max" },
+          "choices": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["index", "message", "finish_reason", "logprobs"], "properties": { "index": { "const": 0 }, "message": { "type": "object", "additionalProperties": false, "required": ["role", "content", "refusal"], "properties": { "role": { "const": "assistant" }, "content": { "type": "string", "minLength": 1 }, "refusal": { "type": "null" } } }, "finish_reason": { "const": "stop" }, "logprobs": { "type": "null" } } } },
+          "x_tokenless": { "type": "object", "additionalProperties": false, "required": ["provider", "visible_model", "conversation_mode", "transcript_replay", "job_id"], "properties": { "provider": { "const": "arena" }, "visible_model": { "const": "Max" }, "conversation_mode": { "const": "new" }, "transcript_replay": { "type": "boolean" }, "job_id": { "type": "string", "minLength": 1 } } }
+        }
+      },
+      "OpenAiErrorResponse": {
+        "type": "object", "additionalProperties": false, "required": ["error"],
+        "properties": { "error": { "type": "object", "additionalProperties": false, "required": ["message", "type", "param", "code"], "properties": { "message": { "type": "string", "minLength": 1 }, "type": { "type": "string", "enum": ["authentication_error", "invalid_request_error", "server_error"] }, "param": { "type": ["string", "null"] }, "code": { "type": "string", "minLength": 1 } } } }
+      },
       "WebAiBindingRequest": {
         "type": "object",
         "additionalProperties": false,

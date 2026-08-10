@@ -44,7 +44,7 @@ import type {
 } from './browser/context-manager.js'
 import type { DaemonClaimedJob, DaemonJob, ManagedDaemonClient } from './daemon-client.js'
 import type { ManagedPlaywrightJobRequest } from './job-contract.js'
-import type { ProviderCapabilityId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
+import type { ProviderCapabilityId, ProviderId, TaskCapabilityId, TaskCapabilityRoute } from '../providers/registry.js'
 import type { BrowserVisibility } from '../browser-visibility.js'
 import type { VisibleAction, VisibleActionRequest } from './actions.js'
 import type { VisibleActionResponse } from './actions.js'
@@ -1668,8 +1668,9 @@ async function inspectAttemptCapabilityEligibility(
   route: TaskCapabilityRoute,
 ): Promise<ClassifiedProviderFailure | null> {
   const inspection = await provider.inspectCapabilities(page)
+  const arenaAgentRoute = provider.id === 'arena' && route.requirements.includes(TASK_CAPABILITIES.AGENT_EXECUTE)
   const observations = route.requirements.map((capability) => {
-    const target = liveInspectionTarget(capability)
+    const target = liveInspectionTarget(capability, provider.id, arenaAgentRoute)
     if (!target) {
       return {
         capability,
@@ -1707,15 +1708,40 @@ async function inspectAttemptCapabilityEligibility(
   })
 }
 
-function liveInspectionTarget(capability: TaskCapabilityId): {
+function liveInspectionTarget(capability: TaskCapabilityId, provider: ProviderId, arenaAgentRoute = false): {
   providerCapability: ProviderCapabilityId
   scope: 'overall' | 'native'
 } | null {
-  if (capability === TASK_CAPABILITIES.CONVERSATION_CHAT) {
+  if (
+    capability === TASK_CAPABILITIES.CONVERSATION_CHAT ||
+    capability === TASK_CAPABILITIES.CONVERSATION_CONTINUE
+  ) {
     return { providerCapability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE, scope: 'overall' }
   }
   if (capability === TASK_CAPABILITIES.FILE_UPLOAD) {
     return { providerCapability: PROVIDER_CAPABILITIES.FILE_UPLOAD, scope: 'overall' }
+  }
+  if (capability === TASK_CAPABILITIES.MODEL_COMPARE) {
+    return { providerCapability: PROVIDER_CAPABILITIES.ARENA_SURFACE, scope: 'overall' }
+  }
+  if (
+    provider === 'arena' &&
+    (
+      capability === TASK_CAPABILITIES.IMAGE_GENERATION ||
+      capability === TASK_CAPABILITIES.IMAGE_EDIT ||
+      capability === TASK_CAPABILITIES.IMAGE_INPUT
+    )
+  ) {
+    return { providerCapability: PROVIDER_CAPABILITIES.ARENA_SURFACE, scope: 'overall' }
+  }
+  if (provider === 'arena' && capability === TASK_CAPABILITIES.WEBSITE_GENERATION) {
+    return { providerCapability: PROVIDER_CAPABILITIES.ARENA_SURFACE, scope: 'overall' }
+  }
+  if (provider === 'arena' && capability === TASK_CAPABILITIES.AGENT_EXECUTE) {
+    return { providerCapability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE, scope: 'overall' }
+  }
+  if (provider === 'arena' && capability === TASK_CAPABILITIES.VIDEO_GENERATION) {
+    return { providerCapability: PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE, scope: 'overall' }
   }
   if (capability === TASK_CAPABILITIES.WORKSPACE_NATIVE) {
     return { providerCapability: PROVIDER_CAPABILITIES.WORKSPACE_ENSURE, scope: 'native' }
@@ -1724,7 +1750,22 @@ function liveInspectionTarget(capability: TaskCapabilityId): {
     return { providerCapability: PROVIDER_CAPABILITIES.WORKSPACE_ENSURE, scope: 'native' }
   }
   if (capability === TASK_CAPABILITIES.SEARCH_WEB) {
-    return { providerCapability: PROVIDER_CAPABILITIES.KIMI_SEARCH, scope: 'overall' }
+    return {
+      providerCapability: provider === 'arena' && !arenaAgentRoute
+        ? PROVIDER_CAPABILITIES.ARENA_SURFACE
+        : arenaAgentRoute
+          ? PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE
+          : PROVIDER_CAPABILITIES.KIMI_SEARCH,
+      scope: 'overall',
+    }
+  }
+  if (capability === TASK_CAPABILITIES.RESPONSE_CITATIONS && provider === 'arena') {
+    return {
+      providerCapability: arenaAgentRoute
+        ? PROVIDER_CAPABILITIES.CONVERSATION_CONTINUE
+        : PROVIDER_CAPABILITIES.ARENA_SURFACE,
+      scope: 'overall',
+    }
   }
   if (capability === TASK_CAPABILITIES.SOURCE_CONNECTED) {
     return { providerCapability: PROVIDER_CAPABILITIES.KIMI_PLUGIN, scope: 'overall' }

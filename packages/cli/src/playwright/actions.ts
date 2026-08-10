@@ -27,6 +27,11 @@ export { validateAttachmentInput } from '../providers/action-catalog.js'
 export { VISIBLE_ACTIONS, isVisibleActionProtocolVersion } from '../providers/contracts.js'
 export type {
   AttachmentInput,
+  ArenaSurfaceInspectActionRequest,
+  ArenaSurfaceMode,
+  ArenaSurfaceModality,
+  ArenaSurfaceSelectActionRequest,
+  ArenaSurfaceSelectionPayload,
   EmptyVisibleActionPayload,
   FileUploadActionRequest,
   FileUploadPayload,
@@ -55,6 +60,8 @@ export type {
 
 import type {
   AttachmentInput,
+  ArenaSurfaceMode,
+  ArenaSurfaceModality,
   DeepSeekMode,
   DoubaoMode,
   DoubaoSkill,
@@ -163,6 +170,23 @@ export type ChoiceSelectResult = {
 } | {
   supported: false
   reason: 'unsupported_by_provider'
+}
+
+export type ArenaSurfaceInspectResult = {
+  supported: true
+  active: {
+    mode: ArenaSurfaceMode
+    modality: ArenaSurfaceModality
+  }
+  modes: readonly ArenaSurfaceMode[]
+  modalities: readonly ArenaSurfaceModality[]
+}
+
+export type ArenaSurfaceSelectResult = {
+  supported: true
+  selectedMode: ArenaSurfaceMode
+  selectedModality: ArenaSurfaceModality
+  visibleProof: string
 }
 
 export type QwenModeChoice = {
@@ -435,9 +459,66 @@ export type PromptSubmitResult = {
 export type ResponseReadResult = {
   text: string
   citations: readonly VisibleCitation[]
+  alternatives?: readonly ResponseAlternative[]
+  artifacts?: readonly VisibleResponseArtifact[]
+  agentRun?: VisibleAgentRun
   visibleProof: string
   decisionDiagnostics: ResponseDecisionDiagnostics
   outputSavings?: import('../output-savings/index.js').OutputSavingsResult
+}
+
+export type VisibleResponseArtifact = VisibleImageArtifact | VisibleCodeArtifact | VisibleVideoArtifact
+
+export type VisibleAgentRun = {
+  status: 'succeeded'
+  steps: readonly {
+    label: string
+    details: string | null
+  }[]
+  visibleProof: string
+}
+
+export type VisibleImageArtifact = {
+  kind: 'image'
+  url: string
+  mediaType: string | null
+  alt: string | null
+  width: number | null
+  height: number | null
+  visibleProof: string
+}
+
+export type VisibleCodeArtifact = {
+  kind: 'code'
+  files: readonly {
+    name: string
+    language: string | null
+    mediaType: string | null
+    content: string
+  }[]
+  previewUrl: string | null
+  downloadAvailable: boolean
+  visibleProof: string
+}
+
+export type VisibleVideoArtifact = {
+  kind: 'video'
+  label: string
+  model: string | null
+  url: string
+  mediaType: string
+  width: number
+  height: number
+  durationSeconds: number
+  downloadAvailable: boolean
+  visibleProof: string
+}
+
+export type ResponseAlternative = {
+  label: string
+  model: string | null
+  text: string
+  citations: readonly VisibleCitation[]
 }
 
 export type ResponseDecisionElement = {
@@ -566,6 +647,8 @@ export type VisibleActionResult = (
   | AuthStatusResult
   | ChoiceInspectResult
   | ChoiceSelectResult
+  | ArenaSurfaceInspectResult
+  | ArenaSurfaceSelectResult
   | QwenModeInspectResult
   | QwenModeSelectResult
   | DeepSeekModeInspectResult

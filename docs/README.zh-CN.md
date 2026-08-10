@@ -8,6 +8,7 @@
 - [CLI 命令](../COMMANDS.zh-CN.md) — 完整 command 与 option reference。
 - [Capability Matrix](capability-matrix.zh-CN.md) — canonical outcomes、当前 provider mappings、support states 与扩展规则。
 - [API Proxy 接入指南](api-proxy-integration.zh-CN.md) — 从既有项目调用 OpenAI/Anthropic 兼容的本地 proxy。
+- [OpenAI-compatible Arena Chat](openai-compatible-api.zh-CN.md) — 本地 model list、文本 completion、鉴权与 stateless transcript replay。
 - [隐私政策](../PRIVACY.zh-CN.md) — browser profile、credential、file 与本地数据边界。
 
 ## 概念与架构

@@ -38,6 +38,13 @@ const handlers = {
   'model-choice': modelChoice,
   'effort-choice': effortChoice,
   'file-selection': fileSelection,
+  'conversation-continuation': conversationContinuation,
+  'model-comparison': modelComparison,
+  'arena-search': arenaSearch,
+  'arena-image': arenaImage,
+  'arena-code': arenaCode,
+  'arena-agent': arenaAgent,
+  'arena-video': arenaVideo,
   'conversation-workflow': conversationWorkflow,
   'workspace-response-citations': workspaceResponseCitations,
   'workspace-response-baseline': workspaceResponseBaseline,
@@ -599,7 +606,7 @@ async function choiceCase({ provider, journey }, kind) {
 
 async function choiceLabelVisible(page, label) {
   if (await exactTextVisible(page, label)) return true
-  const controls = page.locator('button[aria-haspopup="menu"]').filter({ visible: true })
+  const controls = page.locator('button[aria-haspopup="menu"], button[aria-haspopup="dialog"]').filter({ visible: true })
   for (let index = 0; index < await controls.count(); index += 1) {
     const text = await controls.nth(index).evaluate((element) => (
       `${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''}`
@@ -610,7 +617,7 @@ async function choiceLabelVisible(page, label) {
 }
 
 async function fileSelection({ provider, journey }) {
-  const extension = provider === 'gemini' || provider === 'meta' ? '.md' : '.txt'
+  const extension = provider === 'arena' ? '.png' : provider === 'gemini' || provider === 'meta' ? '.md' : '.txt'
   const name = provider === 'meta'
     ? `browser-fingerprint-review-${compactTimestamp(new Date())}${extension}`
     : `${markerFor(provider, 'ATTACHMENT')}${extension}`
@@ -624,7 +631,12 @@ async function fileSelection({ provider, journey }) {
         'Matching one layer does not establish end-to-end browser equivalence.',
       ].join('\n')
     : `${name}\n`
-  await fs.writeFile(file, contents, { mode: 0o600 })
+  if (provider === 'arena') {
+    await fs.copyFile(path.join(root, 'assets', 'tokenless-logo-v1.png'), file)
+    await fs.chmod(file, 0o600)
+  } else {
+    await fs.writeFile(file, contents, { mode: 0o600 })
+  }
   const deepSeekState = provider === 'deepseek' ? await captureDeepSeekState(journey) : null
   let geminiAttachmentCardsBefore = null
   try {
@@ -663,6 +675,12 @@ async function fileSelection({ provider, journey }) {
         geminiAttachmentCardsBefore + 1,
         'Gemini observer must see one newly visible physical attachment card',
       )
+    } else if (provider === 'arena') {
+      assert.equal(
+        await uploaded.page.getByAltText(name, { exact: true }).isVisible().catch(() => false),
+        true,
+        'Arena observer must see the selected image preview',
+      )
     } else {
       const visibleName = provider === 'kimi' || provider === 'meta' ? path.parse(name).name : name
       assert.equal(await exactTextVisible(uploaded.page, visibleName), true, `${provider} observer must see selected attachment`)
@@ -674,6 +692,293 @@ async function fileSelection({ provider, journey }) {
     await fs.rm(file, { force: true })
     if (deepSeekState) await restoreDeepSeekState(journey, deepSeekState)
   }
+}
+
+async function conversationContinuation({ provider, journey }) {
+  const name = markerFor(provider, 'CONVERSATION_CONTINUATION')
+  const firstMarker = markerFor(provider, 'CONTINUATION_TURN_ONE')
+  const contextSecret = markerFor(provider, 'CONTINUATION_SECRET')
+  const first = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--prompt', `Reply with exactly ${firstMarker}. Remember ${contextSecret} for the next message but do not include it now.`,
+  ])
+  const firstText = responseResult(first.payload, 'response.read')?.text ?? ''
+  assert.match(firstText, new RegExp(escapeRegExp(firstMarker)))
+  assert.doesNotMatch(firstText, new RegExp(escapeRegExp(contextSecret)))
+  const conversationUrl = assertConversationWorkspaceResult(provider, journey.taskId, first)
+  await first.close()
+
+  const second = await journey.run([
+    '--project-name', name,
+    '--workspace-mode', 'conversation',
+    '--capability', 'conversation.continue',
+    '--prompt', 'Reply with exactly the secret from my previous message and no other text.',
+  ])
+  const secondText = responseResult(second.payload, 'response.read')?.text ?? ''
+  assert.match(secondText, new RegExp(escapeRegExp(contextSecret)))
+  assert.doesNotMatch(secondText, new RegExp(escapeRegExp(firstMarker)))
+  assert.equal(canonicalPageUrl(second.page.url()), conversationUrl)
+  assertTaskConversationMapping(provider, journey.taskId, conversationUrl, second.payload)
+  await second.close()
+}
+
+async function modelComparison({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const prompt = [
+    'Compare discriminated-union Result values with typed exceptions and centralized middleware',
+    'for TypeScript JSON API error handling. Give executable advice and a clear recommendation.',
+  ].join(' ')
+  for (const mode of ['battle', 'side-by-side']) {
+    const run = await journey.run([
+      '--capability', 'model.compare',
+      '--arena-mode', mode,
+      '--arena-modality', 'text',
+      '--prompt', prompt,
+    ])
+    const result = responseResult(run.payload, 'response.read')
+    assert.equal(result?.alternatives?.length, 2)
+    assert.equal(result?.text, result.alternatives.map((answer) => `${answer.label}\n\n${answer.text}`).join('\n\n'))
+    assert.ok(result.alternatives.every((answer) => answer.text.length > 0))
+    if (mode === 'battle') {
+      assert.deepEqual(result.alternatives.map((answer) => answer.model), [null, null])
+    } else {
+      assert.ok(result.alternatives.every((answer) => typeof answer.model === 'string' && answer.model.length > 0))
+    }
+    await run.close()
+  }
+}
+
+async function arenaSearch({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const marker = markerFor(provider, 'SEARCH_GROUNDED_RESPONSE')
+  const run = await journey.run([
+    '--capability', 'search.web',
+    '--capability', 'response.citations',
+    '--project-name', markerFor(provider, 'SEARCH_WORKSPACE'),
+    '--workspace-mode', 'conversation',
+    '--prompt', [
+      'Use official Arena sources to list three Agent Mode tools with one-sentence purposes and visible HTTPS citations.',
+      `End with this exact marker: ${marker}`,
+    ].join(' '),
+  ])
+  const response = responseResult(run.payload, 'response.read')
+  assert.ok((response?.text ?? '').length >= 300, 'Arena Search must return a substantive grounded answer')
+  assert.match(response.text, new RegExp(escapeRegExp(marker)))
+  assert.ok(Array.isArray(response.citations) && response.citations.length > 0)
+  assert.ok(response.citations.every((citation) => citation.href.startsWith('https://')))
+  assert.ok(await visibleCitationCount(run.page, response.citations) > 0)
+  assertConversationWorkspaceResult(provider, journey.taskId, run)
+  await run.close()
+}
+
+async function arenaImage({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const generated = await journey.run([
+    '--capability', 'image.generation',
+    '--prompt', 'Generate one flat blue paper airplane icon centered on a plain white background, with no text.',
+  ])
+  const generatedResponse = responseResult(generated.payload, 'response.read')
+  const generatedArtifacts = assertArenaImageArtifacts(generatedResponse)
+  assert.equal(await visibleArenaArtifactCount(generated.page, generatedArtifacts), generatedArtifacts.length)
+  await generated.close()
+
+  const edited = await journey.run([
+    '--capability', 'image.edit',
+    '--attach-file', path.join(root, 'assets', 'tokenless-mark.png'),
+    '--prompt', 'Edit the attached image so its background is pale yellow. Keep the existing logo shape and colors unchanged, and add no text.',
+  ])
+  const editedResponse = responseResult(edited.payload, 'response.read')
+  const editedArtifacts = assertArenaImageArtifacts(editedResponse)
+  assert.equal(editedResponse.text.includes('Edit the attached image so its background is pale yellow.'), false)
+  assert.equal(await visibleArenaArtifactCount(edited.page, editedArtifacts), editedArtifacts.length)
+  assert.notEqual(canonicalPageUrl(editedArtifacts[0].url), canonicalPageUrl(generatedArtifacts[0].url))
+  const upload = responseResult(edited.payload, 'file.upload')
+  assert.equal(upload?.acceptance, 'accepted')
+  assert.equal(upload?.attachments?.some((attachment) => attachment.name === 'tokenless-mark.png'), true)
+  await assertArenaEditSourceDistinct(edited.page, editedArtifacts, 'tokenless-mark.png')
+  await edited.close()
+}
+
+async function arenaCode({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const prompt = [
+    'Build a single-file accessible HTML counter app with Increment and Reset buttons.',
+    'Use semantic HTML, visible focus styles, an aria-live count, and no external dependencies.',
+    'Briefly explain the generated file.',
+  ].join(' ')
+  const run = await journey.run([
+    '--capability', 'website.generation',
+    '--prompt', prompt,
+  ])
+  const response = responseResult(run.payload, 'response.read')
+  assert.equal(response?.visibleProof, 'visible-arena-current-turn-code-artifact-read')
+  assert.equal(response?.text.includes(prompt), false)
+  assert.equal(response?.artifacts?.length, 1)
+  const artifact = response.artifacts[0]
+  assert.equal(artifact?.kind, 'code')
+  assert.equal(artifact?.visibleProof, 'visible-arena-current-file-code-and-associated-preview')
+  assert.equal(artifact?.files?.length, 1)
+  const file = artifact.files[0]
+  assert.equal(file?.name, 'index.html')
+  assert.equal(file?.language, 'html')
+  assert.equal(file?.mediaType, 'text/html')
+  assert.match(file?.content ?? '', /<!doctype html>/iu)
+  assert.match(file?.content ?? '', /aria-live=["']polite["']/iu)
+  assert.match(file?.content ?? '', /focus-visible/iu)
+  assert.match(file?.content ?? '', />\s*Increment\s*</iu)
+  assert.match(file?.content ?? '', />\s*Reset\s*</iu)
+  assert.equal(typeof artifact.previewUrl, 'string')
+  const previewUrl = new URL(artifact.previewUrl)
+  assert.equal(previewUrl.protocol, 'https:')
+  assert.equal(previewUrl.hostname.endsWith('.arena.site'), true)
+  assert.equal(artifact.downloadAvailable, true)
+
+  const assistant = run.page.locator('ol.flex-col-reverse > :first-child + div').filter({
+    visible: true,
+    has: run.page.getByRole('button', { name: 'Created index.html', exact: true }),
+  }).first()
+  assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
+  const created = assistant.getByRole('button', { name: 'Created index.html', exact: true })
+  const filePanel = created.locator('xpath=..')
+  const visibleCode = filePanel.locator('.shiki.shiki-code-block').filter({ visible: true })
+  assert.equal(await visibleCode.count(), 1)
+  assert.equal((await visibleCode.innerText()).trim(), file.content)
+  const assistantPanel = assistant.locator('xpath=ancestor::*[@data-panel][1]')
+  const workspace = assistantPanel.locator('xpath=parent::*[@data-panel-group-direction][1]')
+  const workspacePanels = workspace.locator(':scope > [data-panel]').filter({ visible: true })
+  assert.equal(await workspacePanels.count(), 2)
+  assert.equal(await assistantPanel.locator('iframe[title="Option A Preview"]').count(), 0)
+  const previewPanel = workspacePanels.filter({
+    has: run.page.locator('iframe[title="Option A Preview"]'),
+  })
+  assert.equal(await previewPanel.count(), 1)
+  assert.match(await previewPanel.innerText(), /arena\.site/u)
+  const preview = previewPanel.locator('iframe[title="Option A Preview"]').filter({ visible: true })
+  assert.equal(await preview.count(), 1)
+  assert.equal(canonicalPageUrl(await preview.getAttribute('src')), canonicalPageUrl(artifact.previewUrl))
+  assert.equal(await previewPanel.getByRole('button', { name: 'Download', exact: true }).filter({ visible: true }).isVisible(), true)
+  await run.close()
+}
+
+async function arenaAgent({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const marker = markerFor(provider, 'AGENT_TERMINAL_RESPONSE')
+  const run = await journey.run([
+    '--capability', 'agent.execute',
+    '--prompt', [
+      'Using only official Arena sources, summarize exactly three Agent Mode tools in a small Markdown table',
+      'with columns Tool, Purpose, and Official source. Cite one visible official HTTPS source for each row.',
+      'Do not use external integrations or take actions outside web research.',
+      `End with this exact marker: ${marker}`,
+    ].join(' '),
+  ])
+  assert.match(run.page.url(), /^https:\/\/arena\.ai\/agent\/[A-Za-z0-9-]+$/u)
+  const response = responseResult(run.payload, 'response.read')
+  assert.equal(response?.visibleProof, 'visible-arena-current-agent-run-terminal-answer-read')
+  assert.match(response?.text ?? '', new RegExp(escapeRegExp(marker)))
+  assert.equal(response?.agentRun?.status, 'succeeded')
+  assert.equal(response?.agentRun?.visibleProof, 'visible-arena-current-agent-run-tool-steps-and-terminal-review')
+  assert.ok(Array.isArray(response?.agentRun?.steps) && response.agentRun.steps.length > 0)
+  assert.ok(response.agentRun.steps.some((step) => step.label === 'Searched the web'))
+  assert.ok(response.agentRun.steps.every((step) => typeof step.details === 'string' && step.details.length > 0))
+  assert.ok(Array.isArray(response?.citations) && response.citations.length > 0)
+  assert.ok(response.citations.every((citation) => (
+    citation.href.startsWith('https://arena.ai/') || citation.href.startsWith('https://help.arena.ai/')
+  )))
+  assert.equal(response?.artifacts, undefined)
+
+  const log = run.page.getByRole('log').filter({ visible: true })
+  assert.equal(await log.count(), 1)
+  const copy = log.getByRole('button', { name: 'Copy', exact: true }).filter({ visible: true })
+  assert.equal(await copy.count(), 1)
+  const card = copy.locator(
+    'xpath=ancestor::div[.//div[contains(concat(" ", normalize-space(@class), " "), " body-base ")]][1]',
+  )
+  assert.equal(await card.count(), 1)
+  const final = card.locator('.prose.body-base').filter({ visible: true })
+  assert.equal(await final.count(), 1)
+  assert.equal((await final.innerText()).replace(/\s+/gu, ' ').trim(), response.text)
+  const visibleCitations = await final.locator('a[href]').filter({ visible: true }).evaluateAll((anchors) => (
+    [...new Set(anchors.map((anchor) => anchor instanceof HTMLAnchorElement ? anchor.href : '').filter(Boolean))]
+  ))
+  assert.deepEqual(
+    visibleCitations.map(canonicalPageUrl).sort(),
+    response.citations.map((citation) => canonicalPageUrl(citation.href)).sort(),
+  )
+  const toolControls = card.locator('button[aria-expanded]').filter({ visible: true })
+  assert.equal(await toolControls.count(), response.agentRun.steps.length)
+  assert.equal(await run.page.getByText('Was this task successful?', { exact: true }).filter({ visible: true }).count(), 1)
+  await run.close()
+}
+
+async function arenaVideo({ provider, journey }) {
+  assert.equal(provider, 'arena')
+  const run = await journey.run([
+    '--capability', 'video.generation',
+    '--prompt', [
+      'Generate a short seamless loop of a flat blue paper airplane gliding smoothly from left to right',
+      'across a clean white background. Use a minimal flat vector style with steady framing,',
+      'no camera movement, no text, and no audio.',
+    ].join(' '),
+  ], 300_000)
+  assert.match(run.page.url(), /^https:\/\/arena\.ai\/c\/[A-Za-z0-9-]+$/u)
+  const response = responseResult(run.payload, 'response.read')
+  assert.equal(response?.visibleProof, 'visible-arena-current-turn-video-artifacts-read')
+  assert.equal(response?.alternatives?.length, 2)
+  assert.equal(response?.artifacts?.length, 2)
+  const artifacts = response.artifacts
+  assert.deepEqual(artifacts.map((artifact) => artifact.label), ['A', 'B'])
+  assert.deepEqual(response.alternatives.map((alternative) => alternative.label), ['A', 'B'])
+  assert.ok(response.alternatives.every((alternative, index) => (
+    alternative.model === null &&
+    alternative.text === artifacts[index].url &&
+    alternative.citations.length === 0
+  )))
+  assert.equal(new Set(artifacts.map((artifact) => canonicalPageUrl(artifact.url))).size, 2)
+  assert.ok(artifacts.every((artifact) => (
+    artifact.kind === 'video' &&
+    artifact.model === null &&
+    artifact.mediaType === 'video/mp4' &&
+    artifact.url.startsWith('https://') &&
+    new URL(artifact.url).pathname.endsWith('.mp4') &&
+    Number.isFinite(artifact.width) && artifact.width > 0 &&
+    Number.isFinite(artifact.height) && artifact.height > 0 &&
+    Number.isFinite(artifact.durationSeconds) && artifact.durationSeconds > 0 &&
+    artifact.downloadAvailable === false &&
+    artifact.visibleProof === 'visible-arena-current-assistant-video-panel'
+  )))
+  assert.ok(artifacts.every((artifact) => response.text.includes(`${artifact.label}: ${artifact.url}`)))
+  assert.equal(response.text.includes('https://arena.ai/videos/cta/agents-cta.mp4'), false)
+
+  const assistant = run.page.locator('ol.flex-col-reverse > :first-child + div').filter({
+    visible: true,
+    has: run.page.getByText('Assistant A', { exact: true }),
+  }).filter({
+    has: run.page.getByText('Assistant B', { exact: true }),
+  })
+  assert.equal(await assistant.count(), 1)
+  for (const artifact of artifacts) {
+    const label = assistant.getByText(`Assistant ${artifact.label}`, { exact: true }).filter({ visible: true })
+    assert.equal(await label.count(), 1)
+    const panel = label.locator('xpath=ancestor::div[.//video][1]')
+    assert.equal(await panel.count(), 1)
+    const video = panel.locator('video').filter({ visible: true })
+    assert.equal(await video.count(), 1)
+    const metadata = await video.evaluate((element) => ({
+      url: element.currentSrc || element.src,
+      width: element.videoWidth,
+      height: element.videoHeight,
+      durationSeconds: element.duration,
+    }))
+    assert.equal(canonicalPageUrl(metadata.url), canonicalPageUrl(artifact.url))
+    assert.equal(metadata.width, artifact.width)
+    assert.equal(metadata.height, artifact.height)
+    assert.equal(metadata.durationSeconds, artifact.durationSeconds)
+    assert.equal(await panel.getByText(/Download/iu).filter({ visible: true }).count(), 0)
+  }
+  assert.equal(await run.page.locator('button[aria-label*="Stop" i]').filter({ visible: true }).count(), 0)
+  await run.close()
 }
 
 async function conversationWorkflow({ provider, journey }) {
@@ -1452,6 +1757,71 @@ async function visibleCitationCount(page, citations) {
     if (expected.has(canonical) && await control.isVisible({ timeout: 100 }).catch(() => false)) count += 1
   }
   return count
+}
+
+function assertArenaImageArtifacts(response) {
+  assert.equal(response?.visibleProof, 'visible-arena-current-turn-image-artifacts-read')
+  assert.ok(Array.isArray(response.artifacts) && response.artifacts.length > 0)
+  assert.ok(response.artifacts.every((artifact) => (
+    artifact?.kind === 'image' &&
+    typeof artifact.url === 'string' &&
+    artifact.url.startsWith('https://') &&
+    typeof artifact.mediaType === 'string' &&
+    artifact.mediaType.startsWith('image/') &&
+    Number.isSafeInteger(artifact.width) &&
+    artifact.width >= 256 &&
+    Number.isSafeInteger(artifact.height) &&
+    artifact.height >= 256
+  )))
+  return response.artifacts
+}
+
+async function visibleArenaArtifactCount(page, artifacts) {
+  const expected = new Set(artifacts.map((artifact) => canonicalPageUrl(artifact.url)))
+  const assistant = currentArenaImageAssistant(page)
+  assert.equal(await assistant.isVisible({ timeout: 100 }).catch(() => false), true)
+  const images = assistant.locator('img').filter({ visible: true })
+  let count = 0
+  for (let index = 0; index < await images.count(); index += 1) {
+    const image = images.nth(index)
+    const source = await image.getAttribute('src').catch(() => null)
+    if (source && expected.has(canonicalPageUrl(new URL(source, page.url()).toString()))) count += 1
+  }
+  return count
+}
+
+async function assertArenaEditSourceDistinct(page, artifacts, sourceName) {
+  const assistant = currentArenaImageAssistant(page)
+  const providerLabels = (await assistant.locator('p.text-xs').filter({ visible: true }).allInnerTexts())
+    .map((value) => value.replace(/\s+/gu, ' ').trim())
+  assert.equal(providerLabels[0], 'Response provided by')
+  assert.ok(providerLabels[1], 'Arena assistant output must expose its visible response provider label')
+
+  const output = await assistant.locator('img').filter({ visible: true }).first().evaluate((image) => ({
+    url: image instanceof HTMLImageElement ? image.currentSrc || image.src : '',
+    width: image instanceof HTMLImageElement ? image.naturalWidth : 0,
+    height: image instanceof HTMLImageElement ? image.naturalHeight : 0,
+  }))
+  const user = page.locator('ol.flex-col-reverse > div.mx-auto.flex.w-full.justify-end').filter({
+    has: page.locator(`img[alt="${sourceName}"]`),
+  }).first()
+  assert.equal(await user.isVisible({ timeout: 100 }).catch(() => false), true)
+  const source = await user.locator(`img[alt="${sourceName}"]`).filter({ visible: true }).first().evaluate((image) => ({
+    url: image instanceof HTMLImageElement ? image.currentSrc || image.src : '',
+    width: image instanceof HTMLImageElement ? image.naturalWidth : 0,
+    height: image instanceof HTMLImageElement ? image.naturalHeight : 0,
+  }))
+
+  assert.equal(canonicalPageUrl(output.url), canonicalPageUrl(artifacts[0].url))
+  assert.notEqual(output.url, source.url)
+  assert.notDeepEqual([output.width, output.height], [source.width, source.height])
+}
+
+function currentArenaImageAssistant(page) {
+  return page.locator('ol.flex-col-reverse > :first-child + div').filter({
+    visible: true,
+    has: page.locator('p.text-tertiary').filter({ hasText: /^Response provided by$/u }),
+  }).first()
 }
 
 async function visibleResearchProgress(page) {

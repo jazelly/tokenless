@@ -347,6 +347,32 @@ async function visibleAttachmentEvidence(
           }]
           : [])
     }
+    if (providerId === 'arena') {
+      const imageEvidence = Array.from(document.querySelectorAll('img[alt]'))
+        .flatMap((image, index) => {
+          if (!isVisibleElement(image)) return []
+          const alt = (image.getAttribute('alt') ?? '').trim().toLowerCase()
+          const extensions = expectedExtensions.filter((extension) => alt.endsWith(extension))
+          if (extensions.length === 0) return []
+          return [{
+            id: `arena-image|${index}|${alt}`,
+            extensions,
+          }]
+        })
+      const fileEvidence = Array.from(document.querySelectorAll('button[aria-label="Remove file"]'))
+        .flatMap((remove, index) => {
+          const card = remove.parentElement?.parentElement
+          if (!card || !isVisibleElement(card)) return []
+          const text = (card.textContent ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+          const extensions = expectedExtensions.filter((extension) => text.includes(extension))
+          if (extensions.length === 0) return []
+          return [{
+            id: `arena-file|${index}|${text.slice(0, 240)}`,
+            extensions,
+          }]
+        })
+      return [...imageEvidence, ...fileEvidence]
+    }
     const selectors = [
       '[data-testid*="attachment" i]',
       '[data-testid*="upload" i]',

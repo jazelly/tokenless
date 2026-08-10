@@ -210,6 +210,8 @@ const PRIORITY_VISIBLE_PROVIDER_ACTIONS = new Set([
   'auth.status',
   'model.inspect',
   'model.select',
+  'arena.surface.inspect',
+  'arena.surface.select',
   'effort.inspect',
   'effort.select',
   'qwen.mode.inspect',
@@ -1323,6 +1325,9 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (action.startsWith('qwen.mode.') && normalizeProvider(args.provider) !== 'qwen') {
     throw usageError('qwen_mode_unsupported', 'qwen.mode actions are available only for the Qwen provider.')
   }
+  if (action.startsWith('arena.') && normalizeProvider(args.provider) !== 'arena') {
+    throw usageError('arena_control_unsupported', 'arena actions are available only for the Arena provider.')
+  }
   if (action.startsWith('deepseek.') && normalizeProvider(args.provider) !== 'deepseek') {
     throw usageError('deepseek_control_unsupported', 'deepseek actions are available only for the DeepSeek provider.')
   }
@@ -1341,6 +1346,7 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
   if (
     action === 'auth.status' ||
     action === 'model.inspect' ||
+    action === 'arena.surface.inspect' ||
     action === 'effort.inspect' ||
     action === 'qwen.mode.inspect' ||
     action === 'deepseek.mode.inspect' ||
@@ -1383,6 +1389,20 @@ async function visibleProviderActionFromArgs(args: CliArgs) {
       throw usageError('model_fallback_unsupported', 'provider-action model.select accepts one exact --model label; --model-fallback is not supported.')
     }
     return { action, payload: { label } }
+  }
+
+  if (action === 'arena.surface.select') {
+    assertProviderActionPayloadOptions(args, new Set(['arenaMode', 'arenaModality']))
+    if (args.arenaMode === undefined || args.arenaModality === undefined) {
+      throw usageError('missing_visible_action_arena_surface', 'arena.surface.select requires --arena-mode and --arena-modality.')
+    }
+    return {
+      action,
+      payload: {
+        mode: normalizeArenaMode(args.arenaMode),
+        modality: normalizeArenaModality(args.arenaModality),
+      },
+    }
   }
 
   if (action === 'effort.select') {
@@ -1537,6 +1557,8 @@ function assertProviderActionPayloadOptions(args: CliArgs, allowed: Set<string>)
     ['thinkingEffort', '--thinking-effort'],
     ['qwenMode', '--qwen-mode'],
     ['qwenModeVariant', '--qwen-mode-variant'],
+    ['arenaMode', '--arena-mode'],
+    ['arenaModality', '--arena-modality'],
     ['deepSeekMode', '--deepseek-mode'],
     ['deepSeekDeepThink', '--deepseek-deepthink'],
     ['deepSeekSearch', '--deepseek-search'],
@@ -1886,6 +1908,8 @@ function automaticProviderFallbackAllowed({
     args.thinkingEffort === undefined &&
     args.qwenMode === undefined &&
     args.qwenModeVariant === undefined &&
+    args.arenaMode === undefined &&
+    args.arenaModality === undefined &&
     args.deepSeekMode === undefined &&
     args.deepSeekDeepThink === undefined &&
     args.deepSeekSearch === undefined &&
@@ -2145,6 +2169,16 @@ function managedVisibleActions({
   if (workspace !== undefined) {
     actions.push({ requestId: `${requestId}:workspace`, action: VISIBLE_ACTIONS.WORKSPACE_ENSURE, payload: workspace })
   }
+  if (providerControls.arenaMode !== undefined && providerControls.arenaModality !== undefined) {
+    actions.push({
+      requestId: `${requestId}:arena-surface`,
+      action: VISIBLE_ACTIONS.ARENA_SURFACE_SELECT,
+      payload: {
+        mode: providerControls.arenaMode,
+        modality: providerControls.arenaModality,
+      },
+    })
+  }
   if (providerControls.qwenMode !== undefined) {
     actions.push({
       requestId: `${requestId}:qwen-mode`,
@@ -2222,12 +2256,85 @@ async function managedProviderTarget({
   daemonStartTimeoutMs?: number | undefined
   profileId: string
 }) {
+  if (
+    provider === 'arena' &&
+    explicitTargetUrl !== undefined &&
+    taskCapabilities.includes(TASK_CAPABILITIES.AGENT_EXECUTE)
+  ) {
+    throw usageError(
+      'arena_agent_explicit_target_unavailable',
+      'Arena agent.execute selects its fixed /agent surface and does not accept --target-url.',
+    )
+  }
+  if (
+    provider === 'arena' &&
+    explicitTargetUrl !== undefined &&
+    taskCapabilities.includes(TASK_CAPABILITIES.VIDEO_GENERATION)
+  ) {
+    throw usageError(
+      'arena_video_explicit_target_unavailable',
+      'Arena video.generation selects its fixed /video surface and does not accept --target-url.',
+    )
+  }
+  if (taskCapabilities.includes(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    if (workspaceMode !== 'conversation') {
+      throw usageError(
+        'conversation_continue_workspace_required',
+        'conversation.continue requires --workspace-mode conversation.',
+      )
+    }
+    if (!taskId) {
+      throw usageError(
+        'conversation_continue_task_identity_required',
+        'conversation.continue requires a stable task identity.',
+      )
+    }
+    const daemon = await ensureDaemonReady({
+      homeDir,
+      daemonUrl,
+      timeoutMs: daemonStartTimeoutMs,
+      requiredProvider: provider,
+    })
+    const resolved = await resolveProviderConversation({
+      homeDir,
+      daemonUrl: daemon.url,
+      provider,
+      profileId,
+      taskId,
+    })
+    const mapped = resolved.mapping?.canonical_url
+    if (!mapped) {
+      throw usageError(
+        'conversation_continue_mapping_required',
+        'conversation.continue requires an existing exact provider conversation mapping for this task.',
+      )
+    }
+    const mappedUrl = providerWakeUrl(provider, mapped)
+    if (explicitTargetUrl !== undefined) {
+      const explicitUrl = new URL(providerWakeUrl(provider, explicitTargetUrl))
+      explicitUrl.search = ''
+      explicitUrl.hash = ''
+      if (explicitUrl.toString() !== mappedUrl) {
+        throw usageError(
+          'conversation_continue_target_mismatch',
+          'conversation.continue target must match the existing exact provider conversation mapping.',
+        )
+      }
+    }
+    return { url: mappedUrl, resumesConversation: true }
+  }
   if (explicitTargetUrl !== undefined) {
     const candidate = providerWakeUrl(provider, explicitTargetUrl)
     const parsed = new URL(candidate)
     parsed.search = ''
     parsed.hash = ''
     return { url: parsed.toString(), resumesConversation: false }
+  }
+  if (provider === 'arena' && taskCapabilities.includes(TASK_CAPABILITIES.AGENT_EXECUTE)) {
+    return { url: 'https://arena.ai/agent', resumesConversation: false }
+  }
+  if (provider === 'arena' && taskCapabilities.includes(TASK_CAPABILITIES.VIDEO_GENERATION)) {
+    return { url: 'https://arena.ai/video', resumesConversation: false }
   }
   const kimiSurface = provider === 'kimi' ? kimiCapabilitySurface(taskCapabilities) : null
   if (kimiSurface) return { url: new URL(kimiSurface, 'https://www.kimi.com').toString(), resumesConversation: false }
@@ -4835,6 +4942,7 @@ function createCommandContracts(): CommandContract[] {
     'runnerHeartbeatTimeoutMs', 'timeoutMs', 'cancelTimeoutMs', 'targetUrl', 'taskId', 'idempotencyKey',
     'projectName', 'chatName', 'workspaceMode', 'projectInstructions', 'projectInstructionsFile',
     'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant',
+    'arenaMode', 'arenaModality',
     'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill',
     'chatSurface', 'noWait',
     'agentKind', 'agentSessionId',
@@ -4876,7 +4984,7 @@ function createCommandContracts(): CommandContract[] {
     { command: 'inspect-chatgpt-controls', usage: ['tokenless inspect-chatgpt-controls --profile <slug> --json'], options: providerInspectOptions },
     { command: 'provider-configure', usage: ['tokenless provider-configure --profile <slug> --provider <provider> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
     { command: 'chatgpt-configure', usage: ['tokenless chatgpt-configure --profile <slug> [--model <label>] [--effort <label>] --json'], options: providerConfigureOptions },
-    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill'] },
+    { command: 'provider-action', usage: [`tokenless provider-action --profile <slug> --provider <provider> --action <${PRIORITY_VISIBLE_PROVIDER_ACTION_LIST.replace(/, /g, '|')}> --json`], options: [...providerInspectOptions, 'action', 'prompt', 'promptFile', 'attachFiles', 'projectName', 'projectInstructions', 'projectInstructionsFile', 'workspaceMode', 'model', 'modelFallbacks', 'effort', 'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink', 'deepSeekSearch', 'doubaoMode', 'doubaoSkill', 'kimiSearch', 'kimiPlugin', 'kimiSkill'] },
     { command: 'snapshot-dom', usage: ['tokenless snapshot-dom --profile <slug> --provider <provider> --json'], options: providerInspectOptions },
     { command: 'state', usage: ['tokenless state (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
     { command: 'status', usage: ['tokenless status (--task-id <task-id>|--job-id <job-id>|--profile <slug>) --json'], options: ['home', 'json', 'profile', 'provider', 'daemonUrl', 'daemonStartTimeoutMs', 'taskId', 'idempotencyKey', 'jobId', 'projectName', 'chatName', 'limit', 'agentKind', 'agentSessionId'] },
@@ -4977,6 +5085,8 @@ function parseArgs(argv: string[], context: CommandContext): CliArgs {
     '--thinking-effort': 'thinkingEffort',
     '--qwen-mode': 'qwenMode',
     '--qwen-mode-variant': 'qwenModeVariant',
+    '--arena-mode': 'arenaMode',
+    '--arena-modality': 'arenaModality',
     '--deepseek-mode': 'deepSeekMode',
     '--deepseek-deepthink': 'deepSeekDeepThink',
     '--deepseek-search': 'deepSeekSearch',
@@ -5323,7 +5433,7 @@ function assertVisibleRunArguments(args: CliArgs) {
   const unsupported = explicitlySelectedArgumentFlags(args, [
     'targetUrl', 'taskId', 'idempotencyKey', 'projectName', 'chatName', 'workspaceMode',
     'projectInstructions', 'projectInstructionsFile', 'model', 'modelFallbacks', 'effort',
-    'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'deepSeekMode', 'deepSeekDeepThink',
+    'thinkingEffort', 'qwenMode', 'qwenModeVariant', 'arenaMode', 'arenaModality', 'deepSeekMode', 'deepSeekDeepThink',
     'deepSeekSearch', 'kimiSearch', 'kimiPlugin', 'kimiSkill', 'chatSurface', 'longRunning',
   ])
   if (unsupported.length > 0) {
@@ -5370,6 +5480,18 @@ function taskCapabilityRequirementsForExecution(
 
   if (explicit.includes(TASK_CAPABILITIES.FILE_UPLOAD) && args.attachFiles.length === 0) {
     throw usageError('task_capability_input_required', 'file.upload requires at least one --attach-file <path>.')
+  }
+  if (
+    (
+      explicit.includes(TASK_CAPABILITIES.IMAGE_INPUT) ||
+      explicit.includes(TASK_CAPABILITIES.IMAGE_EDIT)
+    ) &&
+    args.attachFiles.length === 0
+  ) {
+    throw usageError(
+      'task_capability_input_required',
+      'image.input and image.edit require at least one --attach-file <image-path>.',
+    )
   }
   if (explicit.includes(TASK_CAPABILITIES.WORKSPACE_KNOWLEDGE) && args.attachFiles.length === 0) {
     throw usageError('task_capability_input_required', 'workspace.knowledge requires at least one --attach-file <path>.')
@@ -5449,6 +5571,7 @@ function resolveProviderControls({
   const hasRequestedModelControl = args.model !== undefined || args.modelFallbacks !== undefined
   const hasRequestedEffortControl = args.effort !== undefined || args.thinkingEffort !== undefined
   const hasRequestedQwenMode = args.qwenMode !== undefined || args.qwenModeVariant !== undefined
+  const hasRequestedArenaSurface = args.arenaMode !== undefined || args.arenaModality !== undefined
   const hasRequestedDeepSeekControl = (
     args.deepSeekMode !== undefined ||
     args.deepSeekDeepThink !== undefined ||
@@ -5463,7 +5586,7 @@ function resolveProviderControls({
     action === 'inspect_controls' ||
     action === 'inspect_chatgpt_controls'
   )
-  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl)) {
+  if (inspectionAction && (hasRequestedModelControl || hasRequestedEffortControl || hasRequestedQwenMode || hasRequestedArenaSurface || hasRequestedDeepSeekControl || hasRequestedKimiControl || hasRequestedChatGptControl)) {
     throw usageError(
       'controls_unsupported_for_action',
       'Control selection options are not accepted by provider-controls or chatgpt-controls; use a configure command.'
@@ -5481,6 +5604,9 @@ function resolveProviderControls({
       '--qwen-mode and --qwen-mode-variant are available only for the Qwen provider.'
     )
   }
+  if (provider !== 'arena' && hasRequestedArenaSurface) {
+    throw usageError('arena_control_unsupported', '--arena-mode and --arena-modality are available only for Arena.')
+  }
   if (provider !== 'deepseek' && hasRequestedDeepSeekControl) {
     throw usageError(
       'deepseek_control_unsupported',
@@ -5491,6 +5617,120 @@ function resolveProviderControls({
     throw usageError('kimi_control_unsupported', '--kimi-search, --kimi-plugin, and --kimi-skill are available only for the Kimi provider.')
   }
   if (inspectionAction) return {}
+
+  const requestedCapabilities = new Set(requirements)
+  const requiresArenaAgent = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.AGENT_EXECUTE)
+  const requiresArenaComparison = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.MODEL_COMPARE)
+  const requiresArenaSearch = provider === 'arena' && (
+    requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB) ||
+    requestedCapabilities.has(TASK_CAPABILITIES.RESPONSE_CITATIONS)
+  ) && !requiresArenaAgent
+  const requiresArenaImage = provider === 'arena' && (
+    requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+    requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_EDIT) ||
+    requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT)
+  )
+  const requiresArenaCode = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.WEBSITE_GENERATION)
+  const requiresArenaVideo = provider === 'arena' && requestedCapabilities.has(TASK_CAPABILITIES.VIDEO_GENERATION)
+  if (requiresArenaAgent && hasRequestedModelControl) {
+    throw usageError(
+      'arena_agent_model_control_unavailable',
+      'Arena agent.execute cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaAgent && hasRequestedArenaSurface) {
+    throw usageError(
+      'arena_agent_surface_control_unavailable',
+      'Arena Agent is an independent surface and cannot be combined with --arena-mode or --arena-modality.',
+    )
+  }
+  if (requiresArenaAgent && args.attachFiles.length > 0) {
+    throw usageError(
+      'arena_agent_file_upload_unavailable',
+      'Arena agent.execute does not support file input until its Agent attachment lifecycle is proven.',
+    )
+  }
+  if (
+    requiresArenaAgent &&
+    (
+      requestedCapabilities.has(TASK_CAPABILITIES.MODEL_COMPARE) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_EDIT) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.WEBSITE_GENERATION)
+    )
+  ) {
+    throw usageError(
+      'arena_agent_capability_combination_unavailable',
+      'Arena agent.execute cannot be combined with comparison, image, or Code outcomes.',
+    )
+  }
+  if (requiresArenaAgent && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_agent_continuation_unavailable',
+      'Arena agent.execute cannot be combined with conversation.continue until Agent continuation is proven.',
+    )
+  }
+  if (requiresArenaComparison && hasRequestedModelControl) {
+    throw usageError(
+      'arena_comparison_model_control_unavailable',
+      'model.compare on Arena cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaImage && hasRequestedModelControl) {
+    throw usageError(
+      'arena_image_model_control_unavailable',
+      'Arena image generation and editing cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaCode && hasRequestedModelControl) {
+    throw usageError(
+      'arena_code_model_control_unavailable',
+      'Arena website generation cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaVideo && hasRequestedModelControl) {
+    throw usageError(
+      'arena_video_model_control_unavailable',
+      'Arena video.generation cannot be combined with --model or --model-fallback.',
+    )
+  }
+  if (requiresArenaVideo && hasRequestedArenaSurface) {
+    throw usageError(
+      'arena_video_surface_control_unavailable',
+      'Arena Video is an independent Battle-only surface and cannot be combined with --arena-mode or --arena-modality.',
+    )
+  }
+  if (requiresArenaVideo && args.attachFiles.length > 0) {
+    throw usageError(
+      'arena_video_file_upload_unavailable',
+      'Arena video.generation does not support file input until its image-to-video lifecycle is proven.',
+    )
+  }
+  if (
+    requiresArenaVideo &&
+    (
+      requestedCapabilities.has(TASK_CAPABILITIES.MODEL_COMPARE) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.RESPONSE_CITATIONS) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_GENERATION) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_EDIT) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.WEBSITE_GENERATION) ||
+      requestedCapabilities.has(TASK_CAPABILITIES.AGENT_EXECUTE)
+    )
+  ) {
+    throw usageError(
+      'arena_video_capability_combination_unavailable',
+      'Arena video.generation cannot be combined with comparison, Search, Image, Code, or Agent outcomes.',
+    )
+  }
+  if (requiresArenaVideo && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_video_continuation_unavailable',
+      'Arena video.generation cannot be combined with conversation.continue until Video continuation is proven.',
+    )
+  }
 
   const model = args.model === undefined
     ? undefined
@@ -5517,7 +5757,92 @@ function resolveProviderControls({
     throw usageError('qwen_mode_variant_requires_mode', '--qwen-mode-variant requires --qwen-mode.')
   }
 
-  const requestedCapabilities = new Set(requirements)
+  const arenaMode = args.arenaMode === undefined
+    ? (requiresArenaComparison || requiresArenaSearch || requiresArenaImage || requiresArenaCode
+        ? (requiresArenaComparison ? 'battle' as const : 'direct' as const)
+        : args.arenaModality === undefined ? undefined : 'direct' as const)
+    : normalizeArenaMode(args.arenaMode)
+  const arenaModality = args.arenaModality === undefined
+    ? (requiresArenaSearch
+        ? 'search' as const
+        : requiresArenaImage
+          ? 'image' as const
+          : requiresArenaCode
+            ? 'code' as const
+          : arenaMode === undefined ? undefined : 'text' as const)
+    : normalizeArenaModality(args.arenaModality)
+  if (requiresArenaComparison && arenaMode === 'direct') {
+    throw usageError(
+      'arena_comparison_mode_unavailable',
+      'model.compare on Arena requires --arena-mode battle or --arena-mode side-by-side.',
+    )
+  }
+  if (requiresArenaComparison && arenaModality !== 'text') {
+    throw usageError(
+      'arena_comparison_modality_unavailable',
+      'model.compare on Arena currently supports only --arena-modality text.',
+    )
+  }
+  if (requiresArenaComparison && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_comparison_continuation_unavailable',
+      'model.compare cannot be combined with conversation.continue until comparison continuation is proven.',
+    )
+  }
+  if (requiresArenaSearch && arenaMode !== 'direct') {
+    throw usageError(
+      'arena_search_mode_unavailable',
+      'search.web and response.citations on Arena require --arena-mode direct.',
+    )
+  }
+  if (requiresArenaSearch && arenaModality !== 'search') {
+    throw usageError(
+      'arena_search_modality_unavailable',
+      'search.web and response.citations on Arena require --arena-modality search.',
+    )
+  }
+  if (requiresArenaSearch && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_search_continuation_unavailable',
+      'Arena Search cannot be combined with conversation.continue until Search continuation is proven.',
+    )
+  }
+  if (requiresArenaImage && arenaMode !== 'direct') {
+    throw usageError(
+      'arena_image_mode_unavailable',
+      'Arena image generation and editing require --arena-mode direct.',
+    )
+  }
+  if (requiresArenaImage && arenaModality !== 'image') {
+    throw usageError(
+      'arena_image_modality_unavailable',
+      'Arena image generation and editing require --arena-modality image.',
+    )
+  }
+  if (requiresArenaImage && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_image_continuation_unavailable',
+      'Arena image generation and editing cannot be combined with conversation.continue until image continuation is proven.',
+    )
+  }
+  if (requiresArenaCode && arenaMode !== 'direct') {
+    throw usageError(
+      'arena_code_mode_unavailable',
+      'Arena website generation requires --arena-mode direct.',
+    )
+  }
+  if (requiresArenaCode && arenaModality !== 'code') {
+    throw usageError(
+      'arena_code_modality_unavailable',
+      'Arena website generation requires --arena-modality code.',
+    )
+  }
+  if (requiresArenaCode && requestedCapabilities.has(TASK_CAPABILITIES.CONVERSATION_CONTINUE)) {
+    throw usageError(
+      'arena_code_continuation_unavailable',
+      'Arena website generation cannot be combined with conversation.continue until Code continuation is proven.',
+    )
+  }
   const requiresDeepSeekSearch = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.SEARCH_WEB)
   const requiresDeepSeekVision = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.IMAGE_INPUT)
   const requiresDeepSeekReasoning = provider === 'deepseek' && requestedCapabilities.has(TASK_CAPABILITIES.REASONING_EXTENDED)
@@ -5585,6 +5910,8 @@ function resolveProviderControls({
       effort,
       qwenMode,
       qwenModeVariant,
+      arenaMode,
+      arenaModality,
       deepSeekMode,
       deepSeekDeepThink,
       deepSeekSearch,
@@ -5623,6 +5950,18 @@ function normalizeDeepSeekMode(value: unknown) {
   if (normalized === 'expert') return 'Expert' as const
   if (normalized === 'vision') return 'Vision' as const
   throw usageError('invalid_deepseek_mode', '--deepseek-mode must be Instant, Expert, or Vision.')
+}
+
+function normalizeArenaMode(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'battle' || normalized === 'side-by-side' || normalized === 'direct') return normalized
+  throw usageError('invalid_arena_mode', '--arena-mode must be battle, side-by-side, or direct.')
+}
+
+function normalizeArenaModality(value: unknown) {
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'text' || normalized === 'search' || normalized === 'image' || normalized === 'code') return normalized
+  throw usageError('invalid_arena_modality', '--arena-modality must be text, search, image, or code.')
 }
 
 function normalizeKimiSearch(value: unknown) {
@@ -6223,6 +6562,8 @@ function optionUsageLabel(option: string) {
     targetUrl: '--target-url <url>',
     taskId: '--task-id <task-id>',
     thinkingEffort: '--thinking-effort <label>',
+    arenaMode: '--arena-mode <battle|side-by-side|direct>',
+    arenaModality: '--arena-modality <text|search|image|code>',
     timeoutMs: '--timeout-ms <ms>',
     turnContextFile: '--turn-context-file <path>',
     verbose: '-v, --verbose',

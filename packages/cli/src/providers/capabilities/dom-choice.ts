@@ -182,7 +182,7 @@ async function selectChoice(
       visibleProof: 'exact-label-not-found',
     }
   }
-  const option = await exactVisibleChoiceLocator(page, label)
+  const option = await exactVisibleChoiceLocator(page, provider, label)
   if (!option) {
     return {
       supported: true as const,
@@ -204,7 +204,11 @@ async function selectChoice(
   }
 }
 
-async function exactVisibleChoiceLocator(page: Page, label: string): Promise<Locator | null> {
+async function exactVisibleChoiceLocator(
+  page: Page,
+  provider: ProviderDomDefinition,
+  label: string,
+): Promise<Locator | null> {
   const candidates = page.locator([
     '[role="menuitem"]',
     '[role="menuitemradio"]',
@@ -216,14 +220,17 @@ async function exactVisibleChoiceLocator(page: Page, label: string): Promise<Loc
   const count = Math.min(await candidates.count(), 80)
   for (let index = 0; index < count; index += 1) {
     const candidate = candidates.nth(index)
-    const text = await candidate.evaluate((element) => (
+    const text = await candidate.evaluate((element, providerId) => (
+      (providerId === 'arena'
+        ? element.querySelector('.text-lg, .font-mono')?.textContent
+        : null) ??
       element.querySelector('.label')?.textContent ??
       (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline')?.textContent : null) ??
       (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate')?.textContent : null) ??
       element.getAttribute('aria-label') ??
       element.textContent ??
       ''
-    ).replace(/\s+/gu, ' ').trim())
+    ).replace(/\s+/gu, ' ').trim(), provider.id)
     if (text === label) return candidate
   }
   return null
@@ -271,8 +278,10 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
   ]
   const choices: Choice[] = []
   for (const locator of locators) {
-    const values = await locator.evaluateAll((elements, choiceAvailability) => elements.slice(0, 80).map((element) => {
-      const labelElement = element.querySelector('.label') ??
+    const values = await locator.evaluateAll((elements, options) => elements.slice(0, 80).map((element) => {
+      const labelElement = (options.providerId === 'arena'
+        ? element.querySelector('.text-lg, .font-mono')
+        : null) ?? element.querySelector('.label') ??
         (element.matches('[role="menuitemcheckbox"]') ? element.querySelector('.text-subheadline') : null) ??
         (element.matches('[role="menuitemradio"], [role="menuitemcheckbox"]') ? element.querySelector('.truncate') : null)
       const text = (labelElement?.textContent ?? element.getAttribute('aria-label') ?? element.textContent ?? '').replace(/\s+/g, ' ').trim()
@@ -285,11 +294,11 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
       const dataDisabled = element.getAttribute('data-disabled')
       const classTokens = new Set((element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean))
       const style = element instanceof HTMLElement ? window.getComputedStyle(element) : null
-      const explicitlyUnavailable = choiceAvailability.unavailableClassTokens.some((token) => classTokens.has(token))
-      const mutedUnavailable = choiceAvailability.mutedUnavailableClassToken !== null &&
-        classTokens.has(choiceAvailability.mutedUnavailableClassToken) &&
+      const explicitlyUnavailable = options.choiceAvailability.unavailableClassTokens.some((token) => classTokens.has(token))
+      const mutedUnavailable = options.choiceAvailability.mutedUnavailableClassToken !== null &&
+        classTokens.has(options.choiceAvailability.mutedUnavailableClassToken) &&
         (
-          (choiceAvailability.mutedOpacityClassToken !== null && classTokens.has(choiceAvailability.mutedOpacityClassToken)) ||
+          (options.choiceAvailability.mutedOpacityClassToken !== null && classTokens.has(options.choiceAvailability.mutedOpacityClassToken)) ||
           (style !== null && Number(style.opacity) < 1)
         )
       const unrelatedAccountControl = /(?:sign|log) in|upgrade|subscribe/i.test(fullText) ||
@@ -307,7 +316,10 @@ async function collectVisibleChoices(page: Page, provider: ProviderDomDefinition
         selected: ariaSelected,
         enabled: !disabled,
       }
-    }).filter((entry) => entry.label.length > 0), provider.choiceAvailability)
+    }).filter((entry) => entry.label.length > 0), {
+      choiceAvailability: provider.choiceAvailability,
+      providerId: provider.id,
+    })
     choices.push(...values)
   }
   const seen = new Set<string>()

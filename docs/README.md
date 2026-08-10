@@ -8,6 +8,7 @@ This index separates user guidance, stable product contracts, implementation arc
 - [CLI Commands](../COMMANDS.md) — complete command and option reference.
 - [Capability Matrix](capability-matrix.md) — canonical outcomes, current provider mappings, support states, and extension rules.
 - [API Proxy Integration](api-proxy-integration.md) — calling the OpenAI/Anthropic-compatible local proxy from an existing project.
+- [OpenAI-Compatible Arena Chat](openai-compatible-api.md) — local model listing, text completion, authentication, and stateless transcript replay.
 - [Privacy](../PRIVACY.md) — browser-profile, credential, file, and local-data boundaries.
 
 ## Concepts and Architecture

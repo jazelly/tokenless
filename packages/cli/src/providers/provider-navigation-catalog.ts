@@ -40,12 +40,21 @@ function navigation(definition: ProviderNavigationDefinition): ProviderNavigatio
 export const PROVIDER_NAVIGATION_CATALOG = Object.freeze({
   arena: navigation({
     entryUrl: 'https://arena.ai/',
-    homeUrl: 'https://arena.ai/',
+    homeUrl: 'https://arena.ai/text/direct',
     origins: ['https://arena.ai'],
     pagePatterns: pages(
       { kind: 'entry', urlPattern: 'https://arena.ai/' },
       { kind: 'chat_runtime', urlPattern: 'https://arena.ai/text' },
       { kind: 'chat_runtime', urlPattern: 'https://arena.ai/text/direct' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/text/side-by-side' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/search' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/search/direct' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/search/side-by-side' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/image/direct' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/code/direct' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/agent' },
+      { kind: 'conversation', urlPattern: 'https://arena.ai/agent/:runId' },
+      { kind: 'chat_runtime', urlPattern: 'https://arena.ai/video' },
       { kind: 'conversation', urlPattern: 'https://arena.ai/c/:conversationId' },
     ),
     trustedSignInOrigins: [],

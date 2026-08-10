@@ -52,15 +52,25 @@ Provider selection 前会展开所有 implication。同一家 provider 必须满
 | Canonical capability | ChatGPT | Claude | Gemini | Grok | Qwen | DeepSeek | Perplexity | Z.ai | Doubao | Kimi | Dola | Arena | Meta AI |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `conversation.chat` | Supported | Supported | Supported | Supported | Experimental | Experimental | Experimental | Experimental | Experimental | Experimental | — | Supported | Experimental |
-| `file.upload` | Supported | Supported | Experimental | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — | — | Experimental |
-| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | — | — |
-| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — | — | — |
+| `conversation.continue` | — | — | — | — | — | — | — | — | — | — | — | Supported | — |
+| `model.compare` | — | — | — | — | — | — | — | — | — | — | — | Supported | — |
+| `agent.execute` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `file.upload` | Supported | Supported | Experimental | Supported | — | Experimental | — | Experimental | Experimental | Experimental | — | Experimental | Experimental |
+| `image.input` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `image.generation` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `image.edit` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `website.generation` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `video.generation` | — | — | — | — | — | — | — | — | — | — | — | Experimental | — |
+| `search.web` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — |
+| `response.citations` | — | — | — | — | — | — | — | — | — | Experimental | — | Experimental | — |
 
 `—` 表示目前没有公开 route，不一定代表 provider 产品没有该功能；也可能是 implementation 或真实 provider evidence 尚未完成。
 
 Route 会按完整 requirement set 评估。例如 image attachment 同时要求 `file.upload` 与 `image.input`；仅有 `file.upload` 这一行并不代表图片上传已经 routeable。
 
-Arena `conversation.chat` 已支持选定的已登录 profile。输入前，adapter 会精确选择 **Direct** mode，并使用 Arena 可见的默认 **Max** router，从而让一次逻辑 provider turn 只返回一份结果；responsive duplicate rendering 的文本必须完全相同，否则 run 会以 ambiguous 失败。Built CLI 与 packaged daemon 通过 headed Cloak `web-ai` 和真实 `arena.ai` network boundary，闭环了 readiness、prompt drafting、关联完成回复、持久化 `/c/:conversationId` mapping，以及同会话 continuation。Adapter 也会处理 provider 自身提供、内容精确的 **Terms of Use & Privacy Policy** → **Agree** onboarding 对话框；由于当前所选账号已经接受过条款，新账号重复验证仍待完成。显式 model/mode selection、file upload、Battle/Side-by-Side、Search、Code、Agent、Image 与 Video outcome 在各自完整 lifecycle 独立闭环前均不公开。
+Arena `conversation.chat`、`conversation.continue` 与 `model.compare` 已支持选定的已登录 profile。新建文字会话前，adapter 会精确选择 **Direct** mode；`model.inspect` 与 `model.select` 可在提交前精确选择一个可见 Direct model，并恢复原始 **Max** router。Built CLI 与 packaged daemon 已证明实质性的 selected-model 回复、持久化 `/c/:conversationId` mapping，以及第二个 CLI 进程在同一 URL 只返回最新回答。Battle 会返回两份匿名回答，并将 `model` 明确设为 `null`；Side-by-Side 会返回两份回答与两个可见 selected model 标签。Generic client 会收到完整 A/B 文本，结构化 client 还会收到 `alternatives`。Arena `search.web` 与 `response.citations` 已作为 experimental routes 开放：请求 Search outcome 会自动选择 Direct Search；真实 reader 已返回一份实质 grounded answer，以及与该回答关联的 source cards 中 normalized HTTPS links。Arena `file.upload`、`image.input`、`image.generation` 与 `image.edit` 已作为 experimental routes 开放。Image outcome 会自动选择 Direct Image，并返回当前 answer 的 `artifacts`，其中包含可见 HTTPS URL、media type、尺寸与 proof；真实运行分别生成了一张 1024×1024 JPEG，并在可见接受 source image 后产生了一张 1372×1146 编辑 PNG。Image task 会在 daemon 提交前拒绝 comparison/search surface、continuation 与 generic model controls。Arena `website.generation` 已作为 experimental route 开放，并会自动选择 Direct Code。真实 reader 返回了当前 assistant 的完整单文件 `index.html` artifact、与其关联的 HTTPS `arena.site` preview，以及可见 download availability；code execution 与 artifact download 仍不公开。Arena `agent.execute` 已作为 experimental route 开放，并会进入独立 `/agent` surface，而不是 Direct Search。它的 current-run reader 会在 provider 显示 task-success review panel 后，返回一份终态回答、answer-scoped 官方 citations 与结构化可见 tool steps；Tokenless 不会回答该 review prompt。Agent attachment、continuation、comparison、Image/Code 组合与 model controls 会在 daemon 提交前失败。Arena `video.generation` 已作为 experimental route 开放，并会自动进入独立且仅支持 Battle 的 `/video` surface。它的 current-turn reader 会同时返回匿名 A/B 两个 HTTPS MP4 artifact 及其尺寸与时长；真实运行得到 1280×720/8 秒和 848×480/8.041667 秒两个视频，而 model selection、attachment、continuation、download 与跨 surface outcome 仍不可用。Adapter 也会处理 provider 自身提供、内容精确的 **Terms of Use & Privacy Policy** → **Agree** onboarding 对话框；由于当前所选账号已经接受过条款，新账号重复验证仍待完成。
+
+本地 [OpenAI-compatible Arena adapter](openai-compatible-api.zh-CN.md) 只为普通 non-streaming 文本聊天公开 `arena:max`。每次请求都会新建 Direct conversation；有界的多 message 文本历史使用 stateless transcript replay。Comparison、Search、Image、Code、Agent 与 Video 等 specialized result 继续使用 task API，以保留结构化输出。
 
 Meta AI 的 `conversation.chat` 与 `file.upload` 已对选定的登录 profile 实验性开放。Built CLI 与 packaged daemon 通过 headed Cloak `web-ai` 和真实 `meta.ai` network boundary，闭环了 readiness、prompt drafting、Instant/Thinking 精确选择与恢复、Markdown 附件可见接受、防御性 browser-fingerprinting 实质回答、conversation fallback 与持久化 mapping。另一次真实运行生成了可见的 1920×1280 HTTPS WebP 图片 tile；但公共 CLI action protocol 尚未暴露 image cursor/start/observe/read，因此 `image.generation` 仍不公开。Thinking 的 research steps 与 source list 属于中间态，只返回 terminal assistant message；最终可见 citation link 也尚未闭环。
 

@@ -56,6 +56,7 @@ const closures = new Set([
   'agent_swarm_surface',
   'visible_agent_plan',
   'visible_parallel_progress',
+  'visible_tool_steps',
   'visible_search_selection',
 ])
 

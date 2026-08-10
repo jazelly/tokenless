@@ -98,6 +98,7 @@ export type MessageKey = keyof typeof messages.en
 const capabilityZh: Record<string, readonly [string, string]> = {
   'conversation.chat': ['对话', '提交 prompt，并读取与本次提交对应的可见 provider 响应。'],
   'conversation.continue': ['继续对话', '继续由 Tokenless 精确选中的持久 provider 对话。'],
+  'model.compare': ['比较模型', '对同一个 prompt 返回两份完整可见模型回答，不静默丢弃任一结果。'],
   'file.upload': ['上传文件', '附加调用方选择的文件，并证明 provider 已在可见界面接收。'],
   'image.input': ['图片输入', '把图片作为 provider 输入。'],
   'audio.input': ['音频输入', '把音频作为 provider 输入。'],

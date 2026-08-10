@@ -5,6 +5,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -24,10 +25,18 @@ test('capabilities list exposes canonical outcomes and only evidence-backed rout
   )
   assert.deepEqual(
     byId.get('file.upload').routes.map((route) => route.provider),
-    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'zai', 'doubao', 'kimi', 'meta'],
+    ['chatgpt', 'claude', 'gemini', 'grok', 'deepseek', 'zai', 'doubao', 'kimi', 'meta', 'arena'],
   )
-  assert.deepEqual(byId.get('search.web').routes.map((route) => route.provider), ['kimi'])
-  assert.deepEqual(byId.get('response.citations').routes.map((route) => route.provider), ['kimi'])
+  assert.deepEqual(byId.get('conversation.continue').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('model.compare').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('agent.execute').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('search.web').routes.map((route) => route.provider), ['kimi', 'arena'])
+  assert.deepEqual(byId.get('response.citations').routes.map((route) => route.provider), ['kimi', 'arena'])
+  assert.deepEqual(byId.get('image.input').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('image.generation').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('image.edit').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('website.generation').routes.map((route) => route.provider), ['arena'])
+  assert.deepEqual(byId.get('video.generation').routes.map((route) => route.provider), ['arena'])
   assert.equal(byId.get('workspace.native').routeable, true)
   assert.deepEqual(
     byId.get('workspace.native').routes.map((route) => route.provider),
@@ -191,6 +200,465 @@ test('explicit provider fails before daemon submission when required capability 
     assert.deepEqual(payload.error.context.requirements, ['file.upload', 'conversation.chat'])
     assert.deepEqual(payload.error.context.providers[0].missingCapabilities, ['file.upload'])
     assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('conversation continuation requires workspace intent and an existing exact mapping before job submission', async () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-continuation-route-')))
+  const daemonUrl = `http://127.0.0.1:${await freePort()}`
+  try {
+    seedManagedProfile(homeDir, {
+      arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
+    })
+    writeConfig(homeDir, ['arena'], daemonUrl)
+
+    const missingWorkspace = runCliUnbound([
+      'run',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--provider', 'arena',
+      '--task-id', 'arena-continuation-missing-workspace',
+      '--project-name', 'Arena continuation routing',
+      '--capability', 'conversation.continue',
+      '--prompt', 'This must not reach the provider.',
+      '--json',
+    ])
+    assert.equal(missingWorkspace.status, 1, missingWorkspace.stderr || missingWorkspace.stdout)
+    assert.equal(JSON.parse(missingWorkspace.stdout).error.code, 'conversation_continue_workspace_required')
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+
+    const missingMapping = runCliUnbound([
+      'run',
+      '--home', homeDir,
+      '--daemon-url', daemonUrl,
+      '--provider', 'arena',
+      '--task-id', 'arena-continuation-missing-mapping',
+      '--project-name', 'Arena continuation routing',
+      '--workspace-mode', 'conversation',
+      '--capability', 'conversation.continue',
+      '--prompt', 'This must not reach the provider.',
+      '--json',
+    ])
+    assert.equal(missingMapping.status, 1, missingMapping.stderr || missingMapping.stdout)
+    assert.equal(JSON.parse(missingMapping.stdout).error.code, 'conversation_continue_mapping_required')
+
+    const database = new DatabaseSync(path.join(homeDir, 'tokenless.sqlite3'), { readOnly: true })
+    try {
+      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM jobs').get().count, 0)
+    } finally {
+      database.close()
+    }
+  } finally {
+    if (fs.existsSync(path.join(homeDir, 'daemon.token'))) {
+      runCliUnbound(['daemon', 'stop', '--home', homeDir, '--daemon-url', daemonUrl, '--json'])
+    }
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('Arena model comparison rejects unsupported surfaces and continuation before job submission', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-comparison-route-')))
+  const daemonUrl = 'http://127.0.0.1:9'
+  try {
+    seedManagedProfile(homeDir, {
+      arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
+    })
+    writeConfig(homeDir, ['arena'], daemonUrl)
+
+    const cases = [
+      {
+        args: ['--model', 'Max'],
+        code: 'arena_comparison_model_control_unavailable',
+      },
+      {
+        args: ['--arena-mode', 'direct'],
+        code: 'arena_comparison_mode_unavailable',
+      },
+      {
+        args: ['--arena-mode', 'side-by-side', '--arena-modality', 'search'],
+        code: 'arena_comparison_modality_unavailable',
+      },
+      {
+        args: [
+          '--workspace-mode', 'conversation',
+          '--task-id', 'arena-comparison-continuation',
+          '--capability', 'conversation.continue',
+        ],
+        code: 'arena_comparison_continuation_unavailable',
+      },
+    ]
+
+    for (const entry of cases) {
+      const result = runCliUnbound([
+        'run',
+        '--home', homeDir,
+        '--daemon-url', daemonUrl,
+        '--provider', 'arena',
+        '--capability', 'model.compare',
+        ...entry.args,
+        '--prompt', 'This must not create a job or reach Arena.',
+        '--json',
+      ])
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, entry.code)
+    }
+
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('Arena search capabilities select Direct Search and reject incompatible surfaces before job submission', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-search-route-')))
+  const daemonUrl = 'http://127.0.0.1:9'
+  try {
+    seedManagedProfile(homeDir, {
+      arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
+    })
+    writeConfig(homeDir, ['arena'], daemonUrl)
+
+    const cases = [
+      {
+        args: ['--arena-mode', 'battle'],
+        code: 'arena_search_mode_unavailable',
+      },
+      {
+        args: ['--arena-mode', 'direct', '--arena-modality', 'text'],
+        code: 'arena_search_modality_unavailable',
+      },
+      {
+        args: [
+          '--workspace-mode', 'conversation',
+          '--task-id', 'arena-search-continuation',
+          '--capability', 'conversation.continue',
+        ],
+        code: 'arena_search_continuation_unavailable',
+      },
+    ]
+    for (const entry of cases) {
+      const result = runCliUnbound([
+        'run',
+        '--home', homeDir,
+        '--daemon-url', daemonUrl,
+        '--provider', 'arena',
+        '--capability', 'search.web',
+        '--capability', 'response.citations',
+        ...entry.args,
+        '--prompt', 'This must not create a job or reach Arena.',
+        '--json',
+      ])
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, entry.code)
+    }
+
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('Arena image capabilities reject incompatible controls and missing source images before job submission', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-image-route-')))
+  const daemonUrl = 'http://127.0.0.1:9'
+  try {
+    seedManagedProfile(homeDir, {
+      arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
+    })
+    writeConfig(homeDir, ['arena'], daemonUrl)
+
+    const cases = [
+      {
+        capabilities: ['image.generation'],
+        args: ['--arena-mode', 'battle'],
+        code: 'arena_image_mode_unavailable',
+      },
+      {
+        capabilities: ['image.generation'],
+        args: ['--arena-modality', 'text'],
+        code: 'arena_image_modality_unavailable',
+      },
+      {
+        capabilities: ['image.generation'],
+        args: ['--model', 'Max'],
+        code: 'arena_image_model_control_unavailable',
+      },
+      {
+        capabilities: ['image.generation', 'conversation.continue'],
+        args: [
+          '--workspace-mode', 'conversation',
+          '--task-id', 'arena-image-continuation',
+        ],
+        code: 'arena_image_continuation_unavailable',
+      },
+      {
+        capabilities: ['image.edit'],
+        args: [],
+        code: 'task_capability_input_required',
+      },
+      {
+        capabilities: ['image.input'],
+        args: [],
+        code: 'task_capability_input_required',
+      },
+    ]
+    for (const entry of cases) {
+      const result = runCliUnbound([
+        'run',
+        '--home', homeDir,
+        '--daemon-url', daemonUrl,
+        '--provider', 'arena',
+        ...entry.capabilities.flatMap((capability) => ['--capability', capability]),
+        ...entry.args,
+        '--prompt', 'This must not create a job or reach Arena.',
+        '--json',
+      ])
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, entry.code)
+    }
+
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('Arena website generation selects Direct Code and rejects incompatible controls before job submission', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-code-route-')))
+  const daemonUrl = 'http://127.0.0.1:9'
+  try {
+    seedManagedProfile(homeDir, {
+      arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
+    })
+    writeConfig(homeDir, ['arena'], daemonUrl)
+
+    const cases = [
+      {
+        capabilities: ['website.generation'],
+        args: ['--arena-mode', 'battle'],
+        code: 'arena_code_mode_unavailable',
+      },
+      {
+        capabilities: ['website.generation'],
+        args: ['--arena-modality', 'text'],
+        code: 'arena_code_modality_unavailable',
+      },
+      {
+        capabilities: ['website.generation'],
+        args: ['--model', 'Max'],
+        code: 'arena_code_model_control_unavailable',
+      },
+      {
+        capabilities: ['website.generation', 'conversation.continue'],
+        args: [
+          '--workspace-mode', 'conversation',
+          '--task-id', 'arena-code-continuation',
+        ],
+        code: 'arena_code_continuation_unavailable',
+      },
+      {
+        capabilities: ['website.generation', 'model.compare'],
+        args: [],
+        code: 'arena_comparison_modality_unavailable',
+      },
+      {
+        capabilities: ['website.generation', 'search.web'],
+        args: [],
+        code: 'arena_code_modality_unavailable',
+      },
+      {
+        capabilities: ['website.generation', 'image.generation'],
+        args: [],
+        code: 'arena_code_modality_unavailable',
+      },
+    ]
+    for (const entry of cases) {
+      const result = runCliUnbound([
+        'run',
+        '--home', homeDir,
+        '--daemon-url', daemonUrl,
+        '--provider', 'arena',
+        ...entry.capabilities.flatMap((capability) => ['--capability', capability]),
+        ...entry.args,
+        '--prompt', 'This must not create a job or reach Arena.',
+        '--json',
+      ])
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, entry.code)
+    }
+
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('Arena agent execution rejects unsupported controls and capability combinations before job submission', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-agent-route-')))
+  const daemonUrl = 'http://127.0.0.1:9'
+  const attachment = path.join(homeDir, 'unproven-agent-input.txt')
+  fs.writeFileSync(attachment, 'This must not reach Arena.\n')
+  try {
+    seedManagedProfile(homeDir, {
+      arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
+    })
+    writeConfig(homeDir, ['arena'], daemonUrl)
+
+    const cases = [
+      {
+        capabilities: ['agent.execute'],
+        args: ['--model', 'Max'],
+        code: 'arena_agent_model_control_unavailable',
+      },
+      {
+        capabilities: ['agent.execute'],
+        args: ['--arena-mode', 'direct'],
+        code: 'arena_agent_surface_control_unavailable',
+      },
+      {
+        capabilities: ['agent.execute'],
+        args: ['--attach-file', attachment],
+        code: 'arena_agent_file_upload_unavailable',
+      },
+      {
+        capabilities: ['agent.execute'],
+        args: ['--target-url', 'https://arena.ai/text/direct'],
+        code: 'arena_agent_explicit_target_unavailable',
+      },
+      {
+        capabilities: ['agent.execute', 'model.compare'],
+        args: [],
+        code: 'arena_agent_capability_combination_unavailable',
+      },
+      {
+        capabilities: ['agent.execute', 'image.generation'],
+        args: [],
+        code: 'arena_agent_capability_combination_unavailable',
+      },
+      {
+        capabilities: ['agent.execute', 'website.generation'],
+        args: [],
+        code: 'arena_agent_capability_combination_unavailable',
+      },
+      {
+        capabilities: ['agent.execute', 'conversation.continue'],
+        args: ['--workspace-mode', 'conversation', '--task-id', 'arena-agent-continuation'],
+        code: 'arena_agent_continuation_unavailable',
+      },
+    ]
+    for (const entry of cases) {
+      const result = runCliUnbound([
+        'run',
+        '--home', homeDir,
+        '--daemon-url', daemonUrl,
+        '--provider', 'arena',
+        ...entry.capabilities.flatMap((capability) => ['--capability', capability]),
+        ...entry.args,
+        '--prompt', 'This must not create a job or reach Arena.',
+        '--json',
+      ])
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, entry.code)
+    }
+
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
+  } finally {
+    fs.rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('Arena video generation rejects unsupported controls and capability combinations before job submission', () => {
+  const homeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tokenless-arena-video-route-')))
+  const daemonUrl = 'http://127.0.0.1:9'
+  const attachment = path.join(homeDir, 'unproven-video-input.png')
+  fs.writeFileSync(attachment, 'This must not reach Arena.\n')
+  try {
+    seedManagedProfile(homeDir, {
+      arena: observedProvider('arena', 'authenticated', 'signed_in_unknown'),
+    })
+    writeConfig(homeDir, ['arena'], daemonUrl)
+
+    const cases = [
+      {
+        capabilities: ['video.generation'],
+        args: ['--model', 'Max'],
+        code: 'arena_video_model_control_unavailable',
+      },
+      {
+        capabilities: ['video.generation'],
+        args: ['--arena-mode', 'battle'],
+        code: 'arena_video_surface_control_unavailable',
+      },
+      {
+        capabilities: ['video.generation'],
+        args: ['--attach-file', attachment],
+        code: 'arena_video_file_upload_unavailable',
+      },
+      {
+        capabilities: ['video.generation'],
+        args: ['--target-url', 'https://arena.ai/text/direct'],
+        code: 'arena_video_explicit_target_unavailable',
+      },
+      {
+        capabilities: ['video.generation'],
+        args: ['--target-url', 'https://arena.ai/c/019fec6e-21b3-725c-bd89-f4adc7b146f6'],
+        code: 'arena_video_explicit_target_unavailable',
+      },
+      {
+        capabilities: ['video.generation', 'model.compare'],
+        args: [],
+        code: 'arena_video_capability_combination_unavailable',
+      },
+      {
+        capabilities: ['video.generation', 'search.web'],
+        args: [],
+        code: 'arena_video_capability_combination_unavailable',
+      },
+      {
+        capabilities: ['video.generation', 'image.generation'],
+        args: [],
+        code: 'arena_video_capability_combination_unavailable',
+      },
+      {
+        capabilities: ['video.generation', 'website.generation'],
+        args: [],
+        code: 'arena_video_capability_combination_unavailable',
+      },
+      {
+        capabilities: ['video.generation', 'agent.execute'],
+        args: [],
+        code: 'arena_video_capability_combination_unavailable',
+      },
+      {
+        capabilities: ['video.generation', 'conversation.continue'],
+        args: ['--workspace-mode', 'conversation', '--task-id', 'arena-video-continuation'],
+        code: 'arena_video_continuation_unavailable',
+      },
+    ]
+    for (const entry of cases) {
+      const result = runCliUnbound([
+        'run',
+        '--home', homeDir,
+        '--daemon-url', daemonUrl,
+        '--provider', 'arena',
+        ...entry.capabilities.flatMap((capability) => ['--capability', capability]),
+        ...entry.args,
+        '--prompt', 'This must not create a job or reach Arena.',
+        '--json',
+      ])
+      assert.equal(result.status, 1, result.stderr || result.stdout)
+      assert.equal(JSON.parse(result.stdout).error.code, entry.code)
+    }
+
+    assert.equal(fs.existsSync(path.join(homeDir, 'daemon.token')), false)
+    assert.equal(fs.existsSync(path.join(homeDir, 'tokenless.sqlite3')), false)
   } finally {
     fs.rmSync(homeDir, { recursive: true, force: true })
   }
@@ -425,6 +893,24 @@ function runCli(args) {
     encoding: 'utf8',
     env: {
       ...process.env,
+      TOKENLESS_PROVIDER: '',
+    },
+  })
+}
+
+function runCliUnbound(args) {
+  return spawnSync(process.execPath, [cliEntry, ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CODEX_THREAD_ID: '',
+      TOKENLESS_CONTEXT_BINDING_ID: '',
+      TOKENLESS_TASK_ID: '',
+      TOKENLESS_PROJECT_NAME: '',
+      TOKENLESS_CHAT_NAME: '',
+      TOKENLESS_AGENT_KIND: '',
+      TOKENLESS_AGENT_SESSION_ID: '',
       TOKENLESS_PROVIDER: '',
     },
   })

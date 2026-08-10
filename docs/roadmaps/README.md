@@ -56,7 +56,7 @@ Priority describes product importance, not a promise that all work proceeds seri
 ## Backlog and Archive
 
 - [Backlog](backlog/README.md): no roadmap is currently backlogged.
-- [Archive](archived/README.md): the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; Browser Connection Mode Capability Evaluation and Provider Architecture and Registry were completed; the Daemon Fastify HTTP API direction was cancelled.
+- [Archive](archived/README.md): Arena Full Capability Integration, Browser Connection Mode Capability Evaluation, and Provider Architecture and Registry were completed; the browser runtime/profile compatibility matrix and its Windows acceptance plan were superseded by native Chrome/Brave CDP connection; the Daemon Fastify HTTP API direction was cancelled.
 
 ## How the Roadmaps Fit Together
 

@@ -216,6 +216,7 @@ export function createProviderOptionalCapabilities(
 
 export function providerCapabilities(options: {
   nativeWorkspace?: boolean
+  arenaSurface?: boolean
   qwenMode?: boolean
   deepSeekControls?: boolean
   doubaoControls?: boolean
@@ -383,6 +384,11 @@ export function providerCapabilities(options: {
       }),
       stability: 'experimental',
     }),
+    [PROVIDER_CAPABILITIES.ARENA_SURFACE]: providerSpecificControlStrategy(
+      PROVIDER_CAPABILITIES.ARENA_SURFACE,
+      'arena',
+      options.arenaSurface === true,
+    ),
     [PROVIDER_CAPABILITIES.QWEN_MODE]: Object.freeze({
       capability: PROVIDER_CAPABILITIES.QWEN_MODE,
       availability: options.qwenMode ? 'unknown' : 'unavailable',

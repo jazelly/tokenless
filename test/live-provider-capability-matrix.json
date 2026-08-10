@@ -155,6 +155,137 @@
         "durable_state"
       ]
     },
+    "conversation-continuation": {
+      "gate": "mutation",
+      "submissions": 2,
+      "actions": [
+        "workspace.ensure",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "conversation_fallback",
+        "visible_submission",
+        "visible_response",
+        "two_cli_processes",
+        "same_conversation",
+        "visible_two_turns",
+        "durable_mapping"
+      ]
+    },
+    "model-comparison": {
+      "gate": "mutation",
+      "submissions": 2,
+      "actions": [
+        "arena.surface.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_submission",
+        "visible_response",
+        "exact_visible_identity"
+      ]
+    },
+    "arena-search": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "arena.surface.select",
+        "workspace.ensure",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "conversation_fallback",
+        "visible_submission",
+        "visible_response",
+        "visible_citation",
+        "durable_mapping"
+      ]
+    },
+    "arena-image": {
+      "gate": "mutation",
+      "submissions": 2,
+      "actions": [
+        "arena.surface.select",
+        "file.upload",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_attachment",
+        "visible_submission",
+        "visible_response",
+        "terminal_artifact",
+        "exact_visible_identity"
+      ]
+    },
+    "arena-code": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "arena.surface.select",
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_submission",
+        "visible_response",
+        "terminal_artifact",
+        "exact_visible_identity"
+      ]
+    },
+    "arena-agent": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_submission",
+        "visible_tool_steps",
+        "visible_response",
+        "visible_citation",
+        "terminal_state",
+        "exact_visible_identity"
+      ]
+    },
+    "arena-video": {
+      "gate": "mutation",
+      "submissions": 1,
+      "actions": [
+        "prompt.input",
+        "prompt.submit",
+        "response.read"
+      ],
+      "closure": [
+        "cli",
+        "visible_dom",
+        "visible_submission",
+        "visible_response",
+        "terminal_artifact",
+        "terminal_state",
+        "exact_visible_identity"
+      ]
+    },
     "conversation-workflow": {
       "gate": "mutation",
       "submissions": 2,
@@ -400,12 +531,19 @@
       "required": [
         "session-readiness",
         "prompt-draft",
+        "model-choice",
+        "file-selection",
+        "conversation-continuation",
+        "model-comparison",
+        "arena-search",
+        "arena-image",
+        "arena-code",
+        "arena-agent",
+        "arena-video",
         "workspace-response-baseline"
       ],
       "unavailable": {
-        "model-choice": "no_real_selection_closure",
         "effort-choice": "no_real_selection_closure",
-        "file-selection": "real_file_acceptance_not_proven",
         "conversation-workflow": "file_and_citation_closure_not_proven",
         "workspace-response-citations": "real_visible_citation_closure_not_proven",
         "qwen-mode-workspace": "provider_specific_capability",
@@ -433,6 +571,13 @@
         "conversation-workflow"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "separate_focused_continuation_gate_not_declared",
         "model-choice": "no_visible_model_control_observed_2026_07_28",
         "effort-choice": "no_visible_effort_control_observed_2026_07_28",
         "deepseek-controls": "provider_specific_capability",
@@ -464,6 +609,13 @@
       "native-project"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "separate_focused_continuation_gate_not_declared",
         "effort-choice": "no_independent_effort_control_declared",
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
@@ -491,6 +643,13 @@
         "workspace-response-citations"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "real_two_process_continuation_not_proven",
         "model-choice": "no_enabled_alternate_model_in_selected_guest_profile",
         "effort-choice": "no_independent_effort_control_declared",
         "deepseek-controls": "provider_specific_capability",
@@ -520,6 +679,13 @@
       "conversation-workflow"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "separate_focused_continuation_gate_not_declared",
         "model-choice": "selected_free_plan_only_fast_enabled_2026_08_10",
       "effort-choice": "no_independent_effort_control_observed_2026_08_10",
       "native-project": "no_visible_project_instruction_control_2026_08_10",
@@ -548,6 +714,13 @@
         "effort-choice"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "real_two_process_continuation_not_proven",
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
@@ -577,6 +750,13 @@
         "file-selection"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "real_two_process_continuation_not_proven",
         "model-choice": "no_real_selection_closure",
         "effort-choice": "no_independent_effort_control_declared",
         "deepseek-controls": "provider_specific_capability",
@@ -606,6 +786,13 @@
         "workspace-response-citations"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "real_two_process_continuation_not_proven",
         "model-choice": "no_real_selection_closure",
         "effort-choice": "no_independent_effort_control_declared",
         "deepseek-controls": "provider_specific_capability",
@@ -636,6 +823,13 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "real_two_process_continuation_not_proven",
         "model-choice": "no_real_selection_closure",
         "effort-choice": "no_real_selection_closure",
         "deepseek-controls": "provider_specific_capability",
@@ -666,6 +860,13 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "real_two_process_continuation_not_proven",
         "model-choice": "no_real_selection_closure",
         "effort-choice": "no_real_selection_closure",
         "deepseek-controls": "provider_specific_capability",
@@ -696,6 +897,13 @@
         "kimi-search"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "separate_focused_continuation_gate_not_declared",
         "deepseek-controls": "provider_specific_capability",
         "deepseek-search-reasoning": "provider_specific_capability",
         "deepseek-vision-input": "provider_specific_capability",
@@ -722,6 +930,13 @@
         "model-choice"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "real_two_process_continuation_not_proven",
         "effort-choice": "no_independent_effort_control_declared",
         "file-selection": "selected_setup_profile_multi_document_and_sequential_selection_only_one_visible_card_2026_08_09",
         "conversation-workflow": "no_real_submitted_response_closure",
@@ -753,6 +968,13 @@
         "workspace-response-baseline"
       ],
       "unavailable": {
+        "arena-search": "provider_specific_capability",
+        "arena-image": "provider_specific_capability",
+        "arena-code": "provider_specific_capability",
+        "arena-agent": "provider_specific_capability",
+        "arena-video": "provider_specific_capability",
+        "model-comparison": "provider_specific_capability",
+        "conversation-continuation": "real_two_process_continuation_not_proven",
         "model-choice": "no_independent_model_control_declared",
         "conversation-workflow": "same_conversation_two_process_and_citation_closure_not_proven_2026_08_10",
         "workspace-response-citations": "real_terminal_response_and_citation_closure_not_proven_2026_08_10",
