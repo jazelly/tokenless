@@ -184,6 +184,16 @@ test('managed Chrome for Testing catalog follows the platform Cloak major', asyn
   assert.equal(windows.browserVersion, '146.0.7680.165')
   assert.equal(windows.sha256, '65d1d4d993da8b24fc871f59f7c8100ffc3719afd58cbf843d81d6ada9bc9880')
   assert.equal(path.basename(windows.executableRelativePath), 'chrome.exe')
+
+  const linux = managedBrowserCatalogEntry('managed-chromium', 'linux-x64')
+  const linuxCloak = managedBrowserCatalogEntry('cloak', 'linux-x64')
+  assert.equal(linux.browserVersion.split('.')[0], linuxCloak.browserVersion.split('.')[0])
+  assert.equal(linux.browserVersion, '146.0.7680.165')
+  assert.equal(linux.sha256, '0436ed08838d35a05ef0b0f20b07cca5fddb88ec6a0c76c143d6c137d6f70ed1')
+  assert.equal(linuxCloak.browserVersion, '146.0.7680.177')
+  assert.equal(linuxCloak.sha256, '4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e')
+  assert.equal(linuxCloak.archiveFormat, 'tar.gz')
+  assert.equal(linuxCloak.executableRelativePath, 'chrome')
 })
 
 test('persistent config migrates every registered legacy profile into config.profiles', async () => {

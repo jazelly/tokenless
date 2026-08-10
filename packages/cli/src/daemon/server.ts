@@ -31,6 +31,16 @@ import { TokenlessUiServer } from './ui-server.js'
 import { UiSessionManager } from './ui-session.js'
 import { OutputSavingsProcessor } from '../output-savings/processor.js'
 import { WebAiInteractionV0Adapter } from './web-ai-interaction-v0.js'
+import {
+  ApiProxyAdapter,
+  anthropicMessageBody,
+  anthropicStreamFrames,
+  apiProxyErrorBody,
+  apiProxyModelList,
+  openAiCompletionBody,
+  openAiStreamFrames,
+  type ApiProxyDialect,
+} from './api-proxy.js'
 
 export type DaemonServer = {
   activate(): void
@@ -99,8 +109,9 @@ export async function serveHttp({
   })
   const webAi = new WebAiInteractionV0Adapter(store)
   await webAi.initializeCleanup()
+  const apiProxy = new ApiProxyAdapter(store, async () => await runtimeController?.wake())
   server = http.createServer((request, response) => {
-    void handleRequest(store, close, () => active, deactivate, runtimeController, uiServer, webAi, request, response)
+    void handleRequest(store, close, () => active, deactivate, runtimeController, uiServer, webAi, apiProxy, request, response)
   })
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -166,6 +177,7 @@ async function handleRequest(
   runtimeController: BrowserRuntimeController | undefined,
   uiServer: TokenlessUiServer,
   webAi: WebAiInteractionV0Adapter,
+  apiProxy: ApiProxyAdapter,
   request: IncomingMessage,
   response: ServerResponse
 ) {
@@ -226,6 +238,12 @@ async function handleRequest(
     }
 
     requireControlAuth(store, request)
+
+    const apiProxyRoute = matchApiProxyRoute(method, url.pathname)
+    if (apiProxyRoute) {
+      await handleApiProxyRequest(apiProxy, apiProxyRoute, request, response)
+      return
+    }
 
     if (url.pathname.startsWith('/v1/web-ai/')) {
       try {
@@ -617,6 +635,65 @@ function requireControlAuth(store: JobStore, request: IncomingMessage) {
   const value = Array.isArray(authorization) ? authorization[0] : authorization
   if (!value || !value.startsWith('Bearer ')) throw controlAuthRejected()
   store.requireControlToken(value.slice('Bearer '.length))
+}
+
+type ApiProxyRoute =
+  | { kind: 'completion'; dialect: ApiProxyDialect }
+  | { kind: 'models' }
+
+function matchApiProxyRoute(method: string, pathname: string): ApiProxyRoute | null {
+  if (method === 'POST' && pathname === '/v1/openai/chat/completions') return { kind: 'completion', dialect: 'openai' }
+  if (method === 'POST' && pathname === '/v1/anthropic/messages') return { kind: 'completion', dialect: 'anthropic' }
+  if (method === 'GET' && pathname === '/v1/openai/models') return { kind: 'models' }
+  return null
+}
+
+async function handleApiProxyRequest(
+  apiProxy: ApiProxyAdapter,
+  route: ApiProxyRoute,
+  request: IncomingMessage,
+  response: ServerResponse,
+) {
+  if (route.kind === 'models') {
+    writeJson(response, 200, apiProxyModelList())
+    return
+  }
+  const dialect = route.dialect
+  let requestedModel = 'unknown'
+  try {
+    const body = await readJsonObject(request)
+    requestedModel = typeof body.model === 'string' ? body.model : 'unknown'
+    const abort = new AbortController()
+    request.once('aborted', () => abort.abort())
+    const completion = await apiProxy.complete(dialect, body, abort.signal)
+    if (body.stream === true) {
+      writeApiProxyStream(response, dialect === 'openai'
+        ? openAiStreamFrames(completion, requestedModel)
+        : anthropicStreamFrames(completion, requestedModel))
+      return
+    }
+    writeJson(response, 200, dialect === 'openai'
+      ? openAiCompletionBody(completion, requestedModel)
+      : anthropicMessageBody(completion, requestedModel))
+  } catch (error) {
+    const daemonError = toDaemonError(error)
+    const { error: envelope } = daemonErrorBody(daemonError)
+    writeJson(response, daemonErrorStatus(daemonError), apiProxyErrorBody(
+      dialect,
+      typeof envelope.code === 'string' ? envelope.code : 'api_proxy_failed',
+      daemonError.message,
+    ))
+  }
+}
+
+function writeApiProxyStream(response: ServerResponse, frames: readonly string[]) {
+  response.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+  })
+  for (const frame of frames) response.write(frame)
+  response.end()
 }
 
 async function readJsonObject(request: IncomingMessage) {

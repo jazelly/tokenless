@@ -27,6 +27,7 @@ This document is the public inventory of the `tokenless` command-line interface.
 | `tokenless capabilities list` | List canonical task capabilities and evidence-backed provider routes. | None |
 | `tokenless limits inspect` | Inspect the next-prompt provider/profile capacity estimate from the packaged catalog and local job history. | None |
 | `tokenless savings <status\|enable\|disable\|clear\|uninstall>` | Manage optional local output savings measurement and its lazily downloaded tokenizer. | None |
+| `tokenless api-proxy <status\|enable\|disable>` | Manage the OpenAI/Anthropic-compatible local API proxy and its conversation mode. | None |
 | `tokenless run` | Send a prompt and optional files through a visible provider session. | Yes |
 | `tokenless replay` | Report previously unseen daemon outcome summaries for one agent recipient. | None |
 | `tokenless state` | Inspect durable daemon job state. | None |
@@ -448,6 +449,32 @@ tokenless savings uninstall --confirm-delete --json
 `enable` downloads and verifies the pinned `o200k_base` WASM tokenizer before setting `outputSavings.enabled` to `true`. Normal default-on use instead installs it lazily after the first provider job has already completed and durably handed its measurement work to the daemon. `disable` discards queued text and prevents in-flight results from being saved while retaining history and the runtime. `clear` discards pre-clear work and removes the durable measurement history, and `uninstall` disables measurement, discards work, and removes the runtime; both destructive operations require `--confirm-delete`. `status` is read-only with respect to configuration and tokenizer installation. None of these commands opens a provider page.
 
 Measurements cover only normalized visible assistant output and are attributed to the triggering durable job and response. They are stable cross-provider estimates, not provider billing values; input tokens, hidden reasoning, and private backend traffic are excluded.
+
+### `tokenless api-proxy`
+
+Manages the local API proxy: an OpenAI- and Anthropic-compatible surface on the daemon that turns ordinary API calls into visible provider work. It is disabled until you turn it on.
+
+```bash
+tokenless api-proxy status --json
+tokenless api-proxy enable --conversation-mode new-conversation --json
+tokenless api-proxy enable --conversation-mode continue-conversation --json
+tokenless api-proxy disable --json
+```
+
+Point a client at the daemon and use the daemon control token as the API key:
+
+| Client | Base URL | Route |
+| --- | --- | --- |
+| OpenAI-compatible | `http://127.0.0.1:7331/v1/openai` | `POST /chat/completions`, `GET /models` |
+| Anthropic-compatible | `http://127.0.0.1:7331/v1/anthropic` | `POST /messages` |
+
+`model` must name the provider explicitly as `tokenless/<provider>`, for example `tokenless/chatgpt`. An unmapped model is rejected rather than redirected to a provider the caller did not choose. `GET /v1/openai/models` lists every accepted name.
+
+`--conversation-mode new-conversation` flattens the whole transcript into one prompt and starts a fresh provider conversation per request, so identical requests never depend on prior local state. `--conversation-mode continue-conversation` derives a thread identity from every message except the final user turn and reuses one provider conversation for it; a caller that edits or truncates its history starts a new conversation instead of appending to a transcript the provider no longer shares.
+
+`tools`, `tool_choice`, `functions`, `function_call`, and `response_format` are rejected because visible provider pages expose no equivalent control. `stream: true` returns the documented event sequence for that dialect, delivered as one terminal chunk, because a visible response is only readable once it has finished rendering. Reported `usage` counts are always zero: Tokenless does not meter provider tokens, and the response is billed by your own web subscription.
+
+Responses carry a `tokenless` object with the provider, durable `job_id`, conversation mode, and any visible citations.
 
 ### `tokenless run`
 

@@ -191,59 +191,264 @@
       "post": {
         "operationId": "bindWebAiInteractionV0",
         "summary": "Bind one configured provider and managed profile for Web AI Interaction Protocol V0",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiBindingRequest" } } } },
-        "responses": { "200": { "description": "Opaque provider binding and static capability projection", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiBindingResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebAiBindingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Opaque provider binding and static capability projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAiBindingResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
       }
     },
     "/v1/web-ai/bindings/{bindingRef}/capabilities": {
       "get": {
         "operationId": "getWebAiInteractionV0Capabilities",
         "summary": "Read the binding's static Web AI capability projection",
-        "parameters": [{ "$ref": "#/components/parameters/web_ai_binding_ref" }],
-        "responses": { "200": { "description": "Opaque provider binding and static capability projection", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiBindingResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/web_ai_binding_ref"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Opaque provider binding and static capability projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAiBindingResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
       }
     },
     "/v1/web-ai/bindings/{bindingRef}/attachments": {
       "post": {
         "operationId": "stageWebAiInteractionV0Attachment",
         "summary": "Stream one bounded markdown system prompt into an opaque staged attachment",
-        "parameters": [{ "$ref": "#/components/parameters/web_ai_binding_ref" }],
-        "requestBody": { "required": true, "content": { "text/markdown": { "schema": { "type": "string", "maxLength": 1048576 } } } },
-        "responses": { "200": { "description": "Core-safe staged attachment reference", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiAttachmentResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/web_ai_binding_ref"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/markdown": {
+              "schema": {
+                "type": "string",
+                "maxLength": 1048576
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Core-safe staged attachment reference",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAiAttachmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
       }
     },
     "/v1/web-ai/bindings/{bindingRef}/turns": {
       "post": {
         "operationId": "startWebAiInteractionV0Turn",
         "summary": "Atomically consume a staged attachment and queue one V0 turn",
-        "parameters": [{ "$ref": "#/components/parameters/web_ai_binding_ref" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiStartRequest" } } } },
-        "responses": { "200": { "description": "Core V0 turn state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiTurnResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/WebAiRequestRefStartConflict" } }
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/web_ai_binding_ref"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebAiStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Core V0 turn state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAiTurnResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/WebAiRequestRefStartConflict"
+          }
+        }
       }
     },
     "/v1/web-ai/turns/{turnRef}": {
       "get": {
         "operationId": "getWebAiInteractionV0Turn",
         "summary": "Read one core V0 turn state without exposing a daemon job",
-        "parameters": [{ "$ref": "#/components/parameters/web_ai_turn_ref" }],
-        "responses": { "200": { "description": "Core V0 turn state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiTurnResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/web_ai_turn_ref"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Core V0 turn state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAiTurnResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
       }
     },
     "/v1/web-ai/turns/{turnRef}/cancel": {
       "post": {
         "operationId": "cancelWebAiInteractionV0Turn",
         "summary": "Cancel one V0 turn by opaque turn reference",
-        "parameters": [{ "$ref": "#/components/parameters/web_ai_turn_ref" }],
-        "responses": { "200": { "description": "Core V0 turn state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiTurnResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/web_ai_turn_ref"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Core V0 turn state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAiTurnResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
       }
     },
     "/v1/web-ai/requests/{requestRef}/cancel": {
       "post": {
         "operationId": "cancelWebAiInteractionV0Request",
         "summary": "Durably cancel a V0 request intent before or after its opaque turn reference is known",
-        "parameters": [{ "$ref": "#/components/parameters/web_ai_request_ref" }],
-        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
-        "responses": { "200": { "description": "Strict cancellation outcome with no job, profile, URL, path, or provider details", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WebAiRequestCancellationResponse" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/web_ai_request_ref"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Strict cancellation outcome with no job, profile, URL, path, or provider details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebAiRequestCancellationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
       }
     },
     "/provider-mappings/resolve": {
@@ -480,29 +685,47 @@
             "name": "provider",
             "in": "query",
             "required": true,
-            "schema": { "type": "string", "minLength": 1 }
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           {
             "name": "profile_id",
             "in": "query",
             "required": true,
-            "schema": { "type": "string", "minLength": 1, "maxLength": 128 }
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
           },
           {
             "name": "access_class",
             "in": "query",
             "required": true,
-            "schema": { "type": "string", "minLength": 1 }
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           {
             "name": "tier_label",
             "in": "query",
-            "schema": { "type": "string", "minLength": 1, "maxLength": 120 }
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            }
           },
           {
             "name": "subscription_label",
             "in": "query",
-            "schema": { "type": "string", "minLength": 1, "maxLength": 120 }
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            }
           }
         ],
         "responses": {
@@ -510,14 +733,24 @@
             "description": "Provider capacity projection",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ProviderCapacityProjection" }
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCapacityProjection"
+                }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "500": { "$ref": "#/components/responses/InternalError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
         }
       }
     },
@@ -770,6 +1003,107 @@
           }
         }
       }
+    },
+    "/v1/openai/chat/completions": {
+      "post": {
+        "operationId": "createApiProxyChatCompletion",
+        "summary": "Run an OpenAI-compatible chat completion through a visible provider page",
+        "description": "Accepts the OpenAI chat-completions request shape and returns the visible provider response. Tools, tool_choice, functions, function_call, and response_format are rejected because visible pages expose no equivalent control. Streaming responses replay the documented event sequence as one terminal chunk.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiProxyOpenAiRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Visible provider response in OpenAI chat-completion shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyOpenAiResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/anthropic/messages": {
+      "post": {
+        "operationId": "createApiProxyMessage",
+        "summary": "Run an Anthropic-compatible message through a visible provider page",
+        "description": "Accepts the Anthropic messages request shape and returns the visible provider response. Tools and structured-output contracts are rejected because visible pages expose no equivalent control. Streaming responses replay the documented event sequence as one terminal chunk.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiProxyAnthropicRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Visible provider response in Anthropic message shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyAnthropicResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/openai/models": {
+      "get": {
+        "operationId": "listApiProxyModels",
+        "summary": "List the tokenless/<provider> model names the API proxy accepts",
+        "responses": {
+          "200": {
+            "description": "Model list in OpenAI shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProxyModelList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -794,19 +1128,28 @@
         "name": "bindingRef",
         "in": "path",
         "required": true,
-        "schema": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$" }
+        "schema": {
+          "type": "string",
+          "pattern": "^binding:[a-f0-9]{32}$"
+        }
       },
       "web_ai_turn_ref": {
         "name": "turnRef",
         "in": "path",
         "required": true,
-        "schema": { "type": "string", "pattern": "^turn:[a-f0-9]{32}$" }
+        "schema": {
+          "type": "string",
+          "pattern": "^turn:[a-f0-9]{32}$"
+        }
       },
       "web_ai_request_ref": {
         "name": "requestRef",
         "in": "path",
         "required": true,
-        "schema": { "type": "string", "pattern": "^request:[a-f0-9]{32}$" }
+        "schema": {
+          "type": "string",
+          "pattern": "^request:[a-f0-9]{32}$"
+        }
       },
       "status": {
         "name": "status",
@@ -951,8 +1294,12 @@
           "application/json": {
             "schema": {
               "oneOf": [
-                { "$ref": "#/components/schemas/WebAiRequestRefConflictResponse" },
-                { "$ref": "#/components/schemas/WebAiRequestCancelledResponse" }
+                {
+                  "$ref": "#/components/schemas/WebAiRequestRefConflictResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/WebAiRequestCancelledResponse"
+                }
               ]
             }
           }
@@ -971,67 +1318,282 @@
     },
     "schemas": {
       "WebAiBindingRequest": {
-        "type": "object", "additionalProperties": false, "required": ["provider", "profileId"],
-        "properties": { "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" }, "profileId": { "type": "string", "pattern": "^[a-f0-9-]{36}$" } }
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "profileId"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
+          "profileId": {
+            "type": "string",
+            "pattern": "^[a-f0-9-]{36}$"
+          }
+        }
       },
       "WebAiBindingResponse": {
-        "type": "object", "additionalProperties": false, "required": ["providerBindingRef", "capabilities"],
-        "properties": { "providerBindingRef": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$" }, "capabilities": { "$ref": "#/components/schemas/WebAiCapabilityDocument" } }
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "providerBindingRef",
+          "capabilities"
+        ],
+        "properties": {
+          "providerBindingRef": {
+            "type": "string",
+            "pattern": "^binding:[a-f0-9]{32}$"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/WebAiCapabilityDocument"
+          }
+        }
       },
       "WebAiCapabilityDocument": {
-        "type": "object", "additionalProperties": false, "required": ["protocol", "providerRef", "supportedCapabilities"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "protocol",
+          "providerRef",
+          "supportedCapabilities"
+        ],
         "properties": {
-          "protocol": { "const": "tokenless.internal.web-ai-interaction-protocol/v0" },
-          "providerRef": { "type": "string", "pattern": "^provider:[a-f0-9]{32}$" },
+          "protocol": {
+            "const": "tokenless.internal.web-ai-interaction-protocol/v0"
+          },
+          "providerRef": {
+            "type": "string",
+            "pattern": "^provider:[a-f0-9]{32}$"
+          },
           "supportedCapabilities": {
-            "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true,
-            "items": { "enum": ["conversation.chat", "file.upload"] }
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "conversation.chat",
+                "file.upload"
+              ]
+            }
           }
         }
       },
       "WebAiAttachmentResponse": {
-        "type": "object", "additionalProperties": false, "required": ["attachment"],
-        "properties": { "attachment": { "type": "object", "additionalProperties": false, "required": ["attachmentRef", "mediaType", "byteLength", "sha256"], "properties": { "attachmentRef": { "type": "string", "pattern": "^attachment:[a-f0-9]{32}$" }, "mediaType": { "const": "text/markdown" }, "byteLength": { "type": "integer", "minimum": 1, "maximum": 1048576 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } } }
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attachment"
+        ],
+        "properties": {
+          "attachment": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "attachmentRef",
+              "mediaType",
+              "byteLength",
+              "sha256"
+            ],
+            "properties": {
+              "attachmentRef": {
+                "type": "string",
+                "pattern": "^attachment:[a-f0-9]{32}$"
+              },
+              "mediaType": {
+                "const": "text/markdown"
+              },
+              "byteLength": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1048576
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
       },
       "WebAiStartRequest": {
-        "type": "object", "additionalProperties": false,
-        "required": ["protocol", "requestRef", "providerRef", "providerBindingRef", "requiredCapabilities", "conversation", "bootstrap"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "protocol",
+          "requestRef",
+          "providerRef",
+          "providerBindingRef",
+          "requiredCapabilities",
+          "conversation",
+          "bootstrap"
+        ],
         "properties": {
-          "protocol": { "const": "tokenless.internal.web-ai-interaction-protocol/v0" },
-          "requestRef": { "type": "string", "pattern": "^request:[a-f0-9]{32}$" },
-          "providerRef": { "type": "string", "pattern": "^provider:[a-f0-9]{32}$" },
-          "providerBindingRef": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$" },
-          "requiredCapabilities": { "type": "array", "prefixItems": [{ "const": "conversation.chat" }, { "const": "file.upload" }], "items": false, "minItems": 2, "maxItems": 2 },
-          "conversation": { "type": "object", "additionalProperties": false, "required": ["mode"], "properties": { "mode": { "const": "new" } } },
-          "bootstrap": { "type": "object", "additionalProperties": false, "required": ["text", "attachments"], "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000, "x-tokenless-internal-maxUtf8Bytes": 8192 }, "attachments": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["kind", "attachmentRef", "mediaType", "byteLength", "sha256"], "properties": { "kind": { "const": "system_prompt" }, "attachmentRef": { "type": "string", "pattern": "^attachment:[a-f0-9]{32}$" }, "mediaType": { "const": "text/markdown" }, "byteLength": { "type": "integer", "minimum": 1, "maximum": 1048576 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } } } } }
+          "protocol": {
+            "const": "tokenless.internal.web-ai-interaction-protocol/v0"
+          },
+          "requestRef": {
+            "type": "string",
+            "pattern": "^request:[a-f0-9]{32}$"
+          },
+          "providerRef": {
+            "type": "string",
+            "pattern": "^provider:[a-f0-9]{32}$"
+          },
+          "providerBindingRef": {
+            "type": "string",
+            "pattern": "^binding:[a-f0-9]{32}$"
+          },
+          "requiredCapabilities": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "const": "conversation.chat"
+              },
+              {
+                "const": "file.upload"
+              }
+            ],
+            "items": false,
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "conversation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mode"
+            ],
+            "properties": {
+              "mode": {
+                "const": "new"
+              }
+            }
+          },
+          "bootstrap": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text",
+              "attachments"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000,
+                "x-tokenless-internal-maxUtf8Bytes": 8192
+              },
+              "attachments": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "attachmentRef",
+                    "mediaType",
+                    "byteLength",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "system_prompt"
+                    },
+                    "attachmentRef": {
+                      "type": "string",
+                      "pattern": "^attachment:[a-f0-9]{32}$"
+                    },
+                    "mediaType": {
+                      "const": "text/markdown"
+                    },
+                    "byteLength": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1048576
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       },
       "WebAiTurnResponse": {
-        "type": "object", "additionalProperties": false, "required": ["turn"],
-        "properties": { "turn": { "$ref": "#/components/schemas/WebAiTurnState" } }
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "turn"
+        ],
+        "properties": {
+          "turn": {
+            "$ref": "#/components/schemas/WebAiTurnState"
+          }
+        }
       },
       "WebAiRequestRefConflictResponse": {
-        "type": "object", "additionalProperties": false, "required": ["error"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
-            "type": "object", "additionalProperties": false, "required": ["code", "message", "retryable"],
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
             "properties": {
-              "code": { "const": "web_ai_request_ref_conflict" },
-              "message": { "const": "The request reference is already bound to a different request." },
-              "retryable": { "const": false }
+              "code": {
+                "const": "web_ai_request_ref_conflict"
+              },
+              "message": {
+                "const": "The request reference is already bound to a different request."
+              },
+              "retryable": {
+                "const": false
+              }
             }
           }
         }
       },
       "WebAiRequestCancelledResponse": {
-        "type": "object", "additionalProperties": false, "required": ["error"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
-            "type": "object", "additionalProperties": false, "required": ["code", "message", "retryable"],
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
             "properties": {
-              "code": { "const": "web_ai_request_cancelled" },
-              "message": { "const": "The request reference was cancelled before a turn could be created." },
-              "retryable": { "const": false }
+              "code": {
+                "const": "web_ai_request_cancelled"
+              },
+              "message": {
+                "const": "The request reference was cancelled before a turn could be created."
+              },
+              "retryable": {
+                "const": false
+              }
             }
           }
         }
@@ -1039,132 +1601,780 @@
       "WebAiRequestCancellationResponse": {
         "oneOf": [
           {
-            "type": "object", "additionalProperties": false, "required": ["kind"],
-            "properties": { "kind": { "const": "cancelled_before_start" } }
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "cancelled_before_start"
+              }
+            }
           },
           {
-            "type": "object", "additionalProperties": false, "required": ["kind", "turn"],
-            "properties": { "kind": { "const": "turn" }, "turn": { "$ref": "#/components/schemas/WebAiRequestCancellationTurn" } }
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "turn"
+            ],
+            "properties": {
+              "kind": {
+                "const": "turn"
+              },
+              "turn": {
+                "$ref": "#/components/schemas/WebAiRequestCancellationTurn"
+              }
+            }
           }
         ]
       },
       "WebAiRequestCancellationTurn": {
-        "type": "object", "additionalProperties": false,
-        "required": ["turnRef", "conversationRef", "lifecycle", "dispatchCertainty", "attachmentDeliveryStatus"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "turnRef",
+          "conversationRef",
+          "lifecycle",
+          "dispatchCertainty",
+          "attachmentDeliveryStatus"
+        ],
         "properties": {
-          "turnRef": { "type": "string", "pattern": "^turn:[a-f0-9]{32}$" },
-          "conversationRef": { "type": "string", "pattern": "^conversation:[a-f0-9]{32}$" },
-          "lifecycle": { "const": "cancelled" },
-          "dispatchCertainty": { "enum": ["not_dispatched", "dispatched", "ambiguous"] },
-          "attachmentDeliveryStatus": { "enum": ["pending", "delivered"] }
+          "turnRef": {
+            "type": "string",
+            "pattern": "^turn:[a-f0-9]{32}$"
+          },
+          "conversationRef": {
+            "type": "string",
+            "pattern": "^conversation:[a-f0-9]{32}$"
+          },
+          "lifecycle": {
+            "const": "cancelled"
+          },
+          "dispatchCertainty": {
+            "enum": [
+              "not_dispatched",
+              "dispatched",
+              "ambiguous"
+            ]
+          },
+          "attachmentDeliveryStatus": {
+            "enum": [
+              "pending",
+              "delivered"
+            ]
+          }
         },
         "allOf": [
           {
-            "if": { "properties": { "dispatchCertainty": { "const": "not_dispatched" } }, "required": ["dispatchCertainty"] },
-            "then": { "properties": { "attachmentDeliveryStatus": { "const": "pending" } } }
+            "if": {
+              "properties": {
+                "dispatchCertainty": {
+                  "const": "not_dispatched"
+                }
+              },
+              "required": [
+                "dispatchCertainty"
+              ]
+            },
+            "then": {
+              "properties": {
+                "attachmentDeliveryStatus": {
+                  "const": "pending"
+                }
+              }
+            }
           },
           {
-            "if": { "properties": { "dispatchCertainty": { "enum": ["dispatched", "ambiguous"] } }, "required": ["dispatchCertainty"] },
-            "then": { "properties": { "attachmentDeliveryStatus": { "const": "delivered" } } }
+            "if": {
+              "properties": {
+                "dispatchCertainty": {
+                  "enum": [
+                    "dispatched",
+                    "ambiguous"
+                  ]
+                }
+              },
+              "required": [
+                "dispatchCertainty"
+              ]
+            },
+            "then": {
+              "properties": {
+                "attachmentDeliveryStatus": {
+                  "const": "delivered"
+                }
+              }
+            }
           }
         ]
       },
       "WebAiTurnStateBase": {
-        "type": "object", "additionalProperties": false,
-        "required": ["protocol", "turnRef", "providerRef", "providerBindingRef", "conversationRef", "lifecycle", "dispatchCertainty", "attachmentDelivery"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "protocol",
+          "turnRef",
+          "providerRef",
+          "providerBindingRef",
+          "conversationRef",
+          "lifecycle",
+          "dispatchCertainty",
+          "attachmentDelivery"
+        ],
         "properties": {
-          "protocol": { "const": "tokenless.internal.web-ai-interaction-protocol/v0" },
-          "turnRef": { "type": "string", "pattern": "^turn:[a-f0-9]{32}$" },
-          "providerRef": { "type": "string", "pattern": "^provider:[a-f0-9]{32}$" },
-          "providerBindingRef": { "type": "string", "pattern": "^binding:[a-f0-9]{32}$" },
-          "conversationRef": { "type": "string", "pattern": "^conversation:[a-f0-9]{32}$" },
-          "lifecycle": { "enum": ["queued", "running", "waiting_for_user", "succeeded", "failed", "cancelled"] },
-          "dispatchCertainty": { "enum": ["not_dispatched", "dispatched", "ambiguous"] },
-          "attachmentDelivery": { "$ref": "#/components/schemas/WebAiAttachmentDelivery" },
-          "waitingReason": { "enum": ["authentication", "mfa", "captcha", "consent", "provider_blocker", "ambiguous_submission", "manual_intervention"] },
-          "result": { "$ref": "#/components/schemas/WebAiTerminalResult" },
-          "error": { "$ref": "#/components/schemas/WebAiStableError" },
-          "cancelReason": { "enum": ["client_requested", "provider_cancelled", "timeout", "user_declined", "shutdown"] }
+          "protocol": {
+            "const": "tokenless.internal.web-ai-interaction-protocol/v0"
+          },
+          "turnRef": {
+            "type": "string",
+            "pattern": "^turn:[a-f0-9]{32}$"
+          },
+          "providerRef": {
+            "type": "string",
+            "pattern": "^provider:[a-f0-9]{32}$"
+          },
+          "providerBindingRef": {
+            "type": "string",
+            "pattern": "^binding:[a-f0-9]{32}$"
+          },
+          "conversationRef": {
+            "type": "string",
+            "pattern": "^conversation:[a-f0-9]{32}$"
+          },
+          "lifecycle": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_for_user",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "dispatchCertainty": {
+            "enum": [
+              "not_dispatched",
+              "dispatched",
+              "ambiguous"
+            ]
+          },
+          "attachmentDelivery": {
+            "$ref": "#/components/schemas/WebAiAttachmentDelivery"
+          },
+          "waitingReason": {
+            "enum": [
+              "authentication",
+              "mfa",
+              "captcha",
+              "consent",
+              "provider_blocker",
+              "ambiguous_submission",
+              "manual_intervention"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/WebAiTerminalResult"
+          },
+          "error": {
+            "$ref": "#/components/schemas/WebAiStableError"
+          },
+          "cancelReason": {
+            "enum": [
+              "client_requested",
+              "provider_cancelled",
+              "timeout",
+              "user_declined",
+              "shutdown"
+            ]
+          }
         }
       },
       "WebAiAttachmentDelivery": {
-        "type": "object", "additionalProperties": false, "required": ["status", "attachmentRef", "sha256"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "attachmentRef",
+          "sha256"
+        ],
         "properties": {
-          "status": { "enum": ["pending", "delivered", "rejected"] },
-          "attachmentRef": { "type": "string", "pattern": "^attachment:[a-f0-9]{32}$" },
-          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          "status": {
+            "enum": [
+              "pending",
+              "delivered",
+              "rejected"
+            ]
+          },
+          "attachmentRef": {
+            "type": "string",
+            "pattern": "^attachment:[a-f0-9]{32}$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
         }
       },
       "WebAiTerminalResult": {
-        "type": "object", "additionalProperties": false, "required": ["text", "citations"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "citations"
+        ],
         "properties": {
-          "text": { "type": "string", "minLength": 1, "maxLength": 65536, "x-tokenless-internal-maxUtf8Bytes": 131072 },
-          "citations": { "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["url"], "properties": { "url": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048, "x-tokenless-internal-maxUtf8Bytes": 4096 }, "title": { "type": "string", "minLength": 1, "maxLength": 512, "x-tokenless-internal-maxUtf8Bytes": 1024 } } } }
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536,
+            "x-tokenless-internal-maxUtf8Bytes": 131072
+          },
+          "citations": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "url"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "format": "uri",
+                  "pattern": "^https?://",
+                  "maxLength": 2048,
+                  "x-tokenless-internal-maxUtf8Bytes": 4096
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "x-tokenless-internal-maxUtf8Bytes": 1024
+                }
+              }
+            }
+          }
         }
       },
       "WebAiStableError": {
-        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message"
+        ],
         "properties": {
-          "code": { "enum": ["unsupported_capability", "invalid_request", "resource_not_found", "identity_mismatch", "authentication_required", "user_intervention_required", "provider_unavailable", "upload_failed", "submission_failed", "response_failed", "timeout", "cancellation_requested", "recovery_failed", "ambiguous_external_mutation"] },
-          "message": { "type": "string", "minLength": 1, "maxLength": 512, "x-tokenless-internal-maxUtf8Bytes": 1024 }
+          "code": {
+            "enum": [
+              "unsupported_capability",
+              "invalid_request",
+              "resource_not_found",
+              "identity_mismatch",
+              "authentication_required",
+              "user_intervention_required",
+              "provider_unavailable",
+              "upload_failed",
+              "submission_failed",
+              "response_failed",
+              "timeout",
+              "cancellation_requested",
+              "recovery_failed",
+              "ambiguous_external_mutation"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "x-tokenless-internal-maxUtf8Bytes": 1024
+          }
         }
       },
       "WebAiTurnState": {
         "allOf": [
-          { "$ref": "#/components/schemas/WebAiTurnStateBase" },
           {
-            "if": { "type": "object", "properties": { "dispatchCertainty": { "enum": ["dispatched", "ambiguous"] } }, "required": ["dispatchCertainty"] },
-            "then": { "type": "object", "properties": { "attachmentDelivery": { "type": "object", "properties": { "status": { "const": "delivered" } }, "required": ["status"] } } }
+            "$ref": "#/components/schemas/WebAiTurnStateBase"
           },
           {
-            "if": { "type": "object", "properties": { "attachmentDelivery": { "type": "object", "properties": { "status": { "const": "rejected" } }, "required": ["status"] } }, "required": ["attachmentDelivery"] },
-            "then": { "type": "object", "properties": { "lifecycle": { "const": "failed" }, "dispatchCertainty": { "const": "not_dispatched" } }, "required": ["error"] }
+            "if": {
+              "type": "object",
+              "properties": {
+                "dispatchCertainty": {
+                  "enum": [
+                    "dispatched",
+                    "ambiguous"
+                  ]
+                }
+              },
+              "required": [
+                "dispatchCertainty"
+              ]
+            },
+            "then": {
+              "type": "object",
+              "properties": {
+                "attachmentDelivery": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "delivered"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
           },
           {
-            "if": { "type": "object", "properties": { "waitingReason": { "const": "ambiguous_submission" } }, "required": ["waitingReason"] },
-            "then": { "type": "object", "properties": { "dispatchCertainty": { "const": "ambiguous" } } }
+            "if": {
+              "type": "object",
+              "properties": {
+                "attachmentDelivery": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "rejected"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              },
+              "required": [
+                "attachmentDelivery"
+              ]
+            },
+            "then": {
+              "type": "object",
+              "properties": {
+                "lifecycle": {
+                  "const": "failed"
+                },
+                "dispatchCertainty": {
+                  "const": "not_dispatched"
+                }
+              },
+              "required": [
+                "error"
+              ]
+            }
+          },
+          {
+            "if": {
+              "type": "object",
+              "properties": {
+                "waitingReason": {
+                  "const": "ambiguous_submission"
+                }
+              },
+              "required": [
+                "waitingReason"
+              ]
+            },
+            "then": {
+              "type": "object",
+              "properties": {
+                "dispatchCertainty": {
+                  "const": "ambiguous"
+                }
+              }
+            }
           }
         ],
         "oneOf": [
-          { "title": "queued", "type": "object", "properties": { "lifecycle": { "const": "queued" }, "dispatchCertainty": { "const": "not_dispatched" }, "attachmentDelivery": { "type": "object", "allOf": [{ "$ref": "#/components/schemas/WebAiAttachmentDelivery" }], "properties": { "status": { "const": "pending" } } } }, "required": ["lifecycle", "dispatchCertainty", "attachmentDelivery"], "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["result"] }, { "type": "object", "required": ["error"] }, { "type": "object", "required": ["cancelReason"] }] } },
-          { "title": "running", "type": "object", "properties": { "lifecycle": { "const": "running" }, "attachmentDelivery": { "type": "object", "allOf": [{ "$ref": "#/components/schemas/WebAiAttachmentDelivery" }], "properties": { "status": { "enum": ["pending", "delivered"] } } } }, "required": ["lifecycle", "attachmentDelivery"], "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["result"] }, { "type": "object", "required": ["error"] }, { "type": "object", "required": ["cancelReason"] }] } },
-          { "title": "waiting_for_user", "type": "object", "properties": { "lifecycle": { "const": "waiting_for_user" }, "attachmentDelivery": { "type": "object", "allOf": [{ "$ref": "#/components/schemas/WebAiAttachmentDelivery" }], "properties": { "status": { "enum": ["pending", "delivered"] } } } }, "required": ["lifecycle", "attachmentDelivery", "waitingReason"], "not": { "anyOf": [{ "type": "object", "required": ["result"] }, { "type": "object", "required": ["error"] }, { "type": "object", "required": ["cancelReason"] }] } },
-          { "title": "succeeded", "type": "object", "properties": { "lifecycle": { "const": "succeeded" }, "dispatchCertainty": { "const": "dispatched" }, "attachmentDelivery": { "type": "object", "allOf": [{ "$ref": "#/components/schemas/WebAiAttachmentDelivery" }], "properties": { "status": { "const": "delivered" } } } }, "required": ["lifecycle", "dispatchCertainty", "attachmentDelivery", "result"], "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["error"] }, { "type": "object", "required": ["cancelReason"] }] } },
           {
-            "title": "failed", "type": "object",
-            "properties": { "lifecycle": { "const": "failed" } },
-            "required": ["lifecycle", "error"],
-            "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["result"] }, { "type": "object", "required": ["cancelReason"] }] },
+            "title": "queued",
+            "type": "object",
+            "properties": {
+              "lifecycle": {
+                "const": "queued"
+              },
+              "dispatchCertainty": {
+                "const": "not_dispatched"
+              },
+              "attachmentDelivery": {
+                "type": "object",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebAiAttachmentDelivery"
+                  }
+                ],
+                "properties": {
+                  "status": {
+                    "const": "pending"
+                  }
+                }
+              }
+            },
+            "required": [
+              "lifecycle",
+              "dispatchCertainty",
+              "attachmentDelivery"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "waitingReason"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "result"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "cancelReason"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "title": "running",
+            "type": "object",
+            "properties": {
+              "lifecycle": {
+                "const": "running"
+              },
+              "attachmentDelivery": {
+                "type": "object",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebAiAttachmentDelivery"
+                  }
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "pending",
+                      "delivered"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "lifecycle",
+              "attachmentDelivery"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "waitingReason"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "result"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "cancelReason"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "title": "waiting_for_user",
+            "type": "object",
+            "properties": {
+              "lifecycle": {
+                "const": "waiting_for_user"
+              },
+              "attachmentDelivery": {
+                "type": "object",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebAiAttachmentDelivery"
+                  }
+                ],
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "pending",
+                      "delivered"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "lifecycle",
+              "attachmentDelivery",
+              "waitingReason"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "result"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "cancelReason"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "title": "succeeded",
+            "type": "object",
+            "properties": {
+              "lifecycle": {
+                "const": "succeeded"
+              },
+              "dispatchCertainty": {
+                "const": "dispatched"
+              },
+              "attachmentDelivery": {
+                "type": "object",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebAiAttachmentDelivery"
+                  }
+                ],
+                "properties": {
+                  "status": {
+                    "const": "delivered"
+                  }
+                }
+              }
+            },
+            "required": [
+              "lifecycle",
+              "dispatchCertainty",
+              "attachmentDelivery",
+              "result"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "waitingReason"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "cancelReason"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "title": "failed",
+            "type": "object",
+            "properties": {
+              "lifecycle": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "lifecycle",
+              "error"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "waitingReason"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "result"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "cancelReason"
+                  ]
+                }
+              ]
+            },
             "allOf": [
               {
-                "if": { "type": "object",
+                "if": {
+                  "type": "object",
                   "properties": {
-                    "attachmentDelivery": { "type": "object",
-                      "properties": { "status": { "const": "rejected" } },
-                      "required": ["status"]
+                    "attachmentDelivery": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "const": "rejected"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
                     }
                   },
-                  "required": ["attachmentDelivery"]
+                  "required": [
+                    "attachmentDelivery"
+                  ]
                 },
-                "then": { "type": "object", "properties": { "dispatchCertainty": { "const": "not_dispatched" } } }
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "dispatchCertainty": {
+                      "const": "not_dispatched"
+                    }
+                  }
+                }
               },
               {
-                "if": { "type": "object",
-                  "properties": { "dispatchCertainty": { "enum": ["dispatched", "ambiguous"] } },
-                  "required": ["dispatchCertainty"]
-                },
-                "then": { "type": "object",
+                "if": {
+                  "type": "object",
                   "properties": {
-                    "attachmentDelivery": { "type": "object",
-                      "properties": { "status": { "const": "delivered" } },
-                      "required": ["status"]
+                    "dispatchCertainty": {
+                      "enum": [
+                        "dispatched",
+                        "ambiguous"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "dispatchCertainty"
+                  ]
+                },
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "attachmentDelivery": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "const": "delivered"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
                     }
                   }
                 }
               }
             ]
           },
-          { "title": "cancelled", "type": "object", "properties": { "lifecycle": { "const": "cancelled" } }, "required": ["lifecycle", "cancelReason"], "not": { "anyOf": [{ "type": "object", "required": ["waitingReason"] }, { "type": "object", "required": ["result"] }, { "type": "object", "required": ["error"] }] }, "allOf": [{ "if": { "type": "object", "properties": { "dispatchCertainty": { "enum": ["dispatched", "ambiguous"] } }, "required": ["dispatchCertainty"] }, "then": { "type": "object", "properties": { "attachmentDelivery": { "type": "object", "properties": { "status": { "const": "delivered" } }, "required": ["status"] } } } }] }
+          {
+            "title": "cancelled",
+            "type": "object",
+            "properties": {
+              "lifecycle": {
+                "const": "cancelled"
+              }
+            },
+            "required": [
+              "lifecycle",
+              "cancelReason"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "waitingReason"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "result"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ]
+                }
+              ]
+            },
+            "allOf": [
+              {
+                "if": {
+                  "type": "object",
+                  "properties": {
+                    "dispatchCertainty": {
+                      "enum": [
+                        "dispatched",
+                        "ambiguous"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "dispatchCertainty"
+                  ]
+                },
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "attachmentDelivery": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "const": "delivered"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
         ]
       },
       "DaemonErrorResponse": {
@@ -1446,7 +2656,9 @@
           {
             "type": "object",
             "not": {
-              "required": ["protocol"]
+              "required": [
+                "protocol"
+              ]
             }
           },
           {
@@ -1477,7 +2689,10 @@
             "$ref": "#/components/schemas/ManagedPlaywrightTarget"
           },
           "taskId": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 256
           },
           "executionMode": {
@@ -1485,27 +2700,42 @@
           },
           "capabilityRoute": {
             "oneOf": [
-              { "type": "null" },
-              { "$ref": "#/components/schemas/TaskCapabilityRoute" }
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskCapabilityRoute"
+              }
             ]
           },
           "fallback": {
             "oneOf": [
-              { "type": "null" },
-              { "$ref": "#/components/schemas/ProviderFallbackPlan" }
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProviderFallbackPlan"
+              }
             ]
           },
           "context": {
             "oneOf": [
-              { "type": "null" },
-              { "$ref": "#/components/schemas/ContextEnvelope" }
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextEnvelope"
+              }
             ]
           },
           "browserVisibility": {
             "$ref": "#/components/schemas/BrowserVisibility"
           },
           "pagePolicy": {
-            "enum": ["preserve", "replace"]
+            "enum": [
+              "preserve",
+              "replace"
+            ]
           },
           "actions": {
             "type": "array",
@@ -1519,60 +2749,124 @@
       },
       "ManagedPlaywrightTarget": {
         "type": "object",
-        "required": ["kind", "url"],
+        "required": [
+          "kind",
+          "url"
+        ],
         "additionalProperties": false,
         "properties": {
-          "kind": { "const": "provider_home" },
-          "url": { "type": "string", "format": "uri", "maxLength": 2048 }
+          "kind": {
+            "const": "provider_home"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          }
         }
       },
       "TaskCapabilityRoute": {
         "type": "object",
-        "required": ["schema", "provider", "requirements", "strategies", "support", "evidence", "runtimeEligibility"],
+        "required": [
+          "schema",
+          "provider",
+          "requirements",
+          "strategies",
+          "support",
+          "evidence",
+          "runtimeEligibility"
+        ],
         "additionalProperties": false,
         "properties": {
-          "schema": { "const": "tokenless.task-capability-route.v1" },
-          "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+          "schema": {
+            "const": "tokenless.task-capability-route.v1"
+          },
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
           "requirements": {
             "type": "array",
             "uniqueItems": true,
-            "items": { "type": "string", "minLength": 1 }
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "strategies": {
             "type": "array",
             "uniqueItems": true,
-            "items": { "type": "string", "minLength": 1 }
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           },
-          "support": { "enum": ["experimental", "supported"] },
+          "support": {
+            "enum": [
+              "experimental",
+              "supported"
+            ]
+          },
           "evidence": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": { "type": "string", "minLength": 1 }
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           },
-          "runtimeEligibility": { "enum": ["eligible", "ineligible", "unchecked"] }
+          "runtimeEligibility": {
+            "enum": [
+              "eligible",
+              "ineligible",
+              "unchecked"
+            ]
+          }
         }
       },
       "ProviderFallbackPlan": {
         "type": "object",
-        "required": ["protocol", "mode", "replay", "alternatives"],
+        "required": [
+          "protocol",
+          "mode",
+          "replay",
+          "alternatives"
+        ],
         "additionalProperties": false,
         "properties": {
-          "protocol": { "const": "tokenless.provider-fallback.v1" },
-          "mode": { "const": "automatic" },
-          "replay": { "const": "from_start" },
+          "protocol": {
+            "const": "tokenless.provider-fallback.v1"
+          },
+          "mode": {
+            "const": "automatic"
+          },
+          "replay": {
+            "const": "from_start"
+          },
           "alternatives": {
             "type": "array",
             "minItems": 1,
             "maxItems": 5,
             "items": {
               "type": "object",
-              "required": ["provider", "target", "capabilityRoute"],
+              "required": [
+                "provider",
+                "target",
+                "capabilityRoute"
+              ],
               "additionalProperties": false,
               "properties": {
-                "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
-                "target": { "$ref": "#/components/schemas/ManagedPlaywrightTarget" },
-                "capabilityRoute": { "$ref": "#/components/schemas/TaskCapabilityRoute" }
+                "provider": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "target": {
+                  "$ref": "#/components/schemas/ManagedPlaywrightTarget"
+                },
+                "capabilityRoute": {
+                  "$ref": "#/components/schemas/TaskCapabilityRoute"
+                }
               }
             }
           }
@@ -1580,118 +2874,299 @@
       },
       "ContextEnvelope": {
         "type": "object",
-        "required": ["schema", "taskId", "requirements", "instructions", "references", "outputContract", "constraints", "upstream", "delivery"],
+        "required": [
+          "schema",
+          "taskId",
+          "requirements",
+          "instructions",
+          "references",
+          "outputContract",
+          "constraints",
+          "upstream",
+          "delivery"
+        ],
         "additionalProperties": false,
         "properties": {
-          "schema": { "const": "tokenless.context-envelope.v1" },
-          "taskId": { "type": ["string", "null"], "maxLength": 256 },
-          "requirements": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "schema": {
+            "const": "tokenless.context-envelope.v1"
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256
+          },
+          "requirements": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
           "instructions": {
             "type": "array",
             "maxItems": 32,
-            "items": { "$ref": "#/components/schemas/ContextInstruction" }
+            "items": {
+              "$ref": "#/components/schemas/ContextInstruction"
+            }
           },
           "references": {
             "type": "array",
             "maxItems": 100,
-            "items": { "$ref": "#/components/schemas/ContextAttachmentReference" }
+            "items": {
+              "$ref": "#/components/schemas/ContextAttachmentReference"
+            }
           },
-          "outputContract": { "$ref": "#/components/schemas/ContextOutputContract" },
-          "constraints": { "$ref": "#/components/schemas/ContextConstraints" },
-          "upstream": { "$ref": "#/components/schemas/ContextUpstream" },
-          "delivery": { "$ref": "#/components/schemas/ContextDelivery" }
+          "outputContract": {
+            "$ref": "#/components/schemas/ContextOutputContract"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/ContextConstraints"
+          },
+          "upstream": {
+            "$ref": "#/components/schemas/ContextUpstream"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/ContextDelivery"
+          }
         }
       },
       "ContextInstruction": {
         "type": "object",
-        "required": ["role", "content", "provenance"],
+        "required": [
+          "role",
+          "content",
+          "provenance"
+        ],
         "additionalProperties": false,
         "properties": {
-          "role": { "enum": ["system", "developer", "user"] },
-          "content": { "type": "string", "minLength": 1, "maxLength": 1000000 },
-          "provenance": { "enum": ["compiled_cli", "caller", "upstream_agent"] }
+          "role": {
+            "enum": [
+              "system",
+              "developer",
+              "user"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000000
+          },
+          "provenance": {
+            "enum": [
+              "compiled_cli",
+              "caller",
+              "upstream_agent"
+            ]
+          }
         }
       },
       "ContextAttachmentReference": {
         "type": "object",
-        "required": ["kind", "attachmentId", "name", "mediaType", "size", "sha256", "provenance"],
+        "required": [
+          "kind",
+          "attachmentId",
+          "name",
+          "mediaType",
+          "size",
+          "sha256",
+          "provenance"
+        ],
         "additionalProperties": false,
         "properties": {
-          "kind": { "const": "attachment" },
-          "attachmentId": { "type": "string", "minLength": 1 },
-          "name": { "type": "string", "minLength": 1 },
-          "mediaType": { "type": "string", "minLength": 1 },
-          "size": { "type": "integer", "minimum": 0 },
-          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "provenance": { "const": "caller_selected_file" }
+          "kind": {
+            "const": "attachment"
+          },
+          "attachmentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mediaType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "provenance": {
+            "const": "caller_selected_file"
+          }
         }
       },
       "ContextOutputContract": {
         "type": "object",
-        "required": ["language", "format"],
+        "required": [
+          "language",
+          "format"
+        ],
         "additionalProperties": false,
         "properties": {
-          "language": { "type": ["string", "null"], "enum": ["en", "zh-CN", null] },
-          "format": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 }
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "en",
+              "zh-CN",
+              null
+            ]
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 120
+          }
         }
       },
       "ContextConstraints": {
         "type": "object",
-        "required": ["tokenBudget", "deadline"],
+        "required": [
+          "tokenBudget",
+          "deadline"
+        ],
         "additionalProperties": false,
         "properties": {
-          "tokenBudget": { "type": ["integer", "null"], "minimum": 1 },
-          "deadline": { "type": ["string", "null"], "format": "date-time" }
+          "tokenBudget": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
         }
       },
       "ContextUpstream": {
         "type": "object",
-        "required": ["agentKind", "sessionId", "state"],
+        "required": [
+          "agentKind",
+          "sessionId",
+          "state"
+        ],
         "additionalProperties": false,
         "properties": {
-          "agentKind": { "type": ["string", "null"], "minLength": 1, "maxLength": 240 },
-          "sessionId": { "type": ["string", "null"], "minLength": 1, "maxLength": 240 },
+          "agentKind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 240
+          },
           "state": {
             "oneOf": [
-              { "type": "null" },
-              { "type": "object", "additionalProperties": true }
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              }
             ]
           }
         }
       },
       "ContextDelivery": {
         "type": "object",
-        "required": ["mode", "promptActions"],
+        "required": [
+          "mode",
+          "promptActions"
+        ],
         "additionalProperties": false,
         "properties": {
-          "mode": { "const": "visible_actions" },
+          "mode": {
+            "const": "visible_actions"
+          },
           "promptActions": {
             "type": "array",
             "maxItems": 100,
-            "items": { "$ref": "#/components/schemas/ContextPromptActionReceipt" }
+            "items": {
+              "$ref": "#/components/schemas/ContextPromptActionReceipt"
+            }
           }
         }
       },
       "ContextPromptActionReceipt": {
         "type": "object",
-        "required": ["requestId", "sha256", "bytes"],
+        "required": [
+          "requestId",
+          "sha256",
+          "bytes"
+        ],
         "additionalProperties": false,
         "properties": {
-          "requestId": { "type": "string", "minLength": 1 },
-          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-          "bytes": { "type": "integer", "minimum": 0 }
+          "requestId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       },
       "VisibleActionRequest": {
         "type": "object",
-        "required": ["protocol", "requestId", "provider", "action", "payload"],
+        "required": [
+          "protocol",
+          "requestId",
+          "provider",
+          "action",
+          "payload"
+        ],
         "additionalProperties": false,
         "properties": {
-          "protocol": { "const": "tokenless.playwright.visible-action.v3" },
-          "requestId": { "type": "string", "minLength": 1 },
-          "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
-          "action": { "type": "string", "minLength": 1 },
-          "payload": { "type": "object" }
+          "protocol": {
+            "const": "tokenless.playwright.visible-action.v3"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "payload": {
+            "type": "object"
+          }
         }
       },
       "ExecutionBackend": {
@@ -1776,21 +3251,45 @@
               ],
               "additionalProperties": false,
               "properties": {
-                "attempt": { "type": "integer", "minimum": 1 },
-                "provider": { "type": "string", "minLength": 1 },
-                "status": { "type": "string", "minLength": 1 },
-                "startedAt": { "type": "string", "format": "date-time" },
-                "completedAt": { "type": ["string", "null"], "format": "date-time" },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "startedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "completedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
                 "blocker": {}
               }
             }
           },
           "provider_submitted_at": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           },
           "eligible_at": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           },
           "created_at": {
@@ -1806,60 +3305,207 @@
       "ProviderCapacityProjection": {
         "type": "object",
         "required": [
-          "schema", "catalogVersion", "catalogRevision", "provider", "profileId",
-          "evaluatedAt", "subscription", "decision", "eligibleAt", "reason", "rules"
+          "schema",
+          "catalogVersion",
+          "catalogRevision",
+          "provider",
+          "profileId",
+          "evaluatedAt",
+          "subscription",
+          "decision",
+          "eligibleAt",
+          "reason",
+          "rules"
         ],
         "additionalProperties": false,
         "properties": {
-          "schema": { "const": "tokenless.provider-capacity-projection.v1" },
-          "catalogVersion": { "type": "integer", "minimum": 1 },
-          "catalogRevision": { "type": "string", "format": "date" },
-          "provider": { "type": "string", "minLength": 1 },
-          "profileId": { "type": "string", "minLength": 1 },
-          "evaluatedAt": { "type": "string", "format": "date-time" },
+          "schema": {
+            "const": "tokenless.provider-capacity-projection.v1"
+          },
+          "catalogVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "catalogRevision": {
+            "type": "string",
+            "format": "date"
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "profileId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evaluatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
           "subscription": {
             "type": "object",
-            "required": ["accessClass", "observedLabel", "planId", "match"],
+            "required": [
+              "accessClass",
+              "observedLabel",
+              "planId",
+              "match"
+            ],
             "additionalProperties": false,
             "properties": {
-              "accessClass": { "type": "string", "minLength": 1 },
-              "observedLabel": { "type": ["string", "null"] },
-              "planId": { "type": "string", "minLength": 1 },
-              "match": { "enum": ["label", "access_class", "unknown"] }
+              "accessClass": {
+                "type": "string",
+                "minLength": 1
+              },
+              "observedLabel": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "planId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "match": {
+                "enum": [
+                  "label",
+                  "access_class",
+                  "unknown"
+                ]
+              }
             }
           },
-          "decision": { "enum": ["admit", "defer", "unknown"] },
-          "eligibleAt": { "type": ["string", "null"], "format": "date-time" },
-          "reason": { "type": "string", "minLength": 1 },
+          "decision": {
+            "enum": [
+              "admit",
+              "defer",
+              "unknown"
+            ]
+          },
+          "eligibleAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
           "rules": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/ProviderRuleCapacityProjection" }
+            "items": {
+              "$ref": "#/components/schemas/ProviderRuleCapacityProjection"
+            }
           }
         }
       },
       "ProviderRuleCapacityProjection": {
         "type": "object",
         "required": [
-          "ruleId", "knowledge", "action", "windowSeconds", "publishedAllowance",
-          "effectiveAllowance", "usedUnits", "requestedUnits", "remainingUnits",
-          "burstUnits", "cadenceSeconds", "decision", "eligibleAt", "reason"
+          "ruleId",
+          "knowledge",
+          "action",
+          "windowSeconds",
+          "publishedAllowance",
+          "effectiveAllowance",
+          "usedUnits",
+          "requestedUnits",
+          "remainingUnits",
+          "burstUnits",
+          "cadenceSeconds",
+          "decision",
+          "eligibleAt",
+          "reason"
         ],
         "additionalProperties": false,
         "properties": {
-          "ruleId": { "type": "string", "minLength": 1 },
-          "knowledge": { "enum": ["official_exact", "non_numeric"] },
-          "action": { "type": "string", "minLength": 1 },
-          "windowSeconds": { "type": ["integer", "null"], "minimum": 1 },
-          "publishedAllowance": { "type": ["integer", "null"], "minimum": 1 },
-          "effectiveAllowance": { "type": ["integer", "null"], "minimum": 1 },
-          "usedUnits": { "type": ["integer", "null"], "minimum": 0 },
-          "requestedUnits": { "type": "integer", "minimum": 0 },
-          "remainingUnits": { "type": ["integer", "null"], "minimum": 0 },
-          "burstUnits": { "type": ["integer", "null"], "minimum": 1 },
-          "cadenceSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
-          "decision": { "enum": ["admit", "defer", "unknown"] },
-          "eligibleAt": { "type": ["string", "null"], "format": "date-time" },
-          "reason": { "type": "string", "minLength": 1 }
+          "ruleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "knowledge": {
+            "enum": [
+              "official_exact",
+              "non_numeric"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "windowSeconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "publishedAllowance": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "effectiveAllowance": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "usedUnits": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "requestedUnits": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remainingUnits": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "burstUnits": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "cadenceSeconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0
+          },
+          "decision": {
+            "enum": [
+              "admit",
+              "defer",
+              "unknown"
+            ]
+          },
+          "eligibleAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "ProviderProjectMapping": {
@@ -2755,6 +4401,361 @@
           "pid": {
             "type": "integer",
             "minimum": 1
+          }
+        }
+      },
+      "ApiProxyModelName": {
+        "type": "string",
+        "pattern": "^tokenless/[a-z0-9-]{1,64}$",
+        "description": "Names the visible provider explicitly. An unmapped model is rejected rather than redirected."
+      },
+      "ApiProxyMessage": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "properties": {
+                    "type": {
+                      "const": "text"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "ApiProxyOpenAiRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/ApiProxyModelName"
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/components/schemas/ApiProxyMessage"
+            }
+          },
+          "stream": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApiProxyAnthropicRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/ApiProxyModelName"
+          },
+          "system": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/components/schemas/ApiProxyMessage"
+            }
+          },
+          "max_tokens": {
+            "type": "integer"
+          },
+          "stream": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApiProxyMetadata": {
+        "type": "object",
+        "required": [
+          "provider",
+          "job_id",
+          "conversation_mode",
+          "citations"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "job_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conversation_mode": {
+            "type": "string",
+            "enum": [
+              "new-conversation",
+              "continue-conversation"
+            ]
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "url"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "title": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ApiProxyOpenAiUsage": {
+        "type": "object",
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens"
+        ],
+        "description": "Always zero. Tokenless does not meter provider tokens; the response is billed by the web subscription.",
+        "properties": {
+          "prompt_tokens": {
+            "type": "integer",
+            "const": 0
+          },
+          "completion_tokens": {
+            "type": "integer",
+            "const": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "const": 0
+          }
+        }
+      },
+      "ApiProxyAnthropicUsage": {
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens"
+        ],
+        "description": "Always zero. Tokenless does not meter provider tokens; the response is billed by the web subscription.",
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "const": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "const": 0
+          }
+        }
+      },
+      "ApiProxyOpenAiResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "created",
+          "model",
+          "choices",
+          "usage",
+          "tokenless"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "object": {
+            "const": "chat.completion"
+          },
+          "created": {
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "choices": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "index",
+                "message",
+                "finish_reason"
+              ],
+              "properties": {
+                "index": {
+                  "type": "integer"
+                },
+                "message": {
+                  "type": "object",
+                  "required": [
+                    "role",
+                    "content"
+                  ],
+                  "properties": {
+                    "role": {
+                      "const": "assistant"
+                    },
+                    "content": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "finish_reason": {
+                  "const": "stop"
+                }
+              }
+            }
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ApiProxyOpenAiUsage"
+          },
+          "tokenless": {
+            "$ref": "#/components/schemas/ApiProxyMetadata"
+          }
+        }
+      },
+      "ApiProxyAnthropicResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "role",
+          "model",
+          "content",
+          "stop_reason",
+          "usage",
+          "tokenless"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "const": "message"
+          },
+          "role": {
+            "const": "assistant"
+          },
+          "model": {
+            "type": "string"
+          },
+          "content": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "type",
+                "text"
+              ],
+              "properties": {
+                "type": {
+                  "const": "text"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "stop_reason": {
+            "const": "end_turn"
+          },
+          "stop_sequence": {
+            "type": "null"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ApiProxyAnthropicUsage"
+          },
+          "tokenless": {
+            "$ref": "#/components/schemas/ApiProxyMetadata"
+          }
+        }
+      },
+      "ApiProxyModelList": {
+        "type": "object",
+        "required": [
+          "object",
+          "data"
+        ],
+        "properties": {
+          "object": {
+            "const": "list"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "object",
+                "created",
+                "owned_by"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/ApiProxyModelName"
+                },
+                "object": {
+                  "const": "model"
+                },
+                "created": {
+                  "type": "integer"
+                },
+                "owned_by": {
+                  "const": "tokenless"
+                }
+              }
+            }
           }
         }
       }
